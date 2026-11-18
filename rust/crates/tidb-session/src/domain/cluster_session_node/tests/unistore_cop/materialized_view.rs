@@ -1666,3 +1666,102 @@ fn compare_materialized_view_refusals_answer_as_go_master() {
 fn refresh_materialized_view_dry_run_answers_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_refresh_dry_run_go.jsonl"));
 }
+
+/// A WITH PROFILE row as Go's structure, without the run's own numbers: a
+/// step header without its time, and a plan row's id, estimated and actual
+/// rows, task and operator info (the execution info, memory and disk being
+/// this run's).
+fn profile_shape(row: &str) -> String {
+    if let Some((header, _)) = row.split_once("] status:") {
+        let status = row.rsplit_once("status:").map_or("", |(_, rest)| rest.split(',').next().unwrap_or(""));
+        return format!("{header}] status:{status}");
+    }
+    let parts: Vec<&str> = row.split(" | ").collect();
+    let keep: Vec<&str> = parts
+        .iter()
+        .copied()
+        .filter(|part| {
+            part.starts_with("  ")
+                || part.starts_with("estRows:")
+                || part.starts_with("actRows:")
+                || part.starts_with("task:")
+                || part.starts_with("table:")
+        })
+        .collect();
+    // The operator info is the last field that is no runtime figure.
+    let info = parts.iter().rev().find(|part| {
+        !part.starts_with("memory:")
+            && !part.starts_with("disk:")
+            && !part.contains("time:")
+            && !part.starts_with("estRows:")
+            && !part.starts_with("actRows:")
+            && !part.starts_with("task:")
+            && !part.starts_with("  ")
+            && !part.starts_with("table:")
+    });
+    format!("{}{}", keep.join(" | "), info.map_or(String::new(), |info| format!(" | {info}")))
+}
+
+/// Go master `TestProfileMaterializedViewRefreshStepRuntime`
+/// (`step_runtime`, FAST aside): WITH PROFILE runs the refresh and answers
+/// each step with its status and time, and each data change's analyzed plan
+/// -- compared with a Go master node's answer by its shape.
+#[test]
+fn refresh_materialized_view_profile_answers_as_go_master() {
+    let (_stack, _users, mut session) = go_master_mview_stack();
+    let mut mismatches = Vec::new();
+    for line in include_str!("../../../../../testdata/mview_refresh_profile_go.jsonl").lines() {
+        let (sql, go): (String, String) = serde_json::from_str(line).unwrap();
+        let rust = answer(&mut session, &sql);
+        if !sql.contains("with profile") {
+            if rust.get(..2) != go.get(..2) {
+                mismatches.push(format!("{sql}\n  go:   {go}\n  rust: {rust}"));
+            }
+            continue;
+        }
+        let shape = |answer: &str| -> Vec<String> {
+            answer
+                .strip_prefix("RS:")
+                .map(|rows| serde_json::from_str::<Vec<Vec<String>>>(rows).unwrap())
+                .unwrap_or_default()
+                .iter()
+                .map(|row| profile_shape(&row[0]))
+                .collect()
+        };
+        if shape(&go) != shape(&rust) || !rust.starts_with("RS:") {
+            mismatches.push(format!("{sql}\n  go:   {:#?}\n  rust: {:#?}\n  raw: {rust}", shape(&go), shape(&rust)));
+        }
+        if sql.contains("delta apply") {
+            assert!(rust.contains("mview_complete_delta_apply:{writer:{") && rust.contains("rows:{insert:0, update:1, delete:0}}}"), "{rust}");
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+/// Go master `TestProfileMaterializedViewRefreshStepRuntime/redaction`: the
+/// profiled plans follow the caller's `tidb_redact_log`, in place and out of
+/// place.
+#[test]
+fn refresh_materialized_view_profile_redacts_as_go_master() {
+    let (_stack, _users, mut root) = go_master_mview_stack();
+    mv_setup(&mut root, &[
+        "use test",
+        "set tidb_mview_enable = ON",
+        "create table t_profile_redact (a int not null, b int not null)",
+        "insert into t_profile_redact values (1, 123456790), (2, 1)",
+        "create materialized view log on t_profile_redact (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_profile_redact (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_profile_redact where b > 123456789 group by a",
+    ]);
+    for (mode, suffix) in [("OFF", ", 123456789)"), ("ON", ", ?)"), ("MARKER", ", ‹123456789›)")] {
+        assert_eq!(answer(&mut root, &format!("set global tidb_redact_log = {mode}")), "OK");
+        for refresh in ["complete in place", "complete out of place"] {
+            let plan = answer(&mut root, &format!("refresh materialized view mv_profile_redact {refresh} with profile"));
+            assert!(plan.contains(suffix), "{mode} {refresh}: {plan}");
+            if mode != "OFF" {
+                assert!(!plan.contains(", 123456789)"), "{mode} {refresh}: {plan}");
+            }
+            assert_eq!(answer(&mut root, "select a, s, cnt from mv_profile_redact"), r#"RS:[["1","123456790","1"]]"#);
+        }
+    }
+    assert_eq!(answer(&mut root, "set global tidb_redact_log = OFF"), "OK");
+}

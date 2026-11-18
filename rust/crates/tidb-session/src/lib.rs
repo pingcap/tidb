@@ -944,6 +944,9 @@ pub struct Session {
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
     process_plan_info: Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>>,
+    /// Go master `RefreshMaterializedViewExec.stepObserver`: the step
+    /// collector of a REFRESH ... WITH PROFILE this session runs.
+    pub(crate) mv_refresh_observer: Option<Arc<std::sync::Mutex<crate::mv_refresh_observability::MvRefreshObserveCollector>>>,
     /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
     /// `DurationWaitTS`, set by the planner and the transaction tier.
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
@@ -1188,6 +1191,7 @@ impl Session {
             external_mpp_query_scope: false,
             mpp_attempt_completed: false,
             process_plan_info: Arc::default(),
+            mv_refresh_observer: None,
             phase_durations: Default::default(),
             sql_cpu_usages: Arc::default(),
             cursor_tracker: tidb_session_cursor::CursorTracker::new(),

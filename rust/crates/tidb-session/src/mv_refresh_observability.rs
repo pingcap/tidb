@@ -165,7 +165,202 @@ fn explain_cell(datum: &Datum) -> String {
     }
 }
 
+/// Go master `mvRefreshObserveStepRuntime`.
+#[derive(Default)]
+struct StepRuntime {
+    started: Option<std::time::Instant>,
+    ended: Option<std::time::Instant>,
+    failed: bool,
+    plan_rows: Vec<Vec<String>>,
+}
+
+/// Go master `mvRefreshObserveCollector`: each observed step's runtime, by
+/// step name.
+#[derive(Default)]
+pub(crate) struct MvRefreshObserveCollector {
+    steps: Vec<(&'static str, StepRuntime)>,
+}
+
+impl MvRefreshObserveCollector {
+    fn step_mut(&mut self, name: &'static str) -> &mut StepRuntime {
+        let index = match self.steps.iter().position(|(step, _)| *step == name) {
+            Some(index) => index,
+            None => {
+                self.steps.push((name, StepRuntime::default()));
+                self.steps.len() - 1
+            }
+        };
+        &mut self.steps[index].1
+    }
+
+    fn step(&self, name: &str) -> Option<&StepRuntime> {
+        self.steps.iter().find(|(step, _)| *step == name).map(|(_, runtime)| runtime)
+    }
+}
+
+/// Go master `formatMVRefreshProfileStepHeader` and
+/// `buildMVRefreshAnalyzeExecutionInfo`.
+fn format_mv_refresh_profile_step_header(step: &ObserveStep, runtime: Option<&StepRuntime>) -> String {
+    match runtime.and_then(|runtime| Some((runtime.started?, runtime.ended?, runtime.failed))) {
+        Some((started, ended, failed)) => format!(
+            "[{} {}] status:{}, time:{}",
+            step.id,
+            step.name,
+            if failed { "failed" } else { "success" },
+            tidb_execdetails::exec_details::format_go_duration(ended.saturating_duration_since(started))
+        ),
+        None => format!("[{} {}]", step.id, step.name),
+    }
+}
+
+/// Go master `formatMVRefreshProfilePlanRows`: an analyzed plan row's
+/// estimated and actual rows, task, access object, execution info, operator
+/// info, memory and disk, the empty and `N/A` fields left out.
+fn format_mv_refresh_profile_plan_rows(rows: &[Vec<String>]) -> Vec<String> {
+    rows.iter()
+        .filter(|row| !row.is_empty())
+        .map(|row| {
+            let field = |index: usize| row.get(index).map_or("", String::as_str);
+            let mut parts = vec![strip_plan_id_suffixes(&row[0])];
+            let operator_info = if row.len() > 6 {
+                field(6)
+            } else if row.len() > 1 {
+                row[row.len() - 1].as_str()
+            } else {
+                ""
+            };
+            for (label, value) in [("estRows:", field(1).trim()), ("actRows:", field(2).trim()), ("task:", field(3).trim())] {
+                if !value.is_empty() {
+                    parts.push(format!("{label}{value}"));
+                }
+            }
+            for value in [field(4), field(5), operator_info] {
+                let value = normalize_dry_run_plan_field(value);
+                if !value.is_empty() {
+                    parts.push(value.to_owned());
+                }
+            }
+            for (label, value) in [("memory:", field(7)), ("disk:", field(8))] {
+                let value = normalize_dry_run_plan_field(value);
+                if !value.is_empty() {
+                    parts.push(format!("{label}{value}"));
+                }
+            }
+            format!("  {}", parts.join(" | "))
+        })
+        .collect()
+}
+
+/// The `refresh steps` result of DRY RUN and WITH PROFILE.
+fn refresh_steps_output(rows: Vec<String>) -> StmtOutput {
+    let (schema_columns, names) = tidb_planner::show_schema::build_refresh_observe_schema();
+    let columns = schema_columns
+        .columns
+        .iter()
+        .zip(names)
+        .map(|(column, name)| {
+            (
+                name.names.column.original.clone(),
+                column.ret_type.clone().unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::String)),
+            )
+        })
+        .collect();
+    let rows = rows
+        .into_iter()
+        .map(|row| vec![Datum::String(tidb_datatype::StringDatum::new(row, tidb_charset::Collation::Utf8Mb4Bin))])
+        .collect();
+    StmtOutput::Rows { columns, rows }
+}
+
 impl Session {
+    /// Go master `observeMVRefreshStep`: `run` timed under `step` when this
+    /// refresh is profiled.
+    pub(crate) fn observe_mv_refresh_step<T>(
+        &self,
+        step: &'static str,
+        run: impl FnOnce() -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let Some(observer) = self.mv_refresh_observer.clone() else {
+            return run();
+        };
+        let started = std::time::Instant::now();
+        observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).step_mut(step).started = Some(started);
+        let result = run();
+        let mut observer = observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = observer.step_mut(step);
+        runtime.ended = Some(std::time::Instant::now());
+        runtime.failed = result.is_err();
+        result
+    }
+
+    /// Go master `emitMVRefreshStepPlanRows`: the analyzed plan of the
+    /// statement `session` just ran, recorded under `step`.
+    pub(crate) fn emit_mv_refresh_step_plan_rows(&self, step: &'static str, session: &mut Session) {
+        let Some(observer) = self.mv_refresh_observer.clone() else {
+            return;
+        };
+        if let Some(rows) = session.last_statement_analyzed_plan_rows() {
+            observer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).step_mut(step).plan_rows = rows;
+        }
+    }
+
+    /// Go master `Explain{Analyze: true, RuntimeStatsColl}.RenderResult` over
+    /// this session's last statement plan (`StmtCtx.GetPlan()`), outside an
+    /// EXPLAIN statement: the operator info keeps its plan ids.
+    fn last_statement_analyzed_plan_rows(&mut self) -> Option<Vec<Vec<String>>> {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        let (plan, runtime_stats_coll, statement_memory) = {
+            let cell = self.process_plan_info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            (cell.plan.clone()?, cell.runtime_stats_coll.clone(), cell.statement_memory.clone())
+        };
+        let ctx = self
+            .statement_context(false)
+            .with_executor_runtime_stats_source(
+                runtime_stats_coll
+                    .and_then(|coll| coll.get::<std::sync::Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>())
+                    .map(|coll| std::sync::Arc::clone(&*coll)),
+            )
+            .with_explain_target_memory(
+                statement_memory.and_then(|memory| memory.get::<tidb_executor::StatementMemory>()).map(|memory| (*memory).clone()),
+            );
+        let physical = plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>()?;
+        let (_, rows) = self
+            .with_catalog_mut(|catalog| {
+                tidb_executor::explain_connection_plan(&physical, catalog, &ctx, tidb_sessionctx::explain_format::ExplainFormat::Row)
+            })
+            .ok()?;
+        Some(rows.iter().map(|row| row.iter().map(explain_cell).collect()).collect())
+    }
+
+    /// Go master `RefreshMaterializedViewProfileExec.generateRows`: the
+    /// refresh runs with a step collector, then each step's header with its
+    /// status and time, and the analyzed plan of each data change.
+    pub(crate) fn refresh_materialized_view_profile(
+        &mut self,
+        s: &RefreshMaterializedViewStmt,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        validate_refresh_materialized_view_stmt(s)?;
+        let steps = build_mv_refresh_observe_steps(s.mode);
+        let mut refresh_stmt = s.clone();
+        refresh_stmt.observe_type = tidb_ast::RefreshMaterializedViewObserveType::None;
+        let collector = std::sync::Arc::new(std::sync::Mutex::new(MvRefreshObserveCollector::default()));
+        self.mv_refresh_observer = Some(std::sync::Arc::clone(&collector));
+        let refreshed = self.refresh_materialized_view(&refresh_stmt, sql);
+        self.mv_refresh_observer = None;
+        refreshed?;
+        let collector = collector.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut rows = Vec::with_capacity(steps.len() * 2);
+        for step in &steps {
+            let runtime = collector.step(step.name);
+            rows.push(format_mv_refresh_profile_step_header(step, runtime));
+            if let Some(runtime) = runtime {
+                rows.extend(format_mv_refresh_profile_plan_rows(&runtime.plan_rows));
+            }
+        }
+        Ok(refresh_steps_output(rows))
+    }
+
     /// Go master `RefreshMaterializedViewDryRunExec.generateRows`.
     pub(crate) fn refresh_materialized_view_dry_run(&mut self, s: &RefreshMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
         validate_refresh_materialized_view_stmt(s)?;
@@ -218,23 +413,7 @@ impl Session {
             };
             rows.extend(format_mv_refresh_dry_run_plan_rows(step_rows));
         }
-        let (schema_columns, names) = tidb_planner::show_schema::build_refresh_observe_schema();
-        let columns = schema_columns
-            .columns
-            .iter()
-            .zip(names)
-            .map(|(column, name)| {
-                (
-                    name.names.column.original.clone(),
-                    column.ret_type.clone().unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::String)),
-                )
-            })
-            .collect();
-        let rows = rows
-            .into_iter()
-            .map(|row| vec![Datum::String(tidb_datatype::StringDatum::new(row, tidb_charset::Collation::Utf8Mb4Bin))])
-            .collect();
-        Ok(StmtOutput::Rows { columns, rows })
+        Ok(refresh_steps_output(rows))
     }
 
     /// Go master `prepareMVRefreshObserveInternalSession`: a system session

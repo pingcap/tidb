@@ -517,8 +517,8 @@ impl Session {
         if s.observe_type == RefreshMaterializedViewObserveType::DryRun {
             return self.refresh_materialized_view_dry_run(s);
         }
-        if s.observe_type != RefreshMaterializedViewObserveType::None {
-            return Err(DriverError::unsupported("REFRESH MATERIALIZED VIEW WITH PROFILE on this node"));
+        if s.observe_type == RefreshMaterializedViewObserveType::Profile {
+            return self.refresh_materialized_view_profile(s, sql);
         }
         if !matches!(
             s.mode,
@@ -731,6 +731,11 @@ impl Session {
         let name = info.name.original().to_owned();
         let mview_id = info.id;
         let mut refresh = self.open_refresh_system_session()?;
+        if self.mv_refresh_observer.is_some() {
+            // Go master `setMVRefreshObserveRedaction`: plans follow the
+            // caller's redaction.
+            refresh.vars.set_enable_redact_log(self.vars.enable_redact_log().to_owned());
+        }
         // Go: the refresh session runs under the task's cancelable context.
         let refresh_watch = controller.watch_guard(&refresh);
         let vars = refresh_session_vars(self, mview);
@@ -869,10 +874,10 @@ impl Session {
         refresh_job_id: &mut u64,
         hist_inserted: &mut bool,
     ) -> Result<StmtOutput, DriverError> {
-        sys_sql(refresh, "BEGIN PESSIMISTIC", &[])?;
+        self.observe_mv_refresh_step("TXN_BEGIN", || sys_sql(refresh, "BEGIN PESSIMISTIC", &[]))?;
         let mut txn_finished = false;
         let result = (|| {
-            let locked = lock_refresh_info_row(refresh, mview_id)?;
+            let locked = self.observe_mv_refresh_step("LOCK_REFRESH_INFO", || lock_refresh_info_row(refresh, mview_id))?;
             let mut hist = self.open_refresh_system_session()?;
             if read_refresh_source_ids(refresh, mview_id)?.is_empty() {
                 return Err(plain("refresh materialized view: input log records are missing"));
@@ -885,7 +890,9 @@ impl Session {
                 .filter(|&ts| ts != 0)
                 .ok_or_else(|| plain("refresh materialized view: invalid transaction start tso"))?;
             *refresh_job_id = start_ts;
-            insert_refresh_hist_running(&mut hist, start_ts, mview_id, schema, name, method, &hist_time(refresh_start))?;
+            self.observe_mv_refresh_step("INSERT_HIST_RUNNING", || {
+                insert_refresh_hist_running(&mut hist, start_ts, mview_id, schema, name, method, &hist_time(refresh_start))
+            })?;
             *hist_inserted = true;
             let finalize_failure = |hist: &mut Session, refresh: &mut Session, txn_finished: &mut bool, error: DriverError| {
                 let (failed_reason, error) = controller.normalize_task_failure(error);
@@ -901,17 +908,19 @@ impl Session {
                     *txn_finished = true;
                 }
                 report_mv_refresh_failed(hist, mview.alert_refresh_failed, mview_id, schema, name);
-                let finalized = finalize_refresh_hist_with_retry(
-                    hist,
-                    start_ts,
-                    mview_id,
-                    REFRESH_HIST_STATUS_FAILED,
-                    None,
-                    None,
-                    refresh_start,
-                    chrono::Local::now(),
-                    Some(&reason),
-                );
+                let finalized = self.observe_mv_refresh_step("FINALIZE_HIST", || {
+                    finalize_refresh_hist_with_retry(
+                        hist,
+                        start_ts,
+                        mview_id,
+                        REFRESH_HIST_STATUS_FAILED,
+                        None,
+                        None,
+                        refresh_start,
+                        chrono::Local::now(),
+                        Some(&reason),
+                    )
+                });
                 if let Err(hist_error) = finalized {
                     let context = match &rollback_error {
                         Some(rollback) => format!(
@@ -966,10 +975,13 @@ impl Session {
                     }),
                 )));
                 let sql = implement.restore();
-                let (affected_rows, _) = refresh
-                    .node_conn()
-                    .run_ordinary_write(&sql, &implement)
-                    .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)?;
+                let (affected_rows, _) = self.observe_mv_refresh_step("DATA_CHANGE_COMPLETE_DELTA_APPLY", || {
+                    refresh
+                        .node_conn()
+                        .run_ordinary_write(&sql, &implement)
+                        .map_err(crate::domain::cluster_session_node::sql_query_error_to_driver)
+                })?;
+                self.emit_mv_refresh_step_plan_rows("DATA_CHANGE_COMPLETE_DELTA_APPLY", refresh);
                 // Go `captureMVRefreshStmtResult`, before the next statement
                 // resets the statement context.
                 let message = refresh.statement_message().to_owned();
@@ -980,13 +992,17 @@ impl Session {
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
             let mut in_place = || {
                 let view_args = [SqlArg::String(schema.as_bytes()), SqlArg::String(name.as_bytes())];
-                sys_sql(refresh, "DELETE FROM %n.%n", &view_args)?;
+                self.observe_mv_refresh_step("DATA_CHANGE_COMPLETE_DELETE", || sys_sql(refresh, "DELETE FROM %n.%n", &view_args))?;
                 // Go `StmtCtx.AffectedRows()` of each statement.
                 let delete_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
+                self.emit_mv_refresh_step_plan_rows("DATA_CHANGE_COMPLETE_DELETE", refresh);
                 let prefix = tidb_sqlescape::escape_sql_text("INSERT INTO %n.%n ", &view_args)
                     .map_err(|error| plain(error.to_string()))?;
-                sys_sql(refresh, &format!("{prefix}{}", mview.sql_content), &[])?;
+                self.observe_mv_refresh_step("DATA_CHANGE_COMPLETE_INSERT", || {
+                    sys_sql(refresh, &format!("{prefix}{}", mview.sql_content), &[])
+                })?;
                 let insert_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
+                self.emit_mv_refresh_step_plan_rows("DATA_CHANGE_COMPLETE_INSERT", refresh);
                 let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
                     .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
                 // Go `newMVRefreshStmtResultFromWriteCounts`.
@@ -1016,13 +1032,15 @@ impl Session {
             // Go master `resolveMVCompleteRefreshSources` and the source
             // baseline replaced when the logs changed.
             let persisted = (|| {
-                let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
-                let registered = read_refresh_source_ids(refresh, mview_id)?;
-                if registered != confirmed {
-                    replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
-                }
-                persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp())?;
-                sys_sql(refresh, "COMMIT", &[]).map(|_| ())
+                self.observe_mv_refresh_step("PERSIST_REFRESH_INFO", || {
+                    let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
+                    let registered = read_refresh_source_ids(refresh, mview_id)?;
+                    if registered != confirmed {
+                        replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
+                    }
+                    persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp())
+                })?;
+                self.observe_mv_refresh_step("TXN_COMMIT", || sys_sql(refresh, "COMMIT", &[]).map(|_| ()))
             })();
             if let Err(error) = persisted {
                 return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error));
@@ -1039,17 +1057,19 @@ impl Session {
                 );
             }
             // Go `finalizeSuccess`.
-            if let Err(error) = finalize_refresh_hist_with_retry(
-                &mut hist,
-                start_ts,
-                mview_id,
-                REFRESH_HIST_STATUS_SUCCESS,
-                Some(read_tso),
-                commit_tso,
-                refresh_start,
-                chrono::Local::now(),
-                None,
-            ) {
+            if let Err(error) = self.observe_mv_refresh_step("FINALIZE_HIST", || {
+                finalize_refresh_hist_with_retry(
+                    &mut hist,
+                    start_ts,
+                    mview_id,
+                    REFRESH_HIST_STATUS_SUCCESS,
+                    Some(read_tso),
+                    commit_tso,
+                    refresh_start,
+                    chrono::Local::now(),
+                    None,
+                )
+            }) {
                 append_cause_warning(
                     self,
                     &annotate(&error, "refresh materialized view: refresh committed but failed to finalize refresh history"),
@@ -1095,7 +1115,9 @@ impl Session {
             .map_err(|error| annotate(&error, "refresh materialized view: failed to allocate refresh job id"))?;
         let job_id = *refresh_job_id;
         let mut hist = self.open_refresh_system_session()?;
-        insert_refresh_hist_running(&mut hist, job_id, mview_id, schema, &name, method, &hist_time(refresh_start))?;
+        self.observe_mv_refresh_step("INSERT_HIST_RUNNING", || {
+            insert_refresh_hist_running(&mut hist, job_id, mview_id, schema, &name, method, &hist_time(refresh_start))
+        })?;
         *hist_inserted = true;
         let monitor = self
             .open_refresh_system_session()
@@ -1116,17 +1138,19 @@ impl Session {
                 let (failed_reason, error) = controller.normalize_task_failure(error);
                 let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
                 report_mv_refresh_failed(&mut hist, mview.alert_refresh_failed, mview_id, schema, &name);
-                if let Err(hist_error) = finalize_refresh_hist_with_retry(
-                    &mut hist,
-                    job_id,
-                    mview_id,
-                    REFRESH_HIST_STATUS_FAILED,
-                    None,
-                    None,
-                    refresh_start,
-                    chrono::Local::now(),
-                    Some(&reason),
-                ) {
+                if let Err(hist_error) = self.observe_mv_refresh_step("FINALIZE_HIST", || {
+                    finalize_refresh_hist_with_retry(
+                        &mut hist,
+                        job_id,
+                        mview_id,
+                        REFRESH_HIST_STATUS_FAILED,
+                        None,
+                        None,
+                        refresh_start,
+                        chrono::Local::now(),
+                        Some(&reason),
+                    )
+                }) {
                     return Err(annotate(
                         &hist_error,
                         &format!("refresh materialized view: failed to finalize refresh history after error {reason}"),
@@ -1136,17 +1160,19 @@ impl Session {
             }
         };
         // Go `finalizeSuccess`.
-        if let Err(error) = finalize_refresh_hist_with_retry(
-            &mut hist,
-            job_id,
-            mview_id,
-            REFRESH_HIST_STATUS_SUCCESS,
-            Some(build_read_tso),
-            None,
-            refresh_start,
-            chrono::Local::now(),
-            None,
-        ) {
+        if let Err(error) = self.observe_mv_refresh_step("FINALIZE_HIST", || {
+            finalize_refresh_hist_with_retry(
+                &mut hist,
+                job_id,
+                mview_id,
+                REFRESH_HIST_STATUS_SUCCESS,
+                Some(build_read_tso),
+                None,
+                refresh_start,
+                chrono::Local::now(),
+                None,
+            )
+        }) {
             append_cause_warning(
                 self,
                 &annotate(&error, "refresh materialized view: refresh committed but failed to finalize refresh history"),
@@ -1184,6 +1210,9 @@ impl Session {
         let name = info.name.original().to_owned();
         // Go `domain.GetDomain(e.Ctx()).InfoSchema()`: the domain's latest.
         let mut build = self.open_refresh_system_session()?;
+        if self.mv_refresh_observer.is_some() {
+            build.vars.set_enable_redact_log(self.vars.enable_redact_log().to_owned());
+        }
         // Go: the build session runs under the task's cancelable context.
         let _build_watch = controller.watch_guard(&build);
         let current = build.refresh_latest_info_schema().table_info_by_id(info.id).map(|table| table.read().clone());
@@ -1233,7 +1262,9 @@ impl Session {
                 source_mview_id: info.id,
                 ..Default::default()
             }));
-            ddl.create_materialized_view_shadow_table(info.db_id, schema, shadow, &refresh.ddl_statement_context())?;
+            self.observe_mv_refresh_step("OUT_OF_PLACE_CREATE_SHADOW", || {
+                ddl.create_materialized_view_shadow_table(info.db_id, schema, shadow, &refresh.ddl_statement_context())
+            })?;
             shadow_needs_cleanup = true;
             // Go `buildMVRefreshOutOfPlaceBuildSQL` (the INSERT path).
             if mview.sql_content.is_empty() {
@@ -1244,9 +1275,12 @@ impl Session {
                 &[SqlArg::String(schema.as_bytes()), SqlArg::String(shadow_name.as_bytes())],
             )
             .map_err(|error| plain(error.to_string()))?;
-            sys_sql(&mut build, &format!("{prefix}{}", mview.sql_content), &[])?;
+            self.observe_mv_refresh_step("OUT_OF_PLACE_LOAD_SHADOW", || {
+                sys_sql(&mut build, &format!("{prefix}{}", mview.sql_content), &[])
+            })?;
             // Go `buildSessVars.StmtCtx.AffectedRows()` of the load.
             let inserted = i64::try_from(build.affected_rows()).unwrap_or(i64::MAX);
+            self.emit_mv_refresh_step_plan_rows("OUT_OF_PLACE_LOAD_SHADOW", &mut build);
             // Go `getMVRefreshOutOfPlaceBuildReadTSO`.
             let build_read_tso = sys_sql(
                 &mut build,
@@ -1294,13 +1328,15 @@ impl Session {
                 should_update_next_refresh_unix_seconds: false,
             };
             let context = self.ddl_statement_context().with_ddl_query(sql);
-            ddl.refresh_materialized_view_complete_out_of_place_cutover(
-                info.db_id,
-                schema,
-                &tidb_hack::go_to_lower(&name),
-                args,
-                &context,
-            )?;
+            self.observe_mv_refresh_step("OUT_OF_PLACE_CUTOVER", || {
+                ddl.refresh_materialized_view_complete_out_of_place_cutover(
+                    info.db_id,
+                    schema,
+                    &tidb_hack::go_to_lower(&name),
+                    args,
+                    &context,
+                )
+            })?;
             shadow_needs_cleanup = false;
             Ok((build_read_tso, inserted))
         })();

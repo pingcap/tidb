@@ -30,10 +30,60 @@ use tidb_table::tables::TableHandle;
 use super::{DriverError, SessionExtendedInfoSchema, TableEntry};
 use crate::WithStatementStore as _;
 
+/// Go master `mviewCompleteDeltaApplyRuntimeStats`: the writer's time and
+/// counts, under the operator's id in the statement's runtime stats.
+#[derive(Clone, Copy, Debug, Default)]
+struct DeltaApplyRuntimeStats {
+    writer_time: std::time::Duration,
+    writer: DeltaApplyWriterStats,
+}
+
+impl tidb_execdetails::RuntimeStats for DeltaApplyRuntimeStats {
+    /// Go `mviewCompleteDeltaApplyRuntimeStats.String`.
+    fn string(&self) -> String {
+        format!(
+            "mview_complete_delta_apply:{{writer:{{time:{}, chunks:{}, row_ops:{}, rows:{{insert:{}, update:{}, delete:{}}}}}}}",
+            tidb_execdetails::format_duration(self.writer_time),
+            self.writer.chunks,
+            self.writer.row_ops,
+            self.writer.insert_rows,
+            self.writer.update_rows,
+            self.writer.delete_rows
+        )
+    }
+
+    fn merge(&mut self, other: &dyn tidb_execdetails::RuntimeStats) {
+        if let Some(other) = other.as_any().downcast_ref::<Self>() {
+            self.writer_time += other.writer_time;
+            self.writer.chunks += other.writer.chunks;
+            self.writer.row_ops += other.writer.row_ops;
+            self.writer.insert_rows += other.writer.insert_rows;
+            self.writer.update_rows += other.writer.update_rows;
+            self.writer.delete_rows += other.writer.delete_rows;
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn tidb_execdetails::RuntimeStats> {
+        Box::new(*self)
+    }
+
+    fn tp(&self) -> i32 {
+        tidb_execdetails::TP_MVIEW_COMPLETE_DELTA_APPLY_RUNTIME_STATS
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Go master `mviewCompleteDeltaApplyWriterStats`: the statement's write
 /// counts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeltaApplyWriterStats {
+    /// The diff chunks applied.
+    pub chunks: i64,
+    /// The diff rows applied.
+    pub row_ops: i64,
     /// Rows inserted into the view.
     pub insert_rows: i64,
     /// Rows updated in the view.
@@ -162,7 +212,16 @@ pub fn run_mview_complete_delta_apply(
     ctx: &crate::StmtContext,
 ) -> Result<DeltaApplyWriterStats, DriverError> {
     let diff = &plan.diff;
-    let mut physical = diff_source_physical_plan(plan, catalog, current_db, ctx)?;
+    // Go `ExecStmt`: the statement's plan is the operator over its diff
+    // source, published with the runtime stats its executors collect.
+    let mut root = plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?;
+    crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
+    let dml = super::physical_builder::DmlExec::new(&root, ctx);
+    let root_id = i64::from(root.id());
+    let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root_plan) = &mut root else {
+        unreachable!("an MViewCompleteDeltaApply plan is a DML root")
+    };
+    let physical = root_plan.select_plan.as_deref_mut().expect("the diff source");
 
     // Go `buildMViewCompleteDeltaApply`'s checks over the target.
     let (public_len, writable_len, target_types) = match catalog.get_in(&plan.database, &plan.name) {
@@ -197,7 +256,7 @@ pub fn run_mview_complete_delta_apply(
         ));
     }
     let mut source = super::DmlSourceCursor::open(
-        super::physical_builder::build_dml_source(&mut physical, catalog, ctx)?,
+        super::physical_builder::build_dml_source(physical, catalog, ctx)?,
         ctx.statement_memory(),
         None,
         ctx.chunk_allocator(),
@@ -230,8 +289,14 @@ pub fn run_mview_complete_delta_apply(
     let zone = tidb_exprctx::Columns::time_zone(ctx);
 
     let mut stats = DeltaApplyWriterStats::default();
-    let result = (|| {
+    let mut writer_time = std::time::Duration::ZERO;
+    // Go `MViewCompleteDeltaApplyExec.Next`: one call applying every chunk.
+    let result = dml.next(|| {
         while let Some((rows, _)) = source.next_chunk()? {
+            // Go `applyChunk`'s writer stats delta.
+            stats.chunks += 1;
+            stats.row_ops += i64::try_from(rows.len()).unwrap_or(i64::MAX);
+            let write_start = std::time::Instant::now();
             for (row_index, row) in rows.iter().enumerate() {
                 let op = match row.get(diff.op_col_offset) {
                     Some(Datum::Int(op)) => *op,
@@ -319,10 +384,15 @@ pub fn run_mview_complete_delta_apply(
                     }
                 }
             }
+            writer_time += write_start.elapsed();
         }
         Ok(())
-    })();
-    let closed = source.close();
+    });
+    let closed = dml.close(|| source.close());
+    // Go `defer RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)`.
+    if let Some(runtime) = ctx.executor_runtime_stats_source() {
+        runtime.register_stats(root_id, Box::new(DeltaApplyRuntimeStats { writer_time, writer: stats }));
+    }
     result?;
     closed?;
     Ok(stats)

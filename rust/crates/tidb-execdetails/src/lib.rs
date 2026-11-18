@@ -79,6 +79,9 @@ pub const TP_FK_CHECK_RUNTIME_STATS: i32 = 17;
 pub const TP_FK_CASCADE_RUNTIME_STATS: i32 = 18;
 /// Go `TpRURuntimeStats`: the tp for `RURuntimeStats`.
 pub const TP_RU_RUNTIME_STATS: i32 = 19;
+/// Go master `TpMViewCompleteDeltaApplyRuntimeStats` (after master's
+/// `TpExplainRURuntimeStats` .. `TpMViewDeltaMergeAggRuntimeStats`).
+pub const TP_MVIEW_COMPLETE_DELTA_APPLY_RUNTIME_STATS: i32 = 25;
 
 /// Go `execdetails.FormatDuration` (`util.go`): formats a duration for
 /// explain output, pruning precision for human readability — under 1µs the
