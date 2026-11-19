@@ -338,6 +338,9 @@ type Config struct {
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
 	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
+	// MaintenanceMode rejects new user DDL jobs and IMPORT INTO submissions in NextGen.
+	// Internal SQL and local temporary-table DDL remain allowed.
+	MaintenanceMode bool `toml:"maintenance-mode" json:"maintenance-mode"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
 	// StarterParams contains Starter-only extension parameters.
@@ -1111,8 +1114,6 @@ type Standby struct {
 
 // StarterParams contains Starter-only extension parameters.
 type StarterParams struct {
-	// DisableUserDDLAndImport rejects user DDL jobs and IMPORT INTO while allowing internal SQL.
-	DisableUserDDLAndImport bool `toml:"disable-user-ddl-and-import" json:"disable-user-ddl-and-import"`
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id,omitempty"`
 	// BootstrapFile is the path to a starter-only JSON manifest of versioned SQL.
@@ -1608,6 +1609,9 @@ func (c *Config) Load(confFile string) error {
 	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
 	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("maintenance-mode") {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
+	}
 	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
 	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
 		c.DXFResourceLimit = DefDXFResourceLimit
@@ -1770,14 +1774,14 @@ func (c *Config) Valid() error {
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
 	}
+	if c.MaintenanceMode && !kerneltype.IsNextGen() {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
+	}
 	if c.Standby.StandByMode && c.KeyspaceActivateMode {
 		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")
 	}
 	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
-	}
-	if c.StarterParams.DisableUserDDLAndImport && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("starter-params.disable-user-ddl-and-import can only be configured for starter deploy mode")
 	}
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")

@@ -960,28 +960,40 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 	})
 }
 
-// starterImportOpenSpy observes child side effects at the import admission boundary.
-type starterImportOpenSpy struct {
+// maintenanceImportOpenSpy observes child side effects at the import admission boundary.
+type maintenanceImportOpenSpy struct {
 	exec.BaseExecutor
 	opened bool
 }
 
-func (s *starterImportOpenSpy) Open(context.Context) error {
+func (s *maintenanceImportOpenSpy) Open(context.Context) error {
 	s.opened = true
 	return nil
 }
 
-func TestStarterDisableUserDDLAndImport(t *testing.T) {
-	const ddlUnavailableMessage = "Schema changes are temporarily unavailable during maintenance and will be available again soon"
-	const importUnavailableMessage = "IMPORT INTO is temporarily unavailable during maintenance and will be available again soon"
+func TestMaintenanceMode(t *testing.T) {
+	const ddlUnavailableMessage = "[executor:8277]During the maintenance window, DDL is currently unavailable. It will be available after maintenance finishes"
+	const importUnavailableMessage = "[executor:8277]During the maintenance window, IMPORT INTO is currently unavailable. It will be available after maintenance finishes"
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.DisableUserDDLAndImport = true
+		conf.MaintenanceMode = true
 	})
 	// Startup's restricted DDL must work even when user job admission is disabled.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	if kerneltype.IsClassic() {
+		// Bypass config validation to verify the runtime guards are NextGen-only.
+		tk.MustExec("create table maintenance_classic (a int)")
+		tk.MustExec("alter table maintenance_classic add column b int")
+		tk.MustExec("drop table maintenance_classic")
+		sctx := mock.NewContext()
+		child := &maintenanceImportOpenSpy{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0)}
+		importExec := &executor.ImportIntoExec{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, child)}
+		require.NoError(t, importExec.Open(context.Background()))
+		require.True(t, child.opened)
+		return
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	for _, sql := range []string{
 		"create table test.starter_target (a int)",
@@ -1004,6 +1016,7 @@ func TestStarterDisableUserDDLAndImport(t *testing.T) {
 			"create global temporary table starter_global_temp (a int) on commit delete rows",
 		} {
 			require.ErrorContains(t, tk.ExecToErr(sql), ddlUnavailableMessage)
+			tk.MustGetErrCode(sql, 8277)
 		}
 		require.ErrorContains(t, tk.ExecToErr("explain analyze alter table starter_target add column b int"), ddlUnavailableMessage)
 		tk.MustQuery("show tables like 'starter_rejected'").Check(testkit.Rows())
@@ -1059,6 +1072,7 @@ func TestStarterDisableUserDDLAndImport(t *testing.T) {
 			"explain analyze import into starter_target from select * from starter_source with disable_precheck",
 		} {
 			require.ErrorContains(t, tk.ExecToErr(sql), importUnavailableMessage)
+			tk.MustGetErrCode(sql, 8277)
 		}
 		require.NotEmpty(t, tk.MustQuery("explain import into starter_target from select * from starter_source").Rows())
 		tk.MustQuery("show import jobs").Check(testkit.Rows())
@@ -1068,7 +1082,7 @@ func TestStarterDisableUserDDLAndImport(t *testing.T) {
 
 	t.Run("import admission precedes child Open", func(t *testing.T) {
 		sctx := mock.NewContext()
-		child := &starterImportOpenSpy{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0)}
+		child := &maintenanceImportOpenSpy{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0)}
 		importExec := &executor.ImportIntoExec{BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, child)}
 		require.ErrorContains(t, importExec.Open(context.Background()), importUnavailableMessage)
 		require.False(t, child.opened)
@@ -1078,7 +1092,7 @@ func TestStarterDisableUserDDLAndImport(t *testing.T) {
 	})
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.DisableUserDDLAndImport = false
+		conf.MaintenanceMode = false
 	})
 	tk.MustExec("create table starter_enabled (a int)")
 	tk.MustExec("alter table starter_enabled add column b int")

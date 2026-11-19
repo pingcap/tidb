@@ -1175,6 +1175,9 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	// Maintenance errors.
+	ErrMaintenanceMode = 8277
+
 	// Reserved for future use.
 	ErrEngineAttributeInvalidFormat             = 8270
 	ErrStorageClassInvalidSpec                  = 8271

@@ -39,6 +39,12 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
+# Reject new user persistent DDL jobs and IMPORT INTO submissions on this TiDB instance.
+# Internal SQL, local temporary-table DDL, ordinary DML, and IMPORT INTO management
+# statements remain available. Already submitted jobs are unaffected.
+# Only available with the NextGen kernel.
+maintenance-mode = false
+
 # The temporary directory to store the intermediate compute results.
 temp-dir = "/tmp/tidb"
 
@@ -516,10 +522,6 @@ ingest-kv-bytes = 1.0
 
 # Starter-only extension parameters.
 [starter-params]
-# Reject new user DDL jobs and IMPORT INTO statements on this TiDB instance.
-# Internal bootstrap/upgrade DDL and local temporary-table DDL remain allowed.
-# Already submitted jobs and IMPORT INTO management statements are unaffected.
-disable-user-ddl-and-import = false
 # Path to a starter-only JSON manifest of versioned SQL. Empty means disabled.
 # Unlike initialize-sql-file, which runs only after TiDB first creates the cluster,
 # this manifest also initializes starter state in an existing cluster and applies

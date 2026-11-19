@@ -8062,8 +8062,8 @@ func isRetryableDDLCancelErr(err error) bool {
 }
 
 func checkUserDDLJobAllowed(ctx sessionctx.Context) error {
-	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !ctx.GetSessionVars().InRestrictedSQL {
-		return errors.New("Schema changes are temporarily unavailable during maintenance and will be available again soon")
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !ctx.GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("DDL")
 	}
 	return nil
 }
@@ -8072,8 +8072,8 @@ func checkUserDDLJobAllowed(ctx sessionctx.Context) error {
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
-	// This switch is only for Starter upgrades. Checking here avoids extra handling
-	// for temporary DDL and execution wrappers in the planner or executor builder.
+	// Check maintenance admission before submitting persistent DDL jobs. Local
+	// temporary-table DDL bypasses job submission and remains available.
 	if err := checkUserDDLJobAllowed(ctx); err != nil {
 		return err
 	}

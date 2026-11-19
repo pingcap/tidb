@@ -106,10 +106,10 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 
 // Open implements the Executor Open interface.
 func (e *ImportIntoExec) Open(ctx context.Context) error {
-	// This switch is only for Starter upgrades. Checking here before opening children
-	// keeps it simple without extra handling in the planner or executor builder.
-	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !e.Ctx().GetSessionVars().InRestrictedSQL {
-		return errors.New("IMPORT INTO is temporarily unavailable during maintenance and will be available again soon")
+	// Reject new user imports before opening children so maintenance admission
+	// does not start query execution or submit tasks.
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("IMPORT INTO")
 	}
 	return e.BaseExecutor.Open(ctx)
 }

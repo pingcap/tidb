@@ -262,7 +262,6 @@ func TestStarterBootstrapFileUpgrade(t *testing.T) {
 	})
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = "test_keyspace"
-		conf.StarterParams.DisableUserDDLAndImport = true
 	})
 
 	store, dom := CreateStoreAndBootstrap(t)
