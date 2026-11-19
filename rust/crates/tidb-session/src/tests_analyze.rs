@@ -1895,3 +1895,48 @@ fn drop_stats_matches_partition_names_by_unicode_lower_case() {
         );
     }
 }
+
+/// Go `buildAnalyzeFullSamplingTask` adjusts the sample rate per sampling
+/// task, so ANALYZE never looks up (and caches a `PseudoTable` for) a
+/// partitioned table's logical ID; under a positive stats lease the logical
+/// entry `Update` loads then holds no columns, and SHOW STATS_HISTOGRAMS
+/// lists only the partitions, their items evicted. Captured from Go master
+/// with `./gorun` (stats lease 3s).
+#[test]
+fn analyze_leaves_a_partitioned_tables_logical_stats_unread_like_go() {
+    crate::domain::mock_store::set_stats_lease_for_test(Some(std::time::Duration::from_secs(3)));
+    let mut session = Session::new();
+    crate::domain::mock_store::set_stats_lease_for_test(None);
+    for sql in [
+        "CREATE DATABASE IF NOT EXISTS test",
+        "USE test",
+        "create table tg (a int, b int, c int, unique key ua (a) global, key gb (b) global) partition by hash(c) partitions 2",
+        "insert into tg values (1,1,1),(2,2,2),(3,null,3),(4,4,4)",
+        "analyze table tg with 2 buckets, 1 topn",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let mut rows: Vec<String> = row_text(session.run("show stats_histograms where table_name = 'tg'"))
+        .into_iter()
+        .map(|mut row| {
+            row.remove(5); // Update_time
+            row.join("|")
+        })
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        [
+            "test|tg|p0|a|0|2|0|1|1|allEvicted|0|0|0|0",
+            "test|tg|p0|b|0|2|0|1|1|allEvicted|0|0|0|0",
+            "test|tg|p0|c|0|2|0|1|1|allEvicted|0|0|0|0",
+            "test|tg|p0|gb|1|2|0|0|0|allEvicted|0|0|0|0",
+            "test|tg|p0|ua|1|2|0|0|0|allEvicted|0|0|0|0",
+            "test|tg|p1|a|0|2|0|1|1|allEvicted|0|0|0|0",
+            "test|tg|p1|b|0|1|1|0.5|1|allEvicted|0|0|0|0",
+            "test|tg|p1|c|0|2|0|1|1|allEvicted|0|0|0|0",
+            "test|tg|p1|gb|1|1|1|0|0|allEvicted|0|0|0|0",
+            "test|tg|p1|ua|1|2|0|0|0|allEvicted|0|0|0|0",
+        ]
+    );
+}

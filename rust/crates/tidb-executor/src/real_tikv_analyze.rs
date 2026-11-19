@@ -490,6 +490,13 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                 ));
             }
         }
+        // Go `buildAnalyzeFullSamplingTask` adjusts the rate per sampling
+        // task (`getAdjustedSampleRate`, whose `GetPhysicalTableStats` caches
+        // a `PseudoTable` on a miss): a partitioned table's logical entry is
+        // no task of its own, so its statistics are never looked up here.
+        if table.partition.is_some() && options.physical_id == table.id {
+            continue;
+        }
         if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
             let partition = partition_names
                 .get(&options.physical_id)
@@ -522,12 +529,8 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
             );
             options.effective.sample_rate = Some(rate);
             // Go appends this NOTE per sampling task at build time
-            // (`builder.go:3185`/`3194`, `sc.AppendNote`, generic 1105). A
-            // partitioned table's logical entry is no task of its own, and a
+            // (`builder.go:3185`/`3194`, `sc.AppendNote`, generic 1105); a
             // partition's task names the partition.
-            if table.partition.is_some() && options.physical_id == table.id {
-                continue;
-            }
             let message = if partition.is_empty() {
                 format!(
                     "Analyze use auto adjusted sample rate {:.6} for table {}.{}, \

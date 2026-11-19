@@ -183,8 +183,25 @@ fn testkit_config() -> Result<NodeConfig, String> {
         },
     )
     .map_err(|error| format!("node config: {error:?}"))?;
-    config.stats_lease = StatsLease::Disabled;
+    config.stats_lease = STATS_LEASE_FOR_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .map_or(StatsLease::Disabled, StatsLease::Positive);
     Ok(config)
+}
+
+/// The stats lease the next mock stores boot with; `None` is the testkit's
+/// disabled lease.
+static STATS_LEASE_FOR_TEST: Mutex<Option<std::time::Duration>> = Mutex::new(None);
+
+/// Go `vardef.SetStatsLease(lease)` before `testkit.CreateMockStore`: the
+/// stores created afterwards run with a positive stats lease (the real
+/// server's default is 3s), so `TableStatsFromStorage` leaves histograms a
+/// table does not hold evicted.
+pub fn set_stats_lease_for_test(lease: Option<std::time::Duration>) {
+    *STATS_LEASE_FOR_TEST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = lease;
 }
 
 /// Go testkit's `tryMakeImage` + the image's use: the bootstrapped store
