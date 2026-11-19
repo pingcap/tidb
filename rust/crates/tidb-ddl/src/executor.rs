@@ -832,6 +832,15 @@ impl<S: StoreClient> ExecutorStore for RealClusterDdl<S> {
                 Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
             }
             Some(AddIndexSubmission::Job(spec, executor_warnings)) => {
+                let spec = match capture_job_for_test(spec) {
+                    Ok(()) => {
+                        return Ok(ClusterDdlReport::AlreadySatisfied {
+                            detail: "the job is captured for a test".into(),
+                            warnings: executor_warnings,
+                        })
+                    }
+                    Err(spec) => spec,
+                };
                 crate::real_tikv_ddl::prepare_executor_job(
                     &self.opener,
                     self.timeout,
@@ -1829,4 +1838,32 @@ pub fn create_masking_policy<E: ExecutorStore>(
         }
         other => other.map_err(SqlQueryError::from),
     }
+}
+
+thread_local! {
+    /// [`capture_ddl_job_for_test`]'s slot: `Some` while capturing, holding
+    /// the job once one is built.
+    static CAPTURED_JOB: std::cell::RefCell<Option<Option<crate::JobWrapper>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Hands `spec` to an active [`capture_ddl_job_for_test`] on this thread.
+fn capture_job_for_test(spec: Box<crate::JobWrapper>) -> Result<(), Box<crate::JobWrapper>> {
+    CAPTURED_JOB.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(captured) => {
+            *captured = Some(*spec);
+            Ok(())
+        }
+        None => Err(spec),
+    })
+}
+
+/// Test support, Go's `ExecutorForTest` construction: the job the DDL
+/// statement `run` executes on this thread builds is kept instead of
+/// delivered, for a later `do_ddl_job_wrapper` (Go tests that build a job,
+/// change the schema, and then run it).
+pub fn capture_ddl_job_for_test<R>(run: impl FnOnce() -> R) -> (R, Option<crate::JobWrapper>) {
+    CAPTURED_JOB.with(|slot| *slot.borrow_mut() = Some(None));
+    let out = run();
+    let job = CAPTURED_JOB.with(|slot| slot.borrow_mut().take().flatten());
+    (out, job)
 }

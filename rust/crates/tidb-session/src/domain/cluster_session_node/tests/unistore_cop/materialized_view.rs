@@ -5057,3 +5057,175 @@ fn test_materialized_view_refresh_complete_out_of_place_cutover_keeps_tiflash_pr
     // t.Run("old log progress")
     assert!(tiflash::get_tiflash_progress_from_cache(old_mlog_id).is_none());
 }
+
+/// Go `ddl.ExecutorForTest`: the job `sql` builds now, delivered later by
+/// [`deliver_captured_job`].
+fn capture_ddl_job(session: &mut Session, sql: &str) -> tidb_ddl::JobWrapper {
+    let (answer, job) = tidb_ddl::executor::capture_ddl_job_for_test(|| answer(session, sql));
+    assert_eq!(answer, "OK", "{sql}");
+    job.expect("the statement built a job")
+}
+
+/// Go `ExecutorForTest.DoDDLJobWrapper`.
+fn deliver_captured_job(session: &mut Session, job: tidb_ddl::JobWrapper) -> Result<(), String> {
+    let ddl = Arc::clone(&session.domain_services().unwrap().ddl);
+    ddl.do_ddl_job_wrapper(&session.ddl_statement_context(), job).map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn mview_column_chain(tk: &mut Session) {
+    must_exec_all(tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10)",
+        "create materialized view log on t (a, b)",
+        "create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b",
+        "create materialized view log on mv1 (k, l)",
+        "create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l",
+        "create materialized view log on mv2 (x, y)",
+    ]);
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumnRejectsDownstreamUsage`,
+/// its `worker` and `multi_worker` modes: a job built before an
+/// incompatible dependent view exists is refused by the worker.
+#[test]
+fn test_nested_materialized_view_modify_column_rejects_downstream_usage_worker() {
+    for multi in [false, true] {
+        for (name, column, columns, select_sql, err) in [
+            ("where", "a", "(z, cnt)", "select x, count(1) from mv2 where x > 0 group by x", "WHERE clause"),
+            ("aggregate", "b", "(z, total, cnt)", "select x, sum(y), count(1) from mv2 group by x", "non-direct SELECT expressions"),
+        ] {
+            let (_stack, _users, mut tk) = go_master_mview_stack();
+            mview_column_chain(&mut tk);
+            let alter_sql = if multi {
+                "alter table t modify column a bigint not null, modify column b bigint not null".to_owned()
+            } else {
+                format!("alter table t modify column {column} bigint not null")
+            };
+            // "Build the worker's job before adding the incompatible
+            // downstream dependency."
+            let job = capture_ddl_job(&mut tk, &alter_sql);
+            must_exec_all(&mut tk, &[&format!("create materialized view mv3 {columns} as {select_sql}")]);
+            const TYPES_SQL: &str = "select table_name, column_name, column_type from information_schema.columns where table_schema = 'test' order by table_name, ordinal_position";
+            let before = answer(&mut tk, TYPES_SQL);
+            let refused = deliver_captured_job(&mut tk, job).expect_err("the worker refuses");
+            assert!(refused.contains(err), "{name}/multi={multi}: {refused}");
+            assert_eq!(answer(&mut tk, TYPES_SQL), before, "{name}/multi={multi}");
+            assert_eq!(answer(&mut tk, "select * from mv2"), r#"RS:[["1","10","1"]]"#, "{name}/multi={multi}");
+        }
+    }
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumnNewDescendants`: views
+/// created after the job was built are retyped too, and the batch's diff
+/// lists every related table, including those the second (version-skipping)
+/// sub-job changes.
+#[test]
+fn test_nested_materialized_view_modify_column_new_descendants() {
+    for cache_size in [0_i64, 1 << 30] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[&format!("set @@global.tidb_schema_cache_size = {cache_size}")]);
+        mview_column_chain(&mut tk);
+        let job = capture_ddl_job(&mut tk, "alter table t modify column a bigint not null, modify column b bigint not null");
+        // "These tables are absent from the already constructed job's
+        // involving set."
+        must_exec_all(&mut tk, &[
+            "create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y",
+            "create materialized view log on mv3 (i, j)",
+            // "This branch changes only in the second sub-job, which skips
+            // schema version generation."
+            "create materialized view mv4 (j, cnt) as select y, count(1) from mv2 group by y",
+            "create materialized view log on mv4 (j)",
+        ]);
+        let involving: Vec<String> =
+            job.job.get_involving_schema_info().snapshot().iter().map(|info| info.table.to_string()).collect();
+        for name in ["mv3", "$mlog$mv3", "mv4", "$mlog$mv4"] {
+            assert!(!involving.iter().any(|table| table == name), "{name} in {involving:?}");
+        }
+        let affected_names = ["$mlog$t", "mv1", "$mlog$mv1", "mv2", "$mlog$mv2", "mv3", "$mlog$mv3", "mv4", "$mlog$mv4"];
+        let mut expected: Vec<i64> = affected_names.iter().map(|name| latest_table(&stack, name).id).collect();
+        expected.sort_unstable();
+        deliver_captured_job(&mut tk, job).expect("the ALTER runs");
+        let history = latest_history_job(&mut tk);
+        assert_eq!(history.type_, tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE);
+        let version = history.binlog_info.as_ref().unwrap().read().schema_version;
+        let domain = tk.domain_services().unwrap().domain.upgrade().unwrap();
+        let ts = domain.transactions.fresh_timestamp().unwrap();
+        let mut meta = domain.get_snapshot_meta(ts).unwrap();
+        let diff = tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| reader.schema_diff(version))
+            .unwrap()
+            .expect("the batch's diff");
+        let mut affected: Vec<i64> = diff.affected_options.iter_deref().map(|option| option.read().table_id).collect();
+        affected.sort_unstable();
+        assert_eq!(affected, expected, "cache_size={cache_size}");
+        assert_eq!(
+            answer(&mut tk, "select distinct data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'b', 'k', 'l', 'x', 'y', 'i', 'j')"),
+            r#"RS:[["bigint"]]"#,
+            "cache_size={cache_size}"
+        );
+        must_exec_all(&mut tk, &[
+            "insert into t values (2147483648, 2147483649)",
+            "refresh materialized view mv1 fast",
+            "refresh materialized view mv2 fast",
+            "refresh materialized view mv3 fast",
+            "refresh materialized view mv4 fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv3 order by i"), r#"RS:[["1","10","1"],["2147483648","2147483649","1"]]"#);
+        assert_eq!(answer(&mut tk, "select * from mv4 order by j"), r#"RS:[["10","1"],["2147483649","1"]]"#);
+        must_exec_all(&mut tk, &["set @@global.tidb_schema_cache_size = default"]);
+    }
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumnDependencyChangesAfterPrecheck`:
+/// a dependent view created while the submitted ALTER waits at its batch
+/// boundary is checked by the worker, which refuses it and changes nothing.
+#[test]
+fn test_nested_materialized_view_modify_column_dependency_changes_after_precheck() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    mview_column_chain(&mut tk);
+    let mut tk_alter = stack.factory.open_session(session_context(2178)).unwrap();
+    must_exec_all(&mut tk_alter, &["set tidb_mview_enable = on", "use test"]);
+    let job = capture_ddl_job(&mut tk_alter, "alter table t modify column a bigint not null, modify column b bigint not null");
+    must_exec_all(&mut tk, &[
+        "create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y",
+        "create materialized view log on mv3 (i, j)",
+    ]);
+    let involving: Vec<String> =
+        job.job.get_involving_schema_info().snapshot().iter().map(|info| info.table.to_string()).collect();
+    for name in ["mv3", "$mlog$mv3", "blocker"] {
+        assert!(!involving.iter().any(|table| table == name), "{name} in {involving:?}");
+    }
+    let (at_boundary_tx, at_boundary_rx) = std::sync::mpsc::channel::<()>();
+    let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+    let pause = std::sync::Mutex::new(Some((at_boundary_tx, resume_rx)));
+    let _boundary = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", move |arg| {
+        let job_w = arg.downcast_mut::<tidb_model::JobW>().unwrap();
+        let job = job_w.job.as_ref().unwrap().read();
+        if job.type_ != tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE || job.is_rollingback() {
+            return;
+        }
+        let Some(info) = &job.multi_schema_info else { return };
+        let info = info.read();
+        if !info.revertible || info.sub_jobs.iter_deref().any(|sub| sub.read().revertible || sub.read().is_finished()) {
+            return;
+        }
+        if let Some((at_boundary, resume)) = pause.lock().unwrap().take() {
+            at_boundary.send(()).unwrap();
+            let _ = resume.recv();
+        }
+    });
+    let alter = std::thread::spawn(move || deliver_captured_job(&mut tk_alter, job));
+    at_boundary_rx.recv_timeout(std::time::Duration::from_secs(15)).expect("ALTER did not reach the batch boundary");
+    // "blocker CREATE completed while ALTER was paused before its boundary
+    // transaction"
+    must_exec_all(&mut tk, &["create materialized view blocker (z, total, cnt) as select i, sum(j), count(1) from mv3 group by i"]);
+    resume_tx.send(()).unwrap();
+    let refused = alter.join().unwrap().expect_err("the worker refuses");
+    assert!(refused.contains("non-direct SELECT expressions"), "{refused}");
+    assert_eq!(
+        answer(&mut tk, "select distinct data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'b', 'k', 'l', 'x', 'y', 'i', 'j', 'z')"),
+        r#"RS:[["int"]]"#,
+        "persisted metadata changed despite rejected ALTER"
+    );
+}
