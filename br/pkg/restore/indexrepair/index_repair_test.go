@@ -171,11 +171,10 @@ func TestRepairExpressionIndexPercent(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, s.Mock.Storage)()
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	// Use a binary column and a hex literal for '%%' to isolate expression
-	// escaping from the separate predicate escaping path.
+	// Verify percent signs in both expressions and predicates survive index repair.
 	tk.MustExec("CREATE TABLE test.t (v VARBINARY(10), " +
 		"KEY idx_single ((CONCAT(v, '%'))) WHERE v = _binary'%', " +
-		"KEY idx_double ((CONCAT(v, '%%'))) WHERE v = X'2525')")
+		"KEY idx_double ((CONCAT(v, '%%'))) WHERE v = _binary'%%')")
 
 	ctx := context.Background()
 	table, err := s.Mock.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))

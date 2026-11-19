@@ -142,7 +142,8 @@ func generateRepairIngestIndexSQLs(
 		// WHERE CONDITION
 		if len(info.IndexInfo.ConditionExprString) > 0 {
 			addSQL.WriteString(" WHERE ")
-			addSQL.WriteString(info.IndexInfo.ConditionExprString)
+			// Escape percent signs because the condition becomes part of a sqlescape SQL template.
+			addSQL.WriteString(strings.ReplaceAll(info.IndexInfo.ConditionExprString, "%", "%%"))
 		}
 		// USING BTREE/HASH/RTREE
 		indexTypeStr := info.IndexInfo.Tp.String()
