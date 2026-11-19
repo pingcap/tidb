@@ -2970,6 +2970,14 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustExec("insert into nc2 values (3, null, null, 'bad')")
 	tk.MustQuery("select c <=> s, s <=> c0, c <=> 'bad', 'bad' <=> c0, c <=> null, cast(null as time) <=> 'bad' from nc2 where id = 3").
 		Check(testkit.Rows("0 0 0 0 1 0"))
+	// valid values compare as TIME under <=> too, and two NULLs are equal
+	tk.MustExec("insert into nc2 values (4, null, null, null), (5, '13:00:00', '13:00:00', 'bad'), (6, null, null, '13:00:00')")
+	tk.MustQuery("select id, c <=> s, s <=> c, c0 <=> s, c = s from nc2 order by id").
+		Check(testkit.Rows("1 1 1 1 1", "2 0 0 0 0", "3 0 0 0 <nil>", "4 1 1 1 <nil>", "5 0 0 0 <nil>", "6 0 0 0 <nil>"))
+	tk.MustQuery("select id from nc2 where c <=> s order by id").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select id from nc2 where time'13:00:00.0' <=> s order by id").Check(testkit.Rows("1", "6"))
+	tk.MustQuery("select time'13:00:00' <=> '13:00:00.0', '13:00:00.0' <=> time'13:00:00', time'13:00:00' <=> 'bad', cast(null as time) <=> cast(null as char)").
+		Check(testkit.Rows("1 1 0 1"))
 }
 
 func TestTimeBuiltin(t *testing.T) {

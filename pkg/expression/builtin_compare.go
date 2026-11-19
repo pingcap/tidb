@@ -2006,30 +2006,47 @@ func (c *compareFunctionClass) getFunction(ctx BuildContext, rawArgs []Expressio
 		return nil, err
 	}
 	cmpType := GetAccurateCmpType(ctx.GetEvalCtx(), args[0], args[1])
-	if c.op == opcode.NullEQ && cmpType == types.ETDuration && keepStringCmpForNullEQ(ctx.GetEvalCtx(), args[0], args[1]) {
-		cmpType = types.ETString
+	if c.op == opcode.NullEQ && cmpType == types.ETDuration {
+		if strIdx := durationStringNullEQStrIdx(ctx.GetEvalCtx(), args[0], args[1]); strIdx >= 0 {
+			return newNullEQDurationStringSig(ctx, c.funcName, args, strIdx)
+		}
 	}
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, err
 }
 
-// keepStringCmpForNullEQ reports whether `<=>` between a TIME and a string should stay a
-// string comparison. Casting an invalid string to TIME gives NULL, so a NULL TIME would
-// be NULL-safe equal to a non-NULL string like 'bad'. For a TIME column and a string
-// constant, handleDurationTypeComparisonForNullEq already avoids that. For the other
-// TIME/string pairs (a string column, or two constants), keep the string comparison
-// so `<=>` only returns 1 when both values are NULL.
-func keepStringCmpForNullEQ(ctx EvalContext, lhs, rhs Expression) bool {
+// durationStringNullEQStrIdx returns the index of the string argument if `<=>` between a TIME
+// and a string should use builtinNullEQDurationStringSig, otherwise -1.
+// Casting an invalid string to TIME gives NULL, so with a plain duration comparison a NULL TIME
+// would be NULL-safe equal to a non-NULL string like 'bad'. For a TIME column and a string
+// constant, handleDurationTypeComparisonForNullEq already avoids that. The other TIME/string
+// pairs (a string column, or two constants) use builtinNullEQDurationStringSig.
+func durationStringNullEQStrIdx(ctx EvalContext, lhs, rhs Expression) int {
 	lhsType, rhsType := lhs.GetType(ctx), rhs.GetType(ctx)
 	_, lhsIsCon := lhs.(*Constant)
 	_, rhsIsCon := rhs.(*Constant)
-	if isDurationAndString(lhsType, rhsType) {
-		return lhsIsCon || !rhsIsCon
+	if isDurationAndString(lhsType, rhsType) && (lhsIsCon || !rhsIsCon) {
+		return 1
 	}
-	if isDurationAndString(rhsType, lhsType) {
-		return rhsIsCon || !lhsIsCon
+	if isDurationAndString(rhsType, lhsType) && (rhsIsCon || !lhsIsCon) {
+		return 0
 	}
-	return false
+	return -1
+}
+
+func newNullEQDurationStringSig(ctx BuildContext, funcName string, args []Expression, strIdx int) (builtinFunc, error) {
+	argTps := []types.EvalType{types.ETDuration, types.ETDuration}
+	argTps[strIdx] = types.ETString
+	bf, err := newBaseBuiltinFuncWithTp(ctx, funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(1)
+	// Use the same fsp as the implicit cast in a duration comparison, see WrapWithCastAsDuration.
+	fsp := WrapWithCastAsDuration(ctx, args[strIdx]).GetType(ctx.GetEvalCtx()).GetDecimal()
+	// It is not pushed down: TiKV and TiFlash would cast the string first and lose the original NULL.
+	sig := &builtinNullEQDurationStringSig{baseBuiltinFunc: bf, strIdx: strIdx, fsp: fsp}
+	return sig, nil
 }
 
 // generateCmpSigs generates compare function signatures.
@@ -3231,6 +3248,54 @@ func (b *builtinNullEQDurationSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 		res = 1
 	}
 	return res, false, nil
+}
+
+// builtinNullEQDurationStringSig compares a TIME and a string with `<=>` as TIME. Unlike
+// builtinNullEQDurationSig, a string that can't be converted to TIME is not treated as NULL,
+// so it is never NULL-safe equal to a NULL TIME. Only two original NULLs are equal.
+type builtinNullEQDurationStringSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+
+	// strIdx is the index of the string argument, the other one is a TIME.
+	strIdx int
+	// fsp is used to convert the string to TIME.
+	fsp int
+}
+
+func (b *builtinNullEQDurationStringSig) Clone() builtinFunc {
+	newSig := &builtinNullEQDurationStringSig{strIdx: b.strIdx, fsp: b.fsp}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNullEQDurationStringSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
+	dur, isDurNull, err := b.args[1-b.strIdx].EvalDuration(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	str, isStrNull, err := b.args[b.strIdx].EvalString(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if isDurNull || isStrNull {
+		return boolToInt64(isDurNull && isStrNull), false, nil
+	}
+	strDur, isNull, err := types.ParseDuration(typeCtx(ctx), str, b.fsp)
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		ec := errCtx(ctx)
+		err = ec.HandleError(err)
+	}
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull {
+		// the string is not a valid TIME, so it's not equal to any TIME value or NULL.
+		return 0, false, nil
+	}
+	return boolToInt64(dur.Compare(strDur) == 0), false, nil
 }
 
 type builtinNullEQTimeSig struct {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -175,6 +176,13 @@ func TestCompare(t *testing.T) {
 		args = bf.getArgs()
 		require.Equal(t, mysql.TypeDuration, args[0].GetType(ctx).GetType())
 		require.Equal(t, mysql.TypeDuration, args[1].GetType(ctx).GetType())
+	}
+	// <=> between a TIME column and a string column compares as TIME but keeps the original NULLs, issue:73293
+	for _, cmpArgs := range [][]Expression{{durationCol, stringCol}, {stringCol, durationCol}} {
+		bf, err = funcs[ast.NullEQ].getFunction(ctx, cmpArgs)
+		require.NoError(t, err)
+		require.IsType(t, &builtinNullEQDurationStringSig{}, bf)
+		require.Equal(t, tipb.ScalarFuncSig_Unspecified, bf.PbCode())
 	}
 	// a TIME against a non-string keeps its old comparison type
 	enumCol := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
