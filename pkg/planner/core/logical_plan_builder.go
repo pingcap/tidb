@@ -1806,6 +1806,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
+// projNameIndexThreshold is the number of select fields and input columns from
+// which buildProjection indexes the input names. Below it, scanning the names
+// for each field is cheaper than building the index.
+const projNameIndexThreshold = 32
+
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
@@ -1814,6 +1819,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	}
 	b.optFlag |= rule.FlagEliminateProjection
 	b.curClause = fieldList
+	// Index the names the field rewriters resolve against (see getExpressionRewriter)
+	// once, instead of scanning them for every column reference in the fields.
+	oldProjNameIndex := b.projNameIndex
+	defer func() { b.projNameIndex = oldProjNameIndex }()
+	b.projNameIndex = nil
+	if inputNames := rewriterNames(p); len(fields) >= projNameIndexThreshold && len(inputNames) >= projNameIndexThreshold {
+		b.projNameIndex = expression.NewFieldNameIndex(inputNames)
+	}
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
