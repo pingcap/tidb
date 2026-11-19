@@ -141,5 +141,14 @@ fn add_index_without_stats_update_during_ddl_does_not_analyze_like_go() {
     rows(&mut tk, "insert into t values (1, 1), (2, 2)");
     rows(&mut tk, "ALTER TABLE t ADD index idx(a)");
     let t = table_id(&mut tk, "t");
-    assert!(stats_versions(&mut tk, t).is_empty());
+    // The stats owner's DDL handler may already have written the table's
+    // unanalyzed rows (Go `InsertTableStats2KV`, `stats_ver` 0); none is
+    // analyzed.
+    assert_eq!(
+        displayed(rows(
+            &mut tk,
+            &format!("select count(*) from mysql.stats_histograms where table_id = {t} and stats_ver != 0")
+        )),
+        vec![vec!["0".to_owned()]]
+    );
 }
