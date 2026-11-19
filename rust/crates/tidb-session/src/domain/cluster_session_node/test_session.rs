@@ -185,6 +185,24 @@ impl<'s> ClusterServerSession<'s> {
         self.rebuild_catalog_if_stale();
     }
 
+    /// Go `session.ExecutePreparedStmt`, read back as the rows a
+    /// [`Session::run`] caller expects: one [`Self::execute_general`], its
+    /// result set drained here.
+    pub(crate) fn execute_prepared_output(
+        self,
+        statement: &crate::domain::session_api::PreparedGeneral,
+        values: &[tidb_param::PreparedValue],
+    ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
+        match self.execute_general(statement, values).map_err(driver_error_of)? {
+            crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) => {
+                drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql)
+            }
+            crate::domain::session_api::GeneralExecuteOutcome::Write(outcome) => {
+                Ok(StmtOutput::Affected(outcome.affected_rows))
+            }
+        }
+    }
+
     /// [`Self::run_statement_output`] over a statement the caller already
     /// parsed and bound (a parameterized statement's markers replaced by its
     /// values), which re-parsing `sql` would lose.

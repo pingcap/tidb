@@ -167,6 +167,47 @@ impl TestKit {
         assert!(!has, "{sql} shouldn't have plan {plan}, full plan {:?}", rs.rows());
     }
 
+    /// Go `tk.MustIndexLookup(sql)`: the plan reads through an
+    /// `IndexLookUp`, and the query's result.
+    pub fn must_index_lookup(&mut self, sql: &str) -> TkResult {
+        self.must_have_plan(sql, "IndexLookUp");
+        self.must_query(sql)
+    }
+
+    /// Go `tk.MustPartition(sql, partitions)`: some `explain` row's
+    /// `access object` ends with `partition:<partitions>` (or, for an empty
+    /// `partitions`, none names a partition), and the query's result.
+    pub fn must_partition(&mut self, sql: &str, partitions: &str) -> TkResult {
+        let rs = self.must_query(&format!("explain {sql}"));
+        let mut ok = partitions.is_empty();
+        for row in &rs.rows {
+            if partitions.is_empty() && row[3].contains("partition:") {
+                ok = false;
+            }
+            if !partitions.is_empty() && row[3].ends_with(&format!("partition:{partitions}")) {
+                ok = true;
+            }
+        }
+        assert!(ok, "{sql} does not read partitions {partitions}: {:?}", rs.rows);
+        self.must_query(sql)
+    }
+
+    /// Go `tk.MustPointGet(sql)`: the plan is a single `Point_Get`, and the
+    /// query's result.
+    pub fn must_point_get(&mut self, sql: &str) -> TkResult {
+        let rs = self.must_query(&format!("explain {sql}"));
+        assert_eq!(rs.rows.len(), 1, "{sql}: {:?}", rs.rows);
+        assert!(rs.rows[0][0].contains("Point_Get"), "plan {}", rs.rows[0][0]);
+        self.must_query(sql)
+    }
+
+    /// Go `tk.HasTiFlashPlan(sql)`: some `explain` row's task is a TiFlash
+    /// one.
+    pub fn has_tiflash_plan(&mut self, sql: &str) -> bool {
+        let rs = self.must_query(&format!("explain {sql}"));
+        rs.rows.iter().any(|row| row[2].contains("tiflash"))
+    }
+
     fn has_plan(&mut self, sql: &str, plan: &str) -> (bool, TkResult) {
         let rs = self.must_query(&format!("explain {sql}"));
         let has = rs.rows.iter().any(|row| row[0].contains(plan));
@@ -312,13 +353,31 @@ impl TkResult {
         self
     }
 
-    /// Go `res.Rows()`.
-    #[must_use]
     /// Go `result.Check(other.Rows())`: the same rows as another result.
     pub fn check_result(&self, expected: &TkResult) {
         assert_eq!(self.rows(), expected.rows());
     }
 
+    /// Go `var r [][]any`: a result no query has filled yet (`r == nil`).
+    #[must_use]
+    pub fn nil() -> Self {
+        Self { sql: String::new(), rows: Vec::new() }
+    }
+
+    /// Go `r == nil` for a [`TkResult::nil`] not yet assigned.
+    #[must_use]
+    pub fn is_nil(&self) -> bool {
+        self.sql.is_empty()
+    }
+
+    /// Go `len(r)`: the row count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Go `res.Rows()`.
+    #[must_use]
     pub fn rows(&self) -> &[Vec<String>] {
         &self.rows
     }
@@ -386,6 +445,19 @@ impl Drop for ConfigGuard {
     }
 }
 
+/// Go `testkit.SetTiFlashReplica(t, dom, db, table)`: the domain's table
+/// meta gets an available one-replica TiFlash replica, in place.
+pub fn set_tiflash_replica(tk: &TestKit, db: &str, table: &str) {
+    let TableEntry::Kv(tbl) = tk.get_table_by_name(db, table) else {
+        panic!("{db}.{table} is not a storage-backed table");
+    };
+    tbl.meta().write().tiflash_replica = Some(tidb_model::GoShared::new(tidb_model::TiFlashReplicaInfo {
+        count: 1,
+        available: true,
+        ..Default::default()
+    }));
+}
+
 /// Go `testfailpoint.Enable(t, name, actions)`: the failpoint is removed
 /// when the guard drops (Go's `t.Cleanup`).
 #[must_use]
@@ -418,4 +490,82 @@ pub fn serial() -> MutexGuard<'static, ()> {
 /// Go `rand.Intn(n)` for the ported tests' generated data.
 pub fn rand_intn(n: i64) -> i64 {
     rand::random_range(0..n)
+}
+
+/// Go `fmt.Sprintf(format, args...)` for a format held in a variable: each
+/// `%v` / `%d` / `%s` takes the next argument's `Display`, `%%` is `%`.
+pub fn go_sprintf(format: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let mut out = String::with_capacity(format.len());
+    let mut args = args.iter();
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => out.push('%'),
+            Some('v' | 'd' | 's') => {
+                let arg = args.next().expect("fmt.Sprintf: missing argument");
+                out.push_str(&arg.to_string());
+            }
+            other => panic!("fmt.Sprintf: unsupported verb %{other:?}"),
+        }
+    }
+    out
+}
+
+/// Go `fmt.Sprintf("%v", x)` of a test value: a row prints as `[a b c]`.
+pub trait GoV {
+    fn go_v(&self) -> String;
+}
+
+impl GoV for Vec<String> {
+    fn go_v(&self) -> String {
+        format!("[{}]", self.join(" "))
+    }
+}
+
+impl GoV for String {
+    fn go_v(&self) -> String {
+        self.clone()
+    }
+}
+
+impl GoV for &str {
+    fn go_v(&self) -> String {
+        (*self).to_owned()
+    }
+}
+
+macro_rules! go_v_display {
+    ($($t:ty),*) => {$(
+        impl GoV for $t {
+            fn go_v(&self) -> String {
+                self.to_string()
+            }
+        }
+    )*};
+}
+go_v_display!(i64, i32, u64, usize, f64, bool);
+
+/// Go `%v` formatting of `value`.
+pub fn go_v<T: GoV + ?Sized>(value: &T) -> String {
+    value.go_v()
+}
+
+/// Go `for _, row := range res.Rows()`.
+impl IntoIterator for TkResult {
+    type Item = Vec<String>;
+    type IntoIter = std::vec::IntoIter<Vec<String>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.rows.into_iter()
+    }
+}
+
+/// Go `require.Equal(t, a.Rows(), b.Rows())`: the rows, not the SQL.
+impl PartialEq for TkResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.rows == other.rows
+    }
 }

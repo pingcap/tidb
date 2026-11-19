@@ -25,6 +25,8 @@ mod executor_test_issuetest_executor_issue_test;
 mod executor_insert_test;
 mod executor_batch_point_get_test;
 mod executor_test_executor_executor_test;
+mod executor_partition_table_test;
+mod executor_parallel_apply_test;
 mod insert_auto_random_rebase_source;
 mod tests_ddl_table_cache;
 mod tests_ddl_modify_column_types;

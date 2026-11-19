@@ -1038,8 +1038,13 @@ fn attach_agg_over_cop(
         return Ok(attach_plan_2_task(final_plan, t));
     };
     {
-        if let Some(table_plan) = cop.table_plan.take() {
+        // Go `attach2Task4PhysicalHashAgg` / `...StreamAgg`: `cop.finishIndexPlan()` runs
+        // while the table plan is still in the task, so the row-ID scan
+        // takes the finished index plan's stats.
+        if cop.table_plan.is_some() {
             cop.finish_index_plan();
+        }
+        if let Some(table_plan) = cop.table_plan.take() {
             inherit_index_join_stats(
                 &mut partial,
                 cop.index_join_info.is_some(),

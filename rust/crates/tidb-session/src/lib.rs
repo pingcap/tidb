@@ -2797,6 +2797,27 @@ impl Session {
     /// Captured from TiDB: a statement that fails leaves its own error in the
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
+    /// Go `session.PrepareStmt`: the statement prepared for the binary
+    /// protocol, its parameter count and result fields on the handle.
+    pub fn prepare_stmt(
+        &mut self,
+        sql: &str,
+    ) -> Result<crate::domain::session_api::PreparedGeneral, DriverError> {
+        self.node_conn()
+            .prepare_general(sql)
+            .map_err(crate::txn::driver_error_of)
+    }
+
+    /// Go `session.ExecutePreparedStmt`: one execution of a prepared
+    /// statement with `values` bound to its markers.
+    pub fn execute_prepared_stmt(
+        &mut self,
+        statement: &crate::domain::session_api::PreparedGeneral,
+        values: &[tidb_param::PreparedValue],
+    ) -> Result<StmtOutput, DriverError> {
+        self.node_conn().execute_prepared_output(statement, values)
+    }
+
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         self.node_conn().run_statement_output(sql)
     }
