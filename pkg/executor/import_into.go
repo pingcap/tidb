@@ -481,7 +481,11 @@ func getImportLifecycleServers(ctx context.Context, sctx sessionctx.Context) (ma
 	if cli == nil {
 		return nil, errors.New("cannot determine SYSTEM/DXF capabilities without a server registry")
 	}
-	defer cli.Close()
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			logutil.BgLogger().Info("close etcd client error", zap.Error(closeErr))
+		}
+	}()
 	return serverinfo.GetAllServerInfoFromEtcd(ctx, cli)
 }
 
