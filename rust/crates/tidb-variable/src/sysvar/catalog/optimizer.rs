@@ -469,7 +469,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_prepared_plan_cache),
         set_global: None,
     },
     SysVarDef {
@@ -1173,7 +1173,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_opt_fix_control),
         set_global: None,
     },
     SysVarDef {

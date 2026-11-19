@@ -530,7 +530,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_window_function),
         set_global: None,
     },
     SysVarDef {
@@ -626,7 +626,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::time_zone),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_time_zone),
         set_global: None,
     },
     SysVarDef {

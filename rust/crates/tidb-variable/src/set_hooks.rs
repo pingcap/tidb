@@ -80,7 +80,7 @@ impl SessionVars {
         self.check_noop_gated_variable(name, &value, false)?;
         self.check_isolation_level(name, &value)?;
         self.check_max_allowed_packet_scope(name, &value, false)?;
-        self.run_set_closures(name, &value, crate::sysvar::SCOPE_SESSION);
+        self.run_set_closures(name, &value, crate::sysvar::SCOPE_SESSION)?;
         let truncated = self.set_system(name, value.clone())?;
         if truncated {
             self.warn_truncated_var(name, &value);
@@ -121,7 +121,7 @@ impl SessionVars {
             name,
             &value,
             if is_global { crate::sysvar::SCOPE_GLOBAL } else { crate::sysvar::SCOPE_INSTANCE },
-        );
+        )?;
         // Go's `require_secure_transport` Validation closure runs after Bool
         // normalization and the SET GLOBAL privilege check, but before
         // SetGlobal mutates the live table. Direct startup/cache loads do not
@@ -377,36 +377,33 @@ impl SessionVars {
 
 
     /// Go `SysVar.Validate` (the type check, then the variable's
-    /// `Validation`) and the scope's `SetSession` / `SetGlobal` hook, as
-    /// `SetSystemVar` / `SetGlobalSysVar` run them before the value is
-    /// stored: the warnings they append go to the statement, those of a
-    /// `Validation` that then refuses the value included. The refusal itself
-    /// is reported by the store that follows.
-    fn run_set_closures(&mut self, name: &str, value: &str, scope: u8) {
+    /// `Validation`), and for `SET GLOBAL` the variable's `SetGlobal`, as
+    /// `SetGlobalSysVar` runs them before the value is stored: the warnings
+    /// go to the statement, those of a `Validation` that then refuses the
+    /// value included. The refusal itself is reported by the store that
+    /// follows.
+    fn run_set_closures(&mut self, name: &str, value: &str, scope: u8) -> Result<(), VarError> {
         let Some(definition) = crate::sysvar::get_sys_var(name) else {
-            return;
+            return Ok(());
         };
         let cx = SetVarsContext {
             vars: self,
             scope,
             warnings: std::cell::RefCell::default(),
         };
-        if let Ok(validated) = definition.validate_in_scope_with_lookup(value, scope, Some(&cx)) {
-            let hook = match scope {
-                crate::sysvar::SCOPE_SESSION => definition.set_session,
-                crate::sysvar::SCOPE_GLOBAL => definition.set_global,
-                _ => None,
-            };
-            if let Some(hook) = hook {
-                hook(&cx, &validated.value);
-            }
-        }
+        let validated = definition.validate_in_scope_with_lookup(value, scope, Some(&cx));
         for warning in cx.warnings.into_inner() {
             match warning.error {
                 Some(proto) => self.append_stmt_warning(WarningLevel::Warning, proto, warning.message),
                 None => self.append_stmt_plain_warning(WarningLevel::Warning, warning.message),
             }
         }
+        // Go `SetGlobal` (the session's `SetSession` runs where the value is
+        // stored, `SetSessionFromHook`).
+        if let (Ok(validated), crate::sysvar::SCOPE_GLOBAL, Some(hook)) = (validated, scope, definition.set_global) {
+            hook(self, &validated.value)?;
+        }
+        Ok(())
     }
 
     /// Go `ErrTruncatedWrongValue` (1292) for a system variable whose

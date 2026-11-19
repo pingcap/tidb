@@ -1095,7 +1095,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         possible_values: &["OFF", "ON", "MARKER"],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_redact_log),
         set_global: None,
     },
     SysVarDef {

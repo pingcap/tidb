@@ -437,7 +437,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_dml_type),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_dml_type),
         set_global: None,
     },
     SysVarDef {
@@ -519,7 +519,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         possible_values: &["OFF", "ON", "WARN"],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_multi_statement_mode),
         set_global: None,
     },
     SysVarDef {

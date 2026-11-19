@@ -1112,9 +1112,11 @@ impl SessionVars {
     fn replica_read_from_systems(
         systems: &HashMap<String, String>,
     ) -> tidb_txnkv::ReplicaReadType {
-        match systems
-            .get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
-            .map(String::as_str)
+        Self::replica_read_from_value(systems.get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ).map(String::as_str))
+    }
+
+    fn replica_read_from_value(value: Option<&str>) -> tidb_txnkv::ReplicaReadType {
+        match value
         {
             Some(value) if value.eq_ignore_ascii_case("follower") => {
                 tidb_txnkv::ReplicaReadType::Follower
@@ -1946,40 +1948,10 @@ impl SessionVars {
     /// [`Self::set_system_var_without_validation`], so both writers keep the
     /// typed fields and derived variables in lockstep.
     fn set_session_from_hook(&mut self, key: String, value: String) -> Result<(), VarError> {
-        let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
-            Some(
-                OptimizerFixControl::parse(&value)
-                    .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?
-                    .0,
-            )
-        } else {
-            None
-        };
-        let parsed_sql_mode = if key == "sql_mode" {
-            Some(
-                tidb_mysql::get_sql_mode(&value)
-                    .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?,
-            )
-        } else {
-            None
-        };
-        let parsed_snapshot_ts = if key == "tidb_snapshot" || key == "tx_read_ts" {
-            Some(parse_read_timestamp(
-                &value,
-                &self.time_zone,
-                key == "tidb_snapshot",
-            )?)
-        } else {
-            None
-        };
-        if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE
-            && !value.eq_ignore_ascii_case("standard")
-            && !value.eq_ignore_ascii_case("bulk")
-        {
-            return Err(tidb_terror::MysqlError::unknown(format!(
-                "unsupport DML type: {}",
-                value
-            )));
+        // Go `SetSessionFromHook`: the variable's `SetSession` first (a
+        // refusal stores nothing), then the value under its name and alias.
+        if let Some(hook) = get_sys_var(&key).and_then(|def| def.set_session) {
+            hook(self, &value)?;
         }
         // Go's charset/collation hooks keep each pair in lockstep. A charset
         // write selects that charset's default collation (except
@@ -2018,22 +1990,6 @@ impl SessionVars {
             self.systems.insert(other.to_owned(), value.clone());
         }
         self.systems.insert(key.clone(), value.clone());
-        if key == "tx_isolation_one_shot" {
-            self.txn_isolation_level_one_shot = (TxnIsolationLevelOneShotState::Set, value.clone());
-        }
-        if let Some(ts) = parsed_snapshot_ts {
-            if key == "tidb_snapshot" {
-                self.snapshot_ts = ts;
-                if !value.is_empty() {
-                    self.set_txn_read_ts(0);
-                }
-            } else {
-                self.set_txn_read_ts(ts);
-                if !value.is_empty() {
-                    self.snapshot_ts = 0;
-                }
-            }
-        }
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
@@ -2046,114 +2002,7 @@ impl SessionVars {
             self.systems.insert(name.to_owned(), value);
             self.note_system_change(name);
         }
-        if key == "autocommit" {
-            self.autocommit = value == "ON";
-        }
-        if let Some(parsed) = parsed_sql_mode {
-            self.sql_mode = parsed;
-        }
-        if key == "max_allowed_packet" {
-            self.max_allowed_packet = value
-                .parse::<u64>()
-                .expect("max_allowed_packet validation stores unsigned decimal bytes");
-        }
-        if key == "tidb_max_keys_read" {
-            self.max_keys_read = value
-                .parse::<u64>()
-                .expect("tidb_max_keys_read validation stores unsigned decimal keys");
-        }
-        if key == "max_execution_time" {
-            self.max_execution_time = value
-                .parse::<u64>()
-                .expect("max_execution_time validation stores unsigned decimal milliseconds");
-        }
-        if key == "time_zone" {
-            self.time_zone = resolve_session_time_zone_value(&value);
-        }
-        if key == "sql_select_limit" {
-            self.select_limit = value
-                .parse::<u64>()
-                .expect("sql_select_limit validation stores unsigned decimal rows");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR {
-            self.selectivity_factor = value
-                .parse::<f64>()
-                .expect("selectivity factor validation stores a decimal fraction");
-        }
-        if key == "tidb_multi_statement_mode" {
-            self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE {
-            self.enable_prepared_plan_cache = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION {
-            self.shared_lock_promotion = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION {
-            self.enable_window_function = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE {
-            self.enable_mview = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ENABLE_FULL_OUTER_JOIN {
-            self.enable_full_outer_join = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
-            self.enable_redact_log.clone_from(&value);
-        }
-        // Go `TiDBConstraintCheckInPlacePessimistic`'s SetSession hook counts
-        // every lazy setting.
-        if key == "tidb_constraint_check_in_place_pessimistic" && !tidb_vardef::option_values::tidb_opt_on(&value) {
-            tidb_metrics::session::LAZY_PESSIMISTIC_UNIQUE_CHECK_SET_COUNT.inc();
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT {
-            self.query_cop_store_limit = value
-                .parse::<i64>()
-                .expect("query cop store limit validation stores an integer");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN {
-            self.ti_flash_max_bytes_before_ext_join = value
-                .parse::<i64>()
-                .expect("TiFlash external join threshold validation stores signed bytes");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY {
-            self.ti_flash_max_bytes_before_ext_agg = value
-                .parse::<i64>()
-                .expect("TiFlash external group-by threshold validation stores signed bytes");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT {
-            self.ti_flash_max_bytes_before_ext_sort = value
-                .parse::<i64>()
-                .expect("TiFlash external sort threshold validation stores signed bytes");
-        }
-        if key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE {
-            self.ti_flash_mem_quota_query_per_node = value
-                .parse::<i64>()
-                .expect("TiFlash per-node quota validation stores signed bytes");
-        }
-        if key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO {
-            self.ti_flash_query_spill_ratio = value
-                .parse::<f64>()
-                .expect("TiFlash spill ratio validation stores a decimal fraction");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING {
-            self.pessimistic_transaction_fair_locking = value == "ON";
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_DML_TYPE {
-            self.bulk_dml_enabled = value.eq_ignore_ascii_case("bulk");
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ {
-            self.replica_read = Self::replica_read_from_systems(&self.systems);
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE {
-            self.analyze_store_batch_size = value
-                .parse::<i64>()
-                .expect("analyze store batch size validation stores an integer");
-        }
         self.generation += 1;
-        if let Some(parsed) = parsed_fix_control {
-            self.optimizer_fix_control = parsed;
-        }
         Ok(())
     }
 
@@ -2422,3 +2271,208 @@ pub fn global_get_hook(name: &str, value: String) -> String {
 /// Go `SessionVars.GetRelatedTableForMDL().Store(id, ...)`: records one stored
 /// table id on the statement's metadata-lock map.
 pub type MdlRelatedTableRecorder = std::sync::Arc<dyn Fn(i64) + Send + Sync>;
+
+/// Go `SysVar.SetSession` bodies: each variable's typed session field, set
+/// from the value about to be stored (`sysvar.go`).
+impl SessionVars {
+    /// Go `tx_isolation_one_shot`'s `SetSession`.
+    pub(crate) fn set_session_tx_isolation_one_shot(&mut self, value: &str) -> Result<(), VarError> {
+        self.txn_isolation_level_one_shot = (TxnIsolationLevelOneShotState::Set, value.to_owned());
+        Ok(())
+    }
+
+    /// Go `tidb_snapshot`'s `SetSession`.
+    pub(crate) fn set_session_tidb_snapshot(&mut self, value: &str) -> Result<(), VarError> {
+        let ts = parse_read_timestamp(value, &self.time_zone, true)?;
+        self.snapshot_ts = ts;
+        if !value.is_empty() {
+            self.set_txn_read_ts(0);
+        }
+        Ok(())
+    }
+
+    /// Go `tx_read_ts`'s `SetSession`.
+    pub(crate) fn set_session_tx_read_ts(&mut self, value: &str) -> Result<(), VarError> {
+        let ts = parse_read_timestamp(value, &self.time_zone, false)?;
+        self.set_txn_read_ts(ts);
+        if !value.is_empty() {
+            self.snapshot_ts = 0;
+        }
+        Ok(())
+    }
+
+    /// Go `sql_mode`'s `SetSession`.
+    pub(crate) fn set_session_sql_mode(&mut self, value: &str) -> Result<(), VarError> {
+        self.sql_mode = tidb_mysql::get_sql_mode(value)
+            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Go `tidb_opt_fix_control`'s `SetSession`.
+    pub(crate) fn set_session_tidb_opt_fix_control(&mut self, value: &str) -> Result<(), VarError> {
+        self.optimizer_fix_control = OptimizerFixControl::parse(value)
+            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?
+            .0;
+        Ok(())
+    }
+
+    /// Go `tidb_dml_type`'s `SetSession`.
+    pub(crate) fn set_session_tidb_dml_type(&mut self, value: &str) -> Result<(), VarError> {
+        if !value.eq_ignore_ascii_case("standard") && !value.eq_ignore_ascii_case("bulk") {
+            return Err(tidb_terror::MysqlError::unknown(format!("unsupport DML type: {value}")));
+        }
+        self.bulk_dml_enabled = value.eq_ignore_ascii_case("bulk");
+        Ok(())
+    }
+
+    /// Go `autocommit`'s `SetSession`.
+    pub(crate) fn set_session_autocommit(&mut self, value: &str) -> Result<(), VarError> {
+        self.autocommit = value == "ON";
+        Ok(())
+    }
+
+    /// Go `max_allowed_packet`'s `SetSession`.
+    pub(crate) fn set_session_max_allowed_packet(&mut self, value: &str) -> Result<(), VarError> {
+        self.max_allowed_packet = value.parse::<u64>().expect("max_allowed_packet validation stores unsigned decimal bytes");
+        Ok(())
+    }
+
+    /// Go `tidb_max_keys_read`'s `SetSession`.
+    pub(crate) fn set_session_tidb_max_keys_read(&mut self, value: &str) -> Result<(), VarError> {
+        self.max_keys_read = value.parse::<u64>().expect("tidb_max_keys_read validation stores unsigned decimal keys");
+        Ok(())
+    }
+
+    /// Go `max_execution_time`'s `SetSession`.
+    pub(crate) fn set_session_max_execution_time(&mut self, value: &str) -> Result<(), VarError> {
+        self.max_execution_time = value.parse::<u64>().expect("max_execution_time validation stores unsigned decimal milliseconds");
+        Ok(())
+    }
+
+    /// Go `time_zone`'s `SetSession`.
+    pub(crate) fn set_session_time_zone(&mut self, value: &str) -> Result<(), VarError> {
+        self.time_zone = resolve_session_time_zone_value(value);
+        Ok(())
+    }
+
+    /// Go `sql_select_limit`'s `SetSession`.
+    pub(crate) fn set_session_sql_select_limit(&mut self, value: &str) -> Result<(), VarError> {
+        self.select_limit = value.parse::<u64>().expect("sql_select_limit validation stores unsigned decimal rows");
+        Ok(())
+    }
+
+    /// Go `tidb_opt_selectivity_factor`'s `SetSession`.
+    pub(crate) fn set_session_tidb_opt_selectivity_factor(&mut self, value: &str) -> Result<(), VarError> {
+        self.selectivity_factor = value.parse::<f64>().expect("selectivity factor validation stores a decimal fraction");
+        Ok(())
+    }
+
+    /// Go `tidb_multi_statement_mode`'s `SetSession`.
+    pub(crate) fn set_session_tidb_multi_statement_mode(&mut self, value: &str) -> Result<(), VarError> {
+        self.multi_statement_mode = match value {
+            "ON" => 1,
+            "WARN" => 2,
+            _ => 0,
+        };
+        Ok(())
+    }
+
+    /// Go `tidb_enable_prepared_plan_cache`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_prepared_plan_cache(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_prepared_plan_cache = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_enable_shared_lock_promotion`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_shared_lock_promotion(&mut self, value: &str) -> Result<(), VarError> {
+        self.shared_lock_promotion = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_enable_window_function`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_window_function(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_window_function = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_mview_enable`'s `SetSession`.
+    pub(crate) fn set_session_tidb_mview_enable(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_mview = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_enable_full_outer_join`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_full_outer_join(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_full_outer_join = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_redact_log`'s `SetSession`.
+    pub(crate) fn set_session_tidb_redact_log(&mut self, value: &str) -> Result<(), VarError> {
+        value.clone_into(&mut self.enable_redact_log);
+        Ok(())
+    }
+
+    /// Go `tidb_constraint_check_in_place_pessimistic`'s `SetSession`.
+    pub(crate) fn set_session_tidb_constraint_check_in_place_pessimistic(&mut self, value: &str) -> Result<(), VarError> {
+        // Go counts every lazy setting.
+        if !tidb_vardef::option_values::tidb_opt_on(value) {
+            tidb_metrics::session::LAZY_PESSIMISTIC_UNIQUE_CHECK_SET_COUNT.inc();
+        }
+        Ok(())
+    }
+
+    /// Go `tidb_query_cop_store_limit`'s `SetSession`.
+    pub(crate) fn set_session_tidb_query_cop_store_limit(&mut self, value: &str) -> Result<(), VarError> {
+        self.query_cop_store_limit = value.parse::<i64>().expect("query cop store limit validation stores an integer");
+        Ok(())
+    }
+
+    /// Go `tidb_max_bytes_before_tiflash_external_join`'s `SetSession`.
+    pub(crate) fn set_session_tidb_max_bytes_before_tiflash_external_join(&mut self, value: &str) -> Result<(), VarError> {
+        self.ti_flash_max_bytes_before_ext_join = value.parse::<i64>().expect("TiFlash external join threshold validation stores signed bytes");
+        Ok(())
+    }
+
+    /// Go `tidb_max_bytes_before_tiflash_external_group_by`'s `SetSession`.
+    pub(crate) fn set_session_tidb_max_bytes_before_tiflash_external_group_by(&mut self, value: &str) -> Result<(), VarError> {
+        self.ti_flash_max_bytes_before_ext_agg = value.parse::<i64>().expect("TiFlash external group-by threshold validation stores signed bytes");
+        Ok(())
+    }
+
+    /// Go `tidb_max_bytes_before_tiflash_external_sort`'s `SetSession`.
+    pub(crate) fn set_session_tidb_max_bytes_before_tiflash_external_sort(&mut self, value: &str) -> Result<(), VarError> {
+        self.ti_flash_max_bytes_before_ext_sort = value.parse::<i64>().expect("TiFlash external sort threshold validation stores signed bytes");
+        Ok(())
+    }
+
+    /// Go `tiflash_mem_quota_query_per_node`'s `SetSession`.
+    pub(crate) fn set_session_tiflash_mem_quota_query_per_node(&mut self, value: &str) -> Result<(), VarError> {
+        self.ti_flash_mem_quota_query_per_node = value.parse::<i64>().expect("TiFlash per-node quota validation stores signed bytes");
+        Ok(())
+    }
+
+    /// Go `tiflash_query_spill_ratio`'s `SetSession`.
+    pub(crate) fn set_session_tiflash_query_spill_ratio(&mut self, value: &str) -> Result<(), VarError> {
+        self.ti_flash_query_spill_ratio = value.parse::<f64>().expect("TiFlash spill ratio validation stores a decimal fraction");
+        Ok(())
+    }
+
+    /// Go `tidb_pessimistic_txn_fair_locking`'s `SetSession`.
+    pub(crate) fn set_session_tidb_pessimistic_txn_fair_locking(&mut self, value: &str) -> Result<(), VarError> {
+        self.pessimistic_transaction_fair_locking = value == "ON";
+        Ok(())
+    }
+
+    /// Go `tidb_replica_read`'s `SetSession`.
+    pub(crate) fn set_session_tidb_replica_read(&mut self, value: &str) -> Result<(), VarError> {
+        self.replica_read = Self::replica_read_from_value(Some(value));
+        Ok(())
+    }
+
+    /// Go `tidb_analyze_store_batch_size`'s `SetSession`.
+    pub(crate) fn set_session_tidb_analyze_store_batch_size(&mut self, value: &str) -> Result<(), VarError> {
+        self.analyze_store_batch_size = value.parse::<i64>().expect("analyze store batch size validation stores an integer");
+        Ok(())
+    }
+}

@@ -565,7 +565,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_opt_selectivity_factor),
         set_global: None,
     },
     SysVarDef {

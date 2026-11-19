@@ -166,7 +166,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::max_allowed_packet),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_max_allowed_packet),
         set_global: None,
     },
     SysVarDef {

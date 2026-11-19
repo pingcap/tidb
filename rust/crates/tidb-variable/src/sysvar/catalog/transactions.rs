@@ -37,7 +37,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_autocommit),
         set_global: None,
     },
     SysVarDef {
@@ -117,7 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_constraint_check_in_place_pessimistic),
         set_global: None,
     },
     SysVarDef {
@@ -247,7 +247,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_shared_lock_promotion),
         set_global: None,
     },
     SysVarDef {
@@ -439,7 +439,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_pessimistic_txn_fair_locking),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_pessimistic_txn_fair_locking),
         set_global: None,
     },
     SysVarDef {
@@ -551,7 +551,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_snapshot),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_snapshot),
         set_global: None,
     },
     SysVarDef {
@@ -769,7 +769,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tx_isolation_one_shot),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tx_isolation_one_shot),
         set_global: None,
     },
     SysVarDef {
@@ -785,7 +785,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tx_read_ts),
         set_global: None,
     },
     SysVarDef {

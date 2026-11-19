@@ -437,7 +437,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_max_bytes_before_tiflash_external_group_by),
         set_global: None,
     },
     SysVarDef {
@@ -453,7 +453,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_max_bytes_before_tiflash_external_join),
         set_global: None,
     },
     SysVarDef {
@@ -469,7 +469,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_max_bytes_before_tiflash_external_sort),
         set_global: None,
     },
     SysVarDef {
@@ -517,7 +517,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_max_keys_read),
         set_global: None,
     },
     SysVarDef {
@@ -613,7 +613,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_query_cop_store_limit),
         set_global: None,
     },
     SysVarDef {
@@ -808,7 +808,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tiflash_mem_quota_query_per_node),
         set_global: None,
     },
     SysVarDef {
@@ -824,7 +824,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tiflash_query_spill_ratio),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tiflash_query_spill_ratio),
         set_global: None,
     },
     SysVarDef {

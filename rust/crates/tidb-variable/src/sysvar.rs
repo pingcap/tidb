@@ -629,10 +629,10 @@ pub struct VarWarning {
     pub message: String,
 }
 
-/// Go `SysVar.SetSession` / `SysVar.SetGlobal`, the part of the closure that
-/// is more than storing the value: `(vars, normalizedValue)`, run before the
-/// value is stored, so `vars` still reads the previous one.
-pub type SetHook = fn(&dyn VarsContext, &str);
+/// Go `SysVar.SetSession` / `SysVar.SetGlobal`: `(vars, normalizedValue)`,
+/// run before the value is stored (so `vars` still reads the previous one); a
+/// refusal stores nothing.
+pub type SetHook = fn(&mut crate::vars::SessionVars, &str) -> Result<(), crate::error::VarError>;
 
 /// Go `SysVar.Validation`, kept on the variable it checks: Go's closure
 /// `Validation(vars, normalizedValue, originalValue, scope)`, run after

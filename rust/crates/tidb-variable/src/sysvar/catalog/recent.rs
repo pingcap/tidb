@@ -24,7 +24,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_analyze_store_batch_size),
         set_global: None,
     },
     SysVarDef {

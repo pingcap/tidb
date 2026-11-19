@@ -165,7 +165,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::sql_mode),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_sql_mode),
         set_global: None,
     },
     SysVarDef {
@@ -229,7 +229,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_sql_select_limit),
         set_global: None,
     },
     SysVarDef {

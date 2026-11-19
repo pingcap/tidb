@@ -26,7 +26,7 @@ pub(super) static ENTRIES: [SysVarDef; 1] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_full_outer_join),
         set_global: None,
     },
 ];

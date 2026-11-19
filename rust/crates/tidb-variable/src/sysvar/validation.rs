@@ -1909,59 +1909,49 @@ pub(super) fn tidb_enable_tiflash_read_for_write_stmt(
 
 /// Go `tidb_partition_prune_mode`'s `SetSession`: switching a session from
 /// static to dynamic asks for a re-analyze and warns against the session level.
-pub(super) fn tidb_partition_prune_mode_set_session(cx: &dyn VarsContext, value: &str) {
-    if value == "dynamic" && cx.read("tidb_partition_prune_mode").as_deref() == Some("static") {
-        cx.append_warning(VarWarning {
-            error: None,
-            message: "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
-        });
-        cx.append_warning(VarWarning {
-            error: None,
-            message: "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
-        });
+pub(super) fn tidb_partition_prune_mode_set_session(cx: &mut crate::vars::SessionVars, value: &str) -> Result<(), crate::error::VarError> {
+    if value == "dynamic" && cx.get_system("tidb_partition_prune_mode").ok().as_deref() == Some("static") {
+        cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "Please analyze all partition tables again for consistency between partition and global stats".to_owned());
+        cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned());
     }
+    Ok(())
 }
 
 /// Go `tidb_partition_prune_mode`'s `SetGlobal`: dynamic asks for a re-analyze.
-pub(super) fn tidb_partition_prune_mode_set_global(cx: &dyn VarsContext, value: &str) {
+pub(super) fn tidb_partition_prune_mode_set_global(cx: &mut crate::vars::SessionVars, value: &str) -> Result<(), crate::error::VarError> {
     if value == "dynamic" {
-        cx.append_warning(VarWarning {
-            error: None,
-            message: "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
-        });
+        cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "Please analyze all partition tables again for consistency between partition and global stats".to_owned());
     }
+    Ok(())
 }
 
 /// Go `mpp_exchange_compression_mode`'s `SetSession`: a concrete mode warns
 /// under MPP version 0.
-pub(super) fn mpp_exchange_compression_mode_set_session(cx: &dyn VarsContext, value: &str) {
+pub(super) fn mpp_exchange_compression_mode_set_session(cx: &mut crate::vars::SessionVars, value: &str) -> Result<(), crate::error::VarError> {
     let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(value) else {
-        return;
+        return Ok(());
     };
     if mode == tidb_vardef::modes::ExchangeCompressionMode::UNSPECIFIED {
-        return;
+        return Ok(());
     }
     let mpp_version = cx
-        .read(tidb_vardef::tidb_vars::MPP_VERSION)
+        .get_system(tidb_vardef::tidb_vars::MPP_VERSION)
+        .ok()
         .and_then(|value| tidb_vardef::modes::to_mpp_version(&value))
         .unwrap_or(tidb_vardef::modes::NEWEST_MPP_VERSION);
     if mpp_version == 0 {
-        cx.append_warning(VarWarning {
-            error: None,
-            message: "mpp exchange compression won't work under current mpp version 0".to_owned(),
-        });
+        cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "mpp exchange compression won't work under current mpp version 0".to_owned());
     }
+    Ok(())
 }
 
 /// Go `tidb_enable_parallel_hashagg_spill`'s `SetSession`: turning it OFF
 /// warns that the switch goes away.
-pub(super) fn tidb_enable_parallel_hashagg_spill_set_session(cx: &dyn VarsContext, value: &str) {
+pub(super) fn tidb_enable_parallel_hashagg_spill_set_session(cx: &mut crate::vars::SessionVars, value: &str) -> Result<(), crate::error::VarError> {
     if value == "OFF" {
-        cx.append_warning(VarWarning {
-            error: Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG),
-            message: "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
-        });
+        cx.append_stmt_warning(tidb_context::WarningLevel::Warning, &*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG, "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned());
     }
+    Ok(())
 }
 
 /// Go `tidb_enforce_mpp`'s `Validation`: ON needs the session's

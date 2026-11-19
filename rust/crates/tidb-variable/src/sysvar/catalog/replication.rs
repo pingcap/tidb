@@ -749,7 +749,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         ],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_replica_read),
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_replica_read),
         set_global: None,
     },
     SysVarDef {
