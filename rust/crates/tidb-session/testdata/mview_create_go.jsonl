@@ -4,7 +4,7 @@
 ["use e29", "OK"]
 ["create table t (id int primary key, g int not null, h int, v int, w decimal(10,2) not null, s varchar(10), d date, key kg (g, h))", "OK"]
 ["insert into t values (1, 1, 1, 10, 1.5, 'a', '2020-01-01'), (2, 1, 1, 20, 2.5, 'b', '2020-01-02'), (3, 2, null, null, 3.5, 'c', null)", "OK"]
-["create materialized view mv0 (g, c) as select g, count(*) from t group by g", "ERR 1105 materialized view log does not exist for base table e29.t"]
+["create materialized view mv0 (g, c) as select g, count(*) from t group by g", "ERR 1105 materialized view log does not exist for source object e29.t"]
 ["create materialized view log on t (g, h, v, w, s, d)", "OK"]
 ["create materialized view mv1 (g, c, sw) as select g, count(*), sum(w) from t group by g", "OK"]
 ["show create table mv1", "RS:[[\"mv1\", \"CREATE TABLE `mv1` (\\n  `g` int NOT NULL,\\n  `c` bigint NOT NULL,\\n  `sw` decimal(32,2) DEFAULT NULL,\\n  PRIMARY KEY (`g`) /*T![clustered_index] CLUSTERED */\\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\"]]"]

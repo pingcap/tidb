@@ -26,7 +26,7 @@
 ["select table_name from information_schema.tables where table_schema = 'e29' order by table_name", "RS:[[\"$mlog$t\"], [\"mv\"], [\"t\"]]"]
 ["refresh materialized view t complete out of place", "ERR 1347 'e29.t' is not MATERIALIZED VIEW"]
 ["select row_count()", "RS:[[\"0\"]]"]
-["create materialized view mv2 (g, c) as select g, count(*) from mv group by g", "ERR 1347 'e29.mv' is not BASE TABLE"]
+["create materialized view mv2 (g, c) as select g, count(*) from mv group by g", "ERR 1105 materialized view log does not exist for source object e29.mv"]
 ["refresh materialized view mv complete out of place", "OK 3 Rows inserted: 3  Updated: 0  Deleted: 0"]
 ["select row_count()", "RS:[[\"0\"]]"]
 ["drop materialized view mv2", "ERR 1146 Table 'e29.mv2' doesn't exist"]

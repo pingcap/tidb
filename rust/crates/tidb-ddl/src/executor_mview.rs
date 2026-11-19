@@ -1009,32 +1009,33 @@ pub(crate) fn create_materialized_view_plan(
         ));
     };
     let base = base.read().clone_like_go();
-    if base.is_view()
-        || base.is_sequence()
-        || base.temp_table_type != tidb_model::TempTableType::NONE
-        || base.materialized_view.is_some()
-    {
-        return Err(MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
-            schema_name.clone().into(),
-            base_table.clone().into(),
-            "BASE TABLE".into(),
-        ])));
-    }
-    if base.get_partition_info().is_some() {
-        return Err(general_unsupported("CREATE MATERIALIZED VIEW on partition table"));
-    }
-    let mlog_name = tidb_model::table::materialized_view_log_table_name(&base.name).original().to_owned();
-    let Some((_, mlog)) = catalog.table_info_by_name(&base_schema, &mlog_name) else {
+    crate::cluster_ddl::materialized_view::validate_materialized_view_source_state(&schema_name, &base)?;
+    crate::cluster_ddl::materialized_view::validate_materialized_view_nesting_depth(
+        &base,
+        &mut |table_id| {
+            catalog.table_info_by_id(table_id).map(|table| table.read().clone_like_go()).ok_or_else(|| {
+                MysqlError::from_terror(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
+                    schema_name.clone().into(),
+                    format!("(Table ID {table_id})").into(),
+                ]))
+            })
+        },
+        &crate::cluster_ddl::materialized_view::materialized_view_nesting_depth_exceeded,
+    )?;
+    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+    if mlog_id == 0 {
         return Err(MysqlError::unknown(format!(
-            "materialized view log does not exist for base table {base_schema}.{base_table}"
+            "materialized view log does not exist for source object {base_schema}.{base_table}"
+        )));
+    }
+    let Some(mlog) = catalog.table_info_by_id(mlog_id) else {
+        return Err(MysqlError::unknown(format!(
+            "materialized view log id {mlog_id} does not exist for source object {base_schema}.{base_table}"
         )));
     };
     let mlog = mlog.read().clone_like_go();
-    let Some(log) = mlog.materialized_view_log.as_ref().filter(|log| log.read().base_table_id == base.id) else {
-        return Err(MysqlError::unknown(format!(
-            "table {base_schema}.{mlog_name} is not a materialized view log for base table {base_schema}.{base_table}"
-        )));
-    };
+    crate::cluster_ddl::materialized_view::validate_materialized_view_source_mlog(&schema_name, &base, &mlog)?;
+    let log = mlog.materialized_view_log.as_ref().expect("validate_materialized_view_source_mlog checked the log");
     let mlog_columns: Vec<String> = log.read().columns.iter().map(|column| column.original().to_owned()).collect();
     let analysis =
         validate_create_materialized_view_query(context, &base_schema, &base_table, &base, &mlog_columns, &select)?;

@@ -676,37 +676,57 @@ fn validate_agg_dependencies(
     Ok(())
 }
 
-/// Go master `Build` (`buildLocal` + `buildFromLocal`): the merge source of
-/// one FAST refresh window and the layout its executor merges by. `mv` is
-/// the view in `db_name`; `table_by_id` answers its base table and log.
+/// Go master `FastRefreshSource`: the source object and its log one FAST
+/// refresh reads. The source is a physical table or a ready materialized
+/// view.
+#[derive(Debug, Clone)]
+pub struct FastRefreshSource {
+    pub base_table: TableInfo,
+    pub mlog_table: TableInfo,
+    pub base_table_id: i64,
+    pub mlog_table_id: i64,
+}
+
+/// Go master `ResolveFastRefreshSource`: validates the source object and the
+/// log metadata a single-source FAST refresh needs.
 ///
 /// # Errors
 ///
-/// The view, its base table or log is malformed for FAST refresh, the
-/// definition uses what FAST cannot merge, or a statement fails to parse.
-pub fn build(
+/// The view, its source or the source's log is missing, not public, not
+/// ready or malformed.
+pub fn resolve_fast_refresh_source(
     mv: &TableInfo,
-    db_name: &str,
     table_by_id: &dyn Fn(i64) -> Option<TableInfo>,
-    opt: BuildOptions,
-    parse: &dyn Fn(&str) -> Result<Stmt, String>,
-) -> Result<BuildResult, String> {
-    let name = mv.name.original();
-    // Stage 0 (Go `buildLocal`): the view, its one base table and its log.
+) -> Result<FastRefreshSource, String> {
     let Some(info) = mv.materialized_view.as_ref().map(|info| info.read().clone()) else {
-        return Err(format!("table {name} is not a materialized view"));
+        return Err(format!("table {} is not a materialized view", mv.name.original()));
     };
     if info.base_table_ids.len() != 1 {
-        return Err(format!("materialized view {name} has invalid base table list size {}", info.base_table_ids.len()));
+        return Err(format!(
+            "materialized view {} has invalid base table list size {}",
+            mv.name.original(),
+            info.base_table_ids.len()
+        ));
     }
     let base_table_id = info.base_table_ids[0];
     let base = table_by_id(base_table_id).ok_or_else(|| format!("base table id {base_table_id} not found in infoschema"))?;
+    if base.state != tidb_model::SchemaState::PUBLIC {
+        return Err(format!("source object {} is not public", base.name.original()));
+    }
+    if base.materialized_view.as_ref().is_some_and(|source| {
+        !tidb_model::table::MaterializedViewInfo::get_init_build_state(Some(&source.read())).is_ready()
+    }) {
+        return Err(format!("source materialized view {} is not ready", base.name.original()));
+    }
     let mlog_table_id = base.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
     if mlog_table_id == 0 {
         return Err(format!("base table {} has no materialized view log", base.name.original()));
     }
     let mlog = table_by_id(mlog_table_id)
         .ok_or_else(|| format!("materialized view log table id {mlog_table_id} not found in infoschema"))?;
+    if mlog.state != tidb_model::SchemaState::PUBLIC {
+        return Err(format!("materialized view log {} is not public", mlog.name.original()));
+    }
     let Some(mlog_info) = mlog.materialized_view_log.as_ref().map(|info| info.read().clone()) else {
         return Err(format!("table {} is not a materialized view log", mlog.name.original()));
     };
@@ -728,6 +748,32 @@ pub fn build(
             return Err(format!("materialized view log {} missing required column {required}", mlog.name.original()));
         }
     }
+    Ok(FastRefreshSource { base_table: base, mlog_table: mlog, base_table_id, mlog_table_id })
+}
+
+/// Go master `Build` (`buildLocal` + `buildFromLocal`): the merge source of
+/// one FAST refresh window and the layout its executor merges by. `mv` is
+/// the view in `db_name`; `table_by_id` answers its base table and log.
+///
+/// # Errors
+///
+/// The view, its base table or log is malformed for FAST refresh, the
+/// definition uses what FAST cannot merge, or a statement fails to parse.
+pub fn build(
+    mv: &TableInfo,
+    db_name: &str,
+    table_by_id: &dyn Fn(i64) -> Option<TableInfo>,
+    opt: BuildOptions,
+    parse: &dyn Fn(&str) -> Result<Stmt, String>,
+) -> Result<BuildResult, String> {
+    // Stage 0 (Go `buildLocal`): "validate MV/MLog metadata and locate all
+    // required tables".
+    let FastRefreshSource { base_table: base, mlog_table: mlog, base_table_id, mlog_table_id } =
+        resolve_fast_refresh_source(mv, table_by_id)?;
+    let Some(info) = mv.materialized_view.as_ref().map(|info| info.read().clone()) else {
+        return Err(format!("table {} is not a materialized view", mv.name.original()));
+    };
+    let name = mv.name.original();
 
     // Stage 1: the definition's group keys and aggregates.
     let Stmt::Query(query) = parse(&info.sql_content)? else {

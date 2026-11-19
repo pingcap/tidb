@@ -55,7 +55,9 @@ fn answer(session: &mut Session, sql: &str) -> String {
 }
 
 /// Replays a Go master `eca4674a6f` node's capture (one `[sql, answer]`
-/// per line) against a node with a DDL owner. Go master's `upgradeToVer316`
+/// per line) against a node with a DDL owner. An answer a later Go master
+/// commit changed carries that commit's text (`27b1b52535f`: CREATE
+/// MATERIALIZED VIEW names a "source object", and a view is a valid source). Go master's `upgradeToVer316`
 /// creates its materialized view tables; this branch's bootstrap does not, so
 /// the replay creates them first.
 fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
@@ -2182,8 +2184,8 @@ fn test_materialized_view_refresh_schema_version() {
         "current", "empty_versions", "unrelated", "unrelated_fast", "unrelated_empty_versions",
         "mlog", "mlog_then_unrelated", "reload_failure", "input_mlog_columns", "output_mlog_columns", "schema_change",
         "schema_cache_miss", "schema_load_failure", "mlog_then_add_column", "related_empty_versions",
-        // Go's "source_oop" builds a materialized view over a materialized
-        // view, which this port refuses (register E29: nested sources).
+        // Go's "source_oop" refreshes OUT OF PLACE a view that has a log and a
+        // dependent view: Go master 36b2c7f57ec, not yet ported (register E29).
     ] {
         refresh_schema_version_scenario(scenario);
     }
@@ -2348,4 +2350,168 @@ fn refresh_schema_version_scenario(scenario: &'static str) {
     if scenario == "mlog_then_add_column" {
         assert_eq!(answer(&mut tk, "select a, s from `$mlog$mv_schema`"), r#"RS:[["2","20"]]"#, "{scenario}");
     }
+}
+
+/// The latest schema's table `test.name`, as Go's `dom.InfoSchema().TableByName`.
+fn latest_table(stack: &UnistoreClusterStack, name: &str) -> tidb_model::TableInfo {
+    stack.factory.catalog.get_latest().table_info_by_name("test", name).expect(name).1.read().clone()
+}
+
+fn mview_ids(table: &tidb_model::TableInfo) -> Vec<i64> {
+    table.materialized_view_base.as_ref().map(|base| base.read().mview_ids.iter().copied().collect()).unwrap_or_default()
+}
+
+fn dependent_mview_ids(mlog: &tidb_model::TableInfo) -> Vec<i64> {
+    mlog.materialized_view_log.as_ref().map(|log| log.read().dependent_mview_ids.iter().copied().collect()).unwrap_or_default()
+}
+
+fn mlog_id(table: &tidb_model::TableInfo) -> i64 {
+    table.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id)
+}
+
+fn must_exec_all(session: &mut Session, statements: &[&str]) {
+    for sql in statements {
+        assert_eq!(answer(session, sql), "OK", "{sql}");
+    }
+}
+
+fn exec_err_contains(session: &mut Session, sql: &str, expected: &str) {
+    let answer = answer(session, sql);
+    assert!(answer.starts_with("ERR") && answer.contains(expected), "{sql}: {answer}");
+}
+
+/// Go master `TestCreateMaterializedViewOnMaterializedView`
+/// (`pkg/executor/test/mviewnested/nested_create_test.go`).
+#[test]
+fn test_create_materialized_view_on_materialized_view() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table mv_on_mv_base (a int not null, b int not null)",
+        "insert into mv_on_mv_base values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on mv_on_mv_base (a, b)",
+        "create materialized view mv_parent (a, cnt, total) refresh fast as select a, count(1), sum(b) from mv_on_mv_base group by a",
+        "create materialized view log on mv_parent (a, cnt)",
+        "create materialized view mv_child (a, parent_cnt, child_cnt) refresh fast as select a, sum(cnt), count(1) from mv_parent group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, parent_cnt, child_cnt from mv_child order by a"), r#"RS:[["1","2","1"],["2","1","1"]]"#);
+
+    let parent = latest_table(&stack, "mv_parent");
+    let child = latest_table(&stack, "mv_child");
+    let parent_mlog = latest_table(&stack, "$mlog$mv_parent");
+    let child_base_ids: Vec<i64> = child.materialized_view.as_ref().unwrap().read().base_table_ids.iter().copied().collect();
+    assert_eq!(child_base_ids, vec![parent.id]);
+    assert!(parent.materialized_view_base.is_some());
+    assert_eq!(mlog_id(&parent), parent_mlog.id);
+    assert_eq!(parent_mlog.materialized_view_log.as_ref().unwrap().read().base_table_id, parent.id);
+    assert!(mview_ids(&parent).contains(&child.id));
+    assert_eq!(dependent_mview_ids(&parent_mlog), vec![child.id]);
+
+    exec_err_contains(&mut tk, "drop materialized view mv_parent", "DROP MATERIALIZED VIEW with materialized view dependencies");
+    exec_err_contains(&mut tk, "drop materialized view log on mv_parent", "dependent materialized views exist");
+
+    must_exec_all(&mut tk, &["drop materialized view mv_child"]);
+    let parent = latest_table(&stack, "mv_parent");
+    let parent_mlog = latest_table(&stack, "$mlog$mv_parent");
+    assert!(mview_ids(&parent).is_empty());
+    assert!(dependent_mview_ids(&parent_mlog).is_empty());
+    assert_eq!(mlog_id(&parent), parent_mlog.id);
+
+    // t.Run("initial_build_rollback")
+    {
+        let _build_err = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr",
+            r#"return("context-canceled")"#,
+        );
+        let answer_text = answer(
+            &mut tk,
+            "create materialized view mv_child_failed (a, parent_cnt, child_cnt) as select a, sum(cnt), count(1) from mv_parent group by a",
+        );
+        assert!(answer_text.starts_with("ERR"), "{answer_text}");
+        assert_eq!(answer(&mut tk, "show tables like 'mv_child_failed'"), "RS:[]");
+        let parent = latest_table(&stack, "mv_parent");
+        let parent_mlog = latest_table(&stack, "$mlog$mv_parent");
+        assert!(mview_ids(&parent).is_empty());
+        assert!(dependent_mview_ids(&parent_mlog).is_empty());
+        assert_eq!(mlog_id(&parent), parent_mlog.id);
+    }
+
+    must_exec_all(&mut tk, &[
+        "drop materialized view log on mv_parent",
+        "drop materialized view mv_parent",
+        "drop materialized view log on mv_on_mv_base",
+        "drop table mv_on_mv_base",
+    ]);
+}
+
+/// Go master `TestMaterializedViewNestedDependencyChain`.
+#[test]
+fn test_materialized_view_nested_dependency_chain() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table mv_dependency_chain_base (a int not null, b int not null)",
+        "insert into mv_dependency_chain_base values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on mv_dependency_chain_base (a, b)",
+        "create materialized view mv_dependency_chain_1 (a, cnt, total) refresh fast as select a, count(1), sum(b) from mv_dependency_chain_base group by a",
+        "create materialized view log on mv_dependency_chain_1 (a, cnt, total)",
+        "create materialized view mv_dependency_chain_2 (a, total, total_cnt, cnt) refresh fast as select a, sum(total), count(total), count(1) from mv_dependency_chain_1 group by a",
+        "create materialized view log on mv_dependency_chain_2 (a, total, total_cnt, cnt)",
+        "create materialized view mv_dependency_chain_3 (a, total, total_cnt, cnt) refresh fast as select a, sum(total), count(total), count(1) from mv_dependency_chain_2 group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, total, cnt from mv_dependency_chain_3 order by a"), r#"RS:[["1","15","1"],["2","7","1"]]"#);
+
+    let base = latest_table(&stack, "mv_dependency_chain_base");
+    let mv1 = latest_table(&stack, "mv_dependency_chain_1");
+    let mv2 = latest_table(&stack, "mv_dependency_chain_2");
+    let mv3 = latest_table(&stack, "mv_dependency_chain_3");
+    let base_ids = |mv: &tidb_model::TableInfo| -> Vec<i64> {
+        mv.materialized_view.as_ref().unwrap().read().base_table_ids.iter().copied().collect()
+    };
+    assert_eq!(base_ids(&mv1), vec![base.id]);
+    assert_eq!(base_ids(&mv2), vec![mv1.id]);
+    assert_eq!(base_ids(&mv3), vec![mv2.id]);
+    assert!(mview_ids(&base).contains(&mv1.id));
+    assert!(mview_ids(&mv1).contains(&mv2.id));
+    assert!(mview_ids(&mv2).contains(&mv3.id));
+
+    exec_err_contains(&mut tk, "drop materialized view mv_dependency_chain_1", "DROP MATERIALIZED VIEW with materialized view dependencies");
+    exec_err_contains(&mut tk, "drop materialized view mv_dependency_chain_2", "DROP MATERIALIZED VIEW with materialized view dependencies");
+
+    must_exec_all(&mut tk, &[
+        "drop materialized view mv_dependency_chain_3",
+        "drop materialized view log on mv_dependency_chain_2",
+        "drop materialized view mv_dependency_chain_2",
+        "drop materialized view log on mv_dependency_chain_1",
+        "drop materialized view mv_dependency_chain_1",
+        "drop materialized view log on mv_dependency_chain_base",
+        "drop table mv_dependency_chain_base",
+    ]);
+}
+
+/// Go master `TestCreateMaterializedViewOnMaterializedViewRequiresTrackedColumns`.
+#[test]
+fn test_create_materialized_view_on_materialized_view_requires_tracked_columns() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table mv_on_mv_missing_log_col_base (a int not null, b int not null)",
+        "insert into mv_on_mv_missing_log_col_base values (1, 10)",
+        "create materialized view log on mv_on_mv_missing_log_col_base (a, b)",
+        "create materialized view mv_parent_missing_log_col (a, cnt) as select a, count(1) from mv_on_mv_missing_log_col_base group by a",
+    ]);
+    exec_err_contains(
+        &mut tk,
+        "create materialized view mv_child_missing_log_col (a, parent_cnt, child_cnt) as select a, sum(cnt), count(1) from mv_parent_missing_log_col group by a",
+        "materialized view log does not exist for source object test.mv_parent_missing_log_col",
+    );
+    must_exec_all(&mut tk, &["create materialized view log on mv_parent_missing_log_col (a)"]);
+    exec_err_contains(
+        &mut tk,
+        "create materialized view mv_child_missing_log_col (a, parent_cnt, child_cnt) as select a, sum(cnt), count(1) from mv_parent_missing_log_col group by a",
+        "materialized view log does not contain column cnt",
+    );
 }

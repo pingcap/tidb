@@ -4,7 +4,7 @@
 ["use e29", "OK"]
 ["create table t (id int primary key, g int not null, h int, v int, w decimal(10,2) not null, s varchar(10), d date, key kg (g, h))", "OK"]
 ["insert into t values (1, 1, 1, 10, 1.5, 'a', '2020-01-01'), (2, 1, 1, 20, 2.5, 'b', '2020-01-02'), (3, 2, null, null, 3.5, 'c', null)", "OK"]
-["create materialized view mv0 (g, c) as select g, count(*) from t group by g", "ERR 1105 materialized view log does not exist for base table e29.t"]
+["create materialized view mv0 (g, c) as select g, count(*) from t group by g", "ERR 1105 materialized view log does not exist for source object e29.t"]
 ["create materialized view log on t (g, h, v, w, s, d)", "OK"]
 ["create materialized view mv4 (h, c, mx) as select h, count(*), max(v) from t group by h", "ERR 8200 CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns"]
 ["create materialized view mv5 (g, c, sv) as select g, count(*), sum(v) from t group by g", "ERR 8200 CREATE MATERIALIZED VIEW SUM on nullable column v requires matching COUNT(v) in SELECT list"]

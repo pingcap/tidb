@@ -917,7 +917,7 @@ impl Session {
             // Go `checkFastRefreshMLogIntegrity`, on the history session so it
             // sees the latest committed purge state.
             let mlog_retained_lower_tso = if fast {
-                check_fast_refresh_mlog_integrity(&mut hist, &latest, schema, info, locked.last_success_read_tso)?
+                check_fast_refresh_mlog_integrity(&mut hist, &latest, info, locked.last_success_read_tso)?
             } else {
                 0
             };
@@ -1620,41 +1620,30 @@ fn read_latest_hazardous_mlog_purge_cutoff_tso(session: &mut Session, mlog_id: i
     Ok(rows.first().and_then(|row| row.first()).and_then(datum_u64))
 }
 
+/// Go master `resolveRefreshMaterializedViewLogInfo`: the source's log, from
+/// the planner's FAST source resolution.
+fn resolve_refresh_materialized_view_log_info(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    info: &tidb_model::TableInfo,
+) -> Result<i64, DriverError> {
+    let table_by_id = |id: i64| catalog.table_info_by_id(id).map(|table| table.read().clone());
+    tidb_planner::mview::resolve_fast_refresh_source(info, &table_by_id)
+        .map(|source| source.mlog_table_id)
+        .map_err(|error| plain(format!("refresh materialized view fast: {error}")))
+}
+
 /// Go master `checkFastRefreshMLogIntegrity` (with
 /// `resolveRefreshMaterializedViewLogInfo`): the log may not have been purged
 /// past the last successful read TSO; answers the retained lower TSO.
 pub(crate) fn check_fast_refresh_mlog_integrity(
     session: &mut Session,
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    schema: &str,
     info: &tidb_model::TableInfo,
     last_success_read_tso: u64,
 ) -> Result<u64, DriverError> {
-    let Some(mview) = info.materialized_view.as_ref().map(|mview| mview.read().clone()) else {
-        return Err(plain("refresh materialized view: target is not a materialized view"));
-    };
-    if mview.base_table_ids.len() != 1 {
-        return Err(plain("refresh materialized view: fast refresh requires exactly one base table"));
-    }
-    let base_id = mview.base_table_ids[0];
-    let Some(base) = catalog.table_info_by_id(base_id) else {
-        return Err(plain(format!(
-            "refresh materialized view: cannot resolve base table {base_id} for materialized view {schema}.{}",
-            info.name.original()
-        )));
-    };
-    let base = base.read().clone();
-    let Some(base_meta) = base.materialized_view_base.as_ref().map(|meta| meta.read().clone()) else {
-        return Err(plain(format!("refresh materialized view: base table {base_id} is missing materialized view base metadata")));
-    };
-    if base_meta.mlog_id == 0 {
-        return Err(plain(format!(
-            "refresh materialized view: materialized view log does not exist for base table {schema}.{}",
-            base.name.original()
-        )));
-    }
-    let last_purged = read_mlog_purge_info_last_purged_tso(session, base_meta.mlog_id)?;
-    let hazard_cutoff = read_latest_hazardous_mlog_purge_cutoff_tso(session, base_meta.mlog_id)?;
+    let mlog_id = resolve_refresh_materialized_view_log_info(catalog, info)?;
+    let last_purged = read_mlog_purge_info_last_purged_tso(session, mlog_id)?;
+    let hazard_cutoff = read_latest_hazardous_mlog_purge_cutoff_tso(session, mlog_id)?;
     let hazard_fence = last_purged.unwrap_or(0).max(hazard_cutoff.unwrap_or(0));
     if hazard_fence > last_success_read_tso {
         return Err(plain(format!(

@@ -399,7 +399,7 @@ impl Session {
             }
             // Go `buildFastMergePlanRows`.
             RefreshMaterializedViewMode::Fast => {
-                fast_rows = self.build_fast_merge_plan_rows(s, &schema, &info)?;
+                fast_rows = self.build_fast_merge_plan_rows(s, &info)?;
             }
         }
 
@@ -448,7 +448,6 @@ impl Session {
     fn build_fast_merge_plan_rows(
         &mut self,
         s: &RefreshMaterializedViewStmt,
-        schema: &str,
         info: &tidb_model::TableInfo,
     ) -> Result<Vec<Vec<String>>, DriverError> {
         let target = match &s.as_of {
@@ -485,7 +484,6 @@ impl Session {
         window.mlog_retained_lower_tso = crate::mview_refresh::check_fast_refresh_mlog_integrity(
             &mut validation,
             &self.refresh_latest_info_schema(),
-            schema,
             info,
             last,
         )?;

@@ -159,6 +159,125 @@ fn field_type_for_mv_related_column(
     field_type
 }
 
+/// Go master `maxMaterializedViewNestingDepth`.
+const MAX_MATERIALIZED_VIEW_NESTING_DEPTH: usize = 16;
+
+/// Go master `validateMaterializedViewNestingDepth`: the longest source chain,
+/// counting the new view as depth 1. "The depth budget also bounds traversal
+/// of cyclic metadata."
+pub(crate) fn validate_materialized_view_nesting_depth<E>(
+    source: &TableInfo,
+    get_table: &mut dyn FnMut(i64) -> Result<TableInfo, E>,
+    depth_exceeded: &dyn Fn() -> E,
+) -> Result<(), E> {
+    fn source_depth<E>(
+        table: &TableInfo,
+        remaining_depth: usize,
+        depths: &mut std::collections::HashMap<i64, usize>,
+        get_table: &mut dyn FnMut(i64) -> Result<TableInfo, E>,
+        depth_exceeded: &dyn Fn() -> E,
+    ) -> Result<usize, E> {
+        let Some(info) = table.materialized_view.as_ref() else {
+            return Ok(0);
+        };
+        let cached_depth = depths.get(&table.id).copied().unwrap_or(0);
+        if remaining_depth == 0 || cached_depth > remaining_depth {
+            return Err(depth_exceeded());
+        }
+        if cached_depth > 0 {
+            return Ok(cached_depth);
+        }
+        let base_table_ids: Vec<i64> = info.read().base_table_ids.iter().copied().collect();
+        let mut depth = 1;
+        for base_table_id in base_table_ids {
+            let base_table = get_table(base_table_id)?;
+            let base_depth = source_depth(&base_table, remaining_depth - 1, depths, get_table, depth_exceeded)?;
+            depth = depth.max(base_depth + 1);
+        }
+        depths.insert(table.id, depth);
+        Ok(depth)
+    }
+    source_depth(source, MAX_MATERIALIZED_VIEW_NESTING_DEPTH - 1, &mut std::collections::HashMap::new(), get_table, depth_exceeded)
+        .map(|_| ())
+}
+
+/// Go master's nesting-depth error.
+pub(crate) fn materialized_view_nesting_depth_exceeded() -> tidb_terror::MysqlError {
+    tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack(format!(
+        "materialized view nesting depth exceeds maximum of {MAX_MATERIALIZED_VIEW_NESTING_DEPTH}"
+    )))
+}
+
+/// Go master `validateMaterializedViewSourceState`: "Public physical tables
+/// and ready MVs are valid sources; protected MV auxiliary tables and SQL
+/// views are not."
+pub(crate) fn validate_materialized_view_source_state(
+    schema_name: &str,
+    source: &TableInfo,
+) -> Result<(), tidb_terror::MysqlError> {
+    if source.is_view()
+        || source.is_sequence()
+        || source.temp_table_type != tidb_model::TempTableType::NONE
+        || source.materialized_view_shadow.is_some()
+        || source.materialized_view_log.is_some()
+    {
+        return Err(tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
+            schema_name.to_owned().into(),
+            source.name.original().to_owned().into(),
+            "BASE TABLE".into(),
+        ])));
+    }
+    if source.state != SchemaState::PUBLIC {
+        return Err(tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack(format!(
+            "source object {} is not in public, but {}",
+            source.name.original(),
+            source.state
+        ))));
+    }
+    if source.get_partition_info().is_some() {
+        return Err(unsupported("CREATE MATERIALIZED VIEW on partition table".to_owned()));
+    }
+    if let Some(info) = &source.materialized_view {
+        let state = tidb_model::table::MaterializedViewInfo::get_init_build_state(Some(&info.read()));
+        if !state.is_ready() {
+            return Err(invalid_ddl_job(
+                state.access_error_message(&format!("{schema_name}.{}", source.name.original())),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Go master `validateMaterializedViewSourceMLog`.
+pub(crate) fn validate_materialized_view_source_mlog(
+    schema_name: &str,
+    source: &TableInfo,
+    mlog: &TableInfo,
+) -> Result<(), tidb_terror::MysqlError> {
+    let mlog_id = source.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+    if mlog_id == 0 {
+        return Err(tidb_terror::MysqlError::unknown(format!(
+            "materialized view log does not exist for source object {schema_name}.{}",
+            source.name.original()
+        )));
+    }
+    if mlog.id != mlog_id || mlog.materialized_view_log.as_ref().is_none_or(|log| log.read().base_table_id != source.id) {
+        return Err(tidb_terror::MysqlError::unknown(format!(
+            "table {} is not a materialized view log for source object {schema_name}.{}",
+            mlog.name.original(),
+            source.name.original()
+        )));
+    }
+    if mlog.state != SchemaState::PUBLIC {
+        return Err(tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack(format!(
+            "materialized view log {} is not in public, but {}",
+            mlog.name.original(),
+            mlog.state
+        ))));
+    }
+    Ok(())
+}
+
 fn invalid_ddl_job(message: impl Into<String>) -> tidb_terror::MysqlError {
     tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.into().into()]))
 }
@@ -1395,29 +1514,12 @@ fn on_create_materialized_view_base_check(
     schema_name: &str,
 ) -> Result<TableInfo, DdlPlanError> {
     let base = get_table_info(txn, base_id, schema_id)?;
-    if base.is_view()
-        || base.is_sequence()
-        || base.temp_table_type != tidb_model::TempTableType::NONE
-        || base.materialized_view.is_some()
-    {
-        return Err(DdlPlanError::from(tidb_dbterror::ERR_WRONG_OBJECT.gen_with_stack_by_args(&[
-            schema_name.to_owned().into(),
-            base.name.original().to_owned().into(),
-            "BASE TABLE".into(),
-        ])));
-    }
-    if base.get_partition_info().is_some() {
-        return Err(err_unsupported_materialized_view_on_partition_table("CREATE MATERIALIZED VIEW"));
-    }
-    let invalid_state = |state: SchemaState| {
-        DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
-            FormatArg::from("table"),
-            FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
-        ]))
-    };
-    if base.state != SchemaState::PUBLIC {
-        return Err(invalid_state(base.state));
-    }
+    validate_materialized_view_source_state(schema_name, &base).map_err(DdlPlanError::from_mysql_error)?;
+    validate_materialized_view_nesting_depth(
+        &base,
+        &mut |table_id| get_table_info(txn, table_id, schema_id),
+        &|| DdlPlanError::from_mysql_error(materialized_view_nesting_depth_exceeded()),
+    )?;
     let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
     if mlog_id == 0 {
         return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
@@ -1425,13 +1527,13 @@ fn on_create_materialized_view_base_check(
         )));
     }
     let mlog = get_table_info(txn, mlog_id, schema_id)?;
-    if mlog.materialized_view_log.as_ref().is_none_or(|log| log.read().base_table_id != base.id) {
-        return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
-            "create materialized view: invalid materialized view log metadata",
+    if let Err(error) = validate_materialized_view_source_mlog(schema_name, &base, &mlog) {
+        return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::from_terror(
+            &tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack(format!(
+                "create materialized view: invalid materialized view log metadata: {}",
+                error.message
+            )),
         )));
-    }
-    if mlog.state != SchemaState::PUBLIC {
-        return Err(invalid_state(mlog.state));
     }
     Ok(base)
 }
