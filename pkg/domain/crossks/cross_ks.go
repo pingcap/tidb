@@ -64,7 +64,6 @@ type runtimeEntry struct {
 	sessMgr       *SessionManager
 	activeHolders map[string]struct{}
 	lastReleaseAt time.Time
-	closeOnIdle   bool
 	// A non-nil closeDone means teardown has been claimed. Keep the entry
 	// discoverable until teardown finishes so in-flight session factories can
 	// still access its store, schema cache, and global variables.
@@ -140,27 +139,15 @@ func (m *Manager) Acquire(
 	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (sqlsvrapi.KSRuntimeHandle, error) {
-	return m.acquire(context.Background(), ks, holderID, ksSessFactoryGetter, false)
+	return m.AcquireWithContext(context.Background(), ks, holderID, ksSessFactoryGetter)
 }
 
-// AcquireTransient acquires a runtime whose release requests immediate cleanup
-// once its final holder releases it. Ordinary holders sharing this runtime also
-// honor that cleanup request. Waiting for an earlier teardown is cancelable.
-func (m *Manager) AcquireTransient(
+// AcquireWithContext allows cancellation while waiting for a closing runtime.
+func (m *Manager) AcquireWithContext(
 	ctx context.Context,
 	ks string,
 	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
-) (sqlsvrapi.KSRuntimeHandle, error) {
-	return m.acquire(ctx, ks, holderID, ksSessFactoryGetter, true)
-}
-
-func (m *Manager) acquire(
-	ctx context.Context,
-	ks string,
-	holderID string,
-	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
-	transient bool,
 ) (sqlsvrapi.KSRuntimeHandle, error) {
 	if holderID == "" {
 		return nil, errors.New("cross keyspace runtime holderID must not be empty")
@@ -169,10 +156,10 @@ func (m *Manager) acquire(
 		return nil, err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		m.mu.Lock()
 		if err := ctx.Err(); err != nil {
 			m.mu.Unlock()
@@ -182,43 +169,42 @@ func (m *Manager) acquire(
 			m.mu.Unlock()
 			return nil, errors.New("cross keyspace runtime manager is closed")
 		}
-		entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
-		if err != nil {
-			m.mu.Unlock()
-			return nil, err
+		entry := m.runtimes[ks]
+		if entry == nil || entry.closeDone == nil {
+			break
 		}
-		if entry.closeDone != nil {
-			closeDone := entry.closeDone
-			m.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-closeDone:
-				continue
-			}
+		done := entry.closeDone
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-done:
 		}
-		if _, ok := entry.activeHolders[holderID]; ok {
-			logutil.BgLogger().Warn("cross keyspace runtime already acquired",
-				zap.String("targetKS", ks),
-				zap.String("holderID", holderID),
-				zap.Int("activeHolderCount", len(entry.activeHolders)))
-			m.mu.Unlock()
-			return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
-		}
-		entry.activeHolders[holderID] = struct{}{}
-		logutil.BgLogger().Info("acquire cross keyspace runtime",
+	}
+	defer m.mu.Unlock()
+
+	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := entry.activeHolders[holderID]; ok {
+		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
 			zap.String("targetKS", ks),
 			zap.String("holderID", holderID),
 			zap.Int("activeHolderCount", len(entry.activeHolders)))
-		m.mu.Unlock()
-		return &runtimeHandle{
-			manager:   m,
-			targetKS:  ks,
-			holderID:  holderID,
-			entry:     entry,
-			transient: transient,
-		}, nil
+		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
 	}
+	entry.activeHolders[holderID] = struct{}{}
+	logutil.BgLogger().Info("acquire cross keyspace runtime",
+		zap.String("targetKS", ks),
+		zap.String("holderID", holderID),
+		zap.Int("activeHolderCount", len(entry.activeHolders)))
+	return &runtimeHandle{
+		manager:  m,
+		targetKS: ks,
+		holderID: holderID,
+		entry:    entry,
+	}, nil
 }
 
 func (m *Manager) validateTargetKS(ks string) error {
@@ -424,31 +410,30 @@ func (*Manager) createSessionManager(
 	return mgr, nil
 }
 
-// release releases only the entry acquired by this handle, so a stale handle
-// cannot remove a holder from a replacement runtime with the same keyspace.
-func (m *Manager) release(targetKS, holderID string, expected *runtimeEntry, transient bool) {
+func (m *Manager) release(h *runtimeHandle, closeIfIdle bool) {
 	m.mu.Lock()
-	entry, ok := m.runtimes[targetKS]
-	if !ok || entry != expected {
+	entry := m.runtimes[h.targetKS]
+	if entry != h.entry {
+		// A replacement runtime may have reused the same holder ID.
 		m.mu.Unlock()
 		return
 	}
-	delete(entry.activeHolders, holderID)
-	entry.closeOnIdle = entry.closeOnIdle || transient
-	closeNow := false
-	if len(entry.activeHolders) == 0 {
+	delete(entry.activeHolders, h.holderID)
+	idle := len(entry.activeHolders) == 0
+	if idle {
 		entry.lastReleaseAt = time.Now()
-		if entry.closeOnIdle {
-			closeNow = m.claimCloseWithoutLock(entry)
-		}
 	}
+	closeNow := idle && closeIfIdle
+	claimed := closeNow && m.claimCloseWithoutLock(entry)
 	logutil.BgLogger().Info("release cross keyspace runtime",
-		zap.String("targetKS", targetKS),
-		zap.String("holderID", holderID),
+		zap.String("targetKS", h.targetKS),
+		zap.String("holderID", h.holderID),
 		zap.Int("activeHolderCount", len(entry.activeHolders)))
 	m.mu.Unlock()
-	if closeNow {
-		m.finishClose(targetKS, entry)
+	if claimed {
+		m.finishClose(h.targetKS, entry)
+	} else if closeNow {
+		<-entry.closeDone
 	}
 }
 
@@ -528,28 +513,19 @@ func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
 
 // Close closes all session managers and their associated resources.
 func (m *Manager) Close() {
-	type closingRuntime struct {
-		targetKS string
-		entry    *runtimeEntry
-		claimed  bool
-	}
 	m.mu.Lock()
 	m.closed = true
-	closing := make([]closingRuntime, 0, len(m.runtimes))
-	for targetKS, entry := range m.runtimes {
-		closing = append(closing, closingRuntime{
-			targetKS: targetKS,
-			entry:    entry,
-			claimed:  m.claimCloseWithoutLock(entry),
-		})
-	}
+	runtimes := maps.Clone(m.runtimes)
 	m.mu.Unlock()
 
-	for _, item := range closing {
-		if item.claimed {
-			m.finishClose(item.targetKS, item.entry)
+	for ks, entry := range runtimes {
+		m.mu.Lock()
+		claimed := m.claimCloseWithoutLock(entry)
+		m.mu.Unlock()
+		if claimed {
+			m.finishClose(ks, entry)
 		} else {
-			<-item.entry.closeDone
+			<-entry.closeDone
 		}
 	}
 }
@@ -566,7 +542,6 @@ type runtimeHandle struct {
 	targetKS    string
 	holderID    string
 	entry       *runtimeEntry
-	transient   bool
 	releaseOnce sync.Once
 }
 
@@ -582,9 +557,9 @@ func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTa
 	return h.entry.sessMgr.alterTableMode(ctx, target)
 }
 
-func (h *runtimeHandle) Release() {
+func (h *runtimeHandle) Release(closeIfIdle bool) {
 	h.releaseOnce.Do(func() {
-		h.manager.release(h.targetKS, h.holderID, h.entry, h.transient)
+		h.manager.release(h, closeIfIdle)
 	})
 }
 

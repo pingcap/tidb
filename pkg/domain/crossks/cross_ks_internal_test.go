@@ -151,15 +151,15 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		require.Contains(t, entry.activeHolders, "holder-1")
 		require.Contains(t, entry.activeHolders, "holder-2")
 
-		first.Release()
-		first.Release()
+		first.Release(false)
+		first.Release(false)
 		require.NotContains(t, entry.activeHolders, "holder-1")
 		require.Contains(t, entry.activeHolders, "holder-2")
 		require.True(t, entry.lastReleaseAt.IsZero())
 		require.Zero(t, sessPool.closeCount)
 
-		second.Release()
-		second.Release()
+		second.Release(false)
+		second.Release(false)
 		require.Empty(t, entry.activeHolders)
 		require.False(t, entry.lastReleaseAt.IsZero())
 		require.Zero(t, sessPool.closeCount)
@@ -168,7 +168,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, entry.activeHolders, "holder-1")
 		require.Zero(t, sessPool.closeCount)
-		reacquired.Release()
+		reacquired.Release(false)
 	})
 
 	t.Run("concurrently tracks holder IDs for a new runtime", func(t *testing.T) {
@@ -201,7 +201,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		const duplicateHolder = "holder-duplicate"
 		type acquireResult struct {
 			holderID string
-			handle   interface{ Release() }
+			handle   sqlsvrapi.KSRuntimeHandle
 			err      error
 		}
 		startCh := make(chan struct{})
@@ -224,7 +224,7 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		close(startCh)
 
 		successByHolder := make(map[string]int, len(uniqueHolderIDs)+1)
-		successfulHandles := make([]interface{ Release() }, 0, len(uniqueHolderIDs)+1)
+		successfulHandles := make([]sqlsvrapi.KSRuntimeHandle, 0, len(uniqueHolderIDs)+1)
 		duplicateErrorCount := 0
 		for range len(uniqueHolderIDs) + duplicateAttempts {
 			result := <-resultCh
@@ -260,8 +260,8 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 			h := handle
 			go func() {
 				<-releaseStartCh
-				h.Release()
-				h.Release()
+				h.Release(false)
+				h.Release(false)
 				releaseDoneCh <- struct{}{}
 			}()
 		}
@@ -290,7 +290,7 @@ func TestEvictRuntime(t *testing.T) {
 		second, err := mgr.Acquire(targetKS, "holder-2", factoryGetter)
 		require.NoError(t, err)
 
-		first.Release()
+		first.Release(false)
 		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
 		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
 
@@ -298,7 +298,7 @@ func TestEvictRuntime(t *testing.T) {
 		require.True(t, ok)
 		require.Contains(t, entry.activeHolders, "holder-2")
 		require.Zero(t, sessPool.closeCount)
-		second.Release()
+		second.Release(false)
 	})
 
 	t.Run("closes idle entry outside manager lock", func(t *testing.T) {
@@ -312,7 +312,7 @@ func TestEvictRuntime(t *testing.T) {
 
 		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
 		require.NoError(t, err)
-		handle.Release()
+		handle.Release(false)
 		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
 
 		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
@@ -341,7 +341,7 @@ func TestEvictRuntime(t *testing.T) {
 
 		handle, err := mgr.Acquire(targetKS, "holder-1", factoryGetter)
 		require.NoError(t, err)
-		handle.Release()
+		handle.Release(false)
 		entry.lastReleaseAt = time.Now().Add(-crossKSRuntimeIdleTimeout - time.Second)
 
 		mgr.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
@@ -352,7 +352,7 @@ func TestEvictRuntime(t *testing.T) {
 		require.NoError(t, err)
 		require.NotSame(t, oldStore, reacquired.Store())
 		require.Equal(t, 1, createCount)
-		reacquired.Release()
+		reacquired.Release(false)
 	})
 }
 
@@ -432,13 +432,13 @@ func (ctx *observedRuntimeLockContext) Err() error {
 	return err
 }
 
-func TestTransientRuntimeLifecycle(t *testing.T) {
+func TestEagerRuntimeRelease(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
 	}
 
 	t.Run("cancellation while waiting for mutex does not create runtime", func(t *testing.T) {
-		ks := "ks-transient-cancel-mutex"
+		ks := "ks-release-cancel-mutex"
 		mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
 		t.Cleanup(mgr.Close)
 		created := false
@@ -459,7 +459,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		done := make(chan result, 1)
 		mgr.mu.Lock()
 		go func() {
-			handle, err := mgr.AcquireTransient(observed, ks, "canceled", unusedRuntimeHandleFactoryGetter(t))
+			handle, err := mgr.AcquireWithContext(observed, ks, "canceled", unusedRuntimeHandleFactoryGetter(t))
 			done <- result{handle: handle, err: err}
 		}()
 		<-observed.checked
@@ -467,7 +467,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		mgr.mu.Unlock()
 		acquired := <-done
 		if acquired.handle != nil {
-			acquired.handle.Release()
+			acquired.handle.Release(true)
 		}
 		require.ErrorIs(t, acquired.err, context.Canceled)
 		require.Nil(t, acquired.handle)
@@ -475,12 +475,14 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 	})
 
 	t.Run("final release closes immediately and once", func(t *testing.T) {
-		ks := "ks-transient-release"
+		ks := "ks-release-release"
 		mgr, _, store, pool := newRuntimeHandleTestManager(t, ks)
-		handle, err := mgr.AcquireTransient(context.Background(), ks, "transient", unusedRuntimeHandleFactoryGetter(t))
+		handle, err := mgr.Acquire(ks, "job-check", unusedRuntimeHandleFactoryGetter(t))
 		require.NoError(t, err)
-		handle.Release()
-		handle.Release()
+		handle.Release(true)
+		require.Empty(t, mgr.GetAllKeyspace())
+		require.Equal(t, 1, store.closeCount)
+		handle.Release(false)
 		mgr.sweepIdleRuntimes(0)
 		mgr.Close()
 		require.Empty(t, mgr.GetAllKeyspace())
@@ -488,27 +490,27 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		require.Equal(t, 1, store.closeCount)
 	})
 
-	t.Run("ordinary final holder honors transient cleanup", func(t *testing.T) {
-		ks := "ks-transient-mixed"
+	t.Run("eager release leaves a shared runtime available for reuse", func(t *testing.T) {
+		ks := "ks-release-mixed"
 		mgr, _, store, pool := newRuntimeHandleTestManager(t, ks)
 		factory := unusedRuntimeHandleFactoryGetter(t)
 		ordinary, err := mgr.Acquire(ks, "ordinary", factory)
 		require.NoError(t, err)
-		transient, err := mgr.AcquireTransient(context.Background(), ks, "transient", factory)
+		check, err := mgr.AcquireWithContext(context.Background(), ks, "job-check", factory)
 		require.NoError(t, err)
-		transient.Release()
+		check.Release(true)
 		require.Zero(t, pool.closeCount)
-		ordinary.Release()
-		require.Equal(t, 1, pool.closeCount)
-		require.Equal(t, 1, store.closeCount)
-		require.Empty(t, mgr.GetAllKeyspace())
+		ordinary.Release(false)
+		require.Contains(t, mgr.GetAllKeyspace(), ks)
+		require.Zero(t, pool.closeCount)
+		require.Zero(t, store.closeCount)
 	})
 
 	t.Run("reacquire waits until store closed and raw access remains available", func(t *testing.T) {
-		ks := "ks-transient-reacquire"
+		ks := "ks-release-reacquire"
 		mgr, entry, store, pool := newRuntimeHandleTestManager(t, ks)
 		factory := unusedRuntimeHandleFactoryGetter(t)
-		handle, err := mgr.AcquireTransient(context.Background(), ks, "transient", factory)
+		handle, err := mgr.AcquireWithContext(context.Background(), ks, "job-check", factory)
 		require.NoError(t, err)
 		closing := make(chan struct{})
 		finishClose := make(chan struct{})
@@ -529,7 +531,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 			require.Same(t, entry.sessMgr, raw)
 		}
 		released := make(chan struct{})
-		go func() { handle.Release(); close(released) }()
+		go func() { handle.Release(true); close(released) }()
 		<-closing
 		raw, err := mgr.GetOrCreate(ks, factory)
 		require.NoError(t, err)
@@ -540,7 +542,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		observed := &observedRuntimeContext{Context: ctx, waiting: make(chan struct{})}
 		cancelledResult := make(chan error, 1)
 		go func() {
-			cancelled, acquireErr := mgr.AcquireTransient(observed, ks, "cancelled", factory)
+			cancelled, acquireErr := mgr.AcquireWithContext(observed, ks, "cancelled", factory)
 			if cancelled != nil {
 				t.Error("canceled acquire returned a handle")
 			}
@@ -563,10 +565,10 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 					return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil
 				}
 			})
-		acquired := make(chan interface{ Release() }, 1)
+		acquired := make(chan sqlsvrapi.KSRuntimeHandle, 1)
 		observedAcquire := &observedRuntimeContext{Context: context.Background(), waiting: make(chan struct{})}
 		go func() {
-			next, acquireErr := mgr.AcquireTransient(observedAcquire, ks, "next", factory)
+			next, acquireErr := mgr.AcquireWithContext(observedAcquire, ks, "next", factory)
 			if acquireErr != nil {
 				t.Error(acquireErr)
 			}
@@ -582,15 +584,15 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		<-released
 		next := <-acquired
 		require.NotNil(t, next)
-		next.Release()
+		next.Release(false)
 		require.Equal(t, 1, store.closeCount)
 	})
 
 	t.Run("stale release cannot remove a replacement holder", func(t *testing.T) {
-		ks := "ks-transient-stale-release"
+		ks := "ks-release-stale-release"
 		mgr, _, _, _ := newRuntimeHandleTestManager(t, ks)
 		factory := unusedRuntimeHandleFactoryGetter(t)
-		oldHandle, err := mgr.AcquireTransient(context.Background(), ks, "same-holder", factory)
+		oldHandle, err := mgr.AcquireWithContext(context.Background(), ks, "same-holder", factory)
 		require.NoError(t, err)
 		mgr.CloseKS(ks)
 		newPool := &runtimeHandleTestSessPool{}
@@ -602,16 +604,16 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 			})
 		newHandle, err := mgr.Acquire(ks, "same-holder", factory)
 		require.NoError(t, err)
-		oldHandle.Release()
+		oldHandle.Release(true)
 		require.Contains(t, mgr.runtimes[ks].activeHolders, "same-holder")
 		require.Zero(t, newPool.closeCount)
-		newHandle.Release()
+		newHandle.Release(false)
 	})
 
 	t.Run("release GC and repeated shutdown close once without holding mutex", func(t *testing.T) {
-		ks := "ks-transient-shutdown"
+		ks := "ks-release-shutdown"
 		mgr, _, store, pool := newRuntimeHandleTestManager(t, ks)
-		handle, err := mgr.AcquireTransient(context.Background(), ks, "transient", unusedRuntimeHandleFactoryGetter(t))
+		handle, err := mgr.Acquire(ks, "job-check", unusedRuntimeHandleFactoryGetter(t))
 		require.NoError(t, err)
 		closing := make(chan struct{})
 		finishClose := make(chan struct{})
@@ -624,7 +626,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 			<-finishClose
 		}
 		done := make(chan struct{}, 4)
-		go func() { handle.Release(); done <- struct{}{} }()
+		go func() { handle.Release(true); done <- struct{}{} }()
 		<-closing
 		go func() { mgr.sweepIdleRuntimes(0); done <- struct{}{} }()
 		go func() { mgr.Close(); done <- struct{}{} }()
@@ -636,7 +638,7 @@ func TestTransientRuntimeLifecycle(t *testing.T) {
 		require.Equal(t, 1, pool.closeCount)
 		require.Equal(t, 1, store.closeCount)
 		require.Empty(t, mgr.GetAllKeyspace())
-		handle, err = mgr.AcquireTransient(context.Background(), ks, "after-close", unusedRuntimeHandleFactoryGetter(t))
+		handle, err = mgr.AcquireWithContext(context.Background(), ks, "after-close", unusedRuntimeHandleFactoryGetter(t))
 		require.Nil(t, handle)
 		require.ErrorContains(t, err, "closed")
 		ordinary, err := mgr.Acquire(ks, "after-close", unusedRuntimeHandleFactoryGetter(t))

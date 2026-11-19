@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/naming"
 )
 
+const maxActiveJobsKeyspacesPerRequest = 1000
+
 type keyspaceJobCounts struct {
 	DDLJobs    int64 `json:"ddl_jobs"`
 	ImportJobs int64 `json:"import_jobs"`
@@ -81,6 +83,10 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	}
 	if len(input.Keyspaces) == 0 {
 		handler.WriteError(w, errors.New("keyspaces must not be empty"))
+		return
+	}
+	if len(input.Keyspaces) > maxActiveJobsKeyspacesPerRequest {
+		handler.WriteError(w, errors.Errorf("keyspaces must contain at most %d entries", maxActiveJobsKeyspacesPerRequest))
 		return
 	}
 	results := make([]keyspaceJobResult, 0, len(input.Keyspaces))
@@ -140,13 +146,13 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 		if domErr != nil {
 			return keyspaceJobCounts{}, domErr
 		}
-		acquire = dom.AcquireTransientKSRuntime
+		acquire = dom.AcquireKSRuntimeWithContext
 	}
 	runtime, err := acquire(ctx, targetKS, "http/active-jobs/"+uuid.NewString())
 	if err != nil {
 		return keyspaceJobCounts{}, err
 	}
-	defer runtime.Release()
+	defer runtime.Release(true)
 	pool := runtime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {

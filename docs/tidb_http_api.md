@@ -1381,7 +1381,7 @@ Send a JSON object with these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `keyspaces` | Required nonempty array of valid user-keyspace names. `SYSTEM` is not accepted. Duplicate names are checked once, in first-occurrence order. |
+| `keyspaces` | Required array of 1 to 1,000 valid user-keyspace names. Duplicates count toward the limit and are checked once, in first-occurrence order. `SYSTEM` is not accepted. |
 | `concurrency` | Optional integer limiting simultaneous keyspace checks. Defaults to 1. Values below 1 become 1; values above the process's usable CPU count become that CPU count. |
 
 ```shell
@@ -1404,7 +1404,9 @@ Example HTTP 200 response:
 Each successful result includes both counts, including zeros. An unsuccessful
 result contains `error` and omits both counts; successful results from other
 keyspaces are preserved. Results follow the input order after deduplication.
-Malformed requests return HTTP 400. Methods other than POST return HTTP 405.
+Split lists longer than 1,000 entries across requests. Oversized or malformed
+requests return HTTP 400 before any keyspace is checked. Methods other than
+POST return HTTP 405.
 
 DDL counts include queued, running, pausing, paused, cancelling, and
 rolling-back jobs. Done, synced, cancelled, and rollback-done jobs are excluded,
@@ -1414,9 +1416,10 @@ DXF task keeps its import job active. Finished, failed, and cancelled imports ar
 excluded. Counts are observations made during the request, not a cluster-wide
 atomic snapshot.
 
-SQL queries and waits for a closing runtime honor request cancellation and a
-10-second timeout. Runtime/session initialization and teardown use their existing
-internal timeouts, so a response can take longer. Borrowed sessions are returned
-before releasing their cross-keyspace runtime. An idle runtime is closed after
-the check; if other holders still use it, closure waits until the final holder
-releases it. This cleanup also applies to failed checks.
+SQL queries and waits for a closing runtime honor request cancellation and share
+one 10-second deadline across the batch. Runtime/session initialization and
+teardown use their existing internal timeouts, so a response can take longer.
+After each check, including a failed check, the handler returns or destroys
+the borrowed session and releases its runtime handle. If it was the last holder,
+the handler closes the runtime immediately. Other holders can continue using
+the shared runtime and release it under their usual policy.

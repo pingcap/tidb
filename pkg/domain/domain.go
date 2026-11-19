@@ -324,17 +324,12 @@ func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
 
 // AcquireKSRuntime implements the sqlsvrapi.Server interface.
 func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
-	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return hdl, nil
+	return do.AcquireKSRuntimeWithContext(context.Background(), targetKS, holderID)
 }
 
-// AcquireTransientKSRuntime acquires a cross-keyspace runtime whose final
-// release closes its resources immediately after all holders finish.
-func (do *Domain) AcquireTransientKSRuntime(ctx context.Context, targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
-	hdl, err := do.crossKSSessMgr.AcquireTransient(ctx, targetKS, holderID, do.crossKSSessFactoryGetter)
+// AcquireKSRuntimeWithContext allows cancellation while waiting for a closing runtime.
+func (do *Domain) AcquireKSRuntimeWithContext(ctx context.Context, targetKS, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.AcquireWithContext(ctx, targetKS, holderID, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

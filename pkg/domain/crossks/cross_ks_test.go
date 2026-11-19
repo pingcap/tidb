@@ -419,7 +419,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	}
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
-	defer cluster.Terminate(t)
+	t.Cleanup(func() { cluster.Terminate(t) })
 	keyspaceIDs := map[string]uint32{
 		keyspace.System:     1,
 		"ks-runtime-domain": 2,
@@ -476,7 +476,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	handle, err := sysKSDom.AcquireKSRuntime(targetKS, "test/domain-runtime-handle")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		handle.Release()
+		handle.Release(false)
 		ksMgr := sysKSDom.GetCrossKSMgr()
 		ksMgr.CloseKS(targetKS)
 	})
@@ -585,13 +585,13 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 	})
-	t.Run("transient checks clean up after the final shared holder", func(t *testing.T) {
+	t.Run("job check and ordinary holder share a runtime", func(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-		transient, err := sysKSDom.AcquireTransientKSRuntime(ctx, targetKS, "test/transient-job-check")
+		check, err := sysKSDom.AcquireKSRuntimeWithContext(ctx, targetKS, "test/job-check")
 		require.NoError(t, err)
-		defer transient.Release()
-		require.Same(t, handle.SysSessionPool(), transient.SysSessionPool())
-		mgr := storage.NewTaskManager(transient.SysSessionPool())
+		defer check.Release(true)
+		require.Same(t, handle.SysSessionPool(), check.SysSessionPool())
+		mgr := storage.NewTaskManager(check.SysSessionPool())
 		for _, sql := range []string{
 			"select count(1) from mysql.tidb_ddl_job",
 			"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')",
@@ -600,12 +600,12 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
 		}
-		transient.Release()
+		check.Release(true)
 		_, exists := crossKSMgr.Get(targetKS)
 		require.True(t, exists, "the ordinary holder still needs the runtime")
-		handle.Release()
+		handle.Release(false)
 		_, exists = crossKSMgr.Get(targetKS)
-		require.False(t, exists, "the final holder must close the checked runtime")
+		require.True(t, exists, "ordinary release keeps the idle runtime available for reuse")
 	})
 }
 
@@ -799,7 +799,7 @@ func alterTableModeInKeyspaceForTest(
 	if err != nil {
 		return err
 	}
-	defer runtime.Release()
+	defer runtime.Release(false)
 	return runtime.AlterTableMode(ctx, req)
 }
 

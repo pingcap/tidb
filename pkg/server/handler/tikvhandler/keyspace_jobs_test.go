@@ -20,6 +20,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -59,6 +60,33 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/keyspaces/jobs/active", nil))
 		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+	t.Run("batch size limit", func(t *testing.T) {
+		names := make([]string, 1000)
+		for i := range names {
+			names[i] = "ks" + strconv.Itoa(i)
+		}
+		var checked []string
+		h := &KeyspaceActiveJobsHandler{checkKeyspace: func(_ context.Context, ks string) (keyspaceJobCounts, error) {
+			checked = append(checked, ks)
+			return keyspaceJobCounts{}, nil
+		}}
+		post := func(names []string) *httptest.ResponseRecorder {
+			body, err := json.Marshal(map[string][]string{"keyspaces": names})
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active", strings.NewReader(string(body))))
+			return w
+		}
+
+		require.Equal(t, http.StatusOK, post(names).Code)
+		require.Equal(t, names, checked)
+
+		checked = nil
+		w := post(append(names, names[0]))
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "at most 1000 entries")
+		require.Empty(t, checked)
 	})
 	t.Run("ordered deduplicated partial results", func(t *testing.T) {
 		var calls []string
@@ -261,7 +289,9 @@ type jobCountTestRuntime struct {
 }
 
 func (r *jobCountTestRuntime) SysSessionPool() util.DestroyableSessionPool { return r.pool }
-func (r *jobCountTestRuntime) Release()                                    { *r.events = append(*r.events, "release") }
+func (r *jobCountTestRuntime) Release(closeIfIdle bool) {
+	*r.events = append(*r.events, "release("+strconv.FormatBool(closeIfIdle)+")")
+}
 
 func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -300,16 +330,16 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 			switch tc {
 			case "success":
 				require.NoError(t, err)
-				require.Equal(t, []string{"put", "release"}, events)
+				require.Equal(t, []string{"put", "release(true)"}, events)
 			case "acquire error":
 				require.Error(t, err)
 				require.Empty(t, events)
 			case "session error":
 				require.Error(t, err)
-				require.Equal(t, []string{"release"}, events)
+				require.Equal(t, []string{"release(true)"}, events)
 			default:
 				require.Error(t, err)
-				require.Equal(t, []string{"destroy", "release"}, events)
+				require.Equal(t, []string{"destroy", "release(true)"}, events)
 			}
 		})
 	}
