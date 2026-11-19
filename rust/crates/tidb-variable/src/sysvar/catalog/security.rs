@@ -602,9 +602,9 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::require_secure_transport),
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_require_secure_transport),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_require_secure_transport),
     },
     SysVarDef {
         name: "secure_auth",

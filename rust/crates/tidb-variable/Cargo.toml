@@ -41,6 +41,7 @@ tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-config = { path = "../tidb-config" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-model = { path = "../tidb-model" }

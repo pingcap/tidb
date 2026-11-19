@@ -725,9 +725,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_service_scope),
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_service_scope),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_service_scope),
     },
     SysVarDef {
         name: "tidb_store_batch_size",
@@ -761,9 +761,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_store_limit),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_store_limit),
     },
     SysVarDef {
         name: "tidb_wait_split_region_finish",

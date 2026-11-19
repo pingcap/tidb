@@ -1187,22 +1187,12 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         matches!(
             name,
-            REQUIRE_SECURE_TRANSPORT
-                | TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME
-                | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
-                | TIDB_SERVICE_SCOPE
-                | TIDB_CLOUD_STORAGE_URI
+            TIDB_CLOUD_STORAGE_URI
                 | TIDB_ENABLE_TS_VALIDATION
-                | TIDB_STORE_LIMIT
-                | TIDB_TXN_COMMIT_BATCH_SIZE
                 | TIDB_ENABLE_MDL
                 | TIDB_SCHEMA_CACHE_SIZE
-                | TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
                 | TIDB_COMMITTER_CONCURRENCY
                 | TIDB_REDACT_LOG
-                | TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
-                | TIDB_MEM_OOM_ACTION
-                | TIDB_MEMORY_USAGE_ALARM_RATIO
                 | TIDB_ANALYZE_DEFAULT_NUM_BUCKETS
                 | TIDB_ANALYZE_DEFAULT_NUM_TOP_N
                 | PD_ENABLE_FOLLOWER_HANDLE_REGION
@@ -1211,7 +1201,6 @@ impl GlobalSysvars {
                 | TIDB_TSO_CLIENT_RPC_MODE
                 | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
                 | TIDB_ENABLE_BATCH_QUERY_REGION
-                | TIDB_CHECK_MB4_VALUE_IN_UTF8
         ) || is_auto_analyze_setting(name)
             || is_resource_control_setting(name)
             || is_stmt_summary_setting(name)
@@ -1246,58 +1235,10 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
-            REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
-                .store(!tidb_config_deploymode::is_starter() && on, SeqCst),
-            // Go `SetGlobal`: `vardef.ServiceScope.Store(strings.ToLower(s))`
-            // and the config's `Instance.TiDBServiceScope`.
-            TIDB_SERVICE_SCOPE => {
-                let new_value = value.to_lowercase();
-                tidb_vardef::set_service_scope(new_value.clone());
-                if tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope != new_value {
-                    tidb_config::config_tree::config::update_global(|config| {
-                        config.instance.tidb_service_scope = new_value;
-                    });
-                }
-            }
-            // Go `SetGlobal`: `time.ParseInLocation(FullDayTimeFormat, s, time.UTC)`.
-            TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME => {
-                if let Ok(time) = tidb_vardef::DayTime::parse(value) {
-                    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME
-                        .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
-                }
-            }
-            TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME => {
-                if let Ok(time) = tidb_vardef::DayTime::parse(value) {
-                    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME
-                        .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
-                }
-            }
-            // Go `SetGlobal`: `ForcePriority = Str2Priority(val)`.
-            TIDB_FORCE_PRIORITY => tidb_vardef::FORCE_PRIORITY
-                .store(tidb_mysql::priority_from_str(value).as_enum(), SeqCst),
             // Go `SetGlobal`: `oracles.EnableTSValidation.Store(TiDBOptOn(val))`.
             TIDB_ENABLE_TS_VALIDATION => {
                 tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
             }
-            // Go `SetGlobal`: `tikvstore.StoreLimit.Store(TidbOptInt64(val, Def))`.
-            TIDB_STORE_LIMIT => tikv_client::kv::STORE_LIMIT.store(
-                tidb_variable::varsutil::tidb_opt_int64(
-                    value,
-                    tidb_vardef::defaults::DEF_TIDB_STORE_LIMIT,
-                ),
-                SeqCst,
-            ),
-            // Go `SetGlobal`: `tikvstore.TxnCommitBatchSize.Store(...)`.
-            TIDB_TXN_COMMIT_BATCH_SIZE => tikv_client::kv::TXN_COMMIT_BATCH_SIZE.store(
-                u64::try_from(tidb_variable::varsutil::tidb_opt_int64(
-                    value,
-                    tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE as i64,
-                ))
-                .unwrap_or(tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE),
-                SeqCst,
-            ),
             // Go's `TiDBEnableMDL` hook runs `SwitchMDL` -> `SetEnableMDL`. A
             // node that leaves the process flag at its `false` default
             // acknowledges DDL schema versions on the classic per-node key
@@ -1317,20 +1258,6 @@ impl GlobalSysvars {
             TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
                 tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on, SeqCst)
             }
-            TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
-                tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
-                    value.parse::<f64>().unwrap_or(
-                        tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO,
-                    ),
-                )
-            }
-            TIDB_ENABLE_RESOURCE_CONTROL => {
-                // Go's SetGlobal: only a change reaches the domain's hook.
-                let previous = tidb_vardef::ENABLE_RESOURCE_CONTROL.swap(on, SeqCst);
-                if previous != on {
-                    tidb_variable::vars::set_global_resource_control(on);
-                }
-            }
             TIDB_COMMITTER_CONCURRENCY => {
                 if let Ok(value) = value.parse::<i32>() {
                     tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, SeqCst);
@@ -1341,18 +1268,6 @@ impl GlobalSysvars {
                 "MARKER" => tidb_mysql::errors::RedactionMode::Marker,
                 _ => tidb_mysql::errors::RedactionMode::Disabled,
             }),
-            TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE => {
-                if let Ok(value) = value.parse::<f64>() {
-                    tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
-                        .store(value.to_bits(), SeqCst);
-                }
-            }
-            TIDB_MEM_OOM_ACTION => tidb_vardef::set_oom_action(value),
-            TIDB_MEMORY_USAGE_ALARM_RATIO => {
-                if let Ok(value) = value.parse::<f64>() {
-                    tidb_vardef::set_memory_usage_alarm_ratio(value);
-                }
-            }
             TIDB_ANALYZE_DEFAULT_NUM_BUCKETS => {
                 if let Ok(value) = value.parse::<u64>() {
                     tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(value, SeqCst);
@@ -1391,14 +1306,6 @@ impl GlobalSysvars {
                         _ => policy.set_tso_rpc_concurrency(tso_rpc_concurrency(value)),
                     }
                 }
-            }
-            // Go's instance hook updates
-            // `config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8`.
-            TIDB_CHECK_MB4_VALUE_IN_UTF8 => {
-                tidb_config::config_tree::config::update_global(|config| {
-                    config.instance.check_mb4_value_in_utf8 =
-                        tidb_config::config_tree::marshal::AtomicBool::new(value == "ON");
-                });
             }
             _ if is_stmt_summary_setting(name) => self.publish_stmt_summary_setting(name, value),
             _ if Self::is_memory_arbitration_setting(name) => {

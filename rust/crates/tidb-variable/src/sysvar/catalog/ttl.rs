@@ -146,9 +146,9 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_ttl_job_schedule_window_end_time),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_ttl_job_schedule_window_end_time),
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_start_time",
@@ -164,9 +164,9 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_ttl_job_schedule_window_start_time),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_ttl_job_schedule_window_start_time),
     },
     SysVarDef {
         name: "tidb_ttl_running_tasks",

@@ -669,9 +669,9 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_mem_oom_action),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_mem_oom_action),
     },
     SysVarDef {
         name: "tidb_mem_quota_apply_cache",
@@ -777,9 +777,9 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_memory_usage_alarm_ratio),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_memory_usage_alarm_ratio),
     },
     SysVarDef {
         name: "tidb_schema_cache_size",

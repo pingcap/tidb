@@ -308,9 +308,9 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_circuit_breaker_pd_metadata_error_rate_threshold_ratio),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_circuit_breaker_pd_metadata_error_rate_threshold_ratio),
     },
     SysVarDef {
         name: "tidb_enable_check_constraint",

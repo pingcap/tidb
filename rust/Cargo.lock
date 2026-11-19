@@ -11414,6 +11414,7 @@ dependencies = [
  "tidb-charset",
  "tidb-config",
  "tidb-config-configtypes",
+ "tidb-config-deploymode",
  "tidb-config-kerneltype",
  "tidb-context",
  "tidb-datatype",

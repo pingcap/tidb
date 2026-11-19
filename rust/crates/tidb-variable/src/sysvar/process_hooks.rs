@@ -189,3 +189,182 @@ get_global! {
     get_tidb_memory_usage_alarm_keep_record_num => tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.load(SeqCst).to_string();
     get_tidb_instance_plan_cache_max_mem_size => tidb_vardef::INSTANCE_PLAN_CACHE_MAX_MEM_SIZE.load(SeqCst).to_string();
 }
+
+/// Go `tidbOptFloat64`.
+fn opt_float64(value: &str, default: f64) -> f64 {
+    crate::varsutil::tidb_opt_float64(value, default)
+}
+
+set_global! {
+    set_tidb_mem_oom_action => |s| tidb_vardef::set_oom_action(s);
+    set_tidb_memory_usage_alarm_ratio => |s| tidb_vardef::set_memory_usage_alarm_ratio(
+        opt_float64(s, tidb_vardef::defaults::DEF_MEMORY_USAGE_ALARM_RATIO),
+    );
+    // Go: `atomic.StoreInt32(&vardef.ForcePriority, int32(mysql.Str2Priority(val)))`.
+    set_tidb_force_priority => |s| tidb_vardef::FORCE_PRIORITY
+        .store(tidb_mysql::priority_from_str(s).as_enum(), SeqCst);
+    // Go: `tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, Def)))`.
+    set_tidb_txn_commit_batch_size => |s| tikv_client::kv::TXN_COMMIT_BATCH_SIZE.store(
+        crate::varsutil::tidb_opt_int64(s, tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE as i64) as u64,
+        SeqCst,
+    );
+    // Go: `tikvstore.StoreLimit.Store(TidbOptInt64(val, DefTiDBStoreLimit))`.
+    set_tidb_store_limit => |s| tikv_client::kv::STORE_LIMIT.store(
+        crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_STORE_LIMIT),
+        SeqCst,
+    );
+    // Go: starter mode keeps the internal TLS transport gate disabled.
+    set_require_secure_transport => |s| tidb_tls::REQUIRE_SECURE_TRANSPORT
+        .store(!tidb_config_deploymode::is_starter() && on(s), SeqCst);
+    set_tidb_check_mb4_value_in_utf8 => |s| tidb_config::config_tree::config::update_global(|config| {
+        config.instance.check_mb4_value_in_utf8 =
+            tidb_config::config_tree::marshal::AtomicBool::new(on(s));
+    });
+    // Go: `vardef.ServiceScope.Store(strings.ToLower(s))` and the config's
+    // `Instance.TiDBServiceScope`.
+    set_tidb_service_scope => |s| {
+        let new_value = s.to_lowercase();
+        tidb_vardef::set_service_scope(new_value.clone());
+        if tidb_config::config_tree::config::get_global_config().instance.tidb_service_scope != new_value {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.instance.tidb_service_scope = new_value;
+            });
+        }
+    };
+    // Go: only a change reaches the resource-control switch.
+    set_tidb_enable_resource_control => |s| {
+        let enable = on(s);
+        if tidb_vardef::ENABLE_RESOURCE_CONTROL.swap(enable, SeqCst) != enable {
+            crate::vars::set_global_resource_control(enable);
+            tidb_logutil::bg_logger().info(
+                "set resource control",
+                &[tidb_log::Field::new("enable", tidb_log::Value::Bool(enable))],
+            );
+        }
+    };
+}
+
+/// Go `tidb_ttl_job_schedule_window_start_time`'s `SetGlobal`:
+/// `time.ParseInLocation(FullDayTimeFormat, s, time.UTC)`.
+pub(super) fn set_tidb_ttl_job_schedule_window_start_time(
+    _vars: &mut SessionVars,
+    s: &str,
+) -> Result<(), VarError> {
+    let time = tidb_vardef::DayTime::parse(s).map_err(tidb_terror::MysqlError::unknown)?;
+    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
+    Ok(())
+}
+
+/// Go `tidb_ttl_job_schedule_window_end_time`'s `SetGlobal`.
+pub(super) fn set_tidb_ttl_job_schedule_window_end_time(
+    _vars: &mut SessionVars,
+    s: &str,
+) -> Result<(), VarError> {
+    let time = tidb_vardef::DayTime::parse(s).map_err(tidb_terror::MysqlError::unknown)?;
+    *tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
+    Ok(())
+}
+
+/// Go `tidb_instance_plan_cache_reserved_percentage`'s `SetGlobal`.
+pub(super) fn set_tidb_instance_plan_cache_reserved_percentage(
+    _vars: &mut SessionVars,
+    s: &str,
+) -> Result<(), VarError> {
+    let v = opt_float64(
+        s,
+        tidb_vardef::defaults::DEF_TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE,
+    );
+    if !(0.0..=1.0).contains(&v) {
+        return Err(tidb_terror::MysqlError::unknown(format!(
+            "invalid tidb_instance_plan_cache_reserved_percentage value {s}"
+        )));
+    }
+    tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE.store(v.to_bits(), SeqCst);
+    Ok(())
+}
+
+/// Go `tidb_cb_pd_metadata_error_rate_threshold_ratio`'s `SetGlobal`.
+pub(super) fn set_tidb_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
+    _vars: &mut SessionVars,
+    s: &str,
+) -> Result<(), VarError> {
+    let v = opt_float64(
+        s,
+        tidb_vardef::defaults::DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO,
+    );
+    if !(0.0..=1.0).contains(&v) {
+        return Err(tidb_terror::MysqlError::unknown(format!(
+            "invalid tidb_cb_pd_metadata_error_rate_threshold_ratio value {s}"
+        )));
+    }
+    tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(v);
+    Ok(())
+}
+
+get_global! {
+    get_tidb_mem_oom_action => tidb_vardef::oom_action().to_owned();
+    get_tidb_txn_commit_batch_size => tikv_client::kv::TXN_COMMIT_BATCH_SIZE.load(SeqCst).to_string();
+    get_tidb_store_limit => tikv_client::kv::STORE_LIMIT.load(SeqCst).to_string();
+    // Go: starter mode intentionally exposes require_secure_transport as ON.
+    get_require_secure_transport => if tidb_config_deploymode::is_starter() {
+        "ON".to_owned()
+    } else {
+        on_off(tidb_tls::REQUIRE_SECURE_TRANSPORT.load(SeqCst))
+    };
+    get_tidb_check_mb4_value_in_utf8 => on_off(
+        tidb_config::config_tree::config::get_global_config().instance.check_mb4_value_in_utf8.load(),
+    );
+    get_tidb_service_scope => tidb_vardef::service_scope();
+    get_tidb_ttl_job_schedule_window_start_time => tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .format();
+    get_tidb_ttl_job_schedule_window_end_time => tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .format();
+    // Go `strconv.FormatFloat(v, 'f', -1, 64)`.
+    get_tidb_instance_plan_cache_reserved_percentage => f64::from_bits(
+        tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE.load(SeqCst),
+    )
+    .to_string();
+    get_tidb_circuit_breaker_pd_metadata_error_rate_threshold_ratio =>
+        tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string();
+}
+
+/// Go `fmt.Sprintf("%g", v)` for a ratio: the shortest representation,
+/// in exponent form (`1e-05`) below 1e-4.
+fn go_g(v: f64) -> String {
+    if v != 0.0 && v.abs() < 1e-4 {
+        let formatted = format!("{v:e}");
+        let (mantissa, exponent) = formatted.split_once('e').expect("exponent form");
+        let (sign, digits) = match exponent.strip_prefix('-') {
+            Some(digits) => ('-', digits),
+            None => ('+', exponent),
+        };
+        return format!("{mantissa}e{sign}{digits:0>2}");
+    }
+    v.to_string()
+}
+
+/// Go `mysql.Priority2Str`.
+fn priority_to_str(priority: i32) -> String {
+    match priority {
+        1 => "LOW_PRIORITY",
+        2 => "HIGH_PRIORITY",
+        3 => "DELAYED",
+        0 => "NO_PRIORITY",
+        _ => "",
+    }
+    .to_owned()
+}
+
+get_global! {
+    get_tidb_enable_resource_control => on_off(tidb_vardef::ENABLE_RESOURCE_CONTROL.load(SeqCst));
+    get_tidb_memory_usage_alarm_ratio => go_g(tidb_vardef::memory_usage_alarm_ratio());
+    get_tidb_force_priority => priority_to_str(tidb_vardef::FORCE_PRIORITY.load(SeqCst));
+}

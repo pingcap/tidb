@@ -128,9 +128,9 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_resource_control),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_resource_control),
     },
     SysVarDef {
         name: "tidb_enable_tmp_storage_on_oom",
@@ -182,9 +182,9 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_force_priority),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_force_priority),
     },
     SysVarDef {
         name: "tidb_hashagg_final_concurrency",

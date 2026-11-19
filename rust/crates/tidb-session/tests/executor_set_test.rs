@@ -208,3 +208,29 @@ fn global_reads_of_process_state_variables_answer_from_the_process() {
     tk.must_exec("set global tidb_ttl_scan_worker_count = default");
     tk.must_exec("set global tidb_ttl_job_enable = default");
 }
+
+/// Go `GetGlobal` formatting of process state: `%g` for the memory alarm
+/// ratio (`1e-05`), the OOM action's registered spelling, `'f', -1` for the
+/// reserved percentage, and `FullDayTimeFormat` for a TTL window bound.
+/// Expected rows: `./gorun` on this branch.
+#[test]
+fn global_reads_of_process_state_use_gos_formatting() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_memory_usage_alarm_ratio = 0.00001");
+    tk.must_query("select @@global.tidb_memory_usage_alarm_ratio").check(["1e-05"]);
+    tk.must_exec("set global tidb_mem_oom_action = 'log'");
+    tk.must_query("select @@global.tidb_mem_oom_action").check(["LOG"]);
+    tk.must_exec("set global tidb_instance_plan_cache_reserved_percentage = 0.25");
+    tk.must_query("select @@global.tidb_instance_plan_cache_reserved_percentage").check(["0.25"]);
+    tk.must_exec("set global tidb_ttl_job_schedule_window_start_time = '01:02 +0800'");
+    tk.must_query("select @@global.tidb_ttl_job_schedule_window_start_time").check(["01:02 +0800"]);
+    for name in [
+        "tidb_memory_usage_alarm_ratio",
+        "tidb_mem_oom_action",
+        "tidb_instance_plan_cache_reserved_percentage",
+        "tidb_ttl_job_schedule_window_start_time",
+    ] {
+        tk.must_exec(&format!("set global {name} = default"));
+    }
+}
