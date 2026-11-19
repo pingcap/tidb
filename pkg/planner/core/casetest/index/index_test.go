@@ -164,6 +164,26 @@ func TestRowFunctionMatchTheIndexRangeScan(t *testing.T) {
 }
 
 func TestRangeIntersection(t *testing.T) {
+	t.Run("issue73063", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table r (a int, b varchar(20), c int, key idx(a,b(1)))")
+		tk.MustExec("insert into r values (1,'xa',1),(1,'xz',1),(1,'ya',1),(2,'zz',1),(3,'aa',1),(1,'xz',0)")
+		for _, fixControl := range []string{"54337:OFF,44389:OFF", "", "54337:OFF,44389:ON"} {
+			t.Run("fixControl="+fixControl, func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set tidb_opt_fix_control='%s'", fixControl))
+				// The prefix range includes 'xa', so the OR must remain a filter.
+				// Conversely, b > 'xx' must not filter the a > 2 branch.
+				for _, indexHint := range []string{"force index(idx)", "ignore index(idx)"} {
+					tk.MustQuery("select * from r " + indexHint + " where ((a=1 and b>'xx') or a>2) and c=1 order by a,b,c").Check(testkit.Rows("1 xz 1", "1 ya 1", "3 aa 1"))
+				}
+			})
+		}
+	})
+
 	t.Run("issue72780", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 		tk.MustExec("use test")

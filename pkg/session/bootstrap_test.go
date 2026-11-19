@@ -206,7 +206,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// system tables are not created in `doDDLWorks` for next-gen.
 	if kerneltype.IsNextGen() {
-		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
 	}
 	// bootstrap
 	{
@@ -1946,7 +1946,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.StorageClassTransitionNextGenBootTableVersion - 1)
 	}))
-	require.NoError(t, bootstrapSchemas(store))
+	require.NoError(t, bootstrapNextGenSchemas(store))
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		ver, err := m.GetNextGenBootTableVersion()
@@ -1975,8 +1975,8 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 		}))
 		// A cluster that already created the MV maintenance tables must still
 		// create the refresh-source table under a new bootstrap table version.
-		require.NoError(t, bootstrapSchemas(store))
-		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
 		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMutator(txn)
 			table, err := m.GetTable(metadef.SystemDatabaseID, metadef.TiDBMViewFastRefreshSourceInfoTableID)
