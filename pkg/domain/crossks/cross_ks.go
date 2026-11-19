@@ -160,39 +160,47 @@ func (m *Manager) AcquireWithContext(
 		return nil, err
 	}
 	for {
-		m.mu.Lock()
-		if err := ctx.Err(); err != nil {
-			m.mu.Unlock()
-			return nil, err
+		handle, closeDone, err := m.tryAcquire(ctx, ks, holderID, ksSessFactoryGetter)
+		if closeDone == nil {
+			return handle, err
 		}
-		if m.closed {
-			m.mu.Unlock()
-			return nil, errors.New("cross keyspace runtime manager is closed")
-		}
-		entry := m.runtimes[ks]
-		if entry == nil || entry.closeDone == nil {
-			break
-		}
-		done := entry.closeDone
-		m.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-done:
+		case <-closeDone:
+			// Another caller may already be closing the replacement runtime.
 		}
 	}
+}
+
+// tryAcquire returns the completion channel when the current entry is closing.
+func (m *Manager) tryAcquire(
+	ctx context.Context,
+	ks, holderID string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (sqlsvrapi.KSRuntimeHandle, <-chan struct{}, error) {
+	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if m.closed {
+		return nil, nil, errors.New("cross keyspace runtime manager is closed")
+	}
 	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if entry.closeDone != nil {
+		return nil, entry.closeDone, nil
 	}
 	if _, ok := entry.activeHolders[holderID]; ok {
 		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
 			zap.String("targetKS", ks),
 			zap.String("holderID", holderID),
 			zap.Int("activeHolderCount", len(entry.activeHolders)))
-		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
+		return nil, nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
 	}
 	entry.activeHolders[holderID] = struct{}{}
 	logutil.BgLogger().Info("acquire cross keyspace runtime",
@@ -204,7 +212,7 @@ func (m *Manager) AcquireWithContext(
 		targetKS: ks,
 		holderID: holderID,
 		entry:    entry,
-	}, nil
+	}, nil, nil
 }
 
 func (m *Manager) validateTargetKS(ks string) error {
