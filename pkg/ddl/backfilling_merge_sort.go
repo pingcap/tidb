@@ -106,14 +106,17 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
+<<<<<<< HEAD
 	memSizePerCon := res.MemoryPerCore()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount)
+=======
+>>>>>>> 6884fa5eaba (ddl, globalsort: bound global sort merge memory (#70756))
 
 	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
 		wctx,
 		objStore,
-		partSize,
+		res.MemoryPerCore(),
 		prefix,
 		external.DefaultBlockSize,
 		onWriterClose,
@@ -131,7 +134,6 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	err = external.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
-		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
 		op,
 	)
 
