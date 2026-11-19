@@ -21,6 +21,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,6 +40,12 @@ func TestColumn(t *testing.T) {
 		{Name: ast.NewCIStr(ExecCountStr)},
 		{Name: ast.NewCIStr(SumLatencyStr)},
 		{Name: ast.NewCIStr(MaxLatencyStr)},
+		{Name: ast.NewCIStr(AvgRocksdbDeleteSkippedCountStr)},
+		{Name: ast.NewCIStr(AvgRocksdbKeySkippedCountStr)},
+		{Name: ast.NewCIStr(AvgRocksdbBlockCacheHitCountStr)},
+		{Name: ast.NewCIStr(AvgRocksdbBlockReadCountStr)},
+		{Name: ast.NewCIStr(AvgRocksdbBlockReadByteStr)},
+		{Name: ast.NewCIStr(AvgAffectedRowsStr)},
 		{Name: ast.NewCIStr(AvgTidbCPUTimeStr)},
 		{Name: ast.NewCIStr(AvgTikvCPUTimeStr)},
 	}
@@ -44,9 +53,32 @@ func TestColumn(t *testing.T) {
 	info := GenerateStmtExecInfo4Test("digest")
 	record := NewStmtRecord(info)
 	record.Add(info)
+	const rocksdbSum = uint64(1 << 63)
+	record.SumRocksdbDeleteSkippedCount = rocksdbSum
+	record.SumRocksdbKeySkippedCount = rocksdbSum
+	record.SumRocksdbBlockCacheHitCount = rocksdbSum
+	record.SumRocksdbBlockReadCount = rocksdbSum
+	record.SumRocksdbBlockReadByte = rocksdbSum
+	record.SumAffectedRows = rocksdbSum
+	avgRocksdbSum := float64(rocksdbSum) / float64(record.ExecCount)
+	doubleColumnExpected := map[string]float64{
+		AvgRocksdbDeleteSkippedCountStr: avgRocksdbSum,
+		AvgRocksdbKeySkippedCountStr:    avgRocksdbSum,
+		AvgRocksdbBlockCacheHitCountStr: avgRocksdbSum,
+		AvgRocksdbBlockReadCountStr:     avgRocksdbSum,
+		AvgRocksdbBlockReadByteStr:      avgRocksdbSum,
+		AvgAffectedRowsStr:              avgRocksdbSum,
+	}
 	for n, f := range factories {
 		column := f(mockColumnInfo{}, record)
-		switch columns[n].Name.O {
+		columnName := columns[n].Name.O
+		if expected, ok := doubleColumnExpected[columnName]; ok {
+			datum := types.NewDatum(column)
+			row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+			row.SetDatums(datum)
+			require.Equal(t, expected, row.ToRow().GetFloat64(0), columnName)
+		}
+		switch columnName {
 		case ClusterTableInstanceColumnNameStr:
 			require.Equal(t, "instance_addr", column)
 		case StmtTypeStr:
@@ -69,11 +101,53 @@ func TestColumn(t *testing.T) {
 			require.Equal(t, int64(record.SumLatency), column)
 		case MaxLatencyStr:
 			require.Equal(t, int64(record.MaxLatency), column)
+		case AvgRocksdbDeleteSkippedCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbKeySkippedCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockCacheHitCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockReadCountStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgRocksdbBlockReadByteStr:
+			require.Equal(t, avgRocksdbSum, column)
+		case AvgAffectedRowsStr:
+			require.Equal(t, avgRocksdbSum, column)
 		case AvgTidbCPUTimeStr:
 			require.Equal(t, int64(record.SumTidbCPU), column)
 		case AvgTikvCPUTimeStr:
 			require.Equal(t, int64(record.SumTikvCPU), column)
 		}
+	}
+
+	smallRecord := &StmtRecord{
+		ExecCount:                    1,
+		SumRocksdbDeleteSkippedCount: 7,
+		SumRocksdbKeySkippedCount:    19,
+		SumRocksdbBlockCacheHitCount: 60,
+		SumRocksdbBlockReadCount:     21103,
+		SumRocksdbBlockReadByte:      4096,
+		SumAffectedRows:              3,
+	}
+	smallCases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: 7},
+		{name: AvgRocksdbKeySkippedCountStr, expected: 19},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
+		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
+		{name: AvgRocksdbBlockReadByteStr, expected: 4096},
+		{name: AvgAffectedRowsStr, expected: 3},
+	}
+	for _, tc := range smallCases {
+		factory, ok := columnFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column factory: %s", tc.name)
+		datum := types.NewDatum(factory(mockColumnInfo{}, smallRecord))
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
 	}
 }
 
