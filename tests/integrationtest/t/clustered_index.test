@@ -16,6 +16,9 @@ create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , co
 load stats 's/wout_cluster_index_tbl_0.json';
 load stats 's/wout_cluster_index_tbl_2.json';
 
+# A background refresh can cache a partial snapshot while LOAD STATS is writing the fixtures.
+refresh stats with_cluster_index.*, wout_cluster_index.* full;
+
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
 explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
 

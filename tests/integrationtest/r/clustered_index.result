@@ -13,6 +13,7 @@ create table tbl_0 ( col_0 decimal not null , col_1 blob(207) , col_2 text , col
 create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , col_12 float , col_13 double(56,29) default 18.0118 , col_14 char not null , primary key idx_8 ( col_14,col_13,col_10 ) nonclustered, key idx_9 ( col_11 ) )  ;
 load stats 's/wout_cluster_index_tbl_0.json';
 load stats 's/wout_cluster_index_tbl_2.json';
+refresh stats with_cluster_index.*, wout_cluster_index.* full;
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
 id	task	access object	operator info
 HashAgg	root		funcs:count(Column)->Column
