@@ -97,3 +97,12 @@ INSERT INTO test.pairs19 values (1, 1), (10, 10);
 -- test partial index
 CREATE TABLE test.pairs20 (id int PRIMARY KEY, pid1 int, pid2 int);
 INSERT INTO test.pairs20 values (1, 1, 1), (10, 10, 10);
+
+-- Existing global indexes must be rebuilt after both snapshot and log import.
+CREATE TABLE test.global_index_restore (
+    id INT PRIMARY KEY, a INT, b VARCHAR(30),
+    KEY idx(a) GLOBAL, UNIQUE KEY uk(a) GLOBAL
+) PARTITION BY RANGE(id) (
+    PARTITION p0 VALUES LESS THAN(10), PARTITION p1 VALUES LESS THAN MAXVALUE
+);
+INSERT INTO test.global_index_restore VALUES (1,1,'old'),(11,2,'removed'),(2,NULL,'null-one'),(12,NULL,'null-two');
