@@ -222,6 +222,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-placement = { path = "../tidb-placement" }
 tempfile.workspace = true
 tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }

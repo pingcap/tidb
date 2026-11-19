@@ -92,6 +92,7 @@ tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
+tidb-placement = { path = "../tidb-placement" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-resourcegrouptag = { path = "../tidb-resourcegrouptag" }

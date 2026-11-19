@@ -1009,6 +1009,11 @@ fn new_cluster_domain(
         Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
             as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
     }));
+    // Go `InfoSyncer.initPlacementManager`: PD's placement rule bundles.
+    tidb_domain_infosync::placement_manager::init_placement_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::placement_manager::PdPlacementManager::new(client))
+            as Arc<dyn tidb_domain_infosync::placement_manager::PlacementManager>
+    }));
     // Go `GlobalInfoSyncerInit`'s `etcdCli`, which `GetPrometheusAddr` finds
     // the `metrics_schema` tables' Prometheus through.
     tidb_domain_infosync::prometheus_addr::init_prometheus_addr(

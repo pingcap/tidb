@@ -33,7 +33,7 @@
 
 use std::borrow::Cow;
 
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Go `pd.PeerRoleType`: the Raft role a placement rule selects peers for.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,6 +59,12 @@ impl PeerRoleType {
 impl From<&'static str> for PeerRoleType {
     fn from(value: &'static str) -> Self {
         Self(Cow::Borrowed(value))
+    }
+}
+
+impl<'de> Deserialize<'de> for PeerRoleType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|value| Self(Cow::Owned(value)))
     }
 }
 
@@ -95,6 +101,12 @@ impl From<&'static str> for LabelConstraintOp {
     }
 }
 
+impl<'de> Deserialize<'de> for LabelConstraintOp {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|value| Self(Cow::Owned(value)))
+    }
+}
+
 impl Serialize for LabelConstraintOp {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
@@ -102,7 +114,8 @@ impl Serialize for LabelConstraintOp {
 }
 
 /// Go `pd.LabelConstraint`: one `{+|-}key=value` store-label predicate.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LabelConstraint {
     /// The store label key.
     #[serde(rename = "key", skip_serializing_if = "String::is_empty")]
@@ -111,7 +124,7 @@ pub struct LabelConstraint {
     #[serde(rename = "op", skip_serializing_if = "op_is_empty")]
     pub op: LabelConstraintOp,
     /// The accepted (or rejected) label values.
-    #[serde(rename = "values", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "values", skip_serializing_if = "Vec::is_empty", deserialize_with = "null_as_default")]
     pub values: Vec<String>,
 }
 
@@ -120,7 +133,8 @@ fn op_is_empty(op: &LabelConstraintOp) -> bool {
 }
 
 /// Go `pd.Rule`: one placement rule inside a rule group.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Rule {
     /// The owning rule group's ID.
     #[serde(rename = "group_id")]
@@ -140,6 +154,9 @@ pub struct Rule {
     /// The Raft role the selected peers take.
     #[serde(rename = "role")]
     pub role: PeerRoleType,
+    /// Go `Override`: when set, every rule of a lower index is disabled.
+    #[serde(rename = "override", skip_serializing_if = "std::ops::Not::not")]
+    pub r#override: bool,
     /// Whether the peers are witnesses.
     #[serde(rename = "is_witness")]
     pub is_witness: bool,
@@ -147,11 +164,18 @@ pub struct Rule {
     #[serde(rename = "count")]
     pub count: i64,
     /// The store-label predicates the peers must satisfy.
-    #[serde(rename = "label_constraints", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "label_constraints", skip_serializing_if = "Vec::is_empty", deserialize_with = "null_as_default")]
     pub label_constraints: Vec<LabelConstraint>,
     /// The isolation labels PD spreads the peers across.
-    #[serde(rename = "location_labels", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "location_labels", skip_serializing_if = "Vec::is_empty", deserialize_with = "null_as_default")]
     pub location_labels: Vec<String>,
+}
+
+/// A JSON `null` (Go's nil slice) as the empty value.
+pub(crate) fn null_as_default<'de, D: Deserializer<'de>, T: Default + Deserialize<'de>>(
+    deserializer: D,
+) -> Result<T, D::Error> {
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 // serde's `skip_serializing_if` predicate signature takes a reference.

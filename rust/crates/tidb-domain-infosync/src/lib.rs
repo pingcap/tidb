@@ -19,6 +19,7 @@ pub mod pd_http;
 pub mod prometheus_addr;
 pub mod schedule_manager;
 pub mod label_manager;
+pub mod placement_manager;
 pub mod min_start_ts;
 pub mod resource_manager_client;
 pub mod label_delivery;

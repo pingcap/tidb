@@ -900,6 +900,9 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `querywatch.AddExecutor.Next` / `ExecDropQueryWatch` over the
     /// domain's runaway manager.
     fn query_watch_stmt(&mut self, stmt: &tidb_ast::AdminStmt) -> Result<StmtOutput, DriverError>;
+
+    /// Go `SimpleExec.executeAlterRange` against the statement's infoschema.
+    fn alter_range_stmt(&mut self, stmt: &tidb_ast::AlterRangeStmt) -> Result<StmtOutput, DriverError>;
     /// Go `calibrateresource.Executor.Next`.
     fn calibrate_resource_stmt(
         &mut self,
@@ -1189,6 +1192,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // success immediately, and a 1-second-delayed task SIGTERMs this
             // very process, whose installed handler performs the graceful
             // stop. `RESTART`/`HELP` keep their unsupported report.
+            tidb_ast::AdminStmt::AlterRange(range) => self.alter_range_stmt(range).map(Some),
             // Go `SimpleExec.Next`: `case *ast.BinlogStmt: // We just
             // ignore it.`
             tidb_ast::AdminStmt::Binlog(_) => Ok(Some(StmtOutput::Affected(0))),
@@ -1712,4 +1716,47 @@ fn unsupported_type(go_type: &str) -> DriverError {
     DriverError::from(
         (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE).gen_with_stack(format!("Unsupported type {go_type}")),
     )
+}
+
+/// Go `SimpleExec.executeAlterRange`: the `global` or `meta` range's rule
+/// bundle rebuilt from the policy (or emptied for `DEFAULT`) and put to PD.
+///
+/// # Errors
+/// An unsupported range or option, an unknown policy, or PD's refusal.
+pub fn execute_alter_range(
+    s: &tidb_ast::AlterRangeStmt,
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+) -> Result<(), DriverError> {
+    let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
+    let range_name = s.range_name.to_lowercase();
+    if range_name != tidb_placement::KEY_RANGE_GLOBAL && range_name != tidb_placement::KEY_RANGE_META {
+        return Err(unknown("range name is not supported".to_owned()));
+    }
+    let Some(tidb_ast::PlacementOption::Policy(policy_name)) = &s.placement else {
+        return Err(unknown("only support alter range policy".to_owned()));
+    };
+    let policy_name_l = policy_name.to_lowercase();
+    let bundle = if policy_name_l != tidb_placement::DEFAULT_KWD {
+        let Some(policy) = is.policy(policy_name) else {
+            return Err(DriverError::from(
+                tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                    .gen_with_stack_by_args(&[policy_name.clone().into()]),
+            ));
+        };
+        let settings = policy.placement_settings.as_ref().map(|settings| settings.read().clone());
+        let mut tmp_bundle = tidb_placement::new_bundle_from_options(settings.as_ref())
+            .map_err(|error| unknown(error.to_string()))?;
+        // reset according range
+        tmp_bundle.rebuild_for_range(&range_name, &policy_name_l);
+        tmp_bundle
+    } else {
+        // delete all rules
+        let mut bundle = tidb_placement::Bundle::default();
+        bundle.rebuild_for_range(&range_name, &policy_name_l);
+        tidb_placement::Bundle {
+            id: bundle.id,
+            ..tidb_placement::Bundle::default()
+        }
+    };
+    tidb_domain_infosync::placement_manager::put_rule_bundles_with_default_retry(&[bundle]).map_err(unknown)
 }

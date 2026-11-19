@@ -18,7 +18,7 @@
 use std::fmt;
 use tidb_hack::GoToLower;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tidb_codec::encode_bytes;
 use tidb_model::{
     GoShared, PartitionDefinition, PlacementSettings, PolicyInfo, PolicyRefInfo, TableInfo,
@@ -43,7 +43,8 @@ use crate::yaml_lite::unmarshal_strict_string_slice;
 /// Go declares it as `type Bundle pd.GroupBundle`, aliasing the PD HTTP
 /// client's group DTO to hang more methods off it; the four JSON fields are
 /// that DTO's, so this struct is both (see [`crate::pd`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Bundle {
     /// The group ID, `TiDB_DDL_<object id>` for every TiDB-owned bundle.
     #[serde(rename = "group_id")]
@@ -59,7 +60,7 @@ pub struct Bundle {
     /// Go's field is `[]*pd.Rule`, so a bundle that never had rules marshals
     /// `"rules":null` where this marshals `"rules":[]`. Nothing in TiDB reads
     /// that distinction back: PD treats both as an empty rule list.
-    #[serde(rename = "rules")]
+    #[serde(rename = "rules", deserialize_with = "crate::pd::null_as_default")]
     pub rules: Vec<Rule>,
 }
 

@@ -39,6 +39,42 @@ fn check_policy_validation(settings: &tidb_model::PlacementSettings) -> Result<(
         .map_err(|error| DdlPlanError::plain_refusal(error.to_string()))
 }
 
+/// Go `GetRangePlacementPolicyName`: the policy named by the first rule of
+/// the range bundle `range_bundle_id` (`TiDB_GLOBAL` or `TiDB_META`), or
+/// empty.
+///
+/// # Errors
+/// The placement manager's.
+pub fn get_range_placement_policy_name(range_bundle_id: &str) -> Result<String, String> {
+    let bundle = tidb_domain_infosync::placement_manager::get_rule_bundle(range_bundle_id)?;
+    let Some(rule) = bundle.rules.first() else {
+        return Ok(String::new());
+    };
+    Ok(match rule.id.rfind("_rule_") {
+        Some(pos) if pos > 0 => rule.id[..pos].to_owned(),
+        _ => String::new(),
+    })
+}
+
+/// Go `checkPlacementPolicyNotInUseFromRange`: neither special range uses
+/// the policy.
+fn check_placement_policy_not_in_use_from_range(policy: &CiString) -> Result<(), DdlPlanError> {
+    for range_bundle_id in [
+        tidb_placement::TIDB_BUNDLE_RANGE_PREFIX_FOR_GLOBAL,
+        tidb_placement::TIDB_BUNDLE_RANGE_PREFIX_FOR_META,
+    ] {
+        let policy_name = get_range_placement_policy_name(range_bundle_id)
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::plain(error)))?;
+        if policy_name == policy.lowercase() {
+            return Err(coded_refusal(
+                &tidb_dbterror::ERR_PLACEMENT_POLICY_IN_USE,
+                format!("Placement policy '{}' is still in use", policy.original()),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: no database, table or
 /// partition may still name the policy.
 fn check_policy_not_in_use(
@@ -342,7 +378,24 @@ fn update_exist_placement_policy(
         .as_ref()
         .map(|settings| settings.read().clone())
         .unwrap_or_default();
-    rebuilt_bundles_for_policy(catalog, &policy.name, &settings)
+    let mut bundles = rebuilt_bundles_for_policy(catalog, &policy.name, &settings)?;
+    // Go `updateExistPlacementPolicy`'s `resetRangeFn`: a special range on
+    // this policy is rebuilt from the new settings too.
+    let bundle = tidb_placement::new_bundle_from_options(Some(&settings))
+        .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::plain(error.to_string())))?;
+    for (range_name, range_bundle_id) in [
+        (tidb_placement::KEY_RANGE_GLOBAL, tidb_placement::TIDB_BUNDLE_RANGE_PREFIX_FOR_GLOBAL),
+        (tidb_placement::KEY_RANGE_META, tidb_placement::TIDB_BUNDLE_RANGE_PREFIX_FOR_META),
+    ] {
+        let policy_name = get_range_placement_policy_name(range_bundle_id)
+            .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::plain(error)))?;
+        if policy_name == policy.name.lowercase() {
+            let mut copy = bundle.clone_bundle();
+            copy.rebuild_for_range(range_name, &policy_name);
+            bundles.push(copy);
+        }
+    }
+    Ok(bundles)
 }
 
 /// Go `onCreatePlacementPolicy`.
@@ -450,8 +503,9 @@ pub(super) fn on_drop_placement_policy(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let policy_id = policy_args(active)?.read().policy_id;
     let mut policy = stored_policy(txn, active, policy_id)?;
-    // Go `checkPlacementPolicyNotInUse`.
+    // Go `checkPlacementPolicyNotInUse`: the schema, then the ranges.
     check_policy_not_in_use(catalog, &policy.name)
+        .and_then(|()| check_placement_policy_not_in_use_from_range(&policy.name))
         .map_err(|error| cancel_ddl_job(active, error))?;
     let finished = policy.state == SchemaState::DELETE_ONLY;
     let drop = match policy.state {

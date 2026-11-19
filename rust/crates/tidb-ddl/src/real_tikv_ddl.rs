@@ -1719,6 +1719,18 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             }
         }
     } else {
+        // Go `infosync.PutRuleBundlesWithDefaultRetry` on a node without
+        // PD: the info syncer's `mockPlacementManager`.
+        if !write.placement_bundles.is_empty() {
+            if let Err(error) = tidb_domain_infosync::placement_manager::put_rule_bundles_with_default_retry(
+                &write.placement_bundles,
+            ) {
+                let _ = transaction.rollback();
+                return Err(ClusterDdlError::NotCommitted(format!(
+                    "failed to notify PD the placement rules: {error}"
+                )));
+            }
+        }
         None
     };
     let label_receipt = match deliver_label_rules(&write) {

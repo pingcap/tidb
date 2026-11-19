@@ -479,6 +479,11 @@ impl tidb_executor::admin::AdminExec for Session {
         }
     }
 
+    fn alter_range_stmt(&mut self, stmt: &tidb_ast::AlterRangeStmt) -> Result<StmtOutput, DriverError> {
+        self.with_planning_catalog(|is| tidb_executor::admin::execute_alter_range(stmt, is))?;
+        Ok(StmtOutput::Affected(0))
+    }
+
     fn calibrate_resource_stmt(
         &mut self,
         stmt: &tidb_ast::CalibrateResourceStmt,
