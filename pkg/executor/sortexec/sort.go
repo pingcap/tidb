@@ -19,7 +19,6 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
