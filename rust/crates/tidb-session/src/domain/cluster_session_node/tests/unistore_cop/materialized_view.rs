@@ -2821,3 +2821,121 @@ fn materialized_view_ddl_safeguards_answer_as_go_master() {
 fn max_count_and_min_count_answer_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_max_min_count_go.jsonl"));
 }
+
+/// Go master `mustSetMockGCSafePoint`.
+fn must_set_mock_gc_safe_point(session: &mut Session, safe_point: chrono::DateTime<chrono::Utc>) {
+    let value = safe_point.format("%Y%m%d-%H:%M:%S +0000").to_string();
+    let comment = "All versions after safe point can be accessed. (DO NOT EDIT)";
+    must_exec_all(session, &[&format!(
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '{value}', '{comment}') ON DUPLICATE KEY UPDATE variable_value = '{value}', comment = '{comment}'"
+    )]);
+}
+
+/// Go `time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)`,
+/// then sleeping past it by 20ms: a target the next writes come after.
+fn next_refresh_target() -> chrono::DateTime<chrono::Utc> {
+    let now = chrono::Utc::now() + chrono::Duration::milliseconds(50);
+    let target = chrono::DateTime::from_timestamp_millis(now.timestamp_millis()).unwrap();
+    let wait = (target + chrono::Duration::milliseconds(20)) - chrono::Utc::now();
+    if let Ok(wait) = wait.to_std() {
+        std::thread::sleep(wait);
+    }
+    target
+}
+
+/// Go `oracle.GoTimeToTS`.
+fn go_time_to_ts(time: chrono::DateTime<chrono::Utc>) -> u64 {
+    u64::try_from(time.timestamp_millis()).unwrap() << 18
+}
+
+fn last_success_read_tso(session: &mut Session, view: &str) -> String {
+    answer(
+        session,
+        &format!(
+            "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '{view}')"
+        ),
+    )
+}
+
+/// Go master `TestMaterializedViewRefreshFastAsOfTimestampMinMaxTargetSnapshot`
+/// (`pkg/executor/test/materializedview/materialized_view_refresh_test.go`):
+/// an AS OF FAST refresh recomputes MIN / MAX from the base table at the
+/// target (`FullUpdateSnapshot`), over the target's schema.
+#[test]
+fn test_materialized_view_refresh_fast_as_of_timestamp_min_max_target_snapshot() {
+    // t.Run("data")
+    {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "set time_zone = '+00:00'",
+            "create table t_mv_refresh_asof_minmax_data (a int not null, b int not null, key idx_a(a))",
+            "create materialized view log on t_mv_refresh_asof_minmax_data (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_refresh_asof_minmax_data (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_data group by a",
+            "insert into t_mv_refresh_asof_minmax_data values (1, 10), (1, 20), (1, 30)",
+            "refresh materialized view mv_refresh_asof_minmax_data complete delta apply",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_minmax_data"), r#"RS:[["1","3","30","10"]]"#);
+        must_exec_all(&mut tk, &["delete from t_mv_refresh_asof_minmax_data where a = 1 and b = 30"]);
+        let target = next_refresh_target();
+        must_exec_all(&mut tk, &["insert into t_mv_refresh_asof_minmax_data values (1, 100)"]);
+        must_set_mock_gc_safe_point(&mut tk, target - chrono::Duration::hours(1));
+        let refresh = format!(
+            "refresh materialized view mv_refresh_asof_minmax_data fast as of timestamp '{}'",
+            target.format("%Y-%m-%d %H:%M:%S%.3f")
+        );
+        assert_eq!(answer(&mut tk, &refresh).get(..2), Some("OK"), "{refresh}");
+        assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_minmax_data"), r#"RS:[["1","2","20","10"]]"#);
+        assert_eq!(
+            last_success_read_tso(&mut tk, "mv_refresh_asof_minmax_data"),
+            format!(r#"RS:[["{}"]]"#, go_time_to_ts(target))
+        );
+    }
+    // t.Run("schema")
+    {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "set time_zone = '+00:00'",
+            "create table t_mv_refresh_asof_minmax_schema (a int not null, b int not null, key idx_ab(a, b))",
+            "create materialized view log on t_mv_refresh_asof_minmax_schema (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_refresh_asof_minmax_schema (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_schema group by a",
+            "insert into t_mv_refresh_asof_minmax_schema values (1, 10), (1, 20), (1, 30)",
+            "refresh materialized view mv_refresh_asof_minmax_schema complete delta apply",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_minmax_schema"), r#"RS:[["1","3","30","10"]]"#);
+        must_exec_all(&mut tk, &["delete from t_mv_refresh_asof_minmax_schema where a = 1 and b = 30"]);
+        let before_invisible = next_refresh_target();
+        must_exec_all(&mut tk, &[
+            "create index idx_a on t_mv_refresh_asof_minmax_schema (a)",
+            "alter table t_mv_refresh_asof_minmax_schema alter index idx_ab invisible",
+        ]);
+        must_set_mock_gc_safe_point(&mut tk, before_invisible - chrono::Duration::hours(1));
+        let refresh = format!(
+            "refresh materialized view mv_refresh_asof_minmax_schema fast as of timestamp '{}'",
+            before_invisible.format("%Y-%m-%d %H:%M:%S%.3f")
+        );
+        assert_eq!(answer(&mut tk, &refresh).get(..2), Some("OK"), "{refresh}");
+        assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_minmax_schema"), r#"RS:[["1","2","20","10"]]"#);
+        assert_eq!(
+            last_success_read_tso(&mut tk, "mv_refresh_asof_minmax_schema"),
+            format!(r#"RS:[["{}"]]"#, go_time_to_ts(before_invisible))
+        );
+
+        must_exec_all(&mut tk, &["delete from t_mv_refresh_asof_minmax_schema where a = 1 and b = 20"]);
+        let after_invisible = next_refresh_target();
+        must_set_mock_gc_safe_point(&mut tk, after_invisible - chrono::Duration::hours(1));
+        let refresh = format!(
+            "refresh materialized view mv_refresh_asof_minmax_schema fast as of timestamp '{}'",
+            after_invisible.format("%Y-%m-%d %H:%M:%S%.3f")
+        );
+        assert_eq!(answer(&mut tk, &refresh).get(..2), Some("OK"), "{refresh}");
+        assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_minmax_schema"), r#"RS:[["1","1","10","10"]]"#);
+        assert_eq!(
+            last_success_read_tso(&mut tk, "mv_refresh_asof_minmax_schema"),
+            format!(r#"RS:[["{}"]]"#, go_time_to_ts(after_invisible))
+        );
+    }
+}

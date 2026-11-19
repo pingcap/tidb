@@ -1459,6 +1459,38 @@ impl Session {
         resolve_refresh_sources(&self.computation_snapshot_info_schema(read_tso)?, mview_id)
     }
 
+    /// Go master `buildRefreshMaterializedViewImplement`'s
+    /// `FullUpdateSnapshot`: an AS OF refresh's MIN / MAX lookup reads the base
+    /// table at the target -- the GC safe point checked
+    /// (`gcutil.ValidateSnapshotWithGCSafePoint`), over the target's schema
+    /// (`staleread.GetSessionSnapshotInfoSchema`) and its committed data alone.
+    pub(crate) fn mview_full_update_snapshot_source(
+        &self,
+    ) -> impl Fn(&tidb_sessionctx::StmtContext, u64) -> Result<tidb_executor::driver::mview_delta_merge::FullUpdateSnapshot, DriverError>
+           + use<> {
+        let restricted = self.restricted_sql_executor();
+        let domain = self.domain_services().and_then(|services| services.domain.upgrade());
+        move |ctx, to_ts| {
+            let restricted = restricted
+                .as_ref()
+                .ok_or_else(|| DriverError::unsupported("the session has no restricted SQL executor to read the GC safe point"))?;
+            crate::gcutil::validate_snapshot(restricted.as_ref(), to_ts)?;
+            let domain =
+                domain.as_ref().ok_or_else(|| DriverError::unsupported("the session has no domain to read a snapshot from"))?;
+            let catalog = crate::domain::cluster_session_node::get_snapshot_info_schema(domain, to_ts)
+                .map_err(|error| annotate(&error, "refresh materialized view: cannot load computation snapshot schema"))?;
+            let snapshot = domain
+                .transactions
+                .open_snapshot_at(to_ts, tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
+                .map_err(DriverError::unsupported)?;
+            let store = ctx
+                .txn_store()
+                .and_then(|store| store.snapshot_reader_at(snapshot))
+                .ok_or_else(|| DriverError::unsupported("the statement's store cannot read at a snapshot"))?;
+            Ok(tidb_executor::driver::mview_delta_merge::FullUpdateSnapshot { catalog, ctx: ctx.clone().with_txn_store(store) })
+        }
+    }
+
     /// The schema at a refresh computation's read TSO (Go `snapshotIS`).
     fn computation_snapshot_info_schema(
         &self,
@@ -1562,8 +1594,18 @@ impl Session {
             ));
         }
         // Go: the retained mlog window ends at the statement's for-update TS.
+        let source = self.mview_full_update_snapshot_source();
+        let full_update_snapshot = |to_ts: u64| source(&ctx, to_ts);
         let stats = self.with_staged_catalog(|catalog| {
-            tidb_executor::driver::mview_delta_merge::run_mview_delta_merge(merge, &build, catalog, &current_db, &ctx, read_tso)
+            tidb_executor::driver::mview_delta_merge::run_mview_delta_merge(
+                merge,
+                &build,
+                catalog,
+                &current_db,
+                &ctx,
+                read_tso,
+                &full_update_snapshot,
+            )
         })?;
         self.statement_message = stats.stmt_message();
         Ok(StmtOutput::Affected(stats.affected_rows()))

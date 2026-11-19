@@ -524,6 +524,14 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     fn statement_read_view(&self) -> Option<Box<dyn TableStorage>> {
         None
     }
+
+    /// Go `dataReaderBuilder` with a snapshot (`newDataReaderBuilderWithSnapshot`,
+    /// `isStaleness`): this backend's readers over `snapshot` alone, without
+    /// the transaction's staged writes. `None` for a backend with no
+    /// snapshot half.
+    fn snapshot_reader_at(&self, _snapshot: Box<dyn crate::cluster_storage::ClusterSnapshot>) -> Option<Box<dyn TableStorage>> {
+        None
+    }
 }
 
 impl Clone for Box<dyn TableStorage> {

@@ -1738,6 +1738,17 @@ impl TableStorage for ClusterTableStorage {
         Box::new(self.clone())
     }
 
+    fn snapshot_reader_at(&self, snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn TableStorage>> {
+        let mut slot = SwappableSnapshot::new();
+        drop(slot.bind(snapshot));
+        Some(Box::new(Self {
+            buffer: MutationBuffer::new(),
+            snapshot: Arc::new(Mutex::new(slot)) as Arc<Mutex<dyn ClusterSnapshot>>,
+            read_view_slot: None,
+            ..self.clone()
+        }))
+    }
+
     fn statement_read_view(&self) -> Option<Box<dyn TableStorage>> {
         let slot = self.read_view_slot.as_ref()?;
         if !slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_bound() {

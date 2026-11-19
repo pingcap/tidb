@@ -532,12 +532,22 @@ impl Session {
         // is unset) and the id column's are stripped by the formatter, which
         // the row format with ids gives once formatted.
         let format = tidb_sessionctx::explain_format::ExplainFormat::Row;
+        let source = sys.mview_full_update_snapshot_source();
+        let full_update_snapshot = |to_ts: u64| source(&ctx, to_ts);
         let (_, rows) = sys.with_planning_catalog(|catalog| match &plan {
             tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) => {
                 tidb_executor::explain_mview_complete_delta_apply(apply, catalog, &current_db, &ctx, format)
             }
             tidb_planner::common_plans::Plan::MViewDeltaMerge(merge) => {
-                tidb_executor::explain_mview_delta_merge(merge, catalog, &current_db, &ctx, format, retained_upper_tso)
+                tidb_executor::explain_mview_delta_merge(
+                    merge,
+                    catalog,
+                    &current_db,
+                    &ctx,
+                    format,
+                    retained_upper_tso,
+                    &full_update_snapshot,
+                )
             }
             _ => Err(plain("dry run refresh materialized view: unexpected internal plan")),
         })?;

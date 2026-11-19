@@ -195,6 +195,8 @@ pub struct FullUpdateLookup {
     join: tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     /// Go `OutputMVOffsets`: the view offset of each inner output column.
     output_mv_offsets: Vec<usize>,
+    /// Go `FullUpdateSnapshot`: an AS OF target's schema and reader.
+    snapshot: Option<FullUpdateSnapshot>,
 }
 
 /// Go `findMVFullUpdateIndexJoinTemplatePlan`: the template's IndexJoin,
@@ -262,7 +264,12 @@ fn extract_full_update_lookup_template(
     if non_key.next().is_some() {
         return Err(plain("mview full-update lookup template: non-key column mapping mismatch"));
     }
-    Ok(FullUpdateLookup { inner, join: join.clone(), output_mv_offsets: output_mv_offsets.into_iter().flatten().collect() })
+    Ok(FullUpdateLookup {
+        inner,
+        join: join.clone(),
+        output_mv_offsets: output_mv_offsets.into_iter().flatten().collect(),
+        snapshot: None,
+    })
 }
 
 /// Go master `mviewRefreshMLogIsEmpty`: the log side of the merge source
@@ -307,6 +314,7 @@ pub fn plan_mview_delta_merge(
     current_db: &str,
     ctx: &crate::StmtContext,
     retained_upper_tso: u64,
+    full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
 ) -> Result<(PhysicalPlan, bool, Option<FullUpdateLookup>), DriverError> {
     // Go master `WithMLogCommitTSEstimation` around the merge source's
     // optimization: the retained log window the commit-ts filters are
@@ -342,8 +350,13 @@ pub fn plan_mview_delta_merge(
     // the log has rows.
     let full_update = match &build.full_update_lookup_template_sql {
         Some(template) if !empty => {
+            // Go `lookupIS`: an AS OF refresh plans and reads the lookup at
+            // its target (the GC safe point checked, the target's schema).
+            let snapshot =
+                if plan.options.to_ts > 0 { Some(full_update_snapshot(plan.options.to_ts)?) } else { None };
+            let lookup_catalog = snapshot.as_ref().map_or(catalog, |snapshot| &snapshot.catalog);
             // Go `validateMVFullUpdateSupportingIndex`.
-            let base = catalog.table_info_by_id(build.base_table_id).ok_or_else(|| {
+            let base = lookup_catalog.table_info_by_id(build.base_table_id).ok_or_else(|| {
                 plain(format!(
                     "mview full-update lookup template: base table id {} not found in infoschema",
                     build.base_table_id
@@ -367,7 +380,7 @@ pub fn plan_mview_delta_merge(
             let lookup_ctx = plan_ctx.clone().with_inl_join_inner_multi_pattern(true);
             let lookup_plan = super::planner_bridge::physical_select_plan_with_allocators(
                 &select,
-                catalog,
+                lookup_catalog,
                 current_db,
                 &lookup_ctx,
                 &plan_ids,
@@ -381,7 +394,9 @@ pub fn plan_mview_delta_merge(
                     build.full_update_lookup_column_count
                 )));
             }
-            Some(extract_full_update_lookup_template(&lookup_plan, build)?)
+            let mut lookup = extract_full_update_lookup_template(&lookup_plan, build)?;
+            lookup.snapshot = snapshot;
+            Some(lookup)
         }
         _ => None,
     };
@@ -679,6 +694,18 @@ fn recompute_min_max_group(
     }
 }
 
+/// Go `plannercore.DataReaderSnapshot` for the MIN / MAX recompute of an AS
+/// OF FAST refresh: the target's schema, and the statement reading the base
+/// table at the target.
+pub struct FullUpdateSnapshot {
+    pub catalog: SessionExtendedInfoSchema,
+    pub ctx: crate::StmtContext,
+}
+
+/// Opens the [`FullUpdateSnapshot`] at an AS OF target, when the merge needs
+/// the MIN / MAX lookup (Go computes it only there).
+pub type FullUpdateSnapshotProvider<'a> = dyn Fn(u64) -> Result<FullUpdateSnapshot, DriverError> + 'a;
+
 /// Go master `MViewDeltaMergeAggExec`: merges the window into the view and
 /// answers the write counts.
 ///
@@ -692,12 +719,24 @@ pub fn run_mview_delta_merge(
     current_db: &str,
     ctx: &crate::StmtContext,
     retained_upper_tso: u64,
+    full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
 ) -> Result<DeltaMergeWriterStats, DriverError> {
     let (mut root, mlog_empty, full_update) =
-        plan_mview_delta_merge(plan, build, catalog, current_db, ctx, retained_upper_tso)?;
+        plan_mview_delta_merge(plan, build, catalog, current_db, ctx, retained_upper_tso, full_update_snapshot)?;
+    // Go `newDataReaderBuilderWithSnapshot(v.FullUpdateInnerSource,
+    // v.FullUpdateSnapshot)`: an AS OF target's recompute reads the base table
+    // at the target, over the target's schema.
     let full_update_reader = full_update
         .as_ref()
-        .map(|lookup| super::physical_builder::full_update_reader_builder(&lookup.inner, &lookup.join, catalog, ctx))
+        .map(|lookup| match &lookup.snapshot {
+            Some(snapshot) => super::physical_builder::full_update_reader_builder(
+                &lookup.inner,
+                &lookup.join,
+                &snapshot.catalog,
+                &snapshot.ctx,
+            ),
+            None => super::physical_builder::full_update_reader_builder(&lookup.inner, &lookup.join, catalog, ctx),
+        })
         .transpose()?;
     crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
     let dml = super::physical_builder::DmlExec::new(&root, ctx);
@@ -792,14 +831,6 @@ pub fn run_mview_delta_merge(
                     let (Some(reader), Some(lookup)) = (full_update_reader.as_ref(), full_update.as_ref()) else {
                         return Err(plain("min/max recompute requires the full-update lookup"));
                     };
-                    if plan.options.to_ts > 0 {
-                        // Go reads the base table at the AS OF target here
-                        // (`FullUpdateSnapshot`); this node reads at the
-                        // statement snapshot only.
-                        return Err(plain(
-                            "FAST refresh AS OF of a materialized view whose MIN / MAX must be recomputed is not supported on this node yet",
-                        ));
-                    }
                     let key: Vec<Datum> = build.group_key_mv_offsets.iter().map(|&offset| row[delta + offset].clone()).collect();
                     let recomputed = recompute_min_max_group(reader.as_ref(), key)?;
                     for mv_offset in recompute {

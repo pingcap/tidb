@@ -3983,10 +3983,18 @@ pub fn explain_mview_delta_merge(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
     retained_upper_tso: u64,
+    full_update_snapshot: &crate::driver::mview_delta_merge::FullUpdateSnapshotProvider<'_>,
 ) -> Result<SelectMeta, DriverError> {
     let build = crate::driver::mview_delta_merge::build_merge_source(plan, catalog, ctx)?;
-    let (mut physical, _, _) =
-        crate::driver::mview_delta_merge::plan_mview_delta_merge(plan, &build, catalog, current_db, ctx, retained_upper_tso)?;
+    let (mut physical, _, _) = crate::driver::mview_delta_merge::plan_mview_delta_merge(
+        plan,
+        &build,
+        catalog,
+        current_db,
+        ctx,
+        retained_upper_tso,
+        full_update_snapshot,
+    )?;
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_built_plan(ctx, &physical, catalog, format, &[])
 }
