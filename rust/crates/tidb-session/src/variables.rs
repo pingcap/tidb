@@ -508,10 +508,11 @@ impl Session {
         if !first && !name.eq_ignore_ascii_case("rand_seed2") {
             return Ok(());
         }
+        // The stored value: the variable's `GetSession` answers "0".
         let seed = self
             .vars
-            .get_system(name)
-            .map_err(var_error)?
+            .stored_session_value(&name.to_ascii_lowercase())
+            .unwrap_or_default()
             .parse::<u32>()
             .unwrap_or(0);
         if first {
@@ -519,7 +520,7 @@ impl Session {
         } else {
             self.rand.set_seed2(seed);
         }
-        self.vars.reset_system(name).map_err(var_error)
+        Ok(())
     }
 
     /// Evaluates a `SET` right-hand side to its TYPED value, which is what a
@@ -690,112 +691,9 @@ impl Session {
                     }
                 }
                 self.require_sem_visible_sysvar(def.name)?;
-                // `@@last_insert_id` and its `@@identity` alias are the SAME
-                // value `LAST_INSERT_ID()` reports -- Go's
-                // `StmtCtx.PrevLastInsertID` -- not an entry in the variable
-                // table, which is why they are answered from the session's
-                // publication rather than from `get_system`. `@@global.` on
-                // either is still the variable table's error (captured).
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && (name.eq_ignore_ascii_case("last_insert_id")
-                        || name.eq_ignore_ascii_case("identity"))
-                {
-                    return Ok(Expr::Int(self.vars.last_insert_id.to_string()));
-                }
-                // `@@warning_count` and `@@error_count` are Go's `GetSession`
-                // hooks on `s.SysWarningCount` / `s.SysErrorCount`: the
-                // PREVIOUS statement's counts, snapshotted by
-                // `ResetContextOfStmt` at every statement start. The variable
-                // table's entries carry only the type and the read-only flag,
-                // so answering from them -- which this port did -- reported
-                // the registration's `0` for every statement, including right
-                // after one that warned.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("warning_count")
-                {
-                    // Both counts are Go's TypeStr session variables (MySQL
-                    // renders them as strings), so the oracle answer reads
-                    // ('1', '1') -- not integers.
-                    return Ok(Expr::String(self.sys_warning_count().to_string()));
-                }
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("error_count")
-                {
-                    return Ok(Expr::String(self.sys_error_count().to_string()));
-                }
-                // `@@last_plan_from_cache` is Go's `PrevFoundInPlanCache`
-                // read (`sysvar.go`'s GetSession hook), not a stored value --
-                // the variable table's entry is only the type and the
-                // read-only flag.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("last_plan_from_cache")
-                {
-                    return Ok(Expr::Int(
-                        i32::from(self.last_plan_from_cache()).to_string(),
-                    ));
-                }
-                // `@@last_sql_use_alloc` is Go's `preUseChunkAlloc` read: the
-                // previous statement's `StmtCtx.useChunkAlloc`.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_USE_ALLOC)
-                {
-                    return Ok(Expr::Int(i32::from(self.vars.pre_use_chunk_alloc).to_string()));
-                }
-                // `@@last_plan_from_binding` is Go's `PrevFoundInBinding`
-                // read, for the same reason and at the same boundary as
-                // `@@last_plan_from_cache` above.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("last_plan_from_binding")
-                {
-                    return Ok(Expr::Int(
-                        i32::from(self.last_plan_from_binding()).to_string(),
-                    ));
-                }
-                // `@@tidb_current_ts` is Go's `s.TxnCtx.StartTS` read
-                // (`sysvar.go:297`'s GetSession hook): the timestamp the
-                // OPEN transaction is reading at, and `0` when none is
-                // open. The variable table's entry carries only the type
-                // and the read-only flag, so answering from it -- which
-                // this port did -- reported 0 for every transaction.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("tidb_current_ts")
-                {
-                    // Go's `GetSession` hook returns `FormatUint`, so the value is a
-                    // string like every system variable's.
-                    return Ok(Expr::String(self.current_tso().value().to_string()));
-                }
-                // `@@tidb_last_txn_info` is Go's `SessionVars.LastTxnInfo`
-                // read: client-go's `TxnInfo` JSON for the last ACTIVATED
-                // transaction, written at the session's commit points and
-                // empty before the first one.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("tidb_last_txn_info")
-                {
-                    return Ok(Expr::String(self.last_txn_info_value()));
-                }
-                // `@@tidb_last_ddl_info`: Go's JSON-marshalled
-                // `SessionVars.LastDDLInfo`.
-                // `@@tidb_last_plan_replayer_token`: Go's getter over
-                // `SessionVars.LastPlanReplayerToken`.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("tidb_last_plan_replayer_token")
-                {
-                    return Ok(Expr::String(self.vars.last_plan_replayer_token.clone()));
-                }
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("tidb_last_ddl_info")
-                {
-                    return Ok(Expr::String(self.last_ddl_info_value()));
-                }
-                // `@@tidb_last_query_info` is Go's JSON-marshalled
-                // `SessionVars.LastQueryInfo` getter. Keep it out of the
-                // registry's empty default so the zero-value JSON shape is
-                // visible even before the first diagnostic query.
-                if *scope != Some(tidb_ast::SysVarScope::Global)
-                    && name.eq_ignore_ascii_case("tidb_last_query_info")
-                {
-                    return Ok(Expr::String(self.last_query_info_value()));
-                }
+                // A variable with a Go `GetSession` hook (`@@warning_count`,
+                // `@@last_insert_id`, `@@tidb_current_ts`, ...) answers from
+                // it inside `get_system` (`GetSessionOrGlobalSystemVar`).
                 // A no-scope server property uses the same read authority as
                 // an unqualified session read. Most answer their registry
                 // default; `version_comment` is derived from the immutable

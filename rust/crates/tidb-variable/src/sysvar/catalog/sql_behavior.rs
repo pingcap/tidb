@@ -39,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "default_storage_engine",
@@ -55,6 +56,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "default_tmp_storage_engine",
@@ -71,6 +73,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "group_concat_max_len",
@@ -87,6 +90,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "keep_files_on_create",
@@ -103,6 +107,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "rbr_exec_mode",
@@ -119,6 +124,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_auto_is_null",
@@ -135,6 +141,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: Some(super::super::validation::check_read_only),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_big_selects",
@@ -151,6 +158,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_mode",
@@ -167,6 +175,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: Some(super::super::validation::sql_mode),
         set_session: Some(crate::vars::SessionVars::set_session_sql_mode),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_notes",
@@ -183,6 +192,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_quote_show_create",
@@ -199,6 +209,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_require_primary_key",
@@ -215,6 +226,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_select_limit",
@@ -231,6 +243,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_sql_select_limit),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sql_warnings",
@@ -247,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "storage_engine",
@@ -263,6 +277,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_cb_pd_metadata_error_rate_threshold_ratio",
@@ -279,6 +294,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_check_constraint",
@@ -295,6 +311,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_collect_execution_info",
@@ -311,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_fast_create_table",
@@ -327,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_new_only_full_group_by_check",
@@ -343,6 +362,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_ts_validation",
@@ -359,6 +379,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_end_time",
@@ -375,6 +396,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_max_time",
@@ -391,6 +413,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_task_start_time",
@@ -407,6 +430,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_generate_binary_plan",
@@ -423,4 +447,5 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },];

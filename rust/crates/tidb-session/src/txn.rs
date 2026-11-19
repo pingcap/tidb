@@ -351,7 +351,7 @@ impl Session {
     fn record_statement_ended_txn(&mut self) {
         if self.statement_ended_txn_start_ts.is_none() {
             self.statement_ended_txn_start_ts =
-                Some(u64::try_from(self.current_tso.value()).unwrap_or(0));
+                Some(u64::try_from(self.vars.current_tso.value()).unwrap_or(0));
         }
     }
 

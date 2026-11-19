@@ -30838,13 +30838,13 @@ fn test_history_read_in_txn() {
     ] {
         rows(&mut session, sql);
     }
-    let ts1 = session.current_tso.value() as u64;
+    let ts1 = session.current_tso().value() as u64;
     rows(&mut session, "ROLLBACK");
     rows(&mut session, "CREATE TABLE his_t1 (id INT PRIMARY KEY, v INT)");
     rows(&mut session, "UPDATE his_t0 SET v=11");
     rows(&mut session, "BEGIN");
     rows(&mut session, "SELECT * FROM his_t0");
-    let ts2 = session.current_tso.value() as u64;
+    let ts2 = session.current_tso().value() as u64;
     rows(&mut session, "ROLLBACK");
     rows(&mut session, "UPDATE his_t0 SET v=12");
     let options = [

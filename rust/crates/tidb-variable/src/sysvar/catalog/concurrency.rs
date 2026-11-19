@@ -39,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "max_execution_time",
@@ -55,6 +56,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_max_execution_time),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "max_statement_time",
@@ -71,6 +73,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "thread_concurrency",
@@ -87,6 +90,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_checksum_table_concurrency",
@@ -103,6 +107,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_resource_control",
@@ -119,6 +124,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_tmp_storage_on_oom",
@@ -135,6 +141,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_executor_concurrency",
@@ -151,6 +158,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_force_priority",
@@ -167,6 +175,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_hashagg_final_concurrency",
@@ -183,6 +192,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_hashagg_partial_concurrency",
@@ -199,6 +209,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_index_serial_scan_concurrency",
@@ -215,6 +226,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: Some(super::super::validation::tidb_index_serial_scan_concurrency),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_pipelined_dml_resource_policy",
@@ -231,6 +243,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: Some(super::super::validation::tidb_pipelined_dml_resource_policy),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_pprof_sql_cpu",
@@ -247,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_projection_concurrency",
@@ -263,6 +277,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_resource_control_strict_mode",
@@ -279,6 +294,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_streamagg_concurrency",
@@ -295,6 +311,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_sysproc_scan_concurrency",
@@ -311,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_window_concurrency",
@@ -327,5 +345,6 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
 ];

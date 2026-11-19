@@ -191,7 +191,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
         let snapshot = if self.vars.snapshot_ts() != 0 {
             self.vars.snapshot_ts()
         } else {
-            u64::try_from(self.current_tso.value()).unwrap_or_default()
+            u64::try_from(self.vars.current_tso.value()).unwrap_or_default()
         };
         let context = tikv_client::util::with_internal_source_type(
             &tikv_client::trace::TraceContext::new(),

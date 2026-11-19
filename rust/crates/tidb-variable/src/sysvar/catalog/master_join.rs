@@ -28,5 +28,6 @@ pub(super) static ENTRIES: [SysVarDef; 1] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_full_outer_join),
         set_global: None,
+        get_session: None,
     },
 ];

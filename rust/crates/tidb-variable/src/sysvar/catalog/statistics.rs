@@ -39,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_column_options",
@@ -55,6 +56,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_analyze_column_options),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_default_num_buckets",
@@ -71,6 +73,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_default_num_topn",
@@ -87,6 +90,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_distsql_scan_concurrency",
@@ -103,6 +107,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_partition_concurrency",
@@ -119,6 +124,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_skip_column_types",
@@ -135,6 +141,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_analyze_skip_column_types),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_analyze_version",
@@ -151,6 +158,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_analyze_version),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_analyze_concurrency",
@@ -167,6 +175,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_auto_analyze_concurrency),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_analyze_end_time",
@@ -183,6 +192,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_analyze_partition_batch_size",
@@ -199,6 +209,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_auto_analyze_partition_batch_size),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_analyze_ratio",
@@ -215,6 +226,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_auto_analyze_ratio),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_analyze_start_time",
@@ -231,6 +243,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_auto_build_stats_concurrency",
@@ -247,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_build_sampling_stats_concurrency",
@@ -263,6 +277,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_build_stats_concurrency",
@@ -279,6 +294,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_default_string_match_selectivity",
@@ -295,6 +311,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_analyze_snapshot",
@@ -311,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_auto_analyze",
@@ -327,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_auto_analyze_priority_queue",
@@ -343,6 +362,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_enable_auto_analyze_priority_queue),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_column_tracking",
@@ -359,6 +379,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_enable_column_tracking),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_extended_stats",
@@ -375,6 +396,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_fast_analyze",
@@ -391,6 +413,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_enable_fast_analyze),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_historical_stats",
@@ -407,6 +430,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_historical_stats_for_capture",
@@ -423,6 +447,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_pseudo_for_outdated_stats",
@@ -439,6 +464,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_stats_owner",
@@ -455,6 +481,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_historical_stats_duration",
@@ -471,6 +498,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_max_auto_analyze_time",
@@ -487,6 +515,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mem_quota_analyze",
@@ -503,6 +532,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_merge_partition_stats_concurrency",
@@ -519,6 +549,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: Some(super::super::validation::tidb_merge_partition_stats_concurrency),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_opt_ordering_index_selectivity_ratio",
@@ -535,6 +566,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_opt_ordering_index_selectivity_threshold",
@@ -551,6 +583,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_opt_selectivity_factor",
@@ -567,6 +600,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_tidb_opt_selectivity_factor),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_optimizer_selectivity_level",
@@ -583,6 +617,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_persist_analyze_options",
@@ -599,6 +634,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_plan_cache_invalidation_on_fresh_stats",
@@ -615,6 +651,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_plan_cache_skip_stats_on_binding",
@@ -631,6 +668,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_skip_missing_partition_stats",
@@ -647,6 +685,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_stats_cache_mem_quota",
@@ -663,6 +702,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_stats_load_pseudo_timeout",
@@ -679,6 +719,7 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_stats_update_during_ddl",
@@ -695,5 +736,6 @@ pub(super) static ENTRIES: [SysVarDef; 42] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
 ];

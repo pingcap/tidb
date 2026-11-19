@@ -108,3 +108,25 @@ fn test_set_cluster_config() {
         "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG",
     ]);
 }
+
+/// Go `SessionVars.GetSessionOrGlobalSystemVar`: `SHOW VARIABLES` reads a
+/// variable with a `GetSession` hook through the hook, as `@@x` does --
+/// the previous statement's warning count, the statement's time -- not the
+/// value stored for it. Expected rows: `./gorun` on this branch.
+#[test]
+fn show_variables_answers_get_session_hooks() {
+    let mut tk = TestKit::new();
+    tk.must_query("select 1/0").check(["<nil>"]);
+    tk.must_query("show variables like 'warning_count'").check(["warning_count 1"]);
+    tk.must_query("select @@warning_count").check(["0"]);
+    tk.must_query("show variables like 'error_count'").check(["error_count 0"]);
+    tk.must_query("show variables like 'last_insert_id'").check(["last_insert_id 0"]);
+    tk.must_query("show variables like 'tidb_current_ts'").check(["tidb_current_ts 0"]);
+    tk.must_query("show variables like 'last_plan_from_cache'").check(["last_plan_from_cache OFF"]);
+    tk.must_query("show variables like 'rand_seed1'").check(["rand_seed1 0"]);
+    let timestamp = tk.must_query("show variables like 'timestamp'");
+    let value: f64 = timestamp.rows()[0][1].parse().unwrap();
+    assert!(value > 1.0e9, "timestamp reads the statement's time: {value}");
+    tk.must_exec("set rand_seed1 = 7");
+    tk.must_query("select @@rand_seed1").check(["0"]);
+}

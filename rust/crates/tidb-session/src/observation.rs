@@ -1523,7 +1523,7 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
     /// Go `TxnCtx.StartTS` and `TxnCtx.GetForUpdateTS()`: the for-update
     /// timestamp when it is newer than the start, else the start.
     fn txn_start_and_for_update_ts(&self) -> (u64, u64) {
-        let start_ts = match u64::try_from(self.current_tso.value()).unwrap_or(0) {
+        let start_ts = match u64::try_from(self.vars.current_tso.value()).unwrap_or(0) {
             0 => self.statement_txn_start_ts,
             start_ts => start_ts,
         };

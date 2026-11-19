@@ -209,6 +209,35 @@ fn timestamp_hook_value(override_value: Option<&str>) -> String {
     format_double(seconds)
 }
 
+/// The transaction timestamp visible to one SQL session: Go
+/// `SessionVars.TxnCtx.StartTS`, which `tidb_current_ts` answers.
+///
+/// The handle is shared with statement contexts because an autocommit
+/// transaction opens lazily on its first storage read, after expression
+/// evaluation has already been wired. Publishing through this handle lets a
+/// later expression in that same statement observe the timestamp without
+/// allocating one for constant-only statements.
+#[derive(Clone, Debug, Default)]
+pub struct CurrentTso(Arc<std::sync::atomic::AtomicU64>);
+
+impl CurrentTso {
+    /// Publishes the timestamp of the transaction that just opened.
+    pub fn publish(&self, tso: u64) {
+        self.0.store(tso, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Clears the completed transaction from the session.
+    pub fn clear(&self) {
+        self.publish(0);
+    }
+
+    /// Returns the signed value `TIDB_CURRENT_TSO()` exposes.
+    #[must_use]
+    pub fn value(&self) -> i64 {
+        i64::try_from(self.0.load(std::sync::atomic::Ordering::Acquire)).unwrap_or(i64::MAX)
+    }
+}
+
 /// Go `txnIsolationLevelOneShotState`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TxnIsolationLevelOneShotState {
@@ -377,6 +406,9 @@ pub struct SessionVars {
     /// answered `0` for every statement that is not one of those three.
     /// (Go `SessionVars.SysWarningCount`.)
     pub sys_warning_count: usize,
+    /// Go `TxnCtx.StartTS`: the open transaction's start timestamp, `0`
+    /// when none is open.
+    pub current_tso: CurrentTso,
     /// Go `SessionVars.SysErrorCount`.
     pub sys_error_count: usize,
     /// Go `SessionVars.User` in its two spellings: the matched grant
@@ -617,6 +649,7 @@ impl Default for SessionVars {
             prepared_statement_id: 0,
             in_multi_stmts: false,
             sys_warning_count: 0,
+            current_tso: CurrentTso::default(),
             sys_error_count: 0,
             current_user: None,
             auth_plugin: String::new(),
@@ -1546,6 +1579,11 @@ impl SessionVars {
                 .get_by_registry_index(index)
                 .map(|value| Cow::Owned(global_get_hook(def.name, value)));
         }
+        // Go `GetSessionOrGlobalSystemVar`: a variable with a `GetSession`
+        // hook answers from it ("shortcut to the getter").
+        if let Some(get_session) = def.get_session {
+            return get_session(self).map(Cow::Owned);
+        }
         if let Some(value) = self.session_resolved.values.get(index) {
             if let Some(value) = value.as_ref() {
                 return Ok(Cow::Borrowed(value.as_ref()));
@@ -1553,11 +1591,6 @@ impl SessionVars {
             if self.session_resolved.values.len() == crate::sysvar::sys_var_count() {
                 // A full-length image is current by construction -- every
                 // `systems` mutation republishes it before returning.
-                if def.name == "timestamp" {
-                    return Ok(Cow::Owned(timestamp_hook_value(
-                        self.systems.get(def.name).map(String::as_str),
-                    )));
-                }
                 return self
                     .unseeded_global_value(index)
                     .unwrap_or_else(|| Ok(crate::sysvar::effective_default_value(def)));
@@ -1565,11 +1598,6 @@ impl SessionVars {
         }
         // The registry name is the lowercase key `systems` is written under,
         // so the caller's spelling needs no second lowercasing here.
-        if def.name == "timestamp" {
-            return Ok(Cow::Owned(timestamp_hook_value(
-                self.systems.get(def.name).map(String::as_str),
-            )));
-        }
         if let Some(value) = self.systems.get(def.name) {
             return Ok(Cow::Borrowed(value.as_str()));
         }
@@ -2300,6 +2328,95 @@ pub fn global_get_hook(name: &str, value: String) -> String {
 /// Go `SessionVars.GetRelatedTableForMDL().Store(id, ...)`: records one stored
 /// table id on the statement's metadata-lock map.
 pub type MdlRelatedTableRecorder = std::sync::Arc<dyn Fn(i64) + Send + Sync>;
+
+/// Go `SysVar.GetSession` bodies (`sysvar.go`): what each of these variables
+/// answers from the session's state.
+impl SessionVars {
+    /// Go `timestamp`'s `GetSession`: an explicit non-default value reads
+    /// back verbatim, else the statement's time.
+    pub(crate) fn get_session_timestamp(&self) -> Result<String, VarError> {
+        Ok(timestamp_hook_value(self.systems.get("timestamp").map(String::as_str)))
+    }
+
+    /// Go `warning_count`'s `GetSession`: `s.SysWarningCount`.
+    pub(crate) fn get_session_warning_count(&self) -> Result<String, VarError> {
+        Ok(self.sys_warning_count.to_string())
+    }
+
+    /// Go `error_count`'s `GetSession`: `s.SysErrorCount`.
+    pub(crate) fn get_session_error_count(&self) -> Result<String, VarError> {
+        Ok(self.sys_error_count.to_string())
+    }
+
+    /// Go `last_insert_id`'s and `identity`'s `GetSession`:
+    /// `s.StmtCtx.PrevLastInsertID`.
+    pub(crate) fn get_session_last_insert_id(&self) -> Result<String, VarError> {
+        Ok(self.last_insert_id.to_string())
+    }
+
+    /// Go `tidb_current_ts`'s `GetSession`: `s.TxnCtx.StartTS`.
+    pub(crate) fn get_session_tidb_current_ts(&self) -> Result<String, VarError> {
+        Ok(self.current_tso.value().to_string())
+    }
+
+    /// Go `tidb_last_txn_info`'s `GetSession`: `s.LastTxnInfo`.
+    pub(crate) fn get_session_tidb_last_txn_info(&self) -> Result<String, VarError> {
+        Ok(self.last_txn_info_value())
+    }
+
+    /// Go `tidb_last_query_info`'s `GetSession`: `json.Marshal(s.LastQueryInfo)`.
+    pub(crate) fn get_session_tidb_last_query_info(&self) -> Result<String, VarError> {
+        Ok(self.last_query_info_value())
+    }
+
+    /// Go `last_plan_from_cache`'s `GetSession`: `s.PrevFoundInPlanCache`.
+    pub(crate) fn get_session_last_plan_from_cache(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.prev_found_in_plan_cache).to_owned())
+    }
+
+    /// Go `last_plan_from_binding`'s `GetSession`: `s.PrevFoundInBinding`.
+    pub(crate) fn get_session_last_plan_from_binding(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.prev_found_in_binding).to_owned())
+    }
+
+    /// Go `rand_seed1`'s and `rand_seed2`'s `GetSession`: always `"0"`; the
+    /// seed SET feeds the session's generator (`s.Rng`).
+    pub(crate) fn get_session_rand_seed(&self) -> Result<String, VarError> {
+        Ok("0".to_owned())
+    }
+
+    /// Go `tidb_last_ddl_info`'s `GetSession`: `json.Marshal(s.LastDDLInfo)`.
+    pub(crate) fn get_session_tidb_last_ddl_info(&self) -> Result<String, VarError> {
+        Ok(self.last_ddl_info_value())
+    }
+
+    /// Go `tidb_last_plan_replayer_token`'s `GetSession`:
+    /// `s.LastPlanReplayerToken`.
+    pub(crate) fn get_session_tidb_last_plan_replayer_token(&self) -> Result<String, VarError> {
+        Ok(self.last_plan_replayer_token.clone())
+    }
+
+    /// Go `last_sql_use_alloc`'s `GetSession`: `s.preUseChunkAlloc`.
+    pub(crate) fn get_session_last_sql_use_alloc(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.pre_use_chunk_alloc).to_owned())
+    }
+
+    /// Go `s.systems[name]`: the value stored for a session variable, which a
+    /// `GetSession` hook may answer differently.
+    #[must_use]
+    pub fn stored_session_value(&self, name: &str) -> Option<&str> {
+        self.systems.get(name).map(String::as_str)
+    }
+}
+
+/// Go `BoolToOnOff`.
+fn bool_to_on_off(value: bool) -> &'static str {
+    if value {
+        "ON"
+    } else {
+        "OFF"
+    }
+}
 
 /// Go `SysVar.SetSession` bodies: each variable's typed session field, set
 /// from the value about to be stored (`sysvar.go`).

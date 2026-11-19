@@ -27,6 +27,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::validate_auto_analyze_ratio),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_log_slow_purge",
@@ -43,6 +44,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_purge_batch_size",
@@ -59,6 +61,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_purge_delete_tiflash_threads",
@@ -75,6 +78,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mlog_purge_delete_tiflash_threads),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_purge_hist_time",
@@ -91,6 +95,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_purge_min_rate",
@@ -107,6 +112,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mlog_purge_min_rate),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mlog_purge_rate_budget_ratio",
@@ -123,6 +129,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mlog_purge_rate_budget_ratio),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_enable",
@@ -139,6 +146,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_tidb_mview_enable),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_maintain_import_disk_quota",
@@ -155,6 +163,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mview_maintain_import_disk_quota),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_maintain_import_threads",
@@ -171,6 +180,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_maintain_isolation_read_engines",
@@ -187,6 +197,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mview_maintain_isolation_read_engines),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_maintain_mem_quota",
@@ -203,6 +214,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mview_maintain_mem_quota),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_refresh_hist_time",
@@ -219,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_task_max",
@@ -235,6 +248,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_task_refresh_ratio",
@@ -251,6 +265,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::tidb_mview_task_refresh_ratio),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_task_threshold_cpu",
@@ -267,6 +282,7 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::validate_float_not_nan),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_mview_task_threshold_memory",
@@ -283,5 +299,6 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         validation: Some(super::super::validation::validate_float_not_nan),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
 ];

@@ -39,6 +39,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_base_dn",
@@ -55,6 +56,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_root_dn",
@@ -71,6 +73,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_bind_root_pwd",
@@ -87,6 +90,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_ca_path",
@@ -103,6 +107,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_init_pool_size",
@@ -119,6 +124,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_max_pool_size",
@@ -135,6 +141,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_server_host",
@@ -151,6 +158,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_server_port",
@@ -167,6 +175,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_tls",
@@ -183,6 +192,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_sasl_user_search_attr",
@@ -199,6 +209,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_auth_method_name",
@@ -215,6 +226,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_base_dn",
@@ -231,6 +243,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_root_dn",
@@ -247,6 +260,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_bind_root_pwd",
@@ -263,6 +277,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_ca_path",
@@ -279,6 +294,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_init_pool_size",
@@ -295,6 +311,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_max_pool_size",
@@ -311,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_server_host",
@@ -327,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_server_port",
@@ -343,6 +362,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_tls",
@@ -359,6 +379,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "authentication_ldap_simple_user_search_attr",
@@ -375,6 +396,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "automatic_sp_privileges",
@@ -391,6 +413,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "default_authentication_plugin",
@@ -413,6 +436,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "default_password_lifetime",
@@ -429,6 +453,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "disconnect_on_expired_password",
@@ -445,6 +470,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "mysql_native_password_proxy_users",
@@ -461,6 +487,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "old_passwords",
@@ -477,6 +504,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "password_history",
@@ -493,6 +521,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "password_reuse_interval",
@@ -509,6 +538,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "read_only",
@@ -525,6 +555,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::check_read_only),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "require_secure_transport",
@@ -541,6 +572,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::require_secure_transport),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "secure_auth",
@@ -557,6 +589,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::secure_auth),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "sha256_password_proxy_users",
@@ -573,6 +606,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "skip_name_resolve",
@@ -589,6 +623,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "skip_networking",
@@ -605,6 +640,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "skip_show_database",
@@ -621,6 +657,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "ssl_ca",
@@ -637,6 +674,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "ssl_cert",
@@ -653,6 +691,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "ssl_cipher",
@@ -669,6 +708,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "ssl_key",
@@ -685,6 +725,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "super_read_only",
@@ -701,6 +742,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::check_read_only),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_enhanced_security",
@@ -717,6 +759,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_restricted_read_only",
@@ -733,6 +776,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_super_read_only",
@@ -749,6 +793,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tls_version",
@@ -765,6 +810,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "transaction_read_only",
@@ -781,6 +827,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::check_read_only),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tx_read_only",
@@ -797,6 +844,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: Some(super::super::validation::check_read_only),
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.check_user_name",
@@ -813,6 +861,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.dictionary",
@@ -829,6 +878,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.enable",
@@ -845,6 +895,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.length",
@@ -861,6 +912,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.mixed_case_count",
@@ -877,6 +929,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.number_count",
@@ -893,6 +946,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.policy",
@@ -909,6 +963,7 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "validate_password.special_char_count",
@@ -925,5 +980,6 @@ pub(super) static ENTRIES: [SysVarDef; 56] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
 ];

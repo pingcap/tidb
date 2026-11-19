@@ -76,25 +76,14 @@ pub fn fetch_show_variables(
         if !extractor_admits(extractor, definition.name, definition.name) {
             continue;
         }
-        let live = if global {
-            None
+        // Go `GetGlobalSystemVar` / `GetSessionOrGlobalSystemVar`, whose
+        // session read answers a `GetSession` hook.
+        let value = if global {
+            vars.get_global(definition.name)
+                .unwrap_or_else(|_| sysvar::effective_default(definition))
         } else {
-            match definition.name {
-                "tidb_last_ddl_info" => Some(vars.last_ddl_info_value()),
-                "tidb_last_query_info" => Some(vars.last_query_info_value()),
-                "tidb_last_txn_info" => Some(vars.last_txn_info_value()),
-                "tidb_last_plan_replayer_token" => Some(vars.last_plan_replayer_token.clone()),
-                _ => None,
-            }
-        };
-        let value = match live {
-            Some(live) => live,
-            None if global => vars
-                .get_global(definition.name)
-                .unwrap_or_else(|_| sysvar::effective_default(definition)),
-            None => vars
-                .get_system(definition.name)
-                .unwrap_or_else(|_| sysvar::effective_default(definition)),
+            vars.get_system(definition.name)
+                .unwrap_or_else(|_| sysvar::effective_default(definition))
         };
         rows.push(vec![
             Datum::Bytes(definition.name.as_bytes().to_vec()),

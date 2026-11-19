@@ -599,7 +599,15 @@ pub struct SysVarDef {
     pub set_session: Option<SetHook>,
     /// Go `SetGlobal`'s hook part (see [`SetHook`]).
     pub set_global: Option<SetHook>,
+    /// Go `GetSession` (see [`GetHook`]).
+    pub get_session: Option<GetHook>,
 }
+
+/// Go `SysVar.GetSession`: the session value a variable answers from the
+/// session's state rather than from `vars.systems` (`GetSessionFromHook`),
+/// which every session read -- `@@x`, `SHOW VARIABLES`, the variable tables
+/// -- goes through.
+pub type GetHook = fn(&crate::vars::SessionVars) -> Result<String, crate::vars::VarError>;
 
 /// Go's `vars *SessionVars` as a variable's `Validation`, `SetSession` and
 /// `SetGlobal` closures see it: the sibling variables' values in the scope
@@ -676,6 +684,7 @@ impl SysVarDef {
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     };
 
     /// Go `HasSessionScope`.

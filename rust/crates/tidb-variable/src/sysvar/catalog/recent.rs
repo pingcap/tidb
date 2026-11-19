@@ -26,6 +26,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_tidb_analyze_store_batch_size),
         set_global: None,
+        get_session: None,
     },
     SysVarDef {
         name: "tidb_enable_connection_event_log",
@@ -42,5 +43,6 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         validation: None,
         set_session: None,
         set_global: None,
+        get_session: None,
     },
 ];

@@ -617,10 +617,6 @@ pub struct Session {
     /// The running statement's processed keys, shared by every context it
     /// builds (Go `DistSQLContext.MaxKeysReadCounter`).
     statement_keys_read: Arc<std::sync::atomic::AtomicU64>,
-    /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
-    /// lazily opened cluster snapshot becomes visible inside the statement
-    /// that opened it.
-    current_tso: tidb_exprctx::CurrentTso,
     /// Go `SessionVars.TxnCtx.forUpdateTS` as the cluster tier last published
     /// it for a pessimistic statement. A value older than the open
     /// transaction's start is stale and `GetForUpdateTS` answers the start.
@@ -1092,7 +1088,6 @@ impl Session {
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
-            current_tso: tidb_exprctx::CurrentTso::default(),
             current_for_update_ts: tidb_exprctx::CurrentTso::default(),
             statement_txn_start_ts: 0,
             statement_ended_txn_start_ts: None,
@@ -1501,7 +1496,10 @@ impl Session {
     /// The live transaction timestamp authority used by storage integration.
     #[must_use]
     pub fn current_tso(&self) -> tidb_exprctx::CurrentTso {
-        self.current_tso.clone()
+        // Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so
+        // a lazily opened cluster snapshot becomes visible inside the
+        // statement that opened it.
+        self.vars.current_tso.clone()
     }
 
     /// Go `SessionVars`' planning-phase clocks, shared with the transaction
