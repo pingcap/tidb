@@ -53,6 +53,19 @@ func TestSQLSelectLimit(t *testing.T) {
 	require.Equal(t, uint64(9999), vars.SelectLimit)
 }
 
+func TestTiDBOptEnableSkipScan(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBOptEnableSkipScan)
+	vars := NewSessionVars(nil)
+
+	require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, sv.Scope)
+	require.Equal(t, vardef.Off, sv.Value)
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.NoError(t, sv.SetSessionFromHook(vars, vardef.On))
+	require.True(t, vars.GetEnableSkipScan())
+	require.NoError(t, sv.SetSessionFromHook(vars, vardef.Off))
+	require.False(t, vars.GetEnableSkipScan())
+}
+
 func TestPagingSizeBytesGlobal(t *testing.T) {
 	original := vardef.PagingSizeBytes.Load()
 	t.Cleanup(func() { vardef.PagingSizeBytes.Store(original) })

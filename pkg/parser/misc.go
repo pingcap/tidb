@@ -1082,6 +1082,7 @@ var hintTokenMap = map[string]int{
 	"NO_RANGE_OPTIMIZATION": hintNoRangeOptimization,
 	"SKIP_SCAN":             hintSkipScan,
 	"NO_SKIP_SCAN":          hintNoSkipScan,
+	"PREFER_SKIP_SCAN":      hintPreferSkipScan,
 	"SEMIJOIN":              hintSemijoin,
 	"NO_SEMIJOIN":           hintNoSemijoin,
 	"MAX_EXECUTION_TIME":    hintMaxExecutionTime,

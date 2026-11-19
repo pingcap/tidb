@@ -181,6 +181,16 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
+			input: "PREFER_SKIP_SCAN(employee_salary, idx_dept_salary)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("PREFER_SKIP_SCAN"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("employee_salary")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("idx_dept_salary")},
+				},
+			},
+		},
+		{
 			input: "TIFLASH_LM_FILTER(@qb1 tbl1 a, b) TIFLASH_LM_FILTER(tbl2@qb2 c)",
 			output: []*ast.TableOptimizerHint{
 				{
