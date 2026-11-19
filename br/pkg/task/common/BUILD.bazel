@@ -24,7 +24,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/metautil",
-        "//pkg/objstore",
+        "//br/pkg/storage",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",

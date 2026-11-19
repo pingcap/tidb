@@ -22,13 +22,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestReadBackupMetaFromStorage(t *testing.T) {
 	ctx := context.Background()
-	storage, err := objstore.NewLocalStorage(t.TempDir())
+	storage, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	for _, method := range []encryptionpb.EncryptionMethod{
 		encryptionpb.EncryptionMethod_AES128_CTR,
