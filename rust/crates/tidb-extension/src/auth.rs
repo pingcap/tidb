@@ -21,15 +21,7 @@ use tidb_mysql::PrivilegeType;
 use tidb_parser::auth::RoleIdentity;
 use tidb_variable::vars::TlsConnectionState;
 
-/// Go `privilege/conn.AuthConn`: the authentication exchange on this connection.
-pub trait AuthConn {
-    /// Go `AuthConn.WriteAuthMoreData`.
-    fn write_auth_more_data(&mut self, data: &[u8]) -> Result<(), String>;
-    /// Go `AuthConn.ReadPacket`.
-    fn read_packet(&mut self) -> Result<Vec<u8>, String>;
-    /// Go `AuthConn.Flush`.
-    fn flush(&mut self) -> Result<(), String>;
-}
+pub use tidb_privilege_conn::AuthConn;
 
 /// Go `AuthenticateRequest`. Deliberately has no Debug implementation: credentials are secret.
 pub struct AuthenticateRequest<'a, 'b> {

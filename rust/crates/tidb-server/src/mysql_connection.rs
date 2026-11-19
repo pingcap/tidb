@@ -1480,10 +1480,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         Ok(AuthPluginDecision::Keep) => None,
         Ok(AuthPluginDecision::Switch(plugin)) => {
             events.info.connection_info.auth_method = plugin.clone();
-            // Go `authSwitchRequest`.
+            // Go `authSwitchRequest`: `authentication_ldap_sasl` sends the
+            // SASL auth method name instead of the salt.
+            let auth_data = if plugin == tidb_mysql::consts::AuthLDAPSASL {
+                tidb_privilege_ldap::LDAP_SASL_AUTH_IMPL.get_sasl_auth_method().into_bytes()
+            } else {
+                salt.to_vec()
+            };
             let request = AuthSwitchRequest::new(
                 crate::auth_plugin_registry::client_plugin_name(extensions, &plugin),
-                salt.to_vec(),
+                auth_data,
             )
                     .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
             write_payload(&mut output, response_sequence, &request.encode_payload())?;
@@ -4205,6 +4211,89 @@ mod check_auth_plugin_tests {
         assert_eq!(
             extensions.client_plugin_name("authentication_ldap_sasl"),
             "authentication_ldap_sasl_client"
+        );
+    }
+
+    /// Reads one LDAP simple bind request (short-form lengths) and returns
+    /// its message id, DN and password.
+    fn read_simple_bind(tcp: &mut std::net::TcpStream) -> Option<(u8, String, String)> {
+        use std::io::Read;
+        let mut header = [0u8; 2];
+        tcp.read_exact(&mut header).ok()?;
+        let mut body = vec![0u8; usize::from(header[1])];
+        tcp.read_exact(&mut body).ok()?;
+        // 02 01 <id> 60 <len> 02 01 03 04 <dn len> <dn> 80 <pw len> <pw>
+        let id = body[2];
+        let dn_len = usize::from(body[9]);
+        let dn = String::from_utf8(body[10..10 + dn_len].to_vec()).ok()?;
+        let pw_len = usize::from(body[11 + dn_len]);
+        let pw = String::from_utf8(body[12 + dn_len..12 + dn_len + pw_len].to_vec()).ok()?;
+        Some((id, dn, pw))
+    }
+
+    /// Go `ConnectionVerification`'s `AuthLDAPSimple` branch: an
+    /// `authentication_ldap_simple` account's stored DN binds with the
+    /// cleartext password (NUL-terminated, as `mysql_clear_password` sends
+    /// it) on a connection that first rebinds the root DN; the server's
+    /// refusal is access denied.
+    #[test]
+    fn an_ldap_simple_account_binds_its_dn() {
+        use std::io::Write;
+        use tidb_privilege_ldap::LDAP_SIMPLE_AUTH_IMPL;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let binds = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&binds);
+        std::thread::spawn(move || {
+            for tcp in listener.incoming() {
+                let Ok(mut tcp) = tcp else { return };
+                let seen = std::sync::Arc::clone(&seen);
+                std::thread::spawn(move || {
+                    while let Some((id, dn, pw)) = read_simple_bind(&mut tcp) {
+                        let ok = matches!(
+                            (dn.as_str(), pw.as_str()),
+                            ("cn=root,dc=example,dc=com", "rootpw") | ("uid=ldap,dc=example,dc=com", "secret")
+                        );
+                        seen.lock().unwrap().push(format!("{dn}/{pw}"));
+                        // BindResponse: resultCode 0 or 49 (invalidCredentials).
+                        let code = if ok { 0 } else { 49 };
+                        let _ = tcp.write_all(&[0x30, 0x0c, 0x02, 0x01, id, 0x61, 0x07, 0x0a, 0x01, code, 0x04, 0x00, 0x04, 0x00]);
+                    }
+                });
+            }
+        });
+        let users = store();
+        let kind = tidb_session::domain::secure_transport::TransportKind::UnixSocket;
+        // The first login loads the global variables, whose rebuild runs
+        // every `SetGlobal` -- the LDAP ones with the table's (default)
+        // values -- before this test configures the impl directly.
+        assert!(users.authenticate("root", "localhost", &[0; 20], b"", kind).is_ok());
+        LDAP_SIMPLE_AUTH_IMPL.set_ldap_server_host("127.0.0.1");
+        LDAP_SIMPLE_AUTH_IMPL.set_ldap_server_port(i64::from(port));
+        LDAP_SIMPLE_AUTH_IMPL.set_bind_root_dn("cn=root,dc=example,dc=com");
+        LDAP_SIMPLE_AUTH_IMPL.set_bind_root_pw("rootpw");
+        LDAP_SIMPLE_AUTH_IMPL.set_search_attr("uid");
+        LDAP_SIMPLE_AUTH_IMPL.set_max_capacity(1);
+        LDAP_SIMPLE_AUTH_IMPL.set_init_capacity(1);
+        assert!(users.authenticate("ldap", "localhost", &[0; 20], b"secret\0", kind).is_ok());
+        assert_eq!(
+            users.authenticate("ldap", "localhost", &[0; 20], b"wrong\0", kind).unwrap_err(),
+            crate::configured_user_store::AuthenticationFailure::AccessDenied
+        );
+        // Go `AuthLDAPSimple`: a password without its NUL is invalid before
+        // any bind.
+        assert_eq!(
+            users.authenticate("ldap", "localhost", &[0; 20], b"secret", kind).unwrap_err(),
+            crate::configured_user_store::AuthenticationFailure::AccessDenied
+        );
+        assert_eq!(
+            *binds.lock().unwrap(),
+            [
+                "cn=root,dc=example,dc=com/rootpw",
+                "uid=ldap,dc=example,dc=com/secret",
+                "cn=root,dc=example,dc=com/rootpw",
+                "uid=ldap,dc=example,dc=com/wrong",
+            ]
         );
     }
 

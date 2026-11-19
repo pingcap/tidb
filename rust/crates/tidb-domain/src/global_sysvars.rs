@@ -855,7 +855,7 @@ impl GlobalSysvars {
                 ]),
             ));
         }
-        self.get(name).map(|value| global_get_hook(def.name, value))
+        self.get(name).map(|value| global_get_hook(def, value))
     }
 
     /// Rebuilds the read-mostly image from the cache's global view and the
@@ -2158,7 +2158,8 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
                 skip_init: def.skip_init(),
                 has_global_scope: def.has_global_scope(),
                 skip_sysvar_cache: def.skip_sysvar_cache(),
-                has_set_global: GlobalSysvars::has_set_global_hook(def.name),
+                has_set_global: def.set_global.is_some()
+                    || GlobalSysvars::has_set_global_hook(def.name),
             })
             .collect()
     }
@@ -2193,6 +2194,16 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
             && self.0.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
         {
             tidb_variable::cloud_storage::set_cloud_storage_uri(&tidb_gocontext::Context::background(), value)?;
+        }
+        // Go `rebuildSysVarCache`: `sv.SetGlobalFromHook` for every
+        // variable with a `SetGlobal` -- its own, then what this node
+        // publishes for it. A scratch table publishes nothing.
+        if self.0.publishes_runtime_settings
+            && self.0.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            if let Some(hook) = get_sys_var(&sv.name).and_then(|def| def.set_global) {
+                hook(&mut tidb_variable::vars::SessionVars::new(), value).map_err(|error| error.message)?;
+            }
         }
         self.0.apply_set_global_hook(&sv.name, value);
         Ok(())

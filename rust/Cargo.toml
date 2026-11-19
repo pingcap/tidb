@@ -371,6 +371,8 @@ members = [
     "crates/tidb-ddl-build",
     "crates/tidb-ddl-label",
     "crates/tidb-privilege",
+    "crates/tidb-privilege-conn",
+    "crates/tidb-privilege-ldap",
     "crates/tidb-deadlockhistory",
     "crates/tidb-domain",
     "crates/tidb-util-disttask",

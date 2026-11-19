@@ -1,0 +1,23 @@
+[package]
+name = "tidb-privilege-ldap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/privilege/privileges/ldap (LDAP simple and SASL authentication) for the TiDB Rust rewrite."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-privilege-conn = { path = "../tidb-privilege-conn" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-native-certs = "0.8"
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

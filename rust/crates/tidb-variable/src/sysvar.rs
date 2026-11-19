@@ -601,7 +601,15 @@ pub struct SysVarDef {
     pub set_global: Option<SetHook>,
     /// Go `GetSession` (see [`GetHook`]).
     pub get_session: Option<GetHook>,
+    /// Go `GetGlobal` (see [`GetGlobalHook`]).
+    pub get_global: Option<GetGlobalHook>,
 }
+
+/// Go `SysVar.GetGlobal`: the GLOBAL value a variable answers from the
+/// process's state rather than from the global table (`GetGlobalFromHook`),
+/// which every GLOBAL read goes through. Go's closure also receives the
+/// context and the session, which none of the ported hooks read.
+pub type GetGlobalHook = fn() -> String;
 
 /// Go `SysVar.GetSession`: the session value a variable answers from the
 /// session's state rather than from `vars.systems` (`GetSessionFromHook`),
@@ -685,6 +693,7 @@ impl SysVarDef {
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     };
 
     /// Go `HasSessionScope`.
@@ -871,6 +880,7 @@ use chrono::{Offset, TimeZone};
 use tidb_mysql::errors::{FormatArg, SqlError};
 
 mod catalog;
+mod ldap_hooks;
 mod validation;
 
 pub use catalog::SYS_VARS;

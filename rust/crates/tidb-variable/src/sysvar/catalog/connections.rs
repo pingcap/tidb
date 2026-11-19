@@ -40,6 +40,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "collation_connection",
@@ -57,6 +58,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "connect_timeout",
@@ -74,6 +76,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "hostname",
@@ -91,6 +94,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "init_connect",
@@ -108,6 +112,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "interactive_timeout",
@@ -125,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "large_files_support",
@@ -142,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_connect_errors",
@@ -159,6 +166,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_connections",
@@ -176,6 +184,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_delayed_threads",
@@ -193,6 +202,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_insert_delayed_threads",
@@ -210,6 +220,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_user_connections",
@@ -227,6 +238,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "net_read_timeout",
@@ -244,6 +256,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "net_retry_count",
@@ -261,6 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "net_write_timeout",
@@ -278,6 +292,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "port",
@@ -295,6 +310,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "pseudo_thread_id",
@@ -312,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "report_port",
@@ -329,6 +346,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "session_track_schema",
@@ -346,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "session_track_state_change",
@@ -363,6 +382,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "session_track_system_variables",
@@ -380,6 +400,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "socket",
@@ -397,6 +418,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "thread_handling",
@@ -414,6 +436,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "thread_pool_size",
@@ -431,6 +454,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "thread_stack",
@@ -448,6 +472,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_dml_type",
@@ -465,6 +490,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: Some(crate::vars::SessionVars::set_session_tidb_dml_type),
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_cache_prepare_stmt",
@@ -482,6 +508,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_lazy_cursor_fetch",
@@ -499,6 +526,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_ignore_prepared_cache_close_stmt",
@@ -516,6 +544,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_last_query_info",
@@ -535,6 +564,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_tidb_last_query_info),
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_multi_statement_mode",
@@ -552,6 +582,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: Some(crate::vars::SessionVars::set_session_tidb_multi_statement_mode),
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_request_source_type",
@@ -583,6 +614,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_session_alias",
@@ -600,6 +632,7 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "wait_timeout",
@@ -617,5 +650,6 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
 ];

@@ -399,7 +399,7 @@ impl Session {
         if is_global {
             // `SetGlobal` stores Go's type-normalized value, which the global
             // config sync publishes.
-            let stored = self.vars.get_global(name).map_err(var_error)?;
+            let stored = self.vars.global_sysvars().get(name).map_err(var_error)?;
             self.notify_global_config_change(name, &stored);
         }
         Ok(())
@@ -424,10 +424,12 @@ impl Session {
         } else {
             value.clone()
         };
+        // The value stored, not what `GetGlobal` reports for it (an LDAP
+        // bind password reads back masked).
         let result = self
             .vars
             .set_global_sys_var(name, value)
-            .and_then(|()| self.vars.get_global(name));
+            .and_then(|()| self.vars.global_sysvars().get(name));
         self.swap_globals(live);
         self.take_var_warnings();
         // `SetGlobal` stores Go's type-normalized value, which the hooks

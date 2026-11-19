@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 10,
-    "open": 5,
+    "unresolved": 9,
+    "open": 4,
     "partial": 5
   },
   "findings": [
@@ -35,7 +35,7 @@
       "id": "X13",
       "status": "partial",
       "group": "Structure: Go's shape before more ports",
-      "finding": "A variable's Set behavior now lives on the variable for its warnings and session fields: `SysVarDef` carries Go's `Validation` (with a `VarsContext` for sibling reads and statement warnings), `set_session` and `set_global` hooks; `set_hooks.rs`'s deprecation-warning switch, the prune-mode / MPP-compression / hashagg-spill hooks, `tidb_enforce_mpp` and plan-replayer checks, and `SessionVars::set_session_from_hook`'s thirty typed-field branches moved onto their variables (2026-11-19). Also on their variables now (2026-11-19 late): `checkIsolationLevel`, `checkReadOnly` (the noop-gated ON switches), `max_allowed_packet`'s SET-only read-only refusal and `require_secure_transport`'s TLS / SEM refusal, through a `VarsContext` that carries Go's `vars` (the session's values in every scope, the statement type, the TLS state). Each variable has one `SetGlobal`, run on the validated value before the store for GLOBAL and INSTANCE writes as Go's `SetGlobalFromHook` is: its own (`tidb_schema_cache_size`, `tidb_redact_log`) or the one the node registers for it (the GC, MV-service and MDL switches, Go's `RegisterSysVar` from another package). Go's `GetSession` is on `SysVarDef` too (2026-11-19 night): the session-state reads (`timestamp`, `warning_count`, `error_count`, `last_insert_id` / `identity`, `tidb_current_ts` over `TxnCtx.StartTS` now on `SessionVars`, `tidb_last_txn_info` / `_query_info` / `_ddl_info`, `last_plan_from_cache` / `_binding`, `last_sql_use_alloc`, `rand_seed1` / `2`, `tidb_last_plan_replayer_token`) answer every session read -- `@@x`, `SHOW VARIABLES`, the variable tables -- where three name switches answered some surfaces (`SHOW VARIABLES` reported `warning_count` 0 and `timestamp` 0). Remaining: `GetGlobal` is a name switch (`vars.rs` `global_get_hook`); Go's other `GetSession` hooks read typed fields this port keeps only in `systems`; the charset/collation pairing is a shared function the store and the session-cache load call, not the variables' `SetSession`; `tidb-session` `variables.rs` keeps session-side `SetSession` hooks (the `rand_seed` generator, `autocommit` ending the transaction) because `Rng` and the transaction state are not on `SessionVars`; `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads.",
+      "finding": "A variable's Set behavior now lives on the variable for its warnings and session fields: `SysVarDef` carries Go's `Validation` (with a `VarsContext` for sibling reads and statement warnings), `set_session` and `set_global` hooks; `set_hooks.rs`'s deprecation-warning switch, the prune-mode / MPP-compression / hashagg-spill hooks, `tidb_enforce_mpp` and plan-replayer checks, and `SessionVars::set_session_from_hook`'s thirty typed-field branches moved onto their variables (2026-11-19). Also on their variables now (2026-11-19 late): `checkIsolationLevel`, `checkReadOnly` (the noop-gated ON switches), `max_allowed_packet`'s SET-only read-only refusal and `require_secure_transport`'s TLS / SEM refusal, through a `VarsContext` that carries Go's `vars` (the session's values in every scope, the statement type, the TLS state). Each variable has one `SetGlobal`, run on the validated value before the store for GLOBAL and INSTANCE writes as Go's `SetGlobalFromHook` is: its own (`tidb_schema_cache_size`, `tidb_redact_log`) or the one the node registers for it (the GC, MV-service and MDL switches, Go's `RegisterSysVar` from another package). Go's `GetSession` is on `SysVarDef` too (2026-11-19 night): the session-state reads (`timestamp`, `warning_count`, `error_count`, `last_insert_id` / `identity`, `tidb_current_ts` over `TxnCtx.StartTS` now on `SessionVars`, `tidb_last_txn_info` / `_query_info` / `_ddl_info`, `last_plan_from_cache` / `_binding`, `last_sql_use_alloc`, `rand_seed1` / `2`, `tidb_last_plan_replayer_token`) answer every session read -- `@@x`, `SHOW VARIABLES`, the variable tables -- where three name switches answered some surfaces (`SHOW VARIABLES` reported `warning_count` 0 and `timestamp` 0). `GetGlobal` is on `SysVarDef` as well, `global_get_hook` dispatching on it (the LDAP variables read their impls; the bind passwords read back masked, while `mysql.global_variables` keeps the value). Remaining: Go's other `GetGlobal` hooks, which read process atomics (`vardef.X.Load()`) or the instance config, answer from the global table here; the domain's `apply_set_global_hook` is a name switch over the `SetGlobal`s whose product this node publishes, run beside the variables' own `SetGlobal` (which the cache rebuild now runs too, as Go's `rebuildSysVarCache` does); Go's other `GetSession` hooks read typed fields this port keeps only in `systems`; the charset/collation pairing is a shared function the store and the session-cache load call, not the variables' `SetSession`; `tidb-session` `variables.rs` keeps session-side `SetSession` hooks (the `rand_seed` generator, `autocommit` ending the transaction) because `Rng` and the transaction state are not on `SessionVars`; `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads.",
       "rust_evidence": "`rust/crates/tidb-variable/src/sysvar.rs` (`SysVarDef`), `set_hooks.rs`, `rust/crates/tidb-session/src/variables.rs`, `rust/crates/tidb-exprstatic/src/evalctx.rs` (`StaticSessionVars`)",
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
     },
@@ -46,14 +46,6 @@
       "finding": "The `tidb-server` binary's command line is not Go's alone. Fixed 2026-11-19: every flag Go's `initFlagSet` defines (`-config`, `-store`, `-path`, `-host`, `-P`, ...) goes through the `main_flags.rs` port in either spelling, last value winning as Go's `flag` does, so `-store unistore -path ...` starts a node. Remaining: it adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache.",
       "rust_evidence": "`rust/crates/tidb-server/src/node_flags.rs` (`parse_node_config`), `main_flags.rs`, `rust/crates/tidb-session/src/domain/configured_user_store.rs`, `real_tikv_node/mod.rs` (`configured_account_store`)",
       "go_owner": "`cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`)"
-    },
-    {
-      "id": "A06",
-      "status": "open",
-      "group": "Privileges, wire and administration",
-      "finding": "LDAP authentication is not ported. Accounts with `authentication_ldap_simple` / `authentication_ldap_sasl` can be created, the connection switches to the cleartext / SASL client plugin, and the `authentication_ldap_*` variables exist, but the verifier always answers access denied (`configured_user_store.rs`: \"this server has neither configured\"). Go binds to the LDAP server through `ldap.LDAPSimpleAuthImpl.AuthLDAPSimple` / `LDAPSASLAuthImpl.AuthLDAPSASL`, configured by those variables' `SetGlobal` hooks.",
-      "rust_evidence": "`rust/crates/tidb-session/src/domain/configured_user_store.rs` (the LDAP / token arm), `rust/crates/tidb-server/src/mysql_connection.rs`, `rust/crates/tidb-variable/src/sysvar/catalog/security.rs`",
-      "go_owner": "`pkg/privilege/privileges/ldap`, `pkg/privilege/privileges/privileges.go` (`ConnectionVerification`), `pkg/sessionctx/variable/sysvar.go` (the `authentication_ldap_*` hooks)"
     },
     {
       "id": "E29",
@@ -88,7 +80,7 @@
       "go_owner": "`pkg/store/copr/coprocessor.go` (`rateLimitAction`), `pkg/executor/test/oomtest/oom_test.go` (`TestMemTracker4DeleteExec`), `pkg/util/chunk` memory accounting"
     }
   ],
-  "unresolved": 10,
-  "open": 5,
+  "unresolved": 9,
+  "open": 4,
   "partial": 5
 }

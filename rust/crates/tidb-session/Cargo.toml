@@ -157,6 +157,7 @@ tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-workloadlearning = { path = "../tidb-workloadlearning" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-extension = { path = "../tidb-extension" }
+tidb-privilege-ldap = { path = "../tidb-privilege-ldap" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-parser = { path = "../tidb-parser" }

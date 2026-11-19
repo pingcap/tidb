@@ -130,3 +130,41 @@ fn show_variables_answers_get_session_hooks() {
     tk.must_exec("set rand_seed1 = 7");
     tk.must_query("select @@rand_seed1").check(["0"]);
 }
+
+/// Go `sysvar.go`'s `authentication_ldap_*` variables: `SetGlobal`
+/// configures `ldap.LDAPSimpleAuthImpl` / `LDAPSASLAuthImpl` and `GetGlobal`
+/// reads it back -- the defaults the boot rebuild set, a masked root
+/// password, a CA path that failed to load, and the simple auth method's
+/// refusal. Expected rows: `./gorun` on this branch.
+#[test]
+fn authentication_ldap_variables_configure_the_ldap_impls() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_query(
+        "select @@global.authentication_ldap_simple_server_port, @@global.authentication_ldap_sasl_init_pool_size, \
+         @@global.authentication_ldap_sasl_auth_method_name, @@global.authentication_ldap_simple_user_search_attr, \
+         @@global.authentication_ldap_sasl_tls",
+    )
+    .check(["389 10 SCRAM-SHA-1 uid 0"]);
+    tk.must_exec("set global authentication_ldap_simple_bind_root_pwd = 'pw'");
+    tk.must_query("select @@global.authentication_ldap_simple_bind_root_pwd").check(["******"]);
+    tk.must_query("show global variables like 'authentication_ldap_simple_bind_root_pwd'")
+        .check(["authentication_ldap_simple_bind_root_pwd ******"]);
+    // The table keeps the password; only `GetGlobal` masks it.
+    tk.must_query(
+        "select variable_value from mysql.global_variables where variable_name = 'authentication_ldap_simple_bind_root_pwd'",
+    )
+    .check(["pw"]);
+    assert_eq!(tidb_privilege_ldap::LDAP_SIMPLE_AUTH_IMPL.get_bind_root_pw(), "pw");
+    tk.must_exec("set global authentication_ldap_simple_server_port = 1636");
+    assert_eq!(tidb_privilege_ldap::LDAP_SIMPLE_AUTH_IMPL.get_ldap_server_port(), 1636);
+    tk.must_get_err_msg(
+        "set global authentication_ldap_simple_auth_method_name = 'x'",
+        "auth method X is not supported",
+    );
+    tk.must_exec_to_err("set global authentication_ldap_sasl_ca_path = '/nonexistent/ca'");
+    tk.must_query("select @@global.authentication_ldap_sasl_ca_path").check(["/nonexistent/ca"]);
+    tk.must_exec("set global authentication_ldap_sasl_ca_path = ''");
+    tk.must_exec("set global authentication_ldap_simple_bind_root_pwd = ''");
+    tk.must_exec("set global authentication_ldap_simple_server_port = 389");
+}

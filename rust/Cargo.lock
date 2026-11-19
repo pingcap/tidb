@@ -7287,6 +7287,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-pd-client",
+ "tidb-privilege-conn",
  "tidb-sqlexec",
  "tidb-stmtsummary",
  "tidb-variable",
@@ -9017,6 +9018,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-privilege-conn"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-privilege-ldap"
+version = "0.0.0"
+dependencies = [
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile 2.2.0",
+ "tidb-intest",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-privilege-conn",
+]
+
+[[package]]
 name = "tidb-promutil"
 version = "0.0.0"
 dependencies = [
@@ -9447,6 +9465,7 @@ dependencies = [
  "tidb-ppcpuusage",
  "tidb-printer",
  "tidb-privilege",
+ "tidb-privilege-ldap",
  "tidb-proto",
  "tidb-protocol",
  "tidb-replayer",
@@ -9703,6 +9722,7 @@ dependencies = [
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-privilege",
+ "tidb-privilege-ldap",
  "tidb-proto",
  "tidb-redact",
  "tidb-replayer",
@@ -11417,6 +11437,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",
+ "tidb-privilege-ldap",
  "tidb-proto",
  "tidb-replayer",
  "tidb-sessionstates",

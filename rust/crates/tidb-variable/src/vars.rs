@@ -1577,7 +1577,7 @@ impl SessionVars {
             return self
                 .globals()
                 .get_by_registry_index(index)
-                .map(|value| Cow::Owned(global_get_hook(def.name, value)));
+                .map(|value| Cow::Owned(global_get_hook(def, value)));
         }
         // Go `GetSessionOrGlobalSystemVar`: a variable with a `GetSession`
         // hook answers from it ("shortcut to the getter").
@@ -1623,7 +1623,7 @@ impl SessionVars {
             return Some(Ok(Cow::Owned(value.clone())));
         }
         Some(self.globals().get_by_registry_index(index).map(|value| {
-            let value = global_get_hook(def.name, value);
+            let value = global_get_hook(def, value);
             first_reads.insert(index, value.clone());
             Cow::Owned(value)
         }))
@@ -2135,8 +2135,11 @@ impl SessionVars {
         if !def.has_global_scope() {
             return Ok(default);
         }
+        if let Some(get_global) = def.get_global {
+            return Ok(get_global());
+        }
         if let Some(stored) = self.globals().overrides().get(def.name) {
-            return Ok(global_get_hook(def.name, stored.clone()));
+            return Ok(stored.clone());
         }
         Ok(global_system_variable_initial_value(def))
     }
@@ -2312,16 +2315,12 @@ pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
     )
 }
 
-/// Go's `GetGlobal` hooks that report something other than the stored text:
-/// an LDAP bind password reads back as `vardef.MaskPwd` once it is set.
-pub fn global_get_hook(name: &str, value: String) -> String {
-    match name {
-        "authentication_ldap_sasl_bind_root_pwd" | "authentication_ldap_simple_bind_root_pwd"
-            if !value.is_empty() =>
-        {
-            "******".to_owned()
-        }
-        _ => value,
+/// Go `SysVar.GetGlobalFromHook`: the variable's `GetGlobal` hook, else the
+/// stored GLOBAL value.
+pub fn global_get_hook(def: &SysVarDef, value: String) -> String {
+    match def.get_global {
+        Some(get_global) => get_global(),
+        None => value,
     }
 }
 

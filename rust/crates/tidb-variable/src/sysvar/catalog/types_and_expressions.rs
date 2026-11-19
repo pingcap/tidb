@@ -53,6 +53,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_client",
@@ -70,6 +71,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_database",
@@ -87,6 +89,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_filesystem",
@@ -104,6 +107,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_results",
@@ -121,6 +125,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_server",
@@ -138,6 +143,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_set_system",
@@ -155,6 +161,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "character_sets_dir",
@@ -172,6 +179,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "collation_database",
@@ -189,6 +197,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "collation_server",
@@ -206,6 +215,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "default_collation_for_utf8mb4",
@@ -223,6 +233,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "default_week_format",
@@ -240,6 +251,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "div_precision_increment",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "explicit_defaults_for_timestamp",
@@ -274,6 +287,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "lc_messages",
@@ -291,6 +305,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "lc_messages_dir",
@@ -308,6 +323,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "lc_time_names",
@@ -325,6 +341,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "sql_safe_updates",
@@ -342,6 +359,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "system_time_zone",
@@ -359,6 +377,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_accelerate_user_creation_update",
@@ -376,6 +395,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_allow_function_for_expression_index",
@@ -393,6 +413,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_allow_remove_auto_inc",
@@ -410,6 +431,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_check_mb4_value_in_utf8",
@@ -427,6 +449,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_no_backslash_escapes_in_like",
@@ -444,6 +467,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_null_aware_anti_join",
@@ -461,6 +485,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_pipelined_window_function",
@@ -478,6 +503,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_strict_double_type_check",
@@ -495,6 +521,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_strict_not_null_check",
@@ -512,6 +539,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_unsafe_substitute",
@@ -529,6 +557,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_vectorized_expression",
@@ -546,6 +575,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_window_function",
@@ -563,6 +593,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_window_function),
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_hash_exchange_with_new_collation",
@@ -580,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_skip_ascii_check",
@@ -597,6 +629,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_skip_utf8_check",
@@ -614,6 +647,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_sysdate_is_now",
@@ -631,6 +665,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "time_format",
@@ -648,6 +683,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "time_zone",
@@ -665,6 +701,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: Some(crate::vars::SessionVars::set_session_time_zone),
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "timestamp",
@@ -682,6 +719,7 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_timestamp),
+        get_global: None,
     },
     SysVarDef {
         name: "windowing_use_high_precision",
@@ -699,4 +737,5 @@ pub(super) static ENTRIES: [SysVarDef; 39] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },];

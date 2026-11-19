@@ -40,6 +40,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "executed_gtids_compression_period",
@@ -57,6 +58,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "gtid_executed_compression_period",
@@ -74,6 +76,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "gtid_mode",
@@ -91,6 +94,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "gtid_next",
@@ -108,6 +112,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "gtid_purged",
@@ -125,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "init_slave",
@@ -142,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "master_info_repository",
@@ -159,6 +166,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "master_verify_checksum",
@@ -176,6 +184,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "pseudo_slave_mode",
@@ -193,6 +202,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_enabled",
@@ -210,6 +220,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_timeout",
@@ -227,6 +238,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_for_slave_count",
@@ -244,6 +256,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_no_slave",
@@ -261,6 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_wait_point",
@@ -278,6 +292,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_slave_enabled",
@@ -295,6 +310,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rpl_stop_slave_timeout",
@@ -312,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "server_id",
@@ -329,6 +346,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "server_id_bits",
@@ -346,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "server_uuid",
@@ -363,6 +382,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "session_track_gtids",
@@ -380,6 +400,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_allow_batching",
@@ -397,6 +418,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_checkpoint_group",
@@ -414,6 +436,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_checkpoint_period",
@@ -431,6 +454,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_compressed_protocol",
@@ -448,6 +472,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_exec_mode",
@@ -465,6 +490,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_load_tmpdir",
@@ -482,6 +508,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_max_allowed_packet",
@@ -499,6 +526,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_net_timeout",
@@ -516,6 +544,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_parallel_type",
@@ -533,6 +562,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_parallel_workers",
@@ -550,6 +580,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_pending_jobs_size_max",
@@ -567,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_preserve_commit_order",
@@ -584,6 +616,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_rows_search_algorithms",
@@ -601,6 +634,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_skip_errors",
@@ -618,6 +652,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_sql_verify_checksum",
@@ -635,6 +670,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "slave_transaction_retries",
@@ -652,6 +688,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "sql_slave_skip_counter",
@@ -669,6 +706,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "sync_frm",
@@ -686,6 +724,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "sync_master_info",
@@ -703,6 +742,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_cdc_write_source",
@@ -720,6 +760,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_async_commit",
@@ -737,6 +778,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_enable_async_merge_global_stats",
@@ -754,6 +796,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_load_based_replica_read_threshold",
@@ -771,6 +814,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_replica_read",
@@ -796,6 +840,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: Some(crate::vars::SessionVars::set_session_tidb_replica_read),
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_source_id",
@@ -813,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tidb_stats_load_sync_wait",
@@ -830,6 +876,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "tiflash_replica_read",
@@ -847,5 +894,6 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
 ];

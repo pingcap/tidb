@@ -738,12 +738,42 @@ impl ConfiguredUserStore {
                 );
                 return Err(AuthenticationFailure::AccessDenied);
             }
-        } else if plugin == AuthTiDBAuthToken || plugin == AuthLDAPSASL || plugin == AuthLDAPSimple
-        {
-            // Go verifies a JWT against `GlobalJWKS` and binds to the LDAP
-            // server; this server has neither configured, which Go answers
-            // with access denied.
+        } else if plugin == AuthTiDBAuthToken {
+            // Go verifies a JWT against `GlobalJWKS`; this server has none
+            // configured, which Go answers with access denied.
             return Err(AuthenticationFailure::AccessDenied);
+        } else if plugin == AuthLDAPSASL {
+            let Some(auth_conn) = auth_conn else {
+                return Err(AuthenticationFailure::AccessDenied);
+            };
+            if let Err(error) =
+                tidb_privilege_ldap::LDAP_SASL_AUTH_IMPL.auth_ldap_sasl(user, &primary, response, auth_conn)
+            {
+                // though the pwd stores only `dn` for LDAP SASL, it could be
+                // unsafe to print it out. for example, someone may alter the
+                // auth plugin name but forgot to change the password...
+                tidb_logutil::bg_logger().warn(
+                    "verify through LDAP SASL failed",
+                    &[
+                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    ],
+                );
+                return Err(AuthenticationFailure::AccessDenied);
+            }
+        } else if plugin == AuthLDAPSimple {
+            if let Err(error) =
+                tidb_privilege_ldap::LDAP_SIMPLE_AUTH_IMPL.auth_ldap_simple(user, &primary, response)
+            {
+                tidb_logutil::bg_logger().warn(
+                    "verify through LDAP Simple failed",
+                    &[
+                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    ],
+                );
+                return Err(AuthenticationFailure::AccessDenied);
+            }
         } else if plugin == AuthSocket {
             // The response is the peer's OS user, which must be the
             // account's user or its authentication string.

@@ -108,6 +108,7 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-privilege = { path = "../tidb-privilege" }
 tidb-extension = { path = "../tidb-extension" }
+tidb-privilege-ldap = { path = "../tidb-privilege-ldap" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }

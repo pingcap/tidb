@@ -40,6 +40,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "big_tables",
@@ -57,6 +58,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "check_proxy_users",
@@ -74,6 +76,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "completion_type",
@@ -91,6 +94,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "concurrent_insert",
@@ -108,6 +112,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "core_file",
@@ -125,6 +130,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "debug",
@@ -142,6 +148,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "debug_sync",
@@ -159,6 +166,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "delay_key_write",
@@ -176,6 +184,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "delayed_insert_limit",
@@ -193,6 +202,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "delayed_insert_timeout",
@@ -210,6 +220,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "delayed_queue_size",
@@ -227,6 +238,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "end_markers_in_json",
@@ -244,6 +256,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "event_scheduler",
@@ -261,6 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "flush",
@@ -278,6 +292,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "flush_time",
@@ -295,6 +310,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ft_boolean_syntax",
@@ -312,6 +328,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ft_max_word_len",
@@ -329,6 +346,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ft_min_word_len",
@@ -346,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ft_query_expansion_limit",
@@ -363,6 +382,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ft_stopword_file",
@@ -380,6 +400,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_compress",
@@ -397,6 +418,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_crypt",
@@ -414,6 +436,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_dynamic_loading",
@@ -431,6 +454,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_geometry",
@@ -448,6 +472,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_openssl",
@@ -465,6 +490,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_profiling",
@@ -482,6 +508,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_rtree_keys",
@@ -499,6 +526,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_ssl",
@@ -516,6 +544,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "have_symlink",
@@ -533,6 +562,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ignore_builtin_innodb",
@@ -550,6 +580,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "key_cache_age_threshold",
@@ -567,6 +598,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "key_cache_block_size",
@@ -584,6 +616,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "key_cache_division_limit",
@@ -601,6 +634,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "large_page_size",
@@ -618,6 +652,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "large_pages",
@@ -635,6 +670,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "local_infile",
@@ -652,6 +688,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_points_in_geometry",
@@ -669,6 +706,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_prepared_stmt_count",
@@ -686,6 +724,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_sp_recursion_depth",
@@ -703,6 +742,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "max_write_lock_count",
@@ -720,6 +760,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "metadata_locks_hash_instances",
@@ -737,6 +778,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "multi_range_count",
@@ -754,6 +796,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_data_pointer_size",
@@ -771,6 +814,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_max_sort_file_size",
@@ -788,6 +832,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_mmap_size",
@@ -805,6 +850,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_recover_options",
@@ -822,6 +868,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_repair_threads",
@@ -839,6 +886,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_sort_buffer_size",
@@ -856,6 +904,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_stats_method",
@@ -873,6 +922,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "myisam_use_mmap",
@@ -890,6 +940,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_blob_write_batch_bytes",
@@ -907,6 +958,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_deferred_constraints",
@@ -924,6 +976,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_distribution",
@@ -941,6 +994,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_eventbuffer_free_percent",
@@ -958,6 +1012,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_eventbuffer_max_alloc",
@@ -975,6 +1030,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_force_send",
@@ -992,6 +1048,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_index_stat_enable",
@@ -1009,6 +1066,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_index_stat_option",
@@ -1026,6 +1084,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_join_pushdown",
@@ -1043,6 +1102,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_log_binlog_index",
@@ -1060,6 +1120,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_log_empty_epochs",
@@ -1077,6 +1138,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_log_updated_only",
@@ -1094,6 +1156,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_optimization_delay",
@@ -1111,6 +1174,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_recv_thread_cpu_mask",
@@ -1128,6 +1192,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_show_foreign_key_mock_tables",
@@ -1145,6 +1210,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_table_no_logging",
@@ -1162,6 +1228,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndb_use_transactions",
@@ -1179,6 +1246,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndbinfo_max_rows",
@@ -1196,6 +1264,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "ndbinfo_show_hidden",
@@ -1213,6 +1282,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "new",
@@ -1230,6 +1300,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "offline_mode",
@@ -1247,6 +1318,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "old",
@@ -1264,6 +1336,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "old_alter_table",
@@ -1281,6 +1354,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema",
@@ -1298,6 +1372,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_accounts_size",
@@ -1315,6 +1390,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_digests_size",
@@ -1332,6 +1408,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_stages_history_long_size",
@@ -1349,6 +1426,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_stages_history_size",
@@ -1366,6 +1444,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_statements_history_long_size",
@@ -1383,6 +1462,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_statements_history_size",
@@ -1400,6 +1480,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_waits_history_long_size",
@@ -1417,6 +1498,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_events_waits_history_size",
@@ -1434,6 +1516,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_hosts_size",
@@ -1451,6 +1534,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_cond_classes",
@@ -1468,6 +1552,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_cond_instances",
@@ -1485,6 +1570,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_file_classes",
@@ -1502,6 +1588,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_file_handles",
@@ -1519,6 +1606,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_file_instances",
@@ -1536,6 +1624,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_mutex_classes",
@@ -1553,6 +1642,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_mutex_instances",
@@ -1570,6 +1660,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_rwlock_classes",
@@ -1587,6 +1678,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_rwlock_instances",
@@ -1604,6 +1696,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_socket_classes",
@@ -1621,6 +1714,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_socket_instances",
@@ -1638,6 +1732,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_stage_classes",
@@ -1655,6 +1750,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_statement_classes",
@@ -1672,6 +1768,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_table_handles",
@@ -1689,6 +1786,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_table_instances",
@@ -1706,6 +1804,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_thread_classes",
@@ -1723,6 +1822,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_max_thread_instances",
@@ -1740,6 +1840,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_session_connect_attrs_size",
@@ -1757,6 +1858,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_setup_actors_size",
@@ -1774,6 +1876,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_setup_objects_size",
@@ -1791,6 +1894,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "performance_schema_users_size",
@@ -1808,6 +1912,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "profiling",
@@ -1825,6 +1930,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "profiling_history_size",
@@ -1842,6 +1948,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rewriter_enabled",
@@ -1859,6 +1966,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "rewriter_verbose",
@@ -1876,6 +1984,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "show_compatibility_56",
@@ -1893,6 +2002,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "show_old_temporals",
@@ -1910,6 +2020,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "skip_external_locking",
@@ -1927,6 +2038,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "stored_program_cache",
@@ -1944,6 +2056,7 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
     SysVarDef {
         name: "updatable_views_with_limit",
@@ -1961,5 +2074,6 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         set_session: None,
         set_global: None,
         get_session: None,
+        get_global: None,
     },
 ];

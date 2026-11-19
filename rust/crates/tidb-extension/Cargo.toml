@@ -11,6 +11,7 @@ description = "TiDB pkg/extension (Rust)."
 workspace = true
 
 [dependencies]
+tidb-privilege-conn = { path = "../tidb-privilege-conn" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-exprctx = { path = "../tidb-exprctx" }
