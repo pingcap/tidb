@@ -111,6 +111,8 @@ pub struct DispatchContext<'a> {
     pub selectivity_factor: f64,
     /// Statement warning and plan-cache fallback state.
     pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
+    /// Go `StmtCtx.MemTracker`, which `indexJoinPathBuildTmpRange` charges.
+    pub stmt_mem_tracker: Option<std::sync::Arc<tidb_memory::Tracker>>,
     /// Statement parameter values, warnings and coercion settings used by ranger.
     pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `recordUsedItemStatsStatus`'s statement: the physical phase's
@@ -267,6 +269,7 @@ impl<'a> DispatchContext<'a> {
             // Go `vardef.DefOptSelectivityFactor`.
             selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
             range_fallback_handler: None,
+            stmt_mem_tracker: None,
             expression_evaluator: &tidb_ranger::points::evaluate_static,
             used_stats_recorder: None,
             ordering_index_selectivity_ratio: 0.01,
@@ -462,6 +465,13 @@ impl<'a> DispatchContext<'a> {
     ) -> Self {
         self.range_max_size = quota;
         self.range_fallback_handler = Some(handler);
+        self
+    }
+
+    /// Attach the statement memory tracker (Go `StmtCtx.MemTracker`).
+    #[must_use]
+    pub fn with_stmt_mem_tracker(mut self, tracker: std::sync::Arc<tidb_memory::Tracker>) -> Self {
+        self.stmt_mem_tracker = Some(tracker);
         self
     }
 
@@ -2690,6 +2700,7 @@ fn index_join_range_env<'a>(
     super::index_join_path::IndexJoinRangeEnv {
         range_max_size: ctx.range_max_size,
         fallback_handler: ctx.range_fallback_handler,
+        mem_tracker: ctx.stmt_mem_tracker.as_ref(),
         opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan,
         evaluate: ctx.expression_evaluator,
         plan_cache_marker: ctx.plan_cache_marker.filter(|_| ctx.use_plan_cache),

@@ -94,6 +94,9 @@ pub trait OptimizeContext:
     fn selectivity_factor(&self) -> f64;
     /// Go's range-fallback warning hook (`StmtCtx.RecordRangeFallback`).
     fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler;
+    /// Go `StmtCtx.MemTracker`: the statement tracker the planner charges
+    /// (`indexJoinPathBuildTmpRange`).
+    fn stmt_mem_tracker(&self) -> std::sync::Arc<tidb_memory::Tracker>;
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     fn always_keep_join_key(&self) -> bool;
     /// Go `SessionVars.EnableUnsafeSubstitute`.
@@ -556,6 +559,7 @@ pub fn physical_optimize<C: OptimizeContext>(
             .get_bool_with_default(tidb_fixcontrol::FIX_44830, false),
     )
     .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
+    .with_stmt_mem_tracker(ctx.stmt_mem_tracker())
     .with_selectivity_factor(ctx.selectivity_factor())
     .with_ordering_index_selectivity_ratio(ctx.opt_ordering_idx_sel_ratio())
     .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())

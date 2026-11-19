@@ -224,6 +224,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler {
         StmtContext::range_fallback_handler(self)
     }
+    fn stmt_mem_tracker(&self) -> std::sync::Arc<tidb_memory::Tracker> {
+        std::sync::Arc::clone(StmtContext::statement_memory(self).stmt_tracker())
+    }
     fn always_keep_join_key(&self) -> bool {
         StmtContext::always_keep_join_key(self)
     }

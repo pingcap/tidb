@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 7,
-    "open": 3,
+    "unresolved": 6,
+    "open": 2,
     "partial": 4
   },
   "findings": [
@@ -54,17 +54,9 @@
       "finding": "The next-gen keyspace services are absent. `--standby`, `--activation-timeout`, `--max-idle-seconds` and `--keyspace-activate` are parsed into `cfg.standby` / `cfg.keyspace_activate_mode` and never read, so a standby node serves at once (Go `pkg/standby`'s `LoadKeyspaceController`: `WaitForActivate`, the activation HTTP API, the idle watcher, `exitAfterKeyspaceActivate`, via `pkg/tidbmanager`). The external workload manager (`pkg/extworkload`) exists only as seam traits (`tidb-gcworker` `GcV2Manager`, the TTL job manager's boundary) with no implementation and `main.go`'s `initExternalWorkloadManager` has no counterpart. `pkg/metaservice` (per-keyspace meta service group discovery used by the TiKV driver) has no counterpart. The DXF cleanup does not send `SendRowAndSizeMeterData` (`tidb-dxf-handle` header). The starter deployment's `/owner_manager/auto_id_service` route (Go `NewAutoIDOwnerHandler`: 500 unless `Server.Health()`, else `is_owner` of the AutoID service) and `Server.Close`'s standby-controller condition on `AutoIDServiceClose` are absent too: this port has no `Server.health` flag or standby controller (the AutoID service itself is served, N07 closed 2026-11-19).",
       "rust_evidence": "`rust/crates/tidb-server/src/main_flags.rs` (`override_config`), `rust/crates/tidb-gcworker/src/seams.rs`, `rust/crates/tidb-ttl-ttlworker/src/job_manager.rs`, `rust/crates/tidb-dxf-handle/src/lib.rs`",
       "go_owner": "`pkg/standby`, `pkg/tidbmanager`, `pkg/extworkload`, `pkg/metaservice`, `pkg/dxf/framework/handle` (`SendRowAndSizeMeterData`), `cmd/tidb-server/main.go`, `pkg/server/handler/auto_id_owner_handler.go`"
-    },
-    {
-      "id": "E42",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "A statement's memory crosses `tidb_mem_quota_query` at a different point than Go's, so a different OOM action handles it. Go `TestMemTracker4DeleteExec` (`disableFixedRowCountHint`, `EnabledRateLimitAction`, quota 500) expects the copr `rateLimitAction` to delegate (`memory exceeds quota, rateLimitAction delegate to fallback action`): the multi-table DELETE's readers are open when the quota is crossed. Here each reader installs its `RateLimitAction` (one token, enabled) on the session tracker, but the statement reaches its 2112 B peak only after they finished, and the session chain then holds a finished spill action and the log action; the rate limiter is never invoked. The executor tracks the rows it holds rather than Go's chunk capacity (`tidb-variable` `mem_quota.rs`), which moves where the peak happens. Port: `tidb-session/tests/executor_test_oomtest_oom_test.rs` (`test_mem_tracker4_delete_exec`, last assertion omitted).",
-      "rust_evidence": "`rust/crates/tidb-copr/src/cop_paging/cop_iterator.rs` (`RateLimitAction`), the executors' memory tracking (`tidb-executor`), `rust/crates/tidb-session/tests/executor_test_oomtest_oom_test.rs`",
-      "go_owner": "`pkg/store/copr/coprocessor.go` (`rateLimitAction`), `pkg/executor/test/oomtest/oom_test.go` (`TestMemTracker4DeleteExec`), `pkg/util/chunk` memory accounting"
     }
   ],
-  "unresolved": 7,
-  "open": 3,
+  "unresolved": 6,
+  "open": 2,
   "partial": 4
 }

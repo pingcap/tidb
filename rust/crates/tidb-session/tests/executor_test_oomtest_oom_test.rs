@@ -278,12 +278,7 @@ fn test_mem_tracker4_delete_exec() {
     let _ = tk.exec_to_err(
         "delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a",
     );
-    // Go: `require.Equal(t, "memory exceeds quota, rateLimitAction delegate
-    // to fallback action", oom.GetTracker())`. Not yet: the copr readers'
-    // `rateLimitAction` (installed, one token, enabled) is never invoked --
-    // the statement crosses the quota after it finished, so a spill action
-    // and the log action handle it. Register row E42.
-    let _ = &oom;
+    assert_eq!(oom.get_tracker(), "memory exceeds quota, rateLimitAction delegate to fallback action");
 }
 
 /// Go `TestOOMActionPriority`.

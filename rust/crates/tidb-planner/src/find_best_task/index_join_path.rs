@@ -52,6 +52,8 @@ pub(crate) struct IndexJoinRangeEnv<'a> {
     pub range_max_size: i64,
     /// Go `StmtCtx.RecordRangeFallback`'s sink.
     pub fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
+    /// Go `StmtCtx.MemTracker`.
+    pub mem_tracker: Option<&'a std::sync::Arc<tidb_memory::Tracker>>,
     /// Go `RangerContext.OptPrefixIndexSingleScan`.
     pub opt_prefix_index_single_scan: bool,
     /// The statement's constant evaluator.
@@ -62,6 +64,14 @@ pub(crate) struct IndexJoinRangeEnv<'a> {
 }
 
 impl IndexJoinRangeEnv<'_> {
+    /// Go `sc.MemTracker.Consume(2 * types.EstimatedMemUsage(ranges[0].LowVal,
+    /// len(ranges)))`.
+    fn consume_ranges(&self, low_val: &[tidb_datatype::Datum], ranges: usize) {
+        if let Some(tracker) = self.mem_tracker {
+            tracker.consume(2 * tidb_datatype::estimated_mem_usage(low_val, ranges));
+        }
+    }
+
     fn record_range_fallback(&self) {
         if let Some(handler) = self.fallback_handler {
             handler.record_range_fallback(self.range_max_size);
@@ -572,6 +582,24 @@ fn index_join_path_build_tmp_range(
     have_extra_col: bool,
     env: IndexJoinRangeEnv<'_>,
 ) -> Result<IndexJoinTmpRange, PlanError> {
+    let res = build_tmp_range(tmp, matched_key_cnt, eq_and_in_funcs, next_col_range, have_extra_col, &env);
+    // Go's deferred charge of the template ranges the result holds.
+    if let Ok(res) = &res {
+        if let Some(first) = res.ranges.first() {
+            env.consume_ranges(&first.low_val, res.ranges.len());
+        }
+    }
+    res
+}
+
+fn build_tmp_range(
+    tmp: &IndexJoinPathTmp,
+    matched_key_cnt: usize,
+    eq_and_in_funcs: &[Expression],
+    next_col_range: Option<&Ranges>,
+    have_extra_col: bool,
+    env: &IndexJoinRangeEnv<'_>,
+) -> Result<IndexJoinTmpRange, PlanError> {
     let point_length = matched_key_cnt + eq_and_in_funcs.len();
     let mut ranges: Ranges = vec![Range::default()];
     let (mut i, mut j) = (0, 0);
@@ -610,6 +638,7 @@ fn index_join_path_build_tmp_range(
                     ..IndexJoinTmpRange::default()
                 });
             }
+            env.consume_ranges(&built.ranges[0].low_val, built.ranges.len());
             if !built.remained_conds.is_empty() {
                 // Go `buildColumnRange` records the fallback itself.
                 env.record_range_fallback();
@@ -941,6 +970,7 @@ mod tests {
         let env = IndexJoinRangeEnv {
             range_max_size,
             fallback_handler: handler,
+            mem_tracker: None,
             opt_prefix_index_single_scan: true,
             evaluate: &tidb_ranger::points::evaluate_static,
             plan_cache_marker: None,
@@ -1268,6 +1298,7 @@ pub(crate) fn rebuild_index_join_path(
     let env = IndexJoinRangeEnv {
         range_max_size: 0,
         fallback_handler: None,
+        mem_tracker: None,
         opt_prefix_index_single_scan: path.opt_prefix_index_single_scan,
         evaluate,
         plan_cache_marker: Some(&recorded),
