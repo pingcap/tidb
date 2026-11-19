@@ -40,6 +40,8 @@ use tidb_config::config_tree::config::Config;
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 pub struct MainFlags {
+    /// `-config` (`main.go`'s `nmConfig`): the TOML file path.
+    pub config_path: Option<String>,
     pub config_check: bool,
     pub config_strict: bool,
     // Base (`main.go:248-269`)
@@ -154,6 +156,7 @@ impl MainFlags {
                 }
             };
             match name {
+                "config" => flags.config_path = Some(take()?),
                 "config-check" => flags.config_check = boolean(&inline)?,
                 "config-strict" => flags.config_strict = boolean(&inline)?,
                 "store" => flags.store = Some(take()?),
@@ -613,8 +616,9 @@ mod tests {
         assert_eq!(flags.keyspace_activate, Some(true));
         assert_eq!(
             remaining,
-            vec!["--store", "unistore", "--auth-file", "/tmp/u.tsv"]
+            vec!["--auth-file", "/tmp/u.tsv"]
         );
+        assert_eq!(flags.store.as_deref(), Some("unistore"));
     }
 }
 
@@ -625,6 +629,11 @@ mod tests {
 /// for the rest.
 const MAIN_GO_ONLY_FLAGS: &[(&str, bool)] = &[
     // (name, is_boolean)
+    ("config", false),
+    ("store", false),
+    ("path", false),
+    ("host", false),
+    ("P", false),
     ("lease", false),
     ("token-limit", false),
     ("plugin-dir", false),

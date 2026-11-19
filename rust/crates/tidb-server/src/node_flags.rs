@@ -45,11 +45,8 @@ where
             .map_err(|error| invalid("main.go flags", &error.to_string()))?;
     let mut pending = remaining.into_iter().peekable();
 
-    let mut host = None;
     let mut port = None;
     let mut affinity_cpus = None;
-    let mut path = None;
-    let mut store = None;
     let mut max_allowed_packet = None;
     let mut auth_file = None;
     let mut max_connections = None;
@@ -65,20 +62,10 @@ where
     let mut cluster_ssl_ca = None;
     let mut cluster_ssl_cert = None;
     let mut cluster_ssl_key = None;
-    let mut config_path = None;
-    let mut socket = None;
 
     while let Some(argument) = pending.next() {
         if argument == "--help" || argument == "-h" {
             return Err(NodeConfigError::HelpRequested);
-        }
-        if argument == "-P" {
-            let value = pending
-                .next()
-                .filter(|value| !value.starts_with('-'))
-                .ok_or_else(|| NodeConfigError::MissingValue("-P".to_owned()))?;
-            set_once(&mut port, "-P", value)?;
-            continue;
         }
         if argument == "--load-privileges" {
             if load_privileges {
@@ -118,12 +105,8 @@ where
                 .ok_or_else(|| NodeConfigError::MissingValue(option.to_owned()))?,
         };
         match option {
-            "--host" => set_once(&mut host, option, value)?,
             "--affinity-cpus" => set_once(&mut affinity_cpus, option, value)?,
             "--port" => set_once(&mut port, option, value)?,
-            "--socket" => set_once(&mut socket, option, value)?,
-            "--path" => set_once(&mut path, option, value)?,
-            "--store" => set_once(&mut store, option, value)?,
             "--max-allowed-packet" => {
                 set_once(&mut max_allowed_packet, option, value)?;
             }
@@ -139,7 +122,6 @@ where
             "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
             "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
             "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
-            "--config" => set_once(&mut config_path, option, value)?,
             _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
         }
     }
@@ -155,13 +137,12 @@ where
     // The native executable's deployment defaults. TOML and explicit
     // flags override these through the single shared owner.
     let defaults = NodeConfig::deployment_defaults(auth_file.is_some());
-    main_flags.host = host;
-    main_flags.port = port;
-    main_flags.store_path = path;
-    main_flags.store = store.map(|store| store.to_ascii_lowercase());
-    if let Some(socket) = socket {
-        main_flags.socket = Some(socket);
+    // `--port` is this binary's spelling of Go's `-P`.
+    if port.is_some() {
+        main_flags.port = port;
     }
+    main_flags.store = main_flags.store.map(|store| store.to_ascii_lowercase());
+    let config_path = main_flags.config_path.clone();
     if let Some(lease) = schema_lease_ms.as_deref() {
         let millis: u64 = parse_positive_number("--lease-ms", lease)?;
         main_flags.ddl_lease = Some(format!("{millis}ms"));
@@ -248,33 +229,10 @@ where
     let (mut main_flags, remaining) =
         crate::main_flags::extract_main_go_flags(arguments.collect())
             .map_err(|error| invalid("main.go flags", &error.to_string()))?;
-    let mut pending = remaining.into_iter().peekable();
-    let mut config_path = None;
-    let mut store = None;
-    while let Some(argument) = pending.next() {
-        if argument == "-V" {
-            continue;
-        }
-        if argument == "--config" {
-            let value = pending
-                .next()
-                .filter(|value| !value.starts_with("--"))
-                .ok_or_else(|| NodeConfigError::MissingValue("--config".to_owned()))?;
-            set_once(&mut config_path, "--config", value)?;
-        } else if let Some(value) = argument.strip_prefix("--config=") {
-            set_once(&mut config_path, "--config", value.to_owned())?;
-        } else if argument == "--store" {
-            let value = pending
-                .next()
-                .filter(|value| !value.starts_with("--"))
-                .ok_or_else(|| NodeConfigError::MissingValue("--store".to_owned()))?;
-            set_once(&mut store, "--store", value)?;
-        } else if let Some(value) = argument.strip_prefix("--store=") {
-            set_once(&mut store, "--store", value.to_owned())?;
-        }
-    }
-
-    main_flags.store = store;
+    // `-V` reads only the Go flags (`-config`, `-store`, ...); the node's
+    // own options are ignored.
+    let _ = remaining;
+    let config_path = main_flags.config_path.clone();
     let (config, warnings) = tidb_config::config_tree::load::prepare_config(
         SourceConfig::default(),
         config_path.as_deref().map(std::path::Path::new),

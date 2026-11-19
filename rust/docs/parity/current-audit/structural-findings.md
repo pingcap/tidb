@@ -6,7 +6,7 @@ carried as written); the [JSON register](structural-findings.json) holds the sam
 rows. A repaired finding is removed, not kept. The live probes behind the new rows
 are in [structural-audit-2026-11-18.md](structural-audit-2026-11-18.md).
 
-**11 unresolved: 6 open, 5 partial.**
+**11 unresolved: 5 open, 6 partial.**
 
 A row states the remaining gap only. "Restate" marks a row whose earlier text
 named no concrete mismatch ("complete package obligations remain"); it stays
@@ -28,7 +28,7 @@ unresolved until it is restated against its Go owner or closed.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| B03 | open | The `tidb-server` binary does not take Go's command line. `parse_node_config` first lets `main_flags.rs` take the flags it ports from `initFlagSet`, then parses its own options, which accept only the `--name` form: Go's `-store unistore -path ...` is refused with `unsupported option -store`. It adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache. | `cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`) |
+| B03 | partial | The `tidb-server` binary's command line is not Go's alone. Fixed 2026-11-19: every flag Go's `initFlagSet` defines (`-config`, `-store`, `-path`, `-host`, `-P`, ...) goes through the `main_flags.rs` port in either spelling, last value winning as Go's `flag` does, so `-store unistore -path ...` starts a node. Remaining: it adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache. | `cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`) |
 
 ### Privileges, wire and administration
 

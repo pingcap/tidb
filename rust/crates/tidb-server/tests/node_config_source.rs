@@ -371,24 +371,39 @@ fn source_port_alias_and_long_option_share_one_value_slot() {
     source_alias.extend(["-P", "4406"]);
     assert_eq!(tidb_server::parse_node_config(source_alias).unwrap().port, 4406);
 
-    let mut ambiguous = required();
-    ambiguous.extend(["-P", "4406", "--port", "4407"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(ambiguous),
-        Err(NodeConfigError::DuplicateOption(option)) if option == "--port"
-    ));
+    // Go's `flag` package takes `-P` and `--P` alike, the last one winning;
+    // `--port` is this binary's own spelling and overrides it.
+    let mut doubled = required();
+    doubled.extend(["--P", "4406"]);
+    assert_eq!(tidb_server::parse_node_config(doubled).unwrap().port, 4406);
+    let mut both = required();
+    both.extend(["-P", "4406", "--port", "4407"]);
+    assert_eq!(tidb_server::parse_node_config(both).unwrap().port, 4407);
+}
+
+/// Go's `initFlagSet` spelling of the store flags: `-store unistore -path
+/// <dir>` (the register's B03 refusal, `unsupported option -store`).
+#[test]
+fn go_single_dash_store_flags_are_accepted() {
+    let config = tidb_server::parse_node_config([
+        "tidb-server",
+        "-store",
+        "unistore",
+        "-path",
+        "127.0.0.1:2379",
+        "-P",
+        "4406",
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
+    ])
+    .expect("Go's single-dash flags parse");
+    assert_eq!(config.store_kind, tidb_domain_core::node_config::StoreKind::Unistore);
+    assert_eq!(config.port, 4406);
 }
 
 #[test]
 fn unsupported_or_ambiguous_startup_options_fail_closed() {
     // pkg/config/config_test.go:457 TestRemovedVariableCheck
-    let mut duplicate = required();
-    duplicate.extend(["--store", "tikv", "--store", "tikv"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(duplicate),
-        Err(NodeConfigError::DuplicateOption(option)) if option == "--store"
-    ));
-
     let mut mock = required();
     mock.extend(["--store", "mocktikv"]);
     assert!(matches!(
@@ -402,12 +417,10 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
     config_file.extend(["--config", &path]);
     assert!(tidb_server::parse_node_config(config_file).is_ok());
 
-    let mut duplicate_config = required();
-    duplicate_config.extend(["--config", &path, "--config", &path]);
-    assert!(matches!(
-        tidb_server::parse_node_config(duplicate_config),
-        Err(NodeConfigError::DuplicateOption(option)) if option == "--config"
-    ));
+    // Go's `flag` package: a repeated `-config` takes its last value.
+    let mut repeated_config = required();
+    repeated_config.extend(["--config", &path, "-config", &path]);
+    assert!(tidb_server::parse_node_config(repeated_config).is_ok());
 
     let mut removed_parallel_id = required();
     removed_parallel_id.extend(["--column-id", "3"]);
