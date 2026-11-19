@@ -97,6 +97,9 @@ func (e *CalcFoundRowsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := exec.Close(count); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	e.foundRows = total
 	e.done = true
 	return nil
