@@ -372,39 +372,40 @@ TopN	root		Column, Column, Column, Column, offset:0, count:100
       └─Selection(Probe)	root		eq(Column, "s"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
         └─CTEFullScan	root	CTE:year_total AS t_s_firstyear	data:CTE_0
 CTE_0	root		Non-Recursive CTE
-└─Union(Seed Part)	root		
-  ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, s->Column
-  │ └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
-  │   └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
-  │     └─Projection	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column
-  │       └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.store_sales.ss_ext_discount_amt, explain_cte.store_sales.ss_ext_list_price, explain_cte.date_dim.d_year
-  │         └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.store_sales.ss_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.store_sales.ss_customer_sk, explain_cte.customer.c_customer_sk)
-  │           ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.store_sales.ss_sold_date_sk)]
-  │           │ ├─TableReader(Build)	root		data:Selection
-  │           │ │ └─Selection	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
-  │           │ │   └─TableFullScan	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
-  │           │ └─TableReader(Probe)	root		data:Selection
-  │           │   └─Selection	cop[tikv]		not(isnull(explain_cte.store_sales.ss_customer_sk)), not(isnull(explain_cte.store_sales.ss_sold_date_sk))
-  │           │     └─TableFullScan	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
-  │           └─IndexLookUp(Probe)	root		
-  │             ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
-  │             └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
-  └─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, w->Column
-    └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
-      └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
-        └─Projection	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column
-          └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.web_sales.ws_ext_discount_amt, explain_cte.web_sales.ws_ext_list_price, explain_cte.date_dim.d_year
-            └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.web_sales.ws_bill_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.web_sales.ws_bill_customer_sk, explain_cte.customer.c_customer_sk)
-              ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.web_sales.ws_sold_date_sk)]
-              │ ├─TableReader(Build)	root		data:Selection
-              │ │ └─Selection	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
-              │ │   └─TableFullScan	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
-              │ └─TableReader(Probe)	root		data:Selection
-              │   └─Selection	cop[tikv]		not(isnull(explain_cte.web_sales.ws_bill_customer_sk)), not(isnull(explain_cte.web_sales.ws_sold_date_sk))
-              │     └─TableFullScan	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
-              └─IndexLookUp(Probe)	root		
-                ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
-                └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
+└─Projection(Seed Part)	root		Column, Column, Column, <nil>->Column, <nil>->Column, <nil>->Column, Column, Column, Column, Column
+  └─Union	root		
+    ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, s->Column
+    │ └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
+    │   └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
+    │     └─Projection	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column
+    │       └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.store_sales.ss_ext_discount_amt, explain_cte.store_sales.ss_ext_list_price, explain_cte.date_dim.d_year
+    │         └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.store_sales.ss_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.store_sales.ss_customer_sk, explain_cte.customer.c_customer_sk)
+    │           ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.store_sales.ss_sold_date_sk)]
+    │           │ ├─TableReader(Build)	root		data:Selection
+    │           │ │ └─Selection	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
+    │           │ │   └─TableFullScan	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+    │           │ └─TableReader(Probe)	root		data:Selection
+    │           │   └─Selection	cop[tikv]		not(isnull(explain_cte.store_sales.ss_customer_sk)), not(isnull(explain_cte.store_sales.ss_sold_date_sk))
+    │           │     └─TableFullScan	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
+    │           └─IndexLookUp(Probe)	root		
+    │             ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
+    │             └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
+    └─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, w->Column
+      └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
+        └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
+          └─Projection	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column
+            └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.web_sales.ws_ext_discount_amt, explain_cte.web_sales.ws_ext_list_price, explain_cte.date_dim.d_year
+              └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.web_sales.ws_bill_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.web_sales.ws_bill_customer_sk, explain_cte.customer.c_customer_sk)
+                ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.web_sales.ws_sold_date_sk)]
+                │ ├─TableReader(Build)	root		data:Selection
+                │ │ └─Selection	cop[tikv]		or(eq(explain_cte.date_dim.d_year, 2001), eq(explain_cte.date_dim.d_year, 2002))
+                │ │   └─TableFullScan	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+                │ └─TableReader(Probe)	root		data:Selection
+                │   └─Selection	cop[tikv]		not(isnull(explain_cte.web_sales.ws_bill_customer_sk)), not(isnull(explain_cte.web_sales.ws_sold_date_sk))
+                │     └─TableFullScan	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
+                └─IndexLookUp(Probe)	root		
+                  ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
+                  └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
 drop table if exists t1;
 create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
 insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);
@@ -432,9 +433,10 @@ HashJoin	root		inner join, equal:[eq(explain_cte.t1.bench_type, explain_cte.t1.b
 └─Selection(Probe)	root		eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))
   └─CTEFullScan	root	CTE:all_data	data:CTE_0
 CTE_0	root		Non-Recursive CTE
-└─TableReader(Seed Part)	root		data:Selection
-  └─Selection	cop[tikv]		not(isnull(explain_cte.t1.bench_type)), or(eq(explain_cte.t1.version, "5.4.0"), eq(explain_cte.t1.version, "6.0.0"))
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection(Seed Part)	root		<nil>->explain_cte.t1.id, explain_cte.t1.bench_type, explain_cte.t1.version, explain_cte.t1.tps
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(explain_cte.t1.bench_type)), or(eq(explain_cte.t1.version, "5.4.0"), eq(explain_cte.t1.version, "6.0.0"))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tbl;
 create table tbl (id int);
 explain format='plan_tree' with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);

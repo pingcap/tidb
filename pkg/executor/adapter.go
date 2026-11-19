@@ -110,11 +110,12 @@ type recordSet struct {
 	executor exec.Executor
 	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
 	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
-	schema     *expression.Schema
-	stmt       *ExecStmt
-	lastErrs   []error
-	txnStartTS uint64
-	once       sync.Once
+	schema       *expression.Schema
+	stmt         *ExecStmt
+	lastErrs     []error
+	txnStartTS   uint64
+	returnedRows uint64
+	once         sync.Once
 	// traceID stores the trace ID for this statement execution.
 	// It's injected into the context during Next() to ensure trace correlation
 	// across TiDB -> client-go -> TiKV during lazy execution.
@@ -165,11 +166,10 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 	return rfs
 }
 
-// Next use uses recordSet's executor to get next available chunk for later usage.
-// If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
-// The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
-// next query.
-// If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
+// Next reads the next chunk and accumulates the number of returned rows.
+// An empty chunk after a successful read marks EOF. Only then does it publish
+// the final count, unless PreserveFoundRows is set. Errors and early close
+// leave the preceding session count unchanged.
 func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	defer func() {
 		r := recover()
@@ -216,16 +216,21 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
-	numRows := req.NumRows()
-	if numRows == 0 {
-		if a.stmt != nil {
-			a.stmt.recordStatementRURootEOF()
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
-		}
+	if numRows := req.NumRows(); numRows != 0 {
+		a.returnedRows += uint64(numRows)
 		return nil
 	}
 	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+		a.stmt.recordStatementRURootEOF()
+		rows := a.returnedRows
+		if total, ok := a.executor.FoundRows(); ok {
+			rows = total
+		}
+		sessVars := a.stmt.Ctx.GetSessionVars()
+		sessVars.StmtCtx.SetFoundRows(rows)
+		if !sessVars.StmtCtx.PreserveFoundRows {
+			sessVars.LastFoundRows = rows
+		}
 	}
 	return nil
 }

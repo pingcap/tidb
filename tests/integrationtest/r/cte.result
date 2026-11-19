@@ -1146,7 +1146,7 @@ Union	root
 └─Projection	root		cte1.table_c.col_4->Column
   └─CTEFullScan	root	CTE:product_detail	data:CTE_4
 CTE_4	root		Non-Recursive CTE
-└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column
+└─Projection(Seed Part)	root		cte1.table_c.col_4, <nil>->Column
   └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column, cte1.table_c.col_1)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
@@ -1272,7 +1272,7 @@ Union	root
 └─Projection	root		cte1.table_c.col_4->Column
   └─CTEFullScan	root	CTE:product_detail	data:CTE_4
 CTE_4	root		Non-Recursive CTE
-└─Projection(Seed Part)	root		cte1.table_c.col_4, 3集合->Column
+└─Projection(Seed Part)	root		cte1.table_c.col_4, <nil>->Column
   └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column, cte1.table_c.col_1)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))

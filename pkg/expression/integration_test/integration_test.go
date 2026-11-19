@@ -1728,6 +1728,93 @@ func TestInfoBuiltin(t *testing.T) {
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("1"))
 
+	t.Run("found rows after explain", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		for _, sql := range []string{"explain select * from t limit 1", "describe select * from t limit 1"} {
+			tk.MustQuery("select * from t")
+			tk.MustQuery(sql)
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+		}
+		tk.MustQuery("select * from t")
+		tk.MustQuery("describe t")
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustExec("prepare explain_found_rows from 'explain select * from t limit 1'")
+		for range 2 {
+			tk.MustQuery("select * from t")
+			tk.MustQuery("execute explain_found_rows")
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+		}
+		tk.MustExec("deallocate prepare explain_found_rows")
+	})
+
+	t.Run("found rows after show", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create view found_rows_view as select a from t")
+		tk.MustExec("create user 'found_rows_show'@'localhost'")
+		defer tk.MustExec("drop user 'found_rows_show'@'localhost'")
+		cases := []struct {
+			query    string
+			preserve bool
+		}{
+			{"show warnings", true},
+			{"show errors", true},
+			{"show create table t", true},
+			{"show create view found_rows_view", true},
+			{"show create database test", true},
+			{"show create user 'found_rows_show'@'localhost'", true},
+			{"show grants for 'found_rows_show'@'localhost'", true},
+			{"show privileges", true},
+			{"show profiles", true},
+			{"show master status", true},
+			{"show binary log status", true},
+			{"show processlist", true},
+			{"show session_states", true},
+			{"show count(*) warnings", false},
+			{"show count(*) errors", false},
+			{"show tables like 't'", false},
+			{"show columns from t", false},
+			{"show variables like 'autocommit'", false},
+			{"show status like 'Threads_connected'", false},
+			{"show engines", false},
+			{"show plugins", false},
+		}
+		for _, tc := range cases {
+			t.Run(tc.query, func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+				tk.MustExec("use test")
+				tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "2"))
+				rows := tk.MustQuery(tc.query).Rows()
+				expected := len(rows)
+				if tc.preserve {
+					expected = 3
+				}
+				tk.MustQuery("select found_rows()").Check(testkit.Rows(fmt.Sprint(expected)))
+				// Reading FOUND_ROWS() itself is a one-row SELECT, even after a preserving SHOW.
+				tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+			})
+		}
+		// Nonempty diagnostics preserve both the previous count and the warning area.
+		tk.MustQuery("select if(a=1, cast('bad' as signed), a) from t")
+		require.Len(t, tk.MustQuery("show warnings").Rows(), 1)
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+		tk.MustQuery("select if(a=1, cast('bad' as signed), a) from t")
+		require.Len(t, tk.MustQuery("show warnings").Rows(), 1)
+		tk.MustQuery("show count(*) warnings").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+		// EXECUTE must classify the prepared SHOW, rather than the ExecuteStmt wrapper.
+		tk.MustExec("prepare show_found_rows from 'show create table t'")
+		for range 2 {
+			tk.MustQuery("select * from t")
+			tk.MustQuery("execute show_found_rows")
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+		}
+		tk.MustExec("deallocate prepare show_found_rows")
+	})
+
 	// for database
 	result = tk.MustQuery("select database()")
 	result.Check(testkit.Rows("test"))

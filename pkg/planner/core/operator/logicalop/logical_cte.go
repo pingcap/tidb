@@ -16,10 +16,12 @@ package logicalop
 
 import (
 	"context"
+	"slices"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -72,6 +74,9 @@ type CTEClass struct {
 	PushDownPredicates []expression.Expression
 	ColumnMap          map[string]*expression.Column
 	IsOuterMostCTE     bool
+	// ColumnUsage unions demands across consumers and nested optimization.
+	// It is cleared once the shared producer has a physical plan.
+	ColumnUsage []bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -82,7 +87,7 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyCTEClassSize
+	sum = emptyCTEClassSize + int64(cap(cc.ColumnUsage))*size.SizeOfBool
 	if cc.SeedPartPhysicalPlan != nil {
 		sum += cc.SeedPartPhysicalPlan.MemoryUsage()
 	}
@@ -138,9 +143,21 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression) ([]ex
 	return predicates, p.Self(), nil
 }
 
-// PruneColumns implements the base.LogicalPlan.<2nd> interface.
-// LogicalCTE just do an empty function call. It's logical optimize is indivisual phase.
-func (p *LogicalCTE) PruneColumns(_ []*expression.Column) (base.LogicalPlan, error) {
+// PruneColumns records the columns required by this consumer. The column-pruning
+// rule combines all consumers before pruning the shared producer.
+func (p *LogicalCTE) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
+	if p.Cte != nil && p.Cte.SeedPartPhysicalPlan == nil &&
+		p.Cte.RecursivePartLogicalPlan == nil && !p.Cte.IsDistinct &&
+		!p.Cte.IsInApply && !p.OnlyUsedAsStorage {
+		if p.Cte.ColumnUsage == nil {
+			p.Cte.ColumnUsage = make([]bool, p.Schema().Len())
+		}
+		for _, col := range parentUsedCols {
+			if index := p.Schema().ColumnIndex(col); index >= 0 {
+				p.Cte.ColumnUsage[index] = true
+			}
+		}
+	}
 	return p, nil
 }
 
@@ -195,6 +212,9 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		if err != nil {
 			return nil, false, err
 		}
+		// Nested producer optimization must retain requirements from consumers
+		// outside that subtree until this shared producer is fully planned.
+		p.Cte.ColumnUsage = nil
 	}
 	if p.OnlyUsedAsStorage {
 		p.SetChildren(p.Cte.SeedPartLogicalPlan)
@@ -299,3 +319,85 @@ func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+// PruneProducerColumns applies the combined consumer requirements while keeping
+// CTE storage positions stable. Pruning the producer also propagates requirements
+// to any other CTEs it references.
+func (p *LogicalCTE) PruneProducerColumns() (bool, error) {
+	if p.Cte.SeedPartPhysicalPlan != nil {
+		return false, nil
+	}
+	seed := p.Cte.SeedPartLogicalPlan
+	used := p.Cte.ColumnUsage
+	// Removing an Apply output can eliminate its inner plan, including side effects.
+	// Preserve all producer outputs until Apply pruning can prove this is safe.
+	if cteProducerHasApply(seed) {
+		used = nil
+	}
+	changed := false
+	if used != nil {
+		// Predicate pushdown may have removed these columns from the consumers.
+		// They are still needed when the producer's filter is installed.
+		for _, col := range expression.ExtractColumnsFromExpressions(p.Cte.PushDownPredicates, nil) {
+			if index := seed.Schema().ColumnIndex(col); index >= 0 {
+				used[index] = true
+			}
+		}
+		schema := seed.Schema().Clone()
+		exprs := make([]expression.Expression, seed.Schema().Len())
+		for i, col := range seed.Schema().Columns {
+			if used[i] {
+				exprs[i] = col
+			} else {
+				nullType := col.RetType.Clone()
+				nullType.SetFlag(nullType.GetFlag() & ^mysql.NotNullFlag)
+				exprs[i] = expression.NewNullWithFieldType(nullType)
+				schema.Columns[i].RetType = nullType
+				changed = true
+			}
+		}
+		if changed {
+			projection := LogicalProjection{Exprs: exprs}.Init(p.SCtx(), seed.QueryBlockOffset())
+			projection.SetChildren(seed)
+			projection.SetSchema(schema)
+			projection.Schema().PKOrUK = nil
+			projection.SetOutputNames(seed.OutputNames())
+			seed = projection
+		}
+	}
+	var err error
+	p.Cte.SeedPartLogicalPlan, err = seed.PruneColumns(slices.Clone(seed.Schema().Columns))
+	if err != nil {
+		return false, err
+	}
+	if recursive := p.Cte.RecursivePartLogicalPlan; recursive != nil {
+		p.Cte.RecursivePartLogicalPlan, err = recursive.PruneColumns(slices.Clone(recursive.Schema().Columns))
+	}
+	return changed, err
+}
+
+// SyncColumnTypes makes each consumer accept nullable producer outputs, including
+// NULL placeholders retained for unused storage positions.
+func (p *LogicalCTE) SyncColumnTypes() {
+	seedSchema := p.Cte.SeedPartLogicalPlan.Schema()
+	for i, col := range p.Schema().Columns {
+		if !mysql.HasNotNullFlag(seedSchema.Columns[i].RetType.GetFlag()) && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+			nullableType := col.RetType.Clone()
+			nullableType.SetFlag(nullableType.GetFlag() & ^mysql.NotNullFlag)
+			col.RetType = nullableType
+		}
+	}
+}
+
+// cteProducerHasApply examines this producer without crossing into other CTEs.
+func cteProducerHasApply(p base.LogicalPlan) bool {
+	if _, ok := p.(*LogicalApply); ok {
+		return true
+	}
+	for _, child := range p.Children() {
+		if cteProducerHasApply(child) {
+			return true
+		}
+	}
+	return false
+}

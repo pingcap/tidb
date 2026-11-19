@@ -614,7 +614,7 @@ func TestSessionCtx(t *testing.T) {
 			// check LastFoundRows
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("insert test.t1 value(1), (2), (3), (4), (5)")
-				// SQL_CALC_FOUND_ROWS is not supported now, so we just test normal select.
+				// Normal SELECT reports its returned-row count.
 				rows := tk.MustQuery("select * from test.t1 limit 3").Rows()
 				require.Equal(t, 3, len(rows))
 				return "3"
