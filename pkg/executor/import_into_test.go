@@ -1044,6 +1044,45 @@ func TestMaintenanceMode(t *testing.T) {
 		tk.MustExec("delete from starter_source")
 	})
 
+	for _, closeSession := range []bool{false, true} {
+		t.Run(fmt.Sprintf("release existing table locks/close=%t", closeSession), func(t *testing.T) {
+			t.Cleanup(config.RestoreFunc())
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.EnableTableLock = true
+				conf.DelayCleanTableLock = 0
+				conf.MaintenanceMode = false
+			})
+			lockTK := testkit.NewTestKit(t, store)
+			closed := false
+			t.Cleanup(func() {
+				config.UpdateGlobal(func(conf *config.Config) {
+					conf.MaintenanceMode = false
+				})
+				if !closed {
+					lockTK.Session().Close()
+				}
+			})
+			lockTK.MustExec("use test")
+			lockTK.MustExec("lock tables starter_target write")
+			require.Len(t, lockTK.Session().GetAllTableLocks(), 1)
+			require.ErrorContains(t, tk.ExecToErr("insert into starter_target values (1)"), "Table 'starter_target' was locked")
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.MaintenanceMode = true
+			})
+			require.ErrorContains(t, lockTK.ExecToErr("lock tables starter_source write"), ddlUnavailableMessage)
+			require.Len(t, lockTK.Session().GetAllTableLocks(), 1)
+			if closeSession {
+				lockTK.Session().Close()
+				closed = true
+			} else {
+				lockTK.MustExec("unlock tables")
+			}
+			require.Empty(t, lockTK.Session().GetAllTableLocks())
+			tk.MustExec("insert into starter_target values (1)")
+			tk.MustExec("delete from starter_target")
+		})
+	}
+
 	t.Run("rejected table lock preserves session state", func(t *testing.T) {
 		t.Cleanup(config.RestoreFunc())
 		config.UpdateGlobal(func(conf *config.Config) {

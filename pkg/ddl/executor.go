@@ -6652,7 +6652,7 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	// Check admission before recording provisional session locks.
-	if err := checkUserDDLJobAllowed(ctx); err != nil {
+	if err := checkUserDDLJobAllowed(ctx, job.Type); err != nil {
 		return err
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
@@ -8061,7 +8061,12 @@ func isRetryableDDLCancelErr(err error) bool {
 		!dbterror.ErrDDLJobNotFound.Equal(err)
 }
 
-func checkUserDDLJobAllowed(ctx sessionctx.Context) error {
+func checkUserDDLJobAllowed(ctx sessionctx.Context, jobType model.ActionType) error {
+	// Releasing existing locks, including session-close cleanup, must remain
+	// available during maintenance so other sessions are not left blocked.
+	if jobType == model.ActionUnlockTable {
+		return nil
+	}
 	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !ctx.GetSessionVars().InRestrictedSQL {
 		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("DDL")
 	}
@@ -8074,7 +8079,7 @@ func checkUserDDLJobAllowed(ctx sessionctx.Context) error {
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
 	// Check maintenance admission before submitting persistent DDL jobs. Local
 	// temporary-table DDL bypasses job submission and remains available.
-	if err := checkUserDDLJobAllowed(ctx); err != nil {
+	if err := checkUserDDLJobAllowed(ctx, jobW.Type); err != nil {
 		return err
 	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
