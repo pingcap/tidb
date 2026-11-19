@@ -36,7 +36,22 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 		{name: "empty object", input: `{}`, normalized: `{}`},
 		{name: "normalize", input: " \n { \"tenant\" : \"tenant-a\", \"purpose\":\"backup\" } \t", normalized: `{"purpose":"backup","tenant":"tenant-a"}`},
 		{name: "unicode", input: `{"租户":"租户一","emoji":"😀","escaped":"\u4e2d"}`, normalized: `{"emoji":"😀","escaped":"中","租户":"租户一"}`},
+		{name: "surrogate pair", input: `{"\uD83D\uDE00":"\ud83d\ude00"}`, normalized: `{"😀":"😀"}`},
+		{name: "surrogate pair boundaries", input: `{"\uD800\uDC00":"\uDBFF\uDFFF"}`, normalized: "{\"\U00010000\":\"\U0010ffff\"}"},
+		{name: "literal replacement character", input: `{"�":"�"}`, normalized: `{"�":"�"}`},
+		{name: "escaped replacement character", input: `{"\uFFFD":"\ufffd"}`, normalized: `{"�":"�"}`},
+		{name: "escaped backslash", input: `{"\\uD800":"\\uDC00"}`, normalized: `{"\\uD800":"\\uDC00"}`},
 		{name: "special characters", input: `{"key":"a+b / = & \" \\ \n"}`, normalized: `{"key":"a+b / = \u0026 \" \\ \n"}`},
+		{name: "lone high surrogate", input: `{"tenant":"\uD800"}`, invalid: true},
+		{name: "lone low surrogate", input: `{"tenant":"\uDC00"}`, invalid: true},
+		{name: "lone high surrogate key", input: `{"secret-value\udbff":"tenant"}`, invalid: true},
+		{name: "lone low surrogate key", input: `{"secret-value\udfff":"tenant"}`, invalid: true},
+		{name: "high surrogate followed by non-surrogate", input: `{"tenant":"secret-value\uD800\u0061"}`, invalid: true},
+		{name: "high surrogate followed by high surrogate", input: `{"tenant":"secret-value\uD800\uD800"}`, invalid: true},
+		{name: "reversed surrogate pair", input: `{"tenant":"secret-value\uDC00\uD800"}`, invalid: true},
+		{name: "separated surrogate pair", input: `{"tenant":"secret-value\uD800x\uDC00"}`, invalid: true},
+		{name: "escaped low surrogate", input: `{"tenant":"secret-value\uD800\\uDC00"}`, invalid: true},
+		{name: "surrogate after escaped backslash", input: `{"tenant":"secret-value\\\uD800"}`, invalid: true},
 		{name: "whitespace", input: " \n\t", invalid: true},
 		{name: "null", input: `null`, invalid: true},
 		{name: "array", input: `[]`, invalid: true},
@@ -63,10 +78,16 @@ func TestS3SSEKMSContextFlags(t *testing.T) {
 			backend := &backuppb.S3{}
 			err := options.Apply(backend)
 			if tc.invalid {
+				if err == nil {
+					decoded, decodeErr := base64.StdEncoding.DecodeString(backend.GetSseKmsEncryptionContext())
+					require.NoError(t, decodeErr)
+					t.Logf("unexpectedly accepted context, normalized JSON: %s", decoded)
+				}
 				require.Error(t, err)
 				require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
 				require.Contains(t, err.Error(), "sse-kms-context")
 				require.NotContains(t, err.Error(), "secret-value")
+				require.NotContains(t, err.Error(), tc.input)
 				return
 			}
 			require.NoError(t, err)

@@ -229,7 +229,7 @@ func encodeSSEKMSContext(raw string) (string, error) {
 	// Do not include the input or decoder errors: either may reveal user values.
 	invalid := errors.Annotate(berrors.ErrStorageInvalidConfig,
 		"sse-kms-context must be a UTF-8 JSON object with unique keys and string values")
-	if !utf8.ValidString(raw) || !json.Valid([]byte(raw)) {
+	if !utf8.ValidString(raw) || !json.Valid([]byte(raw)) || !validJSONSurrogatePairs(raw) {
 		return "", invalid
 	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
@@ -264,6 +264,38 @@ func encodeSSEKMSContext(raw string) (string, error) {
 	// A map of strings contains no unsupported JSON values.
 	normalized, _ := json.Marshal(values)
 	return base64.StdEncoding.EncodeToString(normalized), nil
+}
+
+// validJSONSurrogatePairs requires syntactically valid JSON. encoding/json
+// silently replaces unpaired surrogates with U+FFFD, changing the KMS context.
+// Check the escapes before decoding so that literal U+FFFD remains valid.
+func validJSONSurrogatePairs(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		i++
+		if raw[i] != 'u' {
+			// Skip escaped backslashes, which can precede literal "uD800" text.
+			continue
+		}
+		codeUnit, _ := strconv.ParseUint(raw[i+1:i+5], 16, 16)
+		i += 4
+		if codeUnit < 0xD800 || codeUnit > 0xDFFF {
+			continue
+		}
+		// A high surrogate must immediately precede an escaped low surrogate.
+		// A low surrogate without a preceding high surrogate is invalid.
+		if codeUnit >= 0xDC00 || i+6 >= len(raw) || raw[i+1:i+3] != `\u` {
+			return false
+		}
+		low, _ := strconv.ParseUint(raw[i+3:i+7], 16, 16)
+		if low < 0xDC00 || low > 0xDFFF {
+			return false
+		}
+		i += 6
+	}
+	return true
 }
 
 // SetForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
