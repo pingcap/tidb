@@ -2,7 +2,7 @@
 
 状态：用户已在 Q15 整体确认 v0.5，Q19 已确认技术 spec 并完成当前分支实现。Q10 至 Q12 确定原生 MFA、数据库密码＋LDAP Simple、最多三个因子和基础策略范围；已有能力实测完成，两个 native 因子排除，Q14 确认纳入最小日志脱敏修复。本文 SQL 和登录示例已完成 parser、TiDB 实例及 MySQL CLI 8.4.9 直连复核；真实 LDAP TLS、COM_CHANGE_USER、多节点和其他接入路径仍按文末边界单独验收。
 
-目标基线：`release-7.1.9-0` / `5c980fb645c8f3ae76f006967a4bc8b28ce8ba26`。行为参考 MySQL 8.0.27 与 8.4 共有的 MFA 语义，具体依据见[调研记录](2026-11-18-multi-factor-authentication-research.md)。前期[证书方案](2026-11-18-multi-factor-authentication-certificate-candidate.md)及其修复 spec 为历史材料，不是本次原生 MFA 的技术设计。
+目标基线：`release-7.1.9-0` / `5c980fb645c8f3ae76f006967a4bc8b28ce8ba26`。行为参考 MySQL 8.0.27 与 8.4 共有的 MFA 语义，具体 SQL、账号管理和部署行为见本文及[原生 MFA 技术 spec](2026-11-18-native-mfa-spec.md)。
 
 ## 已有能力与本次增量
 

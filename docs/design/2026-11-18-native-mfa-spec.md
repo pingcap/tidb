@@ -371,4 +371,4 @@ Q17 已确认按明确因子编号稳定更新，并记录 MySQL 8.4.9 的重载
 
 这些是设计约束，不是“实现已证明没有回归”的保证。实现必须通过第 10 节的旧行为及 MFA 验证门槛；发现必须改变其他旧行为时，先说明具体影响并讨论，不能顺手修改。
 
-本轮源码依据、问题及修订比较见[审阅记录](2026-11-18-native-mfa-spec-review.md)，覆盖情况见[审核覆盖记录](2026-11-18-native-mfa-spec-review-coverage.md)。Q19 已确认 v0.4，代码已在当前目录 `mfa-native-support` 分支实现；真实 LDAP 端到端验收仍受外部 LDAP 服务和集成测试依赖限制，见交付报告。
+Q19 已确认 v0.4，代码已在当前目录 `mfa-native-support` 分支实现；真实 LDAP 端到端验收结果见[原生 MFA 端到端验证报告](2026-11-19-multi-factor-authentication-e2e-validation.md)，已有 LDAP 单插件能力见[认证能力实测报告](2026-11-18-authentication-runtime-validation.md)。
