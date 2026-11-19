@@ -48,11 +48,7 @@ go_test(
     ],
     embed = [":metautil"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 15,
-=======
-    shard_count = 19,
->>>>>>> 9c2f875416c (br: fix metadata length panic (#73432))
+    shard_count = 16,
     deps = [
         "//br/pkg/utils",
         "//pkg/meta/model",
