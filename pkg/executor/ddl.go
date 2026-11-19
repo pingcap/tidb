@@ -107,11 +107,26 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
+		}
+		// Validate all local targets before dropping any of them.
+		for _, target := range s.Tables {
+			_, local, err := e.getLocalTemporaryTable(target.Schema, target.Name)
+			if err != nil {
+				return err
+			}
+			if local {
+				if err := checkLatestSchemaReadOnly(e.Ctx(), target.Schema); err != nil {
+					return err
+				}
+			}
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
@@ -146,6 +161,16 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
+	case *ast.TruncateTableStmt:
+		_, local, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+		if err != nil {
+			return err
+		}
+		if local {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -270,6 +295,9 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 		return errors.Trace(err)
 	}
 	if exist {
+		if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+			return err
+		}
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
 	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)

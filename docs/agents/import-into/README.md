@@ -72,11 +72,26 @@ when only reading one package at a time.
 
 - Cleanup entrypoint is `ImportCleaner.Clean` in `clean_up.go`.
 - Table mode in Classic and NextGen:
-  - Task submission sets import mode before physical ingestion. Database
+  - Distributed task submission sets import mode before physical ingestion. Database
     read-only transitions reject tables in that mode.
   - Completion and cleanup switch the mode back to normal. NextGen uses the
     task keyspace's runtime and session pool, including cross-keyspace cleanup.
   - Ignores `infoschema.ErrTableNotExists` during cleanup.
+- Classic `IMPORT FROM SELECT` uses its outer statement transaction to register
+  the target for read-only draining until ingestion and post-processing finish.
+  Its precheck session is insufficient because precheck SQL commits separately.
+- NextGen submission checks the SYSTEM server registry for read-only/import-mode
+  lifecycle support before changing the user table's mode. User-keyspace upgrade
+  completion alone does not establish SYSTEM/DXF compatibility.
+- An allocated DXF task ID is not evidence of commit. Definite submission
+  failures check active/history tasks before cancelling an unregistered user job
+  and releasing its table mode. Indeterminate outcomes retain protection;
+  `CANCEL IMPORT JOB` cancels the pending job before checking SYSTEM again and
+  releases mode only when no task is visible. A completed cancellation is not
+  repeated against the same table, whose mode may belong to a later import.
+- Enabling database read-only also checks unfinished import job rows for existing
+  target tables. This covers jobs submitted before NextGen used import mode;
+  upgrading every node does not remove those jobs.
 - Global-sort artifact cleanup:
   - Deletes task-scoped files via `external.CleanUpFiles(..., <task-id>)`.
   - Does not delete `conflicted-rows/...` files by design.

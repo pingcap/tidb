@@ -17,6 +17,7 @@ package executor
 import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
@@ -34,9 +35,13 @@ func activateSchemaReadOnlyWrite(sctx sessionctx.Context, tbl *model.TableInfo) 
 	if _, err := sctx.Txn(true); err != nil {
 		return err
 	}
-	latestDB, ok := sctx.GetLatestISWithoutSessExt().SchemaByName(db.Name)
-	if ok && latestDB.ReadOnly && !privilege.CanWriteReadOnlySchema(sctx, db.Name.L) {
-		return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+	return checkLatestSchemaReadOnly(sctx, db.Name)
+}
+
+func checkLatestSchemaReadOnly(sctx sessionctx.Context, database ast.CIStr) error {
+	latestDB, ok := sctx.GetLatestISWithoutSessExt().SchemaByName(database)
+	if ok && latestDB.ReadOnly && !privilege.CanWriteReadOnlySchema(sctx, database.L) {
+		return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(latestDB.Name.O)
 	}
 	return nil
 }

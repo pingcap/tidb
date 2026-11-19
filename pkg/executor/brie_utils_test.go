@@ -30,10 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -275,6 +278,45 @@ func mockTableInfo(t *testing.T, sctx sessionctx.Context, createSQL string) *mod
 }
 
 func TestBRIECreateTable(t *testing.T) {
+	t.Run("TrustedRestoreReadOnlyBoundary", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+		tk.MustExec("create database restore_ro")
+		tk.MustExec("create database other_ro")
+		tk.MustExec("create table other_ro.t(a int)")
+		tk.MustExec("alter database restore_ro read only = 1")
+		tk.MustExec("alter database other_ro read only = 1")
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		require.False(t, privilege.HasExplicitReplicaWriterAdmin(tk.Session()), "SUPER is not an ordinary write bypass")
+		tk.MustGetErrCode("create table restore_ro.denied(a int)", 3989)
+		one := mockTableInfo(t, tk.Session(), "create table restore_ro.restored_one(a int)")
+		require.NoError(t, executor.BRIECreateTable(tk.Session(), ast.NewCIStr("restore_ro"), one, ""))
+		two := mockTableInfo(t, tk.Session(), "create table restore_ro.restored_two(a int)")
+		require.NoError(t, executor.BRIECreateTables(tk.Session(), map[string][]*model.TableInfo{"restore_ro": {two}}, ""))
+		tk.MustExec("create user restore_operator")
+		tk.MustExec("grant RESTORE_ADMIN on *.* to restore_operator")
+		tk.MustExec("grant create, insert on restore_ro.* to restore_operator")
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "restore_operator", Hostname: "%"}, nil, nil, nil))
+		require.False(t, privilege.HasExplicitReplicaWriterAdmin(tk.Session()))
+		tk.MustGetErrCode("create table restore_ro.denied_operator(a int)", 3989)
+		three := mockTableInfo(t, tk.Session(), "create table restore_ro.restored_operator(a int)")
+		require.NoError(t, executor.BRIECreateTable(tk.Session(), ast.NewCIStr("restore_ro"), three, ""))
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		for _, db := range []string{"restore_ro", "other_ro"} {
+			require.False(t, privilege.CanWriteReadOnlySchema(tk.Session(), db), "restore authorization must end before returning the session")
+		}
+		tk.MustGetErrCode("insert into restore_ro.restored_one values (1)", 3989)
+		_, err := tk.Session().GetSQLExecutor().ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR), "insert into other_ro.t values (1)")
+		require.ErrorContains(t, err, "read only mode")
+		// Error paths must restore an existing, differently scoped authorization.
+		restore := privilege.WithInternalSchemaReadOnlyBypass(tk.Session(), "other_ro")
+		defer restore()
+		err = executor.BRIECreateTable(tk.Session(), ast.NewCIStr("missing_restore_db"), one, "")
+		require.Error(t, err)
+		require.True(t, privilege.CanWriteReadOnlySchema(tk.Session(), "other_ro"))
+		require.False(t, privilege.CanWriteReadOnlySchema(tk.Session(), "restore_ro"))
+	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

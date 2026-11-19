@@ -47,9 +47,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -547,6 +549,29 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 }
 
 func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
+	t.Run("ClassicReadOnlyDraining", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			t.Skip("Classic FROM SELECT uses the submitting transaction")
+		}
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create table test.guarded_import(a int)")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("guarded_import"))
+		require.NoError(t, err)
+		called := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportFromSelectPrecheck", func(sctx sessionctx.Context) {
+			called = true
+			_, registered := sctx.GetSessionVars().GetRelatedTableForReadOnly().Load(tbl.Meta().ID)
+			require.True(t, registered, "the ingestion lifetime must remain visible to read-only draining")
+			txn, err := sctx.Txn(false)
+			require.NoError(t, err)
+			require.True(t, txn.Valid())
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", "return(true)")
+		require.ErrorContains(t, tk.ExecToErr("import into test.guarded_import from select 1 with disable_precheck"), "mock import from select setup error")
+		require.True(t, called)
+		tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -789,6 +814,53 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		tbl, err := is.TableByName(ctx, db.Name, ast.NewCIStr(tableName))
 		require.NoError(t, err)
 		return &importer.Plan{DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: tk.Session().GetStore().GetKeyspace(), Parameters: &importer.ImportParameters{}}
+	}
+	t.Run("old SYSTEM lifecycle rejects submission before changing mode", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		plan := newSubmissionPlan(userKSTK)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", "return(`{\"new\":{\"schema_read_only\":true},\"old\":{}}`)")
+		_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+		require.ErrorContains(t, err, "SYSTEM/DXF")
+		tbl, err := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr("test"), plan.TableInfo.Name)
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+		userKSTK.MustQuery("select count(*) from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Check(testkit.Rows("0"))
+	})
+	for _, uncertain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allocated task rollback uncertain=%t", uncertain), func(t *testing.T) {
+			config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+			manuallyInitFn(t, userKSStore, sysKSStore)
+			plan := newSubmissionPlan(userKSTK)
+			defer func() {
+				require.NoError(t, domain.GetDomain(userKSTK.Session()).DDLExecutor().AlterTableMode(userKSTK.Session(), &model.AlterTableModeArgs{
+					SchemaID: plan.DBID, TableID: plan.TableInfo.ID, TableMode: model.TableModeNormal,
+				}))
+			}()
+			var allocated int64
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportTaskIDAllocated", func(id int64, err *error) {
+				allocated = id
+				*err = context.Canceled
+				if uncertain {
+					*err = terror.ErrResultUndetermined
+				}
+			})
+			_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+			require.Error(t, err)
+			require.Positive(t, allocated)
+			sysKSTK.MustQuery("select count(*) from mysql.tidb_global_task where id = ?", allocated).Check(testkit.Rows("0"))
+			dom := domain.GetDomain(userKSTK.Session())
+			tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), plan.TableInfo.Name)
+			require.NoError(t, err)
+			if uncertain {
+				require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
+				jobs := userKSTK.MustQuery("select id from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Rows()
+				userKSTK.MustExec(fmt.Sprintf("cancel import job %s", jobs[0][0]))
+				tbl, err = dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), plan.TableInfo.Name)
+				require.NoError(t, err)
+			}
+			require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+		})
 	}
 
 	t.Run("read-only transition excludes background import", func(t *testing.T) {

@@ -922,6 +922,83 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 }
 
 func TestSchemaReadOnlyReviewFixes(t *testing.T) {
+	t.Run("BatchDeleteTransaction", func(t *testing.T) {
+		enableReadOnlyDDLFp(t)
+		store := testkit.CreateMockStore(t)
+		writer, alter := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+		writer.MustExec("create database ro")
+		writer.MustExec("create table ro.t(a int primary key)")
+		writer.MustExec("insert into ro.t values (1), (2)")
+		writer.MustExec("set global tidb_enable_batch_dml = 1")
+		defer writer.MustExec("set global tidb_enable_batch_dml = 0")
+		writer.MustExec("set tidb_batch_delete = 1")
+		writer.MustExec("set tidb_dml_batch_size = 1")
+		var once sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterBatchDeleteNewTxn", func(sessionctx.Context) {
+			once.Do(func() { alter.MustExec("alter database ro read only = 1") })
+		})
+		require.ErrorContains(t, writer.ExecToErr("delete from ro.t order by a"), "read only mode")
+		writer.MustQuery("select * from ro.t").Check(testkit.Rows("2"))
+	})
+	for _, statement := range []string{"create temporary table ro.new_tmp(a int)", "drop temporary table ro.tmp", "truncate table ro.tmp"} {
+		t.Run("LocalTemporaryDDL/"+statement, func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			writer, alter := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+			writer.MustExec("create database ro")
+			writer.MustExec("create table test.anchor(a int)")
+			writer.MustExec("create temporary table ro.tmp(a int)")
+			writer.MustExec("insert into ro.tmp values (1)")
+			writer.MustExec("begin")
+			writer.MustQuery("select * from test.anchor").Check(testkit.Rows())
+			alter.MustExec("alter database ro read only = 1")
+			writer.MustGetErrCode(statement, 3989)
+			writer.MustQuery("select * from ro.tmp").Check(testkit.Rows("1"))
+			writer.MustExec("rollback")
+		})
+	}
+	for _, statement := range []string{"replace into ro.p values (1)", "update ro.p set id = 2", "delete from ro.p", "insert into ro.p values (1) on duplicate key update id = 2"} {
+		for _, childDB := range []string{"ro", "other"} {
+			t.Run("ScopedForeignKey/"+childDB+"/"+statement, func(t *testing.T) {
+				enableReadOnlyDDLFp(t)
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("create database ro")
+				tk.MustExec("create database other")
+				tk.MustExec("create table ro.p(id int primary key)")
+				tk.MustExec("create table " + childDB + ".c(id int, foreign key(id) references ro.p(id) on delete cascade on update cascade)")
+				tk.MustExec("insert into ro.p values (1)")
+				tk.MustExec("insert into " + childDB + ".c values (1)")
+				tk.MustExec("alter database ro read only = 1")
+				tk.MustExec("alter database other read only = 1")
+				restore := privilege.WithInternalSchemaReadOnlyBypass(tk.Session(), "ro")
+				defer restore()
+				if childDB == "ro" {
+					tk.MustExec(statement)
+				} else {
+					tk.MustGetErrCode(statement, 3989)
+					tk.MustQuery("select * from other.c").Check(testkit.Rows("1"))
+				}
+			})
+		}
+	}
+	t.Run("LegacyImportJob", func(t *testing.T) {
+		enableReadOnlyDDLFp(t)
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ro")
+		tk.MustExec("create database other")
+		tk.MustExec("create table ro.t(a int)")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		tk.MustExec("insert into mysql.tidb_import_jobs(table_schema,table_name,table_id,created_by,parameters,source_file_size,status,step) values ('ro','t',?,'root','{}',1,'pending','')", tbl.Meta().ID)
+		require.ErrorContains(t, tk.ExecToErr("alter database ro read only = 1"), "unfinished import")
+		tk.MustExec("alter database other read only = 1")
+		tk.MustExec("update mysql.tidb_import_jobs set status = 'running', step = 'global-sorting'")
+		require.ErrorContains(t, tk.ExecToErr("alter database ro read only = 1"), "unfinished import")
+		tk.MustExec("update mysql.tidb_import_jobs set status = 'finished'")
+		tk.MustExec("alter database ro read only = 1")
+	})
 	t.Run("MixedVersion", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)

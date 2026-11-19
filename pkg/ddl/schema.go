@@ -282,6 +282,10 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 			}
 			return ver, errors.Trace(err)
 		}
+		if err := w.checkUnfinishedSchemaImports(jobCtx, dbInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		// Rollback can skip StateNone only because all mutations follow this assignment.
 		job.SchemaState = model.StatePendingReadOnly
 		dbInfo.ReadOnly = args.ReadOnly
@@ -358,6 +362,32 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	}
 	return ver, nil
+}
+
+// Older NextGen submissions did not set table mode. Their durable job rows
+// remain after all nodes upgrade, so capability checks alone cannot fence them.
+func (w *worker) checkUnfinishedSchemaImports(jobCtx *jobContext, db *model.DBInfo) error {
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(sctx)
+	rows, err := sess.NewSession(sctx).Execute(jobCtx.stepCtx,
+		"SELECT id, table_id FROM mysql.tidb_import_jobs WHERE table_schema = %? AND status IN ('pending', 'running')",
+		"check unfinished schema imports", db.Name.O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		tbl, err := jobCtx.metaMut.GetTable(db.ID, row.GetInt64(1))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tbl != nil {
+			return errors.Errorf("cannot enable database read-only mode while unfinished import job %d targets %s.%s", row.GetInt64(0), db.Name.O, tbl.Name.O)
+		}
+	}
+	return nil
 }
 
 func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {

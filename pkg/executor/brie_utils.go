@@ -87,6 +87,9 @@ func showRestoredCreateTable(sctx sessionctx.Context, dbName ast.CIStr, tbl *mod
 }
 
 // BRIECreateTable creates the table with OnExistIgnore option
+// Trusted restore may recreate objects in a database whose source ReadOnly flag
+// has already been restored. The caller authorizes RESTORE; this exception ends
+// when this function returns and does not grant ordinary SQL write privileges.
 func BRIECreateTable(
 	sctx sessionctx.Context,
 	dbName ast.CIStr,

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -47,10 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -302,6 +305,33 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		return 0, nil, err
 	}
 
+	dxfTaskMgr := taskManager
+	if kerneltype.IsNextGen() {
+		dxfTaskMgr, err = dxfstorage.GetDXFSvcTaskMgr()
+		if err != nil {
+			return 0, nil, err
+		}
+		// The user keyspace's upgrade state does not describe the SYSTEM nodes
+		// that will finish and clean up this task's persistent table mode.
+		if err := dxfTaskMgr.WithNewSession(func(se sessionctx.Context) error {
+			servers, err := getImportLifecycleServers(ctx, se)
+			if err != nil {
+				return err
+			}
+			if len(servers) == 0 {
+				return errors.New("cannot determine SYSTEM/DXF import table-mode support")
+			}
+			for _, server := range servers {
+				if server == nil || !server.SchemaReadOnly {
+					return errors.New("finish upgrading all SYSTEM/DXF nodes before submitting an import with table-mode protection")
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, nil, err
+		}
+	}
+
 	taskMeta := &taskinfo.TaskMeta{
 		Plan:              *plan,
 		Stmt:              stmt,
@@ -326,17 +356,32 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		jobID, taskID int64
 	)
 	var runningOnUserKS bool
-	var tableModeSet, taskSubmitted bool
+	var tableModeSet, taskSubmitted, userJobCommitted bool
 	defer func() {
-		if !tableModeSet || taskSubmitted || taskID != 0 {
+		if !tableModeSet || taskSubmitted {
 			return
 		}
-		// Registration must not strand a table in import mode if task creation
-		// fails, including the separate SYSTEM-keyspace submission in NextGen.
-		// If an ID was allocated, its commit may be indeterminate: retain the
-		// protection for that task's scheduler/cleaner rather than allow ingestion
-		// to race a read-only transition.
-		cleanupErr := taskManager.WithNewTxn(context.WithoutCancel(ctx), func(se sessionctx.Context) error {
+		cleanupCtx := context.WithoutCancel(ctx)
+		if taskID != 0 {
+			if terror.ErrResultUndetermined.Equal(resultErr) {
+				return // CANCEL IMPORT JOB can reconcile this after its outcome is known.
+			}
+			_, lookupErr := dxfTaskMgr.GetTaskBaseByIDWithHistory(cleanupCtx, taskID)
+			if lookupErr == nil {
+				return // A committed task owns its scheduler/cleaner protection.
+			}
+			if !goerrors.Is(lookupErr, dxfstorage.ErrTaskNotFound) {
+				resultErr = errors.Annotatef(resultErr, "confirm import task registration failed: %v", lookupErr)
+				return
+			}
+		}
+		if userJobCommitted {
+			if err := cancelDanglingImportJob(cleanupCtx, jobID); err != nil {
+				resultErr = errors.Annotatef(resultErr, "cancel unregistered import job failed: %v", err)
+			}
+			return
+		}
+		cleanupErr := taskManager.WithNewTxn(cleanupCtx, func(se sessionctx.Context) error {
 			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, plan.DBID, plan.TableInfo.ID)
 		})
 		if cleanupErr != nil {
@@ -375,10 +420,9 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	}); err != nil {
 		return 0, nil, err
 	}
+	userJobCommitted = runningOnUserKS
 	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
 	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
-	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
-	dxfTaskMgr := taskManager
 	if runningOnUserKS {
 		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
 		var err2 error
@@ -395,7 +439,8 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
 				return err2
 			}
-			return nil
+			failpoint.InjectCall("afterImportTaskIDAllocated", taskID, &err2)
+			return err2
 		}); err2 != nil {
 			return 0, nil, err2
 		}
@@ -423,6 +468,21 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
+}
+
+func getImportLifecycleServers(ctx context.Context, sctx sessionctx.Context) (map[string]*serverinfo.ServerInfo, error) {
+	if dom := domain.GetDomain(sctx); dom != nil {
+		return dom.InfoSyncer().ServerInfoSyncer().GetAllServerInfo(ctx)
+	}
+	cli, err := store.NewEtcdCli(sctx.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	if cli == nil {
+		return nil, errors.New("cannot determine SYSTEM/DXF capabilities without a server registry")
+	}
+	defer cli.Close()
+	return serverinfo.GetAllServerInfoFromEtcd(ctx, cli)
 }
 
 func submitTask2DXF(taskMeta *taskinfo.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
@@ -477,6 +537,12 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
+	// The outer statement owns this transaction until all physical ingestion and
+	// post-processing finish. Precheck sessions commit their own short SQL txns.
+	if err := activateSchemaReadOnlyWrite(e.userSctx, e.tbl.Meta()); err != nil {
+		return err
+	}
+	failpoint.InjectCall("afterImportFromSelectPrecheck", e.userSctx)
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
@@ -632,7 +698,7 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	return manager.WithNewSession(func(se sessionctx.Context) error {
+	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		if err2 := importer.CancelPendingJob(ctx, se.GetSQLExecutor(), jobID); err2 != nil {
 			return err2
 		}
@@ -640,6 +706,38 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 			return errors.New("job state changed during cancel, please try again later")
 		}
 		return nil
+	}); err != nil {
+		return err
+	}
+	// Cancel the durable pending job before rechecking SYSTEM. A task that is
+	// committed later will see cancellation before it can start ingestion. A
+	// task already visible here retains protection until its normal cleanup.
+	dxfManager, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
+	_, err = dxfManager.GetTaskBaseByKeyWithHistory(ctx, taskkey.ForJob(jobID))
+	if err == nil {
+		return nil
+	}
+	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
+		return err
+	}
+	return manager.WithNewSession(func(se sessionctx.Context) error {
+		job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
+		if err != nil {
+			return err
+		}
+		dom := domain.GetDomain(se)
+		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(job.TableSchema))
+		if !ok {
+			return nil
+		}
+		err = ddl.AlterTableMode(dom.DDLExecutor(), se, model.TableModeNormal, db.ID, job.TableID)
+		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+			return nil
+		}
+		return err
 	})
 }
 

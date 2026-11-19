@@ -81,6 +81,7 @@ type StaticInfo struct {
 	// TiDB-type RPC requests, which keeps compatibility with older server info.
 	DisableRPC bool `json:"disable_rpc,omitempty"`
 	// SchemaReadOnly advertises that this node preserves and enforces DBInfo.ReadOnly.
+	// This includes restoring import table mode on NextGen completion and cleanup.
 	// Older nodes omit it and must prevent activation during a rolling upgrade.
 	SchemaReadOnly bool `json:"schema_read_only,omitempty"`
 }

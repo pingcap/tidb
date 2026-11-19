@@ -145,6 +145,9 @@ func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, database string) f
 
 // CanWriteReadOnlySchema accepts an explicit user grant or a database-scoped
 // authorization inherited by trusted internal work; internal SQL alone is insufficient.
+// Trusted BR restore is an explicit exception after the restore entrypoint's
+// authorization. Its scope is one restored database, including when restoring
+// the source ReadOnly flag. SUPER alone still does not authorize ordinary writes.
 func CanWriteReadOnlySchema(ctx interface {
 	Value(fmt.Stringer) any
 	GetSessionVars() *variable.SessionVars

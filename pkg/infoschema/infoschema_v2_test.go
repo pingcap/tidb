@@ -297,7 +297,45 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, txn.Rollback())
 }
 
+func testRefreshSchemaReadOnly(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		r := internal.CreateAutoIDRequirement(t)
+		t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+		db := internal.MockDBInfo(t, r.Store(), "refresh_read_only")
+		internal.AddDB(t, r.Store(), db)
+		data := NewData()
+		builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+		require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+		is := builder.Build(math.MaxUint64)
+		for i, readOnly := range []bool{true, false, true} {
+			previous, ok := is.SchemaByID(db.ID)
+			require.True(t, ok)
+			db = previous.Clone()
+			db.ReadOnly = readOnly
+			if i == 2 {
+				db.Charset, db.Collate = "utf8mb4", "utf8mb4_bin"
+			}
+			txn, err := r.Store().Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.UpdateDatabase(db))
+			builder = NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+			require.NoError(t, builder.InitWithOldInfoSchema(is))
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionRefreshMeta, SchemaID: db.ID, Version: int64(i + 2), IsRefreshMeta: true})
+			require.NoError(t, err)
+			is = builder.Build(math.MaxUint64)
+			updated, ok := is.SchemaByID(db.ID)
+			require.True(t, ok)
+			require.Equal(t, readOnly, updated.ReadOnly)
+			require.NotEqual(t, updated.ReadOnly, previous.ReadOnly, "older schema snapshots must stay immutable")
+			require.Equal(t, db.Charset, updated.Charset)
+			require.NoError(t, txn.Rollback())
+		}
+	}
+}
+
 func TestBundles(t *testing.T) {
+	t.Run("refresh schema read-only flag", testRefreshSchemaReadOnly)
 	t.Run("drop schema streams table IDs", testDropSchemaStreamsTableIDs)
 	t.Run("collect physical table IDs propagates iteration errors", testCollectPhysicalTableIDsPropagatesIterationErrors)
 	t.Run("retry flashback in progress", testRetryOnFlashbackInProgress)
