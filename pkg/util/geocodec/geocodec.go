@@ -400,8 +400,9 @@ func (v *validator) empty() error {
 	return nil
 }
 
-// point checks a point's coordinates: all finite, or, in EWKB, all NaN, which is how EWKB
-// writes POINT EMPTY.
+// point checks a point's coordinates: all finite, or all NaN. A point has no count to
+// write as 0, as the other empty geometries do, so EWKB writes POINT EMPTY as NaN
+// coordinates, as PostGIS and GEOS do. MySQL's format has no POINT EMPTY.
 func (v *validator) point(order byte, size int) error {
 	coords, err := v.c.next(size)
 	if err != nil {
