@@ -28,9 +28,10 @@ import (
 )
 
 type sortPartition struct {
-	// cond is only used for protecting spillStatus
-	cond        *sync.Cond
-	spillStatus int
+	// cond is only used for protecting spillStatus and spillFailedForTest
+	cond               *sync.Cond
+	spillStatus        int
+	spillFailedForTest bool
 
 	// syncLock is used to protect variables except `spillStatus`
 	syncLock sync.Mutex
@@ -214,6 +215,7 @@ func (s *sortPartition) spillToDisk() error {
 
 	err := s.sortNoLock()
 	if err != nil {
+		s.setSpillFailedForTest()
 		return err
 	}
 
@@ -319,9 +321,16 @@ func (s *sortPartition) isSpillTriggered() bool {
 func (s *sortPartition) waitForSpillTriggeredForTest() {
 	s.cond.L.Lock()
 	defer s.cond.L.Unlock()
-	for s.spillStatus != spillTriggered {
+	for s.spillStatus != spillTriggered && !s.spillFailedForTest {
 		s.cond.Wait()
 	}
+}
+
+func (s *sortPartition) setSpillFailedForTest() {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	s.spillFailedForTest = true
+	s.cond.Broadcast()
 }
 
 func (s *sortPartition) isSpillTriggeredNoLock() bool {
