@@ -2453,9 +2453,9 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index", `return(true)`))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
 		}()
 		ingestRecorder := ingestrec.New()
 		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
@@ -2466,21 +2466,39 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
+<<<<<<< HEAD
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
+=======
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index", `return(true)`))
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index")
 		}()
+<<<<<<< HEAD
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
+=======
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index", `return(true)`))
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index")
 		}()
+<<<<<<< HEAD
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
 		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+=======
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index"))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))

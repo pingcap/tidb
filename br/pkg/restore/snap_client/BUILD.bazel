@@ -133,7 +133,19 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//require",
+<<<<<<< HEAD
         "@com_github_tikv_pd_client//clients/router",
+=======
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/router",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//keepalive",
+        "@org_golang_google_grpc//status",
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
         "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
     ],
