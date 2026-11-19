@@ -21,13 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -49,12 +47,16 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	schemaVersion := b.is.SchemaMetaVersion()
 	checkedPolicyIDs := make(map[int64]struct{})
 	for i := range cols {
-		for _, candidate := range b.extractMaskingPolicyCandidateNamesFromOutputColumn(p, i) {
-			policy, tblInfo, colInfo, err := b.findMaskingPolicyByFieldName(ctx, candidate)
+		for _, source := range b.extractMaskingPolicySourceColumnsFromOutputColumn(p, i) {
+			tblInfo, colInfo := source.tblInfo, source.colInfo
+			policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
 			if err != nil {
 				return err
 			}
-			if policy == nil || tblInfo == nil || colInfo == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			if !ok {
+				continue
+			}
+			if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
 				continue
 			}
 			if policy.RestrictOps&op == 0 {
@@ -78,22 +80,37 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	return nil
 }
 
-func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
+// maskingPolicySourceColumn is a physical table column that a plan output is
+// computed from.
+type maskingPolicySourceColumn struct {
+	tblInfo *model.TableInfo
+	colInfo *model.ColumnInfo
+}
+
+// extractMaskingPolicySourceColumnsFromOutputColumn returns the table columns
+// that the output column reads. The columns are those bound to the scans, so
+// an alias, a CTE name or another table that shares a name with a protected
+// table is never taken for it.
+func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 	p base.LogicalPlan,
 	outputColIdx int,
-) []*types.FieldName {
-	candidates := make([]*types.FieldName, 0, 2)
-	seen := make(map[string]struct{}, 2)
-	appendCandidate := func(name *types.FieldName) {
-		if name == nil {
+) []maskingPolicySourceColumn {
+	sources := make([]maskingPolicySourceColumn, 0, 2)
+	seen := make(map[[2]int64]struct{}, 2)
+	appendSource := func(ds *logicalop.DataSource, col *expression.Column) {
+		if ds.TableInfo == nil || ds.TableInfo.TempTableType != model.TempTableNone {
 			return
 		}
-		key := name.DBName.L + "/" + name.TblName.L + "/" + name.OrigTblName.L + "/" + name.ColName.L + "/" + name.OrigColName.L
+		colInfo := model.FindColumnInfoByID(ds.TableInfo.Columns, col.ID)
+		if colInfo == nil {
+			return
+		}
+		key := [2]int64{ds.TableInfo.ID, colInfo.ID}
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		candidates = append(candidates, name)
+		sources = append(sources, maskingPolicySourceColumn{tblInfo: ds.TableInfo, colInfo: colInfo})
 	}
 
 	visited := make(map[[2]int]struct{}, 4)
@@ -124,9 +141,9 @@ func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 			return
 		}
 
-		names := plan.OutputNames()
-		if colIdx < len(names) {
-			appendCandidate(names[colIdx])
+		if ds, ok := plan.(*logicalop.DataSource); ok {
+			appendSource(ds, plan.Schema().Columns[colIdx])
+			return
 		}
 
 		if proj, ok := plan.(*logicalop.LogicalProjection); ok && colIdx < len(proj.Exprs) && len(proj.Children()) > 0 {
@@ -187,54 +204,7 @@ func (b *PlanBuilder) extractMaskingPolicyCandidateNamesFromOutputColumn(
 	}
 
 	walkByIndex(p, outputColIdx)
-	return candidates
-}
-
-func (b *PlanBuilder) findMaskingPolicyByFieldName(ctx context.Context, name *types.FieldName) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
-	if name == nil || name.Hidden {
-		return nil, nil, nil, nil
-	}
-	tblName := name.OrigTblName
-	if tblName.L == "" {
-		tblName = name.TblName
-	}
-	if tblName.L == "" {
-		return nil, nil, nil, nil
-	}
-	colName := name.OrigColName
-	if colName.L == "" {
-		colName = name.ColName
-	}
-	if colName.L == "" {
-		return nil, nil, nil, nil
-	}
-	dbName := name.DBName
-	if dbName.L == "" {
-		dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-	}
-	if dbName.L == "" {
-		return nil, nil, nil, nil
-	}
-	tbl, err := b.is.TableByName(ctx, dbName, tblName)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-			return nil, nil, nil, nil
-		}
-		return nil, nil, nil, err
-	}
-	tblInfo := tbl.Meta()
-	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-	if colInfo == nil {
-		return nil, nil, nil, nil
-	}
-	policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if !ok {
-		return nil, nil, nil, nil
-	}
-	return policy, tblInfo, colInfo, nil
+	return sources
 }
 
 func canCurrentSessionReadUnmaskedColumn(

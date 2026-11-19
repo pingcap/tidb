@@ -1065,3 +1065,35 @@ func TestMaskingPolicyDropMixedCaseDatabase(t *testing.T) {
 	tk.MustExec("drop database MixedCaseMask")
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
 }
+
+func TestMaskingPolicyCreatedBeforeQueuedModifyColumnRuns(t *testing.T) {
+	for _, sql := range []string{
+		"alter table t_queued_modify modify column c varchar(64)",   // no reorg
+		"alter table t_queued_modify modify column c varchar(8)",    // reorg
+		"alter table t_queued_modify change column c d varchar(64)", // rename with a shape change
+	} {
+		t.Run(sql, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t_queued_modify(c varchar(20))")
+			tk.MustExec("insert into t_queued_modify values ('secret')")
+			other := testkit.NewTestKit(t, store)
+			other.MustExec("use test")
+			// The job is built while the column is unmasked, and only reaches
+			// the DDL owner after the policy has been created.
+			prepared, release := make(chan struct{}), make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitModifyColumnJob", func() { close(prepared); <-release })
+			done := make(chan error, 1)
+			go func() { done <- other.ExecToErr(sql) }()
+			<-prepared
+			tk.MustExec("create masking policy p on t_queued_modify(c) as mask_full(c)")
+			close(release)
+			require.ErrorContains(t, <-done, "masked column type/length/precision change is forbidden")
+			tk.MustQuery("select column_name, column_type from information_schema.columns where table_schema='test' and table_name='t_queued_modify'").
+				Check(testkit.Rows("c varchar(20)"))
+			tk.MustQuery("select c from t_queued_modify").Check(testkit.Rows("XXXXXX"))
+			tk.MustExec("admin check table t_queued_modify")
+		})
+	}
+}

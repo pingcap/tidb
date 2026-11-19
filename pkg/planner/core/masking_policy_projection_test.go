@@ -767,6 +767,16 @@ func TestMaskingPolicyPredicateSubqueryResults(t *testing.T) {
 	} {
 		tk.MustQuery("select id from t_pred_dst where " + pred + " order by id").Check(testkit.Rows("2"))
 	}
+	// A materialized CTE passes the policy of its seed column to a UNION.
+	for _, sql := range []string{
+		"with x as (select c from t_pred_src) select id from t_pred_dst where c in (select c from x union all select c from x) order by id",
+		"with x as (select c from t_pred_src) select id from t_pred_dst where c in (select c from x union all select 'public') and c in (select c from x) order by id",
+		"with x as (select c from t_pred_src) select id from t_pred_dst where c in (select 'public' union all select c from x) and exists (select 1 from x) order by id",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("2"))
+	}
+	tk.MustQuery("with recursive x as (select c from t_pred_src union all select c from x where false) " +
+		"select id from t_pred_dst where c in (select c from x union all select 'public') order by id").Check(testkit.Rows("1", "3"))
 	// Derived values, such as aggregates, do not carry a policy into a UNION.
 	tk.MustQuery("select id from t_pred_dst where c in (select max(c) from t_pred_src union all select 'public') order by id").Check(testkit.Rows("1", "3"))
 	tk.MustExec("delete from t_pred_dst where id = 3")
@@ -805,6 +815,17 @@ func TestMaskingPolicyNotNullResultExpressions(t *testing.T) {
 	tk.MustExec("create masking policy p on t_mask_null(c) as mask_null(c)")
 	tk.MustQuery("select c,c is null,c is not null from t_mask_null order by id").Check(testkit.Rows("<nil> 1 0", "<nil> 1 0"))
 	tk.MustQuery("select c is null from (select c from t_mask_null) s").Check(testkit.Rows("1", "1"))
+	// A subquery in an earlier field keeps the following fields in the field list.
+	tk.MustExec("create table t_mask_null_sub(id int)")
+	tk.MustExec("insert into t_mask_null_sub values (1),(2)")
+	for _, sub := range []string{
+		"id in (select id from t_mask_null_sub order by id limit 1)",
+		"id = any (select id from t_mask_null_sub order by id limit 1)",
+		"exists (select id from t_mask_null_sub order by id limit 1)",
+		"(select id from t_mask_null_sub order by id limit 1)",
+	} {
+		tk.MustQuery("select " + sub + " is not null,c is null from t_mask_null order by id").Check(testkit.Rows("1 1", "1 1"))
+	}
 	// Unreachable mutable branches still fold before masking is applied.
 	tk.MustQuery("select if(1,c,concat(c,rand())) from t_mask_null").Check(testkit.Rows("<nil>", "<nil>"))
 	tk.MustQuery("select c from t_mask_null where c is null").Check(testkit.Rows())
@@ -819,4 +840,32 @@ func TestMaskingPolicyNotNullResultExpressions(t *testing.T) {
 		require.False(t, mysql.HasNotNullFlag(rs.Fields()[0].Column.GetFlag()), sql)
 		require.NoError(t, rs.Close())
 	}
+}
+
+func TestMaskingPolicyViewWithShadowingTemporaryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_shadow(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_shadow values (1,'secret')")
+	tk.MustExec("create masking policy p on t_shadow(c) as mask_full(c)")
+	tk.MustExec("create view v_shadow as select id, c from t_shadow")
+	tk.MustExec("create table t_shadow_dst(c varchar(20))")
+	tk.MustExec("insert into t_shadow_dst values ('secret'),('XXXXXX')")
+	check := func() {
+		tk.MustQuery("select c from v_shadow").Check(testkit.Rows("XXXXXX"))
+		tk.MustQuery("select c from v_shadow where id = 1").Check(testkit.Rows("XXXXXX"))
+		tk.MustQuery("select concat(c,'!') from v_shadow").Check(testkit.Rows("XXXXXX!"))
+		tk.MustQuery("select c from t_shadow_dst where c in (select c from v_shadow)").Check(testkit.Rows("XXXXXX"))
+		tk.MustQuery("select c from t_shadow_dst where c in (select c from v_shadow union all select 'public')").Check(testkit.Rows("XXXXXX"))
+	}
+	check()
+	// The view still reads the permanent table, so its policy still applies
+	// when a local temporary table takes the name in this session.
+	tk.MustExec("create temporary table t_shadow(id int primary key, c varchar(20))")
+	check()
+	tk.MustQuery("select c from t_shadow").Check(testkit.Rows())
+	tk.MustExec("drop temporary table t_shadow")
+	tk.MustExec("create temporary table t_shadow(c varchar(20), id int primary key)")
+	check()
 }

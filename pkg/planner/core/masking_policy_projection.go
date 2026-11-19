@@ -187,7 +187,7 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 	case *logicalop.LogicalCTE:
 		return m.cte(x, idx)
 	case *logicalop.DataSource:
-		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, p.OutputNames()[idx], col)
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x, col)
 		if err != nil {
 			return plain, err
 		}
@@ -539,7 +539,7 @@ func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *ex
 	var inputs []*expression.Column
 	switch x := p.(type) {
 	case *logicalop.DataSource:
-		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x.OutputNames()[idx], col)
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x, col)
 		if err != nil || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
 			return nil, nil, nil, err
 		}
@@ -573,7 +573,16 @@ func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *ex
 		}
 		return nil, nil, nil, nil
 	case *logicalop.LogicalCTE:
-		return nil, nil, nil, nil
+		// A materialized CTE outputs its seed columns by position. A recursive
+		// CTE cannot carry a policy; see cte.
+		if x.Cte.RecursivePartLogicalPlan != nil || x.Cte.SeedPartLogicalPlan == nil {
+			return nil, nil, nil, nil
+		}
+		seed := x.Cte.SeedPartLogicalPlan
+		if idx >= seed.Schema().Len() {
+			return nil, nil, nil, nil
+		}
+		return m.predicatePolicySource(seed, seed.Schema().Columns[idx])
 	default:
 		inputs = []*expression.Column{col}
 	}

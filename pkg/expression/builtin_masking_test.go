@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -147,6 +148,27 @@ func TestMaskPartial(t *testing.T) {
 	// Non-string args[0] is rejected at build time.
 	_, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{12345, 1, 2, "*"})...)
 	require.Error(t, err)
+
+	// A binary pad must not switch a text input to byte masking: the result
+	// keeps the text type, so cutting inside a character would corrupt it.
+	binaryPad := &Constant{Value: types.NewBytesDatum([]byte("*")), RetType: types.NewFieldType(mysql.TypeVarString)}
+	binaryPad.RetType.SetCharset(charset.CharsetBin)
+	binaryPad.RetType.SetCollate(charset.CollationBin)
+	binaryPad.RetType.AddFlag(mysql.BinaryFlag)
+	textArgs := append(primitiveValsToConstants(ctx, []any{"中文字", 1, 1}), binaryPad)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, textArgs...)
+	require.NoError(t, err)
+	require.Equal(t, charset.CharsetUTF8MB4, f.GetType(ctx).GetCharset())
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "中*字", d.GetString())
+	// A binary input is still masked by bytes.
+	binaryInput := &Constant{Value: types.NewBytesDatum([]byte("中文字")), RetType: binaryPad.RetType.Clone()}
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, append([]Expression{binaryInput}, textArgs[1:]...)...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "\xe4*******\x97", d.GetString())
 }
 
 func TestMaskDate(t *testing.T) {

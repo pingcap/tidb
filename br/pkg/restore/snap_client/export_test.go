@@ -47,6 +47,7 @@ var (
 	GetMinUserTableID                        = getMinUserTableID
 	NotifyUpdateAllUsersPrivilege            = notifyUpdateAllUsersPrivilege
 	RestoreMaskingPoliciesFromTemporaryTable = restoreMaskingPoliciesFromTemporaryTable
+	IsUnrecoverableTable                     = isUnrecoverableTable
 	GetSchemaVersionFromStatsMeta            = getSchemaVersionFromStatsMeta
 	UpdateStatsMetaSchema                    = updateStatsMetaSchema
 )

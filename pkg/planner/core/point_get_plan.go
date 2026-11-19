@@ -313,6 +313,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 		sum += p.handleFieldType.MemoryUsage()
 	}
 
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	for _, datum := range p.IndexValues {
 		sum += datum.MemUsage()
 	}
@@ -649,6 +650,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 		sum += p.HandleType.MemoryUsage()
 	}
 
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	for _, constant := range p.HandleParams {
 		sum += constant.MemoryUsage()
 	}
@@ -2501,6 +2503,16 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	return &col.Name.Name
+}
+
+// maskingExprsMemoryUsage returns the memory usage of the masking expressions
+// that a point get plan retains, for plan cache accounting.
+func maskingExprsMemoryUsage(exprs []expression.Expression) (sum int64) {
+	sum = int64(cap(exprs)) * size.SizeOfInterface
+	for _, expr := range exprs {
+		sum += expr.MemoryUsage()
+	}
+	return sum
 }
 
 // buildMaskingExprsForPointGet builds masking expressions for PointGetPlan/BatchPointGetPlan.

@@ -252,7 +252,9 @@ func disableStatsOwner(t *testing.T, se sessiontypes.Session) {
 func TestDDLTableCreateBackfillTable(t *testing.T) {
 	// The notifier must not poll its system table while this test recreates it.
 	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
-	defer config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner)
+	// Registered before disableStatsOwner, so it runs after that helper's
+	// cleanup, which would otherwise leave the swapped value behind.
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner) })
 
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -289,7 +291,9 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	// The notifier must not poll its system table while this test recreates it.
 	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
-	defer config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner)
+	// Registered before disableStatsOwner, so it runs after that helper's
+	// cleanup, which would otherwise leave the swapped value behind.
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner) })
 
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

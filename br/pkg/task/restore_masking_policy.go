@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -34,7 +35,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 )
+
+// restoredMaskingPolicy is a target-time policy bound to the restored table.
+type restoredMaskingPolicy struct {
+	tableID, columnID int64
+	name              string // lower-cased policy name
+	sql               string
+}
 
 type restoredMaskingColumn struct {
 	source, target pmodel.CIStr
@@ -79,6 +88,25 @@ func rebindRestoredMaskingExpression(expr, sourceColumn, targetColumn string) (s
 	return sb.String(), nil
 }
 
+// loadTableByID tells a table that is absent from the schema from one whose
+// metadata cannot be loaded. InfoSchema.TableByID reports both as not found,
+// and treating the second as a dropped table would lose its policies.
+func loadTableByID(ctx context.Context, is infoschema.InfoSchema, tableID int64) (table.Table, bool, error) {
+	if tbl, ok := is.TableByID(ctx, tableID); ok {
+		return tbl, true, nil
+	}
+	item, ok := is.TableItemByID(tableID)
+	if !ok {
+		return nil, false, nil
+	}
+	tbl, err := is.TableByName(ctx, item.DBName, item.TableName)
+	if err != nil {
+		return nil, false, errors.Annotatef(err, "cannot load table %s.%s (ID %d) for masking policy restore",
+			item.DBName.O, item.TableName.O, tableID)
+	}
+	return tbl, true, nil
+}
+
 func isSourceMaskingPolicyTable(db *stream.DBReplace, tbl *stream.TableReplace) bool {
 	dbName := db.SourceName
 	if dbName == "" {
@@ -106,7 +134,11 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 				continue
 			}
 			hasPolicyStage = true
-			if target, ok := dom.InfoSchema().TableByID(ctx, tbl.TableID); ok {
+			target, ok, err := loadTableByID(ctx, dom.InfoSchema(), tbl.TableID)
+			if err != nil {
+				return err
+			}
+			if ok {
 				targetDB, exists := dom.InfoSchema().SchemaByID(target.Meta().DBID)
 				if exists && targetDB.Name.L == utils.TemporaryDBName(mysql.SystemDB).L && target.Meta().Name.L == "tidb_masking_policy" {
 					if !idMapPersisted {
@@ -138,7 +170,7 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 			if err := se.Execute(ctx, "CREATE TABLE IF NOT EXISTS "+qualified+" LIKE mysql.tidb_masking_policy"); err != nil {
 				return errors.Annotate(err, "cannot create PiTR masking policy staging table")
 			}
-			target, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(name))
+			target, err = dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(name))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -167,7 +199,18 @@ func addMaskingPolicyRewriteRules(schemas *stream.SchemasReplace, rules map[int6
 // restoreMaskingPoliciesAfterLogReplay binds the target-time policy rows to the
 // final restored table/column IDs. Do this before making partial-restore tables
 // writable. Staging tables remain available for checkpoints and log-only PiTR.
-func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domain, se glue.Session, schemas *stream.SchemasReplace) error {
+//
+// A table may have to be fenced in Restore mode while its policies are swapped.
+// reopensTables tells who switches such a table back to Normal: false when the
+// caller does it for every selected table after this function, as a filtered
+// restore does; true when nobody else does. This function then reopens exactly
+// the tables that the restore task restoreID has fenced, in this attempt or in
+// a failed one before it. A restore without a task ID (restoreID 0) cannot be
+// told from another one, so it is refused before it has to fence a table.
+func restoreMaskingPoliciesAfterLogReplay(
+	ctx context.Context, dom *domain.Domain, se glue.Session, schemas *stream.SchemasReplace,
+	reopensTables bool, restoreID uint64,
+) error {
 	if err := dom.Reload(); err != nil {
 		return errors.Trace(err)
 	}
@@ -178,7 +221,10 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 	for _, db := range schemas.DbReplaceMap {
 		for sourceID, tbl := range db.TableMap {
 			if isSourceMaskingPolicyTable(db, tbl) {
-				stage, ok := is.TableByID(ctx, tbl.TableID)
+				stage, ok, err := loadTableByID(ctx, is, tbl.TableID)
+				if err != nil {
+					return err
+				}
 				if !ok {
 					return errors.New("PiTR masking policy staging table disappeared")
 				}
@@ -188,7 +234,11 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 			if db.FilteredOut || tbl.FilteredOut || utils.IsSysOrTempSysDB(tbl.EffectiveDBName(db)) {
 				continue
 			}
-			if target, ok := is.TableByID(ctx, tbl.TableID); ok {
+			target, ok, err := loadTableByID(ctx, is, tbl.TableID)
+			if err != nil {
+				return err
+			}
+			if ok {
 				sourceTargets[sourceID] = target.Meta()
 				targetTables[tbl.TableID] = target.Meta()
 			}
@@ -203,7 +253,7 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 	previousRestore := vars.InMaskingPolicyRestore
 	vars.InMaskingPolicyRestore = true
 	defer func() { vars.InMaskingPolicyRestore = previousRestore }()
-	var statements []string
+	var desired []restoredMaskingPolicy
 	for _, stage := range staging {
 		db, ok := is.SchemaByID(stage.DBID)
 		if !ok {
@@ -238,7 +288,9 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 			if err != nil {
 				return errors.Trace(err)
 			}
-			statements = append(statements, statement)
+			desired = append(desired, restoredMaskingPolicy{
+				tableID: target.ID, columnID: col.ID, name: strings.ToLower(row.GetString(0)), sql: statement,
+			})
 		}
 	}
 	// Replace the entire policy set of selected tables, so drops and retries
@@ -247,20 +299,208 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 	if err != nil {
 		return errors.Trace(err)
 	}
+	dropPolicy := func(policy *model.MaskingPolicyInfo) error {
+		tbl := targetTables[policy.TableID]
+		db, _ := is.SchemaByID(tbl.DBID)
+		sql := fmt.Sprintf("ALTER TABLE %s DROP MASKING POLICY %s", utils.EncloseDBAndTable(db.Name.O, tbl.Name.O), utils.EncloseName(policy.Name.O))
+		return errors.Trace(se.Execute(ctx, sql))
+	}
+	createPolicy := func(policy restoredMaskingPolicy) error {
+		return errors.Annotate(se.Execute(ctx, policy.sql), "cannot rebuild masking policy after PiTR log replay")
+	}
+	// The tables may already be readable, and every statement is a separate
+	// DDL, so a failure can stop the replacement anywhere. Never leave a
+	// readable table without the policies of either the baseline or the target
+	// time:
+	//   - CREATE OR REPLACE swaps a policy that keeps its name and column
+	//     atomically;
+	//   - a policy with no target-time counterpart is dropped only after
+	//     everything else has succeeded;
+	//   - an existing policy that collides with its successor on the column or
+	//     on the name has to be dropped first. The table is switched to Restore
+	//     mode before that drop, which rejects reads and writes until the
+	//     successor exists. A failure keeps the table in Restore mode, and a
+	//     retry of the restore resumes from there.
+	// The mode of a table does not tell who set it, so the fence is recorded
+	// with its restore task before it is raised whenever this function has to
+	// lower it again.
+	fenceRecord := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
+	readFenceOwners := func() (map[int64]uint64, error) {
+		// Only a table that is known to be absent means that nothing is
+		// fenced: failing to load it must not hide its records.
+		_, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB),
+			pmodel.NewCIStr(snapclient.MaskingPolicyFenceTableName))
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, errors.Annotate(err, "cannot load the record of tables fenced for masking policy rebuild")
+		}
+		rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, "SELECT table_id, restore_id FROM %n.%n",
+			snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		owners := make(map[int64]uint64, len(rows))
+		for _, row := range rows {
+			owners[row.GetInt64(0)] = row.GetUint64(1)
+		}
+		return owners, nil
+	}
+	fenced := make(map[int64]struct{})
+	fenceTable := func(tableID int64) error {
+		tbl := targetTables[tableID]
+		if _, ok := fenced[tableID]; ok || tbl.Mode != model.TableModeNormal {
+			return nil
+		}
+		if reopensTables {
+			if len(fenced) == 0 {
+				if err := se.Execute(ctx, "CREATE TABLE IF NOT EXISTS "+fenceRecord+
+					" (table_id BIGINT PRIMARY KEY, restore_id BIGINT UNSIGNED NOT NULL)"); err != nil {
+					return errors.Annotate(err, "cannot record tables fenced for masking policy rebuild")
+				}
+			}
+			// The table is readable, so a record left for it is stale.
+			if err := se.Execute(ctx, fmt.Sprintf("REPLACE INTO %s VALUES (%d, %d)", fenceRecord, tableID, restoreID)); err != nil {
+				return errors.Annotate(err, "cannot record tables fenced for masking policy rebuild")
+			}
+		}
+		if err := se.AlterTableMode(ctx, tbl.DBID, tbl.ID, model.TableModeRestore); err != nil {
+			return errors.Annotatef(err, "cannot fence table %s while rebuilding its masking policies", tbl.Name.O)
+		}
+		fenced[tableID] = struct{}{}
+		return nil
+	}
+	sort.Slice(desired, func(i, j int) bool { return desired[i].sql < desired[j].sql })
+	var stale []*model.MaskingPolicyInfo
+	blockers := make(map[int][]*model.MaskingPolicyInfo)
 	for _, policy := range policies {
-		if tbl, ok := targetTables[policy.TableID]; ok {
-			db, _ := is.SchemaByID(tbl.DBID)
-			sql := fmt.Sprintf("ALTER TABLE %s DROP MASKING POLICY %s", utils.EncloseDBAndTable(db.Name.O, tbl.Name.O), utils.EncloseName(policy.Name.O))
-			if err := se.Execute(ctx, sql); err != nil {
-				return errors.Trace(err)
+		if _, ok := targetTables[policy.TableID]; !ok {
+			continue
+		}
+		blocked, replaced := false, false
+		for i, d := range desired {
+			if d.tableID != policy.TableID {
+				continue
+			}
+			sameColumn, sameName := d.columnID == policy.ColumnID, d.name == policy.Name.L
+			if sameColumn && sameName {
+				replaced = true
+				break
+			}
+			if sameColumn || sameName {
+				blockers[i] = append(blockers[i], policy)
+				blocked = true
+			}
+		}
+		if !replaced && !blocked {
+			stale = append(stale, policy)
+		}
+	}
+	if reopensTables {
+		// Refuse before changing any policy when the fence of a table could
+		// not be attributed to this restore task afterwards.
+		owners, err := readFenceOwners()
+		if err != nil {
+			return err
+		}
+		var foreign []string
+		for tableID, owner := range owners {
+			tbl, selected := targetTables[tableID]
+			if selected && tbl.Mode == model.TableModeRestore && (restoreID == 0 || owner != restoreID) {
+				foreign = append(foreign, fmt.Sprintf("%s (restore task %d)", tbl.Name.O, owner))
+			}
+		}
+		if len(foreign) > 0 {
+			sort.Strings(foreign)
+			return errors.Errorf("cannot rebuild masking policies: these tables are in Restore mode because "+
+				"another restore task was replacing their policies and did not finish: %s", strings.Join(foreign, ", "))
+		}
+		if restoreID == 0 {
+			for i, d := range desired {
+				if tbl := targetTables[d.tableID]; len(blockers[i]) > 0 && tbl.Mode == model.TableModeNormal {
+					return errors.Errorf("cannot replace masking policy %s on table %s: the replacement has to keep the "+
+						"table in Restore mode in between, which needs a restore task ID to be undone", blockers[i][0].Name.O, tbl.Name.O)
+				}
 			}
 		}
 	}
-	sort.Strings(statements)
-	for _, sql := range statements {
-		if err := se.Execute(ctx, sql); err != nil {
-			return errors.Annotate(err, "cannot rebuild masking policy after PiTR log replay")
+	for i, d := range desired {
+		if len(blockers[i]) == 0 {
+			if err := createPolicy(d); err != nil {
+				return err
+			}
 		}
 	}
-	return errors.Trace(dom.Reload())
+	dropped := make(map[int64]struct{})
+	for i, d := range desired {
+		if len(blockers[i]) == 0 {
+			continue
+		}
+		if err := fenceTable(d.tableID); err != nil {
+			return err
+		}
+		for _, policy := range blockers[i] {
+			if _, ok := dropped[policy.ID]; ok {
+				continue
+			}
+			if err := dropPolicy(policy); err != nil {
+				return err
+			}
+			dropped[policy.ID] = struct{}{}
+		}
+		if err := createPolicy(d); err != nil {
+			return err
+		}
+	}
+	for _, policy := range stale {
+		if err := dropPolicy(policy); err != nil {
+			return err
+		}
+	}
+	if err := dom.Reload(); err != nil {
+		return errors.Trace(err)
+	}
+	if !reopensTables {
+		return nil
+	}
+	// Every policy is in place. Reopen the tables recorded as fenced by this
+	// restore task, in this attempt or in a failed one before it, and no other.
+	owners, err := readFenceOwners()
+	if err != nil || owners == nil {
+		return err
+	}
+	is = dom.InfoSchema()
+	remaining := len(owners)
+	for tableID, owner := range owners {
+		// A table that exists but cannot be loaded says nothing about its
+		// mode: keep its record.
+		tbl, ok, err := loadTableByID(ctx, is, tableID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if _, selected := targetTables[tableID]; !selected {
+				continue
+			}
+			if tbl.Meta().Mode == model.TableModeRestore {
+				if owner != restoreID {
+					continue
+				}
+				if err := se.AlterTableMode(ctx, tbl.Meta().DBID, tableID, model.TableModeNormal); err != nil {
+					return errors.Annotatef(err, "cannot reopen table %s after rebuilding its masking policies", tbl.Meta().Name.O)
+				}
+			}
+		}
+		// The table is readable again or dropped: the record has no use.
+		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d", fenceRecord, tableID)); err != nil {
+			return errors.Trace(err)
+		}
+		remaining--
+	}
+	if remaining == 0 {
+		return errors.Trace(se.Execute(ctx, "DROP TABLE IF EXISTS "+fenceRecord))
+	}
+	return nil
 }

@@ -449,7 +449,9 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 }
 
 func TestRestoreMaskingPoliciesFromTemporaryTable(t *testing.T) {
-	cluster := mc
+	// Not the shared `mc`: the temporary system database is created here.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, cluster.Storage)
 
@@ -510,9 +512,29 @@ VALUES
 	tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name='p_orphan' AND db_name='" + dbName + "'").
 		Check(testkit.Rows("0"))
 	tk.MustQuery("SELECT c FROM " + dbName + ".u").Check(testkit.Rows("target"))
+
+	// A selected table that lacks the policy column (for example a reused table
+	// under --no-schema) must fail the restore instead of losing the policy.
+	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.tidb_masking_policy
+(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+VALUES ('p_lost', '%s', 't', 101, 'c_renamed', 204, 'c_renamed', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName))
+	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(
+		ctx,
+		tk.Session().GetRestrictedSQLExecutor(),
+		"__TiDB_BR_Temporary_mysql",
+		true,
+		allowAllFilter,
+		true,
+		map[filter.Table]struct{}{{Schema: dbName, Name: "t"}: {}},
+		execSQL,
+	)
+	require.ErrorContains(t, err, "masking policy p_lost refers to column c_renamed which does not exist in target table")
 }
+
 func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testing.T) {
-	cluster := mc
+	// Not the shared `mc`: the temporary system database is created here.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, cluster.Storage)
 
@@ -553,6 +575,15 @@ func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testi
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	require.Equal(t, int64(234), session.CurrentBootstrapVersion)
+}
+
+func TestMaskingPolicyLocalTablesAreUnrecoverable(t *testing.T) {
+	// The staging tables and the fence record hold physical IDs of the cluster
+	// they were written in. A system table restore must not copy them.
+	require.True(t, snapclient.IsUnrecoverableTable("mysql", snapclient.MaskingPolicyStagingTableName(123)))
+	require.True(t, snapclient.IsUnrecoverableTable("mysql", snapclient.MaskingPolicyFenceTableName))
+	require.False(t, snapclient.IsUnrecoverableTable("test", snapclient.MaskingPolicyFenceTableName))
+	require.False(t, snapclient.IsUnrecoverableTable("mysql", "tidb_masking_policy"))
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

@@ -36,11 +36,18 @@ const (
 	// MaskingPolicyStagingDB retains source IDs across PiTR retries and subsequent
 	// log-only restores. Its table IDs are persisted in the existing PiTR ID map.
 	MaskingPolicyStagingDB = mysql.SystemDB
+	// maskingPolicyLocalTablePrefix names the tables holding target-local PiTR
+	// state of masking policies. They never carry source cluster data.
+	maskingPolicyLocalTablePrefix = "tidb_pitr_masking_policy_"
+	// MaskingPolicyFenceTableName records, per restore task, the target tables
+	// that the policy rebuild switched to Restore mode. Its table IDs are
+	// physical IDs of this cluster.
+	MaskingPolicyFenceTableName = maskingPolicyLocalTablePrefix + "fence"
 )
 
 // MaskingPolicyStagingTableName gives each restored policy table a private name.
 func MaskingPolicyStagingTableName(tableID int64) string {
-	return "tidb_pitr_masking_policy_" + strconv.FormatInt(tableID, 10)
+	return maskingPolicyLocalTablePrefix + strconv.FormatInt(tableID, 10)
 }
 
 var planPeplayerTables = map[string]map[string]struct{}{
@@ -251,8 +258,9 @@ func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{},
 }
 
 func isUnrecoverableTable(schemaName string, tableName string) bool {
-	if schemaName == mysql.SystemDB && strings.HasPrefix(tableName, "tidb_pitr_masking_policy_") {
-		// This is target-local PiTR state, not a source cluster policy table.
+	if schemaName == mysql.SystemDB && strings.HasPrefix(strings.ToLower(tableName), maskingPolicyLocalTablePrefix) {
+		// This is target-local PiTR state (policy staging tables and the fence
+		// record), not a source cluster table.
 		return true
 	}
 	tableMap, ok := unRecoverableTable[schemaName]
@@ -405,10 +413,12 @@ func restoreMaskingPoliciesFromTemporaryTable(
 	// Replay policies as canonical CREATE MASKING POLICY semantics instead of raw row replay.
 	// This lets target cluster bind table_id/column_id with its own IDs.
 	readPoliciesSQL := fmt.Sprintf(
-		`SELECT p.policy_name, p.db_name, p.table_name, p.column_name, p.expression, p.status, p.restrict_on
+		`SELECT p.policy_name, p.db_name, p.table_name, p.column_name, p.expression, p.status, p.restrict_on,
+  c.column_name IS NULL AS column_missing
 FROM %s AS p
-JOIN information_schema.columns AS c
-  ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
+LEFT JOIN information_schema.columns AS c
+  ON LOWER(c.table_schema) = LOWER(p.db_name) AND LOWER(c.table_name) = LOWER(p.table_name)
+  AND LOWER(c.column_name) = LOWER(p.column_name)
 ORDER BY p.table_id, p.column_id, p.policy_id`,
 		tempTable,
 	)
@@ -435,6 +445,14 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		}
 		if !targetSupportsMasking {
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks mysql.tidb_masking_policy for selected masking policies")
+		}
+		// The policy is bound by column name. A reused target table (for example
+		// under --no-schema) may lack that column; skipping the policy would
+		// report a successful restore while leaving the column unmasked.
+		if row.GetInt64(7) != 0 {
+			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"masking policy %s refers to column %s which does not exist in target table %s.%s",
+				row.GetString(0), row.GetString(3), dbName, tableName)
 		}
 		ddl, err := BuildCreateMaskingPolicySQL(
 			row.GetString(0),

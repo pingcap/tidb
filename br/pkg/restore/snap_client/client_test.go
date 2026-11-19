@@ -48,7 +48,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
@@ -779,9 +778,10 @@ func TestGetMinUserTableID(t *testing.T) {
 }
 
 func TestMaskingPolicyStagingWithNoSchema(t *testing.T) {
-	tk := testkit.NewTestKit(t, mc.Storage)
-	tk.MustExec("drop database if exists __TiDB_BR_Temporary_mysql")
-	t.Cleanup(func() { tk.MustExec("drop database if exists __TiDB_BR_Temporary_mysql") })
+	// Not the shared `mc`: this test creates and drops the temporary system
+	// database, which other tests expect to find untouched.
+	mc := getStartedMockedCluster(t)
+	defer mc.Stop()
 
 	client := snapclient.NewRestoreClient(mc.PDClient, mc.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	require.NoError(t, client.InitConnections(gluetidb.New(), mc.Storage))

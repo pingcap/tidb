@@ -38,8 +38,8 @@ func (e maskingPolicyRestoreExecutor) ExecRestrictedSQL(context.Context, []sqlex
 func TestRestoreMaskingPoliciesRequiresTargetSupport(t *testing.T) {
 	tableFilter, err := filter.Parse([]string{"test.*"})
 	require.NoError(t, err)
-	row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow()
-	unrelated := chunk.MutRowFromValues("p", "other", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow()
+	row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(0)).ToRow()
+	unrelated := chunk.MutRowFromValues("p", "other", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(0)).ToRow()
 	for _, tc := range []struct {
 		rows                 []chunk.Row
 		supported, wantError bool
@@ -69,7 +69,7 @@ func TestRestoreMaskingPoliciesRejectsUnknownStatus(t *testing.T) {
 	require.NoError(t, err)
 	backedUp := map[filter.Table]struct{}{{Schema: "test", Name: "t"}: {}}
 	restore := func(status string) ([]string, error) {
-		row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", status, "NONE").ToRow()
+		row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", status, "NONE", int64(0)).ToRow()
 		var executed []string
 		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: []chunk.Row{row}},
 			"tmp_mysql", true, tableFilter, true, backedUp,
@@ -95,8 +95,8 @@ func TestRestoreMaskingPoliciesSkipsTablesOutsideBackup(t *testing.T) {
 	tableFilter, err := filter.Parse([]string{"test.*"})
 	require.NoError(t, err)
 	rows := []chunk.Row{
-		chunk.MutRowFromValues("p1", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE").ToRow(),
-		chunk.MutRowFromValues("p2", "test", "u", "c", "mask_null(c)", "DISABLED", "NONE").ToRow(),
+		chunk.MutRowFromValues("p1", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(0)).ToRow(),
+		chunk.MutRowFromValues("p2", "test", "u", "c", "mask_null(c)", "DISABLED", "NONE", int64(0)).ToRow(),
 	}
 	var statements []string
 	err = restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: rows}, "tmp_mysql", true, tableFilter, true,
@@ -105,4 +105,31 @@ func TestRestoreMaskingPoliciesSkipsTablesOutsideBackup(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, statements, 1)
 	require.Contains(t, statements[0], "`test`.`t`")
+}
+
+func TestRestoreMaskingPoliciesRejectsMissingTargetColumn(t *testing.T) {
+	tableFilter, err := filter.Parse([]string{"test.t"})
+	require.NoError(t, err)
+	backedUp := map[filter.Table]struct{}{{Schema: "test", Name: "t"}: {}, {Schema: "test", Name: "u"}: {}}
+	restore := func(rows ...chunk.Row) ([]string, error) {
+		var executed []string
+		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: rows},
+			"tmp_mysql", true, tableFilter, true, backedUp,
+			func(_ context.Context, sql string) error { executed = append(executed, sql); return nil })
+		return executed, err
+	}
+	// The target table is selected but has no column with the backed-up name:
+	// the restore must fail instead of finishing with the column unmasked.
+	executed, err := restore(chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(1)).ToRow())
+	require.ErrorContains(t, err, "does not exist in target table test.t")
+	require.Empty(t, executed)
+	// Policies of tables outside the restore selection stay skipped.
+	executed, err = restore(
+		chunk.MutRowFromValues("p1", "test", "u", "c", "mask_full(c)", "ENABLED", "NONE", int64(1)).ToRow(),
+		chunk.MutRowFromValues("p2", "other", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(1)).ToRow(),
+		chunk.MutRowFromValues("p3", "test", "t", "c", "mask_full(c)", "ENABLED", "NONE", int64(0)).ToRow(),
+	)
+	require.NoError(t, err)
+	require.Len(t, executed, 1)
+	require.Contains(t, executed[0], "`p3`")
 }

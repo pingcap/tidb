@@ -1586,38 +1586,20 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
-func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
-	if b.is == nil || name == nil {
+// findMaskingPolicy returns the policy of the table column that the scan reads.
+// The table and the column are those bound to the scan. Looking the table up
+// by name again could find another table, such as a local temporary table that
+// shares its name with the base table of a view.
+func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, ds *logicalop.DataSource, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	if b.is == nil || ds == nil || col == nil {
 		return nil, nil, nil, nil
 	}
-	tblName := name.OrigTblName
-	colName := name.OrigColName
-	if tblName.L == "" {
-		tblName = name.TblName
-	}
-	if colName.L == "" {
-		colName = name.ColName
-	}
-	dbName := name.DBName
-	if dbName.L == "" {
-		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-	}
-	if dbName.L == "" {
+	tblInfo := ds.TableInfo
+	if tblInfo == nil || tblInfo.TempTableType != model.TempTableNone {
 		return nil, nil, nil, nil
 	}
-	tbl, err := b.is.TableByName(context.Background(), dbName, tblName)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	tblInfo := tbl.Meta()
-	if tblInfo == nil {
-		return nil, nil, nil, nil
-	}
-	colInfo := tblInfo.FindPublicColumnByName(colName.L)
-	if colInfo == nil {
-		return nil, nil, nil, nil
-	}
-	if colInfo.ID != col.ID {
+	colInfo := model.FindColumnInfoByID(tblInfo.Columns, col.ID)
+	if colInfo == nil || colInfo.State != model.StatePublic {
 		return nil, nil, nil, nil
 	}
 	policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)

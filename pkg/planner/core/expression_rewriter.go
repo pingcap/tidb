@@ -532,7 +532,11 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.subQueryHintFlags = oldHintFlags
 	}()
 
+	// The subquery's clauses must not replace the clause of the outer
+	// expression: the fields after it are still built for the outer clause.
+	outerClause := b.curClause
 	np, err = b.buildResultSetNode(ctx, subq.Query, false)
+	b.curClause = outerClause
 	if err != nil {
 		return nil, 0, err
 	}

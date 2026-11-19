@@ -603,14 +603,9 @@ func TestDB_ExecDDL2(t *testing.T) {
 				},
 			},
 		},
-		{
-			SchemaName: "test_db",
-			Type:       model.ActionAddIndex,
-			Query:      "ALTER TABLE test_db.t1 ADD INDEX i1(id);",
-			BinlogInfo: &model.HistoryInfo{
-				TableInfo: &model.TableInfo{},
-			},
-		},
+		// The policy job carries no TableInfo and its query is not qualified. It
+		// runs before any job that selects test_db, so it only passes when the
+		// schema is selected from the job's table name.
 		{
 			SchemaName: "test_db",
 			TableID:    20000,
@@ -618,6 +613,14 @@ func TestDB_ExecDDL2(t *testing.T) {
 			Type:       model.ActionCreateMaskingPolicy,
 			Query:      "CREATE MASKING POLICY p ON t1(id) AS id;",
 			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			SchemaName: "test_db",
+			Type:       model.ActionAddIndex,
+			Query:      "ALTER TABLE test_db.t1 ADD INDEX i1(id);",
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{},
+			},
 		},
 	}
 

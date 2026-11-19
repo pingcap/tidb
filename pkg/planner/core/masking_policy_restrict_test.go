@@ -295,3 +295,102 @@ func TestMaskingPolicyRestrictAggregateSources(t *testing.T) {
 	root.MustExec("delete from dst_agg where c = (select max(c) from src_agg)")
 	root.MustQuery("select count(*) from dst_agg").Check(testkit.Rows("0"))
 }
+
+func TestMaskingPolicyRestrictUsesScanSource(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database restrict_archive")
+	tk.MustExec("create database restrict_app")
+	tk.MustExec("use restrict_app")
+	tk.MustExec("create table restrict_archive.items(c varchar(20))")
+	tk.MustExec("create table items(c varchar(20))")
+	tk.MustExec("create table plain(c varchar(20))")
+	tk.MustExec("create table dst(c varchar(20))")
+	tk.MustExec("insert into restrict_archive.items values ('public')")
+	tk.MustExec("insert into items values ('secret')")
+	tk.MustExec("insert into plain values ('public')")
+	tk.MustExec("create masking policy p on items(c) as 'X' restrict on (insert_into_select)")
+	tk.MustExec("create view v_items as select c from items")
+
+	// Names that match the protected table without reading it are not restricted.
+	for _, source := range []string{
+		// A CTE over the table of the same name in another database.
+		"with x as (select c from restrict_archive.items) select c from x",
+		"with x as (select c from restrict_archive.items) select c from x union all select c from x",
+		"select c from restrict_archive.items",
+		"select c from (select c from restrict_archive.items) d",
+		// A derived table or a CTE named after the protected table.
+		"select items.c from (select 'public' as c from plain) as items",
+		"select c from (select 'public' as c from plain) as items",
+		"select items.c from (select c from plain) as items",
+		"select items.c from plain as items",
+		"with items as (select c from plain) select c from items",
+	} {
+		tk.MustExec("insert into dst " + source)
+	}
+	tk.MustQuery("select distinct c from dst").Check(testkit.Rows("public"))
+
+	// Reads of the protected column stay restricted under any name.
+	for _, source := range []string{
+		"select c from items",
+		"select plain.c from items as plain",
+		"select c from restrict_app.items",
+		"with x as (select c from items) select c from x",
+		"with x as (select c from items) select c from x union all select c from x",
+		"with plain as (select concat(c, '') as c from items) select c from plain",
+		"select d.v from (select concat(c, '!') as v from items) d",
+		"select c from v_items",
+		"select max(c) from items",
+		"select l.c from items l join plain r using (c)",
+		"select r.c from plain l natural join items r",
+		"select c from items union all select c from items",
+		"select c from items group by c with rollup",
+	} {
+		tk.MustGetErrCode("insert into dst "+source, errno.ErrAccessDeniedToMaskedColumn)
+	}
+	tk.MustExec("create temporary table items(c varchar(20))")
+	tk.MustExec("insert into dst select c from items")
+	tk.MustGetErrCode("insert into dst select c from v_items", errno.ErrAccessDeniedToMaskedColumn)
+}
+
+func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table src_tighten(id int primary key, c varchar(20))")
+	root.MustExec("create table dst_tighten(id int primary key, c varchar(20))")
+	root.MustExec("insert into src_tighten values (1, 'secret')")
+	root.MustExec("insert into dst_tighten values (1, 'old'), (2, 'secret')")
+	root.MustExec(`create masking policy p_tighten on src_tighten(c) as
+		case when current_user() = 'root@%' then c else mask_full(c) end restrict on none enable`)
+	root.MustExec("create user 'u_tighten'@'%'")
+	root.MustExec("grant select, insert, update, delete on test.* to 'u_tighten'@'%'")
+
+	for _, tc := range []struct{ restrictOn, sql string }{
+		{"insert_into_select", "insert into dst_tighten select id + 10, c from src_tighten"},
+		{"update_select", "update dst_tighten set c = (select c from src_tighten where id = 1) where id = 1"},
+		{"delete_select", "delete from dst_tighten where c in (select c from src_tighten)"},
+	} {
+		for _, planCache := range []string{"1", "0"} {
+			t.Run(tc.sql+"/plan_cache="+planCache, func(t *testing.T) {
+				root.MustExec("alter table src_tighten modify masking policy p_tighten set restrict on none")
+				user := testkit.NewTestKit(t, store)
+				require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "u_tighten", Hostname: "%"}, nil, nil, nil))
+				user.MustExec("use test")
+				user.MustExec("set tidb_enable_prepared_plan_cache = " + planCache)
+				user.MustExec("begin")
+				user.MustExec("prepare st from '" + tc.sql + "'")
+				user.MustExec("execute st")
+				user.MustExec("rollback")
+				// A statement prepared while the operation was permitted must
+				// observe a restriction added afterwards.
+				root.MustExec("alter table src_tighten modify masking policy p_tighten set restrict on (" + tc.restrictOn + ")")
+				before := root.MustQuery("select * from dst_tighten order by id").Rows()
+				user.MustGetErrCode("execute st", errno.ErrAccessDeniedToMaskedColumn)
+				user.MustGetErrCode(tc.sql, errno.ErrAccessDeniedToMaskedColumn)
+				root.MustQuery("select * from dst_tighten order by id").Check(before)
+			})
+		}
+	}
+}

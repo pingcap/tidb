@@ -16,6 +16,7 @@ package mock
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -106,9 +107,13 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 }
 
 // AlterTableMode implements glue.Session.
-func (*mockSession) AlterTableMode(_ context.Context, _ int64, _ int64, _ model.TableMode) error {
-	log.Fatal("unimplemented AlterTableMode for mock session")
-	return nil
+func (s *mockSession) AlterTableMode(_ context.Context, schemaID int64, tableID int64, tableMode model.TableMode) error {
+	originQueryString := s.se.Value(sessionctx.QueryString)
+	defer s.se.SetValue(sessionctx.QueryString, originQueryString)
+	s.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{SchemaID: schemaID, TableID: tableID, TableMode: tableMode}
+	return domain.GetDomain(s.se).DDLExecutor().AlterTableMode(s.se, args)
 }
 
 // RefreshMeta implements glue.Session.

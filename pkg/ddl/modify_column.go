@@ -260,6 +260,22 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
+	// A masking policy may have been created on the column after this job was
+	// submitted, so the submission-time check alone cannot protect its shape.
+	// Jobs on the same table run serially: checking once before the first step
+	// is enough.
+	if job.SchemaState == model.StateNone && !job.IsRollingback() &&
+		isMaskedColumnTypeLengthOrPrecisionChanged(oldCol, args.Column) {
+		policy, err := w.getMaskingPolicyByTableColumnFromSysTable(jobCtx.stepCtx, tblInfo.ID, oldCol.ID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if policy != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("masked column type/length/precision change is forbidden"))
+		}
+	}
+
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == model.ModifyTypeNone ||

@@ -48,16 +48,17 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 	t.Run("ORDER BY uses original values", func(t *testing.T) {
 		tk.MustExec("drop table if exists t_orderby")
 		tk.MustExec("create table t_orderby(id int, val varchar(100))")
-		tk.MustExec("insert into t_orderby values (1, 'apple'), (2, 'banana'), (3, 'cherry')")
-		tk.MustExec("create masking policy p_orderby on t_orderby(val) as concat('[', val, ']') enable")
+		tk.MustExec("insert into t_orderby values (1, 'az'), (2, 'ba')")
+		// The masked values sort in the opposite order of the original values.
+		tk.MustExec("create masking policy p_orderby on t_orderby(val) as reverse(val) enable")
 
 		// ORDER BY should sort by original values
 		result := tk.MustQuery("select id, val from t_orderby order by val")
-		result.Check(testkit.Rows("1 [apple]", "2 [banana]", "3 [cherry]"))
+		result.Check(testkit.Rows("1 za", "2 ab"))
 
 		// Reverse order
 		result = tk.MustQuery("select id, val from t_orderby order by val desc")
-		result.Check(testkit.Rows("3 [cherry]", "2 [banana]", "1 [apple]"))
+		result.Check(testkit.Rows("2 ab", "1 za"))
 	})
 
 	// Test UNION DISTINCT uses original values for deduplication
@@ -65,13 +66,12 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 		tk.MustExec("drop table if exists t_union")
 		tk.MustExec("create table t_union(id int, val varchar(100))")
 		tk.MustExec("insert into t_union values (1, 'value1'), (2, 'value2')")
-		tk.MustExec("create masking policy p_union on t_union(val) as concat('[', val, ']') enable")
+		tk.MustExec("create masking policy p_union on t_union(val) as mask_full(val) enable")
 
-		// Two different original values should NOT be deduplicated
-		// even though they mask to the same pattern. Also verify the output
-		// values are actually masked (not raw).
+		// Two different original values must not be deduplicated even though
+		// they have the same masked value.
 		result := tk.MustQuery("select val from t_union where id = 1 union distinct select val from t_union where id = 2")
-		result.Sort().Check(testkit.Rows("[value1]", "[value2]"))
+		result.Check(testkit.Rows("XXXXXX", "XXXXXX"))
 	})
 
 	// Test aggregate with HAVING

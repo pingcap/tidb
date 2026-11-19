@@ -3382,6 +3382,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
 	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
+	failpoint.InjectCall("beforeSubmitModifyColumnJob")
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
@@ -3484,6 +3485,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
 	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
+	failpoint.InjectCall("beforeSubmitModifyColumnJob")
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {

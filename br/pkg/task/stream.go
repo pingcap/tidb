@@ -1798,7 +1798,8 @@ func restoreStream(
 	}
 
 	if cfg.WithSysTable {
-		if err := restoreMaskingPoliciesAfterLogReplay(ctx, client.GetDomain(), client.UnsafeSession(), schemasReplace); err != nil {
+		if err := restoreMaskingPoliciesAfterLogReplay(ctx, client.GetDomain(), client.UnsafeSession(), schemasReplace,
+			!cfg.isPartialRestore(), cfg.RestoreID); err != nil {
 			return errors.Trace(err)
 		}
 	}

@@ -429,7 +429,9 @@ func (c *maskPartialFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp = argType.Clone()
 	bf.tp.DelFlag(mysql.NotNullFlag)
-	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[3].GetType(ctx.GetEvalCtx())) {
+	// The result keeps the type of the input, so only a binary input may be
+	// masked by bytes: a binary pad must not cut the characters of a text value.
+	if types.IsBinaryStr(argType) {
 		return &builtinMaskPartialSig{bf}, nil
 	}
 	return &builtinMaskPartialUTF8Sig{bf}, nil

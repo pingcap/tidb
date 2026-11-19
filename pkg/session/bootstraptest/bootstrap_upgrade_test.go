@@ -222,9 +222,11 @@ func enableMockUpgradeForTest(t *testing.T, kind int) {
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = kind
+	restoreBootstrapVersions := session.SaveBootstrapVersionsForTest()
 	t.Cleanup(func() {
 		mock = false
 		session.MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatestKind
+		restoreBootstrapVersions()
 	})
 }
 

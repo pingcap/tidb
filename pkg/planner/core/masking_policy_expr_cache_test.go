@@ -17,12 +17,14 @@ package core
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,4 +108,20 @@ func TestMaskingPolicyExprCacheRecursion(t *testing.T) {
 	cache.building[policy.ID] = struct{}{}
 	_, _, err := getMaskingPolicyExpr(ctx, sv, 1, policy, tblInfo, colInfo)
 	require.Error(t, err)
+}
+
+func TestMaskingPolicyPointGetMemoryUsage(t *testing.T) {
+	exprs := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeVarchar)}}
+	expected := int64(cap(exprs))*size.SizeOfInterface + exprs[0].MemoryUsage()
+	require.Positive(t, expected)
+
+	pointGet := &PointGetPlan{}
+	base := pointGet.MemoryUsage()
+	pointGet.MaskingExprs = exprs
+	require.Equal(t, base+expected, pointGet.MemoryUsage())
+
+	batchPointGet := &BatchPointGetPlan{}
+	base = batchPointGet.MemoryUsage()
+	batchPointGet.MaskingExprs = exprs
+	require.Equal(t, base+expected, batchPointGet.MemoryUsage())
 }
