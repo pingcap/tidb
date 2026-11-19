@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -99,7 +100,7 @@ const (
 		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
 )
 
-const (
+var (
 	waitInfoSchemaReloadCheckInterval = 1 * time.Second
 	// a million tables should take a few minutes to load all DDL change, making 15 to make sure we don't exit early
 	waitInfoSchemaReloadTimeout = 15 * time.Minute
@@ -1780,6 +1781,10 @@ func restoreStream(
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
+	targetSchemaVer, err := currentStorageSchemaVersion(ctx, mgr.GetStorage())
+	if err != nil {
+		return errors.Annotate(err, "failed to get schema version after restoring meta files")
+	}
 	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
 
@@ -1943,6 +1948,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
+<<<<<<< HEAD
 	if cfg.ExplicitFilter {
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
@@ -1953,6 +1959,8 @@ func restoreStream(
 		}
 	}
 
+=======
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 	// failpoint to stop for a while after restoring kvs
 	// this is to mimic the scenario that restore takes long time and the lease in schemaInfo has expired and needs refresh
 	failpoint.Inject("post-restore-kv-pending", func(val failpoint.Value) {
@@ -1964,8 +1972,18 @@ func restoreStream(
 	})
 
 	// make sure schema reload finishes before proceeding
-	if err = waitUntilSchemaReload(ctx, client); err != nil {
+	if err = waitUntilSchemaReload(ctx, client.GetDomain(), targetSchemaVer); err != nil {
 		return errors.Trace(err)
+	}
+
+	if cfg.isPartialRestore() {
+		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("fail before setting table mode to normal"))
+		})
+
+		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// PiTR log replay writes auto-increment counters straight to TiKV without
@@ -1984,6 +2002,27 @@ func restoreStream(
 	// to delete range(table, schema) that's dropped during log backup
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
+	// Snapshot and log import preserve the source partition IDs in global index
+	// entries. Rebuild only restored tables, after the final schema is available.
+	for _, db := range schemasReplace.DbReplaceMap {
+		if db.FilteredOut {
+			continue
+		}
+		for _, table := range db.TableMap {
+			if table.FilteredOut {
+				continue
+			}
+			for oldID, newID := range table.PartitionMap {
+				if oldID != newID {
+					if info, ok := mgr.GetDomain().InfoSchema().TableInfoByID(table.TableID); ok {
+						ingestRecorder.AddGlobalIndexes(info)
+					}
+					break
+				}
+			}
+		}
 	}
 
 	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, cfg.addIndexSQLStorage); err != nil {
@@ -2430,16 +2469,34 @@ func cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
 	}
 }
 
-func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {
-	log.Info("waiting for schema info finishes reloading")
+func currentStorageSchemaVersion(ctx context.Context, store kv.Storage) (int64, error) {
+	var schemaVersion int64
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		schemaVersion, err = meta.NewReader(txn).GetSchemaVersionWithNonEmptyDiff()
+		return errors.Trace(err)
+	})
+	return schemaVersion, errors.Trace(err)
+}
+
+func waitUntilSchemaReload(ctx context.Context, dom *domain.Domain, targetSchemaVer int64) error {
+	log.Info("waiting for schema info finishes reloading", zap.Int64("targetSchemaVer", targetSchemaVer))
 	reloadStart := time.Now()
 	conditionFunc := func() bool {
-		return !client.GetDomain().IsLeaseExpired()
+		if dom.IsLeaseExpired() {
+			return false
+		}
+		info := dom.InfoSchema()
+		return info != nil && info.SchemaMetaVersion() >= targetSchemaVer
 	}
 	if err := utils.WaitUntil(ctx, conditionFunc, waitInfoSchemaReloadCheckInterval, waitInfoSchemaReloadTimeout); err != nil {
 		return errors.Annotate(err, "failed to wait until schema reload")
 	}
-	log.Info("reloading schema finished", zap.Duration("timeTaken", time.Since(reloadStart)))
+	log.Info("reloading schema finished",
+		zap.Int64("targetSchemaVer", targetSchemaVer),
+		zap.Int64("loadedSchemaVer", dom.InfoSchema().SchemaMetaVersion()),
+		zap.Duration("timeTaken", time.Since(reloadStart)))
 	return nil
 }
 
