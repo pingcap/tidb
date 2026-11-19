@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use tidb_session::domain::cluster_session_node::DomainSessions as _;
+use tidb_session::domain::cluster_session_node::DomainTestSessions as _;
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
 use tidb_domain_core::node_config::{NodeConfig, NodeOptions};
 use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
@@ -59,7 +60,9 @@ fn test_setting_sql_variables() {
     let stack = unistore_stack();
     let worker = tidb_workloadrepo::Worker::new(None, None, None, "worker");
     tidb_workloadrepo::node::register_sysvar_hooks(&stack.factory.global_vars(), &worker);
-    let mut session = stack.factory.open_storage_session(1).expect("session");
+    // Go `testkit.NewTestKit(t, store)`: a client session, whose `SET GLOBAL`
+    // is persisted to `mysql.global_variables` as a user's is.
+    let mut session = stack.factory.create_session_4_test(1).expect("session");
 
     for (statement, expected) in [
         (
