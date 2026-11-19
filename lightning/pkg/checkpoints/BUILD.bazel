@@ -36,10 +36,11 @@ go_test(
     embed = [":checkpoints"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 29,
     deps = [
         "//br/pkg/version/build",
         "//lightning/pkg/checkpoints/checkpointspb",
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/importdef",
         "//pkg/lightning/mydump",
