@@ -2813,3 +2813,11 @@ fn alter_mlog_add_column_refresh_conflict(mode: &'static str, columns: &'static 
 fn materialized_view_ddl_safeguards_answer_as_go_master() {
     replay_go_master(include_str!("../../../../../testdata/mview_ddl_safeguards_go.jsonl"));
 }
+
+/// Go master's `MAX_COUNT` / `MIN_COUNT` as SQL aggregates and window
+/// functions, replayed from a Go master `2a6eb11aeb9` node
+/// (`testdata/mview_max_min_count_go.jsonl`, `tools/e29/p22`).
+#[test]
+fn max_count_and_min_count_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_max_min_count_go.jsonl"));
+}

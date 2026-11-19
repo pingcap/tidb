@@ -364,3 +364,20 @@ fn explain_and_frame_bound_syntax_errors_answer_go_masters_text() {
     assert!(parse("select sum(a) over (order by a range between interval 1 day preceding and current row) from t").is_ok());
     assert!(parse("select sum(a) over (order by a rows between ? preceding and current row) from t").is_ok());
 }
+
+/// Go master `parser_test.go`'s `MAX_COUNT` / `MIN_COUNT` rows of
+/// `TestBuiltin` (the internal aggregates of materialized view maintenance,
+/// also spelled in SQL).
+#[test]
+fn max_count_and_min_count_aggregates() {
+    run_test(&[
+        ("select max_count(c1,c2) from t;", false, ""),
+        ("select max_count(distinct c1) from t;", false, ""),
+        ("select max_count(c2) from t;", true, "SELECT MAX_COUNT(`c2`) FROM `t`"),
+        ("select max_count(all c1) from t;", true, "SELECT MAX_COUNT(`c1`) FROM `t`"),
+        ("select min_count(c1,c2) from t;", false, ""),
+        ("select min_count(distinct c1) from t;", false, ""),
+        ("select min_count(c2) from t;", true, "SELECT MIN_COUNT(`c2`) FROM `t`"),
+        ("select min_count(all c1) from t;", true, "SELECT MIN_COUNT(`c1`) FROM `t`"),
+    ]);
+}

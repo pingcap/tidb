@@ -60,6 +60,12 @@ impl Parser {
                 args: vec![arg],
             });
         }
+        // Go master's `builtinMaxCount '(' ["ALL"] Expression ')'`: no
+        // DISTINCT and one argument, so the error is AT that token.
+        let single_plain_argument = matches!(name.as_str(), "MAX_COUNT" | "MIN_COUNT");
+        if single_plain_argument && (self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW")) {
+            return Err(self.err_here(""));
+        }
         let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
             self.advance();
             true
@@ -86,6 +92,9 @@ impl Parser {
         // Go's argument loop accepts a redundant `ALL` before EVERY argument,
         // not just the first (`JSON_OBJECTAGG(c1, ALL c2)` parses).
         let mut args = vec![self.parse_expr(prec::NONE)?];
+        if single_plain_argument && self.is_op(",") {
+            return Err(self.err_here(""));
+        }
         while self.is_op(",") {
             self.advance();
             if self.is_kw("ALL") {
@@ -494,6 +503,10 @@ pub(super) fn agg_canonical(name: &str) -> Option<&'static str> {
         "AVG" => Some("AVG"),
         "MAX" => Some("MAX"),
         "MIN" => Some("MIN"),
+        // Go master `builtinMaxCount` / `builtinMinCount`: one argument, an
+        // optional ALL, no DISTINCT.
+        "MAX_COUNT" => Some("MAX_COUNT"),
+        "MIN_COUNT" => Some("MIN_COUNT"),
         "STD" | "STDDEV" | "STDDEV_POP" => Some("STDDEV_POP"),
         "STDDEV_SAMP" => Some("STDDEV_SAMP"),
         "VARIANCE" | "VAR_POP" => Some("VAR_POP"),

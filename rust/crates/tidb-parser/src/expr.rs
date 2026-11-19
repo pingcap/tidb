@@ -559,6 +559,19 @@ impl Parser {
                     _ => Err(self.err_here("expected a string, hex, or bit literal")),
                 }
             }
+            // Go master's `MAX_COUNT` / `MIN_COUNT` (`btFuncTokenMap`'s
+            // `builtinMaxCount` / `builtinMinCount`): this branch's keyword
+            // registry does not carry them, so the bare word is recognized
+            // here under Go's builtin-token rule -- the `(` adjacent, or after
+            // spaces under IGNORE_SPACE.
+            TokenKind::Ident
+                if matches!(t.text.to_ascii_uppercase().as_str(), "MAX_COUNT" | "MIN_COUNT")
+                    && self.peek_n(1).kind == TokenKind::Op
+                    && self.peek_n(1).text == "("
+                    && (self.ignore_space || self.peek_n(1).offset == t.end_offset) =>
+            {
+                self.parse_aggregate()
+            }
             // An aggregate-function keyword directly before `(` is an aggregate
             // call (`COUNT(...)`, `SUM(...)`).
             TokenKind::Keyword
