@@ -5397,10 +5397,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, samplePartitions)
 	b.isSampling = ds.SampleInfo != nil
 
+	skipVirtualExpr := b.virtualGeneratedColumnsToSkip(tableInfo, columns)
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
 			if columns[i].IsGenerated() && !columns[i].GeneratedStored {
+				if skipVirtualExpr != nil && skipVirtualExpr[i] {
+					continue
+				}
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
@@ -5656,6 +5660,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if err != nil {
 		return nil, err
 	}
+	// The view definition is not part of the statement's AST, so add the column
+	// names it mentions before its tables are built.
+	b.addGeneratedColumnRefs(selectNode)
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 

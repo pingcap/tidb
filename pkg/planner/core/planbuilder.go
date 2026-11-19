@@ -332,6 +332,14 @@ type PlanBuilder struct {
 
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
+	// gcColumnRefs is the set of lower-case column names mentioned anywhere in
+	// the statement (and in the definitions of the views it reads), used by
+	// buildDataSource to skip building VirtualExpr for virtual generated columns
+	// that the statement cannot use. nil means "build every VirtualExpr".
+	// gcColumnRefsInited records that the outermost Build call has decided it.
+	// See generated_column_refs.go.
+	gcColumnRefs       map[string]struct{}
+	gcColumnRefsInited bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
 
@@ -613,6 +621,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
+	if !b.gcColumnRefsInited {
+		b.gcColumnRefsInited = true
+		b.gcColumnRefs = collectGeneratedColumnRefs(node.Node)
+	}
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
