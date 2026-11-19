@@ -112,6 +112,10 @@ type TableMappingManager struct {
 	tableEvents        map[tableLocationKey]metadataEvent
 	latestTableSources map[UpstreamID]sourceTableLocation
 	baseTableIDs       map[UpstreamID]struct{}
+	// createdTableIDs maps the tables created by a finished DDL job found in
+	// the scanned interval to the start TS of that job. Only a job submitted
+	// within the interval proves that the table did not exist before it.
+	createdTableIDs map[UpstreamID]uint64
 
 	// used during scanning log to identify already seen id mapping. For example after exchange partition, the
 	// exchanged-in table already had an id mapping can be identified in the partition so don't allocate a new id.
@@ -140,9 +144,16 @@ func (tm *TableMappingManager) IsFromPiTRIDMap() bool {
 }
 
 // IsTableNewToBase checks absence from the complete snapshot/predecessor map.
-// Log-only restores additionally require committed table metadata in this
-// interval; placeholders and unknown predecessors cannot prove an empty baseline.
-func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot bool) bool {
+// The predecessor map of a log-only restore lists only the tables the previous
+// restore selected, so absence from it does not make a table new: a table left
+// out before appears in this interval as soon as any DDL rewrites its metadata.
+// A log-only restore therefore also requires the finished DDL job that created
+// the table, submitted no earlier than intervalStartTS, besides its committed
+// metadata. The history record of a job is written after the table became
+// visible, so a job submitted before the interval may have created the table
+// before it. Placeholders, unknown predecessors and tables without such a job
+// cannot prove an empty baseline.
+func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot bool, intervalStartTS uint64) bool {
 	if !fullSnapshot && (!tm.fromPitrIdMap || tm.baseTableIDs == nil) {
 		return false
 	}
@@ -154,7 +165,42 @@ func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot
 	}
 	source, observed := tm.latestTableSources[tableID]
 	event, committed := tm.tableEvents[tableLocationKey{dbID: source.dbID, tableID: tableID}]
-	return observed && committed && !event.deleted
+	jobStartTS, created := tm.createdTableIDs[tableID]
+	return observed && committed && !event.deleted && created && jobStartTS >= intervalStartTS
+}
+
+// recordCreatedTablesFromJobHistory remembers the tables that a finished DDL
+// job has created, with the TS at which the job was submitted. A job that cannot be decoded proves
+// nothing and is ignored.
+func (tm *TableMappingManager) recordCreatedTablesFromJobHistory(value []byte) {
+	job := &model.Job{}
+	if err := job.Decode(value); err != nil || !(job.IsDone() || job.IsSynced()) {
+		return
+	}
+	var tableIDs []int64
+	switch job.Type {
+	case model.ActionCreateTable:
+		tableIDs = append(tableIDs, job.TableID)
+	case model.ActionCreateTables:
+		// The history of a finished job keeps its result, not its arguments:
+		// the created tables are in BinlogInfo and the arguments are null.
+		if job.BinlogInfo == nil {
+			return
+		}
+		for _, tbl := range job.BinlogInfo.MultipleTableInfos {
+			if tbl != nil {
+				tableIDs = append(tableIDs, tbl.ID)
+			}
+		}
+	default:
+		return
+	}
+	if tm.createdTableIDs == nil {
+		tm.createdTableIDs = make(map[UpstreamID]uint64)
+	}
+	for _, tableID := range tableIDs {
+		tm.createdTableIDs[tableID] = job.StartTS
+	}
 }
 
 func NewTableMappingManager() *TableMappingManager {
@@ -204,6 +250,10 @@ type MetaInfoCollector interface {
 func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(
 	e *kv.Entry, cf string, ts uint64, collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
+		// As in the replay phase, only the default CF carries a decodable job.
+		if cf == consts.DefaultCF && utils.IsMetaDDLJobHistoryKey(e.Key) {
+			tm.recordCreatedTablesFromJobHistory(e.Value)
+		}
 		return nil
 	}
 

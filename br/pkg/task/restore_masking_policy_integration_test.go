@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,12 +30,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -259,6 +262,15 @@ func TestRestoreMaskingPolicyNewLogOnlyStage(t *testing.T) {
 	source := mapping.DBReplaceMap[1].TableMap[99]
 	source.TableID = 888888
 	ctx := context.Background()
+	// Committed metadata alone may come from a DDL on a policy table that the
+	// previous restore left out. Without the job that created the table in
+	// this interval, an empty baseline is not proven.
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false), "staging table is missing")
+	createJob, err := (&model.Job{Version: model.JobVersion1, Type: model.ActionCreateTable, TableID: 99, State: model.JobStateSynced}).Encode(true)
+	require.NoError(t, err)
+	require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+		Key: utils.EncodeTxnMetaKey([]byte("DDLJobHistory"), []byte("job"), startTS), Value: createJob,
+	}, consts.DefaultCF, startTS, collector))
 	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false))
 	stageName := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(888888))
 	tk.MustQuery("select count(*) from " + stageName).Check(testkit.Rows("0"))
@@ -458,4 +470,69 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("secret_a secret_b filtered"))
 	setMode(bystander.Meta().ID, model.TableModeNormal)
 	tk.MustQuery("select a from bystander").Check(testkit.Rows())
+}
+
+// The proof that a table is new to a log-only restore is read from the history
+// that a real batch-create job leaves behind, in both job versions.
+func TestTableNewToBaseFromBatchCreateHistory(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	original := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(original) })
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	testDB, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		model.SetJobVerInUse(version)
+		names := []string{fmt.Sprintf("batch_a_v%d", version), fmt.Sprintf("batch_b_v%d", version)}
+		// The DDL sanity check of tests parses the statement text of the job.
+		tk.Session().SetValue(sessionctx.QueryString, fmt.Sprintf("CREATE TABLE %s (id INT); CREATE TABLE %s (id INT)", names[0], names[1]))
+		require.NoError(t, dom.DDLExecutor().BatchCreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), []*model.TableInfo{
+			{Name: pmodel.NewCIStr(names[0])}, {Name: pmodel.NewCIStr(names[1])},
+		}, ddl.WithOnExist(ddl.OnExistError)))
+		jobRow := tk.MustQuery("admin show ddl jobs 1").Rows()[0]
+		require.Equal(t, "create tables", jobRow[3])
+		jobID, err := strconv.ParseInt(fmt.Sprint(jobRow[0]), 10, 64)
+		require.NoError(t, err)
+		var history *model.Job
+		require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+			var readErr error
+			history, readErr = meta.NewMutator(txn).GetHistoryDDLJob(jobID)
+			return readErr
+		}))
+		require.Equal(t, version, history.Version)
+		require.Equal(t, "null", string(history.RawArgs))
+		historyValue, err := history.Encode(false)
+		require.NoError(t, err)
+
+		mapping := stream.NewTableMappingManager()
+		mapping.SetFromPiTRIDMap()
+		mapping.MergeBaseDBReplace(map[int64]*stream.DBReplace{testDB.ID: stream.NewDBReplace("test", testDB.ID)})
+		collector := stream.NewTableHistoryManager()
+		var tableIDs []int64
+		for _, name := range names {
+			tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr(name))
+			require.NoError(t, err)
+			tableIDs = append(tableIDs, tbl.Meta().ID)
+			info, err := json.Marshal(tbl.Meta())
+			require.NoError(t, err)
+			metaStartTS := history.StartTS + 1
+			require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key: utils.EncodeTxnMetaKey(meta.DBkey(testDB.ID), meta.TableKey(tbl.Meta().ID), metaStartTS), Value: info,
+			}, consts.DefaultCF, metaStartTS, collector))
+			require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+				Key:   utils.EncodeTxnMetaKey(meta.DBkey(testDB.ID), meta.TableKey(tbl.Meta().ID), metaStartTS+1),
+				Value: codec.EncodeUvarint([]byte{'P'}, metaStartTS),
+			}, consts.WriteCF, metaStartTS+1, collector))
+			require.False(t, mapping.IsTableNewToBase(tbl.Meta().ID, false, history.StartTS))
+		}
+		require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+			Key: utils.EncodeTxnMetaKey([]byte("DDLJobHistory"), []byte("job"), history.StartTS+3), Value: historyValue,
+		}, consts.DefaultCF, history.StartTS+3, collector))
+		for _, tableID := range tableIDs {
+			require.True(t, mapping.IsTableNewToBase(tableID, false, history.StartTS))
+			require.False(t, mapping.IsTableNewToBase(tableID, false, history.StartTS+1))
+		}
+	}
 }

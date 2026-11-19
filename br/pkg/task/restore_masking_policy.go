@@ -157,7 +157,7 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 				}
 				continue
 			}
-			if idMapPersisted || !cfg.tableMappingManager.IsTableNewToBase(sourceID, fromFullSnapshot) {
+			if idMapPersisted || !cfg.tableMappingManager.IsTableNewToBase(sourceID, fromFullSnapshot, cfg.StartTS) {
 				return errors.New("PiTR masking policy staging table is missing; restore from the full backup again")
 			}
 			// The source may have introduced masking after the baseline snapshot.
