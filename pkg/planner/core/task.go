@@ -959,6 +959,12 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
 	} else if p.containVirtualColumn(copTask.Plan().Schema().Columns) {
 		return false
 	}
+	// A double read may push TopN to the table side after checking the index
+	// schema above. Virtual columns on that side are evaluated by TiDB, so TiKV
+	// cannot sort on them correctly.
+	if copTask.tablePlan != nil && p.containVirtualColumn(copTask.tablePlan.Schema().Columns) {
+		return false
+	}
 	return true
 }
 
