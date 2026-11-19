@@ -138,13 +138,12 @@ pub(crate) fn driver_cause(error: &SqlQueryError) -> Option<&DriverError> {
 /// `errors.Cause`) kept when it has one.
 pub(crate) fn driver_error_of(error: SqlQueryError) -> DriverError {
     if let Some(cause) = driver_cause(&error) {
-        return cause.clone();
+        return match (cause.clone(), &error.annotation) {
+            (DriverError::Mysql(mysql), Some(annotation)) => DriverError::Mysql(mysql.annotate(annotation)),
+            (cause, _) => cause,
+        };
     }
-    let mut mapped = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message);
-    if let Some(identity) = error.identity {
-        mapped = mapped.with_identity(identity);
-    }
-    DriverError::Mysql(mapped)
+    DriverError::Mysql(error.into())
 }
 
 /// One entry of a transaction's savepoint stack: Go `SavepointRecord`.

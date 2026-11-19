@@ -726,15 +726,14 @@ pub fn plan_query_meta_stmt_with_subqueries(
 /// The ordinary planner still builds the exact executor pipeline, including
 /// access-path selection and output type derivation, but a plan-only trace
 /// stops before the pipeline is opened or drained.
-pub fn plan_select_meta_stmt(
-    select: &tidb_ast::SelectStmt,
+pub fn plan_query_result_columns(
+    query: &QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
-    let physical = planner_bridge::physical_select_plan(select, catalog, current_db, ctx)
-        .map_err(planner_error_to_driver)?;
-    physical_builder::planned_result_columns(select, &physical)
+    let physical = plan_query_meta_stmt(query, catalog, current_db, ctx)?;
+    physical_builder::planned_result_columns(query, &physical)
 }
 
 /// Go turns a subquery's result `Datum` into an `expression.Constant`; the

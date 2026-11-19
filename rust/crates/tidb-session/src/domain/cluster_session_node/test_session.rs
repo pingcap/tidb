@@ -29,6 +29,7 @@ use tidb_executor::ddl_exec::map_error;
 
 use super::{ClusterServerSession, Domain};
 use crate::domain::resultset_source::ResultSetSource;
+use crate::txn::driver_error_of;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use crate::{Session, StmtOutput};
 
@@ -135,7 +136,7 @@ impl<'s> ClusterServerSession<'s> {
         &mut self,
         sql: &str,
     ) -> Result<Option<bool>, tidb_driver_error::DriverError> {
-        self.control_transaction(sql).map_err(driver_error)
+        self.control_transaction(sql).map_err(driver_error_of)
     }
 
     /// Go `clientConn.handleQuery` for one statement, read back as the rows a
@@ -153,7 +154,7 @@ impl<'s> ClusterServerSession<'s> {
                     error.message.clone(),
                     error.identity,
                 );
-                return Err(driver_error(error));
+                return Err(driver_error_of(error));
             }
         };
         self.run_parsed_statement_output(sql, stmt)
@@ -195,7 +196,7 @@ impl<'s> ClusterServerSession<'s> {
         let executed = self
             .reborrow()
             .execute_stmt(sql, &stmt)
-            .map_err(driver_error)?
+            .map_err(driver_error_of)?
             .map(|mut result| drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql));
         if let Some(output) = executed {
             // Go `writeChunks` takes the result's chunk from the statement's
@@ -215,7 +216,7 @@ impl<'s> ClusterServerSession<'s> {
             .map(|parked| parked.path.clone());
         if let Some(path) = parked {
             let data = self.session.read_client_local_file(&path)?;
-            self.finish_local_infile(&data).map_err(driver_error)?;
+            self.finish_local_infile(&data).map_err(driver_error_of)?;
         }
         // The outputs the session's own DDL arms give: CREATE TABLE reports
         // whether it created the table (an IF NOT EXISTS that found it leaves
@@ -254,7 +255,7 @@ impl super::NodeConn {
                     session_pool: Some(&pool),
                 },
             )
-            .map_err(driver_error)
+            .map_err(driver_error_of)
     }
 
     /// Go testkit's `dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
@@ -315,13 +316,3 @@ fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_ter
     Ok(StmtOutput::Rows { columns, rows })
 }
 
-fn driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
-    if let Some(cause) = crate::txn::driver_cause(&error) {
-        return cause.clone();
-    }
-    let mut mapped = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message);
-    if let Some(identity) = error.identity {
-        mapped = mapped.with_identity(identity);
-    }
-    tidb_driver_error::DriverError::Mysql(mapped)
-}

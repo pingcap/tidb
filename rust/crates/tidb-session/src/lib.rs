@@ -2576,17 +2576,12 @@ impl Session {
                 "prepared metadata requires a query statement",
             ));
         };
-        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
-            return Err(DriverError::unsupported(
-                "prepared metadata for set operations is not supported here",
-            ));
-        };
         let current_db = self.vars.current_db.clone();
         let ctx = self
             .statement_context(false)
             .with_prepared_params(parameters.unwrap_or_default());
         self.with_catalog_retrieving(&ctx, |catalog| {
-            tidb_executor::plan_select_meta_stmt(&select, catalog, &current_db, &ctx)
+            tidb_executor::plan_query_result_columns(&query, catalog, &current_db, &ctx)
         })
     }
 

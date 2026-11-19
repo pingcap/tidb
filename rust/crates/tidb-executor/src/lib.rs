@@ -157,13 +157,7 @@ mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
-mod tests_batch_point_get_temporary_source;
-#[cfg(test)]
 mod tests_insert_auto_random_id_source;
-#[cfg(test)]
-mod tests_insert_null_non_strict_source;
-#[cfg(test)]
-mod tests_insert_on_duplicate_key_source;
 #[cfg(test)]
 mod tests_joiner_required_rows_source;
 #[cfg(test)]
@@ -204,11 +198,7 @@ mod table_sample;
 mod check_index_range;
 mod admin_index_exec;
 #[cfg(test)]
-mod tests_duplicate_entry_message_source;
-#[cfg(test)]
 mod tests_executor_part19_source;
-#[cfg(test)]
-mod tests_jointest_join_source;
 #[cfg(test)]
 mod tests_memtest_source;
 #[cfg(test)]
@@ -234,7 +224,7 @@ pub use driver::{
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, parameter_count, parsed_parameter_count,
-    plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_select_meta_stmt,
+    plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_query_result_columns,
     run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
     run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
@@ -335,17 +325,9 @@ mod tests_executor_internal_source;
 #[cfg(test)]
 mod tests_executor_part22_source;
 #[cfg(test)]
-mod tests_executor_suite_metadata_source;
-#[cfg(test)]
 mod tests_executor_suite_statements_source;
 #[cfg(test)]
 mod tests_hashagg_aggregate_suite_source;
-#[cfg(test)]
-mod tests_issuetest_b135_source;
-#[cfg(test)]
-mod tests_jointest_hashjoin_b135_source;
-#[cfg(test)]
-mod tests_jointest_join_b135_source;
 #[cfg(test)]
 mod tests_set_show_stats_slow_query_source;
 pub mod cluster_analyze_seam;

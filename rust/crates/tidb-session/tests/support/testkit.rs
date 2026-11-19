@@ -92,6 +92,11 @@ impl TestKit {
         result
     }
 
+    /// Go `tk.CheckLastMessage(msg)`: the last statement's info text.
+    pub fn check_last_message(&self, msg: &str) {
+        assert_eq!(self.session.statement_message(), msg);
+    }
+
     /// Go `tk.MustExec(sql)`.
     pub fn must_exec(&mut self, sql: &str) {
         if let Err(error) = self.exec(sql) {
@@ -309,6 +314,11 @@ impl TkResult {
 
     /// Go `res.Rows()`.
     #[must_use]
+    /// Go `result.Check(other.Rows())`: the same rows as another result.
+    pub fn check_result(&self, expected: &TkResult) {
+        assert_eq!(self.rows(), expected.rows());
+    }
+
     pub fn rows(&self) -> &[Vec<String>] {
         &self.rows
     }
@@ -403,4 +413,9 @@ pub fn update_global_config(
 #[must_use]
 pub fn serial() -> MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Go `rand.Intn(n)` for the ported tests' generated data.
+pub fn rand_intn(n: i64) -> i64 {
+    rand::random_range(0..n)
 }

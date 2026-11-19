@@ -42,6 +42,9 @@ pub struct SqlQueryError {
     /// The typed error this was rendered from, when one was (Go keeps the
     /// typed error under its wrapping, `errors.Cause`).
     pub cause: Option<ErrorCause>,
+    /// Go `errors.Annotate(err, message)`'s message, printed in front of
+    /// `Error()`; the client still receives the cause.
+    pub annotation: Option<String>,
 }
 
 /// The typed error under a [`SqlQueryError`], of whatever layer raised it.
@@ -78,8 +81,12 @@ impl From<tidb_terror::MysqlError> for SqlQueryError {
 /// The statement's failure as the `*terror.Error` it was raised as.
 impl From<SqlQueryError> for tidb_terror::MysqlError {
     fn from(error: SqlQueryError) -> Self {
-        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-            .with_identity_opt(error.identity)
+        let mysql = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity);
+        match error.annotation {
+            Some(annotation) => mysql.annotate(&annotation),
+            None => mysql,
+        }
     }
 }
 
@@ -122,7 +129,18 @@ impl SqlQueryError {
             write_conflict: None,
             identity: None,
             cause: None,
+            annotation: None,
         }
+    }
+
+    /// Go `errors.Annotate(err, message)`.
+    #[must_use]
+    pub fn annotate(mut self, message: &str) -> Self {
+        self.annotation = Some(match self.annotation.take() {
+            Some(inner) => format!("{message}: {inner}"),
+            None => message.to_owned(),
+        });
+        self
     }
 
     /// Remembers the typed error this failure was rendered from.

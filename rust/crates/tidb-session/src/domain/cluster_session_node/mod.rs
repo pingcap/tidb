@@ -1176,7 +1176,11 @@ impl<'s> ClusterServerSession<'s> {
                 // transaction.
                 drop(simple_exec.take());
                 let _commit_txn = CommitTxnRegions::begin(self.node.txn.explicit().is_some());
-                self.commit_explicit()?;
+                // Go `finishStmt`: a COMMIT's commit failure is annotated
+                // with the statement before it.
+                let previous = self.session.vars().prev_stmt_text.clone().unwrap_or_default();
+                self.commit_explicit()
+                    .map_err(|error| error.annotate(&format!("previous statement: {previous}")))?;
             }
             Some(TransactionControl::Rollback) => {
                 // Go `executeRollback` rolled the transaction back in the

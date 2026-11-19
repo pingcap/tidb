@@ -7675,14 +7675,16 @@ fn physical_result_columns(plan: &PhysicalPlan, schema: &Schema) -> Vec<(String,
 /// `ExecStmt.Plan` used by `buildExecutor`; planning-only consumers must not
 /// enter a second AST execution pipeline to rediscover it.
 pub(super) fn planned_result_columns(
-    select: &tidb_ast::SelectStmt,
+    query: &tidb_ast::QueryStmt,
     physical: &PhysicalPlan,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
-    Ok(result_columns(
-        select,
-        &plan_schema(physical)?,
-        physical.base().base.output_names(),
-    ))
+    let schema = plan_schema(physical)?;
+    Ok(match query {
+        tidb_ast::QueryStmt::Select(select) => {
+            result_columns(select, &schema, physical.base().base.output_names())
+        }
+        tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, &schema),
+    })
 }
 
 /// Go's common query execution seam: both SELECT and set-operation logical
