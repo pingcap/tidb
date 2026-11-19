@@ -144,6 +144,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!() };
                 self.build_import_into(import)
             }
+            Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::DistributeTable(_)) => {
+                let tidb_ast::DmlStmt::DistributeTable(distribute) = dml.as_ref() else { unreachable!() };
+                self.build_distribute_table(distribute)
+            }
             Stmt::Query(_) | Stmt::Dml(_) => Err(PlanError::internal(
                 "queries and DML build through their own builders",
             )),
@@ -762,6 +766,45 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 
     /// Go `buildSplitRegion`'s refusals; the regions themselves are the
     /// executor's.
+    /// Go `buildDistributeTable`.
+    fn build_distribute_table(&mut self, node: &tidb_ast::DistributeTableStmt) -> Result<Plan, PlanError> {
+        const RULE_LIST: [&str; 3] = ["leader-scatter", "peer-scatter", "learner-scatter"];
+        const ENGINE_LIST: [&str; 2] = ["tikv", "tiflash"];
+        let wrong = |message: &str| {
+            PlanError::from(tidb_plannererrors::ERR_WRONG_ARGUMENTS.gen_with_stack_by_args(&[message.into()]))
+        };
+        let (database, table, _) = self.qualified(&node.table);
+        let source = self.source.try_find_table(&database, &table)?.ok_or_else(|| {
+            PlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[database.clone().into(), table.clone().into()]),
+            )
+        })?;
+        let table_info = source
+            .table_info
+            .clone()
+            .ok_or_else(|| PlanError::internal("DISTRIBUTE TABLE target has no table info"))?;
+        let rule = node.rule.clone().unwrap_or_default();
+        let engine = node.engine.clone().unwrap_or_default();
+        if !RULE_LIST.contains(&rule.as_str()) {
+            return Err(wrong("rule must be leader-scatter, peer-scatter or learner-scatter"));
+        }
+        if !ENGINE_LIST.contains(&engine.as_str()) {
+            return Err(wrong("engine must be tikv or tiflash"));
+        }
+        if engine == "tiflash" && rule != "learner-scatter" {
+            return Err(wrong("the rule of tiflash must be learner-scatter"));
+        }
+        Ok(Plan::DistributeTable(Box::new(crate::common_plans::DistributeTable {
+            table_info,
+            db_name: source.db_name.clone(),
+            partition_names: node.partitions.iter().map(|name| tidb_ast::CiString::new(name.as_str())).collect(),
+            engine,
+            rule,
+            timeout: node.timeout.clone().unwrap_or_default(),
+        })))
+    }
+
     fn build_split_region(&mut self, split: &tidb_ast::SplitRegionStmt) -> Result<Plan, PlanError> {
         let (database, table, _) = self.qualified(&split.table);
         if let Some(info) = self

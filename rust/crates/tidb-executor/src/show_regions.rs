@@ -440,10 +440,50 @@ pub fn show_table_distributions(
     database: &str,
     table_name: &str,
     partitions: &[String],
-) -> Result<(), DriverError> {
+) -> Result<Vec<Vec<Datum>>, DriverError> {
     let target = resolve(catalog, database, table_name, "show table distributions")?;
-    physical_ids(&target, partitions)?;
-    Err(DriverError::Mysql(MysqlError::unknown(
-        "[PD:client:ErrClientGetLeader]get leader failed, pd http cli is nil",
-    )))
+    let (physical_ids, _) = physical_ids(&target, partitions)?;
+    // Go: the named partitions (lowercased) or every definition, else the
+    // table's own lowercased name.
+    let partition_names: Vec<String> = match target.table.and_then(|table| table.meta().read().get_partition_info()) {
+        Some(pi) if partitions.is_empty() => pi
+            .read()
+            .definitions
+            .snapshot()
+            .iter()
+            .map(|definition| definition.name.lowercase().to_owned())
+            .collect(),
+        Some(_) => partitions.iter().map(|name| name.go_to_lower()).collect(),
+        None => vec![target.name.go_to_lower()],
+    };
+    let mut rows = Vec::new();
+    for (pid, partition_name) in physical_ids.into_iter().zip(partition_names) {
+        let mut start_key = Vec::new();
+        tidb_codec::encode_bytes(&mut start_key, &tidb_tablecodec::table_key::gen_table_prefix(pid));
+        let mut end_key = Vec::new();
+        tidb_codec::encode_bytes(&mut end_key, &tidb_tablecodec::table_key::gen_table_prefix(pid + 1));
+        // todo: support engine type
+        let resp = tidb_domain_infosync::region::get_region_distribution_by_key_range(&start_key, &end_key, "")
+            .map_err(|error| DriverError::Mysql(MysqlError::unknown(error)))?;
+        // Go `fillDistributionsToChunk`.
+        for dis in resp.region_distributions {
+            rows.push(vec![
+                Datum::new_string_datum(partition_name.as_str()),
+                Datum::UInt(dis.store_id),
+                Datum::new_string_datum(dis.engine_type.as_str()),
+                Datum::Int(dis.region_leader_count),
+                Datum::Int(dis.region_peer_count),
+                Datum::UInt(dis.region_write_bytes),
+                Datum::UInt(dis.region_write_keys),
+                Datum::UInt(dis.region_write_query),
+                Datum::UInt(dis.region_leader_read_bytes),
+                Datum::UInt(dis.region_leader_read_keys),
+                Datum::UInt(dis.region_leader_read_query),
+                Datum::UInt(dis.region_peer_read_bytes),
+                Datum::UInt(dis.region_peer_read_keys),
+                Datum::UInt(dis.region_peer_read_query),
+            ]);
+        }
+    }
+    Ok(rows)
 }

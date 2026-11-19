@@ -513,6 +513,7 @@ pub fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::PlacementForPartition
             | T::Regions
             | T::Distributions
+            | T::DistributionJobs
             | T::ImportJobs
             | T::ImportGroups
             | T::TableNextRowId

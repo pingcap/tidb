@@ -38,6 +38,24 @@ pub struct ShowNextRowID {
     pub names: Vec<FieldName>,
 }
 
+/// Go `DistributeTable` (`common_plans.go`): `DISTRIBUTE TABLE`'s target and
+/// options, with `buildDistributeTableSchema`'s one `JOB_ID` column.
+#[derive(Clone, Debug)]
+pub struct DistributeTable {
+    /// Go `TableInfo`.
+    pub table_info: tidb_model::GoShared<tidb_model::TableInfo>,
+    /// The table's schema name (Go `getSchemaName(is, TableInfo.DBID)`).
+    pub db_name: String,
+    /// Go `PartitionNames`.
+    pub partition_names: Vec<tidb_ast::CiString>,
+    /// Go `Engine`.
+    pub engine: String,
+    /// Go `Rule`.
+    pub rule: String,
+    /// Go `Timeout`.
+    pub timeout: String,
+}
+
 /// Go `SetConfig` (`common_plans.go`): `SET CONFIG <type | instance>
 /// <name> = <value>`, its value rewritten as an expression.
 #[derive(Clone, Debug)]
@@ -256,6 +274,8 @@ pub enum Plan {
     PlanReplayer(Box<tidb_ast::PlanReplayerStmt>),
     /// Go `SetConfig`.
     SetConfig(Box<SetConfig>),
+    /// Go `DistributeTable`.
+    DistributeTable(Box<DistributeTable>),
     /// Go `SplitRegion` / `SplitIndexRegion`.
     SplitRegion(Box<tidb_ast::SplitRegionStmt>),
     /// Go `Analyze`.

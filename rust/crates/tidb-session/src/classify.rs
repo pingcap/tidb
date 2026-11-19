@@ -349,6 +349,11 @@ impl Session {
             {
                 StmtKind::Query
             }
+            // Go `buildDistributeTable` gives `DISTRIBUTE TABLE` the
+            // `JOB_ID` schema (`buildDistributeTableSchema`).
+            Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::DistributeTable(_)) => {
+                StmtKind::Query
+            }
             // `USE`, `SET` and the transaction controls answer with an OK
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) => StmtKind::Write,

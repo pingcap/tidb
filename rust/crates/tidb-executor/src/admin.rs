@@ -1193,6 +1193,10 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // very process, whose installed handler performs the graceful
             // stop. `RESTART`/`HELP` keep their unsupported report.
             tidb_ast::AdminStmt::AlterRange(range) => self.alter_range_stmt(range).map(Some),
+            // Go `CancelDistributionJobExec`.
+            tidb_ast::AdminStmt::CancelDistributionJob(job_id) => {
+                crate::distribute::cancel_distribution_job(*job_id as u64).map(|()| Some(StmtOutput::Affected(0)))
+            }
             // Go `SimpleExec.Next`: `case *ast.BinlogStmt: // We just
             // ignore it.`
             tidb_ast::AdminStmt::Binlog(_) => Ok(Some(StmtOutput::Affected(0))),

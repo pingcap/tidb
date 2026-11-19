@@ -561,6 +561,17 @@ impl Session {
             Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
             Plan::SetConfig(plan) => self.set_config_exec(plan).map(Some),
+            // Go `DistributeTableExec`: the job's ID, or no row.
+            Plan::DistributeTable(plan) => {
+                let job_id = tidb_executor::distribute::DistributeTableExec::open((**plan).clone())?.next()?;
+                Ok(Some(StmtOutput::Rows {
+                    columns: vec![(
+                        "JOB_ID".to_owned(),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    )],
+                    rows: job_id.map(|id| vec![tidb_datatype::Datum::UInt(id)]).into_iter().collect(),
+                }))
+            }
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {
                 match self.domain_services() {

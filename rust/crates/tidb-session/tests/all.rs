@@ -414,3 +414,4 @@ mod mysql_bootstrap_tableinfo_source;
 mod executor_test_oomtest_oom_test;
 mod executor_set_test;
 mod ddl_placement_policy_test;
+mod executor_distribute_table_test;

@@ -561,6 +561,8 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     tidb_domain_infosync::label_manager::init_label_rule_manager(None);
     // Go `initPlacementManager` without PD: a fresh `mockPlacementManager`.
     tidb_domain_infosync::placement_manager::init_placement_manager(None);
+    // Go `GlobalInfoSyncerInit` without PD: no `pdHTTPCli`.
+    tidb_domain_infosync::region::init_pd_http_cli(None);
     // Go `initScheduleManager` without PD: a fresh `mockScheduleManager`.
     tidb_domain_infosync::schedule_manager::init_schedule_manager(None);
     tidb_domain_infosync::tiflash_manager::init_tiflash_replica_manager(None);

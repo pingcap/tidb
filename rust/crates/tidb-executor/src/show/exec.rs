@@ -610,9 +610,10 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         &table_name,
                         &contents.table_partitions,
                     )
-                })?;
-                Vec::new()
+                })?
             }
+            // Go `fetchShowDistributionJobs`.
+            T::DistributionJobs => crate::distribute::fetch_show_distribution_jobs(contents.distribution_job_id)?,
             T::StatsTopN => self.stats_topn_rows()?,
             T::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
