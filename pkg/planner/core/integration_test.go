@@ -2733,7 +2733,7 @@ func TestInSubqueryMatchesEachOuterRowOnceWhenKeysAreConverted(t *testing.T) {
 		"Warning 1105 Implicit type or collation conversion on join keys (test.t_outer.id = test.t_inner.a) may make indexes unusable"))
 }
 
-func TestInSubqueryKeepsTheExplicitCollationOfAProjectedKey(t *testing.T) {
+func TestInSubqueryKeepsTheExplicitCollationOfAConvertedKey(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

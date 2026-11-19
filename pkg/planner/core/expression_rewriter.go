@@ -1394,28 +1394,19 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
 		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
-		distinctChild := np
-		distinctLen := np.Schema().Len()
-		joinCondition := checkCondition
 		// IN-subquery rewrite turns:
 		//   outer_col IN (SELECT inner_col ...)
 		// into:
 		//   outer JOIN DISTINCT(inner_col) ON outer_col = inner_col
 		//
-		// DISTINCT must be applied on the same comparison domain as the join predicate.
-		// If "=" injects an implicit cast on the RHS (e.g. blob/string -> number), deduplicating
-		// raw inner values is insufficient: different raw values may become equal after cast and
-		// multiply outer rows in the rewritten inner join.
-		//
-		// To keep semantics equivalent to IN, we project the RHS comparison expression first,
-		// then distinct on that projected key.
-		// The same holds for every column of a multi-column IN.
-		rhsKeys := make([]expression.Expression, lLen)
-		for i := range lLen {
-			rhsKeys[i] = np.Schema().Columns[i]
+		// DISTINCT must group by the values the join compares. If "=" casts an inner column
+		// (e.g. blob/string -> number), different raw values may become equal after the cast and
+		// multiply outer rows, so the DISTINCT groups by the casted key instead.
+		agg, err := planCtx.builder.buildDistinct(np, np.Schema().Len())
+		if err != nil {
+			er.err = err
+			return true
 		}
-		var projectedCastSources map[int64]*expression.Column
-		needProj := false
 		if eqConds := expression.SplitCNFItems(checkCondition); len(eqConds) == lLen {
 			for i, eqCond := range eqConds {
 				sf, ok := eqCond.(*expression.ScalarFunction)
@@ -1423,70 +1414,22 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 					continue
 				}
 				rhs := sf.GetArgs()[1]
-				if _, isCol := rhs.(*expression.Column); !isCol && expression.ExprFromSchema(rhs, np.Schema()) {
-					// rhs is computed from inner columns (typically with an implicit cast generated
-					// by type coercion rules). Materialize it as an inner projection column so both
-					// DISTINCT and JOIN use exactly this coerced key.
-					rhsKeys[i] = rhs
-					needProj = true
+				if _, isCol := rhs.(*expression.Column); isCol {
+					continue
+				}
+				if cols := expression.ExtractColumns(rhs); len(cols) == 1 && cols[0].EqualColumn(np.Schema().Columns[i]) {
+					agg.GroupByItems[i] = rhs
 				}
 			}
-		}
-		if needProj {
-			lArgs := []expression.Expression{lexpr}
-			if lLen > 1 {
-				lArgs = lexpr.(*expression.ScalarFunction).GetArgs()
-			}
-			proj := logicalop.LogicalProjection{Exprs: rhsKeys}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-			projCols := make([]*expression.Column, 0, lLen)
-			names := make([]*types.FieldName, 0, lLen)
-			conds := make([]expression.Expression, 0, lLen)
-			for i, key := range rhsKeys {
-				projCol := &expression.Column{
-					UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  key.GetType(er.sctx.GetEvalCtx()).Clone(),
-				}
-				projCol.SetCoercibility(key.Coercibility())
-				projCol.SetRepertoire(key.Repertoire())
-				projCols = append(projCols, projCol)
-				names = append(names, types.EmptyName)
-				if src, ok := logicalop.ExtractCastSourceColumn(key); ok {
-					if projectedCastSources == nil {
-						projectedCastSources = make(map[int64]*expression.Column)
-					}
-					projectedCastSources[projCol.UniqueID] = src
-				}
-				// Rebuild join condition against the projected key; this preserves
-				// the same coercion behavior while preventing duplicate matches.
-				cond, err := er.constructBinaryOpFunction(lArgs[i], projCol, ast.EQ)
-				if err != nil {
-					er.err = err
-					return true
-				}
-				conds = append(conds, cond)
-			}
-			proj.SetChildren(np)
-			proj.SetSchema(expression.NewSchema(projCols...))
-			proj.SetOutputNames(names)
-			distinctChild = proj
-			distinctLen = lLen
-			joinCondition = expression.ComposeCNFCondition(er.sctx, conds...)
-		}
-		// Build distinct for the inner query.
-		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
-		if err != nil {
-			er.err = err
-			return true
 		}
 		// Build inner join above the aggregation.
 		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-		join.ProjectedKeyCastSources = projectedCastSources
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
-		join.AttachOnConds(expression.SplitCNFItems(joinCondition))
+		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// set FullSchema and FullNames for this join
 		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
 			join.FullSchema = left.FullSchema

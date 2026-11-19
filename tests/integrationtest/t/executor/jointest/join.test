@@ -169,6 +169,7 @@ create table t_plan_outer (id int, y int);
 create table t_plan_inner (pk int primary key, a blob, y int);
 explain format='brief' select * from t_plan_outer where (id, y) in (select pk, y from t_plan_inner);
 explain format='brief' select * from t_plan_outer where (id, y) in (select a, y from t_plan_inner);
+explain format='brief' select * from t_plan_outer where (id, 0) in (select pk, a from t_plan_inner);
 drop table t_plan_outer, t_plan_inner;
 drop table if exists t_outer, t_inner;
 drop table if exists t1, t2;

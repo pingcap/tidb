@@ -97,9 +97,6 @@ type LogicalJoin struct {
 	// to the canonical visible output column index in Join.Schema()/OutputNames().
 	// It is built once during join construction and then treated as immutable.
 	RedundantColsToOutputIdx map[int64]int
-	// ProjectedKeyCastSources maps an inner key column projected from an implicit cast of a column to that
-	// column, so the implicit conversion warning on join keys still sees the cast.
-	ProjectedKeyCastSources map[int64]*expression.Column
 
 	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
 	// IN subquery during the correlate alternative round, indicating that the CorrelateSolver
@@ -1806,8 +1803,8 @@ func (p *LogicalJoin) updateEQCond() {
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
 				keepAsOtherCond := expression.IsMutableEffectsExpr(lKey) || expression.IsMutableEffectsExpr(rKey)
-				lCastCol, lCasted := p.keyCastSourceColumn(lKey)
-				rCastCol, rCasted := p.keyCastSourceColumn(rKey)
+				lCastCol, lCasted := extractCastSourceColumn(lKey)
+				rCastCol, rCasted := extractCastSourceColumn(rKey)
 				if lCasted && rCasted {
 					p.appendImplicitJoinKeyConversionWarning(lCastCol, rCastCol)
 				}
@@ -1898,20 +1895,18 @@ func (p *LogicalJoin) updateEQCond() {
 }
 
 func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
-	castArg, ok := ExtractCastSourceColumn(expr)
-	return ok && castArg.EqualColumn(originalCol)
-}
-
-func (p *LogicalJoin) keyCastSourceColumn(key expression.Expression) (*expression.Column, bool) {
-	if col, ok := key.(*expression.Column); ok {
-		src, ok := p.ProjectedKeyCastSources[col.UniqueID]
-		return src, ok
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return false
 	}
-	return ExtractCastSourceColumn(key)
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	return castArg.EqualColumn(originalCol)
 }
 
-// ExtractCastSourceColumn returns the column that expr casts, if expr is a cast of a column.
-func ExtractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
+func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
 	castExpr, ok := expr.(*expression.ScalarFunction)
 	if !ok || castExpr.FuncName.L != ast.Cast {
 		return nil, false
