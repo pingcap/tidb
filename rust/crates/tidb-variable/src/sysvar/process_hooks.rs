@@ -489,3 +489,8 @@ process_memory_setting! {
     set_tidb_mem_arbitrator_mode => tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE;
     set_tidb_mem_arbitrator_soft_limit => tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT;
 }
+
+get_global! {
+    // Go: `vardef.CloudStorageURI.Load()`, redacted (`ast.RedactURL`).
+    get_tidb_cloud_storage_uri => crate::cloud_storage::get_cloud_storage_uri();
+}

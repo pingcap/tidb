@@ -238,7 +238,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_cloud_storage_uri),
     },
     SysVarDef {
         name: "tidb_columnar_storage_enabled",

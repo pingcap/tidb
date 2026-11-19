@@ -474,97 +474,6 @@ fn runtime_instance_value(globals: &GlobalSysvars, def: &'static SysVarDef) -> O
     }
 }
 
-/// Reads the process-wide products Go exposes through the
-/// GLOBAL getter hooks. The registry still owns validation and persistence;
-/// these atomics are the live consumer-facing authority.
-fn runtime_global_value(name: &str) -> Option<String> {
-    use std::sync::atomic::Ordering::SeqCst;
-    let day_time = |time: &std::sync::RwLock<tidb_vardef::DayTime>| {
-        time.read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .format()
-    };
-    match name {
-        tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI => Some(tidb_variable::cloud_storage::get_cloud_storage_uri()),
-        tidb_vardef::tidb_vars::TIDB_TTL_SCAN_BATCH_SIZE => {
-            Some(tidb_vardef::TTL_SCAN_BATCH_SIZE.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_BATCH_SIZE => {
-            Some(tidb_vardef::TTL_DELETE_BATCH_SIZE.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_RATE_LIMIT => {
-            Some(tidb_vardef::TTL_DELETE_RATE_LIMIT.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME => {
-            Some(day_time(&tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_START_TIME))
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME => {
-            Some(day_time(&tidb_vardef::TTL_JOB_SCHEDULE_WINDOW_END_TIME))
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_SCAN_WORKER_COUNT => {
-            Some(tidb_vardef::TTL_SCAN_WORKER_COUNT.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_DELETE_WORKER_COUNT => {
-            Some(tidb_vardef::TTL_DELETE_WORKER_COUNT.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_TTL_RUNNING_TASKS => {
-            Some(tidb_vardef::TTL_RUNNING_TASKS.load(SeqCst).to_string())
-        }
-        tidb_vardef::tidb_vars::PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => Some(
-            tidb_vardef::CONNECT_ATTRS_SIZE
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string(),
-        ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_FOREIGN_KEY => Some(
-            if tidb_vardef::ENABLE_FOREIGN_KEY.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE => Some(
-            if tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => Some(
-            if tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY => Some(
-            tidb_vardef::AUTO_ANALYZE_CONCURRENCY
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string(),
-        ),
-        tidb_vardef::tidb_vars::TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
-            Some(tidb_vardef::circuit_breaker_pd_metadata_error_rate_threshold_ratio().to_string())
-        }
-        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL => Some(
-            if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE => Some(
-            if tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON".to_owned()
-            } else {
-                "OFF".to_owned()
-            },
-        ),
-        _ => None,
-    }
-}
 
 
 impl GlobalSysvars {
@@ -808,41 +717,14 @@ impl GlobalSysvars {
         if def.name == tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY {
             return Ok("1".to_owned());
         }
-        if self.publishes_runtime_settings
-            && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
-        {
-            if tidb_config_deploymode::is_starter() {
-                return Ok("ON".to_owned());
-            }
-            return Ok(if tidb_tls::REQUIRE_SECURE_TRANSPORT
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                "ON"
-            } else {
-                "OFF"
-            }
-            .to_owned());
-        }
-        if self.publishes_runtime_settings
-            && def.name == tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE
-        {
-            return Ok(
-                if tidb_vardef::ENABLE_TTL_JOB.load(std::sync::atomic::Ordering::SeqCst) {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-                .to_owned(),
-            );
-        }
-        if self.publishes_runtime_settings {
-            if let Some(value) = runtime_global_value(def.name) {
-                return Ok(value);
-            }
-        }
         if self.publishes_runtime_settings {
             if let Some(value) = runtime_instance_value(self, def) {
                 return Ok(value);
+            }
+            // Go `SysVar.GetGlobal`: the variable's process-wide value is the
+            // live table's answer (a scratch table answers what it stores).
+            if let Some(get_global) = def.get_global {
+                return Ok(get_global());
             }
         }
         let snapshot = Arc::clone(
@@ -1061,8 +943,8 @@ impl GlobalSysvars {
             if let Some(value) = runtime_instance_value(self, def) {
                 return Ok(value);
             }
-            if let Some(value) = runtime_global_value(def.name) {
-                return Ok(value);
+            if let Some(get_global) = def.get_global {
+                return Ok(get_global());
             }
         }
         let snapshot = Arc::clone(
