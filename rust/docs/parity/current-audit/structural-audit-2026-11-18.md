@@ -43,7 +43,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 
 | Row | Statement | Go | Rust |
 | --- | --- | --- | --- |
-| B03 | `tidb-server -store unistore -path ...` | starts | `unsupported option -store` |
 
 Probed with equal answers (not findings): `CAST ... AS UNSIGNED ARRAY`
 outside an index, expression indexes, generated and non-literal column

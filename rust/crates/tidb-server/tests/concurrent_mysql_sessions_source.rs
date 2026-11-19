@@ -80,15 +80,13 @@ fn config() -> NodeConfig {
 }
 
 fn config_with_token_limit(limit: &str) -> NodeConfig {
-    tidb_server::parse_node_config([
+    let mut config = tidb_server::parse_node_config([
         "tidb-server",
+        "--store",
+        "tikv",
         "--path",
         "127.0.0.1:2379",
-        "--auth-file",
-        "/tmp/campaign21-users.tsv",
-        "--max-connections",
-        "3",
-        "--port",
+        "-P",
         "0",
         // Go's server tests clear `cfg.Socket`; every node here binds port 0.
         "--socket",
@@ -96,7 +94,10 @@ fn config_with_token_limit(limit: &str) -> NodeConfig {
         "--token-limit",
         limit,
     ])
-    .unwrap()
+    .unwrap();
+    // Go `cfg.Instance.MaxConnections`.
+    config.max_connections = 3;
+    config
 }
 
 fn users() -> ConfiguredUserStore {

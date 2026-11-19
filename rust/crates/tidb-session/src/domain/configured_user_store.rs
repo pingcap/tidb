@@ -28,9 +28,6 @@
 //! admits the requested identity without reading a row or checking a secret.
 
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 
 use tidb_privilege::{check_password_for_plugin, AccountLockout, PrivilegeRegistry};
@@ -270,37 +267,10 @@ impl ConfiguredUserStore {
         .map_err(AuthenticationFailure::AutoLocked)
     }
 
-    /// Opens and parses one strict TSV auth file.
-    ///
-    /// Each record is
-    /// `username<TAB>host<TAB>mysql_native_password<TAB>*40HEX`. On Unix the
-    /// already-opened descriptor must be a regular file with mode exactly
-    /// `0600`; validation and reading use the same descriptor.
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfiguredUserStoreError> {
-        let mut file = File::open(path).map_err(ConfiguredUserStoreError::Io)?;
-        let metadata = file.metadata().map_err(ConfiguredUserStoreError::Io)?;
-        if !metadata.file_type().is_file() {
-            return Err(ConfiguredUserStoreError::NotRegularFile);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            if metadata.permissions().mode() & 0o7777 != 0o600 {
-                return Err(ConfiguredUserStoreError::InvalidPermissions);
-            }
-            if metadata.uid() != rustix::process::getuid().as_raw() {
-                return Err(ConfiguredUserStoreError::InvalidOwner);
-            }
-        }
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .map_err(ConfiguredUserStoreError::Io)?;
-        Self::parse(&contents)
-    }
-
-    /// Parses strict TSV contents after the file owner validates its
-    /// metadata, provisioning one `mysql.user` row per record.
+    /// An account table from strict TSV text, one `mysql.user` row per
+    /// record: a test fixture's accounts, which
+    /// [`crate::domain::cluster_session_node::provision_accounts`] makes the
+    /// store's own.
     ///
     /// A record's stored hash must be a strict `*40HEX` stage-two value or
     /// EMPTY, the latter provisioning a passwordless account exactly as
@@ -878,17 +848,9 @@ impl std::fmt::Debug for ConfiguredUserStore {
     }
 }
 
-/// Safe startup auth-file failure categories.
+/// Why a fixture's account text is refused.
 #[derive(Debug)]
 pub enum ConfiguredUserStoreError {
-    /// The file could not be opened, inspected, or read.
-    Io(std::io::Error),
-    /// The opened descriptor is not a regular file.
-    NotRegularFile,
-    /// Unix secret-file permissions are not exactly `0600`.
-    InvalidPermissions,
-    /// The Unix secret file is not owned by the effective process user.
-    InvalidOwner,
     /// No account rows were present.
     EmptyStore,
     /// A record does not have four nonempty required fields.
@@ -917,14 +879,6 @@ pub enum ConfiguredUserStoreError {
 impl std::fmt::Display for ConfiguredUserStoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(error) => write!(formatter, "could not read authentication file: {error}"),
-            Self::NotRegularFile => formatter.write_str("authentication file is not regular"),
-            Self::InvalidPermissions => {
-                formatter.write_str("authentication file permissions must be 0600")
-            }
-            Self::InvalidOwner => {
-                formatter.write_str("authentication file must be owned by the process user")
-            }
             Self::EmptyStore => formatter.write_str("authentication file contains no accounts"),
             Self::MalformedRecord { line } => {
                 write!(formatter, "authentication file record {line} is malformed")
@@ -945,14 +899,7 @@ impl std::fmt::Display for ConfiguredUserStoreError {
     }
 }
 
-impl std::error::Error for ConfiguredUserStoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(error) => Some(error),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for ConfiguredUserStoreError {}
 
 #[cfg(test)]
 mod account_tls_batch_admission_controls {

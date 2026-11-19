@@ -42,15 +42,32 @@ fn main() -> ExitCode {
     // Go's runtime records its start, which `time.Now()` measures from.
     tidb_monotime::mark_process_start();
     let arguments = std::env::args().collect::<Vec<_>>();
-    if arguments
-        .iter()
-        .skip(1)
-        .any(|argument| argument == "-h" || argument == "--help")
-    {
-        println!("{}", tidb_server::node_config_help_text());
+    // Go `initFlagSet`: `fset.Parse`, then `-help` prints the usage and exits.
+    let flags = match tidb_server::parse_main_flags(arguments.clone()) {
+        Ok(flags) => flags,
+        Err(error) => {
+            eprintln!("{error}");
+            eprint!("{}", tidb_server::node_config_help_text());
+            return ExitCode::from(2);
+        }
+    };
+    if flags.help {
+        eprint!("{}", tidb_server::node_config_help_text());
         return ExitCode::SUCCESS;
     }
-    if arguments.iter().skip(1).any(|argument| argument == "-V") {
+    // Go `main`: `tidb-server [-redact=...] collect-log <input> [<output>]`
+    // de-redacts a log file and exits.
+    if flags.args.first().map(String::as_str) == Some("collect-log") && flags.args.len() > 1 {
+        let output = flags.args.get(2).map_or("-", String::as_str);
+        return match tidb_redact::de_redact_file(flags.redact.unwrap_or(false), &flags.args[1], output) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    if flags.version {
         return match tidb_server::initialize_versions_for_display(arguments) {
             Ok(()) => {
                 println!("{}", tidb_printer::get_tidb_info());
@@ -73,7 +90,7 @@ fn main() -> ExitCode {
             runtime_exit_code(run_configured_node(config))
         }
         Err(NodeConfigError::HelpRequested) => {
-            println!("{}", tidb_server::node_config_help_text());
+            eprint!("{}", tidb_server::node_config_help_text());
             ExitCode::SUCCESS
         }
         Err(NodeConfigError::ConfigCheckSucceeded) => {

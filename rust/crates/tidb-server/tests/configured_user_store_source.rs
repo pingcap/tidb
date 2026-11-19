@@ -14,16 +14,11 @@
 
 #![allow(dead_code, missing_docs)]
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use sha1::{Digest, Sha1};
 use tidb_server::TransportKind;
 use tidb_privilege::load::registry_from_user_rows;
 use tidb_privilege::loaded::LoadedUser;
-use tidb_server::{AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError};
+use tidb_server::{AuthenticationFailure, ConfiguredUserStore};
 
 const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 const SOURCE_SALT: [u8; 20] = [
@@ -51,13 +46,13 @@ impl Drop for RestoreRequireSecureTransport {
 }
 
 #[test]
-fn strict_file_load_authenticates_the_most_specific_canonical_host() {
-    let file = AuthFile::new(&format!(
+fn authentication_matches_the_most_specific_canonical_host() {
+    let store = ConfiguredUserStore::parse(&format!(
         "alice\t%\tmysql_native_password\t{ABC_HASH}\n\
          alice\tlocalhost\tmysql_native_password\t{ABC_HASH}\n\
          alice\t127.0.0.%\tmysql_native_password\t{ABC_HASH}\n"
-    ));
-    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    ))
+    .expect("account rows");
     assert_eq!(store.len(), 3);
     assert!(!store.is_empty());
 
@@ -221,28 +216,6 @@ fn diagnostics_never_render_password_equivalent_material() {
     assert!(!error.to_string().contains(ABC_HASH));
 }
 
-#[cfg(unix)]
-#[test]
-fn file_permissions_must_be_exactly_0600() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let file = AuthFile::new(&format!("alice\t%\tmysql_native_password\t{ABC_HASH}\n"));
-    fs::set_permissions(file.path(), fs::Permissions::from_mode(0o640)).expect("chmod");
-    assert!(matches!(
-        ConfiguredUserStore::load(file.path()),
-        Err(ConfiguredUserStoreError::InvalidPermissions)
-    ));
-
-    fs::set_permissions(file.path(), fs::Permissions::from_mode(0o1600)).expect("chmod");
-    assert!(matches!(
-        ConfiguredUserStore::load(file.path()),
-        Err(ConfiguredUserStoreError::InvalidPermissions)
-    ));
-
-    fs::set_permissions(file.path(), fs::Permissions::from_mode(0o600)).expect("chmod");
-    ConfiguredUserStore::load(file.path()).expect("exact mode");
-}
-
 fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
     let stage_one = Sha1::digest(password);
     let stage_two = Sha1::digest(stage_one);
@@ -259,42 +232,6 @@ fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
         *destination = stage_one ^ challenge;
     }
     response
-}
-
-struct AuthFile {
-    path: PathBuf,
-}
-
-impl AuthFile {
-    fn new(contents: &str) -> Self {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "tidb-rust-auth-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&path).expect("create auth file");
-        file.write_all(contents.as_bytes())
-            .expect("write auth file");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for AuthFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
 }
 
 /// The `mysql.user` row of `bob`@`%` with the password `abc`.

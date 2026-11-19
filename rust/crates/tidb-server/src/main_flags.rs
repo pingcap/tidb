@@ -40,6 +40,10 @@ use tidb_config::config_tree::config::Config;
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 pub struct MainFlags {
+    /// `-V` (`nmVersion`): print the version and exit.
+    pub version: bool,
+    /// `-help`: print the usage and exit (Go's flag package also takes `-h`).
+    pub help: bool,
     /// `-config` (`main.go`'s `nmConfig`): the TOML file path.
     pub config_path: Option<String>,
     pub config_check: bool,
@@ -57,6 +61,10 @@ pub struct MainFlags {
     /// `Instance.TiDBEnableDDL` (`main.go:751`).
     pub run_ddl: Option<bool>,
     pub token_limit: Option<i64>,
+    pub plugin_dir: Option<String>,
+    pub plugin_load: Option<String>,
+    /// `-affinity-cpus`, which `main` applies itself (`setCPUAffinity`).
+    pub affinity_cpus: Option<String>,
     pub repair_mode: Option<bool>,
     pub repair_list: Option<String>,
     pub temp_dir: Option<String>,
@@ -77,6 +85,8 @@ pub struct MainFlags {
     pub status_port: Option<String>,
     pub metrics_addr: Option<String>,
     pub metrics_interval: Option<u64>,
+    /// `-redact`, read by the `collect-log` subcommand.
+    pub redact: Option<bool>,
     // PROXY protocol (`main.go:288-290`)
     pub proxy_protocol_networks: Option<String>,
     pub proxy_protocol_header_timeout: Option<u64>,
@@ -94,6 +104,8 @@ pub struct MainFlags {
     pub max_idle_seconds: Option<u64>,
     pub keyspace_activate: Option<bool>,
     pub starter_additional_params: Option<String>,
+    /// Go `fset.Args()`: the arguments after the flags (`collect-log`).
+    pub args: Vec<String>,
 }
 
 /// One unrecognized or malformed argument, with Go's flag-package shape.
@@ -123,13 +135,19 @@ impl MainFlags {
         let mut flags = Self::default();
         let mut queue = arguments.iter().peekable();
         while let Some(argument) = queue.next() {
+            // Go's `flag` package stops at the first non-flag argument or at
+            // a `--` terminator; the rest are `fset.Args()`.
+            if argument == "--" {
+                flags.args = queue.cloned().collect();
+                break;
+            }
             let Some(stripped) = argument
                 .strip_prefix("--")
                 .or_else(|| argument.strip_prefix('-'))
+                .filter(|_| argument.len() > 1)
             else {
-                return Err(FlagParseError(format!(
-                    "unexpected non-flag argument {argument}"
-                )));
+                flags.args = std::iter::once(argument.clone()).chain(queue.cloned()).collect();
+                break;
             };
             let (name, inline) = match stripped.split_once('=') {
                 Some((name, value)) => (name, Some(value.to_owned())),
@@ -156,6 +174,8 @@ impl MainFlags {
                 }
             };
             match name {
+                "V" => flags.version = boolean(&inline)?,
+                "help" | "h" => flags.help = true,
                 "config" => flags.config_path = Some(take()?),
                 "config-check" => flags.config_check = boolean(&inline)?,
                 "config-strict" => flags.config_strict = boolean(&inline)?,
@@ -173,6 +193,10 @@ impl MainFlags {
                         FlagParseError(format!("invalid value \"{value}\" for flag -token-limit"))
                     })?);
                 }
+                "plugin-dir" => flags.plugin_dir = Some(take()?),
+                "plugin-load" => flags.plugin_load = Some(take()?),
+                "affinity-cpus" => flags.affinity_cpus = Some(take()?),
+                "redact" => flags.redact = Some(boolean(&inline)?),
                 "repair-mode" => flags.repair_mode = Some(boolean(&inline)?),
                 "run-ddl" => flags.run_ddl = Some(boolean(&inline)?),
                 "repair-list" => flags.repair_list = Some(take()?),
@@ -295,6 +319,12 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
         cfg.lease = lease.clone();
     }
     flags.override_token_limit(cfg);
+    if let Some(load) = &flags.plugin_load {
+        cfg.instance.plugin_load = load.clone();
+    }
+    if let Some(dir) = &flags.plugin_dir {
+        cfg.instance.plugin_dir = dir.clone();
+    }
     if let Some(repair) = flags.repair_mode {
         cfg.repair_mode = repair;
     }
@@ -591,128 +621,34 @@ mod tests {
         assert!(error.contains("mutually exclusive"), "{error}");
     }
 
-    /// The extractor accepts every `main.go` spelling and leaves the node's
-    /// own options untouched and in order — the two surfaces coexist the way
-    /// one binary demands.
+    /// Go's one flag set: every `main.go` spelling parses, and a name it
+    /// does not define is Go's `flag provided but not defined` error.
     #[test]
-    fn main_go_flags_are_extracted_and_node_options_survive() {
-        let (flags, remaining) = extract_main_go_flags(vec![
+    fn main_go_flags_are_the_whole_command_line() {
+        let flags = MainFlags::parse(&[
             "--lease=45s".to_owned(),
-            "--store".to_owned(),
+            "-store".to_owned(),
             "unistore".to_owned(),
             "--repair-mode".to_owned(),
-            "--token-limit".to_owned(),
+            "-token-limit".to_owned(),
             "1000".to_owned(),
-            "--auth-file".to_owned(),
-            "/tmp/u.tsv".to_owned(),
+            "-affinity-cpus=1,2".to_owned(),
             "--keyspace-activate=true".to_owned(),
             "--run-ddl=false".to_owned(),
+            "-V".to_owned(),
         ])
-        .expect("the mixed line parses");
+        .expect("the line parses");
         assert_eq!(flags.ddl_lease.as_deref(), Some("45s"));
         assert_eq!(flags.repair_mode, Some(true));
         assert_eq!(flags.run_ddl, Some(false));
         assert_eq!(flags.token_limit, Some(1000));
         assert_eq!(flags.keyspace_activate, Some(true));
-        assert_eq!(
-            remaining,
-            vec!["--auth-file", "/tmp/u.tsv"]
-        );
+        assert_eq!(flags.affinity_cpus.as_deref(), Some("1,2"));
+        assert!(flags.version);
         assert_eq!(flags.store.as_deref(), Some("unistore"));
+        assert_eq!(
+            MainFlags::parse(&["--auth-file".to_owned(), "/tmp/u.tsv".to_owned()]).unwrap_err(),
+            FlagParseError("flag provided but not defined: -auth-file".to_owned())
+        );
     }
-}
-
-/// The names `main.go` defines that the node's own parser does not: consumed
-/// here so every Go spelling is accepted, exactly as `initFlagSet` accepts
-/// them, with the parsed values carried for the fields whose concepts the
-/// node runs today (`--lease` drives the schema lease) and retained visibly
-/// for the rest.
-const MAIN_GO_ONLY_FLAGS: &[(&str, bool)] = &[
-    // (name, is_boolean)
-    ("config", false),
-    ("store", false),
-    ("path", false),
-    ("host", false),
-    ("P", false),
-    ("lease", false),
-    ("token-limit", false),
-    ("plugin-dir", false),
-    ("plugin-load", false),
-    ("run-ddl", true),
-    ("repair-mode", true),
-    ("repair-list", false),
-    ("temp-dir", false),
-    ("cluster-ca", false),
-    ("cluster-cert", false),
-    ("cluster-key", false),
-    ("sql-ca", false),
-    ("sql-cert", false),
-    ("sql-key", false),
-    ("L", false),
-    ("log-file", false),
-    ("log-slow-query", false),
-    ("log-general", false),
-    ("report-status", true),
-    ("status-host", false),
-    ("status", false),
-    ("metrics-addr", false),
-    ("metrics-interval", false),
-    ("redact", true),
-    ("proxy-protocol-networks", false),
-    ("proxy-protocol-header-timeout", false),
-    ("proxy-protocol-fallbackable", true),
-    ("initialize-secure", true),
-    ("initialize-insecure", true),
-    ("initialize-sql-file", false),
-    ("keyspace-name", false),
-    ("tidb-service-scope", false),
-    ("standby", true),
-    ("activation-timeout", false),
-    ("max-idle-seconds", false),
-    ("keyspace-activate", true),
-    ("starter-additional-params", false),
-    ("advertise-address", false),
-    ("cors", false),
-    ("socket", false),
-    ("config-check", true),
-    ("config-strict", true),
-];
-
-/// Splits `main.go`-only flags out of a raw argument list, leaving the node's
-/// own options untouched and in order. The extracted half parses through
-/// [`MainFlags::parse`]; a malformed value there is the same error the full
-/// parser gives.
-pub fn extract_main_go_flags(
-    arguments: Vec<String>,
-) -> Result<(MainFlags, Vec<String>), FlagParseError> {
-    let mut extracted = Vec::new();
-    let mut remaining = Vec::new();
-    let mut queue = arguments.into_iter().peekable();
-    while let Some(argument) = queue.next() {
-        let stripped = argument
-            .strip_prefix("--")
-            .or_else(|| argument.strip_prefix('-'));
-        let owned = stripped.and_then(|body| {
-            let name = body.split_once('=').map_or(body, |(name, _)| name);
-            MAIN_GO_ONLY_FLAGS
-                .iter()
-                .find(|(candidate, _)| *candidate == name)
-        });
-        match owned {
-            Some((_, is_boolean)) => {
-                let has_inline = argument.contains('=');
-                extracted.push(argument.clone());
-                // A value-taking flag written as two arguments carries its
-                // value along; a boolean never consumes the next argument.
-                if !is_boolean && !has_inline {
-                    if let Some(value) = queue.next() {
-                        extracted.push(value);
-                    }
-                }
-            }
-            None => remaining.push(argument),
-        }
-    }
-    let flags = MainFlags::parse(&extracted)?;
-    Ok((flags, remaining))
 }

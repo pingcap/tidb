@@ -30,7 +30,6 @@ TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
 RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
 AUTH_USER=campaign28
 AUTH_PASSWORD=campaign28-native-password
 DATABASE=campaign28
@@ -112,8 +111,8 @@ launch_rust_node() {
   ready_before=$(grep -cF '"event":"cluster_session_node_ready"' "${RUST_LOG}" 2>/dev/null || true)
   ready_before=${ready_before:-0}
   "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-    --host 127.0.0.1 --port "${RUST_PORT}" \
-    --auth-file "${AUTH_FILE}" --max-connections 4 >>"${RUST_LOG}" 2>&1 &
+    --host 127.0.0.1 -P "${RUST_PORT}" \
+    >>"${RUST_LOG}" 2>&1 &
   RUST_PID=$!
   for _ in $(seq 1 120); do
     if ! kill -0 "${RUST_PID}" 2>/dev/null; then
@@ -167,11 +166,6 @@ command -v python3 >/dev/null || { echo "missing python3 for the raw prepared cl
 [[ -f "${RAW_CLIENT}" ]] || { echo "missing raw prepared client: ${RAW_CLIENT}" >&2; exit 1; }
 python3 "${RAW_CLIENT}" self-test >/dev/null || { echo "raw prepared client self-test failed" >&2; exit 1; }
 
-# --- Auth file ----------------------------------------------------------------
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" | openssl dgst -sha1 -binary | openssl dgst -sha1 -hex | awk '{ print toupper($NF) }')
-[[ "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]] || { echo "could not derive native-password hash" >&2; exit 1; }
-(umask 077; printf '%s\t%s\t%s\t*%s\n' "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
 
 # --- Cluster ------------------------------------------------------------------
 echo "stage-e-write: starting tag-owned playground (3 TiKV + one Go TiDB)"
@@ -221,6 +215,12 @@ echo "stage-e-write: table split into ${REGION_COUNT} regions (matrix keys 101 a
 
 # --- Rust node ----------------------------------------------------------------
 echo "stage-e-write: launching Rust node on ${RUST_PORT} against table ${TABLE_ID}"
+# The Rust node's accounts are the cluster's `mysql.user` (Go's one account
+# source), so the harness account is created through the Go TiDB.
+mysql_go <<SQL
+CREATE USER IF NOT EXISTS '${AUTH_USER}'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '${AUTH_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${AUTH_USER}'@'127.0.0.1';
+SQL
 launch_rust_node
 ORIGINAL_RUST_PID=${RUST_PID}
 

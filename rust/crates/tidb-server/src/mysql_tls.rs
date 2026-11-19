@@ -111,7 +111,7 @@ impl MysqlServerTls {
         let paths = (cert.to_owned(), key.to_owned());
         let certs = read_certificates(cert)?;
         let key = read_private_key(key)?;
-        let mut tls = Self::from_material(certs, key, "configured --ssl-cert/--ssl-key")?;
+        let mut tls = Self::from_material(certs, key, "configured ssl-cert/ssl-key")?;
         tls.watch_certificate_files(paths)?;
         Ok(tls)
     }
@@ -267,7 +267,7 @@ pub fn resolve_server_tls(
 ) -> Result<Option<MysqlServerTls>, MysqlTlsError> {
     let generated;
     let (cert, key, origin) = match (config.ssl_cert.as_deref(), config.ssl_key.as_deref()) {
-        (Some(cert), Some(key)) => (cert, key, "configured --ssl-cert/--ssl-key"),
+        (Some(cert), Some(key)) => (cert, key, "configured ssl-cert/ssl-key"),
         _ if config.auto_tls => {
             generated = (
                 config.spill_storage.path.join("cert.pem"),
@@ -1014,7 +1014,7 @@ mod account_tls_batch_tests {
 
     fn generated_config() -> crate::NodeConfig {
         let mut config =
-            crate::parse_node_config(["tidb-server", "--store", "unistore", "--load-privileges"])
+            crate::parse_node_config(["tidb-server", "--store", "unistore"])
                 .unwrap();
         config.auto_tls = true;
         config.global_config.security.rsa_key_size = 2048;

@@ -253,12 +253,10 @@ mod tests {
             "tidb-server",
             "--store",
             "unistore",
-            "--port",
+            "-P",
             "0",
             "--socket",
             "",
-            "--auth-file",
-            "/dev/null",
         ])
         .unwrap();
         let users = Arc::new(tidb_session::domain::configured_user_store::ConfiguredUserStore::parse(&format!(
@@ -285,14 +283,12 @@ mod tests {
             "tidb-server",
             "--store",
             "unistore",
-            "--port",
+            "-P",
             "0",
             "--status",
             status_port.as_str(),
             "--socket",
             "",
-            "--auth-file",
-            "/dev/null",
         ])
         .unwrap();
         let users = Arc::new(tidb_session::domain::configured_user_store::ConfiguredUserStore::parse(&format!(
@@ -908,7 +904,7 @@ mod tests {
     #[test]
     fn tiflash_replica_deprecated_answers_like_go() {
         let config = crate::parse_node_config([
-            "tidb-server", "--store", "unistore", "--port", "0", "--socket", "", "--auth-file", "/dev/null",
+            "tidb-server", "--store", "unistore", "-P", "0", "--socket", "",
         ])
         .unwrap();
         let users = Arc::new(

@@ -193,14 +193,6 @@ done
 trap cleanup EXIT INT TERM
 
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
-  | openssl dgst -sha1 -binary | openssl dgst -sha1 -hex \
-  | awk '{ print toupper($NF) }')
-(umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
-unset AUTH_HASH_HEX
 
 step "cluster: TiUP playground ${CLUSTER_VERSION} at offset ${PORT_OFFSET}"
 TIDB_CONFIG="${RUNTIME_DIR}/tidb.toml"
@@ -245,11 +237,17 @@ rust_sql() {
 go_sql -e "DROP DATABASE IF EXISTS ${DB}; CREATE DATABASE ${DB};" >/dev/null
 go_sql -D "${DB}" -e "CREATE TABLE lu (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)" >/dev/null
 
-step "Rust node startup (--cluster-session)"
+# The Rust node's accounts are the cluster's `mysql.user` (Go's one account
+# source), so the harness account is created through the Go TiDB.
+go_sql <<SQL
+CREATE USER IF NOT EXISTS '${AUTH_USER}'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '${AUTH_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${AUTH_USER}'@'127.0.0.1';
+SQL
+
+step "Rust node startup"
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-  --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --cluster-session --lease-ms 2000 \
-  --auth-file "${AUTH_FILE}" --max-connections 32 \
+  --host 127.0.0.1 -P "${RUST_SQL_PORT}" \
+  -lease 2000ms \
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 rust_ready=false

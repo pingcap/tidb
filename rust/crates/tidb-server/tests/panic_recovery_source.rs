@@ -152,15 +152,13 @@ impl QuerySessionFactory for PanickingFactory {
 }
 
 fn config() -> NodeConfig {
-    tidb_server::parse_node_config([
+    let mut config = tidb_server::parse_node_config([
         "tidb-server",
+        "--store",
+        "tikv",
         "--path",
         "127.0.0.1:2379",
-        "--auth-file",
-        "/tmp/campaign21-users.tsv",
-        "--max-connections",
-        "2",
-        "--port",
+        "-P",
         "0",
         // Go's server tests clear `cfg.Socket`.
         "--socket",
@@ -168,7 +166,10 @@ fn config() -> NodeConfig {
         "--token-limit",
         "1",
     ])
-    .unwrap()
+    .unwrap();
+    // Go `cfg.Instance.MaxConnections`.
+    config.max_connections = 2;
+    config
 }
 
 fn users() -> ConfiguredUserStore {

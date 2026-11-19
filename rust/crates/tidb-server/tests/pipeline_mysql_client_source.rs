@@ -191,6 +191,19 @@ fn handshake_reply_as(
     additional_capabilities: u32,
     collation: u8,
 ) -> Vec<u8> {
+    handshake_reply_with_password(client, reader, user, b"secret", additional_capabilities, collation)
+}
+
+/// [`handshake_reply_as`] with `password` (empty: no auth response, as a
+/// client sends for a passwordless account).
+fn handshake_reply_with_password(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &[u8],
+    password: &[u8],
+    additional_capabilities: u32,
+    collation: u8,
+) -> Vec<u8> {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     assert_eq!(
@@ -212,7 +225,7 @@ fn handshake_reply_as(
     response.extend_from_slice(&[0; 23]);
     response.extend_from_slice(user);
     response.push(0);
-    let auth = native_response(b"secret", &salt);
+    let auth = if password.is_empty() { Vec::new() } else { native_response(password, &salt).to_vec() };
     response.push(u8::try_from(auth.len()).unwrap());
     response.extend_from_slice(&auth);
     response.extend_from_slice(b"mysql_native_password\0");
@@ -3529,14 +3542,6 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
     let (port, status_port) = (free_port(), free_port());
     let base = std::env::temp_dir().join(format!("tidb-server-pooled-write-{}", std::process::id()));
-    let users = base.with_extension("users");
-    // `root`, the bootstrapped account, with the harness password `secret`.
-    std::fs::write(&users, "root\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&users, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
     struct Child(std::process::Child);
     impl Drop for Child {
         fn drop(&mut self) {
@@ -3549,7 +3554,6 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
             .args(["--store", "unistore", "--path", base.to_str().unwrap()])
             .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
             .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
-            .args(["--auth-file", users.to_str().unwrap()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -3569,7 +3573,8 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     // The flags a pymysql client sends, whose text queries the node splits
     // into statements as Go's `handleQuery` does.
     let multi = (1 << 16) | (1 << 17);
-    assert_eq!(handshake_reply_as(&mut client, &mut reader, b"root", multi, 46)[0], 0, "auth OK");
+    // The bootstrap's passwordless `root@%`.
+    assert_eq!(handshake_reply_with_password(&mut client, &mut reader, b"root", b"", multi, 46)[0], 0, "auth OK");
     for sql in [
         "SET AUTOCOMMIT = 1",
         "CREATE DATABASE w",
@@ -3606,7 +3611,6 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "2.38 KB");
     run_query(&mut client, &mut reader, "TRACE SELECT * FROM t");
     assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "1.76 KB");
-    let _ = std::fs::remove_file(&users);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -3638,7 +3642,6 @@ fn a_login_loads_its_user_and_counts_against_max_user_connections_like_go() {
             .args(["--store", "unistore", "--path", base.to_str().unwrap()])
             .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
             .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
-            .arg("--load-privileges")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

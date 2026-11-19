@@ -47,6 +47,7 @@ tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-autoid-service = { path = "../tidb-autoid-service" }
+tidb-redact = { path = "../tidb-redact" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-owner = { path = "../tidb-owner" }

@@ -108,12 +108,7 @@ pub(super) fn cop_backed_stack_with_config(
             config.store = tidb_config::store::StoreType("unistore".to_owned());
             config.port = 0;
         },
-        tidb_domain_core::node_config::NodeOptions {
-            // A requirement of the account source only: the test passes its
-            // own user store below, so the option never names real rows.
-            auth_file: Some("/dev/null".to_owned()),
-            ..tidb_domain_core::node_config::NodeOptions::default()
-        },
+        tidb_domain_core::node_config::NodeOptions::default(),
     )
     .expect("node config");
     f(&mut config);
@@ -5381,37 +5376,6 @@ fn analyze_samples_the_go_handle_ranges() {
         );
     }
     stack.rpc.set_send_hook(None);
-}
-
-/// The node's `--auth-file` accounts are provisioned through Go's account
-/// statements at boot: the bootstrap's `root@%` takes the file's credential
-/// and keeps its full grant, and the credential is the table row every later
-/// account statement reads, so creating another account leaves it as it is.
-#[test]
-fn auth_file_accounts_are_provisioned_through_account_statements() {
-    let (stack, _users) = cop_backed_stack();
-    let mut session = stack
-        .factory
-        .open_session(session_context(81))
-        .expect("session opens");
-    let root = |session: &mut Session| {
-        displayed(rows(
-            session,
-            "SELECT user, host, authentication_string, plugin, Super_priv, Grant_priv FROM mysql.user ORDER BY user, host",
-        ))
-    };
-    let want = vec![vec![
-        "root".to_owned(),
-        "%".to_owned(),
-        ABC_HASH.to_owned(),
-        "mysql_native_password".to_owned(),
-        "Y".to_owned(),
-        "Y".to_owned(),
-    ]];
-    assert_eq!(root(&mut session), want);
-    rows(&mut session, "CREATE USER 'seed_other'@'%'");
-    rows(&mut session, "DROP USER 'seed_other'@'%'");
-    assert_eq!(root(&mut session), want);
 }
 
 /// Go `getAdjustedSampleRate` takes `RealtimeCount` from
@@ -10904,7 +10868,7 @@ fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
 /// `CREATE VIEW` over the real embedded store creates the view, and it reads
 /// back.
 ///
-/// This is the path `--store unistore --cluster-session` actually serves, and
+/// This is the path `-store unistore` actually serves, and
 /// it had NO coverage: the mock-seam modules in this directory serve
 /// `kv_client: None`, and the pipeline session's own `CREATE VIEW` wire test
 /// exercises a different session. That blind spot is how seven commits landed
@@ -29829,10 +29793,7 @@ fn the_stack_arms_the_set_global_hooks_like_gos_domain() {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
             config.port = 0;
         },
-        tidb_domain_core::node_config::NodeOptions {
-            auth_file: Some("/dev/null".to_owned()),
-            ..tidb_domain_core::node_config::NodeOptions::default()
-        },
+        tidb_domain_core::node_config::NodeOptions::default(),
     )
     .expect("node config");
     let globals = crate::GlobalSysvars::before_domain();

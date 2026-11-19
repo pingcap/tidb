@@ -532,7 +532,6 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     worker_count: usize,
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
-    connection_timeout: Duration,
     _server_memory_limit: Option<ServerMemoryLimitRunner>,
     _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
 }
@@ -671,7 +670,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             worker_count: config.max_connections,
             shutdown,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
-            connection_timeout: config.connection_timeout,
             _server_memory_limit: server_memory_limit,
             _memory_usage_alarm: memory_usage_alarm,
         })
@@ -730,7 +728,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         mut prepare_stream: P,
     ) -> Result<(), SqlNodeError>
     where
-        P: FnMut(&ClientSocket, Duration) -> Result<(), SqlNodeError>,
+        P: FnMut(&ClientSocket) -> Result<(), SqlNodeError>,
     {
         let active_sockets = Arc::new(ActiveSockets::default());
         // Includes sockets still in authentication, before ProcessRegistry has
@@ -863,7 +861,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // Go `newConn` logs a socket option it could not set and serves
             // the connection anyway: one client's socket never ends the
             // listener (a peer that already closed fails its handshake).
-            if let Err(error) = prepare_stream(&stream, self.connection_timeout) {
+            if let Err(error) = prepare_stream(&stream) {
                 tidb_logutil::bg_logger()
                     .error("failed to set connection socket options", &[crate::zap_error(error)]);
             }
@@ -1506,19 +1504,13 @@ impl std::error::Error for SqlNodeError {
 /// more than one small write and the client's delayed ACK loses that race --
 /// which is precisely what an OLTP pooler's request/response pattern produces
 /// through any proxy or tunnel hop between the peers.
-pub(crate) fn prepare_accepted_stream(
-    stream: &ClientSocket,
-    timeout: Duration,
-) -> Result<(), SqlNodeError> {
+///
+/// No deadline is set: Go's `PacketIO` reads the handshake with none and
+/// writes with none; the command loop reads under `@@wait_timeout`.
+pub(crate) fn prepare_accepted_stream(stream: &ClientSocket) -> Result<(), SqlNodeError> {
     stream.set_nodelay(true).map_err(SqlNodeError::Listener)?;
     stream
         .set_nonblocking(false)
-        .map_err(SqlNodeError::Listener)?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(SqlNodeError::Listener)?;
-    stream
-        .set_write_timeout(Some(timeout))
         .map_err(SqlNodeError::Listener)
 }
 
@@ -1663,8 +1655,6 @@ mod tests {
             affinity_cpus: Vec::new(),
             pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
-            auth_file: PathBuf::from("unused"),
-            load_privileges: false,
             ssl_cert: None,
             ssl_key: None,
             ssl_ca: None,
@@ -1677,7 +1667,6 @@ mod tests {
             sem_config: String::new(),
             skip_grant_table: false,
             max_connections: 2,
-            connection_timeout: Duration::from_secs(5),
             deadlock_history_capacity: 10,
             deadlock_history_collect_retryable: false,
             schema_lease: Duration::from_millis(45_000),
@@ -1716,7 +1705,8 @@ mod tests {
         let tracker = node.tracker();
         let server = std::thread::spawn(move || {
             let mut prepared = 0;
-            node.run_accept_loop_with(Some(2), move |stream, timeout| {
+            node.run_accept_loop_with(Some(2), move |stream| {
+                let timeout = Duration::from_secs(5);
                 prepared += 1;
                 if prepared == 2 {
                     return Err(SqlNodeError::Listener(std::io::Error::other(
@@ -2038,25 +2028,17 @@ mod tests {
         let client = TcpStream::connect(addr).unwrap();
         let (server, _) = listener.accept().unwrap();
 
-        prepare_accepted_stream(
-            &ClientSocket::from(server.try_clone().unwrap()),
-            Duration::from_secs(30),
-        )
-        .unwrap();
+        prepare_accepted_stream(&ClientSocket::from(server.try_clone().unwrap())).unwrap();
 
         // Go's `setDefaultListenerSockopts` puts TCP_NODELAY on every accepted
         // connection; the Rust accept loop must match it or a Nagle-enabled
         // hop between server and client stalls small responses behind the
         // client's delayed ACK.
         assert_eq!(server.nodelay().unwrap(), true);
-        assert_eq!(
-            server.read_timeout().unwrap(),
-            Some(Duration::from_secs(30))
-        );
-        assert_eq!(
-            server.write_timeout().unwrap(),
-            Some(Duration::from_secs(30))
-        );
+        // Go's `PacketIO` sets no deadline on an accepted connection: the
+        // handshake and every write run without one.
+        assert_eq!(server.read_timeout().unwrap(), None);
+        assert_eq!(server.write_timeout().unwrap(), None);
         drop(client);
     }
 }

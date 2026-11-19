@@ -175,12 +175,7 @@ fn testkit_config() -> Result<NodeConfig, String> {
             config.port = 0;
             config.lease = "500ms".to_owned();
         },
-        NodeOptions {
-            // A requirement of the account source only: the node's user
-            // store is the one the bootstrap seeds.
-            auth_file: Some("/dev/null".to_owned()),
-            ..NodeOptions::default()
-        },
+        NodeOptions::default(),
     )
     .map_err(|error| format!("node config: {error:?}"))?;
     config.stats_lease = STATS_LEASE_FOR_TEST

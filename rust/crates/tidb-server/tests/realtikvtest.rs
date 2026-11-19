@@ -68,7 +68,6 @@ impl RealTiKV {
             "0".to_owned(),
             "--socket".to_owned(),
             String::new(),
-            "--load-privileges".to_owned(),
             "--temp-dir".to_owned(),
             temp_dir.display().to_string(),
             // Go `vardef.SetSchemaLease(500 * time.Millisecond)`.

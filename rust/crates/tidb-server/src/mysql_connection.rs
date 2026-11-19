@@ -2356,7 +2356,7 @@ fn run_connection_commands<S: QuerySession>(
         // variable before every packet, so the ceiling a client reads out of
         // `@@max_allowed_packet` is the one it is actually cut off at. This
         // node bound the reader once, from `NodeConfig`, and a server booted
-        // with `--max-allowed-packet 1048576` therefore answered 67108864
+        // with `max-allowed-packet = 1048576` therefore answered 67108864
         // while dropping the connection on a 2MB statement.
         if let Some(limit) = engine.max_allowed_packet() {
             reader.set_max_allowed_packet(limit);

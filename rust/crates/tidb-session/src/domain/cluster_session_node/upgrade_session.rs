@@ -94,31 +94,30 @@ fn quoted(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
-/// Provisions the node's `--auth-file` accounts (`accounts`, the registry it
-/// boots from) through Go's account statements on an internal session, as
-/// Go's bootstrap provisions `root@%` through SQL: the file is the whole
-/// account set of a node whose store starts empty each boot, so an account
-/// it does not list is dropped (`DROP USER`), a listed one that exists takes
-/// the file's credential when it holds another (`ALTER USER ... IDENTIFIED
-/// WITH ... AS`), and a
-/// new one is created, with Go's bootstrap `root@%` grant when the file
-/// makes it the superuser.
-/// Each statement's commit reloads the privilege cache from the tables.
-pub fn seed_auth_file_accounts(
+/// A test fixture's accounts (`accounts`) made the store's own through Go's
+/// account statements on an internal session, as Go's tests run `CREATE
+/// USER` / `ALTER USER`: they become the whole account set, so an account
+/// they do not list is dropped (`DROP USER`), a listed one that exists takes
+/// their credential when it holds another (`ALTER USER ... IDENTIFIED WITH
+/// ... AS`), and a new one is created, with Go's bootstrap `root@%` grant
+/// when it is a superuser. Each statement's commit reloads the privilege
+/// cache from the tables. A node's accounts are only ever its store's
+/// `mysql.user` (Go's one account source).
+pub fn provision_accounts(
     domain: &Arc<Domain>,
     accounts: &tidb_privilege::PrivilegeRegistry,
 ) -> Result<(), String> {
     // A statement runs on a SQL worker's stack, never the caller's.
     std::thread::scope(|scope| {
-        tidb_worker_stack::sql_worker_thread("tidb-auth-file-seed")
-            .spawn_scoped(scope, || seed_auth_file_accounts_on_worker(domain, accounts))
+        tidb_worker_stack::sql_worker_thread("tidb-account-fixture")
+            .spawn_scoped(scope, || provision_accounts_on_worker(domain, accounts))
             .map_err(|error| error.to_string())?
             .join()
             .map_err(|_| "the account seeding thread panicked".to_owned())?
     })
 }
 
-fn seed_auth_file_accounts_on_worker(
+fn provision_accounts_on_worker(
     domain: &Arc<Domain>,
     accounts: &tidb_privilege::PrivilegeRegistry,
 ) -> Result<(), String> {

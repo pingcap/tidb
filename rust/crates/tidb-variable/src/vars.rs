@@ -635,6 +635,18 @@ pub struct TlsConnectionState {
     pub peer_certificates: Vec<Vec<u8>>,
 }
 
+/// Go `NewSessionVars`' `systems`: only `character_set_connection` and
+/// `collation_connection`, at `charset.GetDefaultCharsetAndCollate()` -- two
+/// `skipInit` variables a session reads (the parser's connection charset)
+/// before anything loads the global tier.
+fn new_session_systems() -> HashMap<String, String> {
+    let (charset, collation) = tidb_charset::charset::get_default_charset_and_collate();
+    HashMap::from([
+        ("character_set_connection".to_owned(), charset.to_owned()),
+        ("collation_connection".to_owned(), collation.to_owned()),
+    ])
+}
+
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
@@ -684,7 +696,7 @@ impl Default for SessionVars {
             sandbox_mode: false,
             found_in_binding: false,
             prev_found_in_binding: false,
-            systems: HashMap::new(),
+            systems: new_session_systems(),
             autocommit: true,
             enable_ddl_analyze_exec_opt: false,
             enable_historical_stats: false,

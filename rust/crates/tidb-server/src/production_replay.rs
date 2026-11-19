@@ -350,12 +350,10 @@ impl ReplayBackend for UnistoreConnections {
             "tidb-server",
             "--store",
             "unistore",
-            "--port",
+            "-P",
             "0",
             "--status",
             status_port.as_str(),
-            "--auth-file",
-            "/dev/null",
             "--config",
             recording_config.as_str(),
         ])

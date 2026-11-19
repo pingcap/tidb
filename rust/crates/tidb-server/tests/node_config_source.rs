@@ -16,10 +16,10 @@ use tidb_spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
 fn required() -> Vec<&'static str> {
     vec![
         "tidb-server",
+        "--store",
+        "tikv",
         "--path",
         "127.0.0.1:2379,127.0.0.1:2380",
-        "--auth-file",
-        "/tmp/campaign21-users.tsv",
     ]
 }
 
@@ -67,8 +67,6 @@ deadlock-history-collect-retryable = true
         "tidb-server",
         "--config",
         &path,
-        "--auth-file",
-        "/tmp/campaign21-users.tsv",
     ]);
     let config =
         config.unwrap_or_else(|error| panic!("configured startup must be admitted: {error}"));
@@ -208,12 +206,12 @@ lease = "not-a-duration"
         &path,
         "--host",
         "127.0.0.1",
-        "--port",
+        "-P",
         "4406",
         "--store",
         "TIKV",
-        "--lease-ms",
-        "9000",
+        "-lease",
+        "9s",
     ]);
     let config = tidb_server::parse_node_config(args).unwrap();
     assert_eq!(config.port, 4406);
@@ -301,7 +299,7 @@ fn config_check_and_strict_modes_use_source_validation_without_starting_resource
 
 #[test]
 fn config_path_accepts_inline_syntax_and_reports_missing_files() {
-    assert!(tidb_server::node_config_help_text().contains("--config <tidb.toml>"));
+    assert!(tidb_server::node_config_help_text().contains("  -config string\n    \tconfig file path\n"));
     let file = ConfigFile::write("inline", "tmp-storage-quota = -1\n");
     let inline = format!("--config={}", file.0.display());
     let mut args = required()
@@ -351,16 +349,12 @@ fn source_tikv_startup_uses_the_shared_catalog() {
     // pkg/config/config_test.go:960 TestConfig
     // pkg/config/store_test.go:23 TestStoreType
     let config = tidb_server::parse_node_config(required()).unwrap();
-    assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    // Go `DefHost`, the wildcard.
+    assert_eq!(config.host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     assert_eq!(config.port, 4000);
     assert_eq!(config.pd_endpoints, ["127.0.0.1:2379", "127.0.0.1:2380"]);
-    assert_eq!(
-        config.auth_file,
-        std::path::Path::new("/tmp/campaign21-users.tsv")
-    );
     // Go's `config.Instance.MaxConnections` default is 0: unlimited.
     assert_eq!(config.max_connections, 0);
-    assert_eq!(config.connection_timeout, Duration::from_secs(30));
     assert_eq!(config.deadlock_history_capacity, 10);
     assert!(!config.deadlock_history_collect_retryable);
 }
@@ -372,13 +366,16 @@ fn source_port_alias_and_long_option_share_one_value_slot() {
     assert_eq!(tidb_server::parse_node_config(source_alias).unwrap().port, 4406);
 
     // Go's `flag` package takes `-P` and `--P` alike, the last one winning;
-    // `--port` is this binary's own spelling and overrides it.
+    // `--port` is no flag Go defines.
     let mut doubled = required();
     doubled.extend(["--P", "4406"]);
     assert_eq!(tidb_server::parse_node_config(doubled).unwrap().port, 4406);
     let mut both = required();
-    both.extend(["-P", "4406", "--port", "4407"]);
+    both.extend(["-P", "4406", "--P", "4407"]);
     assert_eq!(tidb_server::parse_node_config(both).unwrap().port, 4407);
+    let mut port = required();
+    port.extend(["--port", "4407"]);
+    assert!(tidb_server::parse_node_config(port).is_err());
 }
 
 /// Go's `initFlagSet` spelling of the store flags: `-store unistore -path
@@ -393,8 +390,6 @@ fn go_single_dash_store_flags_are_accepted() {
         "127.0.0.1:2379",
         "-P",
         "4406",
-        "--auth-file",
-        "/tmp/campaign21-users.tsv",
     ])
     .expect("Go's single-dash flags parse");
     assert_eq!(config.store_kind, tidb_domain_core::node_config::StoreKind::Unistore);
@@ -424,108 +419,63 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
 
     let mut removed_parallel_id = required();
     removed_parallel_id.extend(["--column-id", "3"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(removed_parallel_id),
-        Err(NodeConfigError::UnknownOption(option)) if option == "--column-id"
-    ));
+    let error = tidb_server::parse_node_config(removed_parallel_id).unwrap_err();
+    assert!(error.to_string().contains("flag provided but not defined: -column-id"), "{error}");
 }
 
 #[test]
-fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
-    // pkg/config/config_test.go:1850 TestTcpNoDelay
-    let mut public = required();
-    public.extend(["--host", "0.0.0.0"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(public),
-        Err(NodeConfigError::NonLoopbackHost(address)) if address == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-    ));
-}
-
-#[test]
-fn cluster_privilege_accounts_can_bind_a_non_loopback_listener() {
+fn a_node_binds_a_non_loopback_listener() {
+    // The accounts are the store's `mysql.user` (Go's one account source),
+    // so any listener Go binds is admitted.
     let config = tidb_server::parse_node_config(vec![
         "tidb-server",
+        "--store",
+        "tikv",
         "--path",
         "172.31.36.41:2379",
         "--host",
         "0.0.0.0",
-        "--port",
+        "-P",
         "4000",
-        "--cluster-session",
-        "--load-privileges",
     ])
-    .expect("cluster privilege mode must support a private-network listener");
-
+    .expect("a private-network listener");
     assert_eq!(config.host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    assert!(config.load_privileges);
 }
 
+/// Go has no connection-count flag: `[instance] max_connections` is the
+/// limit, zero meaning unlimited (`checkConnectionCount`).
 #[test]
-fn ordinary_tikv_startup_defaults_to_persisted_accounts() {
-    let mut missing = required();
-    let option = missing
-        .iter()
-        .position(|argument| *argument == "--auth-file")
-        .unwrap();
-    missing.drain(option..=option + 1);
-    assert!(tidb_server::parse_node_config(missing).unwrap().load_privileges);
-}
-
-#[test]
-fn connection_limit_is_go_uint32_with_zero_unlimited() {
-    // Go's flag is a plain uint32; every in-range value parses, including the
-    // zero that `server.go`'s `checkConnectionCount` reads as unlimited.
-    for count in ["0", "1", "256", "257", "4294967295"] {
+fn connection_limit_comes_from_the_instance_config() {
+    for count in [0u32, 1, 256, 4294967295] {
+        let file = ConfigFile::write("max_connections", &format!("[instance]\nmax_connections = {count}\n"));
+        let path = file.0.to_string_lossy().into_owned();
         let mut args = required();
-        args.extend(["--max-connections", count]);
-        assert_eq!(
-            tidb_server::parse_node_config(args).unwrap().max_connections,
-            count.parse::<u32>().unwrap() as usize
-        );
+        args.extend(["--config", &path]);
+        assert_eq!(tidb_server::parse_node_config(args).unwrap().max_connections, count as usize);
     }
-    for count in ["-1", "4294967296", "abc"] {
-        let mut args = required();
-        args.extend(["--max-connections", count]);
-        assert!(matches!(
-            tidb_server::parse_node_config(args),
-            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--max-connections"
-        ));
-    }
-}
-
-#[test]
-fn connection_timeout_is_positive_explicit_and_documented() {
     let mut args = required();
-    args.extend(["--connection-timeout-ms", "1250"]);
-    assert_eq!(
-        tidb_server::parse_node_config(args).unwrap().connection_timeout,
-        Duration::from_millis(1250)
-    );
-
-    let mut zero = required();
-    zero.extend(["--connection-timeout-ms", "0"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(zero),
-        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--connection-timeout-ms"
-    ));
-    assert!(tidb_server::node_config_help_text().contains("--connection-timeout-ms"));
+    args.extend(["--max-connections", "3"]);
+    assert!(tidb_server::parse_node_config(args).is_err());
 }
 
 #[test]
 fn packet_limit_and_help_are_checked_before_startup() {
     // cmd/tidb-server/main_test.go:56 TestExitCodeForSignal
     // pkg/config/config_test.go:1317 TestTxnTotalSizeLimitValid
-    let mut args = required();
-    args.extend(["--max-allowed-packet", "0"]);
-    assert!(matches!(
-        tidb_server::parse_node_config(args),
-        Err(NodeConfigError::InvalidValue { .. })
-    ));
-    assert_eq!(
-        tidb_server::parse_node_config(["tidb-server", "--help"]),
-        Err(NodeConfigError::HelpRequested)
-    );
-    assert!(tidb_server::node_config_help_text().contains("--store tikv|unistore"));
+    for option in ["--max-allowed-packet", "--connection-timeout-ms", "--lease-ms", "--no-auto-tls"] {
+        let mut args = required();
+        args.extend([option, "0"]);
+        assert!(tidb_server::parse_node_config(args).is_err(), "{option} is no Go flag");
+    }
+    for help in ["--help", "-h", "-help"] {
+        assert_eq!(
+            tidb_server::parse_node_config(["tidb-server", help]),
+            Err(NodeConfigError::HelpRequested)
+        );
+    }
+    assert!(tidb_server::node_config_help_text().starts_with("Usage of tidb-server:\n  -L string\n"));
+    assert!(tidb_server::node_config_help_text()
+        .contains("  -store string\n    \tregistered store name, [tikv unistore mocktikv] (default \"unistore\")\n"));
     assert!(!tidb_server::node_config_help_text().contains("--read-table"));
     assert!(!tidb_server::node_config_help_text().contains("--column-id"));
 }
@@ -547,12 +497,6 @@ fn the_advertise_address_follows_gos_resolution() {
         if local_ip.is_empty() { "0.0.0.0" } else { &local_ip },
         "the wildcard host advertises the local IP"
     );
-
-    // The account file is this port's own account source; it serves loopback
-    // clients only, and its listener defaults there.
-    let account_file = tidb_server::parse_node_config(required()).unwrap();
-    assert_eq!(account_file.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
-    assert_eq!(account_file.advertise_address, "127.0.0.1");
 
     let mut arguments = required();
     arguments.extend(["--advertise-address", "10.0.0.7"]);
@@ -587,8 +531,6 @@ fn every_store_uses_the_shared_session_without_table_descriptors() {
             store,
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/shared-session-users.tsv",
         ])
         .expect("the storage engine must not select another SQL engine");
         assert_eq!(format!("{:?}", config.store_kind).to_lowercase(), store);
@@ -608,8 +550,6 @@ fn static_table_options_cannot_select_an_alternate_sql_engine() {
             "tidb-server",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/shared-session-users.tsv",
         ];
         command.extend(args);
         assert!(
@@ -628,12 +568,6 @@ fn unistore_node_exits_when_the_status_port_cannot_bind() {
     let status_port = occupied.local_addr().unwrap().port().to_string();
     let base = std::env::temp_dir().join(format!("tidb-server-status-bind-{}", std::process::id()));
     let file = ConfigFile::write("status_bind", &format!("tmp-storage-path = {base:?}\n"));
-    let users = ConfigFile::write("status_bind_users", "root\t%\tmysql_native_password\t\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&users.0, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
     let stderr_path = base.with_extension("stderr");
     let stderr = std::fs::File::create(&stderr_path).unwrap();
     // With no log file configured, Go's logger writes to stdout.
@@ -642,7 +576,6 @@ fn unistore_node_exits_when_the_status_port_cannot_bind() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
         .args(["--store", "unistore", "--host", "127.0.0.1", "-P", "0", "--socket", ""])
         .args(["--status-host", "127.0.0.1", "--status", &status_port])
-        .args(["--auth-file", users.0.to_str().unwrap()])
         .args(["--config", file.0.to_str().unwrap()])
         .stdout(stdout)
         .stderr(stderr)
@@ -673,9 +606,28 @@ fn unistore_node_exits_when_the_status_port_cannot_bind() {
 }
 
 #[test]
-fn legacy_cluster_session_flag_does_not_change_the_session_owner() {
-    let ordinary = tidb_server::parse_node_config(required()).unwrap();
+fn the_legacy_cluster_session_flag_is_no_go_flag() {
     let mut legacy = required();
     legacy.push("--cluster-session");
-    assert_eq!(tidb_server::parse_node_config(legacy).unwrap(), ordinary);
+    assert!(tidb_server::parse_node_config(legacy).is_err());
+}
+
+/// Go `main`'s `collect-log` subcommand: `fset.Args()` after the flags name
+/// the log to de-redact (`redact.DeRedactFile`) and its output, and the
+/// process exits without starting a server; `-redact` replaces each marked
+/// value with `?`.
+#[test]
+fn collect_log_de_redacts_a_log_file_and_exits() {
+    let input = ConfigFile::write("collect_log_in", "a ‹b› c\n‹x››y›\n");
+    let output = input.0.with_extension("out");
+    for (flags, want) in [(vec![], "a b c\nx›y\n"), (vec!["-redact"], "a ? c\n?\n")] {
+        let status = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+            .args(flags)
+            .args(["collect-log", input.0.to_str().unwrap(), output.to_str().unwrap()])
+            .status()
+            .expect("run tidb-server collect-log");
+        assert!(status.success(), "{status:?}");
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), want);
+    }
+    let _ = std::fs::remove_file(&output);
 }

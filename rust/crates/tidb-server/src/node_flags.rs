@@ -19,169 +19,31 @@
 //! [`NodeConfig::from_config`].
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config_kerneltype as kerneltype;
 use tidb_domain_core::node_config::{invalid, NodeConfig, NodeConfigError, NodeOptions};
 
-/// Parses the source-shaped command line, including the executable name.
-///
-/// Both `--name value` and `--name=value` are accepted. The parser is
-/// deliberately one-use and rejects duplicate values instead of applying
-/// last-option-wins behavior to security or topology settings.
+/// Go `initFlagSet` + `config.InitializeConfig(..., overrideConfig, ...)`:
+/// the command line (including the executable name) parsed by Go's one flag
+/// set, laid over Go's defaults and the config file.
 pub fn parse_node_config<I, S>(arguments: I) -> Result<NodeConfig, NodeConfigError>
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    let mut arguments = arguments.into_iter().map(Into::into);
-    let _program = arguments.next();
-    // main.go's own flag surface is consumed FIRST, so every Go spelling
-    // is accepted exactly as initFlagSet accepts it; the node's options
-    // remain for the loop below, untouched and in order.
-    let (mut main_flags, remaining) =
-        crate::main_flags::extract_main_go_flags(arguments.collect())
-            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
-    let mut pending = remaining.into_iter().peekable();
-
-    let mut port = None;
-    let mut affinity_cpus = None;
-    let mut max_allowed_packet = None;
-    let mut auth_file = None;
-    let mut max_connections = None;
-    let mut connection_timeout_ms = None;
-    let mut schema_lease_ms = None;
-    let mut load_privileges = false;
-    let mut legacy_cluster_session_option = false;
-    let mut ssl_cert = None;
-    let mut ssl_key = None;
-    let mut ssl_ca = None;
-    let mut no_auto_tls = false;
-    let mut no_disconnect_on_expired_password = false;
-    let mut cluster_ssl_ca = None;
-    let mut cluster_ssl_cert = None;
-    let mut cluster_ssl_key = None;
-
-    while let Some(argument) = pending.next() {
-        if argument == "--help" || argument == "-h" {
-            return Err(NodeConfigError::HelpRequested);
-        }
-        if argument == "--load-privileges" {
-            if load_privileges {
-                return Err(NodeConfigError::DuplicateOption(argument));
-            }
-            load_privileges = true;
-            continue;
-        }
-        if argument == "--no-auto-tls" {
-            if no_auto_tls {
-                return Err(NodeConfigError::DuplicateOption(argument));
-            }
-            no_auto_tls = true;
-            continue;
-        }
-        if argument == "--no-disconnect-on-expired-password" {
-            if no_disconnect_on_expired_password {
-                return Err(NodeConfigError::DuplicateOption(argument));
-            }
-            no_disconnect_on_expired_password = true;
-            continue;
-        }
-        if argument == "--cluster-session" {
-            // Compatibility spelling only: both stores use the shared session.
-            if legacy_cluster_session_option {
-                return Err(NodeConfigError::DuplicateOption(argument));
-            }
-            legacy_cluster_session_option = true;
-            continue;
-        }
-        let (option, inline_value) = split_option(&argument)?;
-        let value = match inline_value {
-            Some(value) => value.to_owned(),
-            None => pending
-                .next()
-                .filter(|value| !value.starts_with("--"))
-                .ok_or_else(|| NodeConfigError::MissingValue(option.to_owned()))?,
-        };
-        match option {
-            "--affinity-cpus" => set_once(&mut affinity_cpus, option, value)?,
-            "--port" => set_once(&mut port, option, value)?,
-            "--max-allowed-packet" => {
-                set_once(&mut max_allowed_packet, option, value)?;
-            }
-            "--auth-file" => set_once(&mut auth_file, option, value)?,
-            "--max-connections" => set_once(&mut max_connections, option, value)?,
-            "--connection-timeout-ms" => {
-                set_once(&mut connection_timeout_ms, option, value)?;
-            }
-            "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
-            "--ssl-cert" => set_once(&mut ssl_cert, option, value)?,
-            "--ssl-key" => set_once(&mut ssl_key, option, value)?,
-            "--ssl-ca" => set_once(&mut ssl_ca, option, value)?,
-            "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
-            "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
-            "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
-            _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
-        }
-    }
-
-    let max_allowed_packet = max_allowed_packet
-        .as_deref()
-        .map(|value| parse_positive_number::<u64>("--max-allowed-packet", value))
-        .transpose()?;
-    let max_connections = max_connections
-        .as_deref()
-        .map(|value| parse_connection_limit("--max-connections", value))
-        .transpose()?;
-    // The native executable's deployment defaults. TOML and explicit
-    // flags override these through the single shared owner.
-    let defaults = NodeConfig::deployment_defaults(auth_file.is_some());
-    // `--port` is this binary's spelling of Go's `-P`.
-    if port.is_some() {
-        main_flags.port = port;
+    let mut main_flags = parse_main_flags(arguments)?;
+    if main_flags.help {
+        return Err(NodeConfigError::HelpRequested);
     }
     main_flags.store = main_flags.store.map(|store| store.to_ascii_lowercase());
     let config_path = main_flags.config_path.clone();
-    if let Some(lease) = schema_lease_ms.as_deref() {
-        let millis: u64 = parse_positive_number("--lease-ms", lease)?;
-        main_flags.ddl_lease = Some(format!("{millis}ms"));
-    }
     let (global_config, warnings) = tidb_config::config_tree::load::prepare_config(
-        defaults,
+        NodeConfig::deployment_defaults(),
         config_path.as_deref().map(std::path::Path::new),
         main_flags.config_check,
         main_flags.config_strict,
-        |config| {
-            crate::main_flags::override_config(config, &main_flags)?;
-            // Rust-native CLI aliases override the same fields, before
-            // SourceConfig::valid, rather than rebuilding a second config.
-            if let Some(value) = &max_allowed_packet {
-                config.max_allowed_packet = *value;
-            }
-            if let Some(value) = &max_connections {
-                config.instance.max_connections = *value as u32;
-            }
-            for (target, value) in [
-                (&mut config.security.ssl_cert, &ssl_cert),
-                (&mut config.security.ssl_key, &ssl_key),
-                (&mut config.security.ssl_ca, &ssl_ca),
-                (&mut config.security.cluster_ssl_ca, &cluster_ssl_ca),
-                (&mut config.security.cluster_ssl_cert, &cluster_ssl_cert),
-                (&mut config.security.cluster_ssl_key, &cluster_ssl_key),
-            ] {
-                if let Some(value) = value {
-                    target.clone_from(value);
-                }
-            }
-            if no_auto_tls {
-                config.security.auto_tls = false;
-            }
-            if no_disconnect_on_expired_password {
-                config.security.disconnect_on_expired_password = false;
-            }
-            Ok(())
-        },
+        |config| crate::main_flags::override_config(config, &main_flags),
     )
     .map_err(|reason| match config_path.as_ref() {
         Some(path) => NodeConfigError::ConfigFile {
@@ -201,18 +63,25 @@ where
     NodeConfig::from_config(
         global_config,
         NodeOptions {
-            auth_file,
-            load_privileges,
-            affinity_cpus: parse_affinity_cpus(affinity_cpus.as_deref().unwrap_or_default())?,
-            connection_timeout: match connection_timeout_ms {
-                Some(value) => Duration::from_millis(parse_positive_number(
-                    "--connection-timeout-ms",
-                    &value,
-                )?),
-                None => NodeOptions::default().connection_timeout,
-            },
+            affinity_cpus: parse_affinity_cpus(main_flags.affinity_cpus.as_deref().unwrap_or_default())?,
         },
     )
+}
+
+/// Go `initFlagSet`'s `fset.Parse(os.Args[1:])` over the command line,
+/// including the executable name.
+///
+/// # Errors
+///
+/// A flag Go does not define, or a malformed value.
+pub fn parse_main_flags<I, S>(arguments: I) -> Result<crate::main_flags::MainFlags, NodeConfigError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let arguments: Vec<String> = arguments.into_iter().map(Into::into).skip(1).collect();
+    crate::main_flags::MainFlags::parse(&arguments)
+        .map_err(|error| invalid("main.go flags", &error.to_string()))
 }
 
 /// Initializes the same process globals Go reads when printing `-V`.
@@ -221,17 +90,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
-    let mut arguments = arguments.into_iter().map(Into::into);
-    let _program = arguments.next();
-    // main.go's own flag surface is consumed FIRST, so every Go spelling
-    // is accepted exactly as initFlagSet accepts it; the node's options
-    // remain for the loop below, untouched and in order.
-    let (mut main_flags, remaining) =
-        crate::main_flags::extract_main_go_flags(arguments.collect())
-            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
-    // `-V` reads only the Go flags (`-config`, `-store`, ...); the node's
-    // own options are ignored.
-    let _ = remaining;
+    let main_flags = parse_main_flags(arguments)?;
     let config_path = main_flags.config_path.clone();
     let (config, warnings) = tidb_config::config_tree::load::prepare_config(
         SourceConfig::default(),
@@ -258,19 +117,113 @@ pub fn install_process_globals(config: &NodeConfig) {
     tidb_cpu::install_cpu_count(max_procs, config.affinity_cpus.len());
 }
 
-/// Stable usage text printed by the executable for `--help`.
+/// Go `fset.Usage()` for `-help`: `flag.FlagSet.PrintDefaults` over
+/// `initFlagSet`'s flags, sorted by name, as Go's flag package formats them.
 #[must_use]
 pub const fn node_config_help_text() -> &'static str {
-    "Usage: tidb-server [-V] [--config <tidb.toml>] --path <pd[,pd...]> \
-[--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
-[--lease-ms <milliseconds>] \
-[--auth-file <mode-0600-tsv> | --load-privileges] \
-[--host <listen-ip>] [-P <port>|--port <port>] [--store tikv|unistore] \
-[--affinity-cpus <cpu[,cpu...]>] \
-[--max-allowed-packet <bytes>] \
-[--ssl-cert <cert-pem> --ssl-key <key-pem> [--ssl-ca <ca-pem>]] [--no-auto-tls] \
-[--no-disconnect-on-expired-password] \
-[--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>]]"
+    r#"Usage of tidb-server:
+  -L string
+    	log level: info, debug, warn, error, fatal (default "info")
+  -P string
+    	tidb server port (default "4000")
+  -V	print version information and exit (default false)
+  -activation-timeout uint
+    	max time in second allowed for tidb to activate from standby, 0 means no limit
+  -advertise-address string
+    	tidb server advertise IP
+  -affinity-cpus string
+    	affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)
+  -cluster-ca string
+    	cluster CA file path
+  -cluster-cert string
+    	cluster cert file path
+  -cluster-key string
+    	cluster key file path
+  -config string
+    	config file path
+  -config-check
+    	check config file validity and exit (default false)
+  -config-strict
+    	enforce config file validity (default false)
+  -cors string
+    	tidb server allow cors origin
+  -disconnect-on-expired-password
+    	the server disconnects the client when the password is expired (default true)
+  -help
+    	show the usage
+  -host string
+    	tidb server host (default "0.0.0.0")
+  -initialize-insecure
+    	bootstrap tidb-server in insecure mode (default true)
+  -initialize-secure
+    	bootstrap tidb-server in secure mode (default false)
+  -initialize-sql-file string
+    	SQL file to execute on first bootstrap
+  -keyspace-activate
+    	exit after activating the keyspace (default false)
+  -keyspace-name string
+    	keyspace name.
+  -lease string
+    	schema lease duration, very dangerous to change only if you know what you do (default "45s")
+  -log-file string
+    	log file path
+  -log-general string
+    	general log file path
+  -log-slow-query string
+    	slow query file path
+  -max-idle-seconds uint
+    	max idle seconds for a connection, 0 means no limit
+  -metrics-addr string
+    	prometheus pushgateway address, leaves it empty will disable prometheus push.
+  -metrics-interval uint
+    	prometheus client push interval in second, set "0" to disable prometheus push. (default 15)
+  -path string
+    	tidb storage path (default "/tmp/tidb")
+  -plugin-dir string
+    	the folder that hold plugin (default "/data/deploy/plugin")
+  -plugin-load string
+    	wait load plugin name(separated by comma)
+  -proxy-protocol-fallbackable
+    	enable proxy protocol fallback mode. If it is enabled, connection will return the client IP address when the client does not send PROXY Protocol Header and it will not return any error. (Note: This feature it does NOT follow the PROXY Protocol SPEC) (default false)
+  -proxy-protocol-header-timeout uint
+    	proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used) (default 5)
+  -proxy-protocol-networks string
+    	proxy protocol networks allowed IP or *, empty mean disable proxy protocol support
+  -redact
+    	remove sensitive words from marked tidb logs when using collect-log subcommand, e.g. ./tidb-server --redact=xxx collect-log <input> <output> (default false)
+  -repair-list string
+    	admin repair table list
+  -repair-mode
+    	enable admin repair mode (default false)
+  -report-status
+    	If enable status report HTTP service. (default true)
+  -run-ddl
+    	run ddl worker on this tidb-server (default true)
+  -socket string
+    	The socket file to use for connection. (default "/tmp/tidb-{Port}.sock")
+  -sql-ca string
+    	SQL CA file path
+  -sql-cert string
+    	SQL cert file path
+  -sql-key string
+    	SQL key file path
+  -standby
+    	start tidb-server as standby (default false)
+  -starter-additional-params string
+    	starter additional params in k=v,k=v format
+  -status string
+    	tidb server status port (default "10080")
+  -status-host string
+    	tidb server status host (default "0.0.0.0")
+  -store string
+    	registered store name, [tikv unistore mocktikv] (default "unistore")
+  -temp-dir string
+    	tidb temporary directory (default "/tmp/tidb")
+  -tidb-service-scope string
+    	tidb service scope
+  -token-limit int
+    	the limit of concurrent executed sessions (default 1000)
+"#
 }
 
 fn validate_version_config(config: &SourceConfig) -> Result<(), NodeConfigError> {
@@ -333,23 +286,6 @@ fn install_global_config(config: SourceConfig) {
     );
 }
 
-fn split_option(argument: &str) -> Result<(&str, Option<&str>), NodeConfigError> {
-    if !argument.starts_with("--") {
-        return Err(NodeConfigError::UnknownOption(argument.to_owned()));
-    }
-    match argument.split_once('=') {
-        Some((option, "")) => Err(NodeConfigError::MissingValue(option.to_owned())),
-        Some((option, value)) => Ok((option, Some(value))),
-        None => Ok((argument, None)),
-    }
-}
-
-fn set_once(slot: &mut Option<String>, option: &str, value: String) -> Result<(), NodeConfigError> {
-    if slot.replace(value).is_some() {
-        return Err(NodeConfigError::DuplicateOption(option.to_owned()));
-    }
-    Ok(())
-}
 fn parse_affinity_cpus(value: &str) -> Result<Vec<i64>, NodeConfigError> {
     value
         .split(',')
@@ -357,39 +293,10 @@ fn parse_affinity_cpus(value: &str) -> Result<Vec<i64>, NodeConfigError> {
         .filter(|cpu| !cpu.is_empty())
         .map(|cpu| {
             cpu.parse::<i64>()
-                .map_err(|_| invalid("--affinity-cpus", "expected comma-separated CPU indexes"))
+                .map_err(|_| invalid("-affinity-cpus", "expected comma-separated CPU indexes"))
         })
         .collect()
 }
-fn parse_number<T>(option: &str, value: &str) -> Result<T, NodeConfigError>
-where
-    T: std::str::FromStr,
-{
-    value
-        .parse()
-        .map_err(|_| invalid(option, "expected an unsigned decimal integer"))
-}
-
-fn parse_positive_number<T>(option: &str, value: &str) -> Result<T, NodeConfigError>
-where
-    T: std::str::FromStr + Default + PartialEq,
-{
-    let parsed = parse_number(option, value)?;
-    if parsed == T::default() {
-        return Err(invalid(option, "value must be greater than zero"));
-    }
-    Ok(parsed)
-}
-
-/// Parses `--max-connections` with Go's semantics: a plain uint32 where zero
-/// means unlimited, not an error.
-fn parse_connection_limit(option: &str, value: &str) -> Result<usize, NodeConfigError> {
-    let parsed = value
-        .parse::<u32>()
-        .map_err(|_| invalid(option, "expected an unsigned 32-bit integer"))?;
-    Ok(usize::try_from(parsed).expect("u32 fits usize"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -405,9 +312,6 @@ mod tests {
             "tidb-server",
             "--store",
             "unistore",
-            "--cluster-session",
-            "--auth-file",
-            "/tmp/users.tsv",
             "--token-limit",
             "1",
         ])
@@ -446,9 +350,6 @@ mod tests {
                 "tidb-server",
                 "--store",
                 "unistore",
-                "--cluster-session",
-                "--auth-file",
-                "/tmp/users.tsv",
                 "--config",
                 path.to_str().unwrap(),
             ];
@@ -466,31 +367,34 @@ mod tests {
     /// are enforced at startup rather than deferred to a connect failure.
     #[test]
     fn cluster_tls_options_build_security_and_reject_partial_material() {
-        let base = [
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
-        ];
+        // A classic deployment's cluster TLS is `[security]` configuration;
+        // Go's `-cluster-*` flags apply to Starter deployments only.
+        let parse = |security: &str| {
+            let path = std::env::temp_dir().join(format!(
+                "tidb-cluster-tls-{}-{}.toml",
+                std::process::id(),
+                security.len()
+            ));
+            fs::write(&path, format!("[security]\n{security}")).unwrap();
+            let config = parse_node_config([
+                "tidb-server",
+                "--store",
+                "tikv",
+                "--path",
+                "127.0.0.1:2379",
+                "--config",
+                path.to_str().unwrap(),
+            ]);
+            fs::remove_file(&path).unwrap();
+            config
+        };
 
         // No security options: plaintext, backward compatible.
-        let plaintext = parse_node_config(base).unwrap();
-        assert!(!plaintext.cluster_security.is_tls_enabled());
+        assert!(!parse("").unwrap().cluster_security.is_tls_enabled());
 
         // CA + client key pair: full mutual TLS.
-        let secured = parse_node_config(
-            base.iter()
-                .copied()
-                .chain([
-                    "--cluster-ssl-ca",
-                    "/tls/ca.pem",
-                    "--cluster-ssl-cert",
-                    "/tls/cert.pem",
-                    "--cluster-ssl-key",
-                    "/tls/key.pem",
-                ])
-                .collect::<Vec<_>>(),
+        let secured = parse(
+            "cluster-ssl-ca = \"/tls/ca.pem\"\ncluster-ssl-cert = \"/tls/cert.pem\"\ncluster-ssl-key = \"/tls/key.pem\"\n",
         )
         .unwrap();
         assert!(secured.cluster_security.is_tls_enabled());
@@ -498,90 +402,34 @@ mod tests {
         assert_eq!(secured.cluster_security.cert_path(), "/tls/cert.pem");
         assert!(secured.cluster_security.verify_cn().is_empty());
 
-        // The accepted option is an inbound peer-CN allowlist. This node owns
-        // only outbound cluster clients, so accepting it would falsely claim
-        // a restriction no transport can enforce.
-        assert!(matches!(
-            parse_node_config(
-                base.iter()
-                    .copied()
-                    .chain(["--cluster-verify-cn", "tidb,tikv"])
-                    .collect::<Vec<_>>(),
-            ),
-            Err(NodeConfigError::UnknownOption(option)) if option == "--cluster-verify-cn"
-        ));
+        // `-cluster-verify-cn` is no flag Go defines.
+        let error = parse_node_config(["tidb-server", "--cluster-verify-cn", "tidb,tikv"]).unwrap_err();
+        assert!(error.to_string().contains("flag provided but not defined: -cluster-verify-cn"), "{error}");
 
         // Cert without key is rejected.
         assert!(matches!(
-            parse_node_config(
-                base.iter()
-                    .copied()
-                    .chain([
-                        "--cluster-ssl-ca",
-                        "/tls/ca.pem",
-                        "--cluster-ssl-cert",
-                        "/tls/cert.pem"
-                    ])
-                    .collect::<Vec<_>>(),
-            ),
+            parse("cluster-ssl-ca = \"/tls/ca.pem\"\ncluster-ssl-cert = \"/tls/cert.pem\"\n"),
             Err(NodeConfigError::InvalidValue { .. })
         ));
 
         // Client material without a CA is rejected.
         assert!(matches!(
-            parse_node_config(
-                base.iter()
-                    .copied()
-                    .chain([
-                        "--cluster-ssl-cert",
-                        "/tls/cert.pem",
-                        "--cluster-ssl-key",
-                        "/tls/key.pem"
-                    ])
-                    .collect::<Vec<_>>(),
-            ),
+            parse("cluster-ssl-cert = \"/tls/cert.pem\"\ncluster-ssl-key = \"/tls/key.pem\"\n"),
             Err(NodeConfigError::InvalidValue { .. })
         ));
     }
 
-    /// `--load-privileges` names the cluster's own `mysql.*` as the account
-    /// source, which is only meaningful in place of `--auth-file`: two
-    /// sources would be two answers to "may this user log in".
+    /// Go has one flag set and one account source, the store's
+    /// `mysql.user`: an account-file option is no flag Go defines.
     #[test]
-    fn the_account_source_is_exactly_one_of_the_auth_file_or_the_cluster() {
-        let base = ["tidb-server", "--path", "127.0.0.1:2379"];
-
-        let from_cluster = parse_node_config(
-            base.iter()
-                .copied()
-                .chain(["--load-privileges"])
-                .collect::<Vec<_>>(),
-        )
-        .expect("--load-privileges alone is a complete account source");
-        assert!(from_cluster.load_privileges);
-        assert_eq!(from_cluster.auth_file.as_os_str(), "");
-
-        let from_file = parse_node_config(
-            base.iter()
-                .copied()
-                .chain(["--auth-file", "/tmp/users.tsv"])
-                .collect::<Vec<_>>(),
-        )
-        .expect("--auth-file alone is a complete account source");
-        assert!(!from_file.load_privileges);
-
-        assert!(matches!(
-            parse_node_config(
-                base.iter()
-                    .copied()
-                    .chain(["--load-privileges", "--auth-file", "/tmp/users.tsv"])
-                    .collect::<Vec<_>>(),
-            ),
-            Err(NodeConfigError::InvalidValue { .. })
-        ));
-        let ordinary = parse_node_config(base).unwrap();
-        assert!(ordinary.load_privileges);
-        assert!(ordinary.auth_file.as_os_str().is_empty());
+    fn account_file_options_are_not_go_flags() {
+        for option in ["--auth-file", "--load-privileges"] {
+            let error = parse_node_config(["tidb-server", option, "x"]).unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("flag provided but not defined: {}", &option[1..])),
+                "{error}"
+            );
+        }
     }
 
     /// The only source surface for skip-grant-table is TiDB's security TOML
@@ -607,16 +455,6 @@ mod tests {
             "--path",
             "127.0.0.1:2379",
         ]);
-        let combined = parse_node_config([
-            "tidb-server",
-            "--config",
-            &path_text,
-            "--path",
-            "127.0.0.1:2379",
-            "--load-privileges",
-            "--auth-file",
-            "/definitely/not/read.tsv",
-        ]);
         fs::remove_file(&path).expect("remove source config");
 
         #[cfg(unix)]
@@ -626,16 +464,11 @@ mod tests {
         if is_root {
             let parsed = parsed.expect("effective root may opt in");
             assert!(parsed.skip_grant_table);
-            assert_eq!(parsed.auth_file.as_os_str(), "");
             assert_eq!(
                 serde_json::to_value(&parsed.global_config)
                     .expect("startup projection is JSON")["security"]["skip-grant-table"],
                 true,
             );
-
-            let combined = combined.expect("recovery mode ignores both account sources");
-            assert!(combined.skip_grant_table);
-            assert_eq!(combined.auth_file.as_os_str(), "");
         } else {
             assert!(matches!(
                 parsed,
@@ -646,10 +479,10 @@ mod tests {
 
         let ordinary = parse_node_config([
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
         ])
         .expect("ordinary config");
         assert!(!ordinary.skip_grant_table);
@@ -677,8 +510,6 @@ mod tests {
             &path_text,
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
         ])
         .expect("the three source memory settings are one admitted policy");
         assert_eq!(parsed.memory_arbitrator.server_memory_limit, "1GiB");
@@ -695,12 +526,7 @@ mod tests {
     /// unreachable code.
     #[test]
     fn expired_passwords_disconnect_by_default_and_the_flag_opts_into_sandboxing() {
-        let base = [
-            "tidb-server",
-            "--path",
-            "127.0.0.1:2379",
-            "--load-privileges",
-        ];
+        let base = ["tidb-server", "--store", "tikv", "--path", "127.0.0.1:2379"];
         assert!(
             parse_node_config(base)
                 .expect("a complete configuration")
@@ -710,24 +536,12 @@ mod tests {
             !parse_node_config(
                 base.iter()
                     .copied()
-                    .chain(["--no-disconnect-on-expired-password"])
+                    .chain(["-disconnect-on-expired-password=false"])
                     .collect::<Vec<_>>(),
             )
             .expect("a complete configuration")
             .disconnect_on_expired_password
         );
-        assert!(matches!(
-            parse_node_config(
-                base.iter()
-                    .copied()
-                    .chain([
-                        "--no-disconnect-on-expired-password",
-                        "--no-disconnect-on-expired-password",
-                    ])
-                    .collect::<Vec<_>>(),
-            ),
-            Err(NodeConfigError::DuplicateOption(_))
-        ));
     }
 
     #[test]
@@ -747,6 +561,8 @@ level = "warn"
 [security]
 auto-tls = true
 ssl-ca = "ca.pem"
+ssl-cert = "cert.pem"
+ssl-key = "key.pem"
 tls-version = "TLSv1.3"
 [performance]
 stats-lease = "-1s"
@@ -755,6 +571,8 @@ stats-lease = "-1s"
         .unwrap();
         let result = parse_node_config([
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
             "--config",
@@ -770,11 +588,6 @@ stats-lease = "-1s"
             "/private/tmp/from-cli",
             "-L",
             "error",
-            "--no-auto-tls",
-            "--ssl-cert",
-            "cert.pem",
-            "--ssl-key",
-            "key.pem",
         ]);
         fs::remove_file(path).unwrap();
         let config = result.unwrap();
@@ -783,7 +596,7 @@ stats-lease = "-1s"
         assert!(config.report_status);
         assert_eq!(config.socket, "/tmp/from-cli-4000.sock");
         assert_eq!(config.advertise_address, "from-cli");
-        assert!(!config.auto_tls);
+        assert!(config.auto_tls);
         let json: serde_json::Value =
             serde_json::to_value(&config.global_config).unwrap();
         assert_eq!(json["status"]["status-port"], 10092);
@@ -791,7 +604,7 @@ stats-lease = "-1s"
         assert_eq!(json["socket"], "/tmp/from-cli-{Port}.sock");
         assert_eq!(json["temp-dir"], "/private/tmp/from-cli");
         assert_eq!(json["log"]["level"], "error");
-        assert_eq!(json["security"]["auto-tls"], false);
+        assert_eq!(json["security"]["auto-tls"], true);
         assert_eq!(json["security"]["ssl-ca"], "ca.pem");
         assert_eq!(config.ssl_ca, Some(std::path::PathBuf::from("ca.pem")));
         assert_eq!(config.min_tls_version, "TLSv1.3");
@@ -802,17 +615,17 @@ stats-lease = "-1s"
     fn startup_config_projection_contains_the_effective_owned_values() {
         let config = parse_node_config([
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
-            "--port",
+            "-P",
             "4406",
         ])
         .unwrap();
         let projected: serde_json::Value =
             serde_json::to_value(&config.global_config).unwrap();
-        assert_eq!(projected["host"], "127.0.0.1");
+        assert_eq!(projected["host"], "0.0.0.0");
         assert_eq!(projected["port"], 4406);
         assert_eq!(projected["path"], "127.0.0.1:2379");
         assert_eq!(projected["store"], "tikv");
@@ -843,10 +656,10 @@ stats-lease = "-1s"
     fn run_ddl_defaults_on_and_follows_the_main_go_flag() {
         let base = [
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
         ];
         assert!(parse_node_config(base).unwrap().run_ddl);
         let with_flag = |flag: &'static str| {
@@ -862,10 +675,10 @@ stats-lease = "-1s"
     fn affinity_cpu_list_matches_the_source_command_line_parser() {
         let base = [
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
         ];
         assert!(parse_node_config(base).unwrap().affinity_cpus.is_empty());
         assert_eq!(
@@ -887,7 +700,7 @@ stats-lease = "-1s"
                     .collect::<Vec<_>>(),
             ),
             Err(NodeConfigError::InvalidValue { option, .. })
-                if option == "--affinity-cpus"
+                if option == "-affinity-cpus"
         ));
     }
 
@@ -898,8 +711,6 @@ stats-lease = "-1s"
             "tidb-server",
             "--store",
             "unistore",
-            "--auth-file",
-            "/tmp/users.tsv",
         ])
         .expect("unistore parses without --path");
         assert_eq!(config.store_kind, StoreKind::Unistore);
@@ -912,8 +723,6 @@ stats-lease = "-1s"
             "tidb-server",
             "--store",
             "tikv",
-            "--auth-file",
-            "/tmp/users.tsv",
         ])
         .expect_err("tikv without --path refuses");
         assert!(format!("{err}").contains("--path"));

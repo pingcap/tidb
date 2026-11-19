@@ -10,7 +10,7 @@
 #     well under that, which is only possible if the Rust node PUT the new
 #     schema version to `/tidb/ddl/global_schema_version`
 #     (`OwnerUpdateGlobalVersion`'s key) and Go's own etcd watch fired;
-#   * a second Rust node — the catalog-following `--cluster-session` shape,
+#   * a second Rust node — the catalog-following shape,
 #     which is the one that owns a reload thread — runs with a ten-minute
 #     lease, so its reload thread ticks every five minutes. It must reload
 #     within seconds of the Go TiDB's own CREATE TABLE, and its reload must
@@ -76,7 +76,6 @@ PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
 RUST_LOG_FILE="${TMPDIR:-/tmp}/${TAG}-rust.log"
 FOLLOWER_LOG_FILE="${TMPDIR:-/tmp}/${TAG}-follower.log"
 RUNTIME_DIR=
-AUTH_FILE=
 AUTH_USER=notify
 AUTH_PASSWORD=${DDL_NOTIFY_AUTH_PASSWORD:-notify-native-password}
 DATABASE=ddl_notify
@@ -297,19 +296,6 @@ done
 trap cleanup EXIT INT TERM
 
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
-  | openssl dgst -sha1 -binary \
-  | openssl dgst -sha1 -hex \
-  | awk '{ print toupper($NF) }')
-if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
-  echo "could not derive the ddl-notify native-password stage-two hash" >&2
-  exit 1
-fi
-(umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
-unset AUTH_HASH_HEX
 
 # NO --db.config: the Go server keeps its DEFAULT 45s schema lease on purpose.
 # Everything this script measures on the Go side has to beat that lease.
@@ -358,9 +344,8 @@ FLUSH PRIVILEGES;
 SQL
 
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-  --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --lease-ms "${RUST_LEASE_MS}" \
-  --auth-file "${AUTH_FILE}" --max-connections 8 \
+  --host 127.0.0.1 -P "${RUST_SQL_PORT}" \
+  -lease "${RUST_LEASE_MS}ms" \
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 
@@ -391,10 +376,9 @@ fi
 
 # A second node uses the same session/catalog lifecycle. Its accounts come
 # from the cluster's own mysql.user, written just above.
-"${RUST_SERVER}" --path "${PD_ADDR}" \
-  --port "${RUST_FOLLOWER_PORT}" \
-  --cluster-session --load-privileges \
-  --lease-ms "${RUST_LEASE_MS}" \
+"${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
+  -P "${RUST_FOLLOWER_PORT}" \
+  -lease "${RUST_LEASE_MS}ms" \
   >"${FOLLOWER_LOG_FILE}" 2>&1 &
 FOLLOWER_PID=$!
 

@@ -168,7 +168,7 @@ pub fn cluster_session_stack(
         |_| Ok(()),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let users = node_accounts(config, global_vars)?;
+    let users = node_accounts(config, global_vars);
     // Go `domain_sysvars.go`: the TSO and follower sysvars tune the store's
     // PD client (`store.GetPDClient().UpdateOption`).
     if let Some(options) = authority.tikv_store().store().pd_client().pd_options() {
@@ -218,6 +218,14 @@ pub fn cluster_session_stack(
     // The cluster-session path owns one process-wide sysvar reloader below,
     // started once the domain's sessions exist; its first rebuild runs before
     // it returns, so the persisted image is in force before bind.
+    // Go `LoadPrivilegeLoop`, on the domain's sessions, before
+    // `LoadSysVarCacheLoop` (`bootstrapSessionImpl`). The reloader must drop
+    // before the authority's shutdown drain, like the catalog reloader.
+    let privilege_reloader = tidb_session::domain::real_tikv_node::load_privilege_loop(
+        config,
+        &users,
+        &factory.advanced_sys_session_pool(),
+    )?;
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
     // each rebuild reads `mysql.global_variables` through them.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
@@ -229,12 +237,6 @@ pub fn cluster_session_stack(
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher =
         tidb_session::domain::real_tikv_node::spawn_sysvar_watch(etcd.as_deref(), Some(&sysvar_reloader));
-    // Go `LoadPrivilegeLoop`, on the domain's sessions too, after the sysvar
-    // cache: Go loads accounts at first use, so its pooled sessions never
-    // copy the global tier before the cache is built. The reloader must drop
-    // before the authority's shutdown drain, like the catalog reloader.
-    let privilege_reloader =
-        tidb_session::domain::real_tikv_node::load_privilege_loop(config, &users)?;
     // The reloader's tick is what makes a peer's `GRANT` reach this node at
     // all, and this watch is what makes it arrive in a round trip instead of
     // an interval.

@@ -15,7 +15,7 @@
 # keep-alive heartbeat refreshes the pinned primary -- which since the
 # primary-pin change IS the key the commit prewrites first.
 #
-# The node runs in `--cluster-session`, the mode that serves real clients, so
+# The node runs as it serves real clients, so
 # the transaction is served by the pinned transaction thread that owns the
 # defect.
 #
@@ -77,7 +77,6 @@ RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 MYSQL_LOG="${TMPDIR:-/tmp}/${TAG}-mysql.log"
 CLIENT_LOG="${TMPDIR:-/tmp}/${TAG}-client.log"
 RUNTIME_DIR=
-AUTH_FILE=
 AUTH_USER=heldtxn
 AUTH_PASSWORD=${HELD_TXN_AUTH_PASSWORD:-heldtxn-native-password}
 DATABASE=heldtxn
@@ -252,19 +251,6 @@ done
 trap cleanup EXIT INT TERM
 
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
-  | openssl dgst -sha1 -binary \
-  | openssl dgst -sha1 -hex \
-  | awk '{ print toupper($NF) }')
-if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
-  echo "could not derive the held-transaction native-password stage-two hash" >&2
-  exit 1
-fi
-(umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
-unset AUTH_HASH_HEX
 
 tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
@@ -328,20 +314,18 @@ if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
   exit 1
 fi
 
-# Only the PD address, the table NAME, and the accounts file.
+# The Rust node's accounts are the cluster's `mysql.user` (Go's one account
+# source), so the harness account is created through the Go TiDB.
+go_tidb <<SQL
+CREATE USER IF NOT EXISTS '${AUTH_USER}'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '${AUTH_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${AUTH_USER}'@'127.0.0.1';
+SQL
+
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-  --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --cluster-session --lease-ms 2000 \
-  --connection-timeout-ms "${HELD_TXN_CONNECTION_TIMEOUT_MS:-600000}" \
-  --auth-file "${AUTH_FILE}" --max-connections 8 \
+  --host 127.0.0.1 -P "${RUST_SQL_PORT}" \
+  -lease 2000ms \
   >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
-# `--connection-timeout-ms` is the socket read/write timeout the accept loop
-# stamps on every connection, and it is ALSO how long the node will wait for a
-# client's next command; at its 30-second default a client that holds a
-# transaction open for 30 seconds has its socket closed under it. That is a
-# separate defect from the transaction's own RPC budget, and this harness
-# raises it so the budget is what is being measured.
 
 READY_JSON=
 for _ in $(seq 1 900); do
@@ -361,7 +345,7 @@ if [[ -z "${READY_JSON}" ]]; then
   tail -200 "${RUST_LOG}" >&2
   exit 1
 fi
-# `--cluster-session` loads the whole catalog rather than one named table, so
+# The node loads the whole catalog rather than one named table, so
 # its readiness event carries a schema version and an account count instead of
 # a table identity. What must hold is that the node is serving.
 if ! printf '%s\n' "${READY_JSON}" | jq -e '.address != null' >/dev/null; then

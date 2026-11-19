@@ -30,7 +30,7 @@ use tidb_server::{resolve_server_tls, ClientStream, MysqlServerTls};
 
 fn tls_config(cert: Option<&Path>, key: Option<&Path>, auto_tls: bool) -> tidb_server::NodeConfig {
     let mut config =
-        tidb_server::parse_node_config(["tidb-server", "--store", "unistore", "--load-privileges"])
+        tidb_server::parse_node_config(["tidb-server", "--store", "unistore"])
             .unwrap();
     config.ssl_cert = cert.map(Path::to_owned);
     config.ssl_key = key.map(Path::to_owned);
@@ -79,7 +79,7 @@ fn configured_pem_material_is_loaded_and_wins_over_auto_tls() {
     let tls = resolve_server_tls(&tls_config(Some(&cert_path), Some(&key_path), true))
         .expect("configured PEM material loads")
         .expect("configured material is always TLS");
-    assert_eq!(tls.origin(), "configured --ssl-cert/--ssl-key");
+    assert_eq!(tls.origin(), "configured ssl-cert/ssl-key");
     std::fs::remove_dir_all(&directory).expect("remove temporary directory");
 }
 

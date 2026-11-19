@@ -67,10 +67,7 @@ pub(super) fn tiflash_stack(nodes: usize) -> UnistoreClusterStack {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
             config.port = 0;
         },
-        tidb_domain_core::node_config::NodeOptions {
-            auth_file: Some("/dev/null".to_owned()),
-            ..tidb_domain_core::node_config::NodeOptions::default()
-        },
+        tidb_domain_core::node_config::NodeOptions::default(),
     )
     .expect("node config");
     let users = Arc::new(

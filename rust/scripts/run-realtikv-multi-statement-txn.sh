@@ -76,7 +76,6 @@ RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 MYSQL_LOG="${TMPDIR:-/tmp}/${TAG}-mysql.log"
 CLIENT_LOG="${TMPDIR:-/tmp}/${TAG}-client.log"
 RUNTIME_DIR=
-AUTH_FILE=
 AUTH_USER=campaign26
 AUTH_PASSWORD=${MULTI_TXN_AUTH_PASSWORD:-campaign26-native-password}
 DATABASE=campaign26
@@ -251,19 +250,6 @@ done
 trap cleanup EXIT INT TERM
 
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
-  | openssl dgst -sha1 -binary \
-  | openssl dgst -sha1 -hex \
-  | awk '{ print toupper($NF) }')
-if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
-  echo "could not derive the multi-statement-txn native-password stage-two hash" >&2
-  exit 1
-fi
-(umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "127.0.0.1" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
-unset AUTH_HASH_HEX
 
 tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
@@ -327,10 +313,16 @@ if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
   exit 1
 fi
 
-# Only the PD address, the table NAME, and the accounts file.
+# The Rust node's accounts are the cluster's `mysql.user` (Go's one account
+# source), so the harness account is created through the Go TiDB.
+go_tidb <<SQL
+CREATE USER IF NOT EXISTS '${AUTH_USER}'@'127.0.0.1' IDENTIFIED WITH mysql_native_password BY '${AUTH_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${AUTH_USER}'@'127.0.0.1';
+SQL
+
+# Only the PD address.
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-  --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --auth-file "${AUTH_FILE}" --max-connections 8 \
+  --host 127.0.0.1 -P "${RUST_SQL_PORT}" \
   >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 

@@ -170,12 +170,11 @@ echo "building the Rust node"
 # with --manifest-path alone the caller's CWD picks the toolchain instead.
 (cd "${RUST_ROOT}" && cargo build --locked -p tidb-server --bin tidb-server)
 
-echo "starting the Rust node in cluster-session mode"
+echo "starting the Rust node"
 "${RUST_ROOT}/target/debug/tidb-server" \
+  --store tikv \
   --path "127.0.0.1:${PD_PORT}" \
-  --port "${RUST_SQL_PORT}" \
-  --cluster-session \
-  --load-privileges \
+  -P "${RUST_SQL_PORT}" \
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 wait_for_port "${RUST_SQL_PORT}" "${RUST_LOG_FILE}"

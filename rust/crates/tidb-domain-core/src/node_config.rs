@@ -31,7 +31,6 @@ use tidb_spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
 /// served by one dedicated thread per accepted connection, mirroring Go's
 /// `go s.onConn(clientConn)` per accept.
 pub const MAX_CONNECTION_WORKERS: usize = 256;
-const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
 /// Go's `tidb-server --lease` default: the DDL schema lease. The catalog
 /// reload thread ticks at half of it, matching Go's domain reload loop.
 const DEFAULT_SCHEMA_LEASE_MS: u64 = 45_000;
@@ -124,26 +123,10 @@ pub struct NodeConfig {
     pub pd_endpoints: Vec<String>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
-    /// Immutable native-password account file. Empty when accounts would
-    /// come from the cluster's own `mysql.*` (see [`Self::load_privileges`])
-    /// or when [`Self::skip_grant_table`] deliberately uses neither source.
-    pub auth_file: PathBuf,
-    /// Load accounts and grants from the cluster's `mysql.*` tables at
-    /// startup instead of from `--auth-file`.
-    ///
-    /// This is the bridge to a keyspace a Go TiDB bootstrapped: whatever
-    /// `CREATE USER`/`GRANT` wrote there is what this node admits. Startup
-    /// reads one snapshot; a [`crate::cluster_privileges::PrivilegeReloader`]
-    /// then re-reads on the same `schema_lease / 2` cadence the catalog
-    /// reloader uses, so a grant made afterwards reaches this node without a
-    /// restart.
-    pub load_privileges: bool,
     /// Go's `Instance.MaxConnections`: the configured cap on simultaneous
     /// client connections. `0` means unlimited, exactly as
     /// `server.go`'s `checkConnectionCount` treats it.
     pub max_connections: usize,
-    /// Handshake, idle-command, and socket-write deadline for one connection.
-    pub connection_timeout: Duration,
     /// Maximum recent deadlock records retained process-wide.
     pub deadlock_history_capacity: usize,
     /// Whether retryable in-statement deadlocks are retained.
@@ -182,7 +165,7 @@ pub struct NodeConfig {
     /// (`cmd/tidb-server/main.go` around line 1067,
     /// `vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)`),
     /// which is the only production writer of the flag the login path's
-    /// expiry check reads. `--no-disconnect-on-expired-password` is that
+    /// expiry check reads. `-disconnect-on-expired-password=false` is that
     /// store, and it is what makes sandbox mode -- and the per-statement
     /// gate that restricts a sandboxed session to `SET PASSWORD`/`ALTER
     /// USER` -- reachable at all.
@@ -195,11 +178,9 @@ pub struct NodeConfig {
     /// TiDB's `[security] skip-grant-table`, accepted only when the process
     /// effective uid passes the source root-only validation.
     pub skip_grant_table: bool,
-    /// Generate a self-signed certificate when no `--ssl-cert`/`--ssl-key` is
-    /// configured, as TiDB's `[security] auto-tls` does.
-    ///
-    /// Defaults to false, as in Go. Enable it explicitly in the shared config;
-    /// `--no-auto-tls` remains a native CLI override.
+    /// Generate a self-signed certificate when no `ssl-cert`/`ssl-key` is
+    /// configured, as TiDB's `[security] auto-tls` does (default false, as
+    /// in Go).
     pub auto_tls: bool,
     /// Cluster-facing gRPC transport security (TiDB's `[security]`
     /// `cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key`). Plaintext
@@ -248,8 +229,6 @@ pub enum NodeConfigError {
     /// Only the real TiKV store is supported by this executable.
     UnsupportedStore(String),
 
-    /// Configured-account mode must never bind a non-loopback address.
-    NonLoopbackHost(IpAddr),
 }
 
 impl fmt::Display for NodeConfigError {
@@ -273,10 +252,6 @@ impl fmt::Display for NodeConfigError {
                     "unsupported store {store:?}; tikv and unistore are executable"
                 )
             }
-            Self::NonLoopbackHost(host) => write!(
-                formatter,
-                "refusing non-loopback MySQL listener {host} for --auth-file; use --load-privileges for cluster deployment"
-            ),
         }
     }
 }
@@ -338,47 +313,21 @@ fn nonempty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// The command line's own node settings: the Rust adapter's options that
-/// are no config-file key. The rest of the node comes from the config tree.
-#[derive(Clone, Debug, PartialEq)]
+/// The command line's settings that are no config-file key: Go `main`
+/// applies `-affinity-cpus` itself. The rest of the node comes from the
+/// config tree.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NodeOptions {
-    /// `--auth-file`: the account TSV a node without the cluster's
-    /// `mysql.user` serves.
-    pub auth_file: Option<String>,
-    /// `--load-privileges`: the cluster's `mysql.*` is the account source.
-    pub load_privileges: bool,
-    /// `--affinity-cpus`.
+    /// `-affinity-cpus`.
     pub affinity_cpus: Vec<i64>,
-    /// `--connection-timeout-ms`.
-    pub connection_timeout: Duration,
-}
-
-impl Default for NodeOptions {
-    fn default() -> Self {
-        Self {
-            auth_file: None,
-            load_privileges: false,
-            affinity_cpus: Vec::new(),
-            connection_timeout: Duration::from_millis(DEFAULT_CONNECTION_TIMEOUT_MS),
-        }
-    }
 }
 
 impl NodeConfig {
-    /// The native executable's deployment defaults, which a config file and
-    /// the command line then override: Go's defaults over TiKV with no PD
-    /// path yet. An account file serves loopback clients only
-    /// (`NonLoopbackHost`), so a node started with one listens there where
-    /// every other node listens on Go's `0.0.0.0`.
+    /// The executable's defaults, which a config file and the command line
+    /// then override: Go's `config.NewConfig()` (a unistore at `/tmp/tidb`).
     #[must_use]
-    pub fn deployment_defaults(account_file: bool) -> SourceConfig {
-        let mut defaults = SourceConfig::default();
-        if account_file {
-            defaults.host = "127.0.0.1".to_owned();
-        }
-        defaults.store = tidb_config::store::StoreType("tikv".to_owned());
-        defaults.path.clear();
-        defaults
+    pub fn deployment_defaults() -> SourceConfig {
+        SourceConfig::default()
     }
 
     /// The node over the executable's defaults as `edit` leaves them, with no
@@ -388,7 +337,7 @@ impl NodeConfig {
         edit: impl FnOnce(&mut SourceConfig),
         options: NodeOptions,
     ) -> Result<Self, NodeConfigError> {
-        let mut config = Self::deployment_defaults(options.auth_file.is_some());
+        let mut config = Self::deployment_defaults();
         edit(&mut config);
         Self::from_config(config, options)
     }
@@ -405,32 +354,15 @@ impl NodeConfig {
             store => return Err(NodeConfigError::UnsupportedStore(store.to_owned())),
         };
         let skip_grant_table = global_config.security.skip_grant_table;
-        let mut load_privileges = options.load_privileges;
-        if store_kind == StoreKind::TiKv && options.auth_file.is_none() && !skip_grant_table {
-            load_privileges = true;
-        }
         let host = parse_ip("--host", &global_config.host)?;
-        if !host.is_loopback() && !load_privileges && !skip_grant_table {
-            return Err(NodeConfigError::NonLoopbackHost(host));
-        }
         let port = u16::try_from(global_config.port)
-            .map_err(|_| invalid("--port", "expected a port number"))?;
+            .map_err(|_| invalid("-P", "expected a port number"))?;
         let pd_endpoints = match store_kind {
             StoreKind::TiKv if global_config.path.is_empty() => {
                 return Err(NodeConfigError::MissingOption("--path"));
             }
             StoreKind::TiKv => parse_pd_endpoints(global_config.path.clone())?,
             StoreKind::Unistore => Vec::new(),
-        };
-        let auth_file = match (options.auth_file, load_privileges, skip_grant_table) {
-            (_, _, true) => PathBuf::new(),
-            (Some(_), true, false) => return Err(invalid(
-                "--load-privileges",
-                "cannot be combined with --auth-file; the cluster's mysql.* is then the only account source",
-            )),
-            (Some(file), false, false) => PathBuf::from(file),
-            (None, true, false) => PathBuf::new(),
-            (None, false, false) => return Err(NodeConfigError::MissingOption("--auth-file")),
         };
         let schema_lease = parse_file_schema_lease(&global_config.lease)?;
         let stats_lease = parse_stats_lease(&global_config.performance.stats_lease)?;
@@ -486,9 +418,7 @@ impl NodeConfig {
             pd_endpoints,
             max_allowed_packet: usize::try_from(global_config.max_allowed_packet)
                 .map_err(|_| invalid("max-allowed-packet", "value does not fit this platform"))?,
-            auth_file,
             max_connections: global_config.instance.max_connections as usize,
-            connection_timeout: options.connection_timeout,
             deadlock_history_capacity: usize::try_from(
                 global_config.pessimistic_txn.deadlock_history_capacity,
             )
@@ -505,7 +435,6 @@ impl NodeConfig {
             run_ddl: global_config.instance.tidb_enable_ddl.load(),
             stats_lease,
             plan_replayer_gc_lease,
-            load_privileges,
             ssl_cert: nonempty(global_config.security.ssl_cert.clone()).map(PathBuf::from),
             ssl_key: nonempty(global_config.security.ssl_key.clone()).map(PathBuf::from),
             ssl_ca: nonempty(global_config.security.ssl_ca.clone()).map(PathBuf::from),
@@ -578,21 +507,21 @@ fn build_cluster_security(
 ) -> Result<ClusterSecurity, NodeConfigError> {
     if ca.is_none() && (cert.is_some() || key.is_some()) {
         return Err(invalid(
-            "--cluster-ssl-ca",
-            "cluster TLS material requires --cluster-ssl-ca; without a CA the transport stays plaintext",
+            "security.cluster-ssl-ca",
+            "cluster TLS material requires cluster-ssl-ca; without a CA the transport stays plaintext",
         ));
     }
     match (&cert, &key) {
         (Some(_), None) => {
             return Err(invalid(
-                "--cluster-ssl-key",
-                "--cluster-ssl-cert requires --cluster-ssl-key",
+                "security.cluster-ssl-key",
+                "cluster-ssl-cert requires cluster-ssl-key",
             ))
         }
         (None, Some(_)) => {
             return Err(invalid(
-                "--cluster-ssl-cert",
-                "--cluster-ssl-key requires --cluster-ssl-cert",
+                "security.cluster-ssl-cert",
+                "cluster-ssl-key requires cluster-ssl-cert",
             ))
         }
         _ => {}

@@ -62,7 +62,7 @@ pub fn run_unistore_cluster_session(
     // Go `setGlobalVars`, before the store and the domain are created.
     let global_vars = tidb_domain::global_sysvars::GlobalSysvars::before_domain();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
-    let users = node_accounts(&config, global_vars)?;
+    let users = node_accounts(&config, global_vars);
     let stack =
         unistore_cluster_session_stack(&config, &users, Some(spill_storage), memory_arbitrator)?;
     let UnistoreClusterStack {

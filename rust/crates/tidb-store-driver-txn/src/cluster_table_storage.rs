@@ -2871,7 +2871,7 @@ mod tests {
 /// able to publish or roll back.
 ///
 /// Every path that ends a transaction shares it, including the served
-/// `--cluster-session` one in this module.
+/// cluster-session one in this module.
 #[must_use]
 pub fn transaction_end_call() -> UnaryCallContext {
     UnaryCallContext::with_optional_deadline(None, UnaryCancellation::new())

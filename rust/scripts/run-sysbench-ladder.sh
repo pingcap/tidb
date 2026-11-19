@@ -86,7 +86,6 @@ PLAYGROUND_PID=
 RUST_PID=
 MDL_LOAD_PID=
 RUNTIME_DIR=
-AUTH_FILE=
 # Override with SYSBENCH_AUTH_USER=root SYSBENCH_AUTH_HOST=% to run under the
 # bootstrap superuser: `PrivilegeRegistry::bootstrapped_from` grants
 # ALL PRIVILEGES to exactly `root`@`%`, and rungs past 4 need more than the
@@ -295,18 +294,6 @@ done
 trap cleanup EXIT INT TERM
 
 RUNTIME_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${TAG}-runtime.XXXXXX")
-AUTH_FILE="${RUNTIME_DIR}/auth.tsv"
-AUTH_HASH_HEX=$(printf '%s' "${AUTH_PASSWORD}" \
-  | openssl dgst -sha1 -binary | openssl dgst -sha1 -hex \
-  | awk '{ print toupper($NF) }')
-if [[ ! "${AUTH_HASH_HEX}" =~ ^[0-9A-F]{40}$ ]]; then
-  echo "could not derive the sysbench native-password stage-two hash" >&2
-  exit 1
-fi
-(umask 077; printf '%s\t%s\t%s\t*%s\n' \
-  "${AUTH_USER}" "${AUTH_HOST}" "mysql_native_password" "${AUTH_HASH_HEX}" >"${AUTH_FILE}")
-chmod 0600 "${AUTH_FILE}"
-unset AUTH_HASH_HEX
 
 step "rung 0: real cluster (TiUP playground)"
 TIDB_CONFIG="${RUNTIME_DIR}/tidb.toml"
@@ -335,11 +322,17 @@ if [[ "${cluster_ready}" != true ]]; then
 fi
 note "OK rung 0: PD ${PD_ADDR}, Go TiDB 127.0.0.1:${GO_SQL_PORT}"
 
-step "rung 1: Rust node startup (--cluster-session)"
+# The Rust node's accounts are the cluster's `mysql.user` (Go's one account
+# source), so the harness account is created through the Go TiDB.
+"${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot ${MYSQL_PLUGIN_ARGS[@]+"${MYSQL_PLUGIN_ARGS[@]}"} <<SQL
+CREATE USER IF NOT EXISTS '${AUTH_USER}'@'${AUTH_HOST}' IDENTIFIED WITH mysql_native_password BY '${AUTH_PASSWORD}';
+GRANT ALL PRIVILEGES ON *.* TO '${AUTH_USER}'@'${AUTH_HOST}';
+SQL
+
+step "rung 1: Rust node startup"
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-  --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-  --cluster-session --lease-ms 2000 \
-  --auth-file "${AUTH_FILE}" --max-connections 32 \
+  --host 127.0.0.1 -P "${RUST_SQL_PORT}" \
+  -lease 2000ms \
   >"${RUST_LOG_FILE}" 2>&1 &
 RUST_PID=$!
 rust_ready=false

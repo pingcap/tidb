@@ -29,10 +29,7 @@ fn unistore_stack() -> UnistoreClusterStack {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
             config.port = 0;
         },
-        NodeOptions {
-            auth_file: Some("/dev/null".to_owned()),
-            ..NodeOptions::default()
-        },
+        NodeOptions::default(),
     )
     .expect("node config");
     let users = Arc::new(

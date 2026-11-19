@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Table-level index hints (`USE`/`FORCE`/`IGNORE INDEX`) on the live
-//! `--cluster-session` path, pinned against real TiDB.
+//! `-store unistore` path, pinned against real TiDB.
 //!
 //! # The seam these tests pin
 //!

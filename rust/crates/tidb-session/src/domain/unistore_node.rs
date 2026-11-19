@@ -240,8 +240,8 @@ mod transaction_buffer_tests {
 /// that keep its store and reload threads alive. One build, two callers:
 /// the running node and the in-tree tests that pin coprocessor-backed
 /// execution -- a test over this stack exercises the SAME bootstrap,
-/// catalog, and coprocessor client the live `--store unistore
-/// --cluster-session` process serves.
+/// catalog, and coprocessor client the live `-store unistore` process
+/// serves.
 pub struct UnistoreClusterStack {
     pub factory: Arc<tidb_domain_core::domain::Domain>,
     pub schema_version: i64,
@@ -252,7 +252,7 @@ pub struct UnistoreClusterStack {
     // store they read from.
     pub _reloader: tidb_infoschema_issyncer::catalog_watch::Syncer,
     pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
-    /// Go `LoadPrivilegeLoop`'s loop, under `--load-privileges`.
+    /// Go `LoadPrivilegeLoop`'s loop (`None` under `skip-grant-table`).
     pub _privilege_reloader: Option<tidb_domain_core::cluster_privileges::PrivilegeReloader>,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
     pub _binding_reloader: tidb_bindinfo::cluster_binding_seam::BindingReloader,
@@ -857,13 +857,12 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     ddl_session_pool.bind(&factory);
     let schema_sync_ack = start_mdl_check_loop(schema_sync_ack)?;
     crate::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
-    // Go's bootstrap provisions `root@%` through SQL; this node provisions its
-    // `--auth-file` accounts the same way, before any client connects. Under
-    // `--load-privileges` the accounts are the store's own, as Go's are.
-    if !config.load_privileges {
-        crate::domain::cluster_session_node::seed_auth_file_accounts(&factory, &users.accounts())
-            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
-    }
+    // Go `LoadPrivilegeLoop`, before `LoadSysVarCacheLoop` (`bootstrapSessionImpl`).
+    let privilege_reloader = crate::domain::real_tikv_node::load_privilege_loop(
+        config,
+        users,
+        &factory.advanced_sys_session_pool(),
+    )?;
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),
@@ -872,8 +871,6 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         sysvar_publication_fence.clone(),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    // Go `LoadPrivilegeLoop`, after the sysvar cache.
-    let privilege_reloader = crate::domain::real_tikv_node::load_privilege_loop(config, users)?;
     // Go `InitBindingHandle`, after the sysvar cache.
     let binding_reloader = crate::domain::cluster_session_node::init_binding_handle(
         &factory,

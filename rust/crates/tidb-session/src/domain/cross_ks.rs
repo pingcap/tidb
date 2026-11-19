@@ -546,10 +546,7 @@ mod live_tests {
                 config.path = endpoint.clone();
                 config.keyspace_name = "SYSTEM".into();
             },
-            tidb_domain_core::node_config::NodeOptions {
-                auth_file: Some("/dev/null".into()),
-                ..Default::default()
-            },
+            tidb_domain_core::node_config::NodeOptions::default(),
         )
         .unwrap();
         let factory = StoreFactory {

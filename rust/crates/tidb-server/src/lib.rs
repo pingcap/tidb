@@ -133,7 +133,7 @@ pub use native_password::{
 pub use node_config::{NodeConfig, NodeConfigError, NodeOptions};
 pub use node_flags::{
     initialize_versions_for_display, install_process_globals, node_config_help_text,
-    parse_node_config,
+    parse_main_flags, parse_node_config,
 };
 pub use pipeline_session::MaterializedResultSetSource;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -460,10 +460,10 @@ mod skip_grant_startup_tests {
     fn enabled_startup_memory_policy_builds_one_running_process_arbitrator() {
         let mut config = crate::parse_node_config([
             "tidb-server",
+            "--store",
+            "tikv",
             "--path",
             "127.0.0.1:2379",
-            "--auth-file",
-            "/tmp/users.tsv",
         ])
         .unwrap();
         config.memory_arbitrator.server_memory_limit = "1GiB".to_owned();

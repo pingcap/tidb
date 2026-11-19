@@ -2,9 +2,9 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 8,
+    "unresolved": 7,
     "open": 3,
-    "partial": 5
+    "partial": 4
   },
   "findings": [
     {
@@ -40,14 +40,6 @@
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
     },
     {
-      "id": "B03",
-      "status": "partial",
-      "group": "System tables and startup",
-      "finding": "The `tidb-server` binary's command line is not Go's alone. Fixed 2026-11-19: every flag Go's `initFlagSet` defines (`-config`, `-store`, `-path`, `-host`, `-P`, ...) goes through the `main_flags.rs` port in either spelling, last value winning as Go's `flag` does, so `-store unistore -path ...` starts a node. Remaining: it adds options Go has no counterpart for (`--auth-file`, `--load-privileges`, `--lease-ms`, `--max-connections`, `--connection-timeout-ms`, `--max-allowed-packet`, `--no-auto-tls`, `--no-disconnect-on-expired-password`) and aliases (`--ssl-cert` / `--ssl-key` / `--ssl-ca` beside Go's `-sql-*`, `--cluster-ssl-*` beside Go's `-cluster-ca` / `-cluster-cert` / `-cluster-key`). One of them picks a second account source: `--auth-file` reads users from a TSV file (`ConfiguredUserStore::load`) and refuses a non-loopback listener, and a unistore node started without it fails with `missing required option --auth-file` unless `--load-privileges` is given. Go has one flag set and one account source, `mysql.user` loaded by the privilege cache.",
-      "rust_evidence": "`rust/crates/tidb-server/src/node_flags.rs` (`parse_node_config`), `main_flags.rs`, `rust/crates/tidb-session/src/domain/configured_user_store.rs`, `real_tikv_node/mod.rs` (`configured_account_store`)",
-      "go_owner": "`cmd/tidb-server/main.go` (`initFlagSet`, `overrideConfig`), `pkg/privilege/privileges/cache.go` (`LoadAll`)"
-    },
-    {
       "id": "E29",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -72,7 +64,7 @@
       "go_owner": "`pkg/store/copr/coprocessor.go` (`rateLimitAction`), `pkg/executor/test/oomtest/oom_test.go` (`TestMemTracker4DeleteExec`), `pkg/util/chunk` memory accounting"
     }
   ],
-  "unresolved": 8,
+  "unresolved": 7,
   "open": 3,
-  "partial": 5
+  "partial": 4
 }

@@ -149,7 +149,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     // so `SELECT @@max_connections` answers the limit the node is actually
     // enforcing. The static catalog here carried the registry default `0`
     // instead, and 0 MEANS UNLIMITED -- so a node booted with
-    // `--max-connections 5` refused the sixth connection while telling every
+    // `max_connections = 5` refused the sixth connection while telling every
     // client that asked that it had no limit at all. Connection poolers and
     // monitoring read this variable to size themselves.
     globals.set_sys_var("max_connections", config.max_connections.to_string());
@@ -191,10 +191,7 @@ mod tests {
                 config.store = tidb_config::store::StoreType("unistore".to_owned());
                 config.port = 4158;
             },
-            NodeOptions {
-                auth_file: Some("/dev/null".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("parses");
         let globals = GlobalSysvars::before_domain();
@@ -214,10 +211,7 @@ mod tests {
                 config.store = tidb_config::store::StoreType("unistore".to_owned());
                 config.instance.tidb_service_scope = "BackGround".to_owned();
             },
-            NodeOptions {
-                auth_file: Some("/dev/null".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("parses");
         let globals = GlobalSysvars::before_domain();
@@ -256,10 +250,7 @@ mod tests {
                 config.store = tidb_config::store::StoreType("unistore".to_owned());
                 config.port = 4157;
             },
-            NodeOptions {
-                auth_file: Some("/dev/null".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("parses");
         assert_eq!(config.socket, "/tmp/tidb-4157.sock");

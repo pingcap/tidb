@@ -31,7 +31,7 @@ use tidb_pd_client::{EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDAT
 use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_domain_core::cluster_privileges::PrivilegeReloader;
-use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
+use crate::domain::configured_user_store::ConfiguredUserStore;
 use tidb_domain_core::node_config::NodeConfig;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
@@ -71,42 +71,23 @@ pub fn server_start_unix_timestamp() -> i64 {
     })
 }
 
-/// The node's account store over `global_vars`, the process's sysvar
+/// This node's live account table over `global_vars`, the process's sysvar
 /// registry, which the server's main has already filled (Go `setGlobalVars`).
-pub fn configured_account_store(
-    config: &NodeConfig,
-    global_vars: GlobalSysvars,
-) -> Result<ConfiguredUserStore, RunConfiguredNodeError> {
+///
+/// The table starts empty and is filled from the store's `mysql.*` by
+/// [`load_privilege_loop`] once the domain's system sessions exist (Go
+/// creates its privilege handle in `LoadPrivilegeLoop`, after `dom.Start`);
+/// under `skip-grant-table` it admits everyone and loads nothing.
+pub fn node_accounts(config: &NodeConfig, global_vars: GlobalSysvars) -> Arc<ConfiguredUserStore> {
     let users = if config.skip_grant_table {
         ConfiguredUserStore::empty_for_skip_grant_table()
     } else {
-        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?
+        ConfiguredUserStore::from_accounts(tidb_privilege::PrivilegeRegistry::bootstrapped_from(Vec::new()))
     };
     let users = apply_account_policies(config, users.with_global_vars(global_vars));
     // The start timestamp pins before any listener starts, as Go's does.
     server_start_unix_timestamp();
-    Ok(users)
-}
-
-/// Builds this node's live account table from whichever source the
-/// command line named.
-///
-/// Under `--load-privileges` the table starts empty and is filled from the
-/// cluster's own `mysql.*` by [`start_privilege_loop`] once the domain's
-/// system sessions exist (Go creates its privilege handle in
-/// `LoadPrivilegeLoop`, after `dom.Start`).
-pub fn node_accounts(
-    config: &NodeConfig,
-    global_vars: GlobalSysvars,
-) -> Result<Arc<ConfiguredUserStore>, RunConfiguredNodeError> {
-    if config.skip_grant_table || !config.load_privileges {
-        return Ok(Arc::new(configured_account_store(config, global_vars)?));
-    }
-    let users = ConfiguredUserStore::from_accounts(tidb_privilege::PrivilegeRegistry::bootstrapped_from(
-        Vec::new(),
-    ))
-    .with_global_vars(global_vars);
-    Ok(Arc::new(apply_account_policies(config, users)))
+    Arc::new(users)
 }
 
 /// Go `privileges.NewHandle(do.SysSessionPool(), ...)`: the live account
@@ -135,11 +116,23 @@ pub fn new_privilege_handle(
 pub fn load_privilege_loop(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
+    session_pool: &Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
 ) -> Result<Option<PrivilegeReloader>, RunConfiguredNodeError> {
-    if config.skip_grant_table || !config.load_privileges {
+    if config.skip_grant_table {
         return Ok(None);
     }
     let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
+    // Go `sctx.GetSQLExecutor().ExecuteInternal(ctx, "set @@autocommit = 1")`
+    // on the loop's session -- whose first statement also loads the session's
+    // copy of the global tier, building the sysvar cache before
+    // `LoadSysVarCacheLoop` starts.
+    use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool as _;
+    tidb_domain_core::sys_session::StatsPool { session_pool: Some(session_pool) }
+        .call_with_sctx(
+            &mut |sctx| tidb_stats_handle_util::exec_rows(sctx, "set @@autocommit = 1", &[]).map(drop),
+            &[],
+        )
+        .map_err(|error| engine(error.message))?;
     let accounts = users.accounts();
     // Go's handle starts empty: each user loads as it is first used
     // (`ensureActiveUser`) until the first event's `UpdateAll`.
@@ -328,8 +321,6 @@ pub fn emit_connections_startup_failure(error: &impl std::fmt::Display) {
 /// Startup/runtime failure from the fully composed node.
 #[derive(Debug)]
 pub enum RunConfiguredNodeError {
-    /// The required immutable account catalog was rejected.
-    Auth(ConfiguredUserStoreError),
     /// Spill storage could not be leased or admitted before listener startup.
     Spill(tidb_spill_storage::SpillStorageOpenError),
     /// The process SIGINT/SIGTERM handler could not be installed.
@@ -356,7 +347,6 @@ pub enum RunConfiguredNodeError {
 impl std::fmt::Display for RunConfiguredNodeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(error) => write!(formatter, "cannot load authentication catalog: {error}"),
             Self::Spill(error) => write!(formatter, "cannot initialize spill storage: {error}"),
             Self::Signal(error) => write!(formatter, "cannot install shutdown handler: {error}"),
             Self::Engine(error) => {
@@ -380,7 +370,6 @@ impl std::fmt::Display for RunConfiguredNodeError {
 impl std::error::Error for RunConfiguredNodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Auth(error) => Some(error),
             Self::Spill(error) => Some(error),
             Self::Signal(error) => Some(error),
             Self::Node(error) => Some(error.as_ref()),
@@ -410,15 +399,11 @@ mod tests {
         }
         let mut config = NodeConfig::with_defaults(
             |config| config.path = "127.0.0.1:2379".to_owned(),
-            NodeOptions {
-                auth_file: Some("/tmp/users.tsv".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("base config");
         config.skip_grant_table = true;
-        let users = configured_account_store(&config, GlobalSysvars::new())
-            .expect("skip-grant-table does not read the nonexistent auth file");
+        let users = node_accounts(&config, GlobalSysvars::new());
         assert_eq!(
             users.match_identity("no-row", "127.0.0.1").as_deref(),
             Some("mysql_native_password")
@@ -483,10 +468,7 @@ mod tests {
         }
         let mut config = NodeConfig::with_defaults(
             |config| config.path = "127.0.0.1:2379".to_owned(),
-            NodeOptions {
-                auth_file: Some("/tmp/users.tsv".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("base config");
         config.skip_grant_table = true;
@@ -502,8 +484,7 @@ mod tests {
             sysvar_reload_interval(Duration::from_secs(10)),
             Duration::from_secs(30)
         );
-        let users = configured_account_store(&config, GlobalSysvars::new())
-            .expect("skip-grant startup creates no file-backed accounts");
+        let users = node_accounts(&config, GlobalSysvars::new());
 
         load_cluster_sysvars_with_read(&users, || {
             Ok(vec![(
@@ -569,10 +550,7 @@ mod tests {
         }
         let mut config = NodeConfig::with_defaults(
             |config| config.path = "127.0.0.1:2379".to_owned(),
-            NodeOptions {
-                auth_file: Some("/tmp/users.tsv".to_owned()),
-                ..NodeOptions::default()
-            },
+            NodeOptions::default(),
         )
         .expect("base config");
         config.schema_lease = Duration::from_secs(120);
