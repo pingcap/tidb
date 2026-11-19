@@ -420,6 +420,34 @@ func assertMatchAgainstRootSelection(t *testing.T, tk *testkit.TestKit, sql stri
 	require.True(t, found)
 }
 
+func TestMatchAgainstNgramShortWordsFromSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session tidb_enable_local_match_against=ON, innodb_ft_enable_stopword=OFF, tidb_isolation_read_engines='tikv'")
+
+	for _, tc := range []struct {
+		collation string
+		want      [][]any
+	}{
+		{"utf8mb4_bin", testkit.Rows()},
+		{"utf8mb4_unicode_ci", testkit.Rows("1", "4")},
+	} {
+		tk.MustExec("drop table if exists short_words")
+		tk.MustExec("create table short_words (id int primary key, body text collate " + tc.collation +
+			", fulltext index idx_body(body) with parser ngram)")
+		tk.MustExec(`insert into short_words values
+			(1, X'E281A334E281A3'), (2, '4'), (3, '45'), (4, X'E281A33435E281A3'),
+			(5, X'E281A33132E281A3'), (6, X'E281A3313233E281A3')`)
+		for _, search := range []string{`"4"`, `"` + "\u20634\u2063" + `"`} {
+			tk.MustQuery("select id from short_words where match(body) against ('" + search + "' in boolean mode) order by id").Check(tc.want)
+		}
+		tk.MustQuery("select id from short_words where match(body) against ('\"" + "\u206312\u2063" + "\"' in boolean mode) order by id").
+			Check(testkit.Rows("5", "6"))
+		tk.MustQuery("select id from short_words where cast(body as binary) = X'E281A334E281A3'").Check(testkit.Rows("1"))
+	}
+}
+
 func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -463,6 +491,12 @@ func TestMatchAgainstNgramBooleanPushdownToTiFlash(t *testing.T) {
 	plan = compilePhysicalPlan(t, tk, sql)
 	metadata = assertLocalMatchAgainstScalarSelection(t, tk, plan, 1)
 	require.Equal(t, tipb.LocalMatchAgainstStopwordMode_LocalMatchAgainstStopwordModeDisabled, metadata.GetStopwordMode())
+	shortPhrasePlan := compilePhysicalPlan(t, tk, "select id from ngram_articles where match(title) against ('\"\u20634\u2063\"' in boolean mode)")
+	shortPhrase := assertLocalMatchAgainstScalarSelection(t, tk, shortPhrasePlan, 1)
+	require.Equal(t, fulltext.LocalMatchAgainstProtocolVersion, shortPhrase.GetVersion())
+	require.Len(t, shortPhrase.GetNodes(), 1)
+	require.Equal(t, tipb.LocalMatchAgainstBooleanTermType_LocalMatchAgainstBooleanTermPhrase, shortPhrase.GetNodes()[0].GetTermType())
+	require.Equal(t, "4", shortPhrase.GetNodes()[0].GetText())
 	scan = findLocalMatchAgainstTableScan(t, plan)
 
 	pb, err := scan.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)

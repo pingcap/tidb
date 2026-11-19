@@ -65,6 +65,14 @@ func (f analyzerFunc) Analyze(text string) ([]Token, error) {
 
 // GetAnalyzer returns the analyzer for the selected fulltext parser type.
 func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
+	return getAnalyzer(config, false)
+}
+
+func getQueryAnalyzer(config AnalyzerConfig) (Analyzer, error) {
+	return getAnalyzer(config, true)
+}
+
+func getAnalyzer(config AnalyzerConfig, keepShortNgramRuns bool) (Analyzer, error) {
 	parserInfo := parserInfoFromConfig(config)
 	switch config.ParserType {
 	case model.FullTextParserTypeStandardV1:
@@ -73,7 +81,7 @@ func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
 		}), nil
 	case model.FullTextParserTypeNgramV1:
 		return analyzerFunc(func(text string) ([]Token, error) {
-			return analyzeNgramV1(text, parserInfo), nil
+			return analyzeNgramV1(text, parserInfo, keepShortNgramRuns), nil
 		}), nil
 	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
@@ -202,9 +210,9 @@ func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 	return analyzer.Analyze(text)
 }
 
-func analyzeNgramV1(text string, parserInfo parserInfo) []Token {
+func analyzeNgramV1(text string, parserInfo parserInfo, keepShortRuns bool) []Token {
 	tokens := tokenizeNgramDocument(text)
-	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize)
+	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize, keepShortRuns)
 	tokens = ngramStopwordFilter(tokens, parserInfo)
 	if parserInfo.collator == nil {
 		tokens = lowerFilter(tokens)
@@ -535,7 +543,7 @@ func stopwordSet(words ...string) map[string]struct{} {
 	return set
 }
 
-func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
+func ngramFilter(tokens []Token, minGram, maxGram int, keepShortRuns bool) []Token {
 	if minGram <= 0 || maxGram < minGram {
 		return nil
 	}
@@ -547,7 +555,12 @@ func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 		spans := utf8CharSpans(token.Text)
 		charCount := len(spans)
 		if charCount < minGram {
-			// A short document run emits no grams and contributes no position.
+			// A Boolean query retains a short word for collation-aware
+			// lookup. The document stream still has only fixed-size grams.
+			if keepShortRuns {
+				out = append(out, Token{Text: token.Text, Position: basePosition})
+				nextPositionBase++
+			}
 			continue
 		}
 
