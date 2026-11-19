@@ -331,6 +331,16 @@ func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.
 	return hdl, nil
 }
 
+// AcquireTransientKSRuntime acquires a cross-keyspace runtime whose final
+// release closes its resources immediately after all holders finish.
+func (do *Domain) AcquireTransientKSRuntime(ctx context.Context, targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.AcquireTransient(ctx, targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
+}
+
 // SetDDL sets DDL to domain, it's only used in tests.
 func (do *Domain) SetDDL(d ddl.DDL, executor ddl.Executor) {
 	do.ddl = d

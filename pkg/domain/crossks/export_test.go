@@ -24,10 +24,16 @@ func (m *Manager) Get(ks string) (*SessionManager, bool) {
 // CloseKS closes the session manager for the specified keyspace in tests.
 func (m *Manager) CloseKS(targetKS string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if entry, ok := m.runtimes[targetKS]; ok {
-		entry.sessMgr.close()
-		delete(m.runtimes, targetKS)
+	entry, ok := m.runtimes[targetKS]
+	claimed := ok && m.claimCloseWithoutLock(entry)
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	if claimed {
+		m.finishClose(targetKS, entry)
+	} else {
+		<-entry.closeDone
 	}
 }
 

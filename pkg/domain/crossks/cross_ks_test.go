@@ -585,6 +585,28 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
 	})
+	t.Run("transient checks clean up after the final shared holder", func(t *testing.T) {
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		transient, err := sysKSDom.AcquireTransientKSRuntime(ctx, targetKS, "test/transient-job-check")
+		require.NoError(t, err)
+		defer transient.Release()
+		require.Same(t, handle.SysSessionPool(), transient.SysSessionPool())
+		mgr := storage.NewTaskManager(transient.SysSessionPool())
+		for _, sql := range []string{
+			"select count(1) from mysql.tidb_ddl_job",
+			"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')",
+		} {
+			rows, err := mgr.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+		}
+		transient.Release()
+		_, exists := crossKSMgr.Get(targetKS)
+		require.True(t, exists, "the ordinary holder still needs the runtime")
+		handle.Release()
+		_, exists = crossKSMgr.Get(targetKS)
+		require.False(t, exists, "the final holder must close the checked runtime")
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

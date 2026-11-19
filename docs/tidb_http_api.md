@@ -1368,3 +1368,55 @@ Example `POST` response with `detail=1`:
   ]
 }
 ```
+
+
+## Active jobs across keyspaces
+
+`POST /keyspaces/jobs/active` counts unfinished DDL and IMPORT INTO jobs in a
+batch of user keyspaces. It is available only on a NextGen TiDB server running
+in the `SYSTEM` keyspace. Classic TiDB, user-keyspace servers, and diagnostic
+mode do not expose this endpoint.
+
+Send a JSON object with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `keyspaces` | Required nonempty array of valid user-keyspace names. `SYSTEM` is not accepted. Duplicate names are checked once, in first-occurrence order. |
+| `concurrency` | Optional integer limiting simultaneous keyspace checks. Defaults to 1. Values below 1 become 1; values above the process's usable CPU count become that CPU count. |
+
+```shell
+curl -X POST 'http://{TiDBIP}:10080/keyspaces/jobs/active' \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspaces":["tenant_a","tenant_b"],"concurrency":2}'
+```
+
+Example HTTP 200 response:
+
+```json
+{
+  "keyspaces": [
+    {"keyspace": "tenant_a", "ddl_jobs": 2, "import_jobs": 1},
+    {"keyspace": "tenant_b", "error": "failed to check keyspace"}
+  ]
+}
+```
+
+Each successful result includes both counts, including zeros. An unsuccessful
+result contains `error` and omits both counts; successful results from other
+keyspaces are preserved. Results follow the input order after deduplication.
+Malformed requests return HTTP 400. Methods other than POST return HTTP 405.
+
+DDL counts include queued, running, pausing, paused, cancelling, and
+rolling-back jobs. Done, synced, cancelled, and rollback-done jobs are excluded,
+even if they have not yet moved to history. IMPORT INTO counts include pending
+and running jobs in each user keyspace's import-job table. Pausing an underlying
+DXF task keeps its import job active. Finished, failed, and cancelled imports are
+excluded. Counts are observations made during the request, not a cluster-wide
+atomic snapshot.
+
+SQL queries and waits for a closing runtime honor request cancellation and a
+10-second timeout. Runtime/session initialization and teardown use their existing
+internal timeouts, so a response can take longer. Borrowed sessions are returned
+before releasing their cross-keyspace runtime. An idle runtime is closed after
+the check; if other holders still use it, closure waits until the final holder
+releases it. This cleanup also applies to failed checks.

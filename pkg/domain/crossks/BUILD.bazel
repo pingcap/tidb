@@ -62,7 +62,7 @@ go_test(
     ],
     embed = [":crossks"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
