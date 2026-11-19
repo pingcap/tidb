@@ -329,7 +329,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	cfg.Storage = storageURL.String()
-	e.info.storage = cfg.Storage
+	e.info.storage = objstore.RedactURL(cfg.Storage)
 
 	for _, opt := range s.Options {
 		switch opt.Tp {

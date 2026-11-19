@@ -325,6 +325,46 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	require.Equal(t, encryptionpb.EncryptionMethod_AES256_CTR, e.backupCfg.CipherInfo.CipherType)
 	require.Greater(t, len(e.backupCfg.CipherInfo.CipherKey), 0)
 
+	for _, tc := range []struct {
+		name             string
+		storage          string
+		wantContext      string
+		checkContextOpts bool
+	}{
+		{
+			name:        "unescaped fragment",
+			storage:     `s3://FAKE_USER:FAKE_PASS@bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"context#fragment"}`,
+			wantContext: `{"tenant":"context`,
+		},
+		{
+			name:             "escaped fragment",
+			storage:          `s3://FAKE_USER:FAKE_PASS@bucket/prefix?sse=aws:kms&sse-kms-context=%7B%22tenant%22%3A%22context%23value%22%7D`,
+			wantContext:      `{"tenant":"context#value"}`,
+			checkContextOpts: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO '"+tc.storage+"'", "", "")
+			require.NoError(t, err)
+			builder.err = nil
+			exec := builder.buildBRIE(stmt.(*ast.BRIEStmt), schema)
+			require.NoError(t, builder.err)
+			e, ok := exec.(*BRIEExec)
+			require.True(t, ok)
+
+			require.NotContains(t, e.info.storage, "FAKE_USER")
+			require.NotContains(t, e.info.storage, "FAKE_PASS")
+			require.NotContains(t, e.info.storage, "#")
+			require.NotContains(t, e.info.query, "FAKE_USER")
+			require.NotContains(t, e.info.query, "FAKE_PASS")
+			require.NotContains(t, e.info.query, "#")
+			if tc.checkContextOpts {
+				require.Equal(t, "s3://FAKE_USER:FAKE_PASS@bucket/prefix", e.backupCfg.Storage)
+				require.Equal(t, tc.wantContext, e.backupCfg.S3.SseKmsContext)
+			}
+		})
+	}
+
 	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
 	require.NoError(t, err)
 	nodeW = resolve.NewNodeW(stmt)
