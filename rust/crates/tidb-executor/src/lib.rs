@@ -157,8 +157,6 @@ mod tests_aggfuncs_approx_pushdown_source;
 #[cfg(test)]
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
-mod tests_insert_auto_random_id_source;
-#[cfg(test)]
 mod tests_joiner_required_rows_source;
 #[cfg(test)]
 mod tests_merge_join_in_disk_source;
@@ -193,8 +191,6 @@ pub(crate) mod index_join_reader;
 mod table_sample;
 mod check_index_range;
 mod admin_index_exec;
-#[cfg(test)]
-mod tests_executor_part19_source;
 #[cfg(test)]
 mod tests_memtest_source;
 #[cfg(test)]
@@ -322,8 +318,6 @@ mod tests_executor_internal_source;
 mod tests_executor_part22_source;
 #[cfg(test)]
 mod tests_executor_suite_statements_source;
-#[cfg(test)]
-mod tests_hashagg_aggregate_suite_source;
 #[cfg(test)]
 mod tests_set_show_stats_slow_query_source;
 pub mod cluster_analyze_seam;

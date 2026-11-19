@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 15,
-    "open": 12,
+    "unresolved": 19,
+    "open": 16,
     "partial": 3
   },
   "findings": [
@@ -38,6 +38,14 @@
       "finding": "A variable's Set behavior now lives on the variable for its warnings and session fields: `SysVarDef` carries Go's `Validation` (with a `VarsContext` for sibling reads and statement warnings), `set_session` and `set_global` hooks; `set_hooks.rs`'s deprecation-warning switch, the prune-mode / MPP-compression / hashagg-spill hooks, `tidb_enforce_mpp` and plan-replayer checks, and `SessionVars::set_session_from_hook`'s thirty typed-field branches moved onto their variables (2026-11-19). Remaining: Go's closures receive the SESSION's `vars` in every scope, while the global writer's context reads the global table, so the checks that read session state or the statement are still name checks in `set_hooks.rs` (`check_isolation_level`, `check_noop_gated_variable`, `check_max_allowed_packet_scope` (SET-statement only), `require_secure_transport` (TLS state), `tidb_schema_cache_size` / `tidb_redact_log` SetGlobal effects); the charset/collation pairing is still inline in `set_session_from_hook`; `GetSession` / `GetGlobal` are not on `SysVarDef`; `tidb-session` `variables.rs` keeps session-side hooks and `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads.",
       "rust_evidence": "`rust/crates/tidb-variable/src/sysvar.rs` (`SysVarDef`), `set_hooks.rs`, `rust/crates/tidb-session/src/variables.rs`, `rust/crates/tidb-exprstatic/src/evalctx.rs` (`StaticSessionVars`)",
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
+    },
+    {
+      "id": "X14",
+      "status": "open",
+      "group": "Structure: Go's shape before more ports",
+      "finding": "Go `AddRecord` reserves a statement's row ids as one batch: `InsertExec` passes `WithReserveAutoIDHint` (up to `tidb_shard_allocate_step` rows) and `AddRecord` fills `StmtCtx.ReservedRowIDAlloc` from one `AllocHandleIDs(n)` (one shard for the batch, `GetRowIDShardGenerator().GetCurrentShard(n)`); `AllocHandle` consumes the reservation before allocating. Rust's `TableCommon::handle_of_row` allocates `_tidb_rowid` one at a time and the insert loop (`driver/dml.rs`) composes a shard per row, so concurrent multi-row inserts interleave their row ids (Go `TestAllocateContinuousRowID` expects each statement's 21 ids consecutive). `tidb_tblctx::MutateContext` lacks Go's `GetReservedRowIDAlloc` / `GetRowIDShardGenerator`.",
+      "rust_evidence": "`rust/crates/tidb-table/src/tables.rs` (`handle_of_row`), `rust/crates/tidb-executor/src/driver/dml.rs` (insert loop, `next_row_id_shard(1)`), `rust/crates/tidb-tblctx/src/lib.rs`",
+      "go_owner": "`pkg/table/tables/tables.go` (`AddRecord`, `AllocHandle`, `AllocHandleIDs`), `pkg/sessionctx/stmtctx/stmtctx.go` (`ReservedRowIDAlloc`), `pkg/table/tblctx/table.go`, `pkg/executor/insert.go` (`exec` size hint)"
     },
     {
       "id": "B03",
@@ -126,9 +134,33 @@
       "finding": "A scalar subquery in a window `RANGE` bound (`RANGE BETWEEN INTERVAL (SELECT 1) DAY PRECEDING ...`) is `ErrWindowRangeBoundNotConstant` (3590); Go master frames the window with its value, because `evalAstExprWithPlanCtx` rewrites the bound through `rewriteAstExprWithPlanCtx`, which plans the subquery on a fake `LogicalTableDual` and evaluates it. Rust's `rewrite_scalar` does not lower subqueries, and `rewriteAstExprWithPlanCtx` has no planner port (its other callers are DML ordered lists and partition expressions). Probe: `create table t(a int, c date)`, rows (1,'2024-01-01'),(2,'2024-01-02'),(3,'2024-01-05'), `SELECT a, SUM(a) OVER (ORDER BY c RANGE BETWEEN INTERVAL (select 1) DAY PRECEDING AND CURRENT ROW) FROM t` answers (1,1),(2,3),(3,3) on Go master.",
       "rust_evidence": "`rust/crates/tidb-planner/src/plan_builder/window.rs` (`build_window_function_frame_bound`), `PlanBuilder::rewrite_scalar`",
       "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildWindowFunctionFrameBound`, `evalAstExprWithPlanCtx`), `pkg/planner/core/expression_rewriter.go` (`rewriteAstExprWithPlanCtx`)"
+    },
+    {
+      "id": "E39",
+      "status": "open",
+      "group": "Executor and SQL surface",
+      "finding": "`PREPARE`'s result fields carry only name and type: `prepare_general` turns the planned `(name, FieldType)` columns into `ResultFieldMetadata` through `select_fields`, so `DBName`, `TableAsName`, `Table` and `Column` are empty (Go `PrepareExec` builds them with `colNames2ResultFields` from the plan's output names; `TestPrepared` reads `fields[0].DBName.L == \"test\"`).",
+      "rust_evidence": "",
+      "go_owner": "`pkg/executor/prepared.go` (`PrepareExec.Next`), `pkg/executor/adapter.go` (`colNames2ResultFields`)"
+    },
+    {
+      "id": "E40",
+      "status": "open",
+      "group": "Executor and SQL surface",
+      "finding": "`select a from t1 union select a from t1 order by (select a+1)` is refused (`expression form is not yet supported by the rewriter`): the set operation's ORDER BY does not resolve a subquery that reads the union's output column (Go `TestUnion2`).",
+      "rust_evidence": "",
+      "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildSetOpr` -> `buildSort` over the set operation)"
+    },
+    {
+      "id": "E41",
+      "status": "open",
+      "group": "Executor and SQL surface",
+      "finding": "Under `tidb_mem_quota_query = 4194304`, `desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a` (201 x 201 rows) is cancelled with 8175; Go's hash aggregate spills to disk and reports a disk usage (`TestAggInDisk`).",
+      "rust_evidence": "",
+      "go_owner": "`pkg/executor/aggregate/agg_hash_executor.go` (spill), `pkg/executor/aggregate/agg_spill.go`"
     }
   ],
-  "unresolved": 15,
-  "open": 12,
+  "unresolved": 19,
+  "open": 16,
   "partial": 3
 }

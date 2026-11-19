@@ -327,6 +327,14 @@ impl PreparedGeneral {
         }
     }
 
+    /// Go `PlanCacheStmt.StmtCacheable = cacheable` on the session's
+    /// prepared definition.
+    pub fn set_stmt_cacheable(&mut self, cacheable: bool) {
+        if let Some(prepared) = self.prepared_ast.as_mut() {
+            prepared.set_stmt_cacheable(cacheable);
+        }
+    }
+
     /// The statement text, whose markers an execute binds.
     #[must_use]
     pub fn sql(&self) -> &str {

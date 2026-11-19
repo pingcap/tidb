@@ -769,6 +769,11 @@ where
 
 
 /// Go `metrics.PlanCacheCounter`.
+/// Go `ResettablePlanCacheCounterFortTest`: a test counts plan-cache hits
+/// under the `prepare` label of [`PLAN_CACHE_COUNTER`], which it can reset.
+pub static RESETTABLE_PLAN_CACHE_COUNTER_FORT_TEST: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 pub static PLAN_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
     register_once(
         CounterVec::new(

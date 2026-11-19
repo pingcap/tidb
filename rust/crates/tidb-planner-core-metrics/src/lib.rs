@@ -91,6 +91,21 @@ pub fn pseudo_estimation_outdate() -> &'static Counter {
     &CHILDREN.pseudo_outdate
 }
 
+/// Go `GetPlanFromPlanCache`'s hit count (`plan_cache.go`): the resettable
+/// `prepare` counter under `ResettablePlanCacheCounterFortTest`, else
+/// [`get_plan_cache_hit_counter`].
+pub fn inc_plan_cache_hit(is_non_prepared: bool) {
+    if tidb_metrics::server::RESETTABLE_PLAN_CACHE_COUNTER_FORT_TEST
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        tidb_metrics::server::PLAN_CACHE_COUNTER
+            .with_label_values(&["prepare"])
+            .inc();
+    } else {
+        get_plan_cache_hit_counter(is_non_prepared).inc();
+    }
+}
+
 /// Go `GetPlanCacheHitCounter`.
 pub fn get_plan_cache_hit_counter(is_non_prepared: bool) -> &'static Counter {
     if is_non_prepared {

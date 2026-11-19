@@ -32,6 +32,8 @@ use tidb_session::{Session, StmtResult};
 pub struct TestKit {
     session: Session,
     affected_rows: u64,
+    /// Go `SessionVars.PreparedStmts`, by statement id (1-based).
+    prepared: Vec<Option<tidb_session::domain::session_api::PreparedGeneral>>,
 }
 
 impl TestKit {
@@ -74,7 +76,14 @@ impl TestKit {
         Self {
             session,
             affected_rows: 0,
+            prepared: Vec::new(),
         }
+    }
+
+    /// Go `tk.Session().ShowProcess().ID`: this connection's id.
+    #[must_use]
+    pub fn connection_id(&self) -> u64 {
+        self.session.connection_id()
     }
 
     /// Go `tk.Session()`.
@@ -84,12 +93,132 @@ impl TestKit {
 
     /// Go `tk.Exec(sql)`.
     pub fn exec(&mut self, sql: &str) -> Result<StmtResult, MysqlError> {
+        // Go `ExecWithContext`: every statement of the text runs in order;
+        // the first one's result set is the answer.
+        let statements = self
+            .session
+            .split_statements(sql, true)
+            .map_err(|error| error.to_mysql_error())?;
+        if statements.len() > 1 {
+            let mut first = None;
+            for statement in &statements {
+                let result = self.exec(statement)?;
+                first.get_or_insert(result);
+            }
+            return Ok(first.expect("at least one statement"));
+        }
         let result = self.session.run(sql).map_err(|error| error.to_mysql_error());
         self.affected_rows = match &result {
             Ok(StmtResult::Affected(rows)) => *rows,
             _ => 0,
         };
         result
+    }
+
+    /// Go `tk.Session().PrepareStmt(sql)`: `(stmtID, paramCount, fields,
+    /// err)`. Statement ids count from 1 per session, as Go's
+    /// `SessionVars.GetNextPreparedStmtID` does.
+    pub fn prepare_stmt(
+        &mut self,
+        sql: &str,
+    ) -> (u32, usize, Vec<tidb_executor::adapter::ResultFieldMetadata>, Option<MysqlError>) {
+        match self.session.prepare_stmt(sql) {
+            Ok(prepared) => {
+                let params = prepared.parameter_count();
+                let fields = prepared.result_fields().to_vec();
+                self.prepared.push(Some(prepared));
+                (u32::try_from(self.prepared.len()).expect("stmt id"), params, fields, None)
+            }
+            Err(error) => (0, 0, Vec::new(), Some(error.to_mysql_error())),
+        }
+    }
+
+    /// Go `tk.Session().ExecutePreparedStmt(ctx, stmtID, args)`: `(rs, err)`;
+    /// a statement without a result set answers an empty, non-nil result.
+    pub fn execute_prepared_stmt(
+        &mut self,
+        stmt_id: u32,
+        args: &[tidb_param::PreparedValue],
+    ) -> (TkResult, Option<MysqlError>) {
+        let prepared = self
+            .prepared
+            .get(stmt_id as usize - 1)
+            .and_then(Option::clone)
+            .unwrap_or_else(|| panic!("prepared statement {stmt_id} not found"));
+        let sql = prepared.sql().to_owned();
+        match self.session.execute_prepared_stmt(&prepared, args) {
+            Ok(tidb_executor::StmtOutput::Rows { rows, .. }) => (TkResult::new(&sql, &rows), None),
+            Ok(tidb_executor::StmtOutput::Affected(rows)) => {
+                self.affected_rows = rows;
+                (TkResult::nil(), None)
+            }
+            Ok(_) => (TkResult::nil(), None),
+            Err(error) => (TkResult::nil(), Some(error.to_mysql_error())),
+        }
+    }
+
+    /// Go `tk.Session().DropPreparedStmt(stmtID)`.
+    pub fn drop_prepared_stmt(&mut self, stmt_id: u32) -> Option<MysqlError> {
+        match self.prepared.get_mut(stmt_id as usize - 1) {
+            Some(slot @ Some(_)) => {
+                *slot = None;
+                None
+            }
+            _ => Some(MysqlError::from_parts(8113, *b"HY000", format!("statement not found, id: {stmt_id}"))),
+        }
+    }
+
+    /// Go `tk.Exec(sql, args...)` with arguments: `PrepareStmt`,
+    /// `ExecutePreparedStmt` with `Args2Expressions4Test(args...)`, then
+    /// `DropPreparedStmt`.
+    pub fn exec_args(
+        &mut self,
+        sql: &str,
+        args: &[tidb_param::PreparedValue],
+    ) -> (TkResult, Option<MysqlError>) {
+        let (stmt_id, _, _, err) = self.prepare_stmt(sql);
+        if err.is_some() {
+            return (TkResult::nil(), err);
+        }
+        let (rs, err) = self.execute_prepared_stmt(stmt_id, args);
+        if err.is_some() {
+            return (rs, err);
+        }
+        (rs, self.drop_prepared_stmt(stmt_id))
+    }
+
+    /// Go `tk.MustQuery(sql, args...)` with arguments.
+    pub fn must_query_args(&mut self, sql: &str, args: &[tidb_param::PreparedValue]) -> TkResult {
+        match self.exec_args(sql, args) {
+            (rs, None) => rs,
+            (_, Some(error)) => panic!("sql: {sql}, args: {args:?}, error: {}", error.error_string()),
+        }
+    }
+
+    /// Go `tk.MustExec(sql, args...)` with arguments.
+    pub fn must_exec_args(&mut self, sql: &str, args: &[tidb_param::PreparedValue]) {
+        if let (_, Some(error)) = self.exec_args(sql, args) {
+            panic!("sql: {sql}, args: {args:?}, error: {}", error.error_string());
+        }
+    }
+
+    /// Go `tk.Session().GetSessionVars().PreparedStmts[id].(*PlanCacheStmt).StmtCacheable = cacheable`.
+    pub fn set_prepared_stmt_cacheable(&mut self, stmt_id: u32, cacheable: bool) {
+        let prepared = self
+            .prepared
+            .get_mut(stmt_id as usize - 1)
+            .and_then(Option::as_mut)
+            .unwrap_or_else(|| panic!("prepared statement {stmt_id} not found"));
+        prepared.set_stmt_cacheable(cacheable);
+    }
+
+    /// Go `tk.Exec(sql)` read as `(rs, err)`.
+    pub fn exec_rs(&mut self, sql: &str) -> (TkResult, Option<MysqlError>) {
+        match self.exec(sql) {
+            Ok(StmtResult::Rows(rows)) => (TkResult::new(sql, &rows), None),
+            Ok(_) => (TkResult::nil(), None),
+            Err(error) => (TkResult::nil(), Some(error)),
+        }
     }
 
     /// Go `tk.CheckLastMessage(msg)`: the last statement's info text.
@@ -338,10 +467,12 @@ impl TkResult {
     /// Go `res.Check(testkit.RowsWithSep(sep, ...))`.
     #[track_caller]
     pub fn check_with_sep<S: AsRef<str>>(&self, sep: &str, expected: impl IntoIterator<Item = S>) {
-        let got: Vec<Vec<String>> = self.rows.clone();
-        let want: Vec<Vec<String>> = expected
+        // Go `Check` compares each row as `fmt.Sprintf("%s", row)`, so the
+        // cells' boundaries are not part of the comparison.
+        let got: Vec<String> = self.rows.iter().map(|row| row.join(" ")).collect();
+        let want: Vec<String> = expected
             .into_iter()
-            .map(|row| row.as_ref().split(sep).map(str::to_owned).collect())
+            .map(|row| row.as_ref().split(sep).collect::<Vec<_>>().join(" "))
             .collect();
         assert_eq!(got, want, "sql: {}", self.sql);
     }
@@ -567,5 +698,60 @@ impl IntoIterator for TkResult {
 impl PartialEq for TkResult {
     fn eq(&self, other: &Self) -> bool {
         self.rows == other.rows
+    }
+}
+
+/// Go `expression.Args2Expressions4Test`'s value kinds: a Go value as the
+/// binary-protocol parameter `types.NewDatum` makes of it.
+pub trait GoArg {
+    fn go_arg(self) -> tidb_param::PreparedValue;
+}
+
+impl GoArg for i32 {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::SignedLongLong(i64::from(self))
+    }
+}
+
+impl GoArg for i64 {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::SignedLongLong(self)
+    }
+}
+
+impl GoArg for u64 {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::UnsignedLongLong(self)
+    }
+}
+
+impl GoArg for f64 {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::Double(self)
+    }
+}
+
+impl GoArg for &str {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::String(self.as_bytes().to_vec())
+    }
+}
+
+impl GoArg for String {
+    fn go_arg(self) -> tidb_param::PreparedValue {
+        tidb_param::PreparedValue::String(self.into_bytes())
+    }
+}
+
+/// [`GoArg::go_arg`] as a function, the shape the ported calls use.
+pub fn go_arg(value: impl GoArg) -> tidb_param::PreparedValue {
+    value.go_arg()
+}
+
+/// Go `strconv.Atoi(s)`: `(value, err)`.
+pub fn go_atoi(text: &str) -> (i64, Option<String>) {
+    match text.parse::<i64>() {
+        Ok(value) => (value, None),
+        Err(error) => (0, Some(format!("strconv.Atoi: parsing {text:?}: {error}"))),
     }
 }

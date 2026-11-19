@@ -1170,7 +1170,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
                 // defer observes the lookup duration on hits only.
-                tidb_planner_core_metrics::get_plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::inc_plan_cache_hit(true);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
@@ -1309,7 +1309,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
                 // defer observes the lookup duration ONLY when it hit; a
                 // miss/re-plan records the miss counter and nothing else.
-                tidb_planner_core_metrics::get_plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::inc_plan_cache_hit(true);
                 observe(lookup_start);
                 return Some(execution);
             }

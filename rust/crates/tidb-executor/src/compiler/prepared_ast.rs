@@ -46,6 +46,9 @@ pub struct PreparedAst {
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
     dml_plan: Option<Arc<PreparedDmlPlan>>,
     select_plan: Option<Arc<PreparedSelectPlan>>,
+    /// Go `PlanCacheStmt.StmtCacheable`: whether PREPARE found the statement
+    /// cacheable; the cached plans above exist only while it holds.
+    stmt_cacheable: bool,
 }
 
 pub struct PreparedPlanCacheEnvironmentCache {
@@ -67,6 +70,7 @@ impl PreparedAst {
         point_get_plan: Option<PreparedPointGetPlan>,
         dml_plan: Option<PreparedDmlPlan>,
         select_plan: Option<PreparedSelectPlan>,
+        stmt_cacheable: bool,
     ) -> Self {
         Self {
             schema_version: Arc::new(std::sync::atomic::AtomicU64::new(schema_version)),
@@ -77,6 +81,24 @@ impl PreparedAst {
             point_get_plan: point_get_plan.map(Arc::new),
             dml_plan: dml_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
+            stmt_cacheable,
+        }
+    }
+
+    /// Go `PlanCacheStmt.StmtCacheable`.
+    #[must_use]
+    pub fn stmt_cacheable(&self) -> bool {
+        self.stmt_cacheable
+    }
+
+    /// Go `PlanCacheStmt.StmtCacheable = cacheable`: an uncacheable statement
+    /// plans every EXECUTE afresh, so its cached plans go.
+    pub fn set_stmt_cacheable(&mut self, cacheable: bool) {
+        self.stmt_cacheable = cacheable;
+        if !cacheable {
+            self.point_get_plan = None;
+            self.dml_plan = None;
+            self.select_plan = None;
         }
     }
 
@@ -350,7 +372,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         let parameter_count = crate::parsed_parameter_count(&statement);
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
         let planner_context = self.statement_context_for_stmt(&statement, false);
-        let (point_get_plan, dml_plan, select_plan) = {
+        let (point_get_plan, dml_plan, select_plan, cacheable) = {
             let catalog = self.lock_catalog()?;
             let cacheable = {
                 let mut candidate = statement.clone();
@@ -392,6 +414,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                         .map(|plan| plan.with_sql(sql))
                     })
                     .flatten(),
+                cacheable,
             )
         };
         // Go `GeneratePlanCacheStmtWithAST` ends with `checkPreparedPriv`:
@@ -406,6 +429,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             point_get_plan,
             dml_plan,
             select_plan,
+            cacheable,
         ))
     }
 
@@ -584,7 +608,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
                 // `lookupPlanCache`'s defer observes the lookup duration on
                 // hits only, for the prepared and non-prepared paths alike.
-                tidb_planner_core_metrics::get_plan_cache_hit_counter(false).inc();
+                tidb_planner_core_metrics::inc_plan_cache_hit(false);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
@@ -685,7 +709,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm
                 // (plan_cache.go:351, prepared label); the lookup-duration
                 // observation is hits-only per `lookupPlanCache`'s defer.
-                tidb_planner_core_metrics::get_plan_cache_hit_counter(false).inc();
+                tidb_planner_core_metrics::inc_plan_cache_hit(false);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
