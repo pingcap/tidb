@@ -228,9 +228,9 @@ explain format='brief' select * from t_plan_outer where (id, y) in (select a, y 
 id	estRows	task	access object	operator info
 HashJoin	9990.00	root		inner join, equal:[eq(executor__jointest__join.t_plan_outer.y, executor__jointest__join.t_plan_inner.y) eq(Column#9, Column#10)]
 ├─Projection(Build)	7992.00	root		executor__jointest__join.t_plan_inner.y, cast(executor__jointest__join.t_plan_inner.a, double BINARY)->Column#10
-│ └─HashAgg	7992.00	root		group by:Column#14, executor__jointest__join.t_plan_inner.y, funcs:firstrow(Column#15)->executor__jointest__join.t_plan_inner.a, funcs:firstrow(executor__jointest__join.t_plan_inner.y)->executor__jointest__join.t_plan_inner.y
+│ └─HashAgg	7992.00	root		group by:Column#13, executor__jointest__join.t_plan_inner.y, funcs:firstrow(Column#14)->executor__jointest__join.t_plan_inner.a, funcs:firstrow(executor__jointest__join.t_plan_inner.y)->executor__jointest__join.t_plan_inner.y
 │   └─TableReader	7992.00	root		data:HashAgg
-│     └─HashAgg	7992.00	cop[tikv]		group by:cast(executor__jointest__join.t_plan_inner.a, double BINARY), executor__jointest__join.t_plan_inner.y, funcs:firstrow(executor__jointest__join.t_plan_inner.a)->Column#15
+│     └─HashAgg	7992.00	cop[tikv]		group by:cast(executor__jointest__join.t_plan_inner.a, double BINARY), executor__jointest__join.t_plan_inner.y, funcs:firstrow(executor__jointest__join.t_plan_inner.a)->Column#14
 │       └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_plan_inner.y))
 │         └─TableFullScan	10000.00	cop[tikv]	table:t_plan_inner	keep order:false, stats:pseudo
 └─Projection(Probe)	9990.00	root		executor__jointest__join.t_plan_outer.id, executor__jointest__join.t_plan_outer.y, cast(executor__jointest__join.t_plan_outer.id, double BINARY)->Column#9
