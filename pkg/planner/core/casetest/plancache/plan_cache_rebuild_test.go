@@ -84,9 +84,13 @@ func TestInstancePlanCachePointGetLiteral(t *testing.T) {
 	// The cached plan is shared by all sessions, so the fast clone must not point at its literal values.
 	stmt, err := parser.New().ParseOneStmt(`select * from t_common_handle where a=1 and b="x" and c=1.5`, "", "")
 	require.NoError(t, err)
-	plan, _, err := planner.Optimize(context.Background(), tk1.Session(), resolve.NewNodeW(stmt), dom.InfoSchema())
+	// Preprocess resolves the table name. Without it the fast path declines and the CBO builds the plan.
+	nodeW := resolve.NewNodeW(stmt)
+	require.NoError(t, core.Preprocess(context.Background(), tk1.Session(), nodeW))
+	plan, _, err := planner.Optimize(context.Background(), tk1.Session(), nodeW, dom.InfoSchema())
 	require.NoError(t, err)
 	src := plan.(*physicalop.PointGetPlan)
+	require.Nil(t, src.AccessConditions)
 	dst := core.FastClonePointGetForPlanCache(tk1.Session().GetPlanCtx(), src, nil)
 	require.NoError(t, checkUnclearPlanCacheClone(src.IndexValues, dst.IndexValues))
 }

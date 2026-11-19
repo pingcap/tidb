@@ -64,10 +64,12 @@ func FastClonePointGetForPlanCache(newCtx base.PlanContext, src, dst *physicalop
 	// Plans from the point get fast path have no AccessConditions, so rebuild only refreshes
 	// the values that have a parameter in IndexConstants. Literal values have to be copied
 	// from the cached plan. Deep copy them so that the clone does not share memory with a
-	// plan that other sessions are reading.
-	for i := range src.IndexValues {
-		if i >= len(src.IndexConstants) || src.IndexConstants[i] == nil {
-			src.IndexValues[i].Copy(&dst.IndexValues[i])
+	// plan that other sessions are reading. CBO plans rebuild every value from AccessConditions.
+	if src.AccessConditions == nil {
+		for i := range src.IndexValues {
+			if i >= len(src.IndexConstants) || src.IndexConstants[i] == nil {
+				src.IndexValues[i].Copy(&dst.IndexValues[i])
+			}
 		}
 	}
 	dst.ColsFieldType = src.ColsFieldType
