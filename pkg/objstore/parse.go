@@ -160,6 +160,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 			return nil, errors.Trace(err)
 		}
 		s3Options.SetForcePathStyle(rawURL)
+		if u.Scheme == "ks3" {
+			s3Options.Provider = s3like.KS3SDKProvider
+		}
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -217,9 +220,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // fields (more types will be supported in the future), and tagged for JSON
 // serialization.
 //
-// All of the URL's query parameters will be removed after calling this method.
-// It returns an error, leaving the options unchanged, if the query cannot be
-// decoded.
+// All of the URL's query parameters will be removed after a successful call.
+// It returns an error, leaving the URL and options unchanged, if the query
+// cannot be decoded or contains duplicate options.
 func ExtractQueryParameters(u *url.URL, options any) error {
 	// URL.Query skips parameters it cannot decode, which would silently drop
 	// options such as sse-kms-context.
@@ -245,25 +248,35 @@ func ExtractQueryParameters(u *url.URL, options any) error {
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
 	}
 
-	// Then, read content from the URL into the options.
+	// Validate all recognized options before changing the URL or options.
+	validated := make(map[string]string, len(values))
 	for key, params := range values {
 		if len(params) == 0 {
 			continue
 		}
-		param := params[0]
 		normalizedKey := NormalizeQueryParameterKey(key)
-		if f, ok := tagToField[normalizedKey]; ok {
-			field := o.Field(f.index)
-			switch f.kind {
-			case reflect.Bool:
-				if v, e := strconv.ParseBool(param); e == nil {
-					field.SetBool(v)
-				}
-			case reflect.String:
-				field.SetString(param)
-			default:
-				panic("BackendOption introduced an unsupported kind, please handle it! " + f.kind.String())
+		if _, ok := tagToField[normalizedKey]; !ok {
+			continue
+		}
+		if _, seen := validated[normalizedKey]; seen || len(params) > 1 {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "duplicate storage URL option")
+		}
+		validated[normalizedKey] = params[0]
+	}
+
+	// Apply the validated options.
+	for key, param := range validated {
+		f := tagToField[key]
+		field := o.Field(f.index)
+		switch f.kind {
+		case reflect.Bool:
+			if v, e := strconv.ParseBool(param); e == nil {
+				field.SetBool(v)
 			}
+		case reflect.String:
+			field.SetString(param)
+		default:
+			panic("BackendOption introduced an unsupported kind, please handle it! " + f.kind.String())
 		}
 	}
 

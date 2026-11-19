@@ -70,6 +70,9 @@ func NewKS3Storage(
 	backend *backuppb.S3,
 	opts *storeapi.Options,
 ) (obj *KS3Storage, errRet error) {
+	if backend.SseKmsEncryptionContext != "" {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "sse-kms-context is not supported by the KS3 driver")
+	}
 	if _, err := url.Parse(backend.Endpoint); err != nil {
 		// Discard the URL-bearing parser error before entering the SDK.
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid KS3 endpoint URL")
