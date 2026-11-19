@@ -117,19 +117,6 @@ impl SessionVars {
             &value,
             if is_global { crate::sysvar::SCOPE_GLOBAL } else { crate::sysvar::SCOPE_INSTANCE },
         )?;
-        // Go TiDBSchemaCacheSize.SetGlobal persists and resizes before
-        // publishing the vardef value; INSTANCE invokes the same callback.
-        let schema_cache_size = name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE);
-        if schema_cache_size {
-            let scope = if is_global { crate::sysvar::SCOPE_GLOBAL } else { crate::sysvar::SCOPE_INSTANCE };
-            let normalized = crate::sysvar::get_sys_var(name).unwrap().validate_in_scope(&value, scope)
-                .map_err(|error| validation_var_error(name, &value, error))?.value;
-            let bytes = crate::varsutil::parse_byte_size(&normalized).map(|(bytes, _)| bytes)
-                .or_else(|| normalized.parse::<u64>().ok());
-            if bytes != Some(tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire)) {
-                if let Some(globals) = self.globals.clone() { globals.run_set_global_hook(name, &normalized)?; }
-            }
-        }
         let truncated = if is_global {
             self.set_global(name, value.clone())
         } else {
@@ -139,18 +126,6 @@ impl SessionVars {
             self.warn_truncated_var(name, &value);
         }
         self.append_fix_control_parse_warnings(name, &value);
-        if is_global {
-            // `SetGlobal` hooks consume the stored, type-normalized value:
-            // the original `-1`/`7201` text would make a hook reject an
-            // assignment the variable layer already accepted and clamped.
-            if let Some(globals) = self.globals.clone() {
-                let stored = self.get_global(name)?;
-                if !schema_cache_size { globals.run_set_global_hook(name, &stored)?; }
-                if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
-                    self.set_enable_redact_log(stored);
-                }
-            }
-        }
         Ok(())
     }
 
@@ -221,10 +196,24 @@ impl SessionVars {
                 return Err(validation_var_error(name, value, error.clone()));
             }
         }
-        // Go `SetGlobal` (the session's `SetSession` runs where the value is
-        // stored, `SetSessionFromHook`).
-        if let (Ok(validated), crate::sysvar::SCOPE_GLOBAL, Some(hook)) = (validated, scope, definition.set_global) {
-            hook(self, &validated.value)?;
+        // Go `SetGlobalFromHook`, which `SetGlobalSysVar` and
+        // `SetInstanceSysVar` both run on the validated value before it is
+        // stored (the session's `SetSession` runs where the value is stored,
+        // `SetSessionFromHook`).
+        //
+        // A variable has one `SetGlobal`: its own, or the one a package
+        // outside the registry gives it (Go `RegisterSysVar` from `domain`,
+        // `ddl`, ...: the GC, MV-service and MDL switches), which the node
+        // registers on the GLOBAL accessor.
+        if let (Ok(validated), crate::sysvar::SCOPE_GLOBAL | crate::sysvar::SCOPE_INSTANCE) = (validated, scope) {
+            match definition.set_global {
+                Some(hook) => hook(self, &validated.value)?,
+                None => {
+                    if let Some(globals) = self.globals.clone() {
+                        globals.run_set_global_hook(definition.name, &validated.value)?;
+                    }
+                }
+            }
         }
         Ok(())
     }

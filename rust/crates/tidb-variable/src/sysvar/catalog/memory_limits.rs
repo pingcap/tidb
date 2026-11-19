@@ -711,7 +711,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_schema_cache_size),
         set_session: None,
-        set_global: None,
+        set_global: Some(crate::vars::SessionVars::set_global_tidb_schema_cache_size),
     },
     SysVarDef {
         name: "tidb_server_memory_limit",

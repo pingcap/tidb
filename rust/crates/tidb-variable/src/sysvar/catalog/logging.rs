@@ -1096,7 +1096,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: Some(crate::vars::SessionVars::set_session_tidb_redact_log),
-        set_global: None,
+        set_global: Some(crate::vars::SessionVars::set_global_tidb_redact_log),
     },
     SysVarDef {
         name: "tidb_slow_log_max_per_sec",

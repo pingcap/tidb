@@ -2491,6 +2491,27 @@ impl SessionVars {
         Ok(())
     }
 
+    /// Go `TiDBSchemaCacheSize`'s `SetGlobal`: a size that differs from the
+    /// live one goes through `ChangeSchemaCacheSize` (the domain's, here the
+    /// node-registered function) before it is published.
+    pub(crate) fn set_global_tidb_schema_cache_size(&mut self, value: &str) -> Result<(), VarError> {
+        let bytes = crate::varsutil::parse_byte_size(value)
+            .map(|(bytes, _)| bytes)
+            .or_else(|| value.parse::<u64>().ok());
+        if bytes != Some(tidb_vardef::SCHEMA_CACHE_SIZE.load(std::sync::atomic::Ordering::Acquire)) {
+            if let Some(globals) = self.globals.clone() {
+                globals.run_set_global_hook(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `TiDBRedactLog`'s `SetGlobal`: `s.EnableRedactLog = val`.
+    pub(crate) fn set_global_tidb_redact_log(&mut self, value: &str) -> Result<(), VarError> {
+        self.set_enable_redact_log(value.to_owned());
+        Ok(())
+    }
+
     pub(crate) fn set_session_tidb_mem_quota_query(&mut self, value: &str) -> Result<(), VarError> {
         self.mem_quota_query =
             crate::varsutil::tidb_opt_int64(value, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY);
