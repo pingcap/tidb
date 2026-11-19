@@ -10,7 +10,7 @@ go_test(
     data = ["analyze_v1_compat_v855.json.gz"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 5,
     deps = [
         "//pkg/parser/ast",
         "//pkg/sessionctx",

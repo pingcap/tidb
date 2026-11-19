@@ -692,34 +692,6 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
-// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-//
-//	needCopy: In order to protect the item in the cache from being damaged, we need to copy the item.
-func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
-	if isIndex {
-		if idxStatsInfo, ok := t.indices[id]; ok {
-			if needCopy {
-				return idxStatsInfo.Histogram.Copy(),
-					idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
-			}
-			return &idxStatsInfo.Histogram,
-				idxStatsInfo.CMSketch, idxStatsInfo.TopN, idxStatsInfo.FMSketch, true
-		}
-		// newly added index which is not analyzed yet
-		return nil, nil, nil, nil, false
-	}
-	if colStatsInfo, ok := t.columns[id]; ok {
-		if needCopy {
-			return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
-				colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
-		}
-		return &colStatsInfo.Histogram, colStatsInfo.CMSketch,
-			colStatsInfo.TopN, colStatsInfo.FMSketch, true
-	}
-	// newly added column which is not analyzed yet
-	return nil, nil, nil, nil, false
-}
-
 // IsAnalyzed checks whether the table is analyzed or not by checking its last analyze's timestamp value.
 // A valid timestamp must be greater than 0.
 func (t *Table) IsAnalyzed() bool {

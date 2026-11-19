@@ -194,18 +194,25 @@ func TestAnalyzeRestrict(t *testing.T) {
 		if kerneltype.IsNextGen() {
 			t.Skip("analyze restrict subtests mutate mysql.analyze_jobs")
 		}
+		// Match the global connection ID to the mock server so SQL KILL reaches this session.
+		const (
+			serverID      uint64 = 1
+			analyzeConnID        = serverID<<41 | 1<<1 | 1
+		)
 		tk.MustExec("truncate table mysql.analyze_jobs")
 		dom := domain.GetDomain(tk.Session())
 		origSM := dom.InfoSyncer().GetSessionManager()
 		sm := &killQuerySessionManager{
 			MockSessionManager: &testkit.MockSessionManager{
-				Conn: make(map[uint64]sessionapi.Session),
+				SerID: serverID,
+				Conn:  make(map[uint64]sessionapi.Session),
 			},
 		}
 		dom.InfoSyncer().SetSessionManager(sm)
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
+		tkAnalyze.Session().SetConnectionID(analyzeConnID)
 		tkAnalyze.Session().SetSessionManager(sm)
 		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
@@ -238,6 +245,7 @@ func TestAnalyzeRestrict(t *testing.T) {
 
 		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
 		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+		tkKiller.MustQuery("show warnings").Check(testkit.Rows())
 
 		select {
 		case err := <-done:
@@ -924,6 +932,51 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	}
 }
 
+// TestKillAnalyzeBeforeResultIsConsumed kills an analyze whose worker has already
+// sent its result, before the result handler reads it. The handler stops on the
+// kill without reading, and the job must still end as failed instead of running.
+func TestKillAnalyzeBeforeResultIsConsumed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_kill_unconsumed (a int, b int)")
+	tk.MustExec("insert into t_kill_unconsumed values (1,2), (3,4)")
+
+	fp := "github.com/pingcap/tidb/pkg/executor/handleResultsErrorSingleThreadPanic"
+	testfailpoint.Enable(t, fp, "pause")
+	sent := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeResultSent", func() {
+		select {
+		case sent <- struct{}{}:
+		default:
+		}
+	})
+	tkAnalyze := testkit.NewTestKit(t, store)
+	tkAnalyze.MustExec("use test")
+	done := make(chan error, 1)
+	go func() {
+		done <- tkAnalyze.ExecToErr("analyze table t_kill_unconsumed")
+	}()
+
+	// Kill once the worker's result is buffered and the handler is still paused.
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze worker did not send its result")
+	}
+	tkAnalyze.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	testfailpoint.Disable(t, fp)
+
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze does not stop after kill")
+	}
+	tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't_kill_unconsumed'").
+		Check(testkit.Rows(statistics.AnalyzeFailed + " " + exeerrors.ErrQueryInterrupted.Error()))
+}
+
 func TestAnalyzeJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	for _, result := range []string{statistics.AnalyzeFinished, statistics.AnalyzeFailed} {
@@ -1239,9 +1292,11 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	require.NoError(t, err)
 	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets), len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// The default TopN of column c keeps all values, so c has no buckets. The
+	// primary key a has no TopN, so its buckets cannot show the options.
+	require.Equal(t, 0, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
+	require.Equal(t, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets), len(p1.GetCol(tableInfo.Columns[2].ID).Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])

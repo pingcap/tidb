@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -83,7 +84,7 @@ func TestOnUserKeyspace(t *testing.T) {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	require.NoError(t, err)
 	userTK.MustQuery("select * from t").Check(testkit.Rows(resultSlice...))
-	taskKey := importinto.TaskKey(int64(jobID))
+	taskKey := taskkey.ForJob(int64(jobID))
 	tableID, err := strconv.Atoi(result[0][fmap["TableID"]].(string))
 	require.NoError(t, err)
 	// job to user keyspace, task to system keyspace
@@ -182,7 +183,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			if task == nil || task.Type != proto.ImportInto || !strings.HasPrefix(task.Key, userKeyspace+"/ImportInto/") {
 				return
 			}
-			var taskMeta importinto.TaskMeta
+			var taskMeta taskinfo.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
 			require.NotNil(t, taskMeta.Plan.UseNewCollate)
 			require.False(t, *taskMeta.Plan.UseNewCollate)
@@ -657,7 +658,7 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 		jobIDCh := make(chan int64, 1)
 		cancelErrCh := make(chan error, 1)
 		var cancelOnce sync.Once
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/afterUserImportJobCreatedBeforeDXFTask",
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterUserImportJobCreatedBeforeDXFTask",
 			func(jobID int64) {
 				cancelOnce.Do(func() {
 					jobIDCh <- jobID
@@ -683,7 +684,7 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 			t.Fatal("timeout waiting for cancel import job")
 		}
 
-		taskKey := importinto.TaskKey(jobID)
+		taskKey := taskkey.ForJob(jobID)
 		userTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
 			Check(testkit.Rows("cancelled cancelled by user"))
 		waitTerminalState(t, sysKSTK, taskKey, proto.TaskStateReverted)
@@ -724,7 +725,7 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 
 		cancelErrCh := make(chan error, 1)
 		var cancelOnce sync.Once
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/afterUserImportJobCreatedBeforeDXFTask",
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterUserImportJobCreatedBeforeDXFTask",
 			func(jobID int64) {
 				cancelOnce.Do(func() {
 					go func() {
@@ -739,7 +740,7 @@ func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
 			fmt.Sprintf("gs://dangling-cancel-sort/after-task-started?endpoint=%s", gcsEndpoint))
 		require.EqualValues(t, jobID, cancelJobID.Load())
 
-		taskKey := importinto.TaskKey(jobID)
+		taskKey := taskkey.ForJob(jobID)
 		waitForCancelTestSignal(t, sortStartedCh, "timeout waiting for import subtask to start")
 		requireTaskRunningBizStep(t, sysKSTK, taskKey)
 

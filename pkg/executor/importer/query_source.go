@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -44,13 +42,16 @@ import (
 type QuerySource struct {
 	ReadTS        uint64
 	SchemaVersion int64
-	// Timestamp is the Unix time in seconds when the query is captured, which
-	// the encoder takes as the timestamp of the query chunks.
-	Timestamp int64
+	// EncodeTimestamp is the Unix time in seconds when the query is captured,
+	// which the encoder takes as the session timestamp of the query chunks.
+	EncodeTimestamp int64
 	// Tables lists the included source tables.
 	Tables []SourceTable
 	// SessionStates are the states of the submitting session.
 	SessionStates *sessionstates.SessionStates
+	// InMViewMaintenance is whether the submitter runs in MV maintenance, which
+	// the session states do not carry.
+	InMViewMaintenance bool `json:",omitempty"`
 }
 
 // SourceTable identifies a source table definition of an import query.
@@ -200,9 +201,10 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	is := txnManager.GetTxnInfoSchema()
 	q := &QuerySource{
-		Timestamp:     time.Now().Unix(),
-		SessionStates: sessionStates,
-		SchemaVersion: is.SchemaMetaVersion(),
+		EncodeTimestamp:    time.Now().Unix(),
+		SessionStates:      sessionStates,
+		SchemaVersion:      is.SchemaMetaVersion(),
+		InMViewMaintenance: sctx.GetSessionVars().InMViewMaintenance,
 	}
 	// Like the plan cache, take the tables that the planner resolved for the
 	// statement, including those in the views it expands.
@@ -220,27 +222,6 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 	}
 	q.ReadTS, err = txnManager.GetStmtReadTS()
 	return q, err
-}
-
-// PlanImportQueryForTest plans the SELECT of the IMPORT INTO statement sql in
-// sctx like the statement does, so that CaptureQuerySource can capture it.
-func PlanImportQueryForTest(sctx sessionctx.Context, sql string) error {
-	stmt, node, err := ParseImportQuery(sctx, sql)
-	if err != nil {
-		return err
-	}
-	// Each statement starts with no related tables.
-	clear(sctx.GetSessionVars().StmtCtx.RelatedTableIDs)
-	// Preprocess the IMPORT INTO statement as it is, then plan its SELECT.
-	stmtW := resolve.NewNodeW(stmt)
-	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(context.Background(), sctx, stmtW,
-		plannercore.WithPreprocessorReturn(ret), plannercore.InitTxnContextProvider); err != nil {
-		return err
-	}
-	_, err = plannercore.BuildLogicalPlanForTest(context.Background(), sctx,
-		resolve.NewNodeWWithCtx(node, stmtW.GetResolveContext()), ret.InfoSchema)
-	return err
 }
 
 // hasSequenceFunc returns whether node calls a sequence function.

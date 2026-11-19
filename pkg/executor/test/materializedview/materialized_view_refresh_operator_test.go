@@ -44,6 +44,9 @@ func TestMaterializedViewRefreshOperators(t *testing.T) {
 			lastReadTSO, err := strconv.ParseUint(tk.MustQuery(
 				"select last_success_read_tso from mysql.tidb_mview_refresh_info").Rows()[0][0].(string), 10, 64)
 			require.NoError(t, err)
+			registeredMLogID, err := strconv.ParseInt(tk.MustQuery(
+				"select mlog_id from mysql.tidb_mview_fast_refresh_source_info").Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
 
 			tk.MustExec("delete from t_refresh_ops where id = 2")
 			tk.MustExec("update t_refresh_ops set v = 5 where id = 3")
@@ -70,6 +73,7 @@ func TestMaterializedViewRefreshOperators(t *testing.T) {
 				},
 				LastSuccessfulRefreshReadTSO: lastReadTSO,
 				TargetRefreshReadTSO:         targetReadTSO,
+				RegisteredMLogIDs:            []int64{registeredMLogID},
 			})
 			require.IsType(t, &plannercore.MViewDeltaMerge{}, plan)
 			require.Contains(t, stats, "mview_delta_merge_agg")
