@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 15,
-    "open": 13,
-    "partial": 2
+    "open": 12,
+    "partial": 3
   },
   "findings": [
     {
@@ -33,9 +33,9 @@
     },
     {
       "id": "X13",
-      "status": "open",
+      "status": "partial",
       "group": "Structure: Go's shape before more ports",
-      "finding": "A system variable's Set / Get behavior is not kept on the variable. Go's `SysVar` carries each variable's `Validation`, `SetSession`, `SetGlobal`, `GetSession` and `GetGlobal` closures in `sysvar.go`. `Validation` is now on `SysVarDef` (`sysvar/validation.rs`); the others are still name switches elsewhere: about 30 name checks in `set_hooks.rs` (`set_system_var` / `set_node_wide_sys_var`: noop gating, isolation level, prune-mode and MPP warnings), and session-side hooks in `tidb-session` `variables.rs`. `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads. A variable's rules can live in three places, and adding one means finding all of them.",
+      "finding": "A variable's Set behavior now lives on the variable for its warnings and session fields: `SysVarDef` carries Go's `Validation` (with a `VarsContext` for sibling reads and statement warnings), `set_session` and `set_global` hooks; `set_hooks.rs`'s deprecation-warning switch, the prune-mode / MPP-compression / hashagg-spill hooks, `tidb_enforce_mpp` and plan-replayer checks, and `SessionVars::set_session_from_hook`'s thirty typed-field branches moved onto their variables (2026-11-19). Remaining: Go's closures receive the SESSION's `vars` in every scope, while the global writer's context reads the global table, so the checks that read session state or the statement are still name checks in `set_hooks.rs` (`check_isolation_level`, `check_noop_gated_variable`, `check_max_allowed_packet_scope` (SET-statement only), `require_secure_transport` (TLS state), `tidb_schema_cache_size` / `tidb_redact_log` SetGlobal effects); the charset/collation pairing is still inline in `set_session_from_hook`; `GetSession` / `GetGlobal` are not on `SysVarDef`; `tidb-session` `variables.rs` keeps session-side hooks and `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads.",
       "rust_evidence": "`rust/crates/tidb-variable/src/sysvar.rs` (`SysVarDef`), `set_hooks.rs`, `rust/crates/tidb-session/src/variables.rs`, `rust/crates/tidb-exprstatic/src/evalctx.rs` (`StaticSessionVars`)",
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
     },
@@ -129,6 +129,6 @@
     }
   ],
   "unresolved": 15,
-  "open": 13,
-  "partial": 2
+  "open": 12,
+  "partial": 3
 }
