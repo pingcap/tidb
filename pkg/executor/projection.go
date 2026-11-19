@@ -224,7 +224,10 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	if e.childResult.NumRows() == 0 {
 		return nil
 	}
+	mSize = e.childResult.MemoryUsage()
 	err = e.evaluatorSuit.Run(e.evalCtx, e.enableVectorizedExpression, e.childResult, chk)
+	// Evaluation can swap columns into chk, transferring their memory to the caller.
+	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	return err
 }
 

@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -635,6 +636,133 @@ func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, 
 		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
 		numWorkers:                int64(numWorkers),
 		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
+	}
+}
+
+func TestIndexLookupProjectionMemoryAccounting(t *testing.T) {
+	const (
+		rowCount    = 32
+		payloadSize = 64 << 10
+	)
+	testCases := []struct {
+		name           string
+		projection     bool
+		copyColumns    bool
+		physicalCopies int
+	}{
+		{name: "without_projection", physicalCopies: 2},
+		{name: "column_swap_projection", projection: true, physicalCopies: 2},
+		{name: "column_copy_projection", projection: true, copyColumns: true, physicalCopies: 3},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			sctx := defaultCtx()
+			vars := sctx.GetSessionVars()
+			vars.InitChunkSize = rowCount
+			vars.MaxChunkSize = rowCount
+			stmtTracker := memory.NewTracker(-1, -1)
+			vars.StmtCtx.MemTracker = stmtTracker
+			fieldType := types.NewFieldType(mysql.TypeJSON)
+			column := &expression.Column{Index: 0, RetType: fieldType}
+			schema := expression.NewSchema(column)
+			fieldTypes := []*types.FieldType{fieldType}
+			payload := types.CreateBinaryJSON(map[string]any{"payload": strings.Repeat("x", payloadSize)})
+			source := chunk.NewChunkWithCapacity(fieldTypes, rowCount)
+			rows := make([]chunk.Row, rowCount)
+			for i := range rowCount {
+				source.AppendJSON(0, payload)
+				rows[i] = source.GetRow(i)
+			}
+
+			// Preload a completed table task to exercise the real Lookup.Next without TiKV workers.
+			lookup := &IndexLookUpExecutor{
+				BaseExecutorV2: exec.NewBaseExecutorV2(vars, schema, 1),
+				memTracker:     memory.NewTracker(1, -1),
+				workerStarted:  true,
+				resultCh:       make(chan *lookupTableTask, 1),
+			}
+			lookup.memTracker.AttachTo(stmtTracker)
+			lookup.memTracker.Consume(source.MemoryUsage())
+			task := &lookupTableTask{
+				rows:       rows,
+				doneCh:     make(chan error, 1),
+				memUsage:   source.MemoryUsage(),
+				memTracker: lookup.memTracker,
+			}
+			task.doneCh <- nil
+			lookup.resultCh <- task
+			close(lookup.resultCh)
+
+			innerResult := chunk.NewList(fieldTypes, rowCount, rowCount)
+			innerResult.GetMemTracker().AttachTo(stmtTracker)
+			var projection *ProjectionExec
+			t.Cleanup(func() {
+				stmtTracker.SetBytesLimit(-1)
+				innerResult.Clear()
+				if projection != nil {
+					require.NoError(t, projection.Close())
+					projection.memTracker.Detach()
+				}
+				lookup.memTracker.Detach()
+				require.Zero(t, stmtTracker.BytesConsumed())
+			})
+
+			output := chunk.NewChunkWithCapacity(fieldTypes, rowCount)
+			var inputColumn *chunk.Column
+			if testCase.projection {
+				projection = buildProjectionExec(sctx, []expression.Expression{column}, lookup, 0).(*ProjectionExec)
+				projection.evaluatorSuit = expression.NewEvaluatorSuite([]expression.Expression{column}, testCase.copyColumns)
+				// The Lookup task is already initialized; open only the Projection resources.
+				require.NoError(t, projection.open(ctx))
+				inputColumn = projection.childResult.Column(0)
+				require.NoError(t, projection.Next(ctx, output))
+			} else {
+				require.NoError(t, lookup.Next(ctx, output))
+			}
+			require.Equal(t, rowCount, output.NumRows())
+			require.Equal(t, payload, output.GetRow(rowCount-1).GetJSON(0))
+			require.Same(t, task, lookup.resultCurr)
+			require.NotSame(t, &source.GetRow(0).GetJSON(0).Value[0], &output.GetRow(0).GetJSON(0).Value[0])
+
+			// Count distinct JSON backing buffers rather than inferring copies from tracker peaks.
+			buffers := map[*byte]struct{}{
+				&source.GetRow(0).GetJSON(0).Value[0]: {},
+				&output.GetRow(0).GetJSON(0).Value[0]: {},
+			}
+			ownedChunkBytes := source.MemoryUsage() + output.MemoryUsage()
+			if projection != nil {
+				buffers[&inputColumn.GetJSON(0).Value[0]] = struct{}{}
+				ownedChunkBytes += projection.childResult.MemoryUsage()
+				if testCase.copyColumns {
+					require.NotSame(t, inputColumn, output.Column(0))
+				} else {
+					require.Same(t, inputColumn, output.Column(0))
+				}
+			}
+			require.Len(t, buffers, testCase.physicalCopies)
+
+			// A quota above all owned chunks should only trip if transferred memory is charged twice.
+			quota := ownedChunkBytes + payloadSize
+			stmtTracker.SetBytesLimit(quota)
+			var quotaTriggered bool
+			action := &memory.LogOnExceed{}
+			action.SetLogHook(func(uint64) { quotaTriggered = true })
+			stmtTracker.SetActionOnExceed(action)
+			require.False(t, stmtTracker.CheckExceed())
+			beforeAdd := stmtTracker.BytesConsumed()
+			innerResult.Add(output)
+			require.Same(t, output, innerResult.GetChunk(0))
+			require.Equal(t, beforeAdd+output.MemoryUsage(), stmtTracker.BytesConsumed())
+			t.Logf("JSON buffers=%d; owned chunks=%d bytes; tracked before/after List.Add=%d/%d bytes; quota=%d bytes; quota triggered=%v",
+				len(buffers), ownedChunkBytes, beforeAdd, stmtTracker.BytesConsumed(), quota, quotaTriggered)
+			require.False(t, quotaTriggered)
+			require.False(t, stmtTracker.CheckExceed())
+			require.Equal(t, ownedChunkBytes, stmtTracker.BytesConsumed())
+			if projection != nil {
+				require.Equal(t, projection.childResult.MemoryUsage(), projection.memTracker.BytesConsumed())
+			}
+		})
 	}
 }
 
