@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -46,6 +47,7 @@ import (
 	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
 	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/diagclient"
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -81,8 +83,15 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if tls.IsEnabled() {
 		securityOpt = tls.ToPDSecurityOption()
 	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(10*time.Second), opt.WithInitMetricsOption(false))
+	// Note: for NextGen, pdCli is created to init the metrics' const labels
+	pdClientOptions := []opt.ClientOption{
+		opt.WithCustomTimeoutOption(10 * time.Second),
+		opt.WithMetricsLabels(metricscommon.GetConstLabels()),
+	}
+	if diagnosticmode.Enabled() {
+		pdClientOptions = append(pdClientOptions, diagclient.PDClientOption())
+	}
+	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt, pdClientOptions...)
 	if err != nil {
 		return err
 	}

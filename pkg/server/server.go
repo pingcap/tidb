@@ -53,7 +53,9 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
@@ -77,6 +79,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -211,7 +214,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -371,8 +374,12 @@ func (s *Server) InitTiDBListener() error {
 }
 
 func (s *Server) initTiDBListener() (err error) {
-	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	socketOnly := diagnosticmode.Enabled() && s.cfg.Security.SkipGrantTable
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || (RunInGoTest && !socketOnly))
 	needUnixSocket := s.cfg.Socket != ""
+	if socketOnly && (needTCPListener || s.listener != nil || !needUnixSocket) {
+		return errors.New("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+	}
 	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
 		(s.listener != nil || s.socket != nil) {
 		return nil
@@ -496,6 +503,11 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
+	// The plaintext slow-query worker is independent of tidb_redact_log.
+	// Tests start it explicitly when they exercise slow-query cache behavior.
+	if !intest.InTest {
+		executor.StartSlowQueryCache()
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 

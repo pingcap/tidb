@@ -508,7 +508,7 @@ var columnFactoryMap = map[string]columnFactory{
 		if err != nil {
 			logutil.BgLogger().Error("decode plan in statement summary failed",
 				zap.String("plan", record.SamplePlan),
-				zap.String("query", record.SampleSQL), zap.Error(err))
+				zap.String("query", record.NormalizedSQL), zap.Error(err))
 			plan = ""
 		}
 		return plan
