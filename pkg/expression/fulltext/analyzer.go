@@ -63,16 +63,23 @@ func (f analyzerFunc) Analyze(text string) ([]Token, error) {
 	return f(text)
 }
 
+type ngramAnalysisMode uint8
+
+const (
+	ngramDocument ngramAnalysisMode = iota
+	ngramQuery
+)
+
 // GetAnalyzer returns the analyzer for the selected fulltext parser type.
 func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
-	return getAnalyzer(config, false)
+	return getAnalyzer(config, ngramDocument)
 }
 
 func getQueryAnalyzer(config AnalyzerConfig) (Analyzer, error) {
-	return getAnalyzer(config, true)
+	return getAnalyzer(config, ngramQuery)
 }
 
-func getAnalyzer(config AnalyzerConfig, keepShortNgramRuns bool) (Analyzer, error) {
+func getAnalyzer(config AnalyzerConfig, ngramMode ngramAnalysisMode) (Analyzer, error) {
 	parserInfo := parserInfoFromConfig(config)
 	switch config.ParserType {
 	case model.FullTextParserTypeStandardV1:
@@ -81,7 +88,7 @@ func getAnalyzer(config AnalyzerConfig, keepShortNgramRuns bool) (Analyzer, erro
 		}), nil
 	case model.FullTextParserTypeNgramV1:
 		return analyzerFunc(func(text string) ([]Token, error) {
-			return analyzeNgramV1(text, parserInfo, keepShortNgramRuns), nil
+			return analyzeNgramV1(text, parserInfo, ngramMode), nil
 		}), nil
 	default:
 		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
@@ -210,9 +217,9 @@ func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
 	return analyzer.Analyze(text)
 }
 
-func analyzeNgramV1(text string, parserInfo parserInfo, keepShortRuns bool) []Token {
+func analyzeNgramV1(text string, parserInfo parserInfo, mode ngramAnalysisMode) []Token {
 	tokens := tokenizeNgramDocument(text)
-	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, parserInfo.ngramTokenSize, keepShortRuns)
+	tokens = ngramFilter(tokens, parserInfo.ngramTokenSize, mode)
 	tokens = ngramStopwordFilter(tokens, parserInfo)
 	if parserInfo.collator == nil {
 		tokens = lowerFilter(tokens)
@@ -543,8 +550,8 @@ func stopwordSet(words ...string) map[string]struct{} {
 	return set
 }
 
-func ngramFilter(tokens []Token, minGram, maxGram int, keepShortRuns bool) []Token {
-	if minGram <= 0 || maxGram < minGram {
+func ngramFilter(tokens []Token, gramSize int, mode ngramAnalysisMode) []Token {
+	if gramSize <= 0 {
 		return nil
 	}
 
@@ -554,33 +561,26 @@ func ngramFilter(tokens []Token, minGram, maxGram int, keepShortRuns bool) []Tok
 		basePosition := nextPositionBase
 		spans := utf8CharSpans(token.Text)
 		charCount := len(spans)
-		if charCount < minGram {
+		if charCount < gramSize {
 			// A Boolean query retains a short word for collation-aware
 			// lookup. The document stream still has only fixed-size grams.
-			if keepShortRuns {
+			if mode == ngramQuery {
 				out = append(out, Token{Text: token.Text, Position: basePosition})
 				nextPositionBase++
 			}
 			continue
 		}
 
-		maxLimit := min(maxGram, charCount)
-		for startIdx := range charCount {
-			for gramLen := minGram; gramLen <= maxLimit; gramLen++ {
-				endIdx := startIdx + gramLen
-				if endIdx > charCount {
-					break
-				}
-
-				startByte := spans[startIdx].byteStart
-				endByte := spans[endIdx-1].byteEnd
-				out = append(out, Token{
-					Text:     token.Text[startByte:endByte],
-					Position: basePosition + startIdx,
-				})
-			}
+		gramCount := charCount - gramSize + 1
+		for startIdx := range gramCount {
+			startByte := spans[startIdx].byteStart
+			endByte := spans[startIdx+gramSize-1].byteEnd
+			out = append(out, Token{
+				Text:     token.Text[startByte:endByte],
+				Position: basePosition + startIdx,
+			})
 		}
-		nextPositionBase = basePosition + charCount - minGram + 1
+		nextPositionBase = basePosition + gramCount
 	}
 	return out
 }
