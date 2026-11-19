@@ -23,8 +23,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -122,6 +124,9 @@ func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
 
 func enableStatementRUExecutionInfo(t *testing.T) {
 	t.Helper()
+	if !kerneltype.IsNextGen() {
+		t.Skip("statement RU collection requires NextGen")
+	}
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
@@ -185,7 +190,8 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 	require.NotNil(t, detail)
 	scanBytes, found := runtimeStats.GetAnalyzeScanBytes(analyzePlan.ID())
 	require.True(t, found)
-	require.GreaterOrEqual(t, scanBytes, float64(0))
+	require.Positive(t, scanBytes)
+	require.Equal(t, float64(detail.TotalKeysSize), scanBytes)
 	execDetail := observation.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 	require.NotNil(t, execDetail.ScanDetail)
 	require.Equal(t, detail.ProcessedKeys, execDetail.ScanDetail.ProcessedKeys)
@@ -1250,8 +1256,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, v int)")
 	tk.MustExec("insert into t values (1, 1), (2, 2)")
 
-	// UniStore's Get and BatchGet handlers do not populate ExecDetailsV2. Add
-	// deterministic details to the otherwise real responses so this test
+	// Override UniStore's details with deterministic legacy counters so this test
 	// exercises client-go's response accounting and TiDB's terminal retrieval.
 	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
 		if req == nil || resp == nil {
@@ -2168,5 +2173,84 @@ func TestStatementRUReportModesSQL(t *testing.T) {
 			checkType("delete from ru_report_modes where id > 1", "delete")
 			tk.MustExec("update ru_report_modes set v = 2 where id = 1")
 		})
+	}
+}
+
+func TestStatementRUBackendScanBytesSQL(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.ReportMode = config.RUReportModeFull
+		cfg.Instance.EnableCollectExecutionInfo.Store(true)
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_scan_bytes (id int primary key, v varchar(30))")
+	tk.MustExec("insert into ru_scan_bytes values (1, 'abc'), (2, 'longer value')")
+
+	var owner *executor.StatementRUOwnerObservationForTest
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			owner = executor.ObserveStatementRUOwnerForTest(stmt)
+		}
+	})
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	var observedBytes float64
+	var published int
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64, _ string, _, scanBytes, _, _, _, _, _, _, _, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		observedBytes = scanBytes
+		published++
+	})
+	var responseBytes atomic.Uint64
+	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
+		if req == nil || resp == nil {
+			return
+		}
+		var details *kvrpcpb.ExecDetailsV2
+		switch r := resp.Resp.(type) {
+		case *coprocessor.Response:
+			details = r.ExecDetailsV2
+		case *kvrpcpb.GetResponse:
+			details = r.ExecDetailsV2
+		case *kvrpcpb.BatchGetResponse:
+			details = r.ExecDetailsV2
+		}
+		if details != nil {
+			responseBytes.Add(details.GetScanDetailV2().GetTotalVersionsSize())
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	t.Cleanup(func() { unistore.UnistoreRPCClientResponseHook.Store(nil) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook", "return(true)")
+	for _, tc := range []struct {
+		sql      string
+		nonempty bool
+	}{
+		{"select * from ru_scan_bytes where id=1", true},
+		{"select * from ru_scan_bytes where id in (1,2)", true},
+		{"select * from ru_scan_bytes where id=999", false},
+		{"select * from ru_scan_bytes where id>0", true},
+	} {
+		owner, observedBytes, published = nil, 0, 0
+		responseBytes.Store(0)
+		tk.MustQuery(tc.sql)
+		if !kerneltype.IsNextGen() {
+			require.Nil(t, owner)
+			require.Zero(t, published)
+			continue
+		}
+		require.NotNil(t, owner)
+		require.Equal(t, 1, published)
+		require.Equal(t, float64(responseBytes.Load()), observedBytes)
+		if tc.nonempty {
+			require.Positive(t, observedBytes)
+		} else {
+			require.Zero(t, observedBytes)
+		}
 	}
 }

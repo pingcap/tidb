@@ -441,7 +441,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols, possibleMVIndexPaths[idx].Index)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -752,7 +752,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			continue
 		}
 
-		accessFilters, remainingFilters, _ := collectFilters4MVIndex(ds.SCtx(), filters, idxCols)
+		accessFilters, remainingFilters, _ := collectFilters4MVIndex(ds.SCtx(), filters, idxCols, ds.PossibleAccessPaths[idx].Index)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -783,15 +783,84 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, buildPartialPathUp4MVIndex(
+		indexMergePath := buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
 			tableFilters,
 			ds.TableStats.HistColl,
-		),
 		)
+		if mvIndexRangeCoversJSONPredicates(ds.SCtx(), ds.Table.Meta(), ds.PossibleAccessPaths[idx].Index, partialPaths) {
+			indexMergePath.IndexMergeMVCoveredConds = collectMVCoveredJSONConds(accessFilters)
+		}
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
 	}
 	return nil
+}
+
+// mvIndexRangeCoversJSONPredicates reports whether the ranges built for this MVIndex enforce the JSON
+// predicates exactly. Ranges for floating-point array elements are built from float values, which cannot
+// represent every JSON number (for example integers larger than 2^53), so such ranges only over-approximate
+// the predicate and the recheck must be kept. Similarly, if a predicate's range on the array column is not a
+// single point, it was not converted into an exact index range and the scan does not enforce the predicate.
+func mvIndexRangeCoversJSONPredicates(sctx planctx.PlanContext, tableInfo *model.TableInfo, idxInfo *model.IndexInfo, partialPaths []*util.AccessPath) bool {
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
+	colInfos := tableInfo.Cols()
+	for i := range idxInfo.Columns {
+		colMeta := colInfos[idxInfo.Columns[i].Offset]
+		if !colMeta.FieldType.IsArray() {
+			continue
+		}
+		switch colMeta.FieldType.ArrayType().GetType() {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return false
+		}
+		for _, partialPath := range partialPaths {
+			if !rangesRestrictColumnToPoint(tc, partialPath.Ranges, i) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// rangesRestrictColumnToPoint reports whether every range restricts the column at colIdx to a single value.
+// A full range means the predicate was not converted into an exact index range, so the recheck must be kept.
+func rangesRestrictColumnToPoint(tc types.Context, ranges ranger.Ranges, colIdx int) bool {
+	if len(ranges) == 0 {
+		return false
+	}
+	for _, ran := range ranges {
+		if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) <= colIdx || len(ran.Collators) <= colIdx {
+			return false
+		}
+		lo, hi := ran.LowVal[colIdx], ran.HighVal[colIdx]
+		if lo.Kind() == types.KindMinNotNull || hi.Kind() == types.KindMaxValue {
+			return false
+		}
+		cmp, err := lo.Compare(tc, &hi, ran.Collators[colIdx])
+		if err != nil || cmp != 0 || ran.LowExclude || ran.HighExclude {
+			return false
+		}
+	}
+	return true
+}
+
+// collectMVCoveredJSONConds returns the JSON predicates among accessFilters. The ranges built for a single MVIndex
+// enforce these exactly (unsafe type conversions and empty arrays are rejected while building them), so rows
+// returned by the path always satisfy them. The caller must make sure the MVIndex ranges are exact.
+func collectMVCoveredJSONConds(accessFilters []expression.Expression) []expression.Expression {
+	var covered []expression.Expression
+	for _, f := range accessFilters {
+		sf, ok := f.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		switch sf.FuncName.L {
+		case ast.JSONMemberOf, ast.JSONContains, ast.JSONOverlaps:
+			covered = append(covered, f)
+		}
+	}
+	return covered
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
@@ -1035,31 +1104,50 @@ func PrepareIdxColsAndUnwrapArrayType(
 // collectFilters4MVIndex splits these filters into 2 parts where accessFilters can be used to access this index directly.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is split to:
 // accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
+// Ranges on a non-array column (`z1>1`, `z1>1 and z1<10`) are only taken as the last access filters, the same way ranger
+// stops building ranges after the first non-point column of a normal index: for idx(x, cast(a as array), z1, z2),
+// `x=1 and (2 member of a) and z1>1 and z2=1` is split to accessFilters: `x=1 and (2 member of a) and z1>1`,
+// remaining: `z2=1`. A range on a column before the array column is never an access filter, since the path could not
+// reach the array column: `x>0 and x in (1,2) and (2 member of a)` still uses `x in (1,2)` and keeps `x>0` remaining.
 func collectFilters4MVIndex(
 	sctx planctx.PlanContext,
 	filters []expression.Expression,
 	idxCols []*expression.Column,
+	idxInfo *model.IndexInfo,
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
 	accessTp = unspecifiedFilterTp
 	usedAsAccess := make([]bool, len(filters))
-	for _, col := range idxCols {
+	mvColIdx := arrayColOffset(sctx, idxCols)
+	for z, col := range idxCols {
 		found := false
+		stop := false
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
+				if tp == rangeOnNonMVColTp {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
+						continue
+					}
+					stop = true
+				} else if stop {
+					// a range has been taken on this column, only more ranges on it (`c>1 and c<10`) can join it.
+					continue
+				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp || accessTp == rangeOnNonMVColTp {
 					accessTp = tp
 				}
-				break
+				if !stop {
+					break
+				}
 			}
 		}
-		if !found {
+		if !found || stop {
 			break
 		}
 	}
@@ -1109,20 +1197,22 @@ func collectFilters4MVIndex(
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
 func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression.Expression,
-	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
+	idxCols []*expression.Column, idxInfo *model.IndexInfo) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
 	//                    |
 	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
 	mvFilterMutations = make([]expression.Expression, 0, 1)
 	mvColOffset = -1
+	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
+		stop := false
 		for i, f := range filters {
 			if usedAsAccess[i] {
 				continue
 			}
-			if ok, _ := checkAccessFilter4IdxCol(sctx, f, col); ok {
+			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
@@ -1137,13 +1227,22 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 					found = true
 					continue
 				}
+				if tp == rangeOnNonMVColTp {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
+						continue
+					}
+					// ranges can only be the last access filters, see collectFilters4MVIndex.
+					stop = true
+				} else if stop {
+					continue
+				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
 				// shouldn't break once found here, because we want to collect all the mutation mv filters here.
 			}
 		}
-		if !found {
+		if !found || stop {
 			break
 		}
 	}
@@ -1153,6 +1252,26 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 		}
 	}
 	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+}
+
+// arrayColOffset returns the position of the array column in idxCols, or len(idxCols) if there is none.
+func arrayColOffset(sctx planctx.PlanContext, idxCols []*expression.Column) int {
+	for z, col := range idxCols {
+		if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
+			return z
+		}
+	}
+	return len(idxCols)
+}
+
+// isPrefixIdxCol reports whether the i-th column of idxInfo is a prefix index column. A range on a prefix column cannot
+// be fully resolved by the index range, so it is not taken as an access filter for a multi-valued index path.
+func isPrefixIdxCol(idxInfo *model.IndexInfo, i int, col *expression.Column) bool {
+	if idxInfo == nil || i >= len(idxInfo.Columns) {
+		return false
+	}
+	length := idxInfo.Columns[i].Length
+	return length != types.UnspecifiedLength && length != col.RetType.GetFlen()
 }
 
 // cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint
@@ -1229,6 +1348,9 @@ const (
 	multiValuesOROnMVColTp
 	multiValuesANDOnMVColTp
 	singleValueOnMVColTp
+	// rangeOnNonMVColTp is a comparison (>, >=, <, <=) between a non-array index column and a constant. It can only be
+	// the last access filter of a path: every column before it must be a point, and no column after it can be used.
+	rangeOnNonMVColTp
 )
 
 // checkAccessFilter4IdxCol checks whether this filter can be used as an accessFilter to access the column of an index,
@@ -1335,7 +1457,13 @@ func checkAccessFilter4IdxCol(
 		}
 		return true, eqOrInOnNonMVColTp
 	}
-	if sf.FuncName.L != ast.EQ {
+	var tp int
+	switch sf.FuncName.L {
+	case ast.EQ:
+		tp = eqOrInOnNonMVColTp
+	case ast.GT, ast.GE, ast.LT, ast.LE:
+		tp = rangeOnNonMVColTp
+	default:
 		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
@@ -1354,7 +1482,7 @@ func checkAccessFilter4IdxCol(
 		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
-		return true, eqOrInOnNonMVColTp
+		return true, tp
 	}
 	return false, unspecifiedFilterTp
 }

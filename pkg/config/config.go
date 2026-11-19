@@ -38,6 +38,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
@@ -886,7 +887,8 @@ type Performance struct {
 	// Deprecated: this config has been deprecated. It has no effect.
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// Deprecated: this config has no effect. The stats cache always uses its memory quota.
+	EnableStatsCacheMemQuota bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1742,8 +1744,14 @@ func (c *Config) Valid() error {
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}
-	if c.Security.SkipGrantTable && !hasRootPrivilege() {
-		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	if c.Security.SkipGrantTable {
+		if diagnosticmode.Enabled() {
+			if c.Socket == "" || (c.Host != "" && c.Port != 0) {
+				return fmt.Errorf("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+			}
+		} else if !hasRootPrivilege() {
+			return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+		}
 	}
 	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")

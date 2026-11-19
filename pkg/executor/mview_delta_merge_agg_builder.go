@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
@@ -96,6 +97,12 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
+	if b.err = validateMVFastRefreshInput(
+		b.ctx, b.sctx, v.MVTableID, v,
+		b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS(), v.RegisteredMLogIDs,
+	); b.err != nil {
+		return nil
+	}
 	sourceExec := b.build(v.Source)
 	if b.err != nil {
 		return nil
@@ -133,8 +140,14 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MViewDeltaMerge) e
 		return nil
 	}
 
+	mviewTable = b.wrapTableWithMLogIfExists(mviewTable, tables.MLogSourceRefresh)
+	if b.err != nil {
+		return nil
+	}
+
 	return &MViewDeltaMergeAggExec{
 		BaseExecutor:     exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), sourceExec),
+		MLogEmpty:        v.MLogEmpty,
 		AggMappings:      aggMappings,
 		DeltaAggColCount: deltaAggColCount,
 		TargetTable:      mviewTable,
@@ -367,7 +380,7 @@ func (b *executorBuilder) buildMViewDeltaMergeMinMaxRecompute(
 	v *plannercore.MViewDeltaMerge,
 	aggMappings []MViewDeltaMergeAggMapping,
 ) (*MinMaxRecomputeExec, error) {
-	if v == nil || len(aggMappings) == 0 {
+	if v == nil || v.MLogEmpty || len(aggMappings) == 0 {
 		return nil, nil
 	}
 

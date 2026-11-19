@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,7 +30,56 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/stretchr/testify/require"
 )
+
+func TestJSONAggInputBufferReuse(t *testing.T) {
+	for _, tp := range []byte{mysql.TypeBlob, mysql.TypeVarString, mysql.TypeBit, mysql.TypeString} {
+		ft := types.NewFieldTypeBuilder().SetType(tp).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetFlen(16).BuildP()
+		for _, name := range []string{ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg} {
+			t.Run(name+"/"+ft.String(), func(t *testing.T) {
+				ctx := mock.NewContext()
+				keyType := types.NewFieldType(mysql.TypeVarString)
+				args := []expression.Expression{&expression.Column{Index: 1, RetType: ft}}
+				if name == ast.AggFuncJsonObjectAgg {
+					args = append([]expression.Expression{&expression.Column{Index: 0, RetType: keyType}}, args...)
+				}
+				desc, err := aggregation.NewAggFuncDesc(ctx, name, args, false)
+				require.NoError(t, err)
+				fn := aggfuncs.Build(ctx, desc, 0)
+				pr, _ := fn.AllocPartialResult()
+				input := chunk.NewChunkWithCapacity([]*types.FieldType{keyType, ft}, 1)
+				object := make(map[string]any)
+				array := make([]any, 0, 3)
+				for _, key := range []string{"a", "b", "c"} {
+					input.Reset()
+					input.AppendString(0, key)
+					input.AppendBytes(1, []byte{key[0], 0})
+					_, err := fn.UpdatePartialResult(ctx, []chunk.Row{input.GetRow(0)}, pr)
+					require.NoError(t, err)
+					buf := []byte{key[0], 0}
+					if tp == mysql.TypeString {
+						buf = append(buf, make([]byte, ft.GetFlen()-len(buf))...)
+					}
+					value := types.Opaque{TypeCode: tp, Buf: buf}
+					object[key] = value
+					array = append(array, value)
+				}
+				// Reusing the input must not change values retained by either aggregate.
+				input.Reset()
+				input.AppendString(0, "x")
+				input.AppendBytes(1, []byte{255, 255})
+				output := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+				require.NoError(t, fn.AppendFinalResult2Chunk(ctx, pr, output))
+				expected := types.CreateBinaryJSON(array)
+				if name == ast.AggFuncJsonObjectAgg {
+					expected = types.CreateBinaryJSON(object)
+				}
+				require.Equal(t, expected, output.GetRow(0).GetJSON(0))
+			})
+		}
+	}
+}
 
 func getJSONValue(secondArg types.Datum, valueType *types.FieldType) any {
 	if valueType.GetType() == mysql.TypeString && valueType.GetCharset() == charset.CharsetBin {

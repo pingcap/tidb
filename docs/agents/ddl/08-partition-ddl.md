@@ -164,7 +164,7 @@ High-level flow:
 
 Partition DDL often needs PD side effects:
 
-- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:droppedPartitionBundles`
+- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:partitionBundlesForDroppedDefinitions`
 - Label rule updates: `pkg/ddl/partition.go:alterTableLabelRule` / `dropLabelRules`
 - TiFlash partition placement + replica status:
   - `infosync.ConfigureTiFlashPDForPartitions`

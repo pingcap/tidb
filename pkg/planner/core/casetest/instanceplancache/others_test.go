@@ -253,29 +253,57 @@ func TestInstancePlanCacheSchemaChange(t *testing.T) {
 }
 
 func TestInstancePlanCachePrivilegeChanges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	for _, enabled := range []int{0, 1} {
+		t.Run(fmt.Sprintf("instance=%d", enabled), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(`use test`)
+			tk.MustExec(fmt.Sprintf("set global tidb_enable_instance_plan_cache=%d", enabled))
 
-	tk.MustExec(`create table t (a int, primary key(a))`)
-	tk.MustExec(`CREATE USER 'u1'`)
-	tk.MustExec(`grant select on test.t to 'u1'`)
+			tk.MustExec(`create table t (a int, primary key(a))`)
+			tk.MustExec(`insert into t values(0)`)
+			tk.MustExec(`CREATE USER 'u1'`)
+			tk.MustExec(`grant select on test.t to 'u1'`)
 
-	u1 := testkit.NewTestKit(t, store)
-	require.NoError(t, u1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
+			u1 := testkit.NewTestKit(t, store)
+			require.NoError(t, u1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
 
-	u1.MustExec(`prepare st from 'select a from test.t where a<1'`)
-	u1.MustExec(`execute st`)
-	u1.MustExec(`execute st`)
-	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			u1.MustExec(`prepare st from 'select a from test.t where a<1'`)
+			u1.MustExec(`execute st`)
+			u1.MustExec(`execute st`)
+			u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(`revoke select on test.t from 'u1'`)
-	u1.MustExecToErr(`execute st`) // no privilege
+			u1.MustExec(`set @point_key=0`)
+			u1.MustExec(`prepare point_stmt from 'select * from test.t where a=?'`)
+			u1.MustQuery(`execute point_stmt using @point_key`).Check(testkit.Rows("0"))
+			u1.MustQuery(`execute point_stmt using @point_key`).Check(testkit.Rows("0"))
+			u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			tk.MustExec(`revoke select on test.t from 'u1'`)
+			u1.MustGetErrCode(`execute point_stmt using @point_key`, 1142)
+			u1.MustExecToErr(`execute st`) // no privilege
 
-	tk.MustExec(`grant select on test.t to 'u1'`)
-	u1.MustExec(`execute st`)
-	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // hit the cache again
+			tk.MustExec(`grant select on test.t to 'u1'`)
+			u1.MustExec(`execute st`)
+			u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // hit the cache again
+			u1.MustQuery(`execute point_stmt using @point_key`).Check(testkit.Rows("0"))
+			u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			tk.MustExec(`revoke select on test.t from 'u1'`)
+			tk.MustExec(`create role 'point_reader'`)
+			tk.MustExec(`grant select on test.t to 'point_reader'`)
+			tk.MustExec(`grant 'point_reader' to 'u1'`)
+			u1.MustExec(`set role all`)
+			u1.MustQuery(`execute point_stmt using @point_key`).Check(testkit.Rows("0"))
+			u1.MustExec(`set role none`)
+			u1.MustGetErrCode(`execute point_stmt using @point_key`, 1142)
+			u1.MustExec(`set role all`)
+			u1.MustQuery(`execute point_stmt using @point_key`).Check(testkit.Rows("0"))
+			// The literal point plan must also be checked before reusing its executor.
+			u1.MustExec(`prepare literal_point from 'select * from test.t where a=0'`)
+			u1.MustQuery(`execute literal_point`).Check(testkit.Rows("0"))
+			tk.MustExec(`revoke select on test.t from 'point_reader'`)
+			u1.MustGetErrCode(`execute literal_point`, 1142)
+		})
+	}
 }
 
 func TestInstancePlanCacheDifferentCollation(t *testing.T) {

@@ -435,6 +435,28 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 
 func TestMaterializedViewDDLStatements(t *testing.T) {
 	table := []testCase{
+		{
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS test.mv (a) AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS `test`.`mv` (`a`) AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS `mv` (`a`) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON test.t (a,b)",
+			true,
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `test`.`t` (`a`, `b`)",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON t (a) SHARD_ROW_ID_BITS = 4 PURGE START WITH now() NEXT 300 ALERT ROWS 100",
+			true,
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `t` (`a`) SHARD_ROW_ID_BITS = 4 PURGE START WITH NOW() NEXT 300 ALERT ROWS 100",
+		},
+		{"CREATE MATERIALIZED VIEW log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW `log` (`a`) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW IF NOT EXISTS log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `log` (`a`) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
@@ -452,6 +474,9 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 	}
 	RunTest(t, table, false, false)
 	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
@@ -459,12 +484,22 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
-	p := parser.New()
-	for i, tc := range table {
-		stmt, err := p.ParseOneStmt(tc.src, "", "")
-		require.NoError(t, err, tc.src)
-		require.IsType(t, wantTypes[i], stmt, tc.src)
+	for _, mode := range []mysql.SQLMode{0, mysql.ModeHighNotPrecedence} {
+		p := parser.New()
+		p.SetSQLMode(mode)
+		for i, tc := range table {
+			stmt, err := p.ParseOneStmt(tc.src, "", "")
+			require.NoError(t, err, "sql_mode=%v, sql=%s", mode, tc.src)
+			require.IsType(t, wantTypes[i], stmt, tc.src)
+			var restored strings.Builder
+			require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &restored)), tc.src)
+			require.Equal(t, tc.restore, restored.String(), tc.src)
+		}
 	}
+	RunTest(t, []testCase{
+		{"CREATE MATERIALIZED VIEW mv IF NOT EXISTS (a) AS SELECT 1", false, ""},
+		{"CREATE MATERIALIZED VIEW LOG ON IF NOT EXISTS t (a)", false, ""},
+	}, false, false)
 }
 
 func TestRefreshMaterializedViewStatements(t *testing.T) {
@@ -497,6 +532,67 @@ func TestRefreshMaterializedViewStatements(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
 	require.Equal(t, int64(42), cancelStmt.JobID)
+
+	viewName := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")}
+	restoreCases := []struct {
+		name        string
+		stmt        ast.StmtNode
+		expectedSQL string
+		expectErr   string
+	}{
+		{
+			name: "implement timestamp bounds",
+			stmt: &ast.RefreshMaterializedViewImplementStmt{
+				RefreshStmt: &ast.RefreshMaterializedViewStmt{
+					ViewName: viewName,
+					Type:     ast.RefreshMaterializedViewTypeFast,
+				},
+				LastSuccessfulRefreshReadTSO: 4242,
+				TargetRefreshReadTSO:         5252,
+				MLogRetainedLowerTSO:         3131,
+				RegisteredMLogIDs:            []int64{1234},
+			},
+			expectedSQL: "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131",
+		},
+		{
+			name: "fast ignores out of place complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "fast ignores delta apply complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "complete type unspecified",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName: viewName,
+				Type:     ast.RefreshMaterializedViewTypeComplete,
+			},
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
+		},
+	}
+	for _, tc := range restoreCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sb strings.Builder
+			err := tc.stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+			if tc.expectErr != "" {
+				require.ErrorContains(t, err, tc.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedSQL, sb.String())
+		})
+	}
 }
 
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
@@ -536,6 +632,7 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 func TestMaterializedViewCreateOptionOrder(t *testing.T) {
 	p := parser.New()
 	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
@@ -1532,6 +1629,36 @@ func TestDBAStmt(t *testing.T) {
 		// for show create view
 		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
 		{"show create view t", true, "SHOW CREATE VIEW `t`"},
+		// for show create materialized view
+		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
+		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		// for show materialized views
+		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
+		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
+		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
+		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
+		// for show materialized view logs
+		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
+		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
+		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
+		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -7879,6 +8006,11 @@ func TestCTEMerge(t *testing.T) {
 
 func TestAsOfClause(t *testing.T) {
 	table := []testCase{
+		{"COMPARE MATERIALIZED VIEW mv AS OF TIMESTAMP '2026-01-01 00:00:00'", true, "COMPARE MATERIALIZED VIEW `mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00'"},
+		{"COMPARE MATERIALIZED VIEW test.mv AS OF TIMESTAMP '2026-01-01 00:00:00' OUTPUT INTO TABLE test.diff", true, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00' OUTPUT INTO TABLE `test`.`diff`"},
+		{"COMPARE MATERIALIZED VIEW mv", false, ""},
+		{"COMPARE MATERIALIZED VIEW mv OUTPUT INTO TABLE diff", false, ""},
+
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
 		{"SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());", true, "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"select * from `t` as of timestamp '2021-04-15 00:00:00'", true, "SELECT * FROM `t` AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'"},

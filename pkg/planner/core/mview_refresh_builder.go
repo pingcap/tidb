@@ -125,8 +125,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if txn == nil || !txn.Valid() || txn.StartTS() == 0 {
+	if txn == nil || !txn.Valid() {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
+	}
+	if txn.StartTS() == 0 {
+		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
 	}
 	sctx, ok := b.ctx.(sessionctx.Context)
 	if !ok {
@@ -210,6 +213,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		if source.Schema().Len() != res.SourceColumnCount {
 			return nil, errors.Errorf("unexpected merge-source schema length: got %d, expected %d", source.Schema().Len(), res.SourceColumnCount)
 		}
+		mlogEmpty := mviewRefreshMLogIsEmpty(source)
 		var (
 			fullInner      base.PhysicalPlan
 			fullInnerCount int
@@ -219,9 +223,16 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullOutput     []int
 			fullSnapshot   *DataReaderSnapshot
 		)
-		if res.FullUpdateLookupTemplateSelect != nil {
-			if res.FullUpdateLookupColumnCount <= 0 || len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
-				return nil, errors.New("mview full-update lookup template: invalid output column metadata")
+		if res.FullUpdateLookupTemplateSelect != nil && !mlogEmpty {
+			if res.FullUpdateLookupColumnCount <= 0 {
+				return nil, errors.New("mview full-update lookup template: invalid output column count")
+			}
+			if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
+				return nil, errors.Errorf(
+					"mview full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+					len(res.FullUpdateLookupMVOffsets),
+					res.FullUpdateLookupColumnCount,
+				)
 			}
 			lookupIS := b.is
 			if stmt.TargetRefreshReadTSO > 0 {
@@ -267,7 +278,9 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			fullInner, fullInnerCount, fullRanges, fullKeyMap, fullKeyResult, fullOutput = tmpl.InnerSource, tmpl.InnerColumnCount, tmpl.IndexRanges, tmpl.KeyOff2IdxOff, tmpl.KeyResultColIdxes, tmpl.OutputMVOffsets
 		}
 		plan := &MViewDeltaMerge{
+			RegisteredMLogIDs:     stmt.RegisteredMLogIDs,
 			Source:                source,
+			MLogEmpty:             mlogEmpty,
 			FullUpdateInnerSource: fullInner, FullUpdateInnerColumnCount: fullInnerCount,
 			FullUpdateIndexRanges: fullRanges, FullUpdateKeyOff2IdxOff: fullKeyMap,
 			FullUpdateKeyResultColIdxes: fullKeyResult, FullUpdateOutputMVOffsets: fullOutput,

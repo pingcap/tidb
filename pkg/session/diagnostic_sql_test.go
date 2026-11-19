@@ -121,6 +121,24 @@ func TestDiagnosticSQLAllowlist(t *testing.T) {
 		{name: "variable assignment", sql: "explain select @x := 1", want: false},
 		{name: "nested assignment", sql: "explain select * from (select @x := 1 as a) t", want: false},
 		{name: "union values", sql: "explain select 1 union all values row(2)", want: false},
+		{name: "recommend return", sql: "recommend index return result for 'select * from t where a=1'", want: true},
+		{name: "recommend return options", sql: "recommend index return result for 'select * from t where a=1' with max_num_index = 1", want: true},
+		{name: "recommend return union", sql: "recommend index return result for 'select a from t1 union all select a from t2'", want: true},
+		{name: "recommend return multi", sql: "recommend index return result for 'select * from t where a=1; select * from t where b=1'", want: true},
+		{name: "recommend return subquery", sql: "recommend index return result for 'select * from t where a = (select max(a) from t)'", want: true},
+		{name: "recommend return empty", sql: "recommend index return result for ''", want: true},
+		{name: "recommend return invalid", sql: "recommend index return result for 'not sql'", want: false},
+		{name: "recommend return lock", sql: "recommend index return result for 'select * from t for update'", want: false},
+		{name: "recommend return function", sql: "recommend index return result for 'select get_lock(''x'', 0)'", want: false},
+		{name: "recommend return outfile", sql: "recommend index return result for 'select 1 into outfile ''/tmp/diagnostic.out'''", want: false},
+		{name: "recommend return insert", sql: "recommend index return result for 'insert into t values (1)'", want: false},
+		{name: "recommend return mixed", sql: "recommend index return result for 'select * from t where a=1; delete from t'", want: false},
+		{name: "recommend return partial", sql: "recommend index return result for 'select * from t for update; not sql'", want: false},
+		{name: "recommend run", sql: "recommend index run for 'select * from t where a=1'", want: false},
+		{name: "recommend run no sql", sql: "recommend index run", want: false},
+		{name: "recommend set", sql: "recommend index set max_num_index = 1", want: false},
+		{name: "recommend show", sql: "recommend index show option", want: false},
+		{name: "recommend apply", sql: "recommend index apply 1", want: false},
 	}
 
 	for _, test := range tests {
@@ -187,7 +205,39 @@ func TestDiagnosticSQLExecutionGuard(t *testing.T) {
 		}
 
 		for _, sql := range []string{
+			"recommend index return result for 'select * from diagnostic_user_table where a = 1'",
+			"recommend index return result for 'select * from diagnostic_user_table where a = 1' with max_num_index = 1",
+		} {
+			resultSets, err = se.Execute(context.Background(), sql)
+			require.NoError(t, err, sql)
+			require.Len(t, resultSets, 1, sql)
+			rows, rowErr := GetRows4Test(context.Background(), se, resultSets[0])
+			require.NoError(t, rowErr, sql)
+			require.NotEmpty(t, rows, sql)
+			require.Equal(t, "test", rows[0].GetString(0), sql)
+			require.Equal(t, "diagnostic_user_table", rows[0].GetString(1), sql)
+			require.Equal(t, "a", rows[0].GetString(3), sql)
+			require.NoError(t, resultSets[0].Close(), sql)
+		}
+
+		// Non-correlated subqueries are planned, not executed: fix-control 43817
+		// rejects evaluation before the subquery can read data.
+		resultSets, err = se.Execute(context.Background(), "recommend index return result for 'select * from diagnostic_user_table where a = (select max(a) from diagnostic_user_table)'")
+		require.NoError(t, err)
+		require.Len(t, resultSets, 1)
+		_, err = GetRows4Test(context.Background(), se, resultSets[0])
+		require.Error(t, err)
+		require.False(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode))
+		require.ErrorContains(t, err, "43817")
+		require.NoError(t, resultSets[0].Close())
+
+		for _, sql := range []string{
 			"select 1",
+			"recommend index run for 'select * from diagnostic_user_table where a = 1'",
+			"recommend index set max_num_index = 1",
+			"recommend index show option",
+			"recommend index return result for 'select * from diagnostic_user_table for update'",
+			"recommend index return result for 'insert into diagnostic_user_table values (1)'",
 			"select * from test.t",
 			"select * from mysql.diagnostic_user_view",
 			"select * from mysql.user join test.t",

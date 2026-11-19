@@ -198,11 +198,11 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 		require.Equal(t, sampledNDVThreshold, chk.GetRow(0).GetString(3))
 	}
 	// Initial bootstrap uses the new-cluster policy.
-	assertValue(vardef.On, "500000000")
+	assertValue(vardef.On, "100000000")
 	// The upgrade backfill must preserve an existing value.
 	upgradeToVer317(se, version316)
 	upgradeToVer319(se, version318)
-	assertValue(vardef.On, "500000000")
+	assertValue(vardef.On, "100000000")
 
 	// Simulate an existing cluster before the version317 backfill. It has no
 	// ndv_rate column yet, and its saved options must not gain a rate.

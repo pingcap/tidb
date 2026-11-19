@@ -36,6 +36,41 @@ type mvFullUpdateLookupTemplate struct {
 	OutputMVOffsets   []int
 }
 
+// mviewRefreshMLogIsEmpty follows the mlog side of the generated merge source:
+// projections over a LEFT JOIN whose left child is grouped mlog aggregation.
+// Only a zero-row Dual proves emptiness; unknown shapes keep MIN/MAX lookup enabled.
+func mviewRefreshMLogIsEmpty(plan base.PhysicalPlan) bool {
+	for plan != nil {
+		children := plan.Children()
+		switch p := plan.(type) {
+		case *physicalop.PhysicalTableDual:
+			return p.RowCount == 0
+		case base.PhysicalJoin:
+			if p.GetJoinType() != base.LeftOuterJoin || len(children) != 2 {
+				return false
+			}
+			plan = children[0]
+			continue
+		case *physicalop.PhysicalHashAgg:
+			if len(p.GroupByItems) == 0 {
+				return false
+			}
+		case *physicalop.PhysicalStreamAgg:
+			if len(p.GroupByItems) == 0 {
+				return false
+			}
+		case *physicalop.PhysicalProjection, *physicalop.PhysicalSelection:
+		default:
+			return false
+		}
+		if len(children) != 1 {
+			return false
+		}
+		plan = children[0]
+	}
+	return false
+}
+
 func validateMVFullUpdateSupportingIndex(
 	ctx context.Context,
 	is infoschema.InfoSchema,

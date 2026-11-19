@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -150,7 +150,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_show_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-job/t.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -174,7 +174,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
@@ -207,7 +207,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	jobInfo.TableName = "t2"
 	jobInfo.TableID = tableID2
 	jobInfo.CreatedBy = "test_show_job2@localhost"
-	jobInfo.Parameters.FileLocation = fmt.Sprintf(`gs://test-show-job/t.csv?endpoint=%s`, gcsEndpoint)
+	jobInfo.Parameters.FileLocation = `gs://test-show-job/t.csv?endpoint=xxxxxx`
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
 	// grant SUPER to test_show_job2, now it can see all jobs
@@ -230,7 +230,7 @@ func (s *mockGCSSuite) TestShowJob() {
 					TableID:     tableID3,
 					CreatedBy:   "test_show_job2@localhost",
 					Parameters: importer.ImportParameters{
-						FileLocation: fmt.Sprintf(`gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=%s`, gcsEndpoint),
+						FileLocation: `gs://test-show-job/t*.csv?access-key=xxxxxx&secret-access-key=xxxxxx&endpoint=xxxxxx`,
 						Format:       importer.DataFormatCSV,
 					},
 					SourceFileSize: 6,
@@ -303,7 +303,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -345,7 +345,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID2,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t2.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t2.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -378,7 +378,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 		TableID:     tableID3,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test-show-detached-job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test-show-detached-job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -467,7 +467,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	var preparedOnce sync.Once
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterTaskPrepared",
 		func(task *proto.Task) {
-			if task.Key != importinto.TaskKey(jobID64) {
+			if task.Key != taskkey.ForJob(jobID64) {
 				return
 			}
 			preparedOnce.Do(func() {
@@ -508,7 +508,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 		TableID:     tableID,
 		CreatedBy:   createdBy,
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://show-job-prepare-timing-source/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://show-job-prepare-timing-source/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -615,10 +615,10 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 		Content: []byte("seed"),
 	})
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockDisableAsyncPrepare", "return")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/mockDisableAsyncPrepare", "return")
 	// Block scheduler so we can verify submitted task still has no prepare mode.
 	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
-	s.False(importinto.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
+	s.False(importer.ShouldUseAsyncPrepare(&importer.Plan{CloudStorageURI: "gs://mock-bucket/mock-path"}))
 	importSQL := fmt.Sprintf(
 		`IMPORT INTO t FROM 'gs://detached-job-without-prepare-mode-source/t.csv?endpoint=%s'
 		WITH DETACHED, cloud_storage_uri='gs://detached-job-without-prepare-mode-sort/path?endpoint=%s'`,
@@ -630,7 +630,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	jobID64 := int64(jobID)
-	taskKey := importinto.TaskKey(jobID64)
+	taskKey := taskkey.ForJob(jobID64)
 	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
 	s.tk.MustQuery(fmt.Sprintf(
 		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
@@ -653,7 +653,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 func (s *mockGCSSuite) getTaskByJobID(ctx context.Context, jobID int64) *proto.Task {
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err)
 	return task
@@ -713,7 +713,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID1,
 		CreatedBy:   "test_cancel_job1@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -775,7 +775,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -786,7 +786,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.compareJobInfoWithoutTime(jobInfo, rows2[0])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID2))
+	taskKey := taskkey.ForJob(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
@@ -843,7 +843,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		TableID:     tableID2,
 		CreatedBy:   "test_cancel_job2@localhost",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://test_cancel_job/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://test_cancel_job/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -871,7 +871,7 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		TableID:     tableID1,
 		CreatedBy:   "root@%",
 		Parameters: importer.ImportParameters{
-			FileLocation: fmt.Sprintf(`gs://fail_job_after_import/t.csv?endpoint=%s`, gcsEndpoint),
+			FileLocation: `gs://fail_job_after_import/t.csv?endpoint=xxxxxx`,
 			Format:       importer.DataFormatCSV,
 		},
 		SourceFileSize: 3,
@@ -935,7 +935,7 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.Equal("cancelled", rows[0][fmap["Status"]])
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
+	taskKey := taskkey.ForJob(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)

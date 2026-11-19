@@ -96,11 +96,25 @@ func TestMVAlterEventConstructors(t *testing.T) {
 	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())
 	require.Same(t, oldMLogTbl, alterMLogPurge.inner.OldTableInfo)
 
-	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl)
+	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl, mlogTbl, oldMLogTbl)
 	require.Equal(t, model.ActionMViewRefreshOutOfPlaceCutover, cutover.GetType())
 	newTableInfo, oldTableInfo := cutover.GetMViewRefreshOutOfPlaceCutoverInfo()
 	require.Same(t, mvTbl, newTableInfo)
 	require.Same(t, oldMVTbl, oldTableInfo)
+	newMLogInfo, oldMLogInfo := cutover.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Same(t, mlogTbl, newMLogInfo)
+	require.Same(t, oldMLogTbl, oldMLogInfo)
+	encoded, err := cutover.MarshalJSON()
+	require.NoError(t, err)
+	var decoded SchemaChangeEvent
+	require.NoError(t, decoded.UnmarshalJSON(encoded))
+	newMLogInfo, oldMLogInfo = decoded.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Equal(t, mlogTbl, newMLogInfo)
+	require.Equal(t, oldMLogTbl, oldMLogInfo)
+	withoutLog := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl, nil, nil)
+	newMLogInfo, oldMLogInfo = withoutLog.GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Nil(t, newMLogInfo)
+	require.Nil(t, oldMLogInfo)
 }
 
 func TestDropSchemaEventMiniTableInfo(t *testing.T) {
