@@ -969,7 +969,8 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 	case flagStorage, FlagStreamFullBackupStorage, flagCheckpointStorage,
 		"s3.endpoint", "gcs.endpoint", "azblob.endpoint", "upstream-storage", "downstream-storage":
 		return zap.String(f.Name, formatStorageURLForLog(f.Value.String()))
-	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token":
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token",
+		"s3.sse-kms-context":
 		return zap.String(f.Name, "<redacted>")
 	case flagMasterKeyConfig:
 		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
