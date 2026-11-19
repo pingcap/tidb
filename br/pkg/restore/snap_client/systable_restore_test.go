@@ -781,6 +781,103 @@ func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
 		Check(testkit.Rows("Y"))
 }
 
+func TestRestoreSystemSchemasValidatesNullBeforeReplacingPrivilegeTables(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+
+	tests := []struct {
+		name          string
+		tableOrder    []string
+		createNullRow bool
+		expectError   bool
+	}{
+		{
+			name:          "db first rejects null without replacing db",
+			tableOrder:    []string{"db", "user"},
+			createNullRow: true,
+			expectError:   true,
+		},
+		{
+			name:          "user first rejects null without replacing db",
+			tableOrder:    []string{"user", "db"},
+			createNullRow: true,
+			expectError:   true,
+		},
+		{
+			name:          "non null row restores normally",
+			tableOrder:    []string{"db", "user"},
+			createNullRow: false,
+			expectError:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, cluster.Storage)
+			const (
+				userName = "br_restore_priv_order"
+				dbName   = "br_restore_validate_privilege_order_db"
+			)
+			client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+			require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+			defer client.Close()
+			client.SetWithSysTable(true)
+
+			cleanup := func() {
+				tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+				tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User='%s'", userName))
+				tk.MustExec(fmt.Sprintf("DELETE FROM mysql.db WHERE User='%s' AND DB='%s'", userName, dbName))
+			}
+			cleanup()
+			defer cleanup()
+
+			tk.MustExec(fmt.Sprintf("INSERT INTO mysql.db (Host, DB, User, Select_priv) VALUES ('%%', '%s', '%s', 'N')", dbName, userName))
+			tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+			tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+			tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user MODIFY COLUMN Create_tablespace_priv ENUM('N','Y') DEFAULT 'N'")
+			tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.db LIKE mysql.db")
+			createTablespaceValue := "'Y'"
+			if tt.createNullRow {
+				createTablespaceValue = "NULL"
+			}
+			tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Create_tablespace_priv) VALUES ('%%', '%s', '', 'mysql_native_password', %s)", userName, createTablespaceValue))
+			tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.db (Host, DB, User, Select_priv) VALUES ('%%', '%s', '%s', 'Y')", dbName, userName))
+
+			info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+			require.NoError(t, err)
+			tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+			require.True(t, ok)
+			backupTables := make([]*metautil.Table, 0, len(tt.tableOrder))
+			for _, name := range tt.tableOrder {
+				ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, ast.NewCIStr(name))
+				require.NoError(t, err)
+				backupTables = append(backupTables, &metautil.Table{DB: tmpSysDB, Info: ti})
+			}
+			client.SetDatabases(map[string]*metautil.Database{
+				tmpSysDB.Name.O: {
+					Info:   tmpSysDB,
+					Tables: backupTables,
+				},
+			})
+
+			err = client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+			if tt.expectError {
+				require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err), "%v", err)
+				tk.MustQuery(fmt.Sprintf("SELECT Select_priv FROM mysql.db WHERE User='%s' AND DB='%s'", userName, dbName)).
+					Check(testkit.Rows("N"))
+				tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.user WHERE User='%s'", userName)).
+					Check(testkit.Rows("0"))
+			} else {
+				require.NoError(t, err)
+				tk.MustQuery(fmt.Sprintf("SELECT Select_priv FROM mysql.db WHERE User='%s' AND DB='%s'", userName, dbName)).
+					Check(testkit.Rows("Y"))
+				tk.MustQuery(fmt.Sprintf("SELECT Create_tablespace_priv FROM mysql.user WHERE User='%s'", userName)).
+					Check(testkit.Rows("Y"))
+			}
+		})
+	}
+}
+
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.

@@ -547,6 +547,23 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
 		return nil
 	}
+	// Validate all source rows before replacing any target system table. A
+	// restore can contain incompatible NULLs in a later table, and merging an
+	// earlier table first would otherwise leave a partial restore behind.
+	for _, table := range originDatabase.Tables {
+		tableName := table.Info.Name
+		if !f.MatchTable(sysDB, tableName.O) ||
+			(loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O)) {
+			continue
+		}
+		downstreamTable := db.ExistingTables[tableName.L]
+		if downstreamTable == nil {
+			continue
+		}
+		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, temporaryDB.L, sysDB, tableName.L, table.Info, downstreamTable); err != nil {
+			return errors.Annotatef(err, "error during validating temporary system table, table: %s", tableName)
+		}
+	}
 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
@@ -711,9 +728,6 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, downstreamTable); err != nil {
 				return err
 			}
-		}
-		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, downstreamTable); err != nil {
-			return err
 		}
 		// target column order may different with source cluster
 		columnNames, columnExpressions, err := buildSystemTableReplaceColumns(dbName, tableName, ti, downstreamTable)
