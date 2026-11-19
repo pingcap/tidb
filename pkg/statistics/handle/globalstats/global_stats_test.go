@@ -905,12 +905,10 @@ func TestMixedGlobalAndLocalIndexPartitionStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_analyze_version = 2")
 	tk.MustExec("create table t (a int, b int, c int, d varchar(20), index b(b), unique index b_s((b+1)) global, unique index d_s(d(3)) global) partition by hash(a) partitions 5")
 	h := dom.StatsHandle()
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
 	tk.MustExec("insert into t values (1,1,1,'abc'), (2,2,2,'abd'), (3,3,3,'axe'), (4,4,4,'axf'), (5,5,5,'azd')")
-	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t index b, b_s, d_s")
 
 	// Inspect the cache published by ANALYZE before any subsequent refresh.
