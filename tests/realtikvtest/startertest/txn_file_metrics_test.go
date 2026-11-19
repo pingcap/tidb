@@ -19,10 +19,14 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/http/httptest"
+	"testing"
 	"time"
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -33,6 +37,21 @@ const (
 type txnFileCounters struct {
 	ok  float64
 	err float64
+}
+
+func TestReadTxnFileCounters(t *testing.T) {
+	for _, name := range []string{txnFileMetricName, tidbTxnFileMetricName} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintf(w, "# TYPE %s counter\n%s{type=\"ok\"} 3\n%s{type=\"err\"} 2\n", name, name, name)
+			}))
+			defer server.Close()
+
+			counters, err := readTxnFileCounters(context.Background(), server.URL)
+			require.NoError(t, err)
+			require.Equal(t, txnFileCounters{ok: 3, err: 2}, counters)
+		})
+	}
 }
 
 func readTxnFileCounters(ctx context.Context, statusURL string) (txnFileCounters, error) {
@@ -50,7 +69,7 @@ func readTxnFileCounters(ctx context.Context, statusURL string) (txnFileCounters
 	if resp.StatusCode != http.StatusOK {
 		return txnFileCounters{}, fmt.Errorf("read metrics: status %s", resp.Status)
 	}
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	families, err := parser.TextToMetricFamilies(resp.Body)
 	if err != nil {
 		return txnFileCounters{}, fmt.Errorf("parse metrics: %w", err)

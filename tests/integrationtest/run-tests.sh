@@ -78,6 +78,9 @@ function help_message()
                     Run all tests if this option is not provided.
 
     -P <port>: Use tidb-server running on <port> for testing.
+               Before running, execute SET GLOBAL tidb_redact_log = OFF; on that server.
+               This persists the global setting; -P does not apply init.sql.
+               See README.md for external-server and reused-store setup.
 
 "
 }
@@ -282,7 +285,8 @@ function start_tidb_server()
         config_file="disable_new_collation.toml"
     fi
 
-    start_options="-P $port -status $status -config $config_file"
+    # Golden results inspect literal values in errors and EXPLAIN output.
+    start_options="-P $port -status $status -config $config_file -initialize-sql-file init.sql"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         start_options="$start_options -store tikv -path ${TIKV_PATH}"
     elif [[ $diagnostic_mode = 1 ]]; then

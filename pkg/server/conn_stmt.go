@@ -44,7 +44,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -56,8 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -237,46 +234,24 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	cc.ctx.GetSessionVars().DurationParse = 0
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
-	//nolint:forcetypeassert
-	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
-	if err != nil {
-		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
-		if txnErr != nil {
-			return txnErr
-		}
-
-		if retryable && action == sessiontxn.StmtActionRetryReady {
-			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-			//nolint:forcetypeassert
-			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
-			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
-			return err
-		}
-	}
-	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
-		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-		// server and fallback to TiKV.
-		prevErr := err
-		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-		defer func() {
-			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}()
+	return cc.runStmtWithRetry(ctx, func(tiFlashErr error) (stmtRetrySafety, error) {
 		//nolint:forcetypeassert
-		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
-		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
-		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
-	}
-	return err
+		safety, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
+		if tiFlashErr != nil {
+			// ResetContextOfStmt may clear warnings, so append only after the fallback attempt.
+			cc.ctx.GetSessionVars().StmtCtx.AppendError(tiFlashErr)
+		}
+		return safety, err
+	})
 }
 
-// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
-// Currently the first return value is used to fallback to TiKV when TiFlash is down.
-func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []param.BinaryParam, useCursor bool) (bool, error) {
+// The first return value indicates whether execution can be repeated without
+// replaying client-visible output or cursor setup.
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []param.BinaryParam, useCursor bool) (stmtRetrySafety, error) {
 	vars := (&cc.ctx).GetSessionVars()
 	prepStmt, err := vars.GetPreparedStmtByID(uint32(stmt.ID()))
 	if err != nil {
-		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+		return stmtRetrySafe, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	execStmt := &ast.ExecuteStmt{
 		BinaryArgs: args,
@@ -324,14 +299,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		if sv := cc.ctx.GetSessionVars(); sv != nil && sv.StmtCtx != nil {
 			sv.StmtCtx.DetachMemDiskTracker()
 		}
-		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+		return stmtRetrySafe, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 
 	if rs == nil {
 		if useCursor {
 			vars.SetStatusFlag(mysql.ServerStatusCursorExists, false)
 		}
-		return false, cc.writeOK(ctx)
+		return stmtRetryUnsafe, cc.writeOK(ctx)
 	}
 	if planCacheStmt, ok := prepStmt.(*plannercore.PlanCacheStmt); ok {
 		rs.SetPreparedStmt(planCacheStmt)
@@ -342,13 +317,13 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
 		detached, err = cc.executeWithCursor(ctx, stmt, rs)
-		return false, err
+		return stmtRetryUnsafe, err
 	}
 	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
 	if err != nil {
-		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
+		return stmtRetrySafety(retryable), errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
-	return false, nil
+	return stmtRetryUnsafe, nil
 }
 
 // The detached result indicates that the caller no longer owns the original result set,

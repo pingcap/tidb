@@ -40,10 +40,6 @@ type StatsGC interface {
 	// so that other tidb could know that table is deleted.
 	GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error)
 
-	// ClearOutdatedHistoryStats clear outdated historical stats.
-	// Only for test.
-	ClearOutdatedHistoryStats() error
-
 	// DeleteTableStatsFromKV deletes table statistics from kv.
 	// A statsID refers to statistic of a table or a partition.
 	DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error)
@@ -101,18 +97,6 @@ type IndexUsage interface {
 
 	// GetIndexUsage returns the index usage information
 	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
-}
-
-// StatsHistory is used to manage historical stats.
-type StatsHistory interface {
-	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
-	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
-
-	// CheckHistoricalStatsEnable check whether historical stats is enabled.
-	CheckHistoricalStatsEnable() (enable bool, err error)
-
-	// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
 // PriorityQueueSnapshot is the snapshot of the stats priority queue.
@@ -207,10 +191,9 @@ type CacheUpdate struct {
 
 // UpdateOptions contains configuration for cache updates
 type UpdateOptions struct {
-	// SkipMoveForward controls whether to skip updating the cache's max version number.
-	// When true, the cache max version number stays unchanged even after updates.
-	// This improves performance when analyzing a small number of tables by avoiding
-	// unnecessary full cache reloads that would normally be triggered by version changes.
+	// SkipMoveForward keeps the cache's max version unchanged after this update. Set it when the
+	// update reads only some tables: a larger max version can make the next full update skip
+	// newer stats_meta rows of the other tables.
 	SkipMoveForward bool
 }
 
@@ -222,7 +205,7 @@ type StatsCache interface {
 	// Clear clears this cache.
 	Clear()
 
-	// Update reads stats meta from store and updates the stats map.
+	// Update reads stats meta from store and updates the stats cache.
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
@@ -343,9 +326,6 @@ type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
 
-	// LoadTablePartitionStats loads partition stats info from storage.
-	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
-
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
@@ -354,15 +334,15 @@ type StatsReadWriter interface {
 
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool, source string) (err error)
+		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool) (err error)
 
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
-	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
+	SaveMetaToStorage(needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
@@ -398,19 +378,6 @@ type StatsReadWriter interface {
 	// DumpStatsToJSON dumps statistic to json.
 	DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
 		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*statsutil.JSONTable, error)
-
-	// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
-	// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
-	// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
-	DumpHistoricalStatsBySnapshot(
-		dbName string,
-		tableInfo *model.TableInfo,
-		snapshot uint64,
-	) (
-		jt *statsutil.JSONTable,
-		fallbackTbls []string,
-		err error,
-	)
 
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
@@ -513,9 +480,6 @@ type StatsHandle interface {
 
 	// StatsUsage is used to handle table delta and stats usage.
 	StatsUsage
-
-	// StatsHistory is used to manage historical stats.
-	StatsHistory
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	StatsAnalyze

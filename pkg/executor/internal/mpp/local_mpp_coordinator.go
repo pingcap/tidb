@@ -273,7 +273,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 			State:                  kv.MppTaskReady,
 			ResourceGroupName:      rgName,
 			ConnectionID:           c.sessionCtx.GetSessionVars().ConnectionID,
-			ConnectionAlias:        c.sessionCtx.ShowProcess().SessionAlias,
+			ConnectionAlias:        c.sessionCtx.GetSessionVars().SessionAlias,
 			SQLDigest:              sqlDigest,
 			PlanDigest:             planDigestStr,
 		}

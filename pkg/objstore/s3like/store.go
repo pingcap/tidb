@@ -168,7 +168,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid S3 endpoint URL")
 		}
 		if u.Scheme == "" {
 			return errors.Errorf("scheme not found in endpoint")

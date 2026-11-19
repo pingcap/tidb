@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -103,6 +104,17 @@ const (
 	notPartitionedTable = "table is not a partitioned table"
 	partitionNotExist   = "partition does not exist"
 )
+
+func checkTableReadyForAnalyze(tableInfo *model.TableInfo) (bool, string, bool) {
+	if tableInfo == nil || tableInfo.MaterializedView == nil {
+		return true, "", false
+	}
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return true, "", false
+	}
+	return false, initBuildState.AccessErrorMessage(tableInfo.Name.O), true
+}
 
 // isValidToAnalyze checks whether the table is valid to analyze.
 // It checks the last failed analysis duration and the average analysis duration.

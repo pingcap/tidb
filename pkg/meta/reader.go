@@ -27,6 +27,7 @@ type Reader interface {
 	GetDatabase(dbID int64) (*model.DBInfo, error)
 	ListDatabases() ([]*model.DBInfo, error)
 	GetTable(dbID int64, tableID int64) (*model.TableInfo, error)
+	GetTables(ctx context.Context, dbID int64, tableIDs []int64) ([]*model.TableInfo, error)
 	ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error)
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
 	IterDatabases(func(info *model.DBInfo) error) error
@@ -62,7 +63,13 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
+	GetLegacyECDSASessionTokenDisabled() (bool, error)
 	GetStarterBootstrapVersion() (int64, error)
+	// IsLegacyNextGen reports whether a NextGen keyspace retains Classic
+	// system-table IDs, as existing Starter tier keyspaces do.
+	// Do not call it before initial system-schema bootstrap: an empty NextGen
+	// keyspace also returns true.
+	IsLegacyNextGen() (bool, error)
 }
 
 // NewReader creates a meta Reader in snapshot.

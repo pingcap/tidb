@@ -140,6 +140,11 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// A panic in handling an event does not escape HandleDDLEvent. The event has no table info.
+	require.NotPanics(t, func() {
+		require.NoError(t, h.HandleDDLEvent(context.Background(), nil, notifier.NewDropTableEvent(nil)))
+	})
 }
 
 func TestSystemTableDDLHasNoEvent(t *testing.T) {
@@ -239,19 +244,20 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	h := do.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_mview_enable = on")
-	originalHistoricalStats := testKit.MustQuery("select @@global.tidb_enable_historical_stats").Rows()[0][0]
-	testKit.MustExec("set global tidb_enable_historical_stats = 1")
-	defer testKit.MustExec(fmt.Sprintf("set global tidb_enable_historical_stats = %v", originalHistoricalStats))
 	testKit.MustExec("create table t_mv_oop_stats (a int not null, b int not null)")
 	testKit.MustExec("insert into t_mv_oop_stats values (1, 10), (1, 5), (2, 7)")
 	testKit.MustExec("create materialized view log on t_mv_oop_stats (a, b) purge next date_add(now(), interval 1 hour)")
 	testKit.MustExec("create materialized view mv_oop_stats (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_oop_stats group by a")
 
+	testKit.MustExec("create materialized view log on mv_oop_stats (a, s, cnt)")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_oop_stats"))
 	require.NoError(t, err)
 	oldTableInfo := tbl.Meta()
+	oldMLog, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$mv_oop_stats"))
+	require.NoError(t, err)
 	testKit.MustExec("analyze table mv_oop_stats")
+	testKit.MustExec("analyze table `$mlog$mv_oop_stats`")
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl := h.GetPhysicalTableStats(oldTableInfo.ID, oldTableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -263,10 +269,18 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	require.Len(t, rows, 1)
 	oldVersion := rows[0][0].(string)
 
+	oldLogVersion := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldMLog.Meta().ID).Rows()
+	require.Len(t, oldLogVersion, 1)
 	newTableInfo := oldTableInfo.Clone()
 	newTableInfo.ID = oldTableInfo.ID + 100000
-	cutoverEvent := notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newTableInfo, oldTableInfo)
+	newMLog := oldMLog.Meta().Clone()
+	newMLog.ID += 100000
+	cutoverEvent := notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newTableInfo, oldTableInfo, newMLog, oldMLog.Meta())
 	require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, cutoverEvent))
+	testKit.MustQuery("select count from mysql.stats_meta where table_id = ?", newMLog.ID).Check(testkit.Rows("0"))
+	newLogVersion := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldMLog.Meta().ID).Rows()
+	require.Len(t, newLogVersion, 1)
+	require.NotEqual(t, oldLogVersion, newLogVersion)
 
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id = ?",
@@ -279,11 +293,6 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	).Rows()
 	require.Len(t, rows, 1)
 	require.NotEqual(t, oldVersion, rows[0][0].(string))
-	testKit.MustQuery(
-		"select count(*) from mysql.stats_meta_history where table_id = ? and source = ?",
-		oldTableInfo.ID,
-		statsutil.StatsMetaHistorySourceSchemaChange,
-	).Check(testkit.Rows("1"))
 }
 
 func TestTruncateAPartitionedTable(t *testing.T) {

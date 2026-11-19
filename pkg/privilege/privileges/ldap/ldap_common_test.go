@@ -19,12 +19,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"io"
 	"net"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	ber "github.com/go-asn1-ber/asn1-ber"
+	"github.com/go-ldap/ldap/v3"
+	"github.com/ngaut/pools"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,6 +47,82 @@ func TestCanonicalizeDN(t *testing.T) {
 	}
 	require.Equal(t, impl.canonicalizeDN("yka", "cn=y,dc=ping,dc=cap"), "cn=y,dc=ping,dc=cap")
 	require.Equal(t, impl.canonicalizeDN("yka", "+dc=ping,dc=cap"), "cn=yka,dc=ping,dc=cap")
+}
+
+func TestGetConnectionClosesFailedRootBind(t *testing.T) {
+	for _, password := range []string{"wrong-password", ""} {
+		t.Run("password="+password, func(t *testing.T) {
+			impl := &ldapAuthImpl{bindRootDN: "cn=root", bindRootPWD: password}
+			peerErrors := make(chan error, getConnectionMaxRetry)
+			var clients []*ldap.Conn
+			var peers []net.Conn
+			var wg sync.WaitGroup
+			t.Cleanup(func() {
+				// Also release leaked connections when running against the broken implementation.
+				for _, peer := range peers {
+					_ = peer.Close()
+				}
+				for _, client := range clients {
+					client.Close()
+				}
+				wg.Wait()
+				impl.ldapConnectionPool.Close()
+			})
+			impl.ldapConnectionPool = pools.NewResourcePool(func() (pools.Resource, error) {
+				client, peer := net.Pipe()
+				conn := ldap.NewConn(client, false)
+				conn.Start()
+				conn.SetTimeout(ldapTimeout)
+				clients = append(clients, conn)
+				peers = append(peers, peer)
+				wg.Go(func() {
+					if password != "" {
+						request, err := ber.ReadPacket(peer)
+						if err != nil {
+							peerErrors <- err
+							return
+						}
+						response := ber.NewSequence("LDAP response")
+						response.AppendChild(request.Children[0])
+						result := ber.Encode(ber.ClassApplication, ber.TypeConstructed, ldap.ApplicationBindResponse, nil, "Bind response")
+						result.AppendChild(ber.NewInteger(ber.ClassUniversal, ber.TypePrimitive, ber.TagEnumerated, ldap.LDAPResultInvalidCredentials, "Result code"))
+						result.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "Matched DN"))
+						result.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, "", "Diagnostic message"))
+						response.AppendChild(result)
+						if _, err = peer.Write(response.Bytes()); err != nil {
+							peerErrors <- err
+							return
+						}
+					}
+					// Keep the peer open: only the client can cause this read to return EOF.
+					var buf [1]byte
+					_, err := peer.Read(buf[:])
+					peerErrors <- err
+				})
+				return conn, nil
+			}, 1, 1, 0)
+
+			conn, err := impl.getConnection()
+			require.Nil(t, conn)
+			var bindErr *ldap.Error
+			require.ErrorAs(t, err, &bindErr)
+			if password == "" {
+				require.EqualValues(t, ldap.ErrorEmptyPassword, bindErr.ResultCode)
+			} else {
+				require.EqualValues(t, ldap.LDAPResultInvalidCredentials, bindErr.ResultCode)
+			}
+			require.Len(t, clients, getConnectionMaxRetry)
+			require.EqualValues(t, 1, impl.ldapConnectionPool.Available())
+			for range getConnectionMaxRetry {
+				select {
+				case err := <-peerErrors:
+					require.ErrorIs(t, err, io.EOF)
+				case <-time.After(time.Second):
+					t.Fatal("LDAP peer did not observe connection closure after root bind failure")
+				}
+			}
+		})
+	}
 }
 
 func TestConnectThrough636(t *testing.T) {

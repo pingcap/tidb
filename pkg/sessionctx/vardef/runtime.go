@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 )
 
 var (
@@ -34,6 +36,30 @@ var (
 	// planReplayerFileRetentionTime is the retention time for non-capture plan replayer files.
 	planReplayerFileRetentionTime = int64(DefTiDBPlanReplayerFileRetentionTime)
 )
+
+// disableLegacyECDSASessionToken rejects legacy raw-input ECDSA signatures, which
+// leave token timestamps unauthenticated because ECDSA truncates the JSON input.
+// Classic keeps this false until the cluster upgrade gate is durably completed;
+// NextGen disables legacy ECDSA tokens immediately because it uses RSA tokens.
+var disableLegacyECDSASessionToken atomic.Bool
+
+func init() {
+	if kerneltype.IsNextGen() {
+		SetLegacyECDSASessionTokenDisabled(true)
+	}
+}
+
+// IsLegacyECDSASessionTokenDisabled reports whether legacy raw-input ECDSA
+// session-token signatures are rejected.
+func IsLegacyECDSASessionTokenDisabled() bool {
+	return disableLegacyECDSASessionToken.Load()
+}
+
+// SetLegacyECDSASessionTokenDisabled controls whether legacy raw-input ECDSA
+// session-token signatures are rejected.
+func SetLegacyECDSASessionTokenDisabled(disabled bool) {
+	disableLegacyECDSASessionToken.Store(disabled)
+}
 
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.

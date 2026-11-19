@@ -144,6 +144,7 @@ func TestCreateUniqueIndexOnMaterializedView(t *testing.T) {
 	tk.MustExec(`create materialized view mv_nullable_key_agg (g1, cnt)
 		refresh fast
 		as select g1, count(*) as cnt from t_mv_nullable_key group by g1`)
+	tk.MustQuery("select non_unique, index_name = 'PRIMARY' from information_schema.statistics where table_schema='test' and table_name='mv_nullable_key_agg'").Check(testkit.Rows("0 0"))
 	tk.MustGetErrMsg(
 		"alter table mv_nullable_key_agg add primary key (cnt) nonclustered",
 		"[ddl:8200]Unsupported ALTER TABLE ADD PRIMARY KEY on materialized view table",

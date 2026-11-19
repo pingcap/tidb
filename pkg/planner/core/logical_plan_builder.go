@@ -1701,6 +1701,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
+	// Only string results refine the column's type-derived repertoire.
+	// In particular, JSON columns must retain their Unicode repertoire.
+	if newCol.RetType.EvalType() == types.ETString {
+		newCol.SetRepertoire(expr.Repertoire())
+	}
 	return newCol, name, nil
 }
 
@@ -1856,6 +1861,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
+// projNameIndexThreshold is the number of select fields and input columns from
+// which buildProjection indexes the input names. Below it, scanning the names
+// for each field is cheaper than building the index.
+const projNameIndexThreshold = 32
+
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
@@ -1864,6 +1874,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	}
 	b.optFlag |= rule.FlagEliminateProjection
 	b.curClause = fieldList
+	// Index the names the field rewriters resolve against (see getExpressionRewriter)
+	// once, instead of scanning them for every column reference in the fields.
+	oldProjNameIndex := b.projNameIndex
+	defer func() { b.projNameIndex = oldProjNameIndex }()
+	b.projNameIndex = nil
+	if inputNames := rewriterNames(p); len(fields) >= projNameIndexThreshold && len(inputNames) >= projNameIndexThreshold {
+		b.projNameIndex = expression.NewFieldNameIndex(inputNames)
+	}
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -3669,7 +3687,7 @@ func checkColFuncDepend(
 	whereDependNames, joinDependNames map[*types.FieldName]*types.FieldName,
 ) bool {
 	for _, index := range tblInfo.Indices {
-		if !index.Unique {
+		if !index.Unique || index.HasCondition() {
 			continue
 		}
 		funcDepend := true
@@ -6676,9 +6694,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		}
 	}
 
-	// If the delete is non-qualified it does not require Select Priv
+	// Only an unqualified single-table delete can omit SELECT privileges.
+	// Joined tables can be read by ON/USING even without a WHERE clause.
 	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
+		if tableName, _ := getSingleTableNameAndAlias(ds.TableRefs); tableName != nil {
+			b.popVisitInfo()
+		}
 	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()

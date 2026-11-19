@@ -218,6 +218,17 @@ func TestHash(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, value)
 
+	values, err := tx.HGetBatch(context.Background(), key, [][]byte{[]byte("2"), []byte("fake"), []byte("1"), []byte("2")})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{[]byte("2"), nil, []byte("1"), []byte("2")}, values)
+	pointOnly := structure.NewStructure(struct{ kv.Retriever }{txn}, nil, []byte{0x00})
+	values, err = pointOnly.HGetBatch(context.Background(), key, [][]byte{[]byte("1"), []byte("fake")})
+	require.NoError(t, err)
+	require.Equal(t, [][]byte{[]byte("1"), nil}, values)
+	values, err = tx.HGetBatch(context.Background(), key, nil)
+	require.NoError(t, err)
+	require.Empty(t, values)
+
 	keys, err := tx.HKeys(key)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{[]byte("1"), []byte("2")}, keys)
@@ -247,6 +258,26 @@ func TestHash(t *testing.T) {
 	require.Equal(t, []structure.HashPair{
 		{Field: []byte("2"), Value: []byte("2")},
 		{Field: []byte("1"), Value: []byte("1")}}, res)
+
+	for _, ca := range []struct {
+		lowerBound string
+		values     []string
+	}{
+		{"1", []string{"2", "1"}},
+		{"2", []string{"2"}},
+		{"15", []string{"2"}},
+		{"3", nil},
+	} {
+		iter, err := structure.NewHashReverseIterWithLowerBound(tx, key, []byte(ca.lowerBound))
+		require.NoError(t, err)
+		var values []string
+		for iter.Valid() {
+			values = append(values, string(iter.Value()))
+			require.NoError(t, iter.Next())
+		}
+		require.Equal(t, ca.values, values)
+		iter.Close()
+	}
 
 	err = tx.HDel(key, []byte("1"))
 	require.NoError(t, err)

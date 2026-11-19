@@ -9,9 +9,8 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
-        "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
