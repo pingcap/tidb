@@ -901,301 +901,77 @@ impl SessionVars {
             return Ok(());
         };
         self.common_global_loaded = true;
-        let mut systems = self.systems.clone();
-        // The deep copy of the sysvar cache's session view
-        // (`Domain.GetSessionCache`), which holds every variable `SkipInit`
-        // does not exclude -- session scope, not noop, not one of Go's
-        // `skipInit` variables -- at its GLOBAL value or, for a session-only
-        // variable, its registry value.
-        // Go sets each one not already held through
-        // `SetSystemVarWithRelaxedValidation`, whose `SetSession` hooks keep
-        // a charset and its collation in lockstep (`collation_server` writes
-        // the `skipInit` `character_set_server`).
-        let mut paired = Vec::new();
+        // Deep copy the sysvar cache's session view (`Domain.GetSessionCache`),
+        // which holds every variable `SkipInit` does not exclude -- session
+        // scope, not noop, not one of Go's `skipInit` variables -- at its
+        // GLOBAL value or, for a session-only variable, its registry value.
+        // Each one not already held goes through its `SetSession`
+        // (`SetSystemVarWithRelaxedValidation`), which keeps the typed
+        // session state, and a charset and its collation, in lockstep.
         for (name, value) in globals.session_cache() {
-            if systems.contains_key(&name) {
+            if self.systems.contains_key(&name) {
                 continue;
             }
-            paired.extend(charset_collation_pair(&name, &value));
-            systems.insert(name, value);
-        }
-        for (name, value) in paired {
-            systems.insert(name.to_owned(), value);
-        }
-        // A client that set `CLIENT_INTERACTIVE` starts with
-        // `wait_timeout = interactive_timeout`.
-        if self.client_capability & tidb_mysql::consts::ClientInteractive != 0 {
-            if let Some(interactive) = systems.get("interactive_timeout").cloned() {
-                systems.insert("wait_timeout".to_owned(), interactive);
+            match self.set_system_var_with_relaxed_validation(&name, value) {
+                Ok(()) => {}
+                // sessionCache is stale; sysvar has likely been unregistered
+                Err(error) if error.code == tidb_errno::errcode::ErrUnknownSystemVariable => {}
+                Err(error) => return Err(error),
             }
         }
-        let raw = systems
-            .get(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
-            .cloned()
-            .unwrap_or_else(|| {
-                get_sys_var(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
-                    .map_or_else(String::new, |def| def.value.to_owned())
-            });
-        let optimizer_fix_control = OptimizerFixControl::parse(&raw)
-            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?
-            .0;
-        let autocommit = Self::autocommit_from_systems(&systems);
-        let sql_mode = Self::sql_mode_from_systems(&systems)
-            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
-        let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
-        let max_keys_read = Self::max_keys_read_from_systems(&systems);
-        let max_execution_time = Self::max_execution_time_from_systems(&systems);
-        let time_zone = Self::time_zone_from_systems(&systems);
-        let select_limit = Self::select_limit_from_systems(&systems);
-        let selectivity_factor = Self::selectivity_factor_from_systems(&systems);
-        let multi_statement_mode = Self::multi_statement_mode_from_systems(&systems);
-        let enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&systems);
-        let shared_lock_promotion = Self::shared_lock_promotion_from_systems(&systems);
-        let enable_window_function = Self::enable_window_function_from_systems(&systems);
-        let enable_mview = Self::enable_mview_from_systems(&systems);
-        let enable_full_outer_join = Self::enable_full_outer_join_from_systems(&systems);
-        let enable_redact_log = systems
-            .get(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
-            .map_or(tidb_vardef::defaults::DEF_TIDB_REDACT_LOG, String::as_str)
-            .to_owned();
-        let ti_flash_max_bytes_before_ext_join =
-            Self::ti_flash_max_bytes_before_ext_join_from_systems(&systems);
-        let ti_flash_max_bytes_before_ext_agg =
-            Self::ti_flash_max_bytes_before_ext_agg_from_systems(&systems);
-        let ti_flash_max_bytes_before_ext_sort =
-            Self::ti_flash_max_bytes_before_ext_sort_from_systems(&systems);
-        let ti_flash_mem_quota_query_per_node =
-            Self::ti_flash_mem_quota_query_per_node_from_systems(&systems);
-        let mem_quota_query = Self::mem_quota_query_from_systems(&systems);
-        let cop_tiflash_concurrency_factor = Self::cop_tiflash_concurrency_factor_from_systems(&systems);
-        let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
-        let pessimistic_transaction_fair_locking =
-            Self::pessimistic_transaction_fair_locking_from_systems(&systems);
-        let bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&systems);
-        let replica_read = Self::replica_read_from_systems(&systems);
-        let analyze_store_batch_size = Self::analyze_store_batch_size_from_systems(&systems);
-        let query_cop_store_limit = Self::query_cop_store_limit_from_systems(&systems);
-        // Commit all authorities only after the inherited fix-control
-        // row has been accepted. A stale/foreign cluster row can therefore
-        // refuse the connection without partially reseeding this session.
-        self.systems = systems;
-        self.optimizer_fix_control = optimizer_fix_control;
-        self.autocommit = autocommit;
-        self.sql_mode = sql_mode;
-        self.max_allowed_packet = max_allowed_packet;
-        self.max_keys_read = max_keys_read;
-        self.max_execution_time = max_execution_time;
-        self.time_zone = time_zone;
-        self.select_limit = select_limit;
-        self.selectivity_factor = selectivity_factor;
-        self.multi_statement_mode = multi_statement_mode;
-        self.enable_prepared_plan_cache = enable_prepared_plan_cache;
-        self.shared_lock_promotion = shared_lock_promotion;
-        self.enable_window_function = enable_window_function;
-        self.enable_mview = enable_mview;
-        self.enable_full_outer_join = enable_full_outer_join;
-        self.enable_redact_log = enable_redact_log;
-        self.ti_flash_max_bytes_before_ext_join = ti_flash_max_bytes_before_ext_join;
-        self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
-        self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
-        self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
-        self.mem_quota_query = mem_quota_query;
-        self.cop_tiflash_concurrency_factor = cop_tiflash_concurrency_factor;
-        self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
-        self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
-        self.bulk_dml_enabled = bulk_dml_enabled;
-        self.replica_read = replica_read;
-        self.analyze_store_batch_size = analyze_store_batch_size;
-        self.query_cop_store_limit = query_cop_store_limit;
+        // when client set Capability Flags CLIENT_INTERACTIVE, init
+        // wait_timeout with interactive_timeout
+        if self.client_capability & tidb_mysql::consts::ClientInteractive != 0 {
+            if let Some(interactive) = self.systems.get("interactive_timeout").cloned() {
+                self.set_system_var("wait_timeout", interactive)?;
+            }
+        }
         self.session_resolved = Self::build_session_image(&self.systems);
-        // The wholesale replacement above is a mutation like any other; the
-        // parsed-product caches keyed on `generation` must not survive it.
         self.generation += 1;
         Ok(())
     }
 
-    fn autocommit_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems.get("autocommit").map_or(true, |value| {
-            value.eq_ignore_ascii_case("ON") || value == "1"
-        })
+    /// Go `SessionVars.SetSystemVarWithRelaxedValidation`: the value as
+    /// `ValidateWithRelaxedValidation` normalizes it, through the
+    /// variable's `SetSession`.
+    ///
+    /// # Errors
+    ///
+    /// An unknown variable, or the variable's `SetSession` refusal.
+    pub fn set_system_var_with_relaxed_validation(&mut self, name: &str, value: String) -> Result<(), VarError> {
+        let Some(def) = get_sys_var(name) else {
+            return Err(tidb_terror::MysqlError::from_terror(
+                &crate::variable_errors::ERR_UNKNOWN_SYSTEM_VAR
+                    .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
+        };
+        let value = def.validate_with_relaxed_validation(&value, SCOPE_SESSION);
+        self.set_session_from_hook(def.name.to_owned(), value)
     }
 
-    fn sql_mode_from_systems(
-        systems: &HashMap<String, String>,
-    ) -> Result<tidb_mysql::SqlMode, tidb_mysql::InvalidSqlMode> {
-        tidb_mysql::get_sql_mode(
-            systems
-                .get("sql_mode")
-                .map_or(tidb_mysql::DefaultSQLMode, String::as_str),
-        )
-    }
 
-    fn max_allowed_packet_from_systems(systems: &HashMap<String, String>) -> Result<u64, VarError> {
-        systems
-            .get("max_allowed_packet")
-            .map_or("67108864", String::as_str)
-            .parse::<u64>()
-            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))
-    }
 
-    fn max_keys_read_from_systems(systems: &HashMap<String, String>) -> u64 {
-        systems
-            .get("tidb_max_keys_read")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0)
-    }
 
-    fn max_execution_time_from_systems(systems: &HashMap<String, String>) -> u64 {
-        systems
-            .get("max_execution_time")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0)
-    }
 
-    fn time_zone_from_systems(systems: &HashMap<String, String>) -> tidb_datatype::SessionTimeZone {
-        resolve_session_time_zone_value(systems.get("time_zone").map_or("SYSTEM", String::as_str))
-    }
 
-    fn select_limit_from_systems(systems: &HashMap<String, String>) -> u64 {
-        systems
-            .get("sql_select_limit")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(u64::MAX)
-    }
 
-    fn selectivity_factor_from_systems(systems: &HashMap<String, String>) -> f64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR)
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_OPT_SELECTIVITY_FACTOR)
-    }
 
-    fn multi_statement_mode_from_systems(systems: &HashMap<String, String>) -> u8 {
-        match systems.get("tidb_multi_statement_mode").map(String::as_str) {
-            Some("ON") => 1,
-            Some("WARN") => 2,
-            _ => 0,
-        }
-    }
 
-    fn prepared_plan_cache_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE)
-            .map_or(
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_PREP_PLAN_CACHE,
-                |value| value == "ON",
-            )
-    }
 
-    fn shared_lock_promotion_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION)
-            .map_or(
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_SHARED_LOCK_PROMOTION,
-                |value| value == "ON",
-            )
-    }
 
-    fn enable_mview_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE)
-            .map_or(tidb_vardef::defaults::DEF_TIDB_MVIEW_ENABLE, |value| {
-                value.eq_ignore_ascii_case("ON") || value == "1"
-            })
-    }
 
-    fn enable_full_outer_join_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_FULL_OUTER_JOIN)
-            .map_or(tidb_vardef::defaults::DEF_TIDB_ENABLE_FULL_OUTER_JOIN, |value| {
-                value.eq_ignore_ascii_case("ON") || value == "1"
-            })
-    }
 
-    fn enable_window_function_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION)
-            .map_or(tidb_vardef::defaults::DEF_ENABLE_WINDOW_FUNCTION, |value| {
-                value.eq_ignore_ascii_case("ON") || value == "1"
-            })
-    }
 
-    fn ti_flash_max_bytes_before_ext_join_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_JOIN)
-    }
 
-    fn ti_flash_max_bytes_before_ext_agg_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_GROUP_BY)
-    }
 
-    fn ti_flash_max_bytes_before_ext_sort_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT)
-    }
 
-    /// Go `tidb_mem_quota_query`'s `SetSession`: `TidbOptInt64(val,
-    /// DefTiDBMemQuotaQuery)`.
-    fn mem_quota_query_from_systems(systems: &HashMap<String, String>) -> i64 {
-        crate::varsutil::tidb_opt_int64(
-            systems
-                .get(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
-                .map_or("", String::as_str),
-            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY,
-        )
-    }
 
-    /// Go `tidb_opt_tiflash_concurrency_factor`'s `SetSession`:
-    /// `tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)`.
-    fn cop_tiflash_concurrency_factor_from_systems(systems: &HashMap<String, String>) -> f64 {
-        crate::varsutil::tidb_opt_float64(
-            systems
-                .get(tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR)
-                .map_or("", String::as_str),
-            tidb_vardef::defaults::DEF_OPT_TIFLASH_CONCURRENCY_FACTOR,
-        )
-    }
 
-    fn ti_flash_mem_quota_query_per_node_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE)
-    }
 
-    fn ti_flash_query_spill_ratio_from_systems(systems: &HashMap<String, String>) -> f64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO)
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO)
-    }
 
-    fn pessimistic_transaction_fair_locking_from_systems(
-        systems: &HashMap<String, String>,
-    ) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING)
-            .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1")
-    }
 
-    fn bulk_dml_enabled_from_systems(systems: &HashMap<String, String>) -> bool {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_DML_TYPE)
-            .is_some_and(|value| value.eq_ignore_ascii_case("bulk"))
-    }
 
-    fn replica_read_from_systems(
-        systems: &HashMap<String, String>,
-    ) -> tidb_txnkv::ReplicaReadType {
-        Self::replica_read_from_value(systems.get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ).map(String::as_str))
-    }
+
 
     fn replica_read_from_value(value: Option<&str>) -> tidb_txnkv::ReplicaReadType {
         match value
@@ -1222,19 +998,7 @@ impl SessionVars {
         }
     }
 
-    fn analyze_store_batch_size_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE)
-    }
 
-    fn query_cop_store_limit_from_systems(systems: &HashMap<String, String>) -> i64 {
-        systems
-            .get(tidb_vardef::tidb_vars::TIDB_QUERY_COP_STORE_LIMIT)
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_QUERY_COP_STORE_LIMIT)
-    }
 
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
@@ -1729,168 +1493,34 @@ impl SessionVars {
             .collect()
     }
 
-    /// Puts back what [`Self::snapshot_system`] recorded.
+    /// Puts back what [`Self::snapshot_system`] recorded: Go's
+    /// `SetSystemVar(name, old)` of a statement-scoped write, whose
+    /// `SetSession` brings the typed session state back with the value. An
+    /// absent override is removed again, and the hook sees the value the
+    /// variable then reads.
     pub fn restore_system(&mut self, snapshot: Vec<(String, Option<String>)>) {
         if snapshot.is_empty() {
             return;
         }
-        let mut restores_sql_mode = false;
-        let mut restores_max_allowed_packet = false;
-        let mut restores_max_keys_read = false;
-        let mut restores_max_execution_time = false;
-        let mut restores_time_zone = false;
-        let mut restores_select_limit = false;
-        let mut restores_selectivity_factor = false;
-        let mut restores_multi_statement_mode = false;
-        let mut restores_prepared_plan_cache = false;
-        let mut restores_shared_lock_promotion = false;
-        let mut restores_mview_enable = false;
-        let mut restores_full_outer_join = false;
-        let mut restores_window_function = false;
-        let mut restores_ti_flash_max_bytes_before_ext_join = false;
-        let mut restores_ti_flash_max_bytes_before_ext_agg = false;
-        let mut restores_ti_flash_max_bytes_before_ext_sort = false;
-        let mut restores_ti_flash_mem_quota_query_per_node = false;
-        let mut restores_mem_quota_query = false;
-        let mut restores_cop_tiflash_concurrency_factor = false;
-        let mut restores_ti_flash_query_spill_ratio = false;
-        let mut restores_pessimistic_transaction_fair_locking = false;
-        let mut restores_bulk_dml_enabled = false;
-        let mut restores_replica_read = false;
-        let mut restores_analyze_store_batch_size = false;
         for (key, previous) in snapshot {
-            restores_sql_mode |= key == "sql_mode";
-            restores_max_allowed_packet |= key == "max_allowed_packet";
-            restores_max_keys_read |= key == "tidb_max_keys_read";
-            restores_max_execution_time |= key == "max_execution_time";
-            restores_time_zone |= key == "time_zone";
-            restores_select_limit |= key == "sql_select_limit";
-            restores_selectivity_factor |=
-                key == tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR;
-            restores_multi_statement_mode |= key == "tidb_multi_statement_mode";
-            restores_prepared_plan_cache |=
-                key == tidb_vardef::tidb_vars::TIDB_ENABLE_PREP_PLAN_CACHE;
-            restores_shared_lock_promotion |=
-                key == tidb_vardef::tidb_vars::TIDB_ENABLE_SHARED_LOCK_PROMOTION;
-            restores_window_function |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_WINDOW_FUNCTION;
-            restores_mview_enable |= key == tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE;
-            restores_full_outer_join |= key == tidb_vardef::tidb_vars::TIDB_ENABLE_FULL_OUTER_JOIN;
-            restores_ti_flash_max_bytes_before_ext_join |=
-                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN;
-            restores_ti_flash_max_bytes_before_ext_agg |=
-                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY;
-            restores_ti_flash_max_bytes_before_ext_sort |=
-                key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT;
-            restores_ti_flash_mem_quota_query_per_node |=
-                key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE;
-            restores_mem_quota_query |= key == tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY;
-            restores_cop_tiflash_concurrency_factor |=
-                key == tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR;
-            restores_ti_flash_query_spill_ratio |=
-                key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
-            restores_pessimistic_transaction_fair_locking |=
-                key == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING;
-            restores_bulk_dml_enabled |= key == tidb_vardef::tidb_vars::TIDB_DML_TYPE;
-            restores_replica_read |= key == tidb_vardef::tidb_vars::TIDB_REPLICA_READ;
-            restores_analyze_store_batch_size |=
-                key == tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE;
             match previous {
                 Some(value) => {
-                    self.session_resolved
-                        .note(key.as_str(), Some(value.as_str()));
-                    self.systems.insert(key, value);
+                    self.session_resolved.note(key.as_str(), Some(value.as_str()));
+                    self.systems.insert(key.clone(), value);
                 }
                 None => {
                     self.session_resolved.note(key.as_str(), None);
                     self.systems.remove(&key);
                 }
-            };
+            }
+            if let Some(hook) = get_sys_var(&key).and_then(|def| def.set_session) {
+                let value = self
+                    .get_system(&key)
+                    .expect("a snapshot names a registered variable");
+                hook(self, &value).expect("a restored value was validated before it was stored");
+            }
         }
         self.generation += 1;
-        self.autocommit = Self::autocommit_from_systems(&self.systems);
-        if restores_sql_mode {
-            self.sql_mode = Self::sql_mode_from_systems(&self.systems)
-                .expect("a saved SQL mode was validated before it was stored");
-        }
-        if restores_max_allowed_packet {
-            self.max_allowed_packet = Self::max_allowed_packet_from_systems(&self.systems)
-                .expect("a saved max_allowed_packet was validated before it was stored");
-        }
-        if restores_max_keys_read {
-            self.max_keys_read = Self::max_keys_read_from_systems(&self.systems);
-        }
-        if restores_max_execution_time {
-            self.max_execution_time = Self::max_execution_time_from_systems(&self.systems);
-        }
-        if restores_time_zone {
-            self.time_zone = Self::time_zone_from_systems(&self.systems);
-        }
-        if restores_select_limit {
-            self.select_limit = Self::select_limit_from_systems(&self.systems);
-        }
-        if restores_selectivity_factor {
-            self.selectivity_factor = Self::selectivity_factor_from_systems(&self.systems);
-        }
-        if restores_multi_statement_mode {
-            self.multi_statement_mode = Self::multi_statement_mode_from_systems(&self.systems);
-        }
-        if restores_prepared_plan_cache {
-            self.enable_prepared_plan_cache = Self::prepared_plan_cache_from_systems(&self.systems);
-        }
-        if restores_shared_lock_promotion {
-            self.shared_lock_promotion = Self::shared_lock_promotion_from_systems(&self.systems);
-        }
-        if restores_window_function {
-            self.enable_window_function = Self::enable_window_function_from_systems(&self.systems);
-        }
-        if restores_mview_enable {
-            self.enable_mview = Self::enable_mview_from_systems(&self.systems);
-        }
-        if restores_full_outer_join {
-            self.enable_full_outer_join = Self::enable_full_outer_join_from_systems(&self.systems);
-        }
-        if restores_ti_flash_max_bytes_before_ext_join {
-            self.ti_flash_max_bytes_before_ext_join =
-                Self::ti_flash_max_bytes_before_ext_join_from_systems(&self.systems);
-        }
-        if restores_ti_flash_max_bytes_before_ext_agg {
-            self.ti_flash_max_bytes_before_ext_agg =
-                Self::ti_flash_max_bytes_before_ext_agg_from_systems(&self.systems);
-        }
-        if restores_ti_flash_max_bytes_before_ext_sort {
-            self.ti_flash_max_bytes_before_ext_sort =
-                Self::ti_flash_max_bytes_before_ext_sort_from_systems(&self.systems);
-        }
-        if restores_mem_quota_query {
-            self.mem_quota_query = Self::mem_quota_query_from_systems(&self.systems);
-        }
-        if restores_cop_tiflash_concurrency_factor {
-            self.cop_tiflash_concurrency_factor =
-                Self::cop_tiflash_concurrency_factor_from_systems(&self.systems);
-        }
-        if restores_ti_flash_mem_quota_query_per_node {
-            self.ti_flash_mem_quota_query_per_node =
-                Self::ti_flash_mem_quota_query_per_node_from_systems(&self.systems);
-        }
-        if restores_ti_flash_query_spill_ratio {
-            self.ti_flash_query_spill_ratio =
-                Self::ti_flash_query_spill_ratio_from_systems(&self.systems);
-        }
-        if restores_pessimistic_transaction_fair_locking {
-            self.pessimistic_transaction_fair_locking =
-                Self::pessimistic_transaction_fair_locking_from_systems(&self.systems);
-        }
-        if restores_bulk_dml_enabled {
-            self.bulk_dml_enabled = Self::bulk_dml_enabled_from_systems(&self.systems);
-        }
-        if restores_replica_read {
-            self.replica_read = Self::replica_read_from_systems(&self.systems);
-        }
-        if restores_analyze_store_batch_size {
-            self.analyze_store_batch_size =
-                Self::analyze_store_batch_size_from_systems(&self.systems);
-        }
-        self.refresh_optimizer_fix_control();
     }
 
     /// Reads `@@global.name`: always the shared table's live value, never
@@ -2042,7 +1672,6 @@ impl SessionVars {
         if let Some(hook) = get_sys_var(&key).and_then(|def| def.set_session) {
             hook(self, &value)?;
         }
-        let paired = charset_collation_pair(&key, &value);
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -2053,10 +1682,6 @@ impl SessionVars {
         self.note_system_change(&key);
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
-        }
-        if let Some((name, value)) = paired {
-            self.systems.insert(name.to_owned(), value);
-            self.note_system_change(name);
         }
         self.generation += 1;
         Ok(())
@@ -2234,17 +1859,6 @@ impl SessionVars {
     pub fn optimizer_fix_control(&self) -> &OptimizerFixControl {
         &self.optimizer_fix_control
     }
-
-    fn refresh_optimizer_fix_control(&mut self) {
-        let raw = self
-            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
-            .unwrap_or_default();
-        self.optimizer_fix_control = OptimizerFixControl::parse(&raw)
-            .map(|(parsed, _warnings)| parsed)
-            .expect(
-                "tidb_opt_fix_control session state comes only from validated writes or trusted global rows",
-            );
-    }
 }
 
 /// Go `strconv.FormatFloat(value, 'f', -1, 64)`.
@@ -2420,6 +2034,60 @@ fn bool_to_on_off(value: bool) -> &'static str {
 /// Go `SysVar.SetSession` bodies: each variable's typed session field, set
 /// from the value about to be stored (`sysvar.go`).
 impl SessionVars {
+    /// Go's charset `SetSession`: the charset's default collation becomes
+    /// the paired collation variable's value.
+    fn pair_default_collation(&mut self, collation_var: &'static str, value: &str) {
+        if let Ok(charset) = tidb_charset::get_charset_info(value) {
+            self.systems.insert(collation_var.to_owned(), charset.default_collation.to_owned());
+            self.note_system_change(collation_var);
+        }
+    }
+
+    /// Go's collation `SetSession`: the collation's charset becomes the
+    /// paired charset variable's value.
+    fn pair_owning_charset(&mut self, charset_var: &'static str, value: &str) {
+        if let Ok(collation) = tidb_charset::get_collation_by_name(value) {
+            self.systems.insert(charset_var.to_owned(), collation.charset_name.to_owned());
+            self.note_system_change(charset_var);
+        }
+    }
+
+    /// Go `character_set_connection`'s `SetSession`.
+    pub(crate) fn set_session_character_set_connection(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_default_collation("collation_connection", value);
+        Ok(())
+    }
+
+    /// Go `character_set_database`'s `SetSession`.
+    pub(crate) fn set_session_character_set_database(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_default_collation("collation_database", value);
+        Ok(())
+    }
+
+    /// Go `character_set_server`'s `SetSession`.
+    pub(crate) fn set_session_character_set_server(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_default_collation("collation_server", value);
+        Ok(())
+    }
+
+    /// Go `collation_connection`'s `SetSession`.
+    pub(crate) fn set_session_collation_connection(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_owning_charset("character_set_connection", value);
+        Ok(())
+    }
+
+    /// Go `collation_database`'s `SetSession`.
+    pub(crate) fn set_session_collation_database(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_owning_charset("character_set_database", value);
+        Ok(())
+    }
+
+    /// Go `collation_server`'s `SetSession`.
+    pub(crate) fn set_session_collation_server(&mut self, value: &str) -> Result<(), VarError> {
+        self.pair_owning_charset("character_set_server", value);
+        Ok(())
+    }
+
     /// Go `tx_isolation_one_shot`'s `SetSession`.
     pub(crate) fn set_session_tx_isolation_one_shot(&mut self, value: &str) -> Result<(), VarError> {
         self.txn_isolation_level_one_shot = (TxnIsolationLevelOneShotState::Set, value.to_owned());
@@ -2664,29 +2332,3 @@ impl SessionVars {
     }
 }
 
-/// Go's charset/collation `SetSession` hooks keep each pair in lockstep: a
-/// charset write selects that charset's default collation (except
-/// `character_set_client` / `character_set_results`), and a collation write
-/// mirrors its owning charset into the corresponding charset variable. The
-/// variable written and its value, for `key = value`.
-fn charset_collation_pair(key: &str, value: &str) -> Option<(&'static str, String)> {
-    let default_collation = |name: &'static str| {
-        tidb_charset::get_charset_info(value)
-            .ok()
-            .map(|charset| (name, charset.default_collation.to_owned()))
-    };
-    let owning_charset = |name: &'static str| {
-        tidb_charset::get_collation_by_name(value)
-            .ok()
-            .map(|collation| (name, collation.charset_name.to_owned()))
-    };
-    match key {
-        "character_set_connection" => default_collation("collation_connection"),
-        "character_set_database" => default_collation("collation_database"),
-        "character_set_server" => default_collation("collation_server"),
-        "collation_connection" => owning_charset("character_set_connection"),
-        "collation_database" => owning_charset("character_set_database"),
-        "collation_server" => owning_charset("character_set_server"),
-        _ => None,
-    }
-}

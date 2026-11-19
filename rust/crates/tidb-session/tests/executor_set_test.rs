@@ -168,3 +168,21 @@ fn authentication_ldap_variables_configure_the_ldap_impls() {
     tk.must_exec("set global authentication_ldap_simple_bind_root_pwd = ''");
     tk.must_exec("set global authentication_ldap_simple_server_port = 389");
 }
+
+/// Go `session.loadCommonGlobalVariablesIfNeeded`: a new session takes each
+/// session-cache variable it does not hold through its `SetSession`
+/// (`SetSystemVarWithRelaxedValidation`); `collation_server`'s pairs the
+/// `skipInit` `character_set_server`, and `collation_connection`'s the
+/// connection charset.
+#[test]
+fn a_new_session_loads_each_variable_through_its_set_session() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global collation_server = 'latin1_bin'");
+    let mut tk2 = tk.new_tk();
+    tk2.must_query("select @@character_set_server, @@collation_server")
+        .check(["latin1 latin1_bin"]);
+    tk2.must_exec("set collation_connection = 'gbk_bin'");
+    tk2.must_query("select @@character_set_connection").check(["gbk"]);
+    tk.must_exec("set global collation_server = default");
+}
