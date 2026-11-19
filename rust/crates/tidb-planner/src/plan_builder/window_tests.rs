@@ -126,12 +126,12 @@ fn catalog() -> TestCatalog {
         tables: vec![{ let mut fixture = SourceTable {
             db_name: "test".to_owned(),
             physical_table_id: 100,
-            columns: vec![
+            columns: std::sync::Arc::new(vec![
                 column(0, "a", bigint()),
                 column(1, "b", bigint()),
                 column(2, "v", varchar(10)),
                 column(3, "d", datetime()),
-            ],
+            ]),
             ..SourceTable::default()
         }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture }],
     }

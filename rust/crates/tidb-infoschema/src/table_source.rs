@@ -101,8 +101,10 @@ pub struct SourceTable {
     /// Go `PartitionExpr.Expr` is a single column reference. Batch point-get
     /// eligibility on partitioned tables uses this same fast-plan condition.
     pub partition_expression_is_column: bool,
-    /// Go `TableInfo.Columns`, in offset order.
-    pub columns: Vec<SourceColumn>,
+    /// Go `TableInfo.Columns`, in offset order: the table's own column
+    /// list, shared (Go `tbl.Cols()` hands out the table's pointers), so a
+    /// planner image rebuilt per schema version copies no column.
+    pub columns: std::sync::Arc<Vec<SourceColumn>>,
 }
 
 impl SourceTable {
@@ -689,7 +691,7 @@ mod tests {
         let mut table = SourceTable {
             db_name: "test".to_owned(),
             physical_table_id: 7,
-            columns,
+            columns: std::sync::Arc::new(columns),
             ..SourceTable::default()
         };
         let infos: Vec<_> = table.columns.iter().map(|column| Some(column.info.clone())).collect();

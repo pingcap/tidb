@@ -35,3 +35,10 @@ leak-timeout = "2s"
 # cores free keeps the machine responsive during a run, and the lighter spawn
 # also reduces the pipe-close contention the note above measures.
 test-threads = 12
+
+# Start the long tests first. A gate's wall time is its slowest worker's queue;
+# a 40-75s partition or DDL test picked up near the end of a ~7000-test run
+# leaves eleven threads idle behind it. Measured from gate runs (2026-11-19).
+[[profile.default.overrides]]
+filter = 'test(/^executor_partition_table_test::/) | test(/partition_db_partition_ddl_source::/) | test(/serial_ddl_ingest_source::/) | test(/materialized_view::/) | test(/^executor_parallel_apply_test::/) | test(/^executor_test_aggregate_aggregate_test::/) | test(test_union2) | test(/^executor_join_test_mergejoin/)'
+priority = 100

@@ -544,14 +544,7 @@ impl SessionExtendedInfoSchema {
                             is_memory_table: true,
                             db_name: database.name(),
                             physical_table_id: table_id,
-                            columns: table
-                                .columns()
-                                .iter()
-                                .enumerate()
-                                .map(|(offset, column)| {
-                                    memory_column(offset, column.read().name.original(), &column.read().field_type)
-                                })
-                                .collect(),
+                            columns: self.memory_columns(table),
                             ..SourceTable::default()
                         };
                         // A memory table has no stored `TableInfo`; the one
@@ -666,6 +659,37 @@ impl SessionExtendedInfoSchema {
     }
 }
 
+/// [`InfoSchema`]'s memo of the planner's memory-table columns: the stored
+/// table's column list (held, so its address stays unique) and the columns
+/// derived from it.
+pub(crate) type MemoryColumns = HashMap<
+    usize,
+    (Arc<Vec<tidb_table::column::Column>>, Arc<Vec<crate::table_source::SourceColumn>>),
+>;
+
+impl SessionExtendedInfoSchema {
+    /// A memory table's planner columns, derived once per stored column list.
+    fn memory_columns(&self, table: &crate::TableCommon) -> Arc<Vec<crate::table_source::SourceColumn>> {
+        let stored = table.shared_columns();
+        let mut memo = self
+            .schema
+            .memory_columns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (_, derived) = memo.entry(Arc::as_ptr(&stored) as usize).or_insert_with(|| {
+            let derived = stored
+                .iter()
+                .enumerate()
+                .map(|(offset, column)| {
+                    memory_column(offset, column.read().name.original(), &column.read().field_type)
+                })
+                .collect();
+            (Arc::clone(&stored), Arc::new(derived))
+        });
+        Arc::clone(derived)
+    }
+}
+
 /// Go's memory-table `ColumnInfo` (`infoschema.buildColumnInfo`): a public
 /// column at `offset` whose id is its position plus one (`c.ID = int64(i) + 1`
 /// as `infoschema` installs the table).
@@ -697,7 +721,7 @@ fn kv_source_table(
     let meta = table.meta();
     let info = meta.read();
     // Go `tbl.Cols()`: the table's own `table.Column`s.
-    let columns = table.columns().to_vec();
+    let columns = table.shared_columns();
     let mut source_table = crate::table_source::SourceTable {
         db_name: db_name.to_owned(),
         physical_table_id: table.table_id(),

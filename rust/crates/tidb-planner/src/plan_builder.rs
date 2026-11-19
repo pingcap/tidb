@@ -3652,7 +3652,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let handle_cols: Vec<Column>;
         let handle_is_int: bool;
 
-        for source_column in &table.columns {
+        for source_column in table.columns.iter() {
             let name = self.table_field_name(
                 &db_name,
                 &table.table_name(),

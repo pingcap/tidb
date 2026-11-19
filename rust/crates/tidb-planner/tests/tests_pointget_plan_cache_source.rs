@@ -83,10 +83,10 @@ fn point_get_catalog() -> PointGetCatalog {
     t.db_name = "test".to_owned();
     t.set_table_name("t".to_owned());
     t.physical_table_id = 201;
-    t.columns = vec![
+    t.columns = std::sync::Arc::new(vec![
         point_get_column(0, "c1", true),
         point_get_column(1, "c2", false),
-    ];
+    ]);
     PointGetCatalog { t }
 }
 

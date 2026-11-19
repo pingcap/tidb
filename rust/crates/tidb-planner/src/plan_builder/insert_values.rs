@@ -97,7 +97,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(table.columns.len());
-        for column in &table.columns {
+        for column in table.columns.iter() {
             let mut built = Column::new(self.column_ids.alloc(), column.read().field_type.clone());
             built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name(), column.read().name);
             schema.columns.push(built);
@@ -113,7 +113,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let saved_array = self.allow_build_cast_array.replace(true);
         let mut resolved = Vec::with_capacity(table.columns.len());
         let mut failure = None;
-        for column in &table.columns {
+        for column in table.columns.iter() {
             if !column.read().is_generated() {
                 resolved.push(None);
                 continue;

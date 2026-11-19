@@ -497,7 +497,7 @@ pub fn get_field_value(prefix: &str, row: &str) -> String {
 
 fn source_table(table: GoShared<TableInfo>) -> SourceTable {
     let info = table.read();
-    let columns = info
+    let columns = std::sync::Arc::new(info
         .columns
         .iter_deref()
         .map(|column| {
@@ -524,7 +524,7 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
                 origin_default: None,
             }
         })
-        .collect();
+        .collect());
     let (partition_definition_names, partition_definition_ids) = info
         .partition
         .as_ref()

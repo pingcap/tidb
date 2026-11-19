@@ -84,19 +84,19 @@ fn type_regression_catalog() -> TypeRegressionCatalog {
     t1.db_name = "test".to_owned();
     t1.set_table_name("t1".to_owned());
     t1.physical_table_id = 101;
-    t1.columns = vec![integer_column(FieldTypeCode::Long, false)];
+    t1.columns = std::sync::Arc::new(vec![integer_column(FieldTypeCode::Long, false)]);
     let mut t2 = SourceTable::default();
     t2.set_table_id(102);
     t2.db_name = "test".to_owned();
     t2.set_table_name("t2".to_owned());
     t2.physical_table_id = 102;
-    t2.columns = vec![integer_column(FieldTypeCode::Long, true)];
+    t2.columns = std::sync::Arc::new(vec![integer_column(FieldTypeCode::Long, true)]);
     let mut t3 = SourceTable::default();
     t3.set_table_id(103);
     t3.db_name = "test".to_owned();
     t3.set_table_name("t3".to_owned());
     t3.physical_table_id = 103;
-    t3.columns = vec![integer_column(FieldTypeCode::LongLong, true)];
+    t3.columns = std::sync::Arc::new(vec![integer_column(FieldTypeCode::LongLong, true)]);
     TypeRegressionCatalog {
         tables: vec![t1, t2, t3],
     }

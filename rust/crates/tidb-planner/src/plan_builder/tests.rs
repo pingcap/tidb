@@ -114,14 +114,14 @@ fn catalog() -> TestCatalog {
                 })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
-                columns: vec![column(0, "a", true), column(1, "b", false)],
+                columns: std::sync::Arc::new(vec![column(0, "a", true), column(1, "b", false)]),
                 ..SourceTable::default()
             }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture },
             { let mut fixture = SourceTable {
             table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo { pk_is_handle: true, ..tidb_model::TableInfo::default() })),
                 db_name: "test".to_owned(),
                 physical_table_id: 200,
-                columns: vec![column(0, "a", true), column(1, "y", false)],
+                columns: std::sync::Arc::new(vec![column(0, "a", true), column(1, "y", false)]),
                 ..SourceTable::default()
             }; fixture.set_table_id(200); fixture.set_table_name("hs".to_owned()); fixture },
         ],
@@ -702,7 +702,7 @@ fn indexed_virtual_generated_expression_is_substituted_by_the_ordinary_rule() {
         &SessionTimeZone::default(),
     )
     .expect("the generation expression resolves");
-    let generated = &mut harness.tables_mut()[0].columns[1];
+    let generated = &mut std::sync::Arc::make_mut(&mut harness.tables_mut()[0].columns)[1];
     generated.info.write().generated_expr_string = built.expr_text.clone();
     generated.generated = Some(built);
 

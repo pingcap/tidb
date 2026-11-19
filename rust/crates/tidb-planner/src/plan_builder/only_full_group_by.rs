@@ -556,7 +556,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // flag rather than as an index.
         let mut has_primary_field = false;
         let mut primary_determined = true;
-        for column in &table.columns {
+        for column in table.columns.iter() {
             if !column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
                 continue;
             }

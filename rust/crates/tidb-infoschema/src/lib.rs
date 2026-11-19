@@ -292,6 +292,12 @@ pub struct InfoSchema {
     /// row storage in and out), which is pure overhead for the sessions that
     /// hold no temporary tables -- every OLTP workload.
     temporary_sweep: Option<(u64, Vec<(String, String)>)>,
+    /// The planner's memory-table columns (Go `buildColumnInfo`'s
+    /// `ColumnInfo`s), keyed by the stored table's shared column list, which
+    /// each entry holds, so a key names one list for as long as it is here.
+    /// Shared by every version of this image: a memory table never changes,
+    /// and a planner image rebuilt per schema version re-derived all of them.
+    memory_columns: Arc<std::sync::Mutex<crate::planner_view::MemoryColumns>>,
 }
 
 /// Go `infoschema.SessionExtendedInfoSchema`: the shared [`InfoSchema`] with
@@ -780,6 +786,7 @@ impl SessionExtendedInfoSchema {
                 schema_meta_version: 0,
                 latest_index_schema: std::sync::OnceLock::new(),
                 temporary_sweep: None,
+                memory_columns: Arc::default(),
                 foreign_keys_present: false,
                 table_locks_present: false,
                 table_modes_present: false,

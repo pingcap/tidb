@@ -80,7 +80,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let non_updatable_columns = match self.source.try_find_table(&database, &written)? {
             None => self.source.try_find_view(&database, &written)?.map(|view| &view.columns),
             Some(table) if table.table_info.as_ref().is_some_and(|info| info.read().is_sequence()) => {
-                Some(&table.columns)
+                Some(&*table.columns)
             }
             Some(_) => None,
         };

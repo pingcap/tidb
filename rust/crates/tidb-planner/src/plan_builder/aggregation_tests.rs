@@ -106,11 +106,11 @@ fn catalog() -> TestCatalog {
             })]).into_iter().map(Some).collect()), ..tidb_model::TableInfo::default() })),
             db_name: "test".to_owned(),
             physical_table_id: 100,
-            columns: vec![
+            columns: std::sync::Arc::new(vec![
                 column(0, "a", true),
                 column(1, "b", false),
                 column(2, "c", false),
-            ],
+            ]),
             ..SourceTable::default()
         }; fixture.set_table_id(100); fixture.set_table_name("t".to_owned()); fixture }],
     };
@@ -1788,7 +1788,7 @@ fn insert_generated_columns_are_expressions_over_the_whole_row() {
             (column.name.original().to_owned(), column.field_type.clone())
         })
         .unzip();
-    generated.catalog.tables[0].columns[2].generated = Some(
+    std::sync::Arc::make_mut(&mut generated.catalog.tables[0].columns)[2].generated = Some(
         tidb_table::generated_column::build_generated_expr(
             &expression,
             false,

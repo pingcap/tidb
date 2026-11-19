@@ -1127,6 +1127,13 @@ impl TableCommon {
         &self.public_columns
     }
 
+    /// [`Self::columns`] as the shared list itself (Go `Cols()` returns the
+    /// table's cached slice, not a copy).
+    #[must_use]
+    pub fn shared_columns(&self) -> std::sync::Arc<Vec<crate::column::Column>> {
+        std::sync::Arc::clone(&self.public_columns)
+    }
+
     /// Go `DeletableCols()`: every column, Go `TableCommon.Columns`, in
     /// `TableInfo.Columns` order. A column's position is its offset.
     #[must_use]

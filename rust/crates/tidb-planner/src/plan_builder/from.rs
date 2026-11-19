@@ -1414,7 +1414,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut schema_columns = Vec::with_capacity(table.columns.len());
         let mut names = Vec::with_capacity(table.columns.len());
         let mut handle_cols: Option<HandleCols> = None;
-        for source_column in &table.columns {
+        for source_column in table.columns.iter() {
             names.push(FieldName {
                 names: FieldNameMetadata {
                     database: IdentifierMetadata::new(db_name),
