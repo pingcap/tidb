@@ -1105,7 +1105,7 @@ mod tests {
         KvStorePropReader, PrivilegeCheckerPropReader, SequenceOperatorPropReader,
         SessionContextPropReader, SessionVarsPropReader, SqlExecutorPropReader,
     };
-    use tidb_exprstatic::StaticSessionVars;
+    use tidb_variable::vars::SessionVars;
     use tidb_variable::user_vars::UserVars;
 
     /// Go `require.Same` on two interface values: the same allocation, even
@@ -1140,11 +1140,11 @@ mod tests {
         eval: Option<Arc<dyn Fn() -> Result<u64, EvalCtxError> + Send + Sync>>,
     }
 
-    /// The session variables of the mock session: [`StaticSessionVars`] for
+    /// The session variables of the mock session: Go's `SessionVars` for
     /// everything a system variable drives, plus the live fields and the
     /// statement-context slice this package reads.
     struct MockSessionVars {
-        systems: Mutex<StaticSessionVars>,
+        systems: Mutex<SessionVars>,
         warn_handler: Arc<StaticWarnHandler>,
         type_flags: Mutex<ConversionFlags>,
         level_map: Mutex<LevelMap>,
@@ -1167,7 +1167,7 @@ mod tests {
         fn new() -> Arc<MockSessionVars> {
             let warn_handler = Arc::new(StaticWarnHandler::new(0));
             Arc::new(MockSessionVars {
-                systems: Mutex::new(StaticSessionVars::default()),
+                systems: Mutex::new(SessionVars::new()),
                 plan_cache_tracker: Arc::new(PlanCacheTracker::new(Arc::clone(&warn_handler) as _)),
                 warn_handler,
                 type_flags: Mutex::new(STRICT_FLAGS),
@@ -1188,7 +1188,11 @@ mod tests {
 
         /// Go `SessionVars.SetSystemVar`.
         fn set_system_var(&self, name: &str, val: &str) -> Result<(), EvalCtxError> {
-            self.systems.lock().unwrap().set_system_var(name, val)
+            self.systems
+                .lock()
+                .unwrap()
+                .set_system_var(name, val.to_owned())
+                .map_err(|error| EvalCtxError::new(error.error_string()))
         }
 
         /// Go `StatementContext.SetTypeFlags`.
@@ -1227,40 +1231,40 @@ mod tests {
 
     impl SessionVarsSnapshot for MockSessionVars {
         fn location(&self) -> TimeZone {
-            self.systems.lock().unwrap().location()
+            SessionVarsSnapshot::location(&*self.systems.lock().unwrap())
         }
         fn sql_mode(&self) -> SqlMode {
-            self.systems.lock().unwrap().sql_mode()
+            SessionVarsSnapshot::sql_mode(&*self.systems.lock().unwrap())
         }
         fn max_allowed_packet(&self) -> u64 {
-            self.systems.lock().unwrap().max_allowed_packet()
+            SessionVarsSnapshot::max_allowed_packet(&*self.systems.lock().unwrap())
         }
         fn enable_redact_log(&self) -> String {
-            self.systems.lock().unwrap().enable_redact_log()
+            SessionVarsSnapshot::enable_redact_log(&*self.systems.lock().unwrap())
         }
         fn div_precision_increment(&self) -> i64 {
-            self.systems.lock().unwrap().div_precision_increment()
+            SessionVarsSnapshot::div_precision_increment(&*self.systems.lock().unwrap())
         }
         fn charset_info(&self) -> (String, String) {
-            self.systems.lock().unwrap().charset_info()
+            SessionVarsSnapshot::charset_info(&*self.systems.lock().unwrap())
         }
         fn default_collation_for_utf8mb4(&self) -> String {
-            self.systems.lock().unwrap().default_collation_for_utf8mb4()
+            SessionVarsSnapshot::default_collation_for_utf8mb4(&*self.systems.lock().unwrap())
         }
         fn get_system_var(&self, name: &str) -> Option<String> {
-            self.systems.lock().unwrap().get_system_var(name)
+            SessionVarsSnapshot::get_system_var(&*self.systems.lock().unwrap(), name)
         }
         fn sysdate_is_now(&self) -> bool {
-            self.systems.lock().unwrap().sysdate_is_now()
+            SessionVarsSnapshot::sysdate_is_now(&*self.systems.lock().unwrap())
         }
         fn noop_funcs_mode(&self) -> i64 {
-            self.systems.lock().unwrap().noop_funcs_mode()
+            SessionVarsSnapshot::noop_funcs_mode(&*self.systems.lock().unwrap())
         }
         fn windowing_use_high_precision(&self) -> bool {
-            self.systems.lock().unwrap().windowing_use_high_precision()
+            SessionVarsSnapshot::windowing_use_high_precision(&*self.systems.lock().unwrap())
         }
         fn group_concat_max_len(&self) -> u64 {
-            self.systems.lock().unwrap().group_concat_max_len()
+            SessionVarsSnapshot::group_concat_max_len(&*self.systems.lock().unwrap())
         }
     }
 
@@ -1610,7 +1614,9 @@ mod tests {
                 .with_level(ErrGroup::NoDefault, Level::Ignore),
         );
         *vars.current_db.lock().unwrap() = "db1".to_owned();
-        vars.set_system_var("max_allowed_packet", "123456").unwrap();
+        // A multiple of 1024: `max_allowed_packet`'s validation rounds down
+        // (Go's test assigns the typed field directly).
+        vars.set_system_var("max_allowed_packet", "122880").unwrap();
 
         // Basic fields.
         assert_eq!(eval_ctx.type_ctx().flags(), vars.type_flags());
@@ -1635,7 +1641,7 @@ mod tests {
             zone_name(&vars.location())
         );
         assert_eq!(eval_ctx.current_db(), "db1");
-        assert_eq!(eval_ctx.get_max_allowed_packet(), 123_456);
+        assert_eq!(eval_ctx.get_max_allowed_packet(), 122_880);
         assert_eq!(eval_ctx.get_default_week_format_mode(), "0");
         vars.set_system_var("default_week_format", "5").unwrap();
         assert_eq!(eval_ctx.get_default_week_format_mode(), "5");
@@ -2064,7 +2070,7 @@ mod tests {
         let ctx = MockSession::new();
         let sctx: Arc<dyn SessionContext> = Arc::clone(&ctx) as _;
         let vars = Arc::clone(&ctx.vars);
-        vars.set_system_var("max_allowed_packet", "9999").unwrap();
+        vars.set_system_var("max_allowed_packet", "9216").unwrap();
         vars.set_system_var("block_encryption_mode", "aes-256-cbc")
             .unwrap();
         *vars.current_db.lock().unwrap() = "db2".to_owned();
@@ -2077,11 +2083,11 @@ mod tests {
         assert_eq!(static_expr.connection_id(), 77);
         assert_eq!(static_expr.get_block_encryption_mode(), "aes-256-cbc");
         assert_eq!(static_expr.get_eval_ctx().current_db(), "db2");
-        assert_eq!(static_expr.get_eval_ctx().get_max_allowed_packet(), 9999);
+        assert_eq!(static_expr.get_eval_ctx().get_max_allowed_packet(), 9216);
 
         let static_eval = expr_ctx.get_eval_ctx().into_static();
         assert_eq!(static_eval.current_db(), "db2");
-        assert_eq!(static_eval.get_max_allowed_packet(), 9999);
+        assert_eq!(static_eval.get_max_allowed_packet(), 9216);
 
         // The snapshot no longer follows the session.
         *vars.current_db.lock().unwrap() = "db3".to_owned();

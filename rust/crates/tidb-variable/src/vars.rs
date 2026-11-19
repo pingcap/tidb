@@ -413,6 +413,10 @@ pub struct SessionVars {
     /// the wall clock (`mathutil.NewWithTime()`) and by `rand_seed1` /
     /// `rand_seed2`'s `SetSession`; statement contexts share it.
     pub rng: Arc<tidb_mathutil::MysqlRng>,
+    /// Go `StmtCtx.StmtType == "Set"`: the running statement is a user's
+    /// `SET`, which some variables' `Validation` refuses more of than a
+    /// programmatic `SetSystemVar` (`max_allowed_packet`'s SESSION scope).
+    pub stmt_type_is_set: bool,
     /// Go `SessionVars.SysErrorCount`.
     pub sys_error_count: usize,
     /// Go `SessionVars.User` in its two spellings: the matched grant
@@ -655,6 +659,7 @@ impl Default for SessionVars {
             sys_warning_count: 0,
             current_tso: CurrentTso::default(),
             rng: Arc::new(tidb_mathutil::MysqlRng::new_with_time()),
+            stmt_type_is_set: false,
             sys_error_count: 0,
             current_user: None,
             auth_plugin: String::new(),

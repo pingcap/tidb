@@ -921,7 +921,7 @@ mod tests {
         assert_eq!(ctx.get_sysdate_is_now(), session_vars.sysdate_is_now());
 
         assert_eq!(ctx.get_noop_funcs_mode(), WARN_INT);
-        assert_eq!(ctx.get_noop_funcs_mode(), session_vars.noop_funcs_mode());
+        assert_eq!(ctx.get_noop_funcs_mode(), SessionVarsSnapshot::noop_funcs_mode(&session_vars));
 
         assert_eq!(ctx.get_block_encryption_mode(), "aes-256-cbc");
         assert_eq!(

@@ -38,7 +38,7 @@
 //!
 //! - `// boundary:` Go `variable.SessionVars` /
 //!   `newSessionVarsWithSystemVariables` — modeled as
-//!   [`evalctx::SessionVarsSnapshot`] plus [`evalctx::StaticSessionVars`],
+//!   [`evalctx::SessionVarsSnapshot`] over `tidb_variable`'s `SessionVars`,
 //!   which parses exactly the system variables these two files switch on.
 //!   Validation of every *other* system variable belongs to the session's
 //!   sysvar catalog and is not attempted; unknown names are accepted and
@@ -88,7 +88,7 @@ pub use evalctx::{
     with_div_precision_increment, with_enable_redact_log, with_err_level_map, with_location,
     with_max_allowed_packet, with_optional_property, with_param_list, with_sql_mode,
     with_type_flags, with_user_vars_reader, with_warn_handler, EvalContext, EvalCtxError,
-    EvalCtxOption, SessionVarsSnapshot, StaticConvertibleEvalContext, StaticSessionVars,
+    EvalCtxOption, SessionVarsSnapshot, StaticConvertibleEvalContext,
 };
 pub use exprctx::{
     ctx_with_handle_truncate_err_level, make_expr_context_static, with_block_encryption_mode,

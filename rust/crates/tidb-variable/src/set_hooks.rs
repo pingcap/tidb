@@ -288,9 +288,8 @@ impl crate::sysvar::VarsContext for SetVarsContext<'_> {
     fn session_read(&self, name: &str) -> Option<String> {
         self.session_value(name)
     }
-    /// Every caller of `run_set_closures` is a user's `SET`.
     fn stmt_is_set(&self) -> bool {
-        true
+        self.vars.stmt_type_is_set
     }
     fn tls_connection_secure(&self) -> bool {
         self.vars.tls_connection_state.is_some()

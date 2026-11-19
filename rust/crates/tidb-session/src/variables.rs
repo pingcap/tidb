@@ -336,7 +336,10 @@ impl Session {
             tidb_executor::driver::plan_set_stmt(&set, catalog, &database, &ctx)
         })?;
         self.check_visit_infos(&visits)?;
+        // Go `ResetContextOfStmt`'s `sc.StmtType = "Set"` for this statement.
+        self.vars.stmt_type_is_set = true;
         let result = tidb_executor::set::execute_set(self, &ctx, &plan);
+        self.vars.stmt_type_is_set = false;
         // Go's SET evaluates under the statement's own context, so what the
         // evaluation warned (`SET @a = (SELECT 1/0)`'s 1365) is the
         // statement's warning.

@@ -30,13 +30,13 @@ use tidb_errctx::{
     WarnAppender as ErrCtxWarnAppender,
 };
 use tidb_terror::TerrorError;
-use tidb_mysql::consts::{format_sql_mode_str, get_sql_mode, DefaultSQLMode, SqlMode};
+use tidb_mysql::consts::{get_sql_mode, DefaultSQLMode, SqlMode};
 use tidb_context::WarnHandler;
 use tidb_context::{gen_context_id, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr};
 use tidb_timeutil::{parse_time_zone, zone_name, TimeZone};
 use tidb_vardef::defaults::{
     DEF_DEFAULT_WEEK_FORMAT, DEF_DIV_PRECISION_INCREMENT, DEF_GROUP_CONCAT_MAX_LEN,
-    DEF_SYSDATE_IS_NOW, DEF_TIDB_ENABLE_NOOP_FUNCS, DEF_TIDB_REDACT_LOG, DEF_TIMESTAMP,
+    DEF_TIDB_REDACT_LOG, DEF_TIMESTAMP,
 };
 use tidb_vardef::tidb_vars::{
     DIV_PRECISION_INCREMENT, ON, TIDB_ENABLE_NOOP_FUNCS, TIDB_REDACT_LOG, TIDB_SYSDATE_IS_NOW, WARN,
@@ -47,6 +47,7 @@ use tidb_exprctx::{
 };
 use tidb_expropt::{DynOptionalEvalPropProvider, EvalPropContext, OptionalEvalPropProviders};
 use tidb_variable::user_vars::{UserVars, UserVarsReader};
+use tidb_variable::vars::SessionVars;
 use tidb_hack::go_to_lower;
 
 /// boundary: Go `vardef.DefMaxAllowedPacket`, which is
@@ -689,240 +690,108 @@ pub trait SessionVarsSnapshot {
     fn group_concat_max_len(&self) -> u64;
 }
 
-/// boundary: the `variable.SessionVars` that Go's
-/// `newSessionVarsWithSystemVariables` builds, narrowed to exactly the
-/// variables this package switches on.
-///
-/// Every other name is accepted and ignored: validating it needs the sysvar
-/// catalog, which `tidb-session` owns. Go instead fails on an unknown name —
-/// the one behavior difference, and it only widens what is accepted.
-#[derive(Clone, Debug)]
-pub struct StaticSessionVars {
-    location: TimeZone,
-    sql_mode: SqlMode,
-    max_allowed_packet: u64,
-    enable_redact_log: String,
-    div_precision_increment: i64,
-    charset: String,
-    collation: String,
-    default_collation_for_utf8mb4: String,
-    sysdate_is_now: bool,
-    noop_funcs_mode: i64,
-    windowing_use_high_precision: bool,
-    group_concat_max_len: u64,
-    systems: HashMap<String, String>,
-}
-
-impl Default for StaticSessionVars {
-    /// Go `variable.NewSessionVars(nil)`, in the fields this type carries.
-    fn default() -> Self {
-        let (charset, collation) = tidb_charset::get_default_charset_and_collate();
-        StaticSessionVars {
-            location: TimeZone::Named(chrono_tz::Tz::UTC),
-            sql_mode: default_sql_mode(),
-            max_allowed_packet: DEF_MAX_ALLOWED_PACKET,
-            enable_redact_log: DEF_TIDB_REDACT_LOG.to_owned(),
-            div_precision_increment: DEF_DIV_PRECISION_INCREMENT,
-            charset: charset.to_owned(),
-            collation: collation.to_owned(),
-            default_collation_for_utf8mb4: tidb_mysql::charset::DefaultCollationName.to_owned(),
-            sysdate_is_now: DEF_SYSDATE_IS_NOW,
-            noop_funcs_mode: tidb_opt_on_off_warn(DEF_TIDB_ENABLE_NOOP_FUNCS),
-            windowing_use_high_precision: true,
-            group_concat_max_len: DEF_GROUP_CONCAT_MAX_LEN,
-            systems: HashMap::new(),
-        }
-    }
-}
-
-impl StaticSessionVars {
-    /// Go `SessionVars.SetSystemVar`, over the variables of this package.
-    ///
-    /// The normalization Go's sysvar catalog performs before the `SetSession`
-    /// hook runs (enum values folded to their registered spelling, booleans to
-    /// `ON`/`OFF`) is reproduced here for the enum and boolean variables
-    /// below, since the hooks observe the *normalized* value.
-    pub fn set_system_var(&mut self, name: &str, val: &str) -> Result<(), EvalCtxError> {
-        let lower = go_to_lower(name);
-        self.systems.insert(lower.clone(), val.to_owned());
-        match lower.as_str() {
-            TIME_ZONE => {
-                self.location =
-                    parse_time_zone(val).map_err(|err| EvalCtxError::new(err.to_string()))?;
-            }
-            SQL_MODE_VAR => {
-                self.sql_mode = get_sql_mode(&format_sql_mode_str(val))
-                    .map_err(|err| EvalCtxError::new(err.to_string()))?;
-            }
-            MAX_ALLOWED_PACKET => {
-                self.max_allowed_packet = parse_number(MAX_ALLOWED_PACKET, val)?;
-            }
-            TIDB_REDACT_LOG => {
-                self.enable_redact_log =
-                    normalize_enum(TIDB_REDACT_LOG, val, &["OFF", "ON", "MARKER"])?;
-            }
-            DIV_PRECISION_INCREMENT => {
-                self.div_precision_increment = parse_number(DIV_PRECISION_INCREMENT, val)?;
-            }
-            CHARACTER_SET_CONNECTION => {
-                let info = tidb_charset::get_charset_info(val)
-                    .map_err(|err| EvalCtxError::new(err.to_string()))?;
-                self.charset = info.name;
-                self.collation = info.default_collation;
-            }
-            COLLATION_CONNECTION => {
-                let info = tidb_charset::get_collation_by_name(val)
-                    .map_err(|err| EvalCtxError::new(err.to_string()))?;
-                self.charset = info.charset_name;
-                self.collation = info.name;
-            }
-            DEFAULT_COLLATION_FOR_UTF8MB4 => {
-                self.default_collation_for_utf8mb4 = val.to_owned();
-            }
-            TIDB_SYSDATE_IS_NOW => {
-                self.sysdate_is_now = parse_bool(TIDB_SYSDATE_IS_NOW, val)?;
-            }
-            TIDB_ENABLE_NOOP_FUNCS => {
-                let normalized =
-                    normalize_enum(TIDB_ENABLE_NOOP_FUNCS, val, &["OFF", "ON", "WARN"])?;
-                self.noop_funcs_mode = tidb_opt_on_off_warn(&normalized);
-            }
-            WINDOWING_USE_HIGH_PRECISION => {
-                self.windowing_use_high_precision = parse_bool(WINDOWING_USE_HIGH_PRECISION, val)?;
-            }
-            GROUP_CONCAT_MAX_LEN => {
-                self.group_concat_max_len = parse_number(GROUP_CONCAT_MAX_LEN, val)?;
-            }
-            // `timestamp`, `default_week_format` and `block_encryption_mode`
-            // are read back through `get_system_var`; everything else is a
-            // variable this package never reads. See the type's doc comment.
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-impl SessionVarsSnapshot for StaticSessionVars {
-    fn location(&self) -> TimeZone {
-        self.location.clone()
-    }
-
-    fn sql_mode(&self) -> SqlMode {
-        self.sql_mode
-    }
-
-    fn max_allowed_packet(&self) -> u64 {
-        self.max_allowed_packet
-    }
-
-    fn enable_redact_log(&self) -> String {
-        self.enable_redact_log.clone()
-    }
-
-    fn div_precision_increment(&self) -> i64 {
-        self.div_precision_increment
-    }
-
-    fn charset_info(&self) -> (String, String) {
-        (self.charset.clone(), self.collation.clone())
-    }
-
-    fn default_collation_for_utf8mb4(&self) -> String {
-        self.default_collation_for_utf8mb4.clone()
-    }
-
-    fn get_system_var(&self, name: &str) -> Option<String> {
-        self.systems.get(&go_to_lower(name)).cloned()
-    }
-
-    fn sysdate_is_now(&self) -> bool {
-        self.sysdate_is_now
-    }
-
-    fn noop_funcs_mode(&self) -> i64 {
-        self.noop_funcs_mode
-    }
-
-    fn windowing_use_high_precision(&self) -> bool {
-        self.windowing_use_high_precision
-    }
-
-    fn group_concat_max_len(&self) -> u64 {
-        self.group_concat_max_len
-    }
-}
-
-fn parse_number<T: std::str::FromStr>(name: &str, val: &str) -> Result<T, EvalCtxError> {
-    val.trim().parse::<T>().map_err(|_| {
-        EvalCtxError::new(
-            tidb_variable::variable_errors::ERR_WRONG_TYPE_FOR_VAR
-                .fast_gen_by_args(&[name.into()])
-                .to_string(),
-        )
+/// The registry default of a variable Go's `variable.NewSessionVars(nil)`
+/// starts from, unless `SetSystemVar` stored another value.
+fn session_value(vars: &SessionVars, name: &str) -> String {
+    vars.stored_session_value(name).map(str::to_owned).unwrap_or_else(|| {
+        tidb_variable::sysvar::get_sys_var(name).map_or_else(String::new, |def| def.value.to_owned())
     })
 }
 
-/// The sysvar catalog's `TypeBool` normalization plus Go `TiDBOptOn`.
-fn parse_bool(name: &str, val: &str) -> Result<bool, EvalCtxError> {
-    match val.trim() {
-        "1" => Ok(true),
-        "0" => Ok(false),
-        other if other.eq_ignore_ascii_case("ON") || other.eq_ignore_ascii_case("TRUE") => Ok(true),
-        other if other.eq_ignore_ascii_case("OFF") || other.eq_ignore_ascii_case("FALSE") => {
-            Ok(false)
-        }
-        other => Err(wrong_value_for_var(name, other)),
+impl SessionVarsSnapshot for SessionVars {
+    /// Go `SessionVars.Location()`: the `time_zone` its `SetSession`
+    /// parsed (`timeutil.ParseTimeZone`, which names a fixed offset "").
+    fn location(&self) -> TimeZone {
+        parse_time_zone(&session_value(self, TIME_ZONE)).unwrap_or(TimeZone::Local)
+    }
+
+    fn sql_mode(&self) -> SqlMode {
+        SessionVars::sql_mode(self)
+    }
+
+    fn max_allowed_packet(&self) -> u64 {
+        SessionVars::max_allowed_packet(self)
+    }
+
+    fn enable_redact_log(&self) -> String {
+        SessionVars::enable_redact_log(self).to_owned()
+    }
+
+    fn div_precision_increment(&self) -> i64 {
+        session_value(self, DIV_PRECISION_INCREMENT).parse().unwrap_or(DEF_DIV_PRECISION_INCREMENT)
+    }
+
+    /// Go `SessionVars.GetCharsetInfo`: `character_set_connection` and
+    /// `collation_connection`.
+    fn charset_info(&self) -> (String, String) {
+        (
+            session_value(self, CHARACTER_SET_CONNECTION),
+            session_value(self, COLLATION_CONNECTION),
+        )
+    }
+
+    fn default_collation_for_utf8mb4(&self) -> String {
+        session_value(self, DEFAULT_COLLATION_FOR_UTF8MB4)
+    }
+
+    /// Go `SessionVars.GetSystemVar`: the value stored for the variable.
+    fn get_system_var(&self, name: &str) -> Option<String> {
+        self.stored_session_value(&go_to_lower(name)).map(str::to_owned)
+    }
+
+    fn sysdate_is_now(&self) -> bool {
+        tidb_opt_on(&session_value(self, TIDB_SYSDATE_IS_NOW))
+    }
+
+    fn noop_funcs_mode(&self) -> i64 {
+        tidb_opt_on_off_warn(&session_value(self, TIDB_ENABLE_NOOP_FUNCS))
+    }
+
+    fn windowing_use_high_precision(&self) -> bool {
+        tidb_opt_on(&session_value(self, WINDOWING_USE_HIGH_PRECISION))
+    }
+
+    fn group_concat_max_len(&self) -> u64 {
+        session_value(self, GROUP_CONCAT_MAX_LEN).parse().unwrap_or(DEF_GROUP_CONCAT_MAX_LEN)
     }
 }
 
-/// The sysvar catalog's `TypeEnum` normalization: the registered spelling of a
-/// case-insensitive match.
-fn normalize_enum(name: &str, val: &str, values: &[&str]) -> Result<String, EvalCtxError> {
-    values
-        .iter()
-        .find(|candidate| candidate.eq_ignore_ascii_case(val.trim()))
-        .map(|candidate| (*candidate).to_owned())
-        .ok_or_else(|| wrong_value_for_var(name, val))
+/// Go `TiDBOptOn`.
+fn tidb_opt_on(value: &str) -> bool {
+    value.eq_ignore_ascii_case("ON") || value == "1"
 }
 
-/// Go `variable.ErrWrongValueForVar`, as its `Error()` text.
-fn wrong_value_for_var(name: &str, value: &str) -> EvalCtxError {
-    EvalCtxError::new(
-        tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-            .fast_gen_by_args(&[name.into(), value.into()])
-            .to_string(),
-    )
-}
-
-/// Go `newSessionVarsWithSystemVariables`.
+/// Go `newSessionVarsWithSystemVariables`: `variable.NewSessionVars(nil)`
+/// with each variable `SetSystemVar`'d -- `tidb_redact_log` through its
+/// `SetGlobalFromHook` -- and the connection charset, then collation, last
+/// because they overwrite each other.
 pub fn new_session_vars_with_system_variables(
     vars: &HashMap<String, String>,
-) -> Result<StaticSessionVars, EvalCtxError> {
-    let mut session_vars = StaticSessionVars::default();
-    let mut charset: Option<(&str, &str)> = None;
-    let mut collation: Option<(&str, &str)> = None;
-
+) -> Result<SessionVars, EvalCtxError> {
+    let mut session_vars = SessionVars::new();
+    let error = |error: tidb_terror::MysqlError| EvalCtxError::new(error.error_string());
+    let mut cs: Option<(&str, &str)> = None;
+    let mut col: Option<(&str, &str)> = None;
     for (name, val) in vars {
         match go_to_lower(name).as_str() {
-            // Go: `charset_connection` and `collation_connection` overwrite
-            // each other, so they are applied last, charset first.
-            CHARACTER_SET_CONNECTION => charset = Some((name, val)),
-            COLLATION_CONNECTION => collation = Some((name, val)),
-            // Go reaches `tidb_redact_log` through `SetGlobalFromHook`
-            // because the variable has no session scope; the session field it
-            // sets is the same one `set_system_var` writes here.
-            _ => session_vars.set_system_var(name, val)?,
+            CHARACTER_SET_CONNECTION => cs = Some((name, val)),
+            COLLATION_CONNECTION => col = Some((name, val)),
+            TIDB_REDACT_LOG => {
+                if let Some(set_global) =
+                    tidb_variable::sysvar::get_sys_var(name).and_then(|def| def.set_global)
+                {
+                    set_global(&mut session_vars, val).map_err(error)?;
+                }
+            }
+            _ => session_vars.set_system_var(name, val.clone()).map_err(error)?,
         }
     }
-
-    if let Some((name, val)) = charset {
-        session_vars.set_system_var(name, val)?;
+    if let Some((name, val)) = cs {
+        session_vars.set_system_var(name, val.to_owned()).map_err(error)?;
     }
-
-    if let Some((name, val)) = collation {
-        session_vars.set_system_var(name, val)?;
+    if let Some((name, val)) = col {
+        session_vars.set_system_var(name, val.to_owned()).map_err(error)?;
     }
-
     Ok(session_vars)
 }
 
