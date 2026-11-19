@@ -889,6 +889,18 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         factory.advanced_sys_session_pool(),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    // Go `UpdateTableStatsLoop`: the statistics owner, whose listener is the
+    // DDL notifier that delivers DDL events to the stats handle, campaigns
+    // when `tidb_enable_stats_owner` is on -- in every domain, testkit's too.
+    if tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load()
+    {
+        factory
+            .campaign_stats_owner(config.stats_lease)
+            .map_err(|error| engine(SqlQueryError::unknown(format!("campaign stats owner failed: {error}"))))?;
+    }
     factory.attach_login_storage(&users);
     let stack_opener = opener.clone();
     factory.install_bdr_role_store(
