@@ -453,20 +453,15 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .filter(|mutation| tidb_tablecodec::is_record_key(mutation.key()))
         .count();
     // One `mysql.user` row, six `mysql.tidb` rows and one
-    // `mysql.global_variables` row per global-scope system variable in the
-    // captured fixture. Their primary keys are common handles (the key IS the
+    // `mysql.global_variables` row per global-scope system variable (Go
+    // `doDMLWorks`). Their primary keys are common handles (the key IS the
     // record, no index entry), so only `mysql.user`'s `i_user` and the builtin
     // binding lock row's three indexes (sql_index, time_index, digest_index)
     // remain. The four DDL jobs file four `mysql.tidb_ddl_history` rows, whose
     // integer primary key is the handle.
-    const GLOBAL_VARIABLES_FIXTURE: &str =
-        include_str!("../src/mysql_bootstrap/global_variables_fixture.tsv");
-    assert!(GLOBAL_VARIABLES_FIXTURE
-        .lines()
-        .any(|line| line == "tidb_workload_repository_snapshot_interval\t3600"));
-    let global_variable_rows = GLOBAL_VARIABLES_FIXTURE
-        .lines()
-        .filter(|line| !line.is_empty())
+    let global_variable_rows = tidb_variable::sysvar::sys_vars()
+        .iter()
+        .filter(|definition| definition.has_global_scope())
         .count();
     assert_eq!(records, 8 + global_variable_rows + 4);
     assert_eq!(index_entries, 4);

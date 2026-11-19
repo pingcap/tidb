@@ -1989,3 +1989,20 @@ pub(super) fn tidb_enable_plan_replayer_continuous_capture(
     }
     Ok(validated)
 }
+
+/// Go `tidb_mem_quota_query`'s `Validation`: a positive quota under 128 bytes
+/// is raised to 128 with `ErrTruncatedWrongValue`.
+pub(super) fn tidb_mem_quota_query(
+    _def: &SysVarDef,
+    mut validated: Validated,
+    _original: &str,
+    _scope: u8,
+    _lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let value = crate::varsutil::tidb_opt_int64(&validated.value, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY);
+    if value > 0 && value < 128 {
+        validated.value = "128".to_owned();
+        validated.truncated = true;
+    }
+    Ok(validated)
+}

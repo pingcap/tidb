@@ -3264,7 +3264,7 @@ impl Session {
                 tidb_sessmgr::processinfo::OOMAlarmVariablesInfo {
                     session_analyze_version: snapshot.analyze_version,
                     session_enabled_rate_limit_action: snapshot.rate_limit_action,
-                    session_mem_quota_query: snapshot.mem_quota,
+                    session_mem_quota_query: self.vars.mem_quota_query,
                 },
             );
         }

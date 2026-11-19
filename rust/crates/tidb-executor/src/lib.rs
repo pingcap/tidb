@@ -163,10 +163,6 @@ mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
 #[cfg(test)]
-mod tests_prepared_param_types_source;
-#[cfg(test)]
-mod tests_prepared_parameter_pushdown_source;
-#[cfg(test)]
 mod tests_required_rows_source;
 #[cfg(test)]
 mod tests_table_part1_source;
@@ -191,8 +187,6 @@ pub(crate) mod index_join_reader;
 mod table_sample;
 mod check_index_range;
 mod admin_index_exec;
-#[cfg(test)]
-mod tests_memtest_source;
 #[cfg(test)]
 mod tests_oomtest_source;
 #[cfg(test)]

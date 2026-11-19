@@ -629,8 +629,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         max_value: 9223372036854775807,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: None,
-        set_session: None,
+        validation: Some(super::super::validation::tidb_mem_quota_query),
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_mem_quota_query),
         set_global: None,
     },
     SysVarDef {

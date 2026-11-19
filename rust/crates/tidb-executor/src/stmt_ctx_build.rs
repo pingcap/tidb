@@ -129,7 +129,6 @@ pub struct StatementVarSnapshot {
     primary_key_required: bool,
     tmp_table_max_size: i64,
     remove_orderby_in_subquery: bool,
-    pub mem_quota: i64,
     replica_read: crate::ReplicaReadType,
     coprocessor_read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
     isolation_read_engines: String,
@@ -452,7 +451,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let (oom_action, tmp_storage_on_oom) = self.session_vars().statement_memory_policy();
         let authority = self.build_statement_result_authority(
             &snapshot,
-            snapshot.mem_quota,
+            self.session_vars().mem_quota_query,
             oom_action,
             tmp_storage_on_oom,
         );
@@ -1209,12 +1208,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(64 << 20),
             remove_orderby_in_subquery: on(tidb_vardef::tidb_vars::TIDB_REMOVE_ORDERBY_IN_SUBQUERY),
-            mem_quota: self
-                .session_vars()
-                .get_system("tidb_mem_quota_query")
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_memory::DEF_MEM_QUOTA_QUERY),
             redact_sql: match self
                 .session_vars()
                 .enable_redact_log()
@@ -1520,7 +1513,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let mem_quota = if self.stmt_hints_ref().has_mem_quota_hint {
             self.stmt_hints_ref().mem_quota_query
         } else {
-            snapshot.mem_quota
+            // Go `ResetContextOfStmt` reads the typed `SessionVars.MemQuotaQuery`
+            // at every statement.
+            self.session_vars().mem_quota_query
         };
         let replica_read = self.effective_replica_read(snapshot.replica_read, read_only);
         // Go `checkIndexLookUpPushDownSupported` reads the statement's

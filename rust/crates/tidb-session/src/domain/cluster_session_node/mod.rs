@@ -2246,24 +2246,17 @@ impl<'s> ClusterServerSession<'s> {
         // Go `generateNewPlan`'s error is the statement's; it is reported
         // inside the statement lifecycle that opens below.
         let mut generate_new_plan_error = None;
-        let cached_select = if fast || !cache_allowed {
+        // Go `ExecuteStmt` binds the transaction context (`PrepareTxnCtx`)
+        // before `Compile` consults the plan cache, so a miss planned there
+        // -- an uncorrelated subquery evaluated during optimization included
+        // -- reads the statement's snapshot. The candidate is bound inside
+        // the statement lifecycle below.
+        let select_candidate = if fast || !cache_allowed {
             None
         } else {
-            statement.select_plan().and_then(|plan| {
-                self.session
-                    .bind_cached_prepared_select_for_statement(
-                        &plan,
-                        &params,
-                        effective.expect("cacheable prepared SELECT retains a statement"),
-                        binding_sql.as_deref(),
-                    )
-                    .unwrap_or_else(|failure| {
-                        generate_new_plan_error = Some(failure);
-                        None
-                    })
-            })
+            statement.select_plan()
         };
-        let fast_select = cached_select.is_some();
+        let fast_select = select_candidate.is_some();
         let cached_dml = cache_allowed
             .then(|| statement.dml_plan())
             .flatten()
@@ -2346,6 +2339,28 @@ impl<'s> ClusterServerSession<'s> {
                                 .expect("a cached plan retains its definition"),
                         );
                     }
+                    let cached_select = match &select_candidate {
+                        Some(plan) => match session.bind_cached_prepared_select_for_statement(
+                            plan,
+                            &params,
+                            effective.expect("cacheable prepared SELECT retains a statement"),
+                            binding_sql.as_deref(),
+                        ) {
+                            Ok(cached) => cached,
+                            // Go `generateNewPlan`'s error is the statement's.
+                            Err(failure) => {
+                                return session.open_failed_generate_new_plan_for(
+                                    effective.expect("a cached plan retains its statement"),
+                                    &params,
+                                    failure,
+                                    prepared_ast
+                                        .as_ref()
+                                        .expect("a cached plan retains its definition"),
+                                );
+                            }
+                        },
+                        None => None,
+                    };
                     if let Some(cached) = &cached_select {
                         session.open_prepared_record_set_for(
                             cached,

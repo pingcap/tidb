@@ -575,6 +575,18 @@ debug = false
 # `tidb-session`'s DDL-heavy suites.
 opt-level = 2
 
+# The test gate's profile: the workspace's own crates optimized at level 1
+# (the dev profile leaves them at 0), dependencies as in dev. Test runs are
+# CPU-bound on the executor/planner code paths; see scripts/gate-scoped.sh.
+[profile.gate]
+inherits = "dev"
+opt-level = 1
+debug = false
+
+[profile.gate.package."*"]
+debug = false
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 

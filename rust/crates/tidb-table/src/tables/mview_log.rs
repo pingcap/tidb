@@ -270,8 +270,26 @@ impl MLogTable {
         }
         mlog_row.push(Datum::new_string_datum(dml_type.as_str()));
         mlog_row.push(Datum::Int(old_new));
-        self.mlog
+        // Go: "ReservedRowIDAlloc only tracks one table. Use a separate
+        // allocation range for the MLog insert, then restore the base-table
+        // range for the caller."
+        let reserved = ctx.get_reserved_row_id_alloc();
+        let saved = reserved.map(|alloc| {
+            let mut alloc = alloc.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let current = alloc.current();
+            alloc.reset(0, 0);
+            current
+        });
+        let added = self
+            .mlog
             .insert_row_with_row_id_checked_without_primary_duplicate_check(store, &mlog_row, None, 0, ctx, lazy_dup_check)
-            .map(|_| ())
+            .map(|_| ());
+        if let (Some(alloc), Some((base, max))) = (reserved, saved) {
+            alloc
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .reset(base, max);
+        }
+        added
     }
 }

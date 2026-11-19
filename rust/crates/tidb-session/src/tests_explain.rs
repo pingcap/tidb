@@ -7917,6 +7917,8 @@ fn a_parallel_hash_aggregate_spills_and_restores_like_go() {
     let values: Vec<String> = (0..3000).map(|i| format!("({i},'{}')", "v".repeat(50))).collect();
     session.run(&format!("INSERT INTO s VALUES {}", values.join(","))).unwrap();
     session.run("SET tidb_mem_quota_query = 400000").unwrap();
+    // Go's test store bootstraps LOG (`intest`); the CANCEL leg sets it.
+    session.run("SET GLOBAL tidb_mem_oom_action = 'CANCEL'").unwrap();
     let query = "SELECT /*+ hash_agg() */ a, count(b), max(b) FROM s GROUP BY a";
     let error = session.run(query).expect_err("CANCEL cancels the statement");
     assert!(format!("{error:?}").contains("8175"), "{error:?}");

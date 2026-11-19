@@ -122,73 +122,48 @@ pub fn seed(
     Ok(())
 }
 
-/// Byte ground truth for Go `doDMLWorks`' `mysql.global_variables` seeding,
-/// captured from a real bootstrap rather than re-derived from the sysvar
-/// registry's `Scope`/`Value` fields (which are not ported to Rust).
-///
-/// Generator: `pkg/session` `TestZZDumpGlobalVariables` (a throwaway,
-/// `-tags=intest` test, deleted after the capture) ran
-/// `CreateStoreAndBootstrap` and dumped
-/// `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM mysql.global_variables ORDER BY
-/// VARIABLE_NAME` as tab-separated lines. That query already is Go's own
-/// `HasGlobalScope` filter plus `GlobalSystemVariableInitialValue` override
-/// applied, so this file needs no Scope metadata to reproduce Go's seeded set
-/// byte-for-byte — only to be re-captured if the sysvar registry changes.
-///
-/// Two corrections make it the SERVER's set rather than that test binary's:
-/// the four workload-repository variables are added, because
-/// `cmd/tidb-server` imports `pkg/util/workloadrepo`, whose `init` registers
-/// them (a `pkg/session` test does not import it); and the test-mode
-/// `GlobalSystemVariableInitialValue` arms are left out, so
-/// `tidb_mem_oom_action` is `CANCEL` and `tidb_enable_auto_analyze` is `ON`.
-///
-/// Go master's materialized view variables (`tidb_mview_*`, `tidb_mlog_*`)
-/// are added with the values a fresh Go master `eca4674a6f` node seeds
-/// (`tidb-session/testdata/mview_sysvars_go.txt`).
-const GLOBAL_VARIABLES_FIXTURE: &str = include_str!("global_variables_fixture.tsv");
+/// Go `doDMLWorks`' `mysql.global_variables` seeding: every variable with a
+/// global scope, at `GlobalSystemVariableInitialValue(v.Name, v.Value)` --
+/// which, in a test build (`intest`), seeds `tidb_mem_oom_action = LOG` and
+/// `tidb_enable_auto_analyze = OFF` as Go's testkit stores do.
+fn global_variables() -> Vec<(String, String)> {
+    tidb_variable::sysvar::sys_vars()
+        .iter()
+        .filter(|definition| definition.has_global_scope())
+        .map(|definition| {
+            (
+                definition.name.to_owned(),
+                tidb_variable::vars::global_system_variable_initial_value(definition),
+            )
+        })
+        .collect()
+}
 
 /// The `mysql.global_variables` rows a bootstrapped cluster holds, as
 /// `(name, value)`: what a test node that never ran the bootstrap loads.
 #[cfg(test)]
 pub(crate) fn bootstrapped_global_variables() -> Vec<(String, String)> {
-    GLOBAL_VARIABLES_FIXTURE
-        .lines()
-        .filter_map(|line| line.split_once('\t'))
-        .map(|(name, value)| (name.to_owned(), value.to_owned()))
-        .collect()
+    global_variables()
 }
 
-/// Parses [`GLOBAL_VARIABLES_FIXTURE`] into one seed row per global variable.
-///
-/// A blank line is skipped (there are none in the captured fixture, but an
-/// empty file must not panic); a line without a tab is a fixture that no
-/// longer matches its own doc comment, so parsing refuses rather than
-/// silently dropping a variable Go would have seeded.
+/// One seed row per global variable.
 fn global_variable_rows() -> Result<Vec<SeedRow>, BootstrapError> {
-    GLOBAL_VARIABLES_FIXTURE
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let (name, value) = line.split_once('\t').ok_or_else(|| {
-                BootstrapError::Encode(format!(
-                    "global_variables fixture line `{line}` is not NAME\\tVALUE"
-                ))
-            })?;
-            Ok(SeedRow {
-                table: "global_variables",
-                values: vec![
-                    SeedValue {
-                        column: "variable_name",
-                        value: Datum::Bytes(name.as_bytes().to_vec()),
-                    },
-                    SeedValue {
-                        column: "variable_value",
-                        value: Datum::Bytes(value.as_bytes().to_vec()),
-                    },
-                ],
-            })
+    Ok(global_variables()
+        .into_iter()
+        .map(|(name, value)| SeedRow {
+            table: "global_variables",
+            values: vec![
+                SeedValue {
+                    column: "variable_name",
+                    value: Datum::Bytes(name.into_bytes()),
+                },
+                SeedValue {
+                    column: "variable_value",
+                    value: Datum::Bytes(value.into_bytes()),
+                },
+            ],
         })
-        .collect()
+        .collect())
 }
 
 /// Go `doDMLWorks`, as data.

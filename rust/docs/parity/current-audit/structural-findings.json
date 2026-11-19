@@ -2,16 +2,16 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 19,
-    "open": 16,
-    "partial": 3
+    "unresolved": 16,
+    "open": 12,
+    "partial": 4
   },
   "findings": [
     {
       "id": "X05",
       "status": "partial",
       "group": "Structure: Go's shape before more ports",
-      "finding": "`pkg/sessiontxn` is ported as `tidb-sessiontxn` (2026-11-19): `TxnManager` holds one provider per transaction (`Optimistic`, `PessimisticRR`, `PessimisticRC`, `PessimisticSerializable`, `StalenessTxnContextProvider`, chosen as `newProviderWithRequest`), which owns the transaction and answers each statement's snapshot, `OnStmtStart` (RCCheckTS), `OnStmtRetry` (the for-update timestamp) and `OnStmtErrorForNextAction` (pessimistic lock errors, the after-query retry). Remaining: (1) the statement lifecycle opens the statement's snapshot before it compiles (`with_bound_statement` -> `open_read_snapshot` -> `run`), where Go compiles, advises (`AdviseOptimizeWithPlan`), builds (activating the transaction) and then reads; so the optimistic provider's max-ts point get is decided from the AST (`classify.rs` `statement_read_shape_bound` -> `AutocommitPointGet`, `open_read_snapshot`'s arm) instead of from the plan (`IsPointGetWithPKOrUniqueKeyByAutoCommit`); the binary-protocol EXECUTE likewise plans a plan-cache-eligible SELECT (`bind_cached_prepared_select_for_statement`) before the lifecycle binds the statement's snapshot, so an uncorrelated subquery evaluated during that planning reads no rows (Go `TestPrepared`'s `c1 = (select c1 ... where c1 = ?)` under `tidb_enable_prepared_plan_cache`); (2) Go enters every transaction through `TxnManager.EnterNewTxn(request)` -> `newProviderWithRequest` -> `OnInitialize`, while `TxnManager` has one entry per case (`open`, `enter_pending`, `enter_implicit_write` / `_read`, `enter_stale`) that builds the transaction before the provider wraps it (`decide_txn_mode` itself runs where Go's `PrepareTxnCtx` runs it). (3) the statement opens ONE snapshot (`open_read_snapshot`: for-update ts for a DML or a top-level locking read, read ts otherwise) and every reader reads it through `StmtContext::txn_store`, while Go's `executorBuilder.getSnapshot` / `getSnapshotTS` pick per reader -- `inSelectLockStmt` (set by `buildSelectLock` and a `Lock` point/batch get) and the insert/update/delete flags select `GetSnapshotWithStmtForUpdateTS` -- so in `(select .. for update) union all (select ..)` only the locked branch reads the latest committed row (Go `TestUnionIssue`'s issue-31530 leg, `pkg/executor/builder.go` `getSnapshotTS`).",
+      "finding": "`pkg/sessiontxn` is ported as `tidb-sessiontxn` (2026-11-19): `TxnManager` holds one provider per transaction (`Optimistic`, `PessimisticRR`, `PessimisticRC`, `PessimisticSerializable`, `StalenessTxnContextProvider`, chosen as `newProviderWithRequest`), which owns the transaction and answers each statement's snapshot, `OnStmtStart` (RCCheckTS), `OnStmtRetry` (the for-update timestamp) and `OnStmtErrorForNextAction` (pessimistic lock errors, the after-query retry). Remaining: (1) the statement lifecycle opens the statement's snapshot before it compiles (`with_bound_statement` -> `open_read_snapshot` -> `run`), where Go compiles, advises (`AdviseOptimizeWithPlan`), builds (activating the transaction) and then reads; so the optimistic provider's max-ts point get is decided from the AST (`classify.rs` `statement_read_shape_bound` -> `AutocommitPointGet`, `open_read_snapshot`'s arm) instead of from the plan (`IsPointGetWithPKOrUniqueKeyByAutoCommit`); (2) Go enters every transaction through `TxnManager.EnterNewTxn(request)` -> `newProviderWithRequest` -> `OnInitialize`, while `TxnManager` has one entry per case (`open`, `enter_pending`, `enter_implicit_write` / `_read`, `enter_stale`) that builds the transaction before the provider wraps it (`decide_txn_mode` itself runs where Go's `PrepareTxnCtx` runs it). (3) the statement opens ONE snapshot (`open_read_snapshot`: for-update ts for a DML or a top-level locking read, read ts otherwise) and every reader reads it through `StmtContext::txn_store`, while Go's `executorBuilder.getSnapshot` / `getSnapshotTS` pick per reader -- `inSelectLockStmt` (set by `buildSelectLock` and a `Lock` point/batch get) and the insert/update/delete flags select `GetSnapshotWithStmtForUpdateTS` -- so in `(select .. for update) union all (select ..)` only the locked branch reads the latest committed row (Go `TestUnionIssue`'s issue-31530 leg, `pkg/executor/builder.go` `getSnapshotTS`).",
       "rust_evidence": "`rust/crates/tidb-session/src/txn_manager.rs`, `statement_lifecycle.rs` (`open_read_snapshot`)",
       "go_owner": "`pkg/sessiontxn` (`interface.go`, `txn_manager.go`), `pkg/sessiontxn/isolation`, `pkg/sessiontxn/staleread`, `pkg/sessiontxn/internal`, `pkg/session/txnmanager.go`, `pkg/executor/builder.go` (`getSnapshot`)"
     },
@@ -25,9 +25,9 @@
     },
     {
       "id": "X11",
-      "status": "open",
+      "status": "partial",
       "group": "Structure: Go's shape before more ports",
-      "finding": "The test tier still runs beside the store-backed one. `tidb-kv`'s `MemTableStorage` (no transaction, `do_lock_keys` a no-op), `tidb-table`'s `LocalTableAutoIds` / `tidb-autoid` `LocalAutoIdStore`, `LocalSequenceCounter`, `tidb-session`'s `SharedCatalog` and `tidb-executor`'s `run_create_table_on` (a CREATE TABLE without a DDL job, now compiled only under `test` / `test-util`) give the executor's tests a second storage, allocator and DDL implementation: 50 of `tidb-executor`'s test files (364 tests) build their tables with `run_create_table_on` over `MemTableStorage`, while production runs over `tidb-store-driver-txn`'s `ClusterTableStorage`. Go has one path: a test runs on `mockstore` (unistore) through the same `kv.Transaction`, meta allocators and DDL jobs as production, as `tidb-session`'s `Session::new()` already does. The `diagnostics` binary `cluster-session-smoke` (used by `scripts/run-realtikv-session-driver.sh` and `run-realtikv-scan-pushdown.sh`) builds over `LocalTableAutoIds` and no longer compiles; Go has no such binary.",
+      "finding": "The test tier still runs beside the store-backed one. `tidb-kv`'s `MemTableStorage` (no transaction, `do_lock_keys` a no-op), `tidb-table`'s `LocalTableAutoIds` / `tidb-autoid` `LocalAutoIdStore`, `LocalSequenceCounter`, `tidb-session`'s `SharedCatalog` and `tidb-executor`'s `run_create_table_on` (a CREATE TABLE without a DDL job, compiled only under `test` / `test-util`) give the executor's tests a second storage, allocator and DDL implementation; Go has one path, `mockstore` through the same `kv.Transaction`, meta allocators and DDL jobs as production. Progress (2026-11-19): the Go-ported executor test files now run as Go's TestKit SQL in `tidb-session/tests` (one file per Go file, Go test names: join, hash join, executor issues, insert, batch point-get, `executor_test.go`, partition table, parallel apply, plan cache, seqtest prepared, `prepared_test.go`, aggregate, merge join, memtest, `pkg/table` partition), and their executor copies are gone. Remaining (43 files, 369 tests still build over `run_create_table_on` / `MemTableStorage`): `tidb-executor/src/driver/tests/*` and `tidb-executor/tests/*` (Rust-only; the SQL-visible ones move to TestKit, tier-internal ones go), `kv_table/tests*.rs`, `tests_table_part1/2` (Go `pkg/table/tables` tests that drive `AddRecord`/`IterRecords` on the session transaction -- the TestKit needs Go's `sessiontxn.NewTxn` / `Session().Txn(true)` surface), `tests_executor_part22` (`TestInsertIgnore` needs `kv.NewInjectedStore` over the session store), `tests_oomtest` (Go's typed `MemQuotaQuery` field, X13, and a zap log-capture core), `tests_merge_join_in_disk` (`join_pkg_test.go`'s mock-data-source tests belong in the executor's unit tests over mock sources); then the tier itself goes.",
       "rust_evidence": "`rust/crates/tidb-kv/src/storage.rs` (`MemTableStorage`), `rust/crates/tidb-table/src/table_from_meta.rs` (`LocalTableAutoIds`), `rust/crates/tidb-autoid/src/{lib,sequence}.rs`, `rust/crates/tidb-executor/src/ddl.rs` (`run_create_table_on`, `test-util`), `rust/crates/tidb-executor/tests/`, `rust/crates/tidb-session/src/lib.rs` (`SharedCatalog`), `rust/crates/tidb-server/src/bin/cluster-session-smoke.rs`",
       "go_owner": "`pkg/testkit` (`CreateMockStore`), `pkg/store/mockstore`, `pkg/meta/autoid`, `pkg/ddl`"
     },
@@ -38,14 +38,6 @@
       "finding": "A variable's Set behavior now lives on the variable for its warnings and session fields: `SysVarDef` carries Go's `Validation` (with a `VarsContext` for sibling reads and statement warnings), `set_session` and `set_global` hooks; `set_hooks.rs`'s deprecation-warning switch, the prune-mode / MPP-compression / hashagg-spill hooks, `tidb_enforce_mpp` and plan-replayer checks, and `SessionVars::set_session_from_hook`'s thirty typed-field branches moved onto their variables (2026-11-19). Remaining: Go's closures receive the SESSION's `vars` in every scope, while the global writer's context reads the global table, so the checks that read session state or the statement are still name checks in `set_hooks.rs` (`check_isolation_level`, `check_noop_gated_variable`, `check_max_allowed_packet_scope` (SET-statement only), `require_secure_transport` (TLS state), `tidb_schema_cache_size` / `tidb_redact_log` SetGlobal effects); the charset/collation pairing is still inline in `set_session_from_hook`; `GetSession` / `GetGlobal` are not on `SysVarDef`; `tidb-session` `variables.rs` keeps session-side hooks and `tidb-exprstatic`'s `StaticSessionVars` re-implements the `SetSession` of the variables it reads.",
       "rust_evidence": "`rust/crates/tidb-variable/src/sysvar.rs` (`SysVarDef`), `set_hooks.rs`, `rust/crates/tidb-session/src/variables.rs`, `rust/crates/tidb-exprstatic/src/evalctx.rs` (`StaticSessionVars`)",
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
-    },
-    {
-      "id": "X14",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "Go `AddRecord` reserves a statement's row ids as one batch: `InsertExec` passes `WithReserveAutoIDHint` (up to `tidb_shard_allocate_step` rows) and `AddRecord` fills `StmtCtx.ReservedRowIDAlloc` from one `AllocHandleIDs(n)` (one shard for the batch, `GetRowIDShardGenerator().GetCurrentShard(n)`); `AllocHandle` consumes the reservation before allocating. Rust's `TableCommon::handle_of_row` allocates `_tidb_rowid` one at a time and the insert loop (`driver/dml.rs`) composes a shard per row, so concurrent multi-row inserts interleave their row ids (Go `TestAllocateContinuousRowID` expects each statement's 21 ids consecutive). `tidb_tblctx::MutateContext` lacks Go's `GetReservedRowIDAlloc` / `GetRowIDShardGenerator`.",
-      "rust_evidence": "`rust/crates/tidb-table/src/tables.rs` (`handle_of_row`), `rust/crates/tidb-executor/src/driver/dml.rs` (insert loop, `next_row_id_shard(1)`), `rust/crates/tidb-tblctx/src/lib.rs`",
-      "go_owner": "`pkg/table/tables/tables.go` (`AddRecord`, `AllocHandle`, `AllocHandleIDs`), `pkg/sessionctx/stmtctx/stmtctx.go` (`ReservedRowIDAlloc`), `pkg/table/tblctx/table.go`, `pkg/executor/insert.go` (`exec` size hint)"
     },
     {
       "id": "B03",
@@ -120,6 +112,14 @@
       "go_owner": "`pkg/util/misc.go` (`InternalHTTPClient`, `initInternalClient`), `pkg/executor/memtable_reader.go` (`fetchClusterConfig`)"
     },
     {
+      "id": "N10",
+      "status": "open",
+      "group": "Domain and process services",
+      "finding": "`tidb-logutil` keeps logger globals of its own (`GLOBALS` with `global` / `slow_query` / `general` / `err_verbose` loggers over its own `Logger` type), separate from `tidb-log`'s (pingcap/log) globals. Go's `logutil.BgLogger()` is `log.L().With()` and `InitLogger` installs through `log.ReplaceGlobals`, so a test's `log.ReplaceGlobals(zap.New(hookCore), props)` (Go `oomtest`'s `registerHook`) sees every background log entry; in Rust `tidb_log::replace_globals` does not reach `bg_logger()`, and the memory actions log `memory exceeds quota` through `tracing` instead of the background logger.",
+      "rust_evidence": "`rust/crates/tidb-logutil/src/lib.rs` (`GLOBALS`, `bg_logger`), `rust/crates/tidb-memory/src/action.rs`",
+      "go_owner": "`pkg/util/logutil/log.go` (`BgLogger`, `InitLogger`), `pkg/util/memory/action.go` (`LogOnExceed`)"
+    },
+    {
       "id": "E37",
       "status": "open",
       "group": "Executor and SQL surface",
@@ -134,33 +134,9 @@
       "finding": "A scalar subquery in a window `RANGE` bound (`RANGE BETWEEN INTERVAL (SELECT 1) DAY PRECEDING ...`) is `ErrWindowRangeBoundNotConstant` (3590); Go master frames the window with its value, because `evalAstExprWithPlanCtx` rewrites the bound through `rewriteAstExprWithPlanCtx`, which plans the subquery on a fake `LogicalTableDual` and evaluates it. Rust's `rewrite_scalar` does not lower subqueries, and `rewriteAstExprWithPlanCtx` has no planner port (its other callers are DML ordered lists and partition expressions). Probe: `create table t(a int, c date)`, rows (1,'2024-01-01'),(2,'2024-01-02'),(3,'2024-01-05'), `SELECT a, SUM(a) OVER (ORDER BY c RANGE BETWEEN INTERVAL (select 1) DAY PRECEDING AND CURRENT ROW) FROM t` answers (1,1),(2,3),(3,3) on Go master.",
       "rust_evidence": "`rust/crates/tidb-planner/src/plan_builder/window.rs` (`build_window_function_frame_bound`), `PlanBuilder::rewrite_scalar`",
       "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildWindowFunctionFrameBound`, `evalAstExprWithPlanCtx`), `pkg/planner/core/expression_rewriter.go` (`rewriteAstExprWithPlanCtx`)"
-    },
-    {
-      "id": "E39",
-      "status": "open",
-      "group": "Executor and SQL surface",
-      "finding": "`PREPARE`'s result fields carry only name and type: `prepare_general` turns the planned `(name, FieldType)` columns into `ResultFieldMetadata` through `select_fields`, so `DBName`, `TableAsName`, `Table` and `Column` are empty (Go `PrepareExec` builds them with `colNames2ResultFields` from the plan's output names; `TestPrepared` reads `fields[0].DBName.L == \"test\"`).",
-      "rust_evidence": "",
-      "go_owner": "`pkg/executor/prepared.go` (`PrepareExec.Next`), `pkg/executor/adapter.go` (`colNames2ResultFields`)"
-    },
-    {
-      "id": "E40",
-      "status": "open",
-      "group": "Executor and SQL surface",
-      "finding": "`select a from t1 union select a from t1 order by (select a+1)` is refused (`expression form is not yet supported by the rewriter`): the set operation's ORDER BY does not resolve a subquery that reads the union's output column (Go `TestUnion2`).",
-      "rust_evidence": "",
-      "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildSetOpr` -> `buildSort` over the set operation)"
-    },
-    {
-      "id": "E41",
-      "status": "open",
-      "group": "Executor and SQL surface",
-      "finding": "Under `tidb_mem_quota_query = 4194304`, `desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a` (201 x 201 rows) is cancelled with 8175; Go's hash aggregate spills to disk and reports a disk usage (`TestAggInDisk`).",
-      "rust_evidence": "",
-      "go_owner": "`pkg/executor/aggregate/agg_hash_executor.go` (spill), `pkg/executor/aggregate/agg_spill.go`"
     }
   ],
-  "unresolved": 19,
-  "open": 16,
-  "partial": 3
+  "unresolved": 16,
+  "open": 12,
+  "partial": 4
 }

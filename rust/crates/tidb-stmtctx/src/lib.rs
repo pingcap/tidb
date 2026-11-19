@@ -44,6 +44,12 @@ impl ReservedRowIdAlloc {
         None
     }
 
+    /// Go `Current`: the reservation's `(base, max)`.
+    #[must_use]
+    pub fn current(&self) -> (i64, i64) {
+        (self.base, self.max)
+    }
+
     /// Go `Exhausted`.
     #[must_use]
     pub fn exhausted(&self) -> bool {

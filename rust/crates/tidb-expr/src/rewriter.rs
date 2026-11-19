@@ -162,6 +162,13 @@ pub trait ColumnResolver {
         path.join(".")
     }
 
+    /// Go `toColumn`'s answer for a column no scope resolves: by default
+    /// `ErrUnknownColumn` over [`Self::unknown_column_name`] in
+    /// [`Self::clause_message`].
+    fn unknown_column_error(&self, path: &[String]) -> EvalError {
+        EvalError::UnknownColumnInClause(self.unknown_column_name(path), self.clause_message())
+    }
+
     /// Resolves the Go `Column.OrigName` carried by a source column. The
     /// planner uses this metadata for EXPLAIN and diagnostics after a column
     /// crosses a Projection or aggregate boundary; execution still binds by
@@ -1097,12 +1104,9 @@ fn rewrite_expr_resolved_inner(
         if let Some(constant) = resolver.resolve_constant(path) {
             return Ok(constant);
         }
-        return resolver.resolve_expression(path).ok_or_else(|| {
-            EvalError::UnknownColumnInClause(
-                resolver.unknown_column_name(path),
-                resolver.clause_message(),
-            )
-        });
+        return resolver
+            .resolve_expression(path)
+            .ok_or_else(|| resolver.unknown_column_error(path));
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     // Go FuncCastExpr calls BuildCastFunctionWithCheck directly, outside

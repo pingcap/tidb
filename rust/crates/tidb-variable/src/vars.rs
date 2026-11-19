@@ -304,6 +304,10 @@ pub struct SessionVars {
     ti_flash_max_bytes_before_ext_sort: i64,
     /// Go's typed `SessionVars.TiFlashMemQuotaQueryPerNode`.
     ti_flash_mem_quota_query_per_node: i64,
+    /// Go's typed `SessionVars.MemQuotaQuery`: the byte quota each
+    /// statement's tracker takes when it starts (`tidb_mem_quota_query`'s
+    /// `SetSession`; Go tests assign it directly).
+    pub mem_quota_query: i64,
     /// Go's typed `SessionVars.TiFlashQuerySpillRatio`.
     ti_flash_query_spill_ratio: f64,
     /// Go's typed `SessionVars.PessimisticTransactionFairLocking`.
@@ -663,6 +667,7 @@ impl Default for SessionVars {
                 tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT,
             ti_flash_mem_quota_query_per_node:
                 tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+            mem_quota_query: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY,
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             pessimistic_transaction_fair_locking: false,
             bulk_dml_enabled: false,
@@ -910,6 +915,7 @@ impl SessionVars {
             Self::ti_flash_max_bytes_before_ext_sort_from_systems(&systems);
         let ti_flash_mem_quota_query_per_node =
             Self::ti_flash_mem_quota_query_per_node_from_systems(&systems);
+        let mem_quota_query = Self::mem_quota_query_from_systems(&systems);
         let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
         let pessimistic_transaction_fair_locking =
             Self::pessimistic_transaction_fair_locking_from_systems(&systems);
@@ -941,6 +947,7 @@ impl SessionVars {
         self.ti_flash_max_bytes_before_ext_agg = ti_flash_max_bytes_before_ext_agg;
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
         self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
+        self.mem_quota_query = mem_quota_query;
         self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
         self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
         self.bulk_dml_enabled = bulk_dml_enabled;
@@ -1079,6 +1086,17 @@ impl SessionVars {
             .get(tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT)
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT)
+    }
+
+    /// Go `tidb_mem_quota_query`'s `SetSession`: `TidbOptInt64(val,
+    /// DefTiDBMemQuotaQuery)`.
+    fn mem_quota_query_from_systems(systems: &HashMap<String, String>) -> i64 {
+        crate::varsutil::tidb_opt_int64(
+            systems
+                .get(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
+                .map_or("", String::as_str),
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY,
+        )
     }
 
     fn ti_flash_mem_quota_query_per_node_from_systems(systems: &HashMap<String, String>) -> i64 {
@@ -1674,6 +1692,7 @@ impl SessionVars {
         let mut restores_ti_flash_max_bytes_before_ext_agg = false;
         let mut restores_ti_flash_max_bytes_before_ext_sort = false;
         let mut restores_ti_flash_mem_quota_query_per_node = false;
+        let mut restores_mem_quota_query = false;
         let mut restores_ti_flash_query_spill_ratio = false;
         let mut restores_pessimistic_transaction_fair_locking = false;
         let mut restores_bulk_dml_enabled = false;
@@ -1704,6 +1723,7 @@ impl SessionVars {
                 key == tidb_vardef::tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT;
             restores_ti_flash_mem_quota_query_per_node |=
                 key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE;
+            restores_mem_quota_query |= key == tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY;
             restores_ti_flash_query_spill_ratio |=
                 key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
             restores_pessimistic_transaction_fair_locking |=
@@ -1778,6 +1798,9 @@ impl SessionVars {
         if restores_ti_flash_max_bytes_before_ext_sort {
             self.ti_flash_max_bytes_before_ext_sort =
                 Self::ti_flash_max_bytes_before_ext_sort_from_systems(&self.systems);
+        }
+        if restores_mem_quota_query {
+            self.mem_quota_query = Self::mem_quota_query_from_systems(&self.systems);
         }
         if restores_ti_flash_mem_quota_query_per_node {
             self.ti_flash_mem_quota_query_per_node =
@@ -2448,6 +2471,16 @@ impl SessionVars {
     }
 
     /// Go `tiflash_mem_quota_query_per_node`'s `SetSession`.
+    /// Go `tidb_mem_quota_query`'s `SetSession`: `s.MemQuotaQuery =
+    /// TidbOptInt64(val, DefTiDBMemQuotaQuery)`; the session tracker's limit
+    /// (`s.MemTracker.SetBytesLimit`) is taken from it when each statement
+    /// starts.
+    pub(crate) fn set_session_tidb_mem_quota_query(&mut self, value: &str) -> Result<(), VarError> {
+        self.mem_quota_query =
+            crate::varsutil::tidb_opt_int64(value, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY);
+        Ok(())
+    }
+
     pub(crate) fn set_session_tiflash_mem_quota_query_per_node(&mut self, value: &str) -> Result<(), VarError> {
         self.ti_flash_mem_quota_query_per_node = value.parse::<i64>().expect("TiFlash per-node quota validation stores signed bytes");
         Ok(())

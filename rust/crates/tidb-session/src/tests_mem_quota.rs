@@ -28,6 +28,14 @@ use crate::domain::resultset_source::ResultSetSource;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
 
+/// Go's test stores bootstrap `tidb_mem_oom_action = LOG` (`intest`); a
+/// test that observes cancellation sets `CANCEL`, as Go's do.
+fn cancel_on_oom(session: &mut Session) {
+    session
+        .run("SET @@global.tidb_mem_oom_action = 'CANCEL'")
+        .unwrap();
+}
+
 fn ordered_session() -> Session {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
@@ -52,9 +60,15 @@ fn the_shipped_quota_and_action_defaults_match_go() {
         crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_quota_query").as_deref(),
         Some("1073741824")
     );
+    // The shipped default is CANCEL; Go's `GlobalSystemVariableInitialValue`
+    // bootstraps a test store with LOG (`intest`).
+    assert_eq!(
+        tidb_variable::sysvar::get_sys_var("tidb_mem_oom_action").map(|def| def.value),
+        Some("CANCEL")
+    );
     assert_eq!(
         crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_oom_action").as_deref(),
-        Some("CANCEL")
+        Some("LOG")
     );
 }
 
@@ -67,7 +81,7 @@ fn cursor_authority_is_captured_before_set_var_restoration() {
 
     let mut result = crate::tests_support::execute_stmt(
         &mut session,
-        "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
+        "SELECT /*+ SET_VAR(tidb_mem_quota_query=197) \
          SET_VAR(tidb_init_chunk_size=8) \
          SET_VAR(tidb_max_chunk_size=64) */ 1",
     )
@@ -75,7 +89,7 @@ fn cursor_authority_is_captured_before_set_var_restoration() {
     let authority = result
         .take_cursor_materialization()
         .expect("a row result carries cursor authority");
-    assert_eq!(authority.memory.quota(), 97);
+    assert_eq!(authority.memory.quota(), 197);
     assert_eq!(authority.init_chunk_size, 8);
     assert_eq!(authority.max_chunk_size, 64);
     result.source().close().unwrap();
@@ -102,7 +116,7 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
     session.run("SET @@tidb_init_chunk_size = 16").unwrap();
     session.run("SET @@tidb_max_chunk_size = 128").unwrap();
 
-    let sql = "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
+    let sql = "SELECT /*+ SET_VAR(tidb_mem_quota_query=197) \
                SET_VAR(tidb_init_chunk_size=8) \
                SET_VAR(tidb_max_chunk_size=64) */ 1";
     let prepared = crate::tests_support::prepare_binary(&mut session, sql);
@@ -129,7 +143,7 @@ fn prepared_server_result_retains_the_executing_statement_authority() {
     // the statement, not rebuild them from the now-restored session vars.
     let (memory, init_chunk_size, max_chunk_size) =
         session.result_materialization_authority().into_parts();
-    assert_eq!(memory.quota(), 97);
+    assert_eq!(memory.quota(), 197);
     assert_eq!(init_chunk_size, 8);
     assert_eq!(max_chunk_size, 64);
 
@@ -167,14 +181,14 @@ fn set_global_is_visible_through_an_unprefixed_read_of_a_global_only_var() {
     let mut session = Session::new();
     assert_eq!(
         crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_oom_action").as_deref(),
-        Some("CANCEL")
+        Some("LOG")
     );
     session
-        .run("SET @@global.tidb_mem_oom_action = 'LOG'")
+        .run("SET @@global.tidb_mem_oom_action = 'CANCEL'")
         .unwrap();
     assert_eq!(
         crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_oom_action").as_deref(),
-        Some("LOG")
+        Some("CANCEL")
     );
 }
 
@@ -203,6 +217,7 @@ fn set_global_is_visible_through_an_unprefixed_read_of_a_global_only_var() {
 #[test]
 fn a_sort_past_the_quota_reaches_the_client_as_go_s_8175() {
     let mut session = ordered_session();
+    cancel_on_oom(&mut session);
     session
         .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
         .unwrap();
@@ -259,6 +274,7 @@ fn a_quota_of_minus_one_is_unlimited_as_the_sysvar_range_allows() {
 #[test]
 fn the_suite_s_oom_insert_is_8175_at_200_and_inserts_at_10000() {
     let mut session = Session::new();
+    cancel_on_oom(&mut session);
     session.run("CREATE TABLE t1 (a BIGINT)").unwrap();
     session.run("SET @@tidb_mem_quota_query = 200").unwrap();
     let error = session
@@ -495,6 +511,7 @@ fn a_hash_join_with_room_answers_what_go_answers() {
 #[test]
 fn with_tmp_storage_off_the_same_hash_join_is_gos_8175() {
     let mut session = spill_session();
+    cancel_on_oom(&mut session);
     session
         .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
         .unwrap();
@@ -508,11 +525,14 @@ fn with_tmp_storage_off_the_same_hash_join_is_gos_8175() {
 #[test]
 fn dml_batch_context_rebuild_keeps_one_active_statement_tracker() {
     let mut session = Session::new();
+    cancel_on_oom(&mut session);
+    // The SET above leaves its statement's authority installed; this test
+    // builds its contexts inside a statement of its own.
+    session.begin_statement_execution("SELECT 1").unwrap();
     session.set_connection_id(71);
-    session
-        .vars
-        .set_system("tidb_mem_quota_query", "1".to_owned())
-        .unwrap();
+    // Go assigns `SessionVars.MemQuotaQuery` directly; `SET` clamps a
+    // positive quota under 128.
+    session.vars.mem_quota_query = 1;
     let first = session.statement_context(false).statement_memory();
     let second = session.statement_context(true).statement_memory();
     assert!(
@@ -529,13 +549,13 @@ fn dml_batch_context_rebuild_keeps_one_active_statement_tracker() {
 #[test]
 fn dml_batch_late_previous_authority_drop_cannot_unbind_current_oom_action() {
     let mut session = Session::new();
+    cancel_on_oom(&mut session);
     session.set_connection_id(72);
     let previous = session.statement_context(false).statement_memory();
     session.begin_statement_execution("SELECT 1").unwrap();
-    session
-        .vars
-        .set_system("tidb_mem_quota_query", "1".to_owned())
-        .unwrap();
+    // Go assigns `SessionVars.MemQuotaQuery` directly; `SET` clamps a
+    // positive quota under 128.
+    session.vars.mem_quota_query = 1;
     let current = session.statement_context(true).statement_memory();
     drop(previous);
     assert!(
@@ -550,6 +570,7 @@ fn dml_batch_late_previous_authority_drop_cannot_unbind_current_oom_action() {
 #[test]
 fn dml_batch_live_quota_cancels_all_physical_write_sources_without_changes() {
     let mut session = Session::new();
+    cancel_on_oom(&mut session);
     session
         .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
         .unwrap();
@@ -576,6 +597,7 @@ fn dml_batch_live_quota_cancels_all_physical_write_sources_without_changes() {
 #[test]
 fn dml_batch_text_set_after_oom_retires_the_previous_statement() {
     let mut session = Session::new();
+    cancel_on_oom(&mut session);
     session
         .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
         .unwrap();

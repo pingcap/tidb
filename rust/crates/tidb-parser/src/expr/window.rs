@@ -489,6 +489,8 @@ pub(super) fn agg_canonical(name: &str) -> Option<&'static str> {
     match name.to_ascii_uppercase().as_str() {
         "COUNT" => Some("COUNT"),
         "SUM" => Some("SUM"),
+        // Go `builtinFnSumInt` (`builtin_func.go`'s `isAggregateFunc`).
+        "SUM_INT" => Some("SUM_INT"),
         "AVG" => Some("AVG"),
         "MAX" => Some("MAX"),
         "MIN" => Some("MIN"),

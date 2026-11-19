@@ -661,6 +661,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub is_sampling: bool,
     /// Go `curClause`.
     pub cur_clause: ClauseCode,
+    /// Whether the rewrite under way resolves against a `LogicalUnionAll`
+    /// (Go `toColumn` reads `planCtx.plan`; see `rewrite_scalar_with_plan`).
+    rewriting_over_union_all: std::cell::Cell<bool>,
     /// Go `qbOffset`; [`Self::select_offset`] reads its tail.
     pub qb_offset: Vec<i32>,
     /// The next query-block offset assigned by the statement's preorder walk.
@@ -1016,6 +1019,9 @@ pub struct PlanScopeResolver<'a> {
     /// Go `er.clause()`: the clause an unknown-column error names. The
     /// default is Go's `expressionClause` spelling.
     clause_message: &'static str,
+    /// The plan the rewrite resolves against is a `LogicalUnionAll` (Go
+    /// `toColumn`'s `planCtx.plan.(*logicalop.LogicalUnionAll)`).
+    over_union_all: bool,
     /// Go `FindFieldName`'s errNonUniq side-channel: the Option-only resolve
     /// contract cannot raise, so an ambiguous path records its written name
     /// here and the rewrite caller swaps the 1054 fall-through for 1052.
@@ -1124,6 +1130,7 @@ impl<'a> PlanScopeResolver<'a> {
             div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
+            over_union_all: false,
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
             default_lookup: None,
@@ -1164,6 +1171,7 @@ impl<'a> PlanScopeResolver<'a> {
             div_precision_increment: 4,
             warning_context: None,
             clause_message: "expression",
+            over_union_all: false,
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
             default_lookup: None,
@@ -1257,6 +1265,13 @@ impl<'a> PlanScopeResolver<'a> {
     #[must_use]
     pub const fn with_clause_message(mut self, clause: &'static str) -> Self {
         self.clause_message = clause;
+        self
+    }
+
+    /// Resolve over a `LogicalUnionAll`'s output (see `over_union_all`).
+    #[must_use]
+    pub const fn with_over_union_all(mut self, over_union_all: bool) -> Self {
+        self.over_union_all = over_union_all;
         self
     }
 
@@ -1443,6 +1458,25 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn clause_message(&self) -> &'static str {
         self.clause_message
+    }
+
+    /// Go `toColumn`: over a UNION ALL a qualified name names a table of one
+    /// of its SELECTs (1250); otherwise `ErrUnknownColumn`, a global ORDER
+    /// clause reported as the ORDER clause.
+    fn unknown_column_error(&self, path: &[String]) -> EvalError {
+        if self.over_union_all && path.len() > 1 {
+            return EvalError::Conversion(tidb_plannererrors::ERR_TABLENAME_NOT_ALLOWED_HERE.gen_with_stack_by_args(&[
+                path[path.len() - 2].clone().into(),
+                "SELECT".into(),
+                self.clause_message.into(),
+            ]));
+        }
+        let clause = if self.clause_message == ClauseCode::GlobalOrderBy.message() {
+            ClauseCode::OrderBy.message()
+        } else {
+            self.clause_message
+        };
+        EvalError::UnknownColumnInClause(self.unknown_column_name(path), clause)
     }
 
     fn allow_build_cast_array(&self) -> bool {
@@ -1690,6 +1724,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             allow_build_cast_array: std::cell::Cell::new(false),
             is_sampling: false,
             cur_clause: ClauseCode::Unknow,
+            rewriting_over_union_all: std::cell::Cell::new(false),
             qb_offset: Vec::new(),
             next_qb_offset: 0,
             qb_hint_handler: None,
@@ -2228,6 +2263,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let (full_schema, full_names) = full
             .map(|(schema, names)| (Some(schema), Some(names)))
             .unwrap_or((None, None));
+        let over_union_all = self
+            .rewriting_over_union_all
+            .replace(matches!(plan, LogicalPlan::UnionAll(_)));
         let rewritten = self.rewrite_scalar_with_scope(
             expr,
             &schema,
@@ -2235,7 +2273,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             full_schema,
             full_names,
             markers,
-        )?;
+        );
+        self.rewriting_over_union_all.set(over_union_all);
+        let rewritten = rewritten?;
         check_not_multi_column_row(&rewritten)?;
         Ok(rewritten)
     }
@@ -2302,6 +2342,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         .with_no_unsigned_subtraction(self.ctx.no_unsigned_subtraction())
         .with_div_precision_increment(self.ctx.div_precision_increment())
         .with_clause_message(self.cur_clause.message())
+        .with_over_union_all(self.rewriting_over_union_all.get())
         .with_allow_build_cast_array(self.allow_build_cast_array.get())
         .with_warning_context(self.ctx);
         resolver.block_expand = self.current_block_expand.as_ref();

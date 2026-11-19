@@ -19,7 +19,6 @@ use crate::support::testkit::*;
 
 /// Go `TestAggInDisk`.
 #[test]
-#[ignore = "register E41: the hash aggregate is cancelled by the 4 MiB quota where Go spills to disk"]
 fn test_agg_in_disk() {
     let mut tk = TestKit::new();
     tk.must_exec("use test");
