@@ -120,6 +120,9 @@ Five places in the Rust rewrite differ from Go's structure in ways that make eve
   Rationale: a stored `sctx` would alias the session mutably; passing it per call keeps Go's method set and one owner per transaction.
   Date/Author: 2026-11-19, Claude.
 
+- Decision: X13, X09 and X11 land as ONE batch with one gate (user 2026-11-19: "X13, X09, X11 as a single batch"; "do not use codex"; between gates only `cargo check` and targeted tests). X13 plan: (a) `sysvar::validation::Lookup` becomes a Copy `VarsContext` (Go's `vars` as `Validation` / `SetSession` see it: sibling reads, a statement-warning sink); (b) `set_hooks.rs` `warn_sysvar_assignment`'s per-name branches move onto each variable's `Validation` (warnings appended even when the closure then refuses, as `tidb_enable_list_partition`); (c) `SysVarDef` gains Go's `set_session` / `set_global` hooks (`fn(&VarsContext, &str)`), taking `warn_partition_prune_assignment`, `warn_mpp_exchange_compression`, `warn_parallel_hashagg_spill`; (d) the session-state checks (`check_isolation_level`, `check_noop_gated_variable`, `check_max_allowed_packet_scope`, `require_secure_transport`) become `Validation` reading the context; (e) `tidb-session` `variables.rs` / `StaticSessionVars` hooks. X09: production callers of `SystemTableView` / `system_row_write` move to restricted SQL (privilege load, sysvar load, stats writes, analyze, bootstrap rows, bindings), then the two modules go. X11: `tidb-executor` tests move onto the mock store through DDL jobs; `MemTableStorage`, `LocalTableAutoIds`, `run_create_table_on`, `cluster-session-smoke` go.
+  Date/Author: 2026-11-19, user and Claude.
+
 ## Outcomes & Retrospective
 
 (none yet)

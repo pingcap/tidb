@@ -595,7 +595,44 @@ pub struct SysVarDef {
     /// Go `Validation`: the variable's own check after the type check, in
     /// `sysvar/validation.rs`.
     pub validation: Option<Validation>,
+    /// Go `SetSession`'s hook part (see [`SetHook`]).
+    pub set_session: Option<SetHook>,
+    /// Go `SetGlobal`'s hook part (see [`SetHook`]).
+    pub set_global: Option<SetHook>,
 }
+
+/// Go's `vars *SessionVars` as a variable's `Validation`, `SetSession` and
+/// `SetGlobal` closures see it: the sibling variables' values in the scope
+/// being set, and the statement's warnings (`vars.StmtCtx.AppendWarning`).
+pub trait VarsContext {
+    /// The current value of a sibling variable in the scope being set.
+    fn read(&self, name: &str) -> Option<String>;
+    /// Go `vars.StmtCtx.AppendWarning`. A caller that collects no warnings
+    /// drops them.
+    fn append_warning(&self, _warning: VarWarning) {}
+}
+
+impl<F: Fn(&str) -> Option<String>> VarsContext for F {
+    fn read(&self, name: &str) -> Option<String> {
+        self(name)
+    }
+}
+
+/// One warning a variable's closure appends: Go's
+/// `AppendWarning(proto.FastGenByArgs(...))`, or a plain `errors.New(message)`
+/// when `error` is `None`.
+#[derive(Clone, Debug)]
+pub struct VarWarning {
+    /// The error proto whose code the warning carries.
+    pub error: Option<&'static tidb_terror::TerrorError>,
+    /// The warning text.
+    pub message: String,
+}
+
+/// Go `SysVar.SetSession` / `SysVar.SetGlobal`, the part of the closure that
+/// is more than storing the value: `(vars, normalizedValue)`, run before the
+/// value is stored, so `vars` still reads the previous one.
+pub type SetHook = fn(&dyn VarsContext, &str);
 
 /// Go `SysVar.Validation`, kept on the variable it checks: Go's closure
 /// `Validation(vars, normalizedValue, originalValue, scope)`, run after
@@ -620,6 +657,8 @@ impl SysVarDef {
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     };
 
     /// Go `HasSessionScope`.
@@ -1211,7 +1250,7 @@ impl SysVarDef {
         &self,
         value: &str,
         scope: u8,
-        lookup: Option<&dyn Fn(&str) -> Option<String>>,
+        lookup: Option<&dyn VarsContext>,
     ) -> Result<Validated, ValidationError> {
         // Go `SysVar.Validate`: `ValidateFromType`, then the variable's own
         // `Validation` (`run_validation_with_lookup`).
@@ -1263,7 +1302,7 @@ impl SysVarDef {
         validated: Validated,
         original: &str,
         scope: u8,
-        lookup: Option<&dyn Fn(&str) -> Option<String>>,
+        lookup: Option<&dyn VarsContext>,
     ) -> Result<Validated, ValidationError> {
         if let Some(validate) = self.validation {
             return validate(self, validated, original, scope, lookup);

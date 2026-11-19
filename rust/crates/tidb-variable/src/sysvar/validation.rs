@@ -26,7 +26,15 @@
 use super::*;
 
 /// A sibling variable's current value, or `None` (Go reads `vars.systems`).
-pub(super) type Lookup<'a> = Option<&'a dyn Fn(&str) -> Option<String>>;
+pub(super) type Lookup<'a> = Option<&'a dyn VarsContext>;
+
+/// Appends a Go `vars.StmtCtx.AppendWarning(...)` through the context, if
+/// the caller collects warnings.
+pub(super) fn warn(lookup: Lookup<'_>, error: Option<&'static tidb_terror::TerrorError>, message: &str) {
+    if let Some(cx) = lookup {
+        cx.append_warning(VarWarning { error, message: message.to_owned() });
+    }
+}
 
 fn conflict(message: &str) -> ValidationError {
     ValidationError::SqlError(SqlError::new_f(
@@ -51,7 +59,7 @@ pub(super) fn tidb_gogc_tuner_threshold(
 ) -> Result<Validated, ValidationError> {
     let float_value = validated.value.parse::<f64>().unwrap_or(0.6);
     let trigger = lookup
-        .and_then(|read| read("tidb_server_memory_limit_gc_trigger"))
+        .and_then(|cx| cx.read("tidb_server_memory_limit_gc_trigger"))
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.7);
     if trigger != 0.0 && trigger < float_value + 0.05 {
@@ -146,6 +154,7 @@ pub(super) fn tidb_mpp_store_fail_ttl(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    warn(lookup, None, "tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases");
     Ok(Validated {
         value: "0s".to_owned(),
         truncated: validated.truncated,
@@ -163,6 +172,7 @@ pub(super) fn tidb_enable_column_tracking(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT), "The 'tidb_enable_column_tracking' variable is deprecated and will be removed in future versions of TiDB. It is always set to 'ON' now.");
     Ok(Validated {
         value: "ON".to_owned(),
         truncated: validated.truncated,
@@ -173,7 +183,7 @@ pub(super) fn tidb_enable_column_tracking(
 /// enum spellings (`static-only`/`dynamic-only`) before storing them.
 /// The type metadata admits those spellings, but readers and the
 /// session setter observe only the upgraded `static`/`dynamic` mode.
-pub(super) fn tidb_partition_prune_mode(
+fn tidb_partition_prune_mode_closure(
     def: &SysVarDef,
     validated: Validated,
     original: &str,
@@ -201,6 +211,9 @@ pub(super) fn tidb_merge_partition_stats_concurrency(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    if validated.value != "1" {
+        warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility.");
+    }
     Ok(Validated {
         value: "1".to_owned(),
         truncated: validated.truncated,
@@ -271,7 +284,7 @@ pub(super) fn tidb_enable_noop_functions(
             "sql_auto_is_null",
         ] {
             let current = lookup
-                .and_then(|resolve| resolve(incompatible))
+                .and_then(|cx| cx.read(incompatible))
                 .or_else(|| get_sys_var(incompatible).map(|def| def.value.to_owned()));
             if current
                 .as_deref()
@@ -470,7 +483,7 @@ pub(super) fn tidb_server_memory_limit_gc_trigger(
         return Err(ValidationError::WrongValue);
     }
     let threshold = lookup
-        .and_then(|read| read("tidb_gogc_tuner_threshold"))
+        .and_then(|cx| cx.read("tidb_gogc_tuner_threshold"))
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.6);
     if threshold != 0.0 && fraction < threshold + 0.05 {
@@ -495,6 +508,9 @@ pub(super) fn tidb_disable_txn_auto_retry(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'OFF' is deprecated and will be removed in a future release. Please use ON instead");
+    }
     if validated.value == "OFF" {
         return Ok(Validated {
             value: "ON".to_owned(),
@@ -531,7 +547,7 @@ pub(super) fn collations(
 /// utf8mb4 collations retained for compatibility.  The latter refusal
 /// is the registered TiDB error 3721 rather than a generic variable
 /// error, so preserve its catalogued message and code here.
-pub(super) fn default_collation_for_utf8mb4(
+fn default_collation_for_utf8mb4_closure(
     def: &SysVarDef,
     validated: Validated,
     original: &str,
@@ -775,6 +791,9 @@ pub(super) fn tidb_enable_table_partition(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, None, "tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases");
+    }
     Ok(Validated {
         value: "ON".to_owned(),
         truncated: validated.truncated,
@@ -813,6 +832,8 @@ pub(super) fn tidb_enable_list_partition(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    // Appended for every assignment, including one this closure refuses.
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT), "tidb_enable_list_partition is deprecated and will be removed in a future release.");
     if validated.value != "ON" {
         return Err(ValidationError::Refused(
             "tidb_enable_list_partition is now always on, and cannot be turned off".into(),
@@ -1398,7 +1419,7 @@ pub(super) fn tx_isolation_one_shot(
         "SERIALIZABLE" | "READ-UNCOMMITTED"
     ) {
         let skip_on = lookup
-            .and_then(|read| read("tidb_skip_isolation_level_check"))
+            .and_then(|cx| cx.read("tidb_skip_isolation_level_check"))
             .map(|v| matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true"))
             .unwrap_or(false);
         if !skip_on {
@@ -1485,7 +1506,7 @@ pub(super) fn tidb_snapshot(
     }
     if let Some(lookup) = lookup {
         if !validated.value.is_empty()
-            && lookup("tidb_read_staleness").is_some_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
+            && lookup.read("tidb_read_staleness").is_some_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
         {
             return Err(conflict(
                 "tidb_read_staleness should be clear before setting tidb_snapshot",
@@ -1505,7 +1526,7 @@ pub(super) fn tidb_read_staleness(
 ) -> Result<Validated, ValidationError> {
     if let Some(lookup) = lookup {
         if validated.value.parse::<i64>().is_ok_and(|v| v != 0)
-            && lookup("tidb_snapshot").is_some_and(|v| !v.is_empty() && v.parse::<u64>() != Ok(0))
+            && lookup.read("tidb_snapshot").is_some_and(|v| !v.is_empty() && v.parse::<u64>() != Ok(0))
         {
             return Err(conflict(
                 "tidb_snapshot should be clear before setting tidb_read_staleness",
@@ -1689,4 +1710,256 @@ pub(super) fn tidb_mview_maintain_import_disk_quota(
         return Err(ValidationError::WrongValue);
     }
     Ok(validated)
+}
+
+pub(super) fn default_collation_for_utf8mb4(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let validated = default_collation_for_utf8mb4_closure(def, validated, original, scope, lookup)?;
+    // Go appends the deprecation only when the validation succeeds.
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT), "Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release.");
+    Ok(validated)
+}
+
+pub(super) fn tidb_partition_prune_mode(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let validated = tidb_partition_prune_mode_closure(def, validated, original, scope, lookup)?;
+    if validated.value == "static" {
+        warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG), "static prune mode is deprecated and will be removed in the future release.");
+    }
+    Ok(validated)
+}
+
+/// Go `tidb_enable_fast_analyze`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_fast_analyze(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "ON" {
+        warn(lookup, None, "the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect");
+    }
+    Ok(validated)
+}
+
+/// Go `tidb_enable_tiflash_pipeline_model`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_tiflash_pipeline_model(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT), "tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release.");
+    Ok(validated)
+}
+
+/// Go `tidb_enable_clustered_index`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_clustered_index(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "INT_ONLY" {
+        warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead");
+    }
+    Ok(validated)
+}
+
+/// Go `tidb_enable_global_index`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_global_index(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, None, "tidb_enable_global_index is always turned on. This variable has been deprecated and will be removed in the future releases");
+    }
+    Ok(validated)
+}
+
+/// Go `tidb_auto_analyze_partition_batch_size`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_auto_analyze_partition_batch_size(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_NO_REPLACEMENT), "Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release.");
+    Ok(validated)
+}
+
+/// Go `tidb_enable_async_merge_global_stats`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_async_merge_global_stats(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, None, "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged.");
+    Ok(validated)
+}
+
+/// Go `tidb_index_lookup_concurrency`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_index_lookup_concurrency(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'tidb_index_lookup_concurrency' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead");
+    Ok(validated)
+}
+
+/// Go `tidb_index_serial_scan_concurrency`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_index_serial_scan_concurrency(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'.");
+    Ok(validated)
+}
+
+/// Go `tidb_prepared_plan_cache_size`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_prepared_plan_cache_size(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'tidb_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead");
+    Ok(validated)
+}
+
+/// Go `tidb_non_prepared_plan_cache_size`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_non_prepared_plan_cache_size(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'tidb_non_prepared_plan_cache_size' is deprecated and will be removed in a future release. Please use tidb_session_plan_cache_size instead");
+    Ok(validated)
+}
+
+/// Go `tidb_enable_exchange_partition`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_exchange_partition(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, None, "tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases");
+    }
+    deprecated_always_on(def, validated, original, scope, lookup)
+}
+
+/// Go `tidb_enable_new_cost_interface`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_new_cost_interface(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX), "'OFF' is deprecated and will be removed in a future release. Please use ON instead");
+    }
+    deprecated_always_on(def, validated, original, scope, lookup)
+}
+
+/// Go `tidb_enable_tiflash_read_for_write_stmt`'s `Validation`: the deprecation warning it appends.
+pub(super) fn tidb_enable_tiflash_read_for_write_stmt(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "OFF" {
+        warn(lookup, None, "tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases");
+    }
+    deprecated_always_on(def, validated, original, scope, lookup)
+}
+
+/// Go `tidb_partition_prune_mode`'s `SetSession`: switching a session from
+/// static to dynamic asks for a re-analyze and warns against the session level.
+pub(super) fn tidb_partition_prune_mode_set_session(cx: &dyn VarsContext, value: &str) {
+    if value == "dynamic" && cx.read("tidb_partition_prune_mode").as_deref() == Some("static") {
+        cx.append_warning(VarWarning {
+            error: None,
+            message: "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
+        });
+        cx.append_warning(VarWarning {
+            error: None,
+            message: "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
+        });
+    }
+}
+
+/// Go `tidb_partition_prune_mode`'s `SetGlobal`: dynamic asks for a re-analyze.
+pub(super) fn tidb_partition_prune_mode_set_global(cx: &dyn VarsContext, value: &str) {
+    if value == "dynamic" {
+        cx.append_warning(VarWarning {
+            error: None,
+            message: "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
+        });
+    }
+}
+
+/// Go `mpp_exchange_compression_mode`'s `SetSession`: a concrete mode warns
+/// under MPP version 0.
+pub(super) fn mpp_exchange_compression_mode_set_session(cx: &dyn VarsContext, value: &str) {
+    let Some(mode) = tidb_vardef::modes::to_exchange_compression_mode(value) else {
+        return;
+    };
+    if mode == tidb_vardef::modes::ExchangeCompressionMode::UNSPECIFIED {
+        return;
+    }
+    let mpp_version = cx
+        .read(tidb_vardef::tidb_vars::MPP_VERSION)
+        .and_then(|value| tidb_vardef::modes::to_mpp_version(&value))
+        .unwrap_or(tidb_vardef::modes::NEWEST_MPP_VERSION);
+    if mpp_version == 0 {
+        cx.append_warning(VarWarning {
+            error: None,
+            message: "mpp exchange compression won't work under current mpp version 0".to_owned(),
+        });
+    }
+}
+
+/// Go `tidb_enable_parallel_hashagg_spill`'s `SetSession`: turning it OFF
+/// warns that the switch goes away.
+pub(super) fn tidb_enable_parallel_hashagg_spill_set_session(cx: &dyn VarsContext, value: &str) {
+    if value == "OFF" {
+        cx.append_warning(VarWarning {
+            error: Some(&*crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG),
+            message: "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
+        });
+    }
 }

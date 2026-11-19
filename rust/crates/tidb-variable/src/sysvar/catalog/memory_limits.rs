@@ -37,6 +37,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "error_count",
@@ -51,6 +53,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "host_cache_size",
@@ -65,6 +69,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "internal_tmp_disk_storage_engine",
@@ -79,6 +85,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "join_buffer_size",
@@ -93,6 +101,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "key_buffer_size",
@@ -107,6 +117,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "last_sql_use_alloc",
@@ -122,6 +134,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "locked_in_memory",
@@ -136,6 +150,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_allowed_packet",
@@ -150,6 +166,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::max_allowed_packet),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_digest_length",
@@ -164,6 +182,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_error_count",
@@ -178,6 +198,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_heap_table_size",
@@ -192,6 +214,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_join_size",
@@ -206,6 +230,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_length_for_sort_data",
@@ -220,6 +246,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_seeks_for_key",
@@ -234,6 +262,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "max_sort_length",
@@ -248,6 +278,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "net_buffer_length",
@@ -262,6 +294,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "preload_buffer_size",
@@ -276,6 +310,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "query_alloc_block_size",
@@ -290,6 +326,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "query_prealloc_size",
@@ -304,6 +342,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "range_alloc_block_size",
@@ -318,6 +358,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "read_buffer_size",
@@ -332,6 +374,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "read_rnd_buffer_size",
@@ -346,6 +390,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "sort_buffer_size",
@@ -360,6 +406,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "sql_buffer_result",
@@ -374,6 +422,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "table_definition_cache",
@@ -388,6 +438,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "table_open_cache",
@@ -402,6 +454,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "table_open_cache_instances",
@@ -416,6 +470,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "thread_cache_size",
@@ -430,6 +486,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_parallel_hashagg_spill",
@@ -444,6 +502,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: Some(super::super::validation::tidb_enable_parallel_hashagg_spill_set_session),
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_point_get_cache",
@@ -458,6 +518,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_mode",
@@ -472,6 +534,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_mem_arbitrator_mode),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_query_reserved",
@@ -486,6 +550,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_mem_arbitrator_query_reserved),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_soft_limit",
@@ -500,6 +566,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_mem_arbitrator_soft_limit),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_wait_averse",
@@ -514,6 +582,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_mem_arbitrator_wait_averse),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_oom_action",
@@ -528,6 +598,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &["CANCEL", "LOG"],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_quota_apply_cache",
@@ -542,6 +614,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_mem_quota_query",
@@ -556,6 +630,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_memory_debug_mode_alarm_ratio",
@@ -570,6 +646,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_memory_debug_mode_min_heap_inuse",
@@ -584,6 +662,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_memory_usage_alarm_keep_record_num",
@@ -598,6 +678,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_memory_usage_alarm_ratio",
@@ -612,6 +694,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_schema_cache_size",
@@ -626,6 +710,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_schema_cache_size),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_server_memory_limit",
@@ -640,6 +726,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_server_memory_limit),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_server_memory_limit_sess_min_size",
@@ -654,6 +742,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_server_memory_limit_sess_min_size),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_shard_allocate_step",
@@ -668,6 +758,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_tmp_table_max_size",
@@ -682,6 +774,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_track_aggregate_memory_usage",
@@ -696,6 +790,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tmp_table_size",
@@ -710,6 +806,8 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tmpdir",
@@ -724,5 +822,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
 ];

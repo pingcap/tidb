@@ -37,6 +37,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_gogc_tuner",
@@ -51,6 +53,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_concurrency",
@@ -65,6 +69,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_enable",
@@ -79,6 +85,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_life_time",
@@ -93,6 +101,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_max_wait_time",
@@ -107,6 +117,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_run_interval",
@@ -121,6 +133,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gc_scan_lock_mode",
@@ -135,6 +149,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &["PHYSICAL", "LEGACY"],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_max_value",
@@ -149,6 +165,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_min_value",
@@ -163,6 +181,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_threshold",
@@ -177,6 +197,8 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_gogc_tuner_threshold),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_server_memory_limit_gc_trigger",
@@ -191,5 +213,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_server_memory_limit_gc_trigger),
+        set_session: None,
+        set_global: None,
     },
 ];

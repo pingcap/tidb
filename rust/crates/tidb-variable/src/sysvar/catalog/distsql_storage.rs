@@ -37,6 +37,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_adaptive_closest_read_threshold",
@@ -51,6 +53,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_advancer_check_point_lag_limit",
@@ -65,6 +69,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_allow_batch_cop",
@@ -79,6 +85,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_allow_fallback_to_tikv",
@@ -93,6 +101,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_allow_fallback_to_tikv),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_allow_tiflash_cop",
@@ -107,6 +117,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_backoff_lock_fast",
@@ -121,6 +133,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_backoff_weight",
@@ -135,6 +149,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_batch_delete",
@@ -149,6 +165,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_batch_insert",
@@ -163,6 +181,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_batch_pending_tiflash_count",
@@ -177,6 +197,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_cloud_storage_uri",
@@ -191,6 +213,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_columnar_storage_enabled",
@@ -205,6 +229,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_distsql_scan_concurrency",
@@ -219,6 +245,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_dml_batch_size",
@@ -233,6 +261,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_batch_dml",
@@ -247,6 +277,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_batch_query_region",
@@ -261,6 +293,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_chunk_rpc",
@@ -275,6 +309,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_dist_task",
@@ -289,6 +325,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_paging",
@@ -303,6 +341,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_rate_limit_action",
@@ -317,6 +357,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_reuse_chunk",
@@ -331,6 +373,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_tiflash_pipeline_model",
@@ -344,7 +388,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: None,
+        validation: Some(super::super::validation::tidb_enable_tiflash_pipeline_model),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_tiflash_read_for_write_stmt",
@@ -358,7 +404,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: Some(super::super::validation::deprecated_always_on),
+        validation: Some(super::super::validation::tidb_enable_tiflash_read_for_write_stmt),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_init_chunk_size",
@@ -373,6 +421,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_group_by",
@@ -387,6 +437,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_join",
@@ -401,6 +453,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_bytes_before_tiflash_external_sort",
@@ -415,6 +469,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_chunk_size",
@@ -429,6 +485,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_dist_task_nodes",
@@ -443,6 +501,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_max_dist_task_nodes),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_keys_read",
@@ -457,6 +517,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_paging_size",
@@ -471,6 +533,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_max_tiflash_threads",
@@ -485,6 +549,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_min_paging_size",
@@ -499,6 +565,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_paging_size_bytes",
@@ -513,6 +581,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_pre_split_regions",
@@ -527,6 +597,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_query_cop_store_limit",
@@ -541,6 +613,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_scatter_region",
@@ -558,6 +632,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &["", "table", "global"],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_scatter_region),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_service_scope",
@@ -572,6 +648,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_service_scope),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_store_batch_size",
@@ -586,6 +664,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_store_limit",
@@ -600,6 +680,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_wait_split_region_finish",
@@ -614,6 +696,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_wait_split_region_timeout",
@@ -628,6 +712,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_compute_dispatch_policy",
@@ -642,6 +728,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tiflash_compute_dispatch_policy),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_fastscan",
@@ -656,6 +744,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_fine_grained_shuffle_batch_size",
@@ -670,6 +760,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_fine_grained_shuffle_stream_count",
@@ -684,6 +776,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_hashagg_preaggregation_mode",
@@ -698,6 +792,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tiflash_hashagg_preaggregation_mode),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_mem_quota_query_per_node",
@@ -712,6 +808,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tiflash_query_spill_ratio",
@@ -726,6 +824,8 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tiflash_query_spill_ratio),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tikv_client_read_timeout",
@@ -740,5 +840,7 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
 ];

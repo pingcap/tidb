@@ -37,6 +37,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_plan_replayer_continuous_capture",
@@ -51,6 +53,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_stmt_summary",
@@ -65,6 +69,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_telemetry",
@@ -79,6 +85,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_enable_top_sql",
@@ -93,6 +101,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_last_plan_replayer_token",
@@ -107,6 +117,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_metric_query_range_duration",
@@ -121,6 +133,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_metric_query_step",
@@ -135,6 +149,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_simplified_metrics",
@@ -149,6 +165,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_enable_persistent",
@@ -163,6 +181,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_backups",
@@ -177,6 +197,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_days",
@@ -191,6 +213,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_size",
@@ -205,6 +229,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_filename",
@@ -219,6 +245,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_group_by_user",
@@ -233,6 +261,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_history_size",
@@ -247,6 +277,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_internal_query",
@@ -261,6 +293,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_max_sql_length",
@@ -275,6 +309,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_max_stmt_count",
@@ -289,6 +325,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_persist_evicted",
@@ -303,6 +341,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_stmt_summary_refresh_interval",
@@ -317,6 +357,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_top_sql_max_meta_count",
@@ -331,6 +373,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_top_sql_max_time_series_count",
@@ -345,6 +389,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_workload_repository_active_sampling_interval",
@@ -359,6 +405,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_workload_repository_dest",
@@ -373,6 +421,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_workload_repository_dest),
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_workload_repository_retention_days",
@@ -387,6 +437,8 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
     SysVarDef {
         name: "tidb_workload_repository_snapshot_interval",
@@ -401,5 +453,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
+        set_session: None,
+        set_global: None,
     },
 ];
