@@ -441,7 +441,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols, possibleMVIndexPaths[idx].Index)
+		accessFilters, remainingFilters, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols, possibleMVIndexPaths[idx].Index)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -462,9 +462,12 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 		var partialPaths4ThisMvIndex []*util.AccessPath
 		for _, mvFilterMu := range mvFilterMutations {
 			// derive each mutation access filters
-			accessFilters[mvColOffset] = mvFilterMu
+			attemptFilters := slices.Clone(accessFilters)
+			attemptFilters[mvColOffset] = mvFilterMu
 
-			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx], ds.TableStats.HistColl)
+			partialPaths, isIntersection, ok, usedFilters, _, err := buildPartialPaths4MVIndexWithRangeFallback(
+				ds.SCtx(), attemptFilters, remainingFilters, idxCols, possibleMVIndexPaths[idx], ds.TableStats.HistColl,
+			)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, err
@@ -479,7 +482,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 			// 2: it's an original intersection type:
 			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
 			if len(partialPaths) == 1 || isIntersection {
-				for _, accessF := range accessFilters {
+				for _, accessF := range usedFilters {
 					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
 				partialPaths4ThisMvIndex = append(partialPaths4ThisMvIndex, partialPaths...)
@@ -757,7 +760,9 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			continue
 		}
 
-		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, ds.PossibleAccessPaths[idx], ds.TableStats.HistColl)
+		partialPaths, isIntersection, ok, accessFilters, remainingFilters, err := buildPartialPaths4MVIndexWithRangeFallback(
+			ds.SCtx(), accessFilters, remainingFilters, idxCols, ds.PossibleAccessPaths[idx], ds.TableStats.HistColl,
+		)
 		if err != nil {
 			return err
 		}
@@ -902,6 +907,84 @@ func buildPartialPaths4MVIndexWithPath(
 		}
 	}
 	return
+}
+
+// buildPartialPaths4MVIndexWithRangeFallback retries a rejected point candidate using a deferred range on the same
+// index column. Later-column access predicates are left as remaining filters because a range terminates index-prefix
+// access.
+func buildPartialPaths4MVIndexWithRangeFallback(
+	sctx planctx.PlanContext,
+	accessFilters, remainingFilters []expression.Expression,
+	idxCols []*expression.Column,
+	path *util.AccessPath,
+	histColl *statistics.HistColl,
+) (
+	partialPaths []*util.AccessPath,
+	isIntersection bool,
+	ok bool,
+	usedAccessFilters, usedRemainingFilters []expression.Expression,
+	err error,
+) {
+	partialPaths, isIntersection, ok, err = buildPartialPaths4MVIndexWithPath(sctx, accessFilters, idxCols, path, histColl)
+	if ok || err != nil {
+		return partialPaths, isIntersection, ok, accessFilters, remainingFilters, err
+	}
+
+	fallbackAccessFilters, fallbackRemainingFilters, found := collectMVIndexRangeFallback(
+		sctx, accessFilters, remainingFilters, idxCols,
+	)
+	if !found {
+		return nil, false, false, accessFilters, remainingFilters, nil
+	}
+	partialPaths, isIntersection, ok, err = buildPartialPaths4MVIndexWithPath(sctx, fallbackAccessFilters, idxCols, path, histColl)
+	if !ok || err != nil {
+		return nil, false, ok, accessFilters, remainingFilters, err
+	}
+	return partialPaths, isIntersection, true, fallbackAccessFilters, fallbackRemainingFilters, nil
+}
+
+// collectMVIndexRangeFallback replaces a point predicate with deferred range predicates on the same column and drops
+// later-column access predicates, which cannot be used after a range in a composite index.
+func collectMVIndexRangeFallback(
+	sctx planctx.PlanContext,
+	accessFilters, remainingFilters []expression.Expression,
+	idxCols []*expression.Column,
+) (fallbackAccessFilters, fallbackRemainingFilters []expression.Expression, ok bool) {
+	mvColIdx := arrayColOffset(sctx, idxCols)
+	for colIdx := mvColIdx + 1; colIdx < len(idxCols); colIdx++ {
+		pointFilterIdx := -1
+		for i, filter := range accessFilters {
+			if matched, tp := checkAccessFilter4IdxCol(sctx, filter, idxCols[colIdx]); matched && tp == eqOrInOnNonMVColTp {
+				pointFilterIdx = i
+				break
+			}
+		}
+		if pointFilterIdx == -1 {
+			continue
+		}
+
+		deferredRanges := make([]expression.Expression, 0, 2)
+		deferredRangeIdx := make([]bool, len(remainingFilters))
+		for i, filter := range remainingFilters {
+			if matched, tp := checkAccessFilter4IdxCol(sctx, filter, idxCols[colIdx]); matched && tp == rangeOnNonMVColTp {
+				deferredRanges = append(deferredRanges, filter)
+				deferredRangeIdx[i] = true
+			}
+		}
+		if len(deferredRanges) == 0 {
+			continue
+		}
+
+		fallbackAccessFilters = append(slices.Clone(accessFilters[:pointFilterIdx]), deferredRanges...)
+		for i, filter := range remainingFilters {
+			if !deferredRangeIdx[i] {
+				fallbackRemainingFilters = append(fallbackRemainingFilters, filter)
+			}
+		}
+		fallbackRemainingFilters = append(fallbackRemainingFilters, accessFilters[pointFilterIdx:]...)
+		return fallbackAccessFilters, fallbackRemainingFilters, true
+	}
+	return nil, nil, false
 }
 
 func buildPartialPaths4MVIndex(
@@ -1126,6 +1209,11 @@ func collectFilters4MVIndex(
 				continue
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
+				if tp == eqOrInOnNonMVColTp && isPrefixIdxCol(idxInfo, z, col) {
+					// Ranger cannot fully resolve point predicates on prefix columns. Stop here so the predicate and
+					// every later-column predicate remain filters.
+					break
+				}
 				if tp == rangeOnNonMVColTp {
 					// A point predicate may still follow and let us use the next index column.
 					if z > mvColIdx && !isPrefixIdxCol(idxInfo, z, col) {
@@ -1213,6 +1301,11 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 				continue
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
+				if tp == eqOrInOnNonMVColTp && isPrefixIdxCol(idxInfo, z, col) {
+					// Ranger cannot fully resolve point predicates on prefix columns. Stop here so the predicate and
+					// every later-column predicate remain filters.
+					break
+				}
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.

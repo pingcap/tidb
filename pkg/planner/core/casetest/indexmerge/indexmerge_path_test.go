@@ -131,6 +131,43 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		// A range that excludes an IN value must still be enforced.
 		tk.MustQuery(query + "c > 2 and c in (2,3) and d=1").Check(testkit.Rows("2"))
 	})
+
+	t.Run("PrefixColumnPointPredicate", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table mv_prefix(id int primary key, j json, c int, d varchar(20), index m((cast(j as signed array)), c, d(2)))")
+		tk.MustExec(`insert into mv_prefix values
+			(1,'[1]',2,'abcd'), (2,'[1]',3,'abcd'), (3,'[1]',2,'abce'),
+			(4,'[1]',1,'abcd'), (5,'[2]',2,'abcd')`)
+		const prefixQuery = "select /*+ use_index_merge(mv_prefix,m) */ id from mv_prefix where 1 member of(j) and "
+		for _, pred := range []string{"c > 1 and c in (2,3)", "c in (2,3) and c > 1"} {
+			sql := prefixQuery + pred + " and d = 'abcd' order by id"
+			tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
+			plan := tk.MustQuery("explain format='brief' " + sql)
+			plan.CheckContain("IndexMerge")
+			plan.CheckContain("range:[1 2,1 3]")
+		}
+	})
+
+	t.Run("RangeLimitFallsBackToRangePredicate", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table mv_range_limit(id int primary key, j json, c int, index m((cast(j as signed array)), c))")
+		tk.MustExec(`insert into mv_range_limit values
+			(1,'[1]',2), (2,'[1]',4), (3,'[1]',1), (4,'[2]',2)`)
+		oldRangeMaxSize := fmt.Sprint(tk.MustQuery("select @@tidb_opt_range_max_size").Rows()[0][0])
+		defer tk.MustExec("set @@tidb_opt_range_max_size = " + oldRangeMaxSize)
+		tk.MustExec("set @@tidb_opt_range_max_size = 1024")
+		inValues := make([]string, 128)
+		for i := range inValues {
+			inValues[i] = fmt.Sprint((i + 1) * 2)
+		}
+		sql := "select /*+ use_index_merge(mv_range_limit,m) */ id from mv_range_limit where 1 member of(j) and c > 1 and c in (" + strings.Join(inValues, ",") + ") order by id"
+		tk.MustQuery(sql).Check(testkit.Rows("1", "2"))
+		plan := tk.MustQuery("explain format='brief' " + sql)
+		plan.CheckContain("IndexMerge")
+		plan.CheckContain("range:(1 1,1 +inf]")
+	})
 }
 
 func TestMultiMVIndexRandom(t *testing.T) {

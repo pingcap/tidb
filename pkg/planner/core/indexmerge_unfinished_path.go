@@ -67,6 +67,8 @@ type unfinishedAccessPath struct {
 	path *util.AccessPath
 
 	usableFilters []expression.Expression
+	// rangeFallbackFilters preserves deferred ranges for a point candidate that Ranger may reject at build time.
+	rangeFallbackFilters []expression.Expression
 
 	// To avoid regression and keep the same behavior as the previous implementation, we collect access filters in two
 	// methods:
@@ -204,6 +206,7 @@ func initUnfinishedPathsFromExpr(
 			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 				ret[i].initedWithValidRange = true
 				ret[i].usableFilters = accessFilters
+				ret[i].rangeFallbackFilters = remainingFilters
 				ret[i].needKeepFilter = len(remainingFilters) > 0
 				continue
 			}
@@ -334,6 +337,7 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 			if pathListFromANDItem[i].initedWithValidRange ||
 				slices.Contains(pathListFromANDItem[i].idxColHasUsableFilter, true) {
 				path.usableFilters = append(path.usableFilters, pathListFromANDItem[i].usableFilters...)
+				path.rangeFallbackFilters = append(path.rangeFallbackFilters, pathListFromANDItem[i].rangeFallbackFilters...)
 			}
 		}
 	}
@@ -385,9 +389,12 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndexWithPath(
+				remainingForFallback := append(slices.Clone(remainingFilters), unfinishedPath.rangeFallbackFilters...)
+				var usedRemainingFilters []expression.Expression
+				oneAlternative, isIntersection, ok, _, usedRemainingFilters, err = buildPartialPaths4MVIndexWithRangeFallback(
 					ds.SCtx(),
 					accessFilters,
+					remainingForFallback,
 					idxCols,
 					unfinishedPath.path,
 					ds.TableStats.HistColl,
@@ -397,7 +404,7 @@ func buildIntoAccessPath(
 					continue
 				}
 
-				needSelection = len(remainingFilters) > 0
+				needSelection = len(usedRemainingFilters) > 0
 			} else {
 				// case 2: non-mv index
 				var path *util.AccessPath
