@@ -778,9 +778,7 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         )),
         cluster_ddl,
         Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
-            Arc::new(opener.clone()),
             users.accounts(),
-            IN_PROCESS_TIMEOUT,
             None,
         )),
         Arc::new(crate::cluster_sysvar_writer::RealClusterSysvarWriter::new(

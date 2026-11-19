@@ -43,19 +43,12 @@
 //! `ClusterDdl`: tidb_ddl::worker::ClusterDdl
 
 use std::sync::Arc;
-use std::time::Duration;
-use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_infoschema::cluster_catalog::load_info_schema;
-use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
-use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
 
 use crate::cluster_privileges::{priv_reload_event, PrivilegeEvent};
-use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
-use tidb_privilege::load::registry_from_cluster;
 
 /// This node's one route to the cluster's stored accounts.
 ///
@@ -76,16 +69,11 @@ pub trait ClusterAccountWriter: Send + Sync {
 
 /// The production account writer: reads of the cluster's tables, the live
 /// table's reload and the etcd announcement.
-pub struct RealClusterAccountWriter<S = tikv_client::PdRpcClient>
-where
-    S: StoreClient,
-{
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
+pub struct RealClusterAccountWriter {
     /// The node's LIVE account table -- the one every session, the login path
     /// and `SHOW GRANTS` already hold a clone of. Reloaded only after a
     /// commit.
     live: PrivilegeRegistry,
-    timeout: Duration,
     /// The etcd client this node announces account changes through, so peers'
     /// privilege watches fire promptly. `None` leaves them to their reload
     /// tick; a failed announcement is a warning, never a failed statement.
@@ -95,23 +83,13 @@ where
     server_id: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
-impl<S> RealClusterAccountWriter<S>
-where
-    S: StoreClient,
-{
+impl RealClusterAccountWriter {
     /// Binds the writer to an already-connected authority and the live
     /// account table a successful change reloads.
     #[must_use]
-    pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener<S>>,
-        live: PrivilegeRegistry,
-        timeout: Duration,
-        notifier: Option<Arc<EtcdClient>>,
-    ) -> Self {
+    pub fn new(live: PrivilegeRegistry, notifier: Option<Arc<EtcdClient>>) -> Self {
         Self {
-            opener,
             live,
-            timeout,
             notifier,
             server_id: Arc::new(|| 0),
         }
@@ -125,10 +103,7 @@ where
     }
 }
 
-impl<S> ClusterAccountWriter for RealClusterAccountWriter<S>
-where
-    S: StoreClient,
-{
+impl ClusterAccountWriter for RealClusterAccountWriter {
     fn notify_all_privileges_changed(&self) -> Result<(), String> {
         self.notify_update(&PrivilegeEvent {
             all: true,
@@ -136,26 +111,10 @@ where
         })
     }
 
+    // Go loads `mysql.*` through the privilege handle's system session
+    // (`LoadAll` over restricted SQL).
     fn load_accounts(&self) -> Result<PrivilegeRegistry, String> {
-        let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
-        let registry = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            let bootstrap =
-                read_bootstrap_state(&mut snapshot, &catalog).map_err(|error| error.to_string())?;
-            if !bootstrap.already_bootstrapped() {
-                return Err(format!(
-                    "this node cannot change the accounts of a cluster that reports {bootstrap}"
-                ));
-            }
-            let loaded =
-                load_cluster_privileges(&mut snapshot, &catalog).map_err(|e| e.to_string())?;
-            registry_from_cluster(&loaded).registry
-        };
-        transaction
-            .finish_without_writes()
-            .map_err(|error| error.to_string())?;
-        Ok(registry)
+        self.live.load_current()
     }
 
     fn notify_update_privilege(&self, users: &[String]) -> Result<(), String> {
@@ -166,10 +125,7 @@ where
     }
 }
 
-impl<S> RealClusterAccountWriter<S>
-where
-    S: StoreClient,
-{
+impl RealClusterAccountWriter {
     /// Go `Domain.notifyUpdatePrivilege`: the etcd announcement, stamped
     /// with this server's ID, then `privReloadEvent` on this node's handle.
     fn notify_update(&self, event: &PrivilegeEvent) -> Result<(), String> {

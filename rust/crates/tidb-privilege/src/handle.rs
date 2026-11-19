@@ -93,6 +93,22 @@ impl PrivilegeRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = data;
     }
 
+    /// Go `MySQLPrivilege.LoadAll` through this registry's session pool,
+    /// without publishing: the cluster's accounts as of now, for one account
+    /// statement to validate against.
+    ///
+    /// # Errors
+    ///
+    /// No session pool, or the load failed.
+    pub fn load_current(&self) -> Result<PrivilegeRegistry, String> {
+        let mut loaded = None;
+        self.privilege_loader()?.with_tables(&mut |tables| {
+            loaded = Some(load_all(tables)?);
+            Ok(())
+        })?;
+        Ok(crate::load::registry_from_cluster(&loaded.expect("a successful load")).registry)
+    }
+
     /// Go `Handle.UpdateAll`: every user's rows.
     ///
     /// # Errors

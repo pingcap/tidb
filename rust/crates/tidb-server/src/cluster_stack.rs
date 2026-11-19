@@ -1069,12 +1069,7 @@ fn new_cluster_domain(
         )),
         cluster_ddl,
         Arc::new(
-            RealClusterAccountWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.accounts(),
-                CONTROL_PLANE_TIMEOUT,
-                etcd.clone(),
-            )
+            RealClusterAccountWriter::new(users.accounts(), etcd.clone())
             .with_server_id(Arc::clone(&server_id)),
         ),
         Arc::new(RealClusterSysvarWriter::new(

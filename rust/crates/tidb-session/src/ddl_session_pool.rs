@@ -135,7 +135,7 @@ impl NodeDdlSessionPool {
         let domain = Domain::new(
             Arc::new(RealClusterTransactions::new(opener.clone(), timeout)), ddl,
             Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
-                Arc::new(opener.clone()), privileges.clone(), timeout, None,
+                privileges.clone(), None,
             )),
             Arc::new(crate::cluster_sysvar_writer::RealClusterSysvarWriter::new(
                 Arc::new(opener.clone()), globals.clone(), timeout, None, Default::default(), worker_pool.clone(),
