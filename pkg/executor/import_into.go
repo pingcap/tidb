@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -101,6 +102,16 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 		"inheritMViewMaintenanceFlagApplied",
 		childVars.InMViewMaintenance,
 	)
+}
+
+// Open implements the Executor Open interface.
+func (e *ImportIntoExec) Open(ctx context.Context) error {
+	// Reject new user imports before opening children so maintenance admission
+	// does not start query execution or submit tasks.
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("IMPORT INTO")
+	}
+	return e.BaseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
