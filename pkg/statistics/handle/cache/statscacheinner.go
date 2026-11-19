@@ -131,6 +131,11 @@ func (sc *statsCache) Version() uint64 {
 func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForwardStatsCache bool) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
+		// A background update may have read an older snapshot before LOAD STATS
+		// published newer statistics for this table.
+		if oldTbl, ok := sc.c.Get(id); ok && oldTbl.Version > tbl.Version {
+			continue
+		}
 		metrics.UpdateCounter.Inc()
 		sc.c.Put(id, tbl)
 	}

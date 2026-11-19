@@ -17,6 +17,7 @@ package cache
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
@@ -70,6 +71,79 @@ func TestCacheOfBatchUpdate(t *testing.T) {
 	require.Len(t, cached.toDelete, 0)
 	require.Len(t, markedAsDeleted, 4)
 	require.Equal(t, int64(9), markedAsDeleted[3])
+}
+
+func TestStatsCacheUpdateSkipsStaleTables(t *testing.T) {
+	for _, skipMoveForward := range []bool{false, true} {
+		name := "full_update"
+		if skipMoveForward {
+			name = "targeted_update"
+		}
+		t.Run(name, func(t *testing.T) {
+			sc, err := newStatsCache()
+			require.NoError(t, err)
+			defer sc.Close()
+
+			stale := newMockTable(t, 1, false, 100, 0, 0)
+			stale.Version = 10
+			stale.SetIdx(9, &statistics.Index{Info: &model.IndexInfo{ID: 9}})
+			other := newMockTable(t, 2, false, 100, 0, 0)
+			other.Version = 5
+			pending := newCacheOfBatchUpdate(batchSizeOfUpdateBatch, func(updated []*statistics.Table, deleted []int64) {
+				sc.Update(updated, deleted, skipMoveForward)
+			})
+			pending.addToUpdate(stale)
+			pending.addToUpdate(other)
+
+			// LOAD STATS publishes the complete index stats after the background
+			// update has read an older snapshot, but before it flushes its batch.
+			loaded := stale.CopyAs(statistics.IndexMapWritable)
+			loaded.Version = 20
+			loaded.SetIdx(9, &statistics.Index{
+				Info:              stale.GetIdx(9).Info,
+				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			})
+			sc.Update([]*statistics.Table{loaded}, nil, true)
+			sc.WaitForAsyncUpdates()
+			cached, ok := sc.Get(1)
+			require.True(t, ok)
+			require.True(t, cached.GetIdx(9).IsFullLoad())
+
+			pending.flush()
+			sc.WaitForAsyncUpdates()
+			cached, ok = sc.Get(1)
+			require.True(t, ok)
+			require.Equal(t, loaded.Version, cached.Version)
+			require.True(t, cached.GetIdx(9).IsFullLoad())
+			cached, ok = sc.Get(2)
+			require.True(t, ok)
+			require.Equal(t, other.Version, cached.Version)
+
+			// Equal versions must still allow schema metadata refreshes.
+			refreshed := loaded.CopyAs(statistics.MetaOnly)
+			refreshed.TblInfoUpdateTS++
+			sc.Update([]*statistics.Table{refreshed}, nil, skipMoveForward)
+			sc.WaitForAsyncUpdates()
+			cached, ok = sc.Get(1)
+			require.True(t, ok)
+			require.Same(t, refreshed, cached)
+
+			newer := refreshed.CopyAs(statistics.MetaOnly)
+			newer.Version = 30
+			sc.Update([]*statistics.Table{newer}, []int64{2}, skipMoveForward)
+			sc.WaitForAsyncUpdates()
+			cached, ok = sc.Get(1)
+			require.True(t, ok)
+			require.Same(t, newer, cached)
+			_, ok = sc.Get(2)
+			require.False(t, ok)
+			if skipMoveForward {
+				require.Zero(t, sc.Version())
+			} else {
+				require.Equal(t, newer.Version, sc.Version())
+			}
+		})
+	}
 }
 
 func TestUpdateStatsHealthyMetrics(t *testing.T) {
