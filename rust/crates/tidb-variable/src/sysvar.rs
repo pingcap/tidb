@@ -607,6 +607,21 @@ pub struct SysVarDef {
 pub trait VarsContext {
     /// The current value of a sibling variable in the scope being set.
     fn read(&self, name: &str) -> Option<String>;
+    /// Go `vars.systems[name]`: the SESSION's value, whatever scope is
+    /// being set (Go's closures receive the session's `vars` in every
+    /// scope).
+    fn session_read(&self, name: &str) -> Option<String> {
+        self.read(name)
+    }
+    /// Go `vars.StmtCtx.StmtType == "Set"`: the value comes from a user's
+    /// `SET` statement, not the handshake or a cache load.
+    fn stmt_is_set(&self) -> bool {
+        false
+    }
+    /// Go `vars.TLSConnectionState != nil`.
+    fn tls_connection_secure(&self) -> bool {
+        false
+    }
     /// Go `vars.StmtCtx.AppendWarning`. A caller that collects no warnings
     /// drops them.
     fn append_warning(&self, _warning: VarWarning) {}
@@ -627,6 +642,8 @@ pub struct VarWarning {
     pub error: Option<&'static tidb_terror::TerrorError>,
     /// The warning text.
     pub message: String,
+    /// Go's statement error, which `SHOW WARNINGS` lists at `Error` level.
+    pub is_error: bool,
 }
 
 /// Go `SysVar.SetSession` / `SysVar.SetGlobal`: `(vars, normalizedValue)`,

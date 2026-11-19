@@ -32,7 +32,7 @@ pub(super) type Lookup<'a> = Option<&'a dyn VarsContext>;
 /// the caller collects warnings.
 pub(super) fn warn(lookup: Lookup<'_>, error: Option<&'static tidb_terror::TerrorError>, message: &str) {
     if let Some(cx) = lookup {
-        cx.append_warning(VarWarning { error, message: message.to_owned() });
+        cx.append_warning(VarWarning { error, message: message.to_owned(), is_error: false });
     }
 }
 
@@ -933,6 +933,23 @@ pub(super) fn max_allowed_packet(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
+    // Go: `if vars.StmtCtx.StmtType == "Set" && scope == ScopeSession`, the
+    // session copy is read-only to a SET. `ValidateFromType` has already
+    // clamped the value and appended its 1292, so both are reported.
+    if scope == SCOPE_SESSION && lookup.is_some_and(VarsContext::stmt_is_set) {
+        if validated.truncated {
+            warn(
+                lookup,
+                Some(&crate::variable_errors::ERR_TRUNCATED_WRONG_VALUE),
+                &format!("Truncated incorrect {} value: '{original}'", def.name),
+            );
+        }
+        return Err(ValidationError::SqlError(
+            crate::variable_errors::ERR_READ_ONLY
+                .gen_with_stack_by_args(&["SESSION".into(), def.name.to_owned().into(), "GLOBAL".into()])
+                .to_sql_error(),
+        ));
+    }
     if let Ok(parsed) = validated.value.parse::<u64>() {
         let remainder = parsed % 1024;
         if remainder != 0 {
@@ -2003,6 +2020,125 @@ pub(super) fn tidb_mem_quota_query(
     if value > 0 && value < 128 {
         validated.value = "128".to_owned();
         validated.truncated = true;
+    }
+    Ok(validated)
+}
+
+/// Go `checkReadOnly` (`varsutil.go`), the `Validation` of the variables
+/// whose ON the server only pretends to honor (`tx_read_only`,
+/// `offline_mode`, `sql_auto_is_null`, ...): turning one ON is refused with
+/// 1235 unless `tidb_enable_noop_functions` -- the session's for a session
+/// write, the global table's for a global one -- allows it, or only warned
+/// under `WARN`.
+pub(super) fn check_read_only(
+    def: &SysVarDef,
+    validated: Validated,
+    _original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let clause = noop_gated_clause(def.name).unwrap_or("READ ONLY");
+    if validated.value != "ON" {
+        return Ok(validated);
+    }
+    let Some(cx) = lookup else {
+        return Ok(validated);
+    };
+    let message = format!(
+        "function {clause} has only noop implementation in tidb now, use \
+         tidb_enable_noop_functions to enable these functions"
+    );
+    let mode = if scope == SCOPE_GLOBAL {
+        cx.read("tidb_enable_noop_functions")
+    } else {
+        cx.session_read("tidb_enable_noop_functions")
+    }
+    .unwrap_or_else(|| "OFF".to_owned())
+    .to_ascii_uppercase();
+    match mode.as_str() {
+        "ON" | "1" => Ok(validated),
+        "WARN" => {
+            warn(lookup, Some(&crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL), &message);
+            Ok(validated)
+        }
+        _ => {
+            // The statement's error, which SHOW WARNINGS lists too.
+            cx.append_warning(VarWarning {
+                error: Some(&crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL),
+                message,
+                is_error: true,
+            });
+            Err(ValidationError::SqlError(
+                crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL
+                    .gen_with_stack_by_args(&[clause.into()])
+                    .to_sql_error(),
+            ))
+        }
+    }
+}
+
+/// Go `checkIsolationLevel` (`varsutil.go`), the `Validation` of
+/// `tx_isolation` and `transaction_isolation`: SERIALIZABLE and
+/// READ-UNCOMMITTED are refused unless the session's
+/// `tidb_skip_isolation_level_check` is ON, which stores them with a
+/// warning.
+pub(super) fn check_isolation_level(
+    _def: &SysVarDef,
+    validated: Validated,
+    _original: &str,
+    _scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let normalized = validated.value.as_str();
+    if normalized != "SERIALIZABLE" && normalized != "READ-UNCOMMITTED" {
+        return Ok(validated);
+    }
+    let skip = lookup
+        .and_then(|cx| cx.session_read("tidb_skip_isolation_level_check"))
+        .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
+    if !skip {
+        return Err(ValidationError::SqlError(
+            crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL
+                .gen_with_stack_by_args(&[normalized.to_owned().into()])
+                .to_sql_error(),
+        ));
+    }
+    warn(
+        lookup,
+        Some(&crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL),
+        &format!(
+            "The isolation level '{normalized}' is not supported. Set \
+             tidb_skip_isolation_level_check=1 to skip this error"
+        ),
+    );
+    Ok(validated)
+}
+
+/// Go `require_secure_transport`'s `Validation`: a SET may turn it ON only
+/// without SEM and over a TLS connection.
+pub(super) fn require_secure_transport(
+    _def: &SysVarDef,
+    validated: Validated,
+    _original: &str,
+    _scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let Some(cx) = lookup.filter(|cx| cx.stmt_is_set()) else {
+        return Ok(validated);
+    };
+    if validated.value == "ON" {
+        if tidb_config::config_tree::config::get_global_config().security.enable_sem {
+            return Err(ValidationError::Refused(
+                "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled"
+                    .to_owned(),
+            ));
+        }
+        if !cx.tls_connection_secure() {
+            return Err(ValidationError::Refused(
+                "require_secure_transport can only be set to ON if the connection issuing the change is secure"
+                    .to_owned(),
+            ));
+        }
     }
     Ok(validated)
 }

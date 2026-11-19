@@ -3172,3 +3172,31 @@ fn materialized_view_sysvars_answer_as_go_master() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// Go `require_secure_transport`'s `Validation`: a SET may turn it ON only
+/// over a TLS connection (captured with `./gorun`, whose session has none),
+/// and never with SEM enabled; OFF is always accepted.
+#[test]
+fn require_secure_transport_validation_follows_go() {
+    use tidb_config::config_tree::config::{get_global_config, store_global_config, update_global};
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let error = session
+        .run("set global require_secure_transport = ON")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1105, "require_secure_transport can only be set to ON if the connection issuing the change is secure")
+    );
+    session.run("set global require_secure_transport = OFF").unwrap();
+    assert_eq!(scalar_text(&mut session, "select @@global.require_secure_transport").as_deref(), Some("0"));
+
+    let previous = get_global_config();
+    update_global(|config| config.security.enable_sem = true);
+    let refused = session.run("set global require_secure_transport = ON");
+    store_global_config((*previous).clone());
+    assert_eq!(
+        refused.unwrap_err().to_mysql_error().message,
+        "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled"
+    );
+}

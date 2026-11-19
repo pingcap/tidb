@@ -77,9 +77,6 @@ impl SessionVars {
     ///
     /// The variable's scope, type or `Validation` refusal.
     pub fn set_system_var(&mut self, name: &str, value: String) -> Result<(), VarError> {
-        self.check_noop_gated_variable(name, &value, false)?;
-        self.check_isolation_level(name, &value)?;
-        self.check_max_allowed_packet_scope(name, &value, false)?;
         self.run_set_closures(name, &value, crate::sysvar::SCOPE_SESSION)?;
         let truncated = self.set_system(name, value.clone())?;
         if truncated {
@@ -115,28 +112,11 @@ impl SessionVars {
         value: String,
         is_global: bool,
     ) -> Result<(), VarError> {
-        self.check_noop_gated_variable(name, &value, is_global)?;
-        self.check_isolation_level(name, &value)?;
         self.run_set_closures(
             name,
             &value,
             if is_global { crate::sysvar::SCOPE_GLOBAL } else { crate::sysvar::SCOPE_INSTANCE },
         )?;
-        // Go's `require_secure_transport` Validation closure runs after Bool
-        // normalization and the SET GLOBAL privilege check, but before
-        // SetGlobal mutates the live table. Direct startup/cache loads do not
-        // run this SQL-only guard.
-        if is_global && name.eq_ignore_ascii_case("require_secure_transport") {
-            if let Some(definition) = crate::sysvar::get_sys_var(name) {
-                let normalized = definition
-                    .validate_in_scope(&value, crate::sysvar::SCOPE_GLOBAL)
-                    .map_err(|error| validation_var_error(name, &value, error))?;
-                if normalized.value == "ON" && self.tls_connection_state.is_none() {
-                    return Err(tidb_terror::MysqlError::unknown("require_secure_transport can only be set to ON if the connection issuing the change is secure"
-                            .to_owned()));
-                }
-            }
-        }
         // Go TiDBSchemaCacheSize.SetGlobal persists and resizes before
         // publishing the vardef value; INSTANCE invokes the same callback.
         let schema_cache_size = name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE);
@@ -196,181 +176,9 @@ impl SessionVars {
         }
     }
 
-    /// Go `varsutil.go:checkReadOnly` and the identical branch inlined in
-    /// `sql_auto_is_null`'s own registration: turning one of these ON is
-    /// refused with 1235 unless `tidb_enable_noop_functions` allows it,
-    /// because the server does not actually do what the setting names.
-    /// Turning one OFF is always accepted, and so is a value the registry
-    /// would reject -- that is the store's job, and Go likewise validates the
-    /// type before it runs this hook.
-    fn check_noop_gated_variable(
-        &mut self,
-        name: &str,
-        value: &str,
-        is_global: bool,
-    ) -> Result<(), VarError> {
-        let Some(clause) = crate::sysvar::noop_gated_clause(name) else {
-            return Ok(());
-        };
-        let turns_on = crate::sysvar::get_sys_var(name)
-            .and_then(|def| def.validate(value).ok())
-            .is_some_and(|validated| validated.value == "ON");
-        if !turns_on {
-            return Ok(());
-        }
-        let message = format!(
-            "function {clause} has only noop implementation in tidb now, use \
-             tidb_enable_noop_functions to enable these functions"
-        );
-        match self.noop_funcs_mode(is_global) {
-            NoopFuncsMode::On => Ok(()),
-            NoopFuncsMode::Off => {
-                // Go appends the statement error into the warning buffer as
-                // well, so SHOW WARNINGS after the refused statement carries
-                // the same 1235 row.
-                self.append_stmt_warning(
-                    WarningLevel::Error,
-                    &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL,
-                    message,
-                );
-                Err(tidb_terror::MysqlError::from_terror(
-                    &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL
-                        .gen_with_stack_by_args(&[(clause).into()]),
-                ))
-            }
-            NoopFuncsMode::Warn => {
-                self.append_stmt_warning(WarningLevel::Warning, &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL, message);
-                Ok(())
-            }
-        }
-    }
 
 
-    /// Go `checkIsolationLevel` (`pkg/sessionctx/variable/varsutil.go:116`),
-    /// wired to both spellings at `sysvar.go:2100` (`tx_isolation`) and
-    /// `:2106` (`transaction_isolation`):
-    ///
-    /// ```text
-    /// if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-    ///     returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
-    ///     if !TiDBOptOn(vars.systems[vardef.TiDBSkipIsolationLevelCheck]) {
-    ///         return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
-    ///     }
-    ///     vars.StmtCtx.AppendWarning(returnErr)
-    /// }
-    /// ```
-    ///
-    /// The escape hatch does not change the value: with the check skipped the
-    /// level is STORED and read back, it merely warns. The two accepted
-    /// levels (`READ-COMMITTED`, `REPEATABLE-READ`) pass through untouched.
-    ///
-    /// This lives here rather than in `SysVarDef::run_validation` because
-    /// both halves need the session: the skip switch is read from it, and the
-    /// warning is appended to it.
-    fn check_isolation_level(&mut self, name: &str, value: &str) -> Result<(), VarError> {
-        if !name.eq_ignore_ascii_case("transaction_isolation")
-            && !name.eq_ignore_ascii_case("tx_isolation")
-        {
-            return Ok(());
-        }
-        // Go tests the NORMALIZED value: the entry is `TypeEnum`, so
-        // `serializable` and the ordinal `3` both arrive here as
-        // `SERIALIZABLE`.
-        let Some(normalized) = crate::sysvar::get_sys_var(name)
-            .and_then(|def| def.normalize_by_type(value, crate::sysvar::SCOPE_SESSION).ok())
-            .map(|validated| validated.value)
-        else {
-            return Ok(());
-        };
-        if normalized != "SERIALIZABLE" && normalized != "READ-UNCOMMITTED" {
-            return Ok(());
-        }
-        let skip = self
-            .get_system("tidb_skip_isolation_level_check")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
-        if !skip {
-            return Err(tidb_terror::MysqlError::from_terror(
-                &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL
-                    .gen_with_stack_by_args(&[(normalized).into()]),
-            ));
-        }
-        self.append_stmt_warning(
-            WarningLevel::Warning,
-            &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL,
-            format!(
-                "The isolation level '{normalized}' is not supported. Set \
-                 tidb_skip_isolation_level_check=1 to skip this error"
-            ),
-        );
-        Ok(())
-    }
 
-    /// Go's `max_allowed_packet` `Validation` (`sysvar.go:2193`) refuses a
-    /// SESSION write outright:
-    ///
-    /// ```text
-    /// if scope == vardef.ScopeSession {
-    ///     err := ErrReadOnly.GenWithStackByArgs("SESSION", vardef.MaxAllowedPacket, "GLOBAL")
-    ///     return normalizedValue, err
-    /// }
-    /// ```
-    ///
-    /// The variable still HAS session scope -- `SELECT @@max_allowed_packet`
-    /// answers from the session copy -- so this is a write-side refusal only,
-    /// which is why it cannot be expressed as a scope bit.
-    ///
-    /// Go guards it with `vars.StmtCtx.StmtType == "Set"`, so only a user
-    /// `SET` is refused; the handshake's own seeding is not.
-    ///
-    /// The 1024-rounding half of the same closure is in
-    /// [`crate::sysvar::SysVarDef::run_validation`], where the clamp flag already
-    /// travels to the statement as `ErrTruncatedWrongValue` (1292).
-    ///
-    /// # The refusal comes AFTER the type validation, not before
-    ///
-    /// `SysVar.Validate` (`pkg/sessionctx/variable/variable.go:219`) is
-    /// `validateScope` -> `ValidateFromType` -> `Validation`, and the closure
-    /// above is the LAST of the three. `ValidateFromType` has therefore
-    /// already clamped the value into `[MinValue, MaxValue]` and appended its
-    /// own `ErrTruncatedWrongValue` by the time the read-only refusal is
-    /// reached, so the statement reports BOTH. Captured from TiDB:
-    ///
-    /// ```text
-    /// set @@Max_Allowed_Packet=100;
-    ///   ERROR 1621 SESSION variable 'max_allowed_packet' is read-only.
-    ///              Use SET GLOBAL to assign the value
-    ///   Warning 1292 Truncated incorrect max_allowed_packet value: '100'
-    /// set @@max_allowed_packet='abc';
-    ///   ERROR 1232 Incorrect argument type to variable 'max_allowed_packet'
-    /// ```
-    ///
-    /// The second capture is why the type check runs here rather than being
-    /// skipped on the refusal path: a value the TYPE rejects never reaches
-    /// the closure at all, so 1232 outranks 1621.
-    fn check_max_allowed_packet_scope(
-        &mut self,
-        name: &str,
-        value: &str,
-        is_node_wide: bool,
-    ) -> Result<(), VarError> {
-        if is_node_wide || !name.eq_ignore_ascii_case("max_allowed_packet") {
-            return Ok(());
-        }
-        if let Some(def) = crate::sysvar::get_sys_var(name) {
-            match def.normalize_by_type(value, crate::sysvar::SCOPE_SESSION) {
-                Ok(validated) if validated.truncated => self.warn_truncated_var(name, value),
-                Ok(_) => {}
-                Err(error) => return Err(validation_var_error(name, value, error)),
-            }
-        }
-        Err(tidb_terror::MysqlError::from_terror(
-            &crate::variable_errors::ERR_READ_ONLY.gen_with_stack_by_args(&[
-                "SESSION".into(),
-                ("max_allowed_packet".to_owned()).into(),
-                "GLOBAL".into(),
-            ]),
-        ))
-    }
 
 
 
@@ -393,9 +201,24 @@ impl SessionVars {
         };
         let validated = definition.validate_in_scope_with_lookup(value, scope, Some(&cx));
         for warning in cx.warnings.into_inner() {
+            let level = if warning.is_error { WarningLevel::Error } else { WarningLevel::Warning };
             match warning.error {
-                Some(proto) => self.append_stmt_warning(WarningLevel::Warning, proto, warning.message),
-                None => self.append_stmt_plain_warning(WarningLevel::Warning, warning.message),
+                Some(proto) => self.append_stmt_warning(level, proto, warning.message),
+                None => self.append_stmt_plain_warning(level, warning.message),
+            }
+        }
+        // A closure's own refusal (Go `Validation` returning an error) is the
+        // statement's, once Go's `validateScope` would have admitted the
+        // scope; a scope or type refusal is reported by the store that
+        // follows, which checks them in Go's order.
+        if let Err(error @ (crate::sysvar::ValidationError::SqlError(_) | crate::sysvar::ValidationError::Refused(_))) = &validated {
+            let in_scope = match scope {
+                crate::sysvar::SCOPE_SESSION => definition.has_session_scope(),
+                crate::sysvar::SCOPE_GLOBAL => definition.has_global_scope(),
+                _ => definition.has_instance_scope(),
+            };
+            if in_scope && !definition.read_only {
+                return Err(validation_var_error(name, value, error.clone()));
             }
         }
         // Go `SetGlobal` (the session's `SetSession` runs where the value is
@@ -459,6 +282,16 @@ impl crate::sysvar::VarsContext for SetVarsContext<'_> {
         } else {
             self.vars.get_global(name).ok()
         }
+    }
+    fn session_read(&self, name: &str) -> Option<String> {
+        self.vars.get_system(name).ok()
+    }
+    /// Every caller of `run_set_closures` is a user's `SET`.
+    fn stmt_is_set(&self) -> bool {
+        true
+    }
+    fn tls_connection_secure(&self) -> bool {
+        self.vars.tls_connection_state.is_some()
     }
     fn append_warning(&self, warning: crate::sysvar::VarWarning) {
         self.warnings.borrow_mut().push(warning);
