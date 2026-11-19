@@ -910,6 +910,10 @@ impl TableStorage for MemBufferStorage {
 #[derive(Debug, Default)]
 pub struct SwappableSnapshot {
     bound: Option<Box<dyn ClusterSnapshot>>,
+    /// The session's read-timestamp slot, bound beside this one for a
+    /// statement that reads at two timestamps (Go
+    /// `GetSnapshotWithStmtReadTS` for its non-locking readers).
+    read_view: Option<Arc<Mutex<SwappableSnapshot>>>,
 }
 
 impl SwappableSnapshot {
@@ -917,6 +921,22 @@ impl SwappableSnapshot {
     #[must_use]
     pub fn new() -> Self {
         SwappableSnapshot::default()
+    }
+
+    /// An unbound slot whose statements can also bind a read-timestamp view
+    /// into `read_view` ([`Self::bind_read_view`]).
+    #[must_use]
+    pub fn with_read_view(read_view: Arc<Mutex<SwappableSnapshot>>) -> Self {
+        SwappableSnapshot { bound: None, read_view: Some(read_view) }
+    }
+
+    /// Binds the statement's read-timestamp snapshot into the read view (a
+    /// slot without one drops it). [`Self::unbind`] releases it with the
+    /// statement's snapshot.
+    pub fn bind_read_view(&mut self, snapshot: Box<dyn ClusterSnapshot>) {
+        if let Some(read_view) = &self.read_view {
+            drop(read_view.lock().unwrap_or_else(std::sync::PoisonError::into_inner).bind(snapshot));
+        }
     }
 
     /// Binds this statement's snapshot, returning whatever the slot held.
@@ -927,8 +947,12 @@ impl SwappableSnapshot {
         self.bound.replace(snapshot)
     }
 
-    /// Takes the bound snapshot back, leaving the slot unbound.
+    /// Takes the bound snapshot back, leaving the slot unbound; the read view
+    /// is released with it.
     pub fn unbind(&mut self) -> Option<Box<dyn ClusterSnapshot>> {
+        if let Some(read_view) = &self.read_view {
+            drop(read_view.lock().unwrap_or_else(std::sync::PoisonError::into_inner).unbind());
+        }
         self.bound.take()
     }
 
@@ -1266,6 +1290,10 @@ pub struct ClusterTableStorage {
     client: Option<Arc<dyn tidb_txnkv::Client>>,
     /// Go `sctx.GetStore()`: the node's storage new transactions begin on.
     kv_storage: Option<Arc<dyn tidb_kv::storage::KvStorage>>,
+    /// The session's read-timestamp slot (Go `GetSnapshotWithStmtReadTS`),
+    /// bound for a statement whose locking readers read at the for-update
+    /// timestamp while its other readers read at the statement's read one.
+    read_view_slot: Option<Arc<Mutex<SwappableSnapshot>>>,
 }
 
 impl ClusterTableStorage {
@@ -1279,7 +1307,16 @@ impl ClusterTableStorage {
             mpp_client: None,
             client: None,
             kv_storage: None,
+            read_view_slot: None,
         }
+    }
+
+    /// The session's read-timestamp slot, which [`TableStorage::statement_read_view`]
+    /// reads through while a statement has it bound.
+    #[must_use]
+    pub fn with_read_view_slot(mut self, slot: Arc<Mutex<SwappableSnapshot>>) -> Self {
+        self.read_view_slot = Some(slot);
+        self
     }
 
     /// Go GetSnapshotWithStmtReadTS uses a storage snapshot, without the active
@@ -1699,6 +1736,18 @@ impl TableStorage for ClusterTableStorage {
 
     fn clone_box(&self) -> Box<dyn TableStorage> {
         Box::new(self.clone())
+    }
+
+    fn statement_read_view(&self) -> Option<Box<dyn TableStorage>> {
+        let slot = self.read_view_slot.as_ref()?;
+        if !slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_bound() {
+            return None;
+        }
+        Some(Box::new(Self {
+            snapshot: Arc::clone(slot) as Arc<Mutex<dyn ClusterSnapshot>>,
+            read_view_slot: None,
+            ..self.clone()
+        }))
     }
 }
 

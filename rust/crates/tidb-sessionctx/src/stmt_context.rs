@@ -1435,6 +1435,9 @@ pub struct StmtContextData {
     temporary_table_data: Option<tidb_variable::temporary_table_data::SessionData>,
     /// Go `sctx.Txn()`, see [`StmtContextSessionState::txn_store`].
     txn_store: Option<Box<dyn tidb_kv::storage::TableStorage>>,
+    /// The statement's for-update store while [`Self::txn_store`] is its
+    /// read-timestamp view ([`StmtContext::statement_read_view`]).
+    for_update_store: Option<Box<dyn tidb_kv::storage::TableStorage>>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -3665,6 +3668,7 @@ impl StmtContext {
             txn_cached_tables: session.txn_cached_tables,
             temporary_table_data: session.temporary_table_data,
             txn_store: session.txn_store,
+            for_update_store: None,
             given_insert_id: Arc::default(),
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
@@ -6997,6 +7001,33 @@ impl StmtContext {
     #[must_use]
     pub fn txn_store(&self) -> Option<Box<dyn tidb_kv::storage::TableStorage>> {
         self.txn_store.clone()
+    }
+
+    /// Go `executorBuilder.getSnapshot` outside `inSelectLockStmt` (and the
+    /// insert / update / delete flags): this statement with its readers on the
+    /// read-timestamp view of its store, when the statement reads at two
+    /// timestamps; [`Self::for_update_view`] returns to the for-update store.
+    #[must_use]
+    pub fn statement_read_view(&self) -> Option<Self> {
+        let store = self.txn_store.as_ref()?;
+        let view = store.statement_read_view()?;
+        let mut ctx = self.clone();
+        let data = Arc::make_mut(&mut ctx.0);
+        data.for_update_store = data.txn_store.replace(view);
+        Some(ctx)
+    }
+
+    /// Go `executorBuilder.getSnapshot` inside `inSelectLockStmt`: this
+    /// statement on its for-update store, when [`Self::statement_read_view`]
+    /// moved its readers off it.
+    #[must_use]
+    pub fn for_update_view(&self) -> Option<Self> {
+        let store = self.for_update_store.clone()?;
+        let mut ctx = self.clone();
+        let data = Arc::make_mut(&mut ctx.0);
+        data.txn_store = Some(store);
+        data.for_update_store = None;
+        Some(ctx)
     }
 
     /// The statement runs over `store`, as Go's `sctx.Txn()` (a test

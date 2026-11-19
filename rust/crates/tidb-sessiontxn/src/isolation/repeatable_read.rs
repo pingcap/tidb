@@ -79,6 +79,11 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         Ok(self.txn.for_update_ts())
     }
 
+    // Go `getStmtReadTS` is the start ts; `getForUpdateTs` a fresh one.
+    fn stmt_read_ts_precedes_for_update_ts(&self) -> bool {
+        true
+    }
+
     fn get_snapshot_with_stmt_read_ts(
         &mut self,
         cx: &mut dyn TxnContext,

@@ -1046,6 +1046,18 @@ impl StatementLifecycle<'_> {
             } else {
                 provider.get_snapshot_with_stmt_read_ts(&mut cx)
             };
+            // Go `executorBuilder.getSnapshotTS`: in a locking SELECT, the
+            // readers outside its `SelectLock` subtrees read at the read
+            // timestamp (`GetSnapshotWithStmtReadTS`); an insert / update /
+            // delete reads everything at the for-update one.
+            if locking_read && !is_dml && provider.stmt_read_ts_precedes_for_update_ts() {
+                let mut read_cx = SessionTxnContext { session: cx.session, in_txn, locking_read: false };
+                let read_snapshot = provider.get_snapshot_with_stmt_read_ts(&mut read_cx)?;
+                self.slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .bind_read_view(read_snapshot);
+            }
             // Go `TxnCtx.SetForUpdateTS`: the statement's for-update
             // timestamp, which `tidb_last_query_info` reports.
             self.session

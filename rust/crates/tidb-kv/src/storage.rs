@@ -515,6 +515,15 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// Clones the backend behind the trait object. Divergence: see the module
     /// doc.
     fn clone_box(&self) -> Box<dyn TableStorage>;
+
+    /// Go `txnManager.GetSnapshotWithStmtReadTS()` beside the statement's
+    /// for-update snapshot: the view a reader outside a locking subtree reads
+    /// through (Go `executorBuilder.getSnapshot` without `inSelectLockStmt`),
+    /// over the same staged writes. `None` when the statement read at one
+    /// timestamp only.
+    fn statement_read_view(&self) -> Option<Box<dyn TableStorage>> {
+        None
+    }
 }
 
 impl Clone for Box<dyn TableStorage> {

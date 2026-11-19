@@ -228,9 +228,12 @@ impl DomainSessions for Domain {
     ) -> Result<Session, SqlQueryError> {
         // The connection's own snapshot slot and staged writes: one session,
         // one transaction, exactly as Go's session owns one `kv.Transaction`.
-        let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+        // Go's `GetSnapshotWithStmtReadTS` beside the for-update snapshot:
+        // a statement's non-locking readers read at its read timestamp.
+        let read_slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+        let slot = Arc::new(Mutex::new(SwappableSnapshot::with_read_view(Arc::clone(&read_slot))));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
-        let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
+        let mut storage = ClusterTableStorage::new(buffer.clone(), handle).with_read_view_slot(read_slot);
         if let Some(mpp) = self.mpp_client.as_ref() {
             storage = storage.with_mpp_client(Arc::clone(mpp));
         }

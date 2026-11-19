@@ -6224,6 +6224,10 @@ fn build_with_state(
             Ok(executor)
         }
         PhysicalPlan::PointGet(point) => {
+            // Go `buildPointGet`: a locking point get reads in
+            // `inSelectLockStmt`, at the for-update timestamp.
+            let lock_ctx = point.select_lock.and_then(|_| ctx.for_update_view());
+            let ctx = lock_ctx.as_ref().unwrap_or(ctx);
             // Go `buildPointGet`'s `b.getSnapshot()`.
             get_snapshot_ts(ctx);
             let snapshot_stats = state.point_snapshot_runtime_stats();
@@ -6240,6 +6244,10 @@ fn build_with_state(
             )
         }
         PhysicalPlan::BatchPointGet(batch) => {
+            // Go `buildBatchPointGet`: a locking batch point get reads in
+            // `inSelectLockStmt`, at the for-update timestamp.
+            let lock_ctx = batch.select_lock.and_then(|_| ctx.for_update_view());
+            let ctx = lock_ctx.as_ref().unwrap_or(ctx);
             // Go `buildBatchPointGet`'s `b.getSnapshot()`.
             get_snapshot_ts(ctx);
             let snapshot_stats = state.point_snapshot_runtime_stats();
@@ -6257,6 +6265,11 @@ fn build_with_state(
         }
         PhysicalPlan::Lock(lock) => {
             state.has_lock = true;
+            // Go `buildSelectLock`: `b.inSelectLockStmt = true` while its
+            // child builds, so the readers below it take the for-update
+            // snapshot (`getSnapshotTS`).
+            let lock_ctx = ctx.for_update_view();
+            let ctx = lock_ctx.as_ref().unwrap_or(ctx);
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
             select_lock_executor(lock, child, catalog, ctx)
         }
@@ -7539,6 +7552,12 @@ pub(super) fn build(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
+    // Go `executorBuilder.getSnapshotTS`: a reader outside a locking subtree
+    // (and outside insert / update / delete) reads at the statement's read
+    // timestamp; [`PhysicalPlan::Lock`] returns its subtree to the for-update
+    // one.
+    let read_ctx = ctx.statement_read_view();
+    let ctx = read_ctx.as_ref().unwrap_or(ctx);
     let mut state = BuildState {
         projection_workers_allowed: true,
         ..BuildState::default()

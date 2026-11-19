@@ -139,6 +139,18 @@ pub enum StatementReadShape {
     AutocommitWrite,
 }
 
+/// Whether a set operation's terms take a `FOR UPDATE` lock (Go
+/// `buildSelectLock` under a `PhysicalUnionAll`).
+fn set_opr_has_update_lock(set_opr: &tidb_ast::SetOprStmt) -> bool {
+    set_opr.terms.iter().any(|term| match &term.body {
+        tidb_ast::SetOprTermBody::Select(select) => select
+            .lock
+            .as_ref()
+            .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update),
+        tidb_ast::SetOprTermBody::Nested(nested) => set_opr_has_update_lock(nested),
+    })
+}
+
 /// Whether `stmt` is a statement whose WHOLE read is one point get on the
 /// clustered handle -- the plan-shape half of Go's
 /// `IsPointGetWithPKOrUniqueKeyByAutoCommit`
@@ -211,9 +223,18 @@ pub fn statement_read_shape(
     };
     // A set operation reads every term, so it is several reads by
     // construction; Go's root plan for it is a `PhysicalUnionAll`, which its
-    // `switch` refuses.
-    let tidb_ast::QueryStmt::Select(select) = &**query else {
-        return StatementReadShape::Unknown;
+    // `switch` refuses. A `FOR UPDATE` term still makes it a locking read:
+    // Go `ExecStmt.isSelectForUpdate` is `b.hasLock`, set by any
+    // `buildSelectLock` in the tree.
+    let select = match &**query {
+        tidb_ast::QueryStmt::Select(select) => select,
+        tidb_ast::QueryStmt::SetOpr(set_opr) => {
+            return if set_opr_has_update_lock(set_opr) {
+                StatementReadShape::LockingRead
+            } else {
+                StatementReadShape::Unknown
+            };
+        }
     };
     if select
         .lock

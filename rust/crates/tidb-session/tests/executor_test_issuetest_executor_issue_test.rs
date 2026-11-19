@@ -21,7 +21,6 @@ use crate::support::testkit::TestKit;
 
 /// Go `TestUnionIssue`.
 #[test]
-#[ignore = "register X05 (3): the issue-31530 leg needs Go's per-reader snapshot choice (executorBuilder.getSnapshotTS / inSelectLockStmt)"]
 fn test_union_issue() {
     let mut tk = TestKit::new();
     // Issue56640

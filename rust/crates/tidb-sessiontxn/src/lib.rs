@@ -193,6 +193,15 @@ pub trait TxnContextProvider: Send {
         &mut self,
         cx: &mut dyn TxnContext,
     ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError>;
+    /// Whether one statement's `GetStmtReadTS` can lie below its
+    /// `GetStmtForUpdateTS`, so Go `executorBuilder.getSnapshotTS` gives a
+    /// locking statement's readers outside `SelectLock` a snapshot of their
+    /// own. Only `PessimisticRRTxnContextProvider` (start ts against a fresh
+    /// for-update ts); RC's two are its one `stmtTS`, and the optimistic and
+    /// serializable providers read both at the start ts.
+    fn stmt_read_ts_precedes_for_update_ts(&self) -> bool {
+        false
+    }
     /// Go `OnStmtStart`.
     ///
     /// # Errors
