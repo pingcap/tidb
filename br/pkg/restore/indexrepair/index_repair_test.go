@@ -111,6 +111,21 @@ func TestRepairGlobalIndexes(t *testing.T) {
 			tk.MustExec("SET tidb_enable_fast_table_check=0")
 			require.Error(t, tk.ExecToErr("ADMIN CHECK TABLE test.t"))
 			g := gluetidb.New()
+			t.Run("canceled", func(t *testing.T) {
+				canceledCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				// Cancel after session setup succeeds, before any index is scheduled.
+				const beforeRepair = "github.com/pingcap/tidb/br/pkg/restore/indexrepair/before-repair-ingest-index"
+				require.NoError(t, failpoint.EnableCall(beforeRepair, cancel))
+				t.Cleanup(func() { require.NoError(t, failpoint.Disable(beforeRepair)) })
+				repairErr := indexrepair.RepairIndexes(canceledCtx, s.Mock.Domain, recorder, nil, g, nil)
+				afterCancel, err := s.Mock.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+				require.NoError(t, err)
+				require.Equal(t, before.Indices, afterCancel.Meta().Indices, "cancellation must leave the original indexes unrepaired")
+				require.Error(t, tk.ExecToErr("ADMIN CHECK TABLE test.t"))
+				t.Logf("RepairIndexes returned %v with the original indexes still unrepaired", repairErr)
+				require.ErrorIs(t, repairErr, context.Canceled)
+			})
 			meta, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 71052)
 			require.NoError(t, err)
 			defer meta.Close()

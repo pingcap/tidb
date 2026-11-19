@@ -372,12 +372,15 @@ func RepairIndexes(
 		}
 	})
 	eg, ectx = errgroup.WithContext(ctx)
+	failpoint.InjectCall("before-repair-ingest-index")
 	mp := console.StartMultiProgress()
+	var schedulingErr error
 	for _, sql := range sqls {
 		if sql.IndexRepaired {
 			continue
 		}
-		if ectx.Err() != nil {
+		if err := ectx.Err(); err != nil {
+			schedulingErr = err
 			break
 		}
 		progressTitle := fmt.Sprintf("repair ingest index %s for table %s.%s", sql.IndexName, sql.SchemaName, sql.TableName)
@@ -420,6 +423,9 @@ func RepairIndexes(
 	}
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
+	}
+	if schedulingErr != nil {
+		return errors.Trace(schedulingErr)
 	}
 	if addIndexSQLStorage != nil {
 		if err := writeRepairIngestIndexSQLFile(ctx, addIndexSQLStorage, sqls, fkSqls); err != nil {
