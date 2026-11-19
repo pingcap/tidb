@@ -877,35 +877,23 @@ pub(crate) fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, lim
 // Go worker.loadGlobalVars uses an independent session: a SET GLOBAL committed
 // after the action snapshot must affect this error. Failed refresh retains the
 // process value published by the previous refresh or local SET GLOBAL.
-fn refresh_ddl_error_count_limit<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    timeout: Duration,
+fn refresh_ddl_error_count_limit(
+    sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     ddl_job_id: i64,
 ) -> i64 {
-    let refreshed = (|| -> Result<_, String> {
-        let mut tx = opener
-            .begin_read_only()
-            .map_err(|error| error.to_string())?;
-        let result = (|| {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = load_info_schema(&mut snapshot).map_err(|error| error.to_string())?;
-            tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
-                .map_err(|error| error.to_string())
-        })();
-        let finished = tx
-            .finish_without_writes()
-            .map_err(|error| error.to_string());
-        let vars = result?;
-        finished?;
-        Ok(vars
-            .into_iter()
-            .find(|(name, _)| name == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT)
-            .map(|(_, value)| {
-                value
-                    .parse::<i64>()
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT)
-            }))
-    })();
+    // Go `w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit)`.
+    let refreshed = sess_pool
+        .load_global_vars(&[tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT])
+        .map_err(|error| error.to_string())
+        .map(|vars| {
+            vars.into_iter()
+                .find(|(name, _)| name == tidb_vardef::tidb_vars::TIDB_DDL_ERROR_COUNT_LIMIT)
+                .map(|(_, value)| {
+                    value
+                        .parse::<i64>()
+                        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT)
+                })
+        });
     match refreshed {
         Ok(Some(limit)) => tidb_vardef::set_ddl_error_count_limit(limit),
         Ok(None) => {}
@@ -1613,7 +1601,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             phase.ddl_job_id,
             start_ts,
             schema_state,
-            &|| refresh_ddl_error_count_limit(&opener, timeout, phase.ddl_job_id),
+            &|| refresh_ddl_error_count_limit(&*sess_pool, phase.ddl_job_id),
             Some(row_ids.as_ref()),
         ) {
             Ok(PersistedDdlJobPlan::Paused) => {
@@ -1705,7 +1693,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             };
             let checkpoint = plan_persisted_ddl_job_failure(
                 ddl_job_id, start_ts, failure, &job,
-                &|| refresh_ddl_error_count_limit(&opener, timeout, ddl_job_id), &session,
+                &|| refresh_ddl_error_count_limit(&*sess_pool, ddl_job_id), &session,
             );
             let checkpoint = match checkpoint {
                 Ok(checkpoint) => checkpoint,

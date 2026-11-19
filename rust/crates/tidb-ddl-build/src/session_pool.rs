@@ -169,6 +169,33 @@ pub trait DdlSessionPool: Send + Sync {
             .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
     }
 
+    /// Go `ddl/util.LoadGlobalVars` on a pool session: the stored GLOBAL
+    /// values of `names`, read through restricted SQL. (Go then sets them on
+    /// that session; the caller here takes the pairs.)
+    ///
+    /// # Errors
+    ///
+    /// The statement's error.
+    fn load_global_vars(&self, names: &[&str]) -> Result<Vec<(String, String)>, tidb_terror::MysqlError> {
+        let mut sql = "SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (".to_owned();
+        sql.push_str(&vec!["%?"; names.len()].join(", "));
+        sql.push(')');
+        let args = names.iter().map(|name| tidb_sqlescape::SqlArg::String(name.as_bytes())).collect::<Vec<_>>();
+        Ok(self
+            .exec_restricted_sql_with(&sql, &args)?
+            .into_iter()
+            .map(|row| {
+                let text = |datum: Option<&tidb_datatype::Datum>| {
+                    datum
+                        .and_then(tidb_datatype::Datum::as_string)
+                        .map(|text| String::from_utf8_lossy(text.bytes()).into_owned())
+                        .unwrap_or_default()
+                };
+                (text(row.first()), text(row.get(1)))
+            })
+            .collect())
+    }
+
     /// Go `w.sessPool.Get()`: one of the pool's sessions, which the caller
     /// sets up and runs its restricted SQL on.
     ///
