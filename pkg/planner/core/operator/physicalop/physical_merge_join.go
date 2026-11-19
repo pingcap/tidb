@@ -128,8 +128,19 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop, getConstantCols); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
-				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
-				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, rightStatsInfo.RowCount, statsInfo.RowCount)
+				leftProp, rightProp := prop, prop
+				// A semi/anti-semi join acts as a filter on its outer side: under a
+				// LIMIT, the rows each ordered child must read before enough rows
+				// survive the join depend on how the join keys interleave, which the
+				// uniform LIMIT scaling cannot see. Use the children's own required
+				// order so CalcChildExpectedCnt applies the ordering index selectivity
+				// ratio, as it does for an ordered scan with filters, even when the
+				// parent (e.g. a bare LIMIT) does not require any order.
+				if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin {
+					leftProp, rightProp = withSortItems(prop, reqProps[0]), withSortItems(prop, reqProps[1])
+				}
+				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), leftProp, leftStatsInfo.RowCount, statsInfo.RowCount)
+				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), rightProp, rightStatsInfo.RowCount, statsInfo.RowCount)
 			}
 			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
@@ -584,4 +595,16 @@ func isSortPropCompatibleWithJoinKeys(sortItems []property.SortItem, joinKeys []
 		}
 	}
 	return true
+}
+
+// withSortItems returns a shallow copy of prop whose sort items are replaced by
+// those of childProp. It is only used to decide whether CalcChildExpectedCnt
+// should apply the ordering index selectivity ratio.
+func withSortItems(prop, childProp *property.PhysicalProperty) *property.PhysicalProperty {
+	if len(childProp.SortItems) == 0 {
+		return prop
+	}
+	cp := *prop
+	cp.SortItems = childProp.SortItems
+	return &cp
 }
