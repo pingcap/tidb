@@ -52,7 +52,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: None,
+        validation: Some(super::super::validation::tidb_enable_plan_replayer_continuous_capture),
         set_session: None,
         set_global: None,
     },

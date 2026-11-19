@@ -68,6 +68,10 @@ pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> 
                 (value.to_owned()).into(),
             ]),
         ),
+        ValidationError::WrongValueWith(given) => tidb_terror::MysqlError::from_terror(
+            &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
+                .gen_with_stack_by_args(&[(name.to_ascii_lowercase()).into(), given.into()]),
+        ),
         ValidationError::SqlError(error) => tidb_terror::MysqlError::from_sql_error(error),
         ValidationError::Refused(message) => tidb_terror::MysqlError::unknown(message),
     }
@@ -1913,38 +1917,6 @@ impl SessionVars {
             .validate_in_scope_with_lookup(&value, SCOPE_SESSION, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
-        // Go's `tidb_enforce_mpp` Validation refuses ON while the session's
-        // `allowMPPExecution` gate is OFF. The value is type-normalized before
-        // this closure runs, so numeric/boolean spellings take the same path
-        // as an explicit ON. Keep the refusal in the session writer rather
-        // than the registry (it depends on another session variable).
-        if key == "tidb_enforce_mpp"
-            && validated.value == "ON"
-            && self
-                .get_system("tidb_allow_mpp")
-                .map_or(true, |allow| allow != "ON")
-        {
-            return Err(tidb_terror::MysqlError::from_terror(
-                &crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR
-                    .gen_with_stack_by_args(&[
-                        ("tidb_enforce_mpp".to_owned()).into(),
-                        ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
-                            .to_owned())
-                        .into(),
-                    ]),
-            ));
-        }
-        // The session Validation uses the same GLOBAL historical-stats
-        // prerequisite as the shared writer above.
-        if key == "tidb_enable_plan_replayer_continuous_capture"
-            && validated.value == "ON"
-            && self
-                .get_system("tidb_enable_historical_stats")
-                .map_or(true, |value| value != "ON")
-        {
-            return Err(tidb_terror::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-                    .to_owned()));
-        }
         self.set_session_from_hook(key, validated.value)?;
         Ok(validated.truncated)
     }

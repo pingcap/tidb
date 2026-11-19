@@ -1646,17 +1646,6 @@ impl GlobalSysvars {
                 )));
             }
         }
-        // Go's plan-replayer continuous-capture Validation refuses ON until
-        // the GLOBAL historical-stats switch is enabled. The closure reads
-        // the pending shared image, so validate against this table rather
-        // than a process singleton.
-        if key == "tidb_enable_plan_replayer_continuous_capture"
-            && validated.value == "ON"
-            && !self.global_bool_value("tidb_enable_historical_stats", false)
-        {
-            return Err(tidb_terror::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-                    .to_owned()));
-        }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             OptimizerFixControl::parse(&validated.value)
                 .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;

@@ -1963,3 +1963,39 @@ pub(super) fn tidb_enable_parallel_hashagg_spill_set_session(cx: &dyn VarsContex
         });
     }
 }
+
+/// Go `tidb_enforce_mpp`'s `Validation`: ON needs the session's
+/// `tidb_allow_mpp`.
+pub(super) fn tidb_enforce_mpp(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "ON" && lookup.and_then(|cx| cx.read("tidb_allow_mpp")).as_deref() != Some("ON") {
+        return Err(ValidationError::WrongValueWith(
+            "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
+        ));
+    }
+    Ok(validated)
+}
+
+/// Go `tidb_enable_plan_replayer_continuous_capture`'s `Validation`: ON needs
+/// the GLOBAL `tidb_enable_historical_stats`.
+pub(super) fn tidb_enable_plan_replayer_continuous_capture(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if validated.value == "ON"
+        && lookup.and_then(|cx| cx.read("tidb_enable_historical_stats")).as_deref() != Some("ON")
+    {
+        return Err(ValidationError::Refused(
+            "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture".to_owned(),
+        ));
+    }
+    Ok(validated)
+}

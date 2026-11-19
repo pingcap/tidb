@@ -500,7 +500,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: None,
+        validation: Some(super::super::validation::tidb_enforce_mpp),
         set_session: None,
         set_global: None,
     },

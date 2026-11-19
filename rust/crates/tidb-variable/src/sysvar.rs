@@ -1129,6 +1129,9 @@ pub enum ValidationError {
     WrongType,
     /// Go `ErrWrongValueForVar` (1231).
     WrongValue,
+    /// Go `ErrWrongValueForVar` (1231) naming this text as the value (a
+    /// closure's `ErrWrongValueForVar.GenWithStackByArgs(name, text)`).
+    WrongValueWith(String),
     /// A catalogued MySQL error returned directly by a `Validation` closure.
     SqlError(tidb_mysql::errors::SqlError),
     /// A `Validation` closure that refuses the value with a bare
