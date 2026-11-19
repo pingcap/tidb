@@ -297,3 +297,30 @@ fn pd_client_options_store_and_read_their_process_state() {
         tk.must_exec(&format!("set global {name} = default"));
     }
 }
+
+/// Go's statement-summary variables call `stmtsummaryv2`'s setters from their
+/// own `SetGlobal`, and the memory-arbitration ones set the process-wide
+/// limit.
+#[test]
+fn stmt_summary_and_memory_variables_set_their_process_state() {
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_enable_stmt_summary = OFF");
+    assert!(!tidb_stmtsummary::v2::stmtsummary::enabled());
+    tk.must_exec("set global tidb_enable_stmt_summary = ON");
+    assert!(tidb_stmtsummary::v2::stmtsummary::enabled());
+    tk.must_exec("set global tidb_stmt_summary_internal_query = ON");
+    assert!(tidb_stmtsummary::v2::stmtsummary::enabled_internal());
+    tk.must_exec("set global tidb_server_memory_limit_sess_min_size = 1048576");
+    assert_eq!(
+        tidb_memory::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.load(std::sync::atomic::Ordering::SeqCst),
+        1048576
+    );
+    for name in [
+        "tidb_enable_stmt_summary",
+        "tidb_stmt_summary_internal_query",
+        "tidb_server_memory_limit_sess_min_size",
+    ] {
+        tk.must_exec(&format!("set global {name} = default"));
+    }
+}

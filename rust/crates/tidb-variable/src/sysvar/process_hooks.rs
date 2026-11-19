@@ -448,3 +448,44 @@ get_global! {
     get_pd_enable_follower_handle_region => on_off(tidb_vardef::ENABLE_PD_FOLLOWER_HANDLE_REGION.load(SeqCst));
     get_tidb_enable_batch_query_region => on_off(tidb_vardef::ENABLE_BATCH_QUERY_REGION.load(SeqCst));
 }
+
+set_global! {
+    // Go: `stmtsummaryv2.SetEnabled(TiDBOptOn(val))` and its siblings; the
+    // registry has validated each value, so the parse cannot fail.
+    set_tidb_enable_stmt_summary => |s| tidb_stmtsummary::v2::stmtsummary::set_enabled(on(s));
+    set_tidb_stmt_summary_internal_query => |s| tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(on(s));
+    set_tidb_stmt_summary_refresh_interval => |s| if let Ok(v) = s.parse::<i64>() {
+        tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(v);
+    };
+    set_tidb_stmt_summary_history_size => |s| if let Ok(v) = s.parse::<i32>() {
+        tidb_stmtsummary::v2::stmtsummary::set_history_size(v);
+    };
+    set_tidb_stmt_summary_max_stmt_count => |s| if let Ok(v) = s.parse::<i64>() {
+        tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(v);
+    };
+    set_tidb_stmt_summary_max_sql_length => |s| if let Ok(v) = s.parse::<i32>() {
+        tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(v);
+    };
+    set_tidb_stmt_summary_persist_evicted => |s| tidb_stmtsummary::v2::stmtsummary::set_persist_evicted(on(s));
+    set_tidb_stmt_summary_group_by_user => |s| tidb_stmtsummary::v2::stmtsummary::set_group_by_user(on(s));
+}
+
+/// Go's memory-arbitration `SetGlobal` (`tidb_server_memory_limit`, its
+/// session minimum, the arbitrator's mode and soft limit): the process-wide
+/// limit and the global arbitrator take the value.
+macro_rules! process_memory_setting {
+    ($($fn_name:ident => $var:path;)*) => {
+        $(
+            pub(super) fn $fn_name(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+                tidb_memory::apply_process_memory_setting($var, value).map_err(VarError::unknown)
+            }
+        )*
+    };
+}
+
+process_memory_setting! {
+    set_tidb_server_memory_limit => tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT;
+    set_tidb_server_memory_limit_sess_min_size => tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT_SESS_MIN_SIZE;
+    set_tidb_mem_arbitrator_mode => tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE;
+    set_tidb_mem_arbitrator_soft_limit => tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT;
+}

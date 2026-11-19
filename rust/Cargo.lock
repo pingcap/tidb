@@ -11466,6 +11466,7 @@ dependencies = [
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-stmtctx",
+ "tidb-stmtsummary",
  "tidb-stringutil",
  "tidb-terror",
  "tidb-tiflashcompute",

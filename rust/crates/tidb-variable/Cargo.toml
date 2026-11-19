@@ -29,6 +29,7 @@ tidb-terror = { path = "../tidb-terror" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 tidb-context = { path = "../tidb-context" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }

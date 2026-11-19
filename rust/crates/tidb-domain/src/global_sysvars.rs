@@ -583,19 +583,6 @@ fn is_resource_control_setting(name: &str) -> bool {
     )
 }
 
-fn is_stmt_summary_setting(name: &str) -> bool {
-    matches!(
-        name,
-        "tidb_enable_stmt_summary"
-            | "tidb_stmt_summary_internal_query"
-            | "tidb_stmt_summary_refresh_interval"
-            | "tidb_stmt_summary_history_size"
-            | "tidb_stmt_summary_max_stmt_count"
-            | "tidb_stmt_summary_max_sql_length"
-            | "tidb_stmt_summary_persist_evicted"
-            | "tidb_stmt_summary_group_by_user"
-    )
-}
 
 impl GlobalSysvars {
     /// This table with `other`'s registered `SetGlobal` hooks: Go's hooks
@@ -1260,24 +1247,9 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         matches!(
             name,
-            TIDB_CLOUD_STORAGE_URI
-                | TIDB_ENABLE_TS_VALIDATION
-                | TIDB_ENABLE_MDL
-                | TIDB_SCHEMA_CACHE_SIZE
-                | TIDB_COMMITTER_CONCURRENCY
-                | TIDB_REDACT_LOG
-                | TIDB_ANALYZE_DEFAULT_NUM_BUCKETS
-                | TIDB_ANALYZE_DEFAULT_NUM_TOP_N
-                | PD_ENABLE_FOLLOWER_HANDLE_REGION
-                | TIDB_ENABLE_TSO_FOLLOWER_PROXY
-                | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
-                | TIDB_TSO_CLIENT_RPC_MODE
-                | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
-                | TIDB_ENABLE_BATCH_QUERY_REGION
+            TIDB_CLOUD_STORAGE_URI | TIDB_ENABLE_MDL
         ) || is_auto_analyze_setting(name)
             || is_resource_control_setting(name)
-            || is_stmt_summary_setting(name)
-            || Self::is_memory_arbitration_setting(name)
     }
 
     /// Go `SysVar.SetGlobal` for the variables whose process-wide product
@@ -1316,10 +1288,6 @@ impl GlobalSysvars {
             // blocks until the node is gone. Following the value the cluster
             // holds is not a switch, so the running-job guard does not apply.
             TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
-            _ if is_stmt_summary_setting(name) => self.publish_stmt_summary_setting(name, value),
-            _ if Self::is_memory_arbitration_setting(name) => {
-                let _ = tidb_memory::apply_process_memory_setting(name, value);
-            }
             _ => {}
         }
     }
@@ -1530,53 +1498,6 @@ impl GlobalSysvars {
             }
         }
         Ok(validated.truncated)
-    }
-
-    /// Publishes Go's GLOBAL statement-summary setters into the live v2
-    /// proxy. The SQL table remains the source of truth for reads, while the
-    /// summary map is the process-wide consumer Go's `SetGlobal` callbacks
-    /// update immediately. Scratch cluster images deliberately skip this
-    /// hook and publish only after their committed image becomes live.
-    fn publish_stmt_summary_setting(&self, name: &str, value: &str) {
-        if !self.publishes_runtime_settings || !is_stmt_summary_setting(name) {
-            return;
-        }
-        let bool_value = || value.eq_ignore_ascii_case("ON") || value == "1";
-        match name {
-            "tidb_enable_stmt_summary" => {
-                tidb_stmtsummary::v2::stmtsummary::set_enabled(bool_value())
-            }
-            "tidb_stmt_summary_internal_query" => {
-                tidb_stmtsummary::v2::stmtsummary::set_enable_internal_query(bool_value())
-            }
-            "tidb_stmt_summary_refresh_interval" => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_refresh_interval(value);
-                }
-            }
-            "tidb_stmt_summary_history_size" => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_history_size(value);
-                }
-            }
-            "tidb_stmt_summary_max_stmt_count" => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_max_stmt_count(value);
-                }
-            }
-            "tidb_stmt_summary_max_sql_length" => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_stmtsummary::v2::stmtsummary::set_max_sql_length(value);
-                }
-            }
-            "tidb_stmt_summary_persist_evicted" => {
-                tidb_stmtsummary::v2::stmtsummary::set_persist_evicted(bool_value())
-            }
-            "tidb_stmt_summary_group_by_user" => {
-                tidb_stmtsummary::v2::stmtsummary::set_group_by_user(bool_value())
-            }
-            _ => {}
-        }
     }
 
     /// The length floor the `validate_password` coupling requires right now:
