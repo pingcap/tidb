@@ -52,6 +52,11 @@
 ### Tests
 - `pkg/server/internal/packetio_test.go` - server/internal: Tests packet IO write.
 
+## pkg/server/internal/advertisedstatus
+
+### Tests
+- `pkg/server/internal/advertisedstatus/checker_test.go` - server/internal/advertisedstatus: Tests the advertised status endpoint self-check.
+
 ## pkg/server/internal/column
 
 ### Tests
