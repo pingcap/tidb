@@ -4960,3 +4960,100 @@ fn test_materialized_view_refresh_complete_out_of_place_purge_concurrency() {
         must_exec_all(&mut tk, &["purge materialized view log on mv_source_init"]);
     }
 }
+
+/// Go `tablecodec.EncodeTablePrefix(id)` as Go's `%x`.
+fn table_prefix_hex(id: i64) -> String {
+    format!("74{:016x}", (id as u64) ^ 0x8000_0000_0000_0000)
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlaceCutoverKeepsTiFlashProgressUntilCommit`
+/// (`nested_oop_test.go`): a cutover that fails before commit leaves the old
+/// view's and log's TiFlash progress and replica, and queues the would-be
+/// log's range for GC; the committed cutover gives the replacement log the
+/// old replica's settings (unavailable) and a placement rule, and drops the
+/// old progress.
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_cutover_keeps_tiflash_progress_until_commit() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use tidb_domain_infosync::tiflash_manager as tiflash;
+    let _store_count = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)");
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    let mock = Arc::new(tiflash::MockTiFlash::new());
+    tiflash::set_mock_tiflash(Arc::clone(&mock));
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_tiflash_cutover (a int not null, b int not null)",
+        "insert into t_tiflash_cutover values (1, 10), (2, 7)",
+        "create materialized view log on t_tiflash_cutover (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_tiflash_cutover (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_tiflash_cutover group by a",
+        "alter table mv_tiflash_cutover set tiflash replica 1",
+        "create materialized view log on mv_tiflash_cutover (a, s, cnt) purge next date_add(now(), interval 1 hour)",
+        "alter table `$mlog$mv_tiflash_cutover` set tiflash replica 2 location labels 'zone'",
+    ]);
+    let mv = latest_table(&stack, "mv_tiflash_cutover");
+    let (old_mview_id, old_mlog_id) = (mv.id, mlog_id(&mv));
+    stack
+        .factory
+        .ddl
+        .update_table_replica_info(old_mlog_id, true, &tidb_sessionctx::StmtContext::for_query())
+        .expect("the log's replica turns available");
+    let replica_of = |id: i64| {
+        let table = stack.factory.catalog.get_latest().table_info_by_id(id).expect("table").read().clone();
+        let replica = table.tiflash_replica.as_ref().expect("a TiFlash replica").read().clone();
+        replica
+    };
+    let old_replica = replica_of(old_mlog_id);
+    assert!(old_replica.available);
+    tiflash::update_tiflash_progress_cache(old_mview_id, 0.75);
+    tiflash::update_tiflash_progress_cache(old_mlog_id, 1.0);
+    assert!(tiflash::get_tiflash_progress_from_cache(old_mview_id).is_some());
+
+    must_exec_all(&mut tk, &["set global tidb_ddl_error_count_limit = 0"]);
+    let cancelled_job_id = Arc::new(AtomicI64::new(0));
+    let cancelled_log_id = Arc::new(AtomicI64::new(0));
+    {
+        let (job_id, log_id) = (Arc::clone(&cancelled_job_id), Arc::clone(&cancelled_log_id));
+        let _observe = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |job| {
+            let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ == tidb_model::ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER && job.table_id == old_mview_id {
+                let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(job).unwrap().unwrap();
+                job_id.store(job.id, Ordering::Release);
+                log_id.store(args.read().new_mlog_id, Ordering::Release);
+            }
+        });
+        let _fail = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverBeforeCommitError",
+            "return",
+        );
+        must_exec_all(&mut tk, &["insert into t_tiflash_cutover values (3, 4)"]);
+        exec_err_contains(&mut tk, "refresh materialized view mv_tiflash_cutover complete out of place", "error before commit");
+    }
+    let (job_id, log_id) = (cancelled_job_id.load(Ordering::Acquire), cancelled_log_id.load(Ordering::Acquire));
+    assert!(log_id > 0);
+    assert_eq!(
+        answer(&mut tk, &format!("select start_key, end_key from mysql.gc_delete_range where job_id = {job_id} union all select start_key, end_key from mysql.gc_delete_range_done where job_id = {job_id}")),
+        format!(r#"RS:[["{}","{}"]]"#, table_prefix_hex(log_id), table_prefix_hex(log_id + 1))
+    );
+    assert!(tiflash::get_tiflash_progress_from_cache(old_mview_id).is_some());
+    assert!(tiflash::get_tiflash_progress_from_cache(old_mlog_id).is_some());
+    let kept = replica_of(old_mlog_id);
+    assert_eq!(serde_json::to_value(&kept).unwrap(), serde_json::to_value(&old_replica).unwrap());
+
+    must_exec_all(&mut tk, &["refresh materialized view mv_tiflash_cutover complete out of place"]);
+    assert!(tiflash::get_tiflash_progress_from_cache(old_mview_id).is_none());
+    let new_log = latest_table(&stack, "$mlog$mv_tiflash_cutover");
+    assert_ne!(new_log.id, old_mlog_id);
+    let replica = new_log.tiflash_replica.as_ref().expect("the replacement log's replica").read().clone();
+    assert_eq!(replica.count, old_replica.count);
+    assert_eq!(replica.location_labels, old_replica.location_labels);
+    // t.Run("replica state")
+    assert!(!replica.available);
+    assert!(replica.available_partition_ids.is_empty());
+    // t.Run("placement rule")
+    let rule = mock.get_placement_rule(&tiflash::make_rule_id(new_log.id)).expect("the replacement log's rule");
+    assert_eq!(rule.count, replica.count as i64);
+    assert_eq!(rule.location_labels, replica.location_labels.iter().cloned().collect::<Vec<_>>());
+    // t.Run("old log progress")
+    assert!(tiflash::get_tiflash_progress_from_cache(old_mlog_id).is_none());
+}

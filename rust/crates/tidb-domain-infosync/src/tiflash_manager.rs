@@ -251,10 +251,12 @@ impl TiFlashReplicaManager for TiFlashReplicaManagerCtx {
 }
 
 /// Go `MockTiFlash`, the part DDL jobs read: the one TiFlash store its
-/// `HandleGetStoresStat` reports.
+/// `HandleGetStoresStat` reports, and the placement rules its manager sets
+/// (`GlobalTiFlashPlacementRules`).
 pub struct MockTiFlash {
     status_addr: String,
     start_time: i64,
+    global_tiflash_placement_rules: Mutex<std::collections::HashMap<String, pd_http::Rule>>,
 }
 
 impl MockTiFlash {
@@ -266,7 +268,50 @@ impl MockTiFlash {
             start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)),
+            global_tiflash_placement_rules: Mutex::default(),
         }
+    }
+
+    /// Go `HandleSetPlacementRule`: a rule of count zero is deleted. (Go's
+    /// mock also marks the table's regions synced, which nothing here reads.)
+    ///
+    /// # Errors
+    ///
+    /// Go's `Can't parse rule` for an ID that is not `table-<id>-r`.
+    pub fn handle_set_placement_rule(&self, rule: &pd_http::Rule) -> Result<(), String> {
+        let mut rules = self.global_tiflash_placement_rules.lock().unwrap_or_else(PoisonError::into_inner);
+        if rule.count == 0 {
+            rules.remove(&rule.id);
+        } else {
+            rules.insert(rule.id.clone(), rule.clone());
+        }
+        let parsed = rule
+            .id
+            .strip_prefix("table-")
+            .and_then(|rest| rest.strip_suffix("-r"))
+            .is_some_and(|id| id.parse::<i64>().is_ok());
+        if !parsed {
+            return Err("Can't parse rule".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Go `HandleDeletePlacementRule`.
+    pub fn handle_delete_placement_rule(&self, rule_id: &str) {
+        self.global_tiflash_placement_rules
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(rule_id);
+    }
+
+    /// Go `MockTiFlash.GetPlacementRule`.
+    #[must_use]
+    pub fn get_placement_rule(&self, rule_id: &str) -> Option<pd_http::Rule> {
+        self.global_tiflash_placement_rules
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(rule_id)
+            .cloned()
     }
 
     /// Go `HandleGetStoresStat`.
@@ -326,14 +371,25 @@ impl TiFlashReplicaManager for MockTiFlashReplicaManagerCtx {
         Ok(())
     }
 
+    /// Go's mock: its mock TiFlash's `HandleSetPlacementRule`, nothing
+    /// without one.
     fn set_placement_rule(&self, rule: &pd_http::Rule) -> Result<(), String> {
         self.record(format!("set {} {}", rule.id, rule.count));
-        Ok(())
+        match self.tiflash.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            Some(tiflash) => tiflash.handle_set_placement_rule(rule),
+            None => Ok(()),
+        }
     }
 
+    /// Go's mock: `HandleSetPlacementRuleBatch`.
     fn set_placement_rule_batch(&self, rules: &[pd_http::Rule]) -> Result<(), String> {
         for rule in rules {
             self.record(format!("set {} {}", rule.id, rule.count));
+        }
+        if let Some(tiflash) = self.tiflash.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            for rule in rules {
+                tiflash.handle_set_placement_rule(rule)?;
+            }
         }
         Ok(())
     }

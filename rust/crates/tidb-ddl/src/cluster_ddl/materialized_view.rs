@@ -3048,6 +3048,14 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
             "mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info",
         ));
     }
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverBeforeCommitError").is_some() {
+        // Go rolls the step's session back and cancels the job with this
+        // error (here the step's `mustRollbackTxnOnError` discards it).
+        active.job.state = JobState::CANCELLED;
+        return Err(DdlPlanError::plain_refusal(
+            "mock refresh materialized view complete OUT OF PLACE cutover error before commit",
+        ));
+    }
     {
         let meta = txn.meta();
         meta.drop_table_or_view(schema_id, args.old_mview_id)
