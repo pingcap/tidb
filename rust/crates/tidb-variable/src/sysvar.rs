@@ -881,6 +881,7 @@ use tidb_mysql::errors::{FormatArg, SqlError};
 
 mod catalog;
 mod ldap_hooks;
+mod process_hooks;
 mod validation;
 
 pub use catalog::SYS_VARS;

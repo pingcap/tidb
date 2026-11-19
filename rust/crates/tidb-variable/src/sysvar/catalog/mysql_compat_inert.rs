@@ -1856,9 +1856,13 @@ pub(super) static ENTRIES: [SysVarDef; 114] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(
+            super::super::process_hooks::set_performance_schema_session_connect_attrs_size,
+        ),
         get_session: None,
-        get_global: None,
+        get_global: Some(
+            super::super::process_hooks::get_performance_schema_session_connect_attrs_size,
+        ),
     },
     SysVarDef {
         name: "performance_schema_setup_actors_size",

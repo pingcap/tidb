@@ -308,9 +308,9 @@ pub(super) static ENTRIES: [SysVarDef; 19] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_resource_control_strict_mode),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_resource_control_strict_mode),
     },
     SysVarDef {
         name: "tidb_streamagg_concurrency",

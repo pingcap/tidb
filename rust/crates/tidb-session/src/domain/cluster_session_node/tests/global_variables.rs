@@ -344,6 +344,13 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
     .shared();
     let mut first = factory.open_session(session_context(71)).unwrap();
     let mut peer = factory.open_session(session_context(72)).unwrap();
+    // Go reads the switch from `vardef.EnableInstancePlanCache`, which its
+    // `SetGlobal` stores; rows loaded into a table publish nothing to the
+    // process.
+    first
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_enable_instance_plan_cache = ON")
+        .unwrap();
     for session in [&mut first, &mut peer] {
         session.node_conn().select_database("app").unwrap();
     }

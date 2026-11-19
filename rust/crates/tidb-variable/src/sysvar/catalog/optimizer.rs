@@ -362,9 +362,9 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_instance_plan_cache),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_instance_plan_cache),
     },
     SysVarDef {
         name: "tidb_enable_new_cost_interface",
@@ -776,9 +776,9 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_instance_plan_cache_max_mem_size),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_instance_plan_cache_max_mem_size),
     },
     SysVarDef {
         name: "tidb_instance_plan_cache_reserved_percentage",

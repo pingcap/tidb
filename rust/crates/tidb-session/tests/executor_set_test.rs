@@ -186,3 +186,25 @@ fn a_new_session_loads_each_variable_through_its_set_session() {
     tk2.must_query("select @@character_set_connection").check(["gbk"]);
     tk.must_exec("set global collation_server = default");
 }
+
+/// Go `sysvar.go`'s `SetGlobal` / `GetGlobal` over `vardef`'s process state:
+/// `SET GLOBAL` stores the process-wide value, and `@@global` reads it back
+/// from there -- so a change another part of the process makes (the TTL job
+/// manager's switch, the user-creation shortcut) is what `@@global` reports.
+#[test]
+fn global_reads_of_process_state_variables_answer_from_the_process() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_ttl_job_enable = OFF");
+    assert!(!tidb_vardef::ENABLE_TTL_JOB.load(SeqCst));
+    tk.must_query("select @@global.tidb_ttl_job_enable").check(["0"]);
+    tidb_vardef::ENABLE_TTL_JOB.store(true, SeqCst);
+    tk.must_query("select @@global.tidb_ttl_job_enable").check(["1"]);
+    tk.must_exec("set global tidb_ttl_scan_worker_count = 7");
+    assert_eq!(tidb_vardef::TTL_SCAN_WORKER_COUNT.load(SeqCst), 7);
+    tk.must_query("show global variables like 'tidb_ttl_scan_worker_count'")
+        .check(["tidb_ttl_scan_worker_count 7"]);
+    tk.must_exec("set global tidb_ttl_scan_worker_count = default");
+    tk.must_exec("set global tidb_ttl_job_enable = default");
+}

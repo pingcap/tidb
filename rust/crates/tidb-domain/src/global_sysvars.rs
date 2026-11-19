@@ -1188,51 +1188,23 @@ impl GlobalSysvars {
         matches!(
             name,
             REQUIRE_SECURE_TRANSPORT
-                | PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE
-                | MAX_USER_CONNECTIONS
-                | TIDB_ACCELERATE_USER_CREATION_UPDATE
-                | TIDB_TTL_JOB_ENABLE
-                | TIDB_TTL_SCAN_BATCH_SIZE
-                | TIDB_TTL_DELETE_BATCH_SIZE
-                | TIDB_TTL_DELETE_RATE_LIMIT
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_START_TIME
                 | TIDB_TTL_JOB_SCHEDULE_WINDOW_END_TIME
                 | TIDB_SERVICE_SCOPE
-                | TIDB_DDL_DISK_QUOTA
                 | TIDB_CLOUD_STORAGE_URI
-                | TIDB_TTL_SCAN_WORKER_COUNT
-                | TIDB_TTL_DELETE_WORKER_COUNT
-                | TIDB_TTL_RUNNING_TASKS
-                | TIDB_ENABLE_FOREIGN_KEY
-                | TIDB_ENABLE_ROW_LEVEL_CHECKSUM
                 | TIDB_ENABLE_TS_VALIDATION
-                | TIDB_MAX_DELTA_SCHEMA_COUNT
                 | TIDB_STORE_LIMIT
                 | TIDB_TXN_COMMIT_BATCH_SIZE
-                | TIDB_TXN_ENTRY_SIZE_LIMIT
-                | TIDB_ENABLE_CHECK_CONSTRAINT
-                | TIDB_DDL_ENABLE_FAST_REORG
                 | TIDB_ENABLE_MDL
                 | TIDB_SCHEMA_CACHE_SIZE
-                | TIDB_DDL_ERROR_COUNT_LIMIT
-                | TIDB_DDL_FLASHBACK_CONCURRENCY
-                | TIDB_DDL_REORG_WORKER_COUNT
-                | TIDB_DDL_REORG_BATCH_SIZE
                 | TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO
                 | TIDB_COMMITTER_CONCURRENCY
                 | TIDB_REDACT_LOG
-                | TIDB_ENABLE_INSTANCE_PLAN_CACHE
-                | TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE
                 | TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
                 | TIDB_MEM_OOM_ACTION
                 | TIDB_MEMORY_USAGE_ALARM_RATIO
-                | TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM
                 | TIDB_ANALYZE_DEFAULT_NUM_BUCKETS
                 | TIDB_ANALYZE_DEFAULT_NUM_TOP_N
-                | TIDB_STATS_CACHE_MEM_QUOTA
-                | TIDB_MAX_AUTO_ANALYZE_TIME
-                | TIDB_TABLE_CACHE_LEASE
-                | TIDB_ENABLE_FAST_CREATE_TABLE
                 | PD_ENABLE_FOLLOWER_HANDLE_REGION
                 | TIDB_ENABLE_TSO_FOLLOWER_PROXY
                 | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
@@ -1262,30 +1234,20 @@ impl GlobalSysvars {
         {
             return;
         }
+        // Go `SetGlobalFromHook`: the variable's own `SetGlobal` (its
+        // process state, e.g. `vardef`'s atomics and the LDAP impls), then
+        // what this node publishes for it below. Its refusal stopped an
+        // explicit write before the store; here it is Go's logged-and-
+        // ignored rebuild error.
+        if let Some(set_global) = get_sys_var(name).and_then(|def| def.set_global) {
+            let _ = set_global(&mut tidb_variable::vars::SessionVars::new(), value);
+        }
         use std::sync::atomic::Ordering::SeqCst;
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
             REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
                 .store(!tidb_config_deploymode::is_starter() && on, SeqCst),
-            PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
-                tidb_variable::varsutil::tidb_opt_int64(
-                    value,
-                    tidb_vardef::defaults::DEF_CONNECT_ATTRS_SIZE,
-                ),
-                SeqCst,
-            ),
-            TIDB_TTL_JOB_ENABLE => tidb_vardef::ENABLE_TTL_JOB.store(on, SeqCst),
-            TIDB_ACCELERATE_USER_CREATION_UPDATE => {
-                tidb_vardef::ACCELERATE_USER_CREATION_UPDATE.store(on, SeqCst);
-            }
-            MAX_USER_CONNECTIONS => tidb_vardef::MAX_USER_CONNECTIONS_VALUE.store(
-                tidb_variable::varsutil::tidb_opt_int64(
-                    value,
-                    tidb_vardef::defaults::DEF_MAX_USER_CONNECTIONS,
-                ) as u32,
-                SeqCst,
-            ),
             // Go `SetGlobal`: `vardef.ServiceScope.Store(strings.ToLower(s))`
             // and the config's `Instance.TiDBServiceScope`.
             TIDB_SERVICE_SCOPE => {
@@ -1295,29 +1257,6 @@ impl GlobalSysvars {
                     tidb_config::config_tree::config::update_global(|config| {
                         config.instance.tidb_service_scope = new_value;
                     });
-                }
-            }
-            // Go `SetGlobal`: `vardef.DDLDiskQuota.Store(TidbOptUint64(val,
-            // DefTiDBDDLDiskQuota))`.
-            TIDB_DDL_DISK_QUOTA => tidb_vardef::DDL_DISK_QUOTA.store(
-                value.parse::<u64>().unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_DISK_QUOTA as u64),
-                SeqCst,
-            ),
-            // Go `SetGlobal`: `strconv.ParseInt(s, 10, 64)` then `Store`; the
-            // registry has validated the value, so the parse cannot fail.
-            TIDB_TTL_SCAN_BATCH_SIZE => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_SCAN_BATCH_SIZE.store(value, SeqCst);
-                }
-            }
-            TIDB_TTL_DELETE_BATCH_SIZE => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_DELETE_BATCH_SIZE.store(value, SeqCst);
-                }
-            }
-            TIDB_TTL_DELETE_RATE_LIMIT => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_DELETE_RATE_LIMIT.store(value, SeqCst);
                 }
             }
             // Go `SetGlobal`: `time.ParseInLocation(FullDayTimeFormat, s, time.UTC)`.
@@ -1335,25 +1274,9 @@ impl GlobalSysvars {
                         .unwrap_or_else(std::sync::PoisonError::into_inner) = time;
                 }
             }
-            TIDB_TTL_SCAN_WORKER_COUNT => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_SCAN_WORKER_COUNT.store(value as i32, SeqCst);
-                }
-            }
-            TIDB_TTL_DELETE_WORKER_COUNT => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_DELETE_WORKER_COUNT.store(value as i32, SeqCst);
-                }
-            }
-            TIDB_TTL_RUNNING_TASKS => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TTL_RUNNING_TASKS.store(value as i32, SeqCst);
-                }
-            }
             // Go `SetGlobal`: `ForcePriority = Str2Priority(val)`.
             TIDB_FORCE_PRIORITY => tidb_vardef::FORCE_PRIORITY
                 .store(tidb_mysql::priority_from_str(value).as_enum(), SeqCst),
-            TIDB_ENABLE_FOREIGN_KEY => tidb_vardef::ENABLE_FOREIGN_KEY.store(on, SeqCst),
             // Go `SetGlobal`: `oracles.EnableTSValidation.Store(TiDBOptOn(val))`.
             TIDB_ENABLE_TS_VALIDATION => {
                 tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
@@ -1375,18 +1298,6 @@ impl GlobalSysvars {
                 .unwrap_or(tikv_client::kv::DEF_TXN_COMMIT_BATCH_SIZE),
                 SeqCst,
             ),
-            // Go `SetGlobal`: `SetMaxDeltaSchemaCount(TidbOptInt64(val, Def))`.
-            TIDB_MAX_DELTA_SCHEMA_COUNT => tidb_vardef::set_max_delta_schema_count(
-                tidb_variable::varsutil::tidb_opt_int64(
-                    value,
-                    tidb_vardef::defaults::DEF_TIDB_MAX_DELTA_SCHEMA_COUNT,
-                ),
-            ),
-            TIDB_ENABLE_ROW_LEVEL_CHECKSUM => {
-                tidb_vardef::ENABLE_ROW_LEVEL_CHECKSUM.store(on, SeqCst)
-            }
-            TIDB_ENABLE_CHECK_CONSTRAINT => tidb_vardef::ENABLE_CHECK_CONSTRAINT.store(on, SeqCst),
-            TIDB_DDL_ENABLE_FAST_REORG => tidb_vardef::ENABLE_FAST_REORG.store(on, SeqCst),
             // Go's `TiDBEnableMDL` hook runs `SwitchMDL` -> `SetEnableMDL`. A
             // node that leaves the process flag at its `false` default
             // acknowledges DDL schema versions on the classic per-node key
@@ -1403,53 +1314,9 @@ impl GlobalSysvars {
                     .unwrap_or(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
                 tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, SeqCst);
             }
-            TIDB_ENABLE_AUTO_ANALYZE => tidb_vardef::RUN_AUTO_ANALYZE.store(on, SeqCst),
-            // Go `SetGlobal`: `vardef.TxnEntrySizeLimit.Store(TidbOptUint64(val, Def))`.
-            TIDB_TXN_ENTRY_SIZE_LIMIT => tidb_vardef::TXN_ENTRY_SIZE_LIMIT.store(
-                tidb_variable::varsutil::tidb_opt_uint64(
-                    value,
-                    tidb_vardef::defaults::DEF_TIDB_TXN_ENTRY_SIZE_LIMIT as u64,
-                ),
-                SeqCst,
-            ),
             TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
                 tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on, SeqCst)
             }
-            TIDB_AUTO_ANALYZE_CONCURRENCY => tidb_vardef::AUTO_ANALYZE_CONCURRENCY.store(
-                value
-                    .parse::<i64>()
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_AUTO_ANALYZE_CONCURRENCY),
-                SeqCst,
-            ),
-            // Go `tidbOptPositiveInt32(val, DefTiDBDDLFlashbackConcurrency)`.
-            TIDB_DDL_FLASHBACK_CONCURRENCY => tidb_vardef::set_ddl_flashback_concurrency(
-                value
-                    .parse::<i32>()
-                    .ok()
-                    .filter(|cnt| *cnt > 0)
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_FLASHBACK_CONCURRENCY as i32),
-            ),
-            // Go `tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)`.
-            TIDB_DDL_REORG_WORKER_COUNT => tidb_vardef::set_ddl_reorg_worker_counter(
-                value
-                    .parse::<i32>()
-                    .ok()
-                    .filter(|cnt| *cnt > 0)
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_REORG_WORKER_COUNT as i32),
-            ),
-            // Go `tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)`.
-            TIDB_DDL_REORG_BATCH_SIZE => tidb_vardef::set_ddl_reorg_batch_size(
-                value
-                    .parse::<i32>()
-                    .ok()
-                    .filter(|cnt| *cnt > 0)
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_REORG_BATCH_SIZE as i32),
-            ),
-            TIDB_DDL_ERROR_COUNT_LIMIT => tidb_vardef::set_ddl_error_count_limit(
-                value
-                    .parse::<i64>()
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT),
-            ),
             TIDB_CIRCUIT_BREAKER_PD_METADATA_ERROR_RATE_THRESHOLD_RATIO => {
                 tidb_vardef::set_circuit_breaker_pd_metadata_error_rate_threshold_ratio(
                     value.parse::<f64>().unwrap_or(
@@ -1464,9 +1331,6 @@ impl GlobalSysvars {
                     tidb_variable::vars::set_global_resource_control(on);
                 }
             }
-            TIDB_RESOURCE_CONTROL_STRICT_MODE => {
-                tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE.store(on, SeqCst)
-            }
             TIDB_COMMITTER_CONCURRENCY => {
                 if let Ok(value) = value.parse::<i32>() {
                     tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, SeqCst);
@@ -1477,18 +1341,6 @@ impl GlobalSysvars {
                 "MARKER" => tidb_mysql::errors::RedactionMode::Marker,
                 _ => tidb_mysql::errors::RedactionMode::Disabled,
             }),
-            TIDB_ENABLE_INSTANCE_PLAN_CACHE => {
-                tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE.store(on, SeqCst)
-            }
-            TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE => {
-                if let Some(bytes) = tidb_variable::varsutil::parse_byte_size(value)
-                    .map(|(bytes, _)| bytes)
-                    .or_else(|| value.parse().ok())
-                {
-                    tidb_vardef::INSTANCE_PLAN_CACHE_MAX_MEM_SIZE
-                        .store(bytes.min(i64::MAX as u64) as i64, SeqCst);
-                }
-            }
             TIDB_INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE => {
                 if let Ok(value) = value.parse::<f64>() {
                     tidb_vardef::INSTANCE_PLAN_CACHE_RESERVED_PERCENTAGE
@@ -1501,11 +1353,6 @@ impl GlobalSysvars {
                     tidb_vardef::set_memory_usage_alarm_ratio(value);
                 }
             }
-            TIDB_MEMORY_USAGE_ALARM_KEEP_RECORD_NUM => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::MEMORY_USAGE_ALARM_KEEP_RECORD_NUM.store(value, SeqCst);
-                }
-            }
             TIDB_ANALYZE_DEFAULT_NUM_BUCKETS => {
                 if let Ok(value) = value.parse::<u64>() {
                     tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(value, SeqCst);
@@ -1514,25 +1361,6 @@ impl GlobalSysvars {
             TIDB_ANALYZE_DEFAULT_NUM_TOP_N => {
                 if let Ok(value) = value.parse::<u64>() {
                     tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(value, SeqCst);
-                }
-            }
-            TIDB_STATS_CACHE_MEM_QUOTA => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::STATS_CACHE_MEM_QUOTA.store(value, SeqCst);
-                }
-            }
-            TIDB_MAX_AUTO_ANALYZE_TIME => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::MAX_AUTO_ANALYZE_TIME.store(value, SeqCst);
-                }
-            }
-            TIDB_ENABLE_FAST_CREATE_TABLE => {
-                tidb_vardef::ENABLE_FAST_CREATE_TABLE
-                    .store(tidb_vardef::option_values::tidb_opt_on(value), SeqCst);
-            }
-            TIDB_TABLE_CACHE_LEASE => {
-                if let Ok(value) = value.parse::<i64>() {
-                    tidb_vardef::TABLE_CACHE_LEASE.store(value, SeqCst);
                 }
             }
             PD_ENABLE_FOLLOWER_HANDLE_REGION
@@ -1608,21 +1436,6 @@ impl GlobalSysvars {
             .validate_in_scope_with_lookup(&value, scope, Some(&lookup))
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
-        if key == tidb_vardef::tidb_vars::TIDB_INSTANCE_PLAN_CACHE_MAX_MEM_SIZE {
-            let bytes = tidb_variable::varsutil::parse_byte_size(&validated.value)
-                .map(|(bytes, _)| bytes)
-                .or_else(|| validated.value.parse::<u64>().ok());
-            let Some(bytes) = bytes else {
-                return Err(tidb_terror::MysqlError::unknown(format!(
-                    "invalid tidb_instance_plan_cache_max_mem_size value {value}"
-                )));
-            };
-            if bytes < 100 * 1024 * 1024 {
-                return Err(tidb_terror::MysqlError::unknown(
-                    "tidb_instance_plan_cache_max_mem_size should be at least 100MiB".to_owned(),
-                ));
-            }
-        }
         // Go's `tidb_auto_analyze_concurrency` Validation observes the two
         // current GLOBAL switches. Check the table being written (rather
         // than process atomics) so a cluster scratch image validates a
@@ -2194,16 +2007,6 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
             && self.0.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
         {
             tidb_variable::cloud_storage::set_cloud_storage_uri(&tidb_gocontext::Context::background(), value)?;
-        }
-        // Go `rebuildSysVarCache`: `sv.SetGlobalFromHook` for every
-        // variable with a `SetGlobal` -- its own, then what this node
-        // publishes for it. A scratch table publishes nothing.
-        if self.0.publishes_runtime_settings
-            && self.0.domain_hooks.load(std::sync::atomic::Ordering::SeqCst)
-        {
-            if let Some(hook) = get_sys_var(&sv.name).and_then(|def| def.set_global) {
-                hook(&mut tidb_variable::vars::SessionVars::new(), value).map_err(|error| error.message)?;
-            }
         }
         self.0.apply_set_global_hook(&sv.name, value);
         Ok(())
