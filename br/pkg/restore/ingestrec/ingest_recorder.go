@@ -214,9 +214,9 @@ func (i *IngestRecorder) UpdateIndexInfo(ctx context.Context, infoSchema infosch
 				col := tblInfo.Columns[column.Offset]
 				if col.Hidden {
 					// (expression)
-					// the generated expression string can be directly add into sql
+					// Escape percent signs because the expression becomes part of a sqlescape SQL template.
 					columnListBuilder.WriteByte('(')
-					columnListBuilder.WriteString(col.GeneratedExprString)
+					columnListBuilder.WriteString(strings.ReplaceAll(col.GeneratedExprString, "%", "%%"))
 					columnListBuilder.WriteByte(')')
 				} else {
 					// columnName

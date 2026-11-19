@@ -16,6 +16,9 @@ package indexrepair_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,12 +27,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/config"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
 
@@ -154,5 +160,78 @@ func TestRepairGlobalIndexes(t *testing.T) {
 			require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
 			tk.MustExec("ADMIN CHECK TABLE test.t")
 		})
+	}
+}
+
+func TestRepairExpressionIndexPercent(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, s.Mock.Storage)()
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	// Use a binary column and a hex literal for '%%' to isolate expression
+	// escaping from the separate predicate escaping path.
+	tk.MustExec("CREATE TABLE test.t (v VARBINARY(10), " +
+		"KEY idx_single ((CONCAT(v, '%'))) WHERE v = _binary'%', " +
+		"KEY idx_double ((CONCAT(v, '%%'))) WHERE v = X'2525')")
+
+	ctx := context.Background()
+	table, err := s.Mock.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	expressionForIndex := func(tableInfo *model.TableInfo, indexName string) string {
+		for _, index := range tableInfo.Indices {
+			if index.Name.O == indexName {
+				return tableInfo.Columns[index.Columns[0].Offset].GeneratedExprString
+			}
+		}
+		require.FailNow(t, "index not found", indexName)
+		return ""
+	}
+	wantExpressions := map[string]string{
+		"idx_single": expressionForIndex(tableInfo, "idx_single"),
+		"idx_double": expressionForIndex(tableInfo, "idx_double"),
+	}
+	require.Contains(t, wantExpressions["idx_double"], "%%")
+	wantConditions := make(map[string]string, 2)
+
+	recorder := ingestrec.New()
+	for _, index := range tableInfo.Indices {
+		require.NotEmpty(t, index.ConditionExprString)
+		wantConditions[index.Name.O] = index.ConditionExprString
+		job := &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: "test",
+			TableName:  "t",
+			TableID:    tableInfo.ID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RawArgs:    json.RawMessage(fmt.Sprintf("[%d, false, [], false]", index.ID)),
+			ReorgMeta:  &model.DDLReorgMeta{ReorgTp: model.ReorgTypeIngest},
+			BinlogInfo: &model.HistoryInfo{TableInfo: &model.TableInfo{Indices: []*model.IndexInfo{index}}},
+		}
+		require.NoError(t, recorder.TryAddJob(job, false))
+	}
+
+	t.Run("format_sql", func(t *testing.T) {
+		require.NoError(t, recorder.UpdateIndexInfo(ctx, s.Mock.InfoSchema()))
+		require.NoError(t, recorder.Iterate(func(_, _ int64, info *ingestrec.IngestIndexInfo) error {
+			var columns strings.Builder
+			require.NoError(t, sqlescape.FormatSQL(&columns, info.ColumnList, info.ColumnArgs...))
+			require.Equal(t, "("+wantExpressions[info.IndexInfo.Name.O]+")", columns.String())
+			return nil
+		}))
+	})
+
+	require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, recorder, nil, gluetidb.New(), nil))
+	afterTable, err := s.Mock.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	for indexName, want := range wantExpressions {
+		require.Equal(t, want, expressionForIndex(afterTable.Meta(), indexName), "index %s expression changed during repair", indexName)
+		index := afterTable.Meta().FindIndexByName(indexName)
+		require.NotNil(t, index)
+		require.Equal(t, wantConditions[indexName], index.ConditionExprString, "index %s condition changed during repair", indexName)
 	}
 }
