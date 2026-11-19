@@ -570,23 +570,6 @@ impl StatementLifecycle<'_> {
                                 }
                             }
                         }
-                        Ok(PessimisticStep::Retry { lock_error, .. }) if self.txn.explicit().is_none() => {
-                            // The autocommit statement's lock found a newer
-                            // committed version of a key it wrote: as for its
-                            // locking reads, the replay is a new implicit
-                            // transaction reading the version that beat it.
-                            if let Err(error) = self.provider_retries_lock_error(lock_error) {
-                                break Err(error);
-                            }
-                            if let Err(error) = retries.retry() {
-                                break Err(transactions::sql_error(error));
-                            }
-                            self.session.record_statement_retry();
-                            self.txn.rollback_implicit();
-                            self.txn.buffer().restore(savepoint.clone());
-                            tidb_breakpoint::inject(&*self.session, "lockErrorAndThenOnStmtRetryCalled");
-                            continue;
-                        }
                         Ok(PessimisticStep::Retry { lock_error }) => {
                             if let Err(error) = self.provider_retries_lock_error(lock_error) {
                                 break Err(error);
@@ -651,29 +634,6 @@ impl StatementLifecycle<'_> {
                         // does: what the client sees is the lock outcome.
                         self.session
                             .retract_statement_failure(error.code, &error.message);
-                    }
-                    if let (None, Some(StatementLockFailure::Retry { lock_error, .. })) =
-                        (self.txn.explicit(), failure.as_ref())
-                    {
-                        // The autocommit statement's lock found a newer
-                        // committed version of a row it read.
-                        if let Err(error) = self.provider_retries_lock_error(lock_error.clone()) {
-                            break Err(error);
-                        }
-                        if let Err(error) = retries.retry() {
-                            break Err(transactions::sql_error(error));
-                        }
-                        self.session.record_statement_retry();
-                        // The implicit transaction has nothing earlier to
-                        // keep: the replay is a new one, reading the version
-                        // that beat the statement.
-                        self.txn.rollback_implicit();
-                        self.txn.buffer().restore(savepoint.clone());
-                        tidb_breakpoint::inject(
-                            &*self.session,
-                            "lockErrorAndThenOnStmtRetryCalled",
-                        );
-                        continue;
                     }
                     match failure {
                         None => break Err(error),

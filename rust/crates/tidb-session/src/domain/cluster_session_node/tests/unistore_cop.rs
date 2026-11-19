@@ -11988,6 +11988,55 @@ fn pessimistic_autocommit_dml_writes_and_locks_its_rows() {
     assert_eq!(displayed(rows(&mut session, "SELECT id, v FROM test.pac")), [["1", "11"]]);
 }
 
+/// Go with `pessimistic-auto-commit = true`: an autocommit UPDATE waiting on
+/// a peer's lock retries, once the peer commits, in the SAME transaction
+/// (`OnStmtRetry` advances its for-update timestamp), so its start timestamp
+/// precedes the peer's commit. Go master capture:
+/// `tidb-wt/tools/x05/go_autocommit_retry.json`.
+#[test]
+fn a_pessimistic_autocommit_lock_retry_keeps_its_transaction() {
+    struct ConfigGuard;
+    impl Drop for ConfigGuard {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(false);
+            });
+        }
+    }
+    let last_txn_info = |session: &mut Session, key: &str| -> u64 {
+        let info = displayed(rows(session, "SELECT @@tidb_last_txn_info"))[0][0].clone();
+        let value: serde_json::Value = serde_json::from_str(&info).expect("txn info json");
+        value[key].as_u64().expect("timestamp")
+    };
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory.open_session(session_context(110)).expect("session opens");
+    rows(&mut holder, "CREATE TABLE test.acretry (id int primary key, v int)");
+    rows(&mut holder, "INSERT INTO test.acretry VALUES (1, 1)");
+    let _guard = ConfigGuard;
+    tidb_config::config_tree::config::update_global(|config| {
+        config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(true);
+    });
+    holder.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin holder");
+    rows(&mut holder, "UPDATE test.acretry SET v = v + 1 WHERE id = 1");
+    let writer_start_ts = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut writer = factory.open_session(session_context(111)).expect("session opens");
+            writer
+                .node_conn()
+                .execute_write("UPDATE test.acretry SET v = v + 10 WHERE id = 1")
+                .expect("the update waits, then retries");
+            last_txn_info(&mut writer, "start_ts")
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        holder.node_conn().control_transaction("COMMIT").expect("commit holder");
+        contender.join().expect("contender joins")
+    });
+    let holder_commit_ts = last_txn_info(&mut holder, "commit_ts");
+    assert!(writer_start_ts < holder_commit_ts, "{writer_start_ts} vs {holder_commit_ts}");
+    assert_eq!(displayed(rows(&mut holder, "SELECT v FROM test.acretry")), [["12"]]);
+}
+
 /// Go with `pessimistic-auto-commit = true`: an autocommit INSERT whose
 /// unique value another transaction is inserting waits on that key's lock
 /// and, once the other commits, fails with 1062 (`ErrDupEntry`), as an
