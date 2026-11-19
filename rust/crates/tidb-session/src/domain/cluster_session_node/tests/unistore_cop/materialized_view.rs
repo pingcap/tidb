@@ -5229,3 +5229,329 @@ fn test_nested_materialized_view_modify_column_dependency_changes_after_precheck
         "persisted metadata changed despite rejected ALTER"
     );
 }
+
+fn mview_output_log_session() -> (UnistoreClusterStack, Session) {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &["set tidb_mview_enable = on", "use test"]);
+    (stack, tk)
+}
+
+/// Go master `testMaterializedViewRefreshWritesMLog`
+/// (`pkg/executor/test/mviewoutputlog/refresh_output_log_test.go`).
+fn materialized_view_refresh_writes_m_log(refresh_method: &str) {
+    let (_stack, mut tk) = mview_output_log_session();
+    must_exec_all(&mut tk, &[
+        "create table t_mv_refresh_mlog (a int not null, b int not null)",
+        "insert into t_mv_refresh_mlog values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t_mv_refresh_mlog (a, b)",
+        "create materialized view mv_refresh_mlog (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog group by a",
+        "create materialized view log on mv_refresh_mlog (a, s, cnt)",
+        // "The three base-table mutations make the parent MV update one
+        // group, delete one group, and insert one group."
+        "update t_mv_refresh_mlog set b = 11 where a = 1 and b = 10",
+        "delete from t_mv_refresh_mlog where a = 2",
+        "insert into t_mv_refresh_mlog values (3, 4)",
+        &format!("refresh materialized view mv_refresh_mlog {refresh_method}"),
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv_refresh_mlog order by a"), r#"RS:[["1","16","2"],["3","4","1"]]"#);
+    assert_eq!(
+        answer(&mut tk, "select a, s, cnt, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$mv_refresh_mlog` order by a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`"),
+        r#"RS:[["1","15","2","U","-1"],["1","16","2","U","1"],["2","7","1","D","-1"],["3","4","1","I","1"]]"#,
+        "{refresh_method}"
+    );
+    // "A refresh with no source changes must not append a MLog row."
+    must_exec_all(&mut tk, &[&format!("refresh materialized view mv_refresh_mlog {refresh_method}")]);
+    assert_eq!(answer(&mut tk, "select count(*) from `$mlog$mv_refresh_mlog`"), r#"RS:[["4"]]"#, "{refresh_method}");
+}
+
+/// Go master `TestMaterializedViewRefreshFastWritesMLog`.
+#[test]
+fn test_materialized_view_refresh_fast_writes_m_log() {
+    materialized_view_refresh_writes_m_log("fast");
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteDeltaApplyWritesMLog`.
+#[test]
+fn test_materialized_view_refresh_complete_delta_apply_writes_m_log() {
+    materialized_view_refresh_writes_m_log("complete delta apply");
+}
+
+/// Go master `TestMaterializedViewRefreshSkipsMLogWhenTrackedColumnsAreUnchanged`.
+#[test]
+fn test_materialized_view_refresh_skips_m_log_when_tracked_columns_are_unchanged() {
+    for refresh_method in ["fast", "complete delta apply"] {
+        let (_stack, mut tk) = mview_output_log_session();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_refresh_mlog_tracked (a int not null, b int not null)",
+            "insert into t_mv_refresh_mlog_tracked values (1, 10), (1, 5)",
+            "create materialized view log on t_mv_refresh_mlog_tracked (a, b)",
+            "create materialized view mv_refresh_mlog_tracked (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog_tracked group by a",
+            "create materialized view log on mv_refresh_mlog_tracked (a)",
+            "update t_mv_refresh_mlog_tracked set b = 11 where a = 1 and b = 10",
+            &format!("refresh materialized view mv_refresh_mlog_tracked {refresh_method}"),
+        ]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv_refresh_mlog_tracked"), r#"RS:[["1","16","2"]]"#, "{refresh_method}");
+        assert_eq!(answer(&mut tk, "select * from `$mlog$mv_refresh_mlog_tracked`"), "RS:[]", "{refresh_method}");
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshMLogWriteFailureRollsBack`.
+#[test]
+fn test_materialized_view_refresh_m_log_write_failure_rolls_back() {
+    for refresh_method in ["fast", "complete delta apply"] {
+        let (_stack, mut tk) = mview_output_log_session();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_refresh_mlog_rollback (a int not null, b int not null)",
+            "insert into t_mv_refresh_mlog_rollback values (1, 10), (1, 5)",
+            "create materialized view log on t_mv_refresh_mlog_rollback (a, b)",
+            "create materialized view mv_refresh_mlog_rollback (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_mlog_rollback group by a",
+            "create materialized view log on mv_refresh_mlog_rollback (a, s, cnt)",
+            "update t_mv_refresh_mlog_rollback set b = 11 where a = 1 and b = 10",
+        ]);
+        let before = answer(&mut tk, "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info");
+        {
+            let _fail = tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/table/tables/mockMLogWriteError",
+                r#"return("mock mlog write failure")"#,
+            );
+            exec_err_contains(&mut tk, &format!("refresh materialized view mv_refresh_mlog_rollback {refresh_method}"), "mock mlog write failure");
+        }
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv_refresh_mlog_rollback"), r#"RS:[["1","15","2"]]"#, "{refresh_method}");
+        assert_eq!(answer(&mut tk, "select * from `$mlog$mv_refresh_mlog_rollback`"), "RS:[]", "{refresh_method}");
+        assert_eq!(answer(&mut tk, "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info"), before, "{refresh_method}");
+        must_exec_all(&mut tk, &[&format!("refresh materialized view mv_refresh_mlog_rollback {refresh_method}")]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv_refresh_mlog_rollback"), r#"RS:[["1","16","2"]]"#, "{refresh_method}");
+        assert_eq!(answer(&mut tk, "select count(*) from `$mlog$mv_refresh_mlog_rollback`"), r#"RS:[["2"]]"#, "{refresh_method}");
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshMLogNullTransitions`.
+#[test]
+fn test_materialized_view_refresh_m_log_null_transitions() {
+    for method in ["fast", "complete delta apply"] {
+        let (_stack, mut tk) = mview_output_log_session();
+        must_exec_all(&mut tk, &[
+            "create table t_null_output (a int not null, b int)",
+            "insert into t_null_output values (1, null), (2, 10)",
+            "create materialized view log on t_null_output (a, b)",
+            "create materialized view mv_null_output (a, s, n, cnt) as select a, sum(b), count(b), count(1) from t_null_output group by a",
+            "create materialized view log on mv_null_output (a, s, n, cnt)",
+            "update t_null_output set b=10 where a=1",
+            "update t_null_output set b=null where a=2",
+            &format!("refresh materialized view mv_null_output {method}"),
+        ]);
+        assert_eq!(
+            answer(&mut tk, "select a, ifnull(cast(s as char), 'NULL'), n, cnt, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$mv_null_output` order by a, `_MLOG$_OLD_NEW`"),
+            r#"RS:[["1","NULL","0","1","U","-1"],["1","10","1","1","U","1"],["2","10","1","1","U","-1"],["2","NULL","0","1","U","1"]]"#,
+            "{method}"
+        );
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshMinMaxWritesMLog`.
+#[test]
+fn test_materialized_view_refresh_min_max_writes_m_log() {
+    for method in ["fast", "complete delta apply"] {
+        let (_stack, mut tk) = mview_output_log_session();
+        must_exec_all(&mut tk, &[
+            "create table t_minmax_output (g int not null, b int, key(g))",
+            "insert into t_minmax_output values (1, 10), (1, 20), (2, null)",
+            "create materialized view log on t_minmax_output (g, b)",
+            "create materialized view mv_minmax_output (g, cnt, mn, mx) as select g, count(1), min(b), max(b) from t_minmax_output group by g",
+            "create materialized view log on mv_minmax_output (g, cnt, mn, mx)",
+            "delete from t_minmax_output where g=1 and b=20",
+            "update t_minmax_output set b=5 where g=2",
+            &format!("refresh materialized view mv_minmax_output {method}"),
+        ]);
+        assert_eq!(
+            answer(&mut tk, "select g, cnt, ifnull(cast(mn as char), 'NULL'), ifnull(cast(mx as char), 'NULL'), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$mv_minmax_output` order by g, `_MLOG$_OLD_NEW`"),
+            r#"RS:[["1","2","10","20","U","-1"],["1","1","10","10","U","1"],["2","1","NULL","NULL","U","-1"],["2","1","5","5","U","1"]]"#,
+            "{method}"
+        );
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteInPlaceRejectsMLog`
+/// (`pkg/executor/test/mviewoutputlog/refresh_schema_test.go`).
+#[test]
+fn test_materialized_view_refresh_complete_in_place_rejects_m_log() {
+    let (_stack, mut tk) = mview_output_log_session();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (2, 20)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a",
+        "create materialized view log on mv (a, s, cnt)",
+        "insert into t values (3, 30)",
+    ]);
+    let refused = answer(&mut tk, "refresh materialized view mv complete in place");
+    assert!(refused.contains("complete IN PLACE is not supported") && refused.contains("with a materialized view log"), "{refused}");
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+}
+
+/// Go master `TestMaterializedViewRefreshSchemaReloadConcurrent`: refreshes
+/// that see a stale schema share one reload.
+#[test]
+fn test_materialized_view_refresh_schema_reload_concurrent() {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    const REFRESH_COUNT: usize = 10;
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_schema (a int not null, b int not null)",
+        "insert into t_schema values (1, 10)",
+        "create materialized view log on t_schema (a, b)",
+    ]);
+    let mut refreshers = Vec::new();
+    for i in 0..REFRESH_COUNT {
+        must_exec_all(&mut tk, &[&format!(
+            "create materialized view mv_schema_{i} (a, s, cnt) as select a, sum(b), count(1) from t_schema group by a"
+        )]);
+        let mut refresher = stack.factory.open_session(session_context(2180 + i as u64)).unwrap();
+        must_exec_all(&mut refresher, &["set tidb_mview_enable = on", "use test"]);
+        refreshers.push(refresher);
+    }
+    must_exec_all(&mut tk, &["insert into t_schema values (2, 20)"]);
+    let _no_reload =
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)");
+    let catalog = Arc::clone(&stack.factory.catalog);
+    let old_is = catalog.get_latest();
+    // "Every refresh uses this source, so the diff requires a shared reload."
+    must_exec_all(&mut tk, &["alter table t_schema add column c int"]);
+    let required_version = catalog.get_latest().schema_meta_version();
+    assert!(required_version > old_is.schema_meta_version());
+    catalog.upsert_replacing(Arc::clone(&old_is), 0);
+
+    let (waiting_tx, waiting_rx) = std::sync::mpsc::channel::<i64>();
+    let resume = Latch::default();
+    let _before_lock = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeSchemaReloadLock",
+        {
+            let waiting_tx = std::sync::Mutex::new(waiting_tx);
+            let resume = resume.clone();
+            move |version| {
+                let version = *version.downcast_mut::<i64>().unwrap();
+                waiting_tx.lock().unwrap().send(version).unwrap();
+                resume.wait();
+            }
+        },
+    );
+    let reloads = Arc::new(AtomicI32::new(0));
+    let _before_reload = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeSchemaReload",
+        {
+            let reloads = Arc::clone(&reloads);
+            move |_| {
+                reloads.fetch_add(1, Ordering::AcqRel);
+            }
+        },
+    );
+    let handles: Vec<_> = refreshers
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut refresher)| std::thread::spawn(move || answer(&mut refresher, &format!("refresh materialized view mv_schema_{i} fast"))))
+        .collect();
+    for _ in 0..REFRESH_COUNT {
+        let version = waiting_rx
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .expect("timeout waiting for every refresh to observe the stale schema");
+        assert_eq!(version, required_version);
+    }
+    resume.open();
+    for handle in handles {
+        assert_eq!(handle.join().unwrap(), "OK");
+    }
+    assert_eq!(reloads.load(Ordering::Acquire), 1, "concurrent refreshes must share the first successful schema reload");
+    assert!(catalog.get_latest().schema_meta_version() >= required_version);
+    for i in 0..REFRESH_COUNT {
+        assert_eq!(answer(&mut tk, &format!("select * from mv_schema_{i} order by a")), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshCreateMLogConflict`: CREATE
+/// MATERIALIZED VIEW LOG on a view a refresh holds is cancelled at once, the
+/// refresh finishes, and a retry succeeds.
+#[test]
+fn test_materialized_view_refresh_create_m_log_conflict() {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    for (mode, rollback) in [
+        ("fast", false),
+        ("complete delta apply", false),
+        ("complete in place", false),
+        ("complete in place", true),
+        ("complete out of place", false),
+    ] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t_mlog_refresh (a int not null, b int not null)",
+            "insert into t_mlog_refresh values (1, 10)",
+            "create materialized view log on t_mlog_refresh (a, b)",
+            "create materialized view mv_mlog_refresh (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mlog_refresh group by a",
+            "insert into t_mlog_refresh values (2, 20)",
+        ]);
+        let (paused, resume) = (Latch::default(), Latch::default());
+        let pause = {
+            let (paused, resume) = (paused.clone(), resume.clone());
+            move |_: &mut dyn std::any::Any| {
+                paused.open();
+                resume.wait();
+            }
+        };
+        let mut guards = vec![if mode == "complete out of place" {
+            tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", pause)
+        } else {
+            tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", pause)
+        }];
+        if rollback {
+            guards.push(tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges",
+                r#"return("rollback refresh for lock test")"#,
+            ));
+        }
+        let create_attempts = Arc::new(AtomicI32::new(0));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        {
+            let (attempts, cancelled) = (Arc::clone(&create_attempts), Arc::clone(&cancelled));
+            guards.push(tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", move |job| {
+                let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                if job.type_ == tidb_model::ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG
+                    && job.table_name.to_string() == "$mlog$mv_mlog_refresh"
+                {
+                    attempts.fetch_add(1, Ordering::AcqRel);
+                    cancelled.store(job.is_cancelled(), Ordering::Release);
+                }
+            }));
+        }
+        let mut tk_refresh = stack.factory.open_session(session_context(2190)).unwrap();
+        must_exec_all(&mut tk_refresh, &["set tidb_mview_enable = on", "use test"]);
+        let refresh_sql = format!("refresh materialized view mv_mlog_refresh {mode}");
+        let refresh = std::thread::spawn(move || answer(&mut tk_refresh, &refresh_sql));
+        paused.wait_for("refresh");
+        let created = answer(&mut tk, "create materialized view log on mv_mlog_refresh (a, s, cnt)");
+        assert!(created.starts_with("ERR 8182 "), "{mode}/{rollback}: {created}");
+        assert!(created.contains("materialized view refresh is running") && created.contains("please retry later"), "{created}");
+        assert_eq!(create_attempts.load(Ordering::Acquire), 1, "lock conflict must not retry the same job");
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_eq!(answer(&mut tk, "show tables like '$mlog$mv_mlog_refresh'"), "RS:[]");
+        resume.open();
+        let refreshed = refresh.join().unwrap();
+        if rollback {
+            assert!(refreshed.contains("rollback refresh for lock test"), "{refreshed}");
+            assert_eq!(answer(&mut tk, "select * from mv_mlog_refresh order by a"), r#"RS:[["1","10","1"]]"#);
+        } else {
+            assert_eq!(refreshed, "OK", "{mode}: OOP cutover must remain runnable after CREATE MLog is cancelled");
+            assert_eq!(answer(&mut tk, "select * from mv_mlog_refresh order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+        }
+        drop(guards);
+        // "A new user retry succeeds after refresh releases its lock,
+        // including after OOP cutover has replaced the MV's table ID."
+        must_exec_all(&mut tk, &["create materialized view log on mv_mlog_refresh (a, s, cnt)"]);
+        let mv = latest_table(&stack, "mv_mlog_refresh");
+        let mlog = stack.factory.catalog.get_latest().table_info_by_id(mlog_id(&mv)).expect("the view's log").read().clone();
+        assert_eq!(mlog.materialized_view_log.as_ref().unwrap().read().base_table_id, mv.id);
+        assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+    }
+}
