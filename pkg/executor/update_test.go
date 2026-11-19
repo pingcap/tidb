@@ -43,8 +43,9 @@ func TestPointUpdateUnsignedValueRangeCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, i int, b bigint, k int unique key)")
-	tk.MustExec("insert into t values (1, 0, 0, 10), (2, 0, 0, 20)")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	tk.MustExec("create table t (id int primary key, i int, b bigint, k int unique key, bits bit(8), j json, tiny tinyint)")
+	tk.MustExec("insert into t values (1, 0, 0, 10, b'01000001', null, 0), (2, 0, 0, 20, b'01000001', null, 0)")
 	require.EqualError(t,
 		tk.ExecToErr("update t set i = 18446744073709551516 where id >= 2"),
 		"[types:1264]Out of range value for column 'i' at row 1")
@@ -61,9 +62,42 @@ func TestPointUpdateUnsignedValueRangeCheck(t *testing.T) {
 			"update t set b = 9223372036854775808 where k = 20",
 			"[types:1264]Out of range value for column 'b' at row 1",
 		},
+		{
+			"update t set i = '18446744073709551516' where id = 1",
+			"[types:1264]Out of range value for column 'i' at row 1",
+		},
+		{
+			"update t set i = x'FFFFFFFFFFFFFF9C' where id = 1",
+			"[types:1264]Out of range value for column 'i' at row 1",
+		},
 	} {
-		require.EqualError(t, tk.ExecToErr(tt.sql), tt.err)
+		t.Run(tt.sql, func(t *testing.T) {
+			err := tk.ExecToErr(tt.sql)
+			t.Logf("error: %v; warnings: %v", err, tk.MustQuery("show warnings").Rows())
+			if err == nil {
+				t.Logf("stored i: %v", tk.MustQuery("select i from t where id = 1").Rows())
+			}
+			require.EqualError(t, err, tt.err)
+		})
 	}
+
+	tk.MustExec(`set tidb_opt_fix_control = "52592:ON"`)
+	require.EqualError(t,
+		tk.ExecToErr("update t set i = '18446744073709551516' where id = 1"),
+		"[types:1264]Out of range value for column 'i' at row 1")
+	tk.MustExec(`set tidb_opt_fix_control = "52592:OFF"`)
+
+	t.Run("BIT assignment to JSON retains numeric value", func(t *testing.T) {
+		tk.MustExec("update t set j = bits where id = 1")
+		tk.MustQuery("select j from t where id = 1").Check(testkit.Rows("65"))
+	})
+
+	t.Run("JSON string assignment retains target-width check", func(t *testing.T) {
+		tk.MustExec(`update t set j = '"128"' where id = 1`)
+		require.EqualError(t,
+			tk.ExecToErr("update t set tiny = j where id = 1"),
+			"[types:1264]Out of range value for column 'tiny' at row 1")
+	})
 
 	tk.MustExec("update t set i = 123 where id = 1")
 	tk.MustQuery("select i from t where id = 1").Check(testkit.Rows("123"))
