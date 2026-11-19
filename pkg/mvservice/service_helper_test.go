@@ -237,12 +237,14 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 			types.NewIntDatum(nextRefreshSec1),
 			types.NewIntDatum(101),
 			types.NewIntDatum(123456789),
+			types.NewStringDatum(mvRefreshAlertLevelWarning),
 		}).ToRow(),
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec2),
 			types.NewIntDatum(102),
 			types.NewIntDatum(223456789),
+			types.NewDatum(nil),
 		}).ToRow(),
 		// Invalid row with non-positive ID should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
@@ -271,6 +273,7 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	require.Equal(t, expect101.UnixMilli(), m101.orderTs)
 	require.Equal(t, uint64(123456789), m101.lastSuccessReadTSO)
 	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(123456789)), m101.lastSuccessTime)
+	require.Equal(t, mvRefreshAlertLevelWarning, m101.persistedAlertLevel)
 
 	m102 := got[int64(102)]
 	require.NotNil(t, m102)
@@ -279,6 +282,72 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	require.Equal(t, expect102.UnixMilli(), m102.orderTs)
 	require.Equal(t, uint64(223456789), m102.lastSuccessReadTSO)
 	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(223456789)), m102.lastSuccessTime)
+	require.Empty(t, m102.persistedAlertLevel)
+}
+
+func TestMVServiceRefreshAlertRestoresMissingPersistedState(t *testing.T) {
+	for _, alertLevel := range []string{mvRefreshAlertLevelWarning, mvRefreshAlertLevelOverdue} {
+		t.Run(alertLevel, func(t *testing.T) {
+			clock := installMockTimeForTest(t)
+			now := mvsNow()
+			lastSuccessTime := now.Add(-90 * time.Second)
+			if alertLevel == mvRefreshAlertLevelOverdue {
+				lastSuccessTime = now.Add(-400 * time.Second)
+			}
+			lastSuccessReadTSO := oracle.GoTimeToTS(lastSuccessTime)
+			nextRefresh := now.Add(24 * time.Hour)
+			withMockInfoSchema(t, &meta.TableInfo{
+				ID:   101,
+				Name: pmodel.NewCIStr("mv"),
+				MaterializedView: &meta.MaterializedViewInfo{
+					AlertWarningSec: 60,
+					AlertOverdueSec: 300,
+				},
+			})
+
+			se := newRecordingSessionContext()
+			setPersistedAlert := func(level any) {
+				se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
+					chunk.MutRowFromValues(nextRefresh.Unix(), int64(101), lastSuccessReadTSO, level).ToRow(),
+				}
+			}
+			setPersistedAlert(alertLevel)
+			svc := NewMVService(context.Background(), recordingSessionPool{se: se}, &serviceHelper{}, DefaultMVServiceConfig())
+			defer svc.closeTaskExecutors()
+			setRefreshAlertCleanupOwnerForTest(svc, 10)
+
+			expectedUpsert := func(at time.Time) string {
+				return buildUpsertMVRefreshAlertSQL(at, []refreshAlertTask{{
+					mviewID:         101,
+					schemaName:      "test",
+					mviewName:       "mv",
+					lastSuccessTime: lastSuccessTime,
+					alertLevel:      alertLevel,
+				}})
+			}
+			svc.maybeLogRefreshAlertTasks(now)
+			require.Contains(t, se.executedRestrictedSQL, expectedUpsert(now))
+
+			// Both schedule changes complete between scans. The persisted alert is
+			// cleared, but the successful snapshot and even the next schedule can be unchanged.
+			setPersistedAlert(nil)
+			clock.Advance(mvRefreshAlertScanInterval)
+			se.executedRestrictedSQL = nil
+			svc.maybeLogRefreshAlertTasks(mvsNow())
+			require.Contains(t, se.executedRestrictedSQL, expectedUpsert(mvsNow()))
+
+			// Once restored, an unchanged alert should not be written again.
+			setPersistedAlert(alertLevel)
+			clock.Advance(mvRefreshAlertScanInterval)
+			se.executedRestrictedSQL = nil
+			svc.maybeLogRefreshAlertTasks(mvsNow())
+			require.Equal(t, []string{
+				testSQLFetchMVRefresh,
+				buildClearDisabledMVRefreshAlertLevelSQL(),
+				buildCleanupStaleMVRefreshAlertSQL(),
+			}, se.executedRestrictedSQL)
+		})
+	}
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {

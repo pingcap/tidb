@@ -1773,7 +1773,10 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error) {
-	const sql = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+	const sql = `SELECT i.NEXT_REFRESH_UNIX_SECONDS, i.MVIEW_ID, i.LAST_SUCCESS_READ_TSO, a.ALERT_LEVEL
+FROM mysql.tidb_mview_refresh_info AS i
+LEFT JOIN mysql.tidb_mview_refresh_alert AS a ON a.MVIEW_ID = i.MVIEW_ID
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err
@@ -1809,6 +1812,9 @@ func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			nextRefresh:        nextRefresh,
 			lastSuccessReadTSO: lastSuccessReadTSO,
 			lastSuccessTime:    lastSuccessTime,
+		}
+		if !row.IsNull(3) {
+			m.persistedAlertLevel = row.GetString(3)
 		}
 		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mviewID)
 		if resolveErr == nil && found {
