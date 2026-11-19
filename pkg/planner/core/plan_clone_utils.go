@@ -140,13 +140,25 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	// independent path objects. Stats derivation (fillIndexPath, etc.) mutates
 	// AccessPath fields in place; without deep cloning, costing one alternative
 	// can corrupt the other and destabilize CBO.
+	//
+	// PossibleAccessPaths holds the same path objects as AllPossibleAccessPaths
+	// (DeriveStats fills the latter and physical optimization reads the former),
+	// so the clone keeps that sharing: cloning the two slices independently would
+	// leave PossibleAccessPaths with paths DeriveStats never fills, and a table
+	// path without ranges becomes a TableDual that returns no rows.
+	clonedPaths := make(map[*util.AccessPath]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 	clone.AllPossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 	for i, ap := range ds.AllPossibleAccessPaths {
 		clone.AllPossibleAccessPaths[i] = ap.Clone()
+		clonedPaths[ap] = clone.AllPossibleAccessPaths[i]
 	}
 	clone.PossibleAccessPaths = make([]*util.AccessPath, len(ds.PossibleAccessPaths))
 	for i, ap := range ds.PossibleAccessPaths {
-		clone.PossibleAccessPaths[i] = ap.Clone()
+		if cloned, ok := clonedPaths[ap]; ok {
+			clone.PossibleAccessPaths[i] = cloned
+		} else {
+			clone.PossibleAccessPaths[i] = ap.Clone()
+		}
 	}
 	// Preserve original stats so DeriveStats returns early for DataSources
 	// that don't receive correlated conditions. Without this, DeriveStats

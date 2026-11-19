@@ -93,6 +93,18 @@ func TestDecodeOldRowValToChunkWithExtraCommitTS(t *testing.T) {
 	}
 }
 
+func TestHistTimeUsesLocation(t *testing.T) {
+	input := time.Date(2026, 6, 14, 12, 0, 0, 123456789, time.UTC)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+
+	localTime := histTime(input, loc)
+	utcTime := histTime(input, time.UTC)
+	require.Equal(t, "2026-06-14 20:00:00.123456 +0800", localTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, "2026-06-14 12:00:00.123456 +0000", utcTime.Format("2006-01-02 15:04:05.000000 -0700"))
+	require.Equal(t, 123456000, localTime.Nanosecond())
+	require.Equal(t, 123456000, utcTime.Nanosecond())
+}
+
 func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
 	return tables.MockTableFromMeta(&model.TableInfo{
 		ID:    1,
@@ -152,8 +164,8 @@ func TestMViewCompleteDeltaApplyMappingDiagnostics(t *testing.T) {
 		{"non_public", nonPublic, []int{0}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
 		{"input_count", valid, nil, "MViewCompleteDeltaApply row input column mapping length 0 != target public column count 1"},
 		{"nil_column", nilCol, []int{0}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
-		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
-		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 != writable ordinal 0"},
+		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 != writable ordinal 0"},
 	} {
 		t.Run("writable/"+tc.name, func(t *testing.T) {
 			_, err := buildMViewCompleteDeltaWritableInputColIDs(tc.target, tc.inputIDs)
@@ -1133,4 +1145,39 @@ func TestGetMPPServerID(t *testing.T) {
 	serverID, err := getMPPServerID(sctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 7, serverID)
+}
+
+func TestBuildMViewCompleteDeltaWritableInputColIDsColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  ast.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: ast.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: ast.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			mapping, err := buildMViewCompleteDeltaWritableInputColIDs(target, []int{4, 2})
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, mapping)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []int{4, 2}, mapping)
+		})
+	}
 }

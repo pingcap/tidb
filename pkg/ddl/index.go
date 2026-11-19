@@ -89,10 +89,12 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pderr "github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -669,6 +671,9 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 // ValidateRenameIndex checks if index name is ok to be renamed.
 func ValidateRenameIndex(from, to ast.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+	if err := checkMaterializedViewGroupKeyIndexConstraints(tbl, from, "RENAME INDEX"); err != nil {
+		return false, errors.Trace(err)
+	}
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -712,6 +717,11 @@ func onRenameIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 }
 
 func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	if invisible {
+		if err := checkMaterializedViewGroupKeyIndexConstraints(tbl, indexName, "ALTER INDEX INVISIBLE"); err != nil {
+			return false, errors.Trace(err)
+		}
+	}
 	var idx *model.IndexInfo
 	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
@@ -1636,7 +1646,7 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 				w.sessPool.Put(sessCtx)
 				close(doneCh)
 			}()
-			dbTable := fmt.Sprintf("`%s`.`%s`", dbName, tblName)
+			dbTable := sqlescape.MustEscapeSQL("%n.%n", dbName, tblName)
 
 			exec, ok := sessCtx.(sqlexec.RestrictedSQLExecutor)
 			if !ok {
@@ -2065,6 +2075,9 @@ func isRetryableError(err error, retryUnknown bool) bool {
 		}
 	}
 	originErr := errors.Cause(err)
+	if pderr.ErrClientCreateTSOStream.Equal(originErr) || pderr.ErrClientTSOStreamClosed.Equal(originErr) {
+		return true
+	}
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
@@ -2341,6 +2354,14 @@ func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t 
 	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, idxArg := range args.IndexArgs {
 		indexInfo := tblInfo.FindIndexByName(idxArg.IndexName.L)
+		// Reject before the first transition; later drop states cannot be safely
+		// cancelled. Rollback of an add-index job must still be able to remove it.
+		if !job.IsRollingback() && (indexInfo == nil || indexInfo.State == model.StatePublic) {
+			if err := checkMaterializedViewGroupKeyIndexConstraints(tblInfo, idxArg.IndexName, "DROP INDEX"); err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, false, errors.Trace(err)
+			}
+		}
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, idxArg.IfExist, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxArg.IndexName)

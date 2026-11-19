@@ -5734,6 +5734,20 @@ CreateMaterializedViewStmt:
 			Select:     $12.(ast.StmtNode).(ast.ResultSetNode),
 		}
 	}
+|	"CREATE" "MATERIALIZED" "VIEW" "IF" NotSym "EXISTS" TableName '(' ColumnList ')' MViewTableOptionListOpt MViewRefreshClauseOpt MViewAttributesOpt "AS" CreateViewSelectOpt
+	{
+		opts := $11.(*mviewCreateOptions)
+		$$ = &ast.CreateMaterializedViewStmt{
+			IfNotExists: true,
+			ViewName:    $7.(*ast.TableName),
+			Cols:        $9.([]ast.CIStr),
+			Comment:     opts.comment,
+			Refresh:     $12.(*ast.MViewRefreshClause),
+			Attributes:  $13.(string),
+			Options:     opts.options,
+			Select:      $15.(ast.StmtNode).(ast.ResultSetNode),
+		}
+	}
 
 MViewTableOptionListOpt:
 	/* EMPTY */
@@ -5849,15 +5863,16 @@ MViewStartWithOrNext:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" IfNotExists "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt MLogAccumulationAlertClauseOpt
 	{
-		opts := $10.(*mlogCreateOptions)
+		opts := $11.(*mlogCreateOptions)
 		$$ = &ast.CreateMaterializedViewLogStmt{
-			Table:             $6.(*ast.TableName),
-			Cols:              $8.([]ast.CIStr),
+			IfNotExists:       $5.(bool),
+			Table:             $7.(*ast.TableName),
+			Cols:              $9.([]ast.CIStr),
 			Options:           opts.options,
-			Purge:             $11.(*ast.MLogPurgeClause),
-			AccumulationAlert: $12.(*ast.MLogAccumulationAlertClause),
+			Purge:             $12.(*ast.MLogPurgeClause),
+			AccumulationAlert: $13.(*ast.MLogAccumulationAlertClause),
 		}
 	}
 

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
@@ -84,7 +83,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			}
 			continue
 		}
-		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot)
 		if err != nil {
 			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(statsHandle, results.Job, err)

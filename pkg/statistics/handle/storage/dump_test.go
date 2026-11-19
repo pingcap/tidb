@@ -15,7 +15,6 @@
 package storage_test
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -351,8 +350,10 @@ func TestLoadStatsFMSketchConcurrentAnalyze(t *testing.T) {
 			require.NoError(t, h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 1))
 			stats, err := h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 			require.NoError(t, err)
-			hist, _, _, fms, ok := stats.GetStatsInfo(1, isIndex == 1, false)
-			require.True(t, ok)
+			hist, fms := &stats.GetCol(1).Histogram, stats.GetCol(1).FMSketch
+			if isIndex == 1 {
+				hist, fms = &stats.GetIdx(1).Histogram, stats.GetIdx(1).FMSketch
+			}
 			require.Equal(t, int64(3), hist.NDV)
 			require.Equal(t, hist.NDV, fms.NDV())
 		})
@@ -619,49 +620,6 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
 	requireTableEqual(t, statsCacheTbl, loadTbl)
-}
-
-func TestJSONTableToBlocks(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10))")
-	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
-	// mark column stats as needed
-	tk.MustExec("select * from t where a = 3")
-	tk.MustExec("select * from t where b = 'bbb'")
-	tk.MustExec("alter table t add index single(a)")
-	tk.MustExec("alter table t add index multi(a, b)")
-	tk.MustExec("analyze table t with 2 topn")
-	h := dom.StatsHandle()
-	is := dom.InfoSchema()
-	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-
-	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
-	require.NoError(t, err)
-	// the slice is generated from a map loop, which is randomly
-	slices.SortFunc(dumpJSONTable.PredicateColumns, func(a, b *statsutil.JSONPredicateColumn) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
-	jsOrigin, _ := json.Marshal(dumpJSONTable)
-
-	blockSize := 30
-	js, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
-	require.NoError(t, err)
-	dumpJSONBlocks, err := storage.JSONTableToBlocks(js, blockSize)
-	require.NoError(t, err)
-	jsConverted, err := storage.BlocksToJSONTable(dumpJSONBlocks)
-	// the slice is generated from a map loop, which is randomly
-	slices.SortFunc(jsConverted.PredicateColumns, func(a, b *statsutil.JSONPredicateColumn) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
-	require.NoError(t, err)
-	jsonStr, err := json.Marshal(jsConverted)
-	require.NoError(t, err)
-	require.JSONEq(t, string(jsOrigin), string(jsonStr))
 }
 
 func TestLoadStatsFromOldVersion(t *testing.T) {

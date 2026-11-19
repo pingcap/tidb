@@ -310,6 +310,28 @@ func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 		require.Len(t, appendedCols, 1)
 		require.Equal(t, baseCol.UniqueID, appendedCols[0].UniqueID)
 	})
+
+	t.Run("injectExpr preserves materialized rand outputs", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{ctx: ctx, basicJoinGroupInfo: &basicJoinGroupInfo{}}
+		plan := newDataSource(ctx, "p", 1)
+		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(plan.Schema().Columns)}.Init(ctx, 0)
+		proj.SetSchema(plan.Schema().Clone())
+		proj.SetChildren(plan)
+		randCol := proj.AppendExpr(makeRandPlusCol(plan.Schema().Columns[0]))
+		expr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeDouble), randCol, expression.NewOne())
+
+		newPlan, injectedCol := solver.injectExpr(proj, expr)
+		newProj := newPlan.(*logicalop.LogicalProjection)
+		require.NotSame(t, proj, newProj)
+		require.Same(t, proj, newProj.Children()[0])
+		require.Len(t, proj.Exprs, 2)
+		require.True(t, expression.ExpressionsSemanticEqual(expr, newProj.Exprs[2]))
+		require.Equal(t, randCol.UniqueID, expression.ExtractColumns(newProj.Exprs[2])[0].UniqueID)
+		// A second join edge may reuse the deterministic expression over the materialized value.
+		reusedPlan, reusedCol := solver.injectExpr(newPlan, expr)
+		require.Same(t, newPlan, reusedPlan)
+		require.Same(t, injectedCol, reusedCol)
+	})
 }
 
 func TestJoinReorderInlineSafetyGates(t *testing.T) {
