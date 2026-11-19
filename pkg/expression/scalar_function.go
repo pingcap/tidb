@@ -857,7 +857,17 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 //
 // The constant operand of ast.Plus and ast.Minus must be immutable and not NULL, since
 // `col + NULL` / `NULL - col` is NULL for every row and doesn't follow col's order.
+//
+// ast.Plus and ast.Minus returning a floating-point value are not handled. Rounding can
+// map different values to the same one, e.g. `x + 1e20` is 1e20 for both x = 1 and x = 2,
+// so the ties must be broken by the following sort keys instead of x's order.
 func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
+	switch sf.FuncName.String() {
+	case ast.Plus, ast.Minus:
+		if sf.RetType.EvalType() == types.ETReal {
+			return nil, false
+		}
+	}
 	switch sf.FuncName.String() {
 	case ast.Plus:
 		args := sf.GetArgs()

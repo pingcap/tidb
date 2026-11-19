@@ -983,7 +983,7 @@ ORDER BY t1.a, t2.a, t3.a, var`
 	})
 
 	// issue-72560-order-by-null-constant-arithmetic-uses-index-order
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	runUnderBothPlanners(t, func(t *testing.T, tk *testkit.TestKit) {
 		resetTestDB(t, tk)
 		tk.MustExec("create table t (id int primary key, c int not null, key i(c))")
 		tk.MustExec("insert into t values (1, 30), (2, 10), (3, 20)")
@@ -1012,7 +1012,7 @@ ORDER BY t1.a, t2.a, t3.a, var`
 	})
 
 	// issue-72560-order-by-null-constant-arithmetic-skips-constant-sort-key
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	runUnderBothPlanners(t, func(t *testing.T, tk *testkit.TestKit) {
 		resetTestDB(t, tk)
 		tk.MustExec("create table t (id int primary key, c int not null, d int, key i(c))")
 		tk.MustExec("insert into t values (1, 30, 3), (2, 10, 1), (3, 20, 2)")
@@ -1045,6 +1045,20 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		}
 		// A non-NULL constant key is still sorted on its column.
 		tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by 1-d, id").Check(testkit.Rows("1", "3", "2"))
+
+		// Floating-point arithmetic can round different values to the same one, e.g. 1+1e20 = 2+1e20, so x+1e20
+		// can't be replaced by x when another key follows it. Keep the Sort.
+		tk.MustExec("create table tf (id int primary key, x double not null, d int, key ix(x, id, d))")
+		tk.MustExec("insert into tf values (1, 2, 0), (2, 1, 0)")
+		for _, orderBy := range []string{"null-d, x+1e20, id", "x+1e20, id", "1e20-x desc, id", "-(x+1e20) desc, id"} {
+			query := "select /* issue:72560 */ id from tf use index(ix) " + "order by " + orderBy
+			tk.MustQuery(query).Check(testkit.Rows("1", "2"))
+			tk.MustQuery("explain format = 'brief' " + query).CheckContain("Sort")
+		}
+		// Negating a float is exact, so it can still use the index order.
+		query := "select /* issue:72560 */ id from tf use index(ix) order by -x desc, id"
+		tk.MustQuery(query).Check(testkit.Rows("2", "1"))
+		tk.MustQuery("explain format = 'brief' " + query).CheckNotContain("Sort")
 
 		// A parameter can be NULL in one execution and non-NULL in the next one,
 		// so a cached plan must keep the Sort.
@@ -1304,6 +1318,19 @@ func TestExpressionIndexMergeSort(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+// runUnderBothPlanners runs testFunc in a fresh store with the Cascades planner off and on.
+func runUnderBothPlanners(t *testing.T, testFunc func(t *testing.T, tk *testkit.TestKit)) {
+	for _, cascades := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cascades=%v", cascades), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			testkit.WithCascades(cascades)(tk)
+			testFunc(t, tk)
 		})
 	}
 }
