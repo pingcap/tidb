@@ -423,13 +423,16 @@ impl StatementLifecycle<'_> {
     pub fn attempt_statement_inner<T>(
         &mut self,
         shape: StatementReadShape,
-        savepoint: &BufferCheckpoint,
+        outer_savepoint: &BufferCheckpoint,
         resource_group: &str,
         retrying: bool,
         is_dml: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
+        // The statement checkpoint, retaken once an autocommit write's
+        // implicit transaction binds the SQL buffer it is taken on.
+        let mut savepoint = *outer_savepoint;
         if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)
@@ -513,26 +516,24 @@ impl StatementLifecycle<'_> {
                     .start_ts();
             }
             // Go's executor builder activates a DML's transaction before the
-            // statement runs (`updateForUpdateTS` -> `GetStmtForUpdateTS`);
-            // inside a pending `autocommit = 0` transaction that is its
-            // activation.
-            if self.activate_statement_txn {
-                if let Some(transaction) = self.txn.explicit() {
+            // statement runs (`updateForUpdateTS` -> `GetStmtForUpdateTS`):
+            // a pending `autocommit = 0` transaction, or an autocommit
+            // write's implicit one, which binds the SQL buffer while it is
+            // still empty -- so the statement's writes and its pessimistic
+            // locks land in the one buffer its commit publishes -- and gives
+            // a statement that never reads its `TxnCtx.StartTS`.
+            if self.activate_statement_txn || autocommit_write {
+                if let Some(transaction) = self.txn.current() {
                     if let Err(error) = transaction.activate() {
                         let _ = self.finish_snapshot();
                         break Err(SqlQueryError::unknown(error));
                     }
                 }
             }
-            let outcome = run(&mut self.session);
-            // Go's executor builder activates an autocommit DML's transaction
-            // before it runs (`updateForUpdateTS`), so a statement that never
-            // read still has its `TxnCtx.StartTS`, from the same future.
             if autocommit_write {
-                if let Some(transaction) = self.txn.current() {
-                    let _ = transaction.activate();
-                }
+                savepoint = self.txn.buffer().checkpoint();
             }
+            let outcome = run(&mut self.session);
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
@@ -561,7 +562,7 @@ impl StatementLifecycle<'_> {
                     if let Err(error) = finished {
                         break Err(error);
                     }
-                    match self.lock_pessimistic_statement_keys(savepoint) {
+                    match self.lock_pessimistic_statement_keys(&savepoint) {
                         Ok(PessimisticStep::Done) => {
                             if let Some(transaction) = self.txn.current() {
                                 if let Err(error) = transaction.finish_pessimistic_statement(true) {
@@ -726,7 +727,7 @@ impl StatementLifecycle<'_> {
                 let _ = transaction.finish_pessimistic_statement(false);
                 // The statement's writes go; the transaction keeps its
                 // earlier writes and native lock ownership.
-                self.txn.buffer().restore(*savepoint);
+                self.txn.buffer().restore(savepoint);
             } else {
                 // Autocommit rollback ends the whole native transaction.
                 // Its statement checkpoint cannot outlive that owner.

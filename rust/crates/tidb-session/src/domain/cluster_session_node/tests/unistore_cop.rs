@@ -11957,6 +11957,37 @@ fn a_pessimistic_autocommit_write_times_out_on_a_held_row() {
     assert_eq!(displayed(rows(&mut holder, "SELECT id, v FROM test.acwait ORDER BY id")), [["1", "10"], ["2", "20"]]);
 }
 
+/// Go with `pessimistic-auto-commit = true`: plain autocommit DML runs in a
+/// pessimistic implicit transaction that locks what it writes (Go master
+/// capture: `tidb-wt/tools/x05/autocommit_retry.py` with `pac.toml`, whose
+/// setup is this sequence).
+#[test]
+fn pessimistic_autocommit_dml_writes_and_locks_its_rows() {
+    struct ConfigGuard;
+    impl Drop for ConfigGuard {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(false);
+            });
+        }
+    }
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(127)).expect("session");
+    let _guard = ConfigGuard;
+    tidb_config::config_tree::config::update_global(|config| {
+        config.pessimistic_txn.pessimistic_auto_commit = tidb_config::config_tree::AtomicBool::new(true);
+    });
+    for sql in [
+        "CREATE TABLE test.pac (id INT PRIMARY KEY, v INT)",
+        "INSERT INTO test.pac VALUES (1, 1)",
+        "UPDATE test.pac SET v = v + 10 WHERE id = 1",
+        "DELETE FROM test.pac WHERE id = 2",
+    ] {
+        session.node_conn().execute_write(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    assert_eq!(displayed(rows(&mut session, "SELECT id, v FROM test.pac")), [["1", "11"]]);
+}
+
 /// Go with `pessimistic-auto-commit = true`: an autocommit INSERT whose
 /// unique value another transaction is inserting waits on that key's lock
 /// and, once the other commits, fails with 1062 (`ErrDupEntry`), as an
