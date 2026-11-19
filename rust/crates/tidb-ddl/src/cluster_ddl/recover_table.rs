@@ -45,10 +45,9 @@ pub struct DdlStepWorker {
     pub auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
-    /// Go `jobCtx.mustRollbackTxnOnError`: the step's handler asked that an
-    /// errored or cancelled step discard all its mutations, its session's
-    /// statements included. Fresh (false) for each step.
-    pub must_rollback_txn_on_error: crate::job_txn::MustRollbackTxnOnError,
+    /// Go `jobContext`'s per-step state (`mustRollbackTxnOnError`,
+    /// `multiSchemaDiff`). Fresh for each step.
+    pub step_ctx: crate::job_txn::JobStepContextRef,
     /// The advisory locks `w.sess` holds for this delivery (Go
     /// `GetAdvisoryLock`); dropping the worker at the end of the delivery
     /// releases them (Go `deliveryJob`'s `ReleaseAllAdvisoryLocks`).

@@ -994,7 +994,7 @@ mod tests {
                     buffer: Default::default(),
                     sql: Default::default(),
                     start_mode: mode,
-                    must_rollback_txn_on_error: Default::default(),
+                    step_ctx: Default::default(),
                 }));
                 let result = helper(&txn);
                 if want_err {

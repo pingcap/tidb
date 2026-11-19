@@ -1118,6 +1118,13 @@ impl Session {
                             replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
                         }
                     }
+                    tidb_failpoint::inject_call(
+                        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterReplaceSourceInfo",
+                        &mut read_tso.clone(),
+                    );
+                    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewAfterReplaceSourceInfoError").is_some() {
+                        return Err(plain("mock refresh error after replacing source info"));
+                    }
                     persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp())
                 })?;
                 self.observe_mv_refresh_step("TXN_COMMIT", || sys_sql(refresh, "COMMIT", &[]).map(|_| ()))

@@ -1010,6 +1010,25 @@ pub(super) fn table_step_with_diff(
     start_ts: u64,
     fill: impl FnOnce(&mut SchemaDiff),
 ) -> Result<DdlWrite, DdlPlanError> {
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr") {
+        match value.int() {
+            1 => {
+                return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
+                    "mock update version and tableInfo error",
+                )))
+            }
+            2 => {
+                // "We change it cancelled directly here, because we want to
+                // get the original error with the job id appended."
+                active.job.state = JobState::CANCELLED;
+                return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(format!(
+                    "mock update version and tableInfo error, jobID={}",
+                    active.job.id
+                ))));
+            }
+            _ => {}
+        }
+    }
     let meta = txn.meta();
     // Go: one multi-schema step publishes one version, the sub-jobs after the
     // first skipping theirs.

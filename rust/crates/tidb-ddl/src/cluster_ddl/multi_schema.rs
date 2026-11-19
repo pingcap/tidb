@@ -724,7 +724,21 @@ pub(super) fn on_multi_schema_change(
             let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
             return Ok(action_step(write));
         }
+        // "Save every sub-job, including finished no-ops, before running the
+        // batch."
         let saved: Vec<SubJob> = sub_jobs.iter().map(|sub| sub.read().clone()).collect();
+        // Go master: the batch's diff starts from the involving tables, and
+        // "execution can discover related tables absent from the submitted
+        // involving set. Collect updates even from sub-jobs that skip schema
+        // version generation" (`jobCtx.multiSchemaDiff`).
+        let involving_infos = collect_affected_table_infos_from_involving(catalog, &active.job);
+        let step_ctx = txn.session().map(|session| std::sync::Arc::clone(&session.step_ctx));
+        if let Some(step_ctx) = &step_ctx {
+            *step_ctx.multi_schema_diff.lock().unwrap() = Some(Vec::new());
+        }
+        let take_multi_schema_infos = || {
+            step_ctx.as_ref().and_then(|step_ctx| step_ctx.multi_schema_diff.lock().unwrap().take()).unwrap_or_default()
+        };
         // Step every sub-job past its revertible point at once, under the
         // one schema version the first of them publishes.
         let mut merged = job_only_write(active.job.id, Vec::new());
@@ -758,7 +772,16 @@ pub(super) fn on_multi_schema_change(
                 row_ids,
                 worker,
             );
+            // Go's `(job, &proxyJob)`, as a snapshot the callback reads.
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate",
+                &mut (active.job.clone(), proxy.job.clone()),
+            );
             update_parent_job_from_proxy(&active.job, &proxy.job);
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaParentJobUpdate",
+                &mut (active.job.clone(), proxy.job.clone()),
+            );
             if step.reorg.is_some() {
                 // Go `onMultiSchemaChange` keeps this loop and its metadata
                 // transaction alive while runOneJobStep waits for reorg.
@@ -769,6 +792,7 @@ pub(super) fn on_multi_schema_change(
                 for (earlier, saved) in sub_jobs.iter().zip(&saved).take(seq) {
                     *earlier.write() = saved.clone();
                 }
+                take_multi_schema_infos();
                 return Ok(step);
             }
             let proxy_version = step.write.schema_version;
@@ -790,23 +814,34 @@ pub(super) fn on_multi_schema_change(
                 let written = subs.into_mutations()?;
                 txn.stage(&written);
                 merged.schema_version = version;
+                take_multi_schema_infos();
                 return Ok(action_step(merged));
             }
             if run_error.is_some() || proxy.job.error.is_some() {
-                for (earlier, saved) in sub_jobs.iter().zip(&saved).take(seq) {
+                take_multi_schema_infos();
+                // Go keeps the failed sub-job's object, whose state decides
+                // whether the parent rolls back, apart from the restored list.
+                let failed = GoShared::new(sub.read().clone());
+                for (earlier, saved) in sub_jobs.iter().zip(&saved).take(seq + 1) {
                     *earlier.write() = saved.clone();
                 }
-                handle_revertible_exception(
-                    &mut active.job,
-                    &sub_jobs,
-                    sub,
-                    proxy.job.error.clone(),
-                );
-                // The table goes back to how it stood, under a new version.
+                // "The failed sub-job's state still determines whether to
+                // roll back the parent; its persisted state must match the
+                // restored transaction."
+                handle_revertible_exception(&mut active.job, &sub_jobs, &failed, proxy.job.error.clone());
+                // "Earlier sub-jobs may have updated related tables. Discard
+                // the entire transaction before persisting the error and
+                // restored jobs. External effects such as allocator rebases
+                // cannot be undone here."
                 drop(subs);
-                let schema_id = active.job.schema_id;
-                let write = update_version_and_table_info(txn, active, schema_id, &saved_info, true, start_ts)?;
-                return Ok(action_step(write));
+                txn.set_must_rollback_txn_on_error();
+                let error = run_error.unwrap_or_else(|| {
+                    DdlPlanError::from(proxy.job.error.as_ref().expect("a failed proxy job").read().clone())
+                });
+                let mut step = action_step(job_only_write(active.job.id, Vec::new()));
+                step.update_raw_args = active.job.is_rollingback();
+                step.run_error = Some(error);
+                return Ok(step);
             }
             // Go's sub-jobs share the step's transaction: the next one reads
             // the metadata this one wrote.
@@ -816,9 +851,11 @@ pub(super) fn on_multi_schema_change(
         }
         let written = subs.into_mutations()?;
         txn.stage(&written);
+        let collected_infos = take_multi_schema_infos();
         if action_types.len() > 1 {
-            // Go `SetSchemaDiff` with every sub-job's action.
-            let diff = SchemaDiff {
+            // "Publish every related table updated under the shared schema
+            // version."
+            let mut diff = SchemaDiff {
                 version,
                 action_type: active.job.type_,
                 table_id: active.job.table_id,
@@ -826,6 +863,8 @@ pub(super) fn on_multi_schema_change(
                 sub_action_types: action_types.into(),
                 ..SchemaDiff::default()
             };
+            super::materialized_view::set_schema_diff_for_multi_infos(&mut diff, &involving_infos);
+            super::materialized_view::set_schema_diff_for_multi_infos(&mut diff, &collected_infos);
             let meta = txn.meta();
             meta.set_schema_diff(&diff)
                 .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
@@ -1040,4 +1079,27 @@ mod promote_proxy_kv_disk_full_pause_tests {
             assert!(parent.error.is_none() && parent.pause_reason.is_none());
         }
     }
+}
+
+/// Go master `collectAffectedTableInfosFromInvolving`: the tables the job's
+/// involving objects name (other than its own), from the latest schema.
+fn collect_affected_table_infos_from_involving(catalog: &SessionExtendedInfoSchema, job: &tidb_model::Job) -> Vec<(i64, i64)> {
+    let mut seen = vec![job.table_id];
+    let mut infos = Vec::new();
+    for involving in job.get_involving_schema_info().snapshot() {
+        let (database, table) = (involving.database.to_string(), involving.table.to_string());
+        if database.is_empty() || table.is_empty() || table == tidb_model::job::INVOLVING_ALL {
+            continue;
+        }
+        let Some((schema, table)) = catalog.table_info_by_name(&database, &table) else {
+            continue;
+        };
+        let table_id = table.read().id;
+        if seen.contains(&table_id) {
+            continue;
+        }
+        seen.push(table_id);
+        infos.push((schema.read().id, table_id));
+    }
+    infos
 }

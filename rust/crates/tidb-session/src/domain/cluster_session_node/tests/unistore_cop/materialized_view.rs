@@ -3612,3 +3612,711 @@ fn test_flashback_schema_materialized_view_missing_maintenance() {
 fn stack_session(stack: &UnistoreClusterStack) -> Session {
     stack.factory.open_session(session_context(2140)).unwrap()
 }
+
+/// Go master `TestMaterializedViewOutputLogModifyColumn`
+/// (`pkg/ddl/tests/materializedviewlog/mview_output_column_test.go`):
+/// MODIFY COLUMN of a base retypes its log, its dependent view's direct
+/// output columns and that view's own log.
+#[test]
+fn test_materialized_view_output_log_modify_column() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_output_type (a int not null, b int not null)",
+        "insert into t_output_type values (1, 10)",
+        "create materialized view log on t_output_type (a, b)",
+        "create materialized view mv_output_type (k, l, cnt) as select a, b, count(1) from t_output_type group by a, b",
+        "create materialized view log on mv_output_type (k, l)",
+        "alter table t_output_type modify column a bigint not null, modify column b bigint not null",
+    ]);
+    assert_eq!(
+        answer(
+            &mut tk,
+            "select table_name, column_name, data_type from information_schema.columns where table_schema='test' and table_name in ('t_output_type', '$mlog$t_output_type', 'mv_output_type', '$mlog$mv_output_type') and column_name in ('a', 'b', 'k', 'l') order by table_name, ordinal_position"
+        ),
+        r#"RS:[["$mlog$mv_output_type","k","bigint"],["$mlog$mv_output_type","l","bigint"],["$mlog$t_output_type","a","bigint"],["$mlog$t_output_type","b","bigint"],["mv_output_type","k","bigint"],["mv_output_type","l","bigint"],["t_output_type","a","bigint"],["t_output_type","b","bigint"]]"#
+    );
+    must_exec_all(&mut tk, &[
+        "insert into t_output_type values (2147483648, 2147483649)",
+        "refresh materialized view mv_output_type fast",
+    ]);
+    assert_eq!(
+        answer(&mut tk, "select k, l, cnt from mv_output_type order by k"),
+        r#"RS:[["1","10","1"],["2147483648","2147483649","1"]]"#
+    );
+    assert_eq!(answer(&mut tk, "select k, l from `$mlog$mv_output_type`"), r#"RS:[["2147483648","2147483649"]]"#);
+}
+
+/// Go master `TestMaterializedViewOutputLogModifyColumnBatchRollback`
+/// (`mview_output_column_test.go`): a batched MODIFY COLUMN sub-job failing
+/// after an earlier one staged the base, view and log changes discards the
+/// whole step (`mustRollbackTxnOnError`), and the job rolls back with its
+/// restored sub-jobs.
+#[test]
+fn test_materialized_view_output_log_modify_column_batch_rollback() {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_output_batch (a int not null, b int not null)",
+        "create materialized view log on t_output_batch (a, b)",
+        "create materialized view mv_output_batch (k, l, cnt) as select a, b, count(1) from t_output_batch group by a, b",
+        "create materialized view log on mv_output_batch (k, l)",
+    ]);
+    let base_id = latest_table(&stack, "t_output_batch").id;
+    let injected = Arc::new(AtomicBool::new(false));
+    let observed = Arc::new(AtomicBool::new(false));
+    let failed_job_id = Arc::new(AtomicI64::new(0));
+    let fail_guard: Arc<std::sync::Mutex<Option<tidb_failpoint::Guard>>> = Arc::default();
+    let _before = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate", {
+        let (injected, failed_job_id, fail_guard) = (Arc::clone(&injected), Arc::clone(&failed_job_id), Arc::clone(&fail_guard));
+        move |jobs| {
+            let (parent, proxy) = jobs.downcast_mut::<(tidb_model::Job, tidb_model::Job)>().unwrap();
+            if parent.table_id == base_id
+                && proxy.type_ == tidb_model::ActionType::ACTION_MODIFY_COLUMN
+                && !injected.swap(true, Ordering::AcqRel)
+            {
+                // "The first sub-job has staged parent/MV/MLog metadata. Fail
+                // the second."
+                failed_job_id.store(parent.id, Ordering::Release);
+                *fail_guard.lock().unwrap() = Some(tidb_failpoint::enable_for_test(
+                    "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr",
+                    "1*return(1)",
+                ));
+            }
+        }
+    });
+    let _after = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", {
+        let (observed, failed_job_id) = (Arc::clone(&observed), Arc::clone(&failed_job_id));
+        move |job| {
+            let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ == tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE && job.id == failed_job_id.load(Ordering::Acquire) {
+                observed.store(true, Ordering::Release);
+            }
+        }
+    });
+    exec_err_contains(
+        &mut tk,
+        "alter table t_output_batch modify column a bigint not null, modify column b bigint not null",
+        "mock update version and tableInfo error",
+    );
+    assert!(injected.load(Ordering::Acquire));
+    assert!(observed.load(Ordering::Acquire), "the failed batch must discard its whole transaction");
+    assert_eq!(
+        answer(
+            &mut tk,
+            "select distinct data_type from information_schema.columns where table_schema='test' and table_name in ('t_output_batch', '$mlog$t_output_batch', 'mv_output_batch', '$mlog$mv_output_batch') and column_name in ('a', 'b', 'k', 'l')"
+        ),
+        r#"RS:[["int"]]"#
+    );
+    let job_meta = answer(
+        &mut tk,
+        &format!("select hex(job_meta) from mysql.tidb_ddl_history where job_id = {}", failed_job_id.load(Ordering::Acquire)),
+    );
+    let hex = job_meta.trim_start_matches("RS:[[\"").trim_end_matches("\"]]");
+    let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+    let mut history = tidb_model::Job::default();
+    history.decode(&bytes).unwrap();
+    assert_eq!(history.state, tidb_model::JobState::ROLLBACK_DONE);
+    let info = history.multi_schema_info.as_ref().expect("multi-schema info").read().clone();
+    assert!(info.revertible);
+    assert_eq!(info.sub_jobs.len(), 2);
+    // "The restored sub-jobs cancel from SchemaStateNone without publishing
+    // changes."
+    for (i, sub) in info.sub_jobs.iter_deref().enumerate() {
+        let sub = sub.read();
+        assert_eq!(sub.state, tidb_model::JobState::CANCELLED, "sub-job {i}");
+        assert_eq!(sub.schema_state, tidb_model::SchemaState::NONE, "sub-job {i}");
+    }
+    let types = "select distinct data_type from information_schema.columns where table_schema='test' and column_name in ('a', 'b', 'k', 'l')";
+    assert_eq!(answer(&mut tk, types), r#"RS:[["int"]]"#);
+    must_exec_all(&mut tk, &["alter table t_output_batch modify column a bigint not null, modify column b bigint not null"]);
+    assert_eq!(answer(&mut tk, types), r#"RS:[["bigint"]]"#);
+}
+
+/// The latest finished DDL job (Go `admin show ddl jobs 1` then
+/// `GetHistoryJobByID`).
+fn latest_history_job(session: &mut Session) -> tidb_model::Job {
+    let meta = answer(session, "select hex(job_meta) from mysql.tidb_ddl_history order by job_id desc limit 1");
+    let hex = meta.trim_start_matches("RS:[[\"").trim_end_matches("\"]]");
+    let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+    let mut job = tidb_model::Job::default();
+    job.decode(&bytes).unwrap();
+    job
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumn`
+/// (`pkg/executor/test/mviewnested/nested_column_test.go`).
+#[test]
+fn test_nested_materialized_view_modify_column() {
+    for multi_column in [false, true] {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10)",
+            "create materialized view log on t (a, b)",
+            "create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b",
+            "create materialized view log on mv1 (k, l)",
+            "create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l",
+            "create materialized view sibling (q, r, cnt) as select k, l, count(1) from mv1 group by k, l",
+            "create materialized view log on mv2 (x, y)",
+            "create materialized view mv3 (i, j, cnt) as select x, y, count(1) from mv2 group by x, y",
+            "create materialized view log on mv3 (i, j)",
+            if multi_column {
+                "alter table t modify column a bigint not null, modify column b bigint not null"
+            } else {
+                "alter table t change column a a bigint not null"
+            },
+        ]);
+        let second = if multi_column { "bigint" } else { "int" };
+        let want: Vec<String> = [
+            ("$mlog$mv1", "k", "bigint"), ("$mlog$mv1", "l", second),
+            ("$mlog$mv2", "x", "bigint"), ("$mlog$mv2", "y", second),
+            ("$mlog$mv3", "i", "bigint"), ("$mlog$mv3", "j", second),
+            ("$mlog$t", "a", "bigint"), ("$mlog$t", "b", second),
+            ("mv1", "k", "bigint"), ("mv1", "l", second),
+            ("mv2", "x", "bigint"), ("mv2", "y", second),
+            ("mv3", "i", "bigint"), ("mv3", "j", second),
+            ("sibling", "q", "bigint"), ("sibling", "r", second),
+            ("t", "a", "bigint"), ("t", "b", second),
+        ]
+        .iter()
+        .map(|(table, column, ty)| format!(r#"["{table}","{column}","{ty}"]"#))
+        .collect();
+        assert_eq!(
+            answer(
+                &mut tk,
+                "select table_name, column_name, data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'b', 'k', 'l', 'x', 'y', 'i', 'j', 'q', 'r') order by table_name, ordinal_position"
+            ),
+            format!("RS:[{}]", want.join(",")),
+            "multi_column={multi_column}"
+        );
+        let job = latest_history_job(&mut tk);
+        let mut involving: Vec<String> = job
+            .get_involving_schema_info()
+            .snapshot()
+            .iter()
+            .map(|info| format!("{}.{}", info.database, info.table))
+            .collect();
+        involving.sort();
+        involving.dedup();
+        assert_eq!(
+            involving,
+            ["test.$mlog$mv1", "test.$mlog$mv2", "test.$mlog$mv3", "test.$mlog$t", "test.mv1", "test.mv2", "test.mv3", "test.sibling", "test.t"],
+            "multi_column={multi_column}"
+        );
+        must_exec_all(&mut tk, &[
+            "insert into t values (2147483648, 20)",
+            "refresh materialized view mv1 fast",
+            "refresh materialized view mv2 fast",
+            "refresh materialized view mv3 fast",
+            "refresh materialized view sibling fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv3 order by i"), r#"RS:[["1","10","1"],["2147483648","20","1"]]"#);
+        assert_eq!(answer(&mut tk, "select * from sibling order by q"), r#"RS:[["1","10","1"],["2147483648","20","1"]]"#);
+    }
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumnUnreferencedOutput`.
+#[test]
+fn test_nested_materialized_view_modify_column_unreferenced_output() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t (a int not null)",
+        "insert into t values (1)",
+        "create materialized view log on t (a)",
+        "create materialized view mv1 (k, cnt) as select a, count(1) from t group by a",
+        "create materialized view log on mv1 (k, cnt)",
+        "create materialized view mv2 (x, cnt) as select k, count(1) from mv1 group by k",
+        "create materialized view unaffected (c, n) as select cnt, count(1) from mv1 where cnt > 0 group by cnt",
+        "create materialized view log on unaffected (c)",
+        "create materialized view unaffected_nested (z, n) as select c, count(1) from unaffected where c > 0 group by c",
+    ]);
+    const UNAFFECTED_SQL: &str = "select table_name, column_name, column_type from information_schema.columns where table_schema = 'test' and table_name in ('unaffected', '$mlog$unaffected', 'unaffected_nested') order by table_name, ordinal_position";
+    let before = answer(&mut tk, UNAFFECTED_SQL);
+    must_exec_all(&mut tk, &["alter table t modify column a bigint not null"]);
+    assert_eq!(
+        answer(
+            &mut tk,
+            "select table_name, column_name, data_type from information_schema.columns where table_schema = 'test' and column_name in ('a', 'k', 'x') order by table_name, ordinal_position"
+        ),
+        r#"RS:[["$mlog$mv1","k","bigint"],["$mlog$t","a","bigint"],["mv1","k","bigint"],["mv2","x","bigint"],["t","a","bigint"]]"#
+    );
+    assert_eq!(answer(&mut tk, UNAFFECTED_SQL), before);
+}
+
+/// Go master `TestNestedMaterializedViewModifyColumnRejectsDownstreamUsage`,
+/// its `preflight` mode (the `worker` modes build the job before the
+/// dependency exists through Go's `ExecutorForTest.DoDDLJobWrapper`).
+#[test]
+fn test_nested_materialized_view_modify_column_rejects_downstream_usage() {
+    for (name, column, columns, select_sql, err) in [
+        ("where", "a", "(z, cnt)", "select x, count(1) from mv2 where x > 0 group by x", "WHERE clause"),
+        ("aggregate", "b", "(z, total, cnt)", "select x, sum(y), count(1) from mv2 group by x", "non-direct SELECT expressions"),
+    ] {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10)",
+            "create materialized view log on t (a, b)",
+            "create materialized view mv1 (k, l, cnt) as select a, b, count(1) from t group by a, b",
+            "create materialized view log on mv1 (k, l)",
+            "create materialized view mv2 (x, y, cnt) as select k, l, count(1) from mv1 group by k, l",
+            "create materialized view log on mv2 (x, y)",
+            &format!("create materialized view mv3 {columns} as {select_sql}"),
+        ]);
+        const TYPES_SQL: &str = "select table_name, column_name, column_type from information_schema.columns where table_schema = 'test' order by table_name, ordinal_position";
+        let before = answer(&mut tk, TYPES_SQL);
+        exec_err_contains(&mut tk, &format!("alter table t modify column {column} bigint not null"), err);
+        assert_eq!(answer(&mut tk, TYPES_SQL), before, "{name}");
+        assert_eq!(answer(&mut tk, "select * from mv2"), r#"RS:[["1","10","1"]]"#, "{name}");
+    }
+}
+
+/// Go master `TestMaterializedViewNestingDepthLimit`.
+#[test]
+fn test_materialized_view_nesting_depth_limit() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table mv_depth_base (a int not null)",
+        "insert into mv_depth_base values (1), (1), (2)",
+    ]);
+    let mut source = "mv_depth_base".to_owned();
+    for depth in 1..=16 {
+        let name = format!("mv_depth_{depth}");
+        must_exec_all(&mut tk, &[
+            &format!("create materialized view log on {source} (a)"),
+            &format!("create materialized view {name} (a, cnt) refresh fast as select a, count(1) from {source} group by a"),
+        ]);
+        source = name;
+    }
+    assert_eq!(answer(&mut tk, "select * from mv_depth_16 order by a"), r#"RS:[["1","1"],["2","1"]]"#);
+    must_exec_all(&mut tk, &["create materialized view log on mv_depth_16 (a)"]);
+    exec_err_contains(
+        &mut tk,
+        "create materialized view mv_depth_17 (a, cnt) refresh fast as select a, count(1) from mv_depth_16 group by a",
+        "materialized view nesting depth exceeds maximum of 16",
+    );
+    assert_eq!(answer(&mut tk, "show tables like 'mv_depth_17'"), "RS:[]");
+    assert_eq!(answer(&mut tk, "select * from mv_depth_1 order by a"), r#"RS:[["1","2"],["2","1"]]"#);
+    assert_eq!(answer(&mut tk, "select * from mv_depth_16 order by a"), r#"RS:[["1","1"],["2","1"]]"#);
+    assert!(mview_ids(&latest_table(&stack, "mv_depth_16")).is_empty());
+}
+
+/// One cell of a one-row answer.
+fn single_value(session: &mut Session, sql: &str) -> String {
+    let answer = answer(session, sql);
+    let rows: Vec<Vec<serde_json::Value>> =
+        serde_json::from_str(answer.strip_prefix("RS:").unwrap_or_else(|| panic!("{sql}: {answer}"))).unwrap();
+    assert_eq!(rows.len(), 1, "{sql}: {answer}");
+    rows[0][0].as_str().unwrap_or_default().to_owned()
+}
+
+/// Go master `TestPurgeMaterializedViewLogPreservesNestedChildDelta`
+/// (`nested_purge_test.go`): PURGE of a view's log stops at its child's
+/// last read, keeping the delta the child has not consumed.
+#[test]
+fn test_purge_materialized_view_log_preserves_nested_child_delta() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_nested_purge (a int not null, b int not null, v int not null)",
+        "insert into t_nested_purge values (1, 1, 10), (2, 1, 20)",
+        "create materialized view log on t_nested_purge (a, b, v)",
+        "create materialized view mv_nested_purge_parent (a, b, s, cnt) refresh fast as select a, b, sum(v), count(1) from t_nested_purge group by a, b",
+        "create materialized view log on mv_nested_purge_parent (a, b, s, cnt)",
+        "create materialized view mv_nested_purge_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(1), count(s) from mv_nested_purge_parent group by a",
+    ]);
+    let parent_mlog_id = latest_table(&stack, "$mlog$mv_nested_purge_parent").id;
+    let child_id = latest_table(&stack, "mv_nested_purge_child").id;
+    let child_read_tso: u64 =
+        single_value(&mut tk, &format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = {child_id}")).parse().unwrap();
+    let count = |tk: &mut Session| -> i64 { single_value(tk, "select count(*) from `$mlog$mv_nested_purge_parent`").parse().unwrap() };
+    let before_delta = count(&mut tk);
+    must_exec_all(&mut tk, &["insert into t_nested_purge values (1, 2, 7)", "refresh materialized view mv_nested_purge_parent fast"]);
+    let after_parent_refresh = count(&mut tk);
+    assert!(after_parent_refresh > before_delta);
+    // "The child has not consumed the parent refresh yet. PURGE must stop at
+    // the child's LAST_SUCCESS_READ_TSO and retain the parent delta for the
+    // subsequent FAST refresh."
+    must_exec_all(&mut tk, &["purge materialized view log on mv_nested_purge_parent"]);
+    assert_eq!(count(&mut tk), after_parent_refresh);
+    assert_eq!(
+        single_value(&mut tk, &format!("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = {parent_mlog_id}")),
+        child_read_tso.to_string()
+    );
+    must_exec_all(&mut tk, &["refresh materialized view mv_nested_purge_child fast"]);
+    assert_eq!(
+        answer(&mut tk, "select a, s, cnt, cnt_s from mv_nested_purge_child order by a"),
+        r#"RS:[["1","17","2","2"],["2","20","1","1"]]"#
+    );
+    must_exec_all(&mut tk, &[
+        "drop materialized view mv_nested_purge_child",
+        "drop materialized view log on mv_nested_purge_parent",
+        "drop materialized view mv_nested_purge_parent",
+        "drop materialized view log on t_nested_purge",
+        "drop table t_nested_purge",
+    ]);
+}
+
+/// Go master `TestPurgeMaterializedViewLogUsesSlowestNestedChildCheckpoint`
+/// (`nested_purge_test.go`).
+#[test]
+fn test_purge_materialized_view_log_uses_slowest_nested_child_checkpoint() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_nested_purge_multi (a int not null, b int not null, v int not null)",
+        "insert into t_nested_purge_multi values (1, 1, 10), (2, 1, 20)",
+        "create materialized view log on t_nested_purge_multi (a, b, v)",
+        "create materialized view mv_nested_purge_parent_multi (a, b, s, cnt) refresh fast as select a, b, sum(v), count(1) from t_nested_purge_multi group by a, b",
+        "create materialized view log on mv_nested_purge_parent_multi (a, b, s, cnt)",
+    ]);
+    let child_names = ["mv_nested_purge_child_1", "mv_nested_purge_child_2"];
+    let mut child_ids = Vec::new();
+    for name in child_names {
+        must_exec_all(&mut tk, &[&format!(
+            "create materialized view {name} (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(1), count(s) from mv_nested_purge_parent_multi group by a"
+        )]);
+        child_ids.push(latest_table(&stack, name).id);
+    }
+    let parent_mlog_id = latest_table(&stack, "$mlog$mv_nested_purge_parent_multi").id;
+    let read_checkpoint = |tk: &mut Session, child_id: i64| -> u64 {
+        let checkpoint: u64 =
+            single_value(tk, &format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = {child_id}")).parse().unwrap();
+        assert_ne!(checkpoint, 0);
+        checkpoint
+    };
+    let purge_and_check_checkpoint = |tk: &mut Session, expected: u64| {
+        must_exec_all(tk, &["purge materialized view log on mv_nested_purge_parent_multi"]);
+        assert_eq!(
+            single_value(tk, &format!("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = {parent_mlog_id}")),
+            expected.to_string()
+        );
+    };
+    let mut child1_checkpoint = read_checkpoint(&mut tk, child_ids[0]);
+    must_exec_all(&mut tk, &[
+        "insert into t_nested_purge_multi values (1, 2, 7)",
+        "refresh materialized view mv_nested_purge_parent_multi fast",
+        "refresh materialized view mv_nested_purge_child_2 fast",
+    ]);
+    let child2_checkpoint = read_checkpoint(&mut tk, child_ids[1]);
+    assert!(child2_checkpoint > child1_checkpoint);
+    assert_eq!(answer(&mut tk, "select a, s, cnt, cnt_s from mv_nested_purge_child_1 order by a"), r#"RS:[["1","10","1","1"],["2","20","1","1"]]"#);
+    assert_eq!(answer(&mut tk, "select a, s, cnt, cnt_s from mv_nested_purge_child_2 order by a"), r#"RS:[["1","17","2","2"],["2","20","1","1"]]"#);
+    // "Put one delta before the faster child's checkpoint and one after it.
+    // Neither may be purged yet: child 1 still needs both, even though child
+    // 2 has consumed the first."
+    must_exec_all(&mut tk, &["insert into t_nested_purge_multi values (3, 1, 8)", "refresh materialized view mv_nested_purge_parent_multi fast"]);
+    assert_eq!(
+        answer(&mut tk, &format!("select count(*) from `$mlog$mv_nested_purge_parent_multi` where _tidb_commit_ts > {child1_checkpoint} and _tidb_commit_ts <= {child2_checkpoint}")),
+        r#"RS:[["1"]]"#
+    );
+    purge_and_check_checkpoint(&mut tk, child1_checkpoint);
+    assert_eq!(answer(&mut tk, "select a, b, s, cnt from `$mlog$mv_nested_purge_parent_multi` order by a, b"), r#"RS:[["1","2","7","1"],["3","1","8","1"]]"#);
+    // "Once child 1 catches up, child 2 becomes the slower consumer."
+    must_exec_all(&mut tk, &["refresh materialized view mv_nested_purge_child_1 fast"]);
+    child1_checkpoint = read_checkpoint(&mut tk, child_ids[0]);
+    assert!(child1_checkpoint > child2_checkpoint);
+    let final_rows = r#"RS:[["1","17","2","2"],["2","20","1","1"],["3","8","1","1"]]"#;
+    assert_eq!(answer(&mut tk, "select a, s, cnt, cnt_s from mv_nested_purge_child_1 order by a"), final_rows);
+    purge_and_check_checkpoint(&mut tk, child2_checkpoint);
+    assert_eq!(answer(&mut tk, "select a, b, s, cnt from `$mlog$mv_nested_purge_parent_multi` order by a, b"), r#"RS:[["3","1","8","1"]]"#);
+    must_exec_all(&mut tk, &["refresh materialized view mv_nested_purge_child_2 fast"]);
+    assert!(read_checkpoint(&mut tk, child_ids[1]) > child1_checkpoint);
+    assert_eq!(answer(&mut tk, "select a, s, cnt, cnt_s from mv_nested_purge_child_2 order by a"), final_rows);
+    purge_and_check_checkpoint(&mut tk, child1_checkpoint);
+    assert_eq!(answer(&mut tk, "select count(*) from `$mlog$mv_nested_purge_parent_multi`"), r#"RS:[["0"]]"#);
+    for name in child_names {
+        must_exec_all(&mut tk, &[&format!("drop materialized view {name}")]);
+    }
+    must_exec_all(&mut tk, &[
+        "drop materialized view log on mv_nested_purge_parent_multi",
+        "drop materialized view mv_nested_purge_parent_multi",
+        "drop materialized view log on t_nested_purge_multi",
+        "drop table t_nested_purge_multi",
+    ]);
+}
+
+/// Go master `TestNestedMaterializedViewFastRefresh` (`nested_refresh_test.go`).
+#[test]
+fn test_nested_materialized_view_fast_refresh() {
+    for parent_refresh_method in ["fast", "complete delta apply"] {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t_nested_mv_refresh (a int not null, b int not null, v int)",
+            "insert into t_nested_mv_refresh values (1, 1, 10), (1, 1, 5), (1, 2, 7), (2, 1, 4)",
+            "create materialized view log on t_nested_mv_refresh (a, b, v)",
+            "create materialized view mv_nested_parent (a, b, s, cnt, cnt_v) refresh fast as select a, b, sum(v), count(1), count(v) from t_nested_mv_refresh group by a, b",
+            "create materialized view log on mv_nested_parent (a, b, s, cnt)",
+            "create materialized view mv_nested_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(1), count(s) from mv_nested_parent group by a",
+        ]);
+        let child = "select a, s, cnt, cnt_s from mv_nested_child order by a";
+        assert_eq!(answer(&mut tk, child), r#"RS:[["1","22","2","2"],["2","4","1","1"]]"#);
+        // "These mutations make the parent update one group, delete another,
+        // and insert a third."
+        must_exec_all(&mut tk, &[
+            "update t_nested_mv_refresh set v = 11 where a = 1 and b = 1 and v = 10",
+            "delete from t_nested_mv_refresh where a = 1 and b = 2",
+            "insert into t_nested_mv_refresh values (3, 1, 8)",
+            // "A child refresh only consumes published parent deltas; it does
+            // not refresh its parent."
+            "refresh materialized view mv_nested_child fast",
+        ]);
+        assert_eq!(answer(&mut tk, child), r#"RS:[["1","22","2","2"],["2","4","1","1"]]"#, "{parent_refresh_method}");
+        must_exec_all(&mut tk, &[
+            &format!("refresh materialized view mv_nested_parent {parent_refresh_method}"),
+            "refresh materialized view mv_nested_child fast",
+        ]);
+        assert_eq!(
+            answer(&mut tk, "select a, b, s, cnt from mv_nested_parent order by a, b"),
+            r#"RS:[["1","1","16","2"],["2","1","4","1"],["3","1","8","1"]]"#,
+            "{parent_refresh_method}"
+        );
+        assert_eq!(answer(&mut tk, child), r#"RS:[["1","16","1","1"],["2","4","1","1"],["3","8","1","1"]]"#, "{parent_refresh_method}");
+        // "Moving a parent group and making all SUM inputs NULL exercises both
+        // group deletion and nullable aggregate transitions in the child's
+        // delta stream."
+        must_exec_all(&mut tk, &[
+            "update t_nested_mv_refresh set a = 1, b = 3, v = null where a = 3 and b = 1",
+            "update t_nested_mv_refresh set v = null where a = 1 and b = 1",
+            &format!("refresh materialized view mv_nested_parent {parent_refresh_method}"),
+            "refresh materialized view mv_nested_child fast",
+        ]);
+        assert_eq!(
+            answer(&mut tk, "select a, b, s, cnt, cnt_v from mv_nested_parent order by a, b"),
+            r#"RS:[["1","1",null,"2","0"],["1","3",null,"1","0"],["2","1","4","1","1"]]"#,
+            "{parent_refresh_method}"
+        );
+        assert_eq!(answer(&mut tk, child), r#"RS:[["1",null,"2","0"],["2","4","1","1"]]"#, "{parent_refresh_method}");
+        must_exec_all(&mut tk, &[
+            "update t_nested_mv_refresh set v = 9 where a = 1 and b = 3",
+            &format!("refresh materialized view mv_nested_parent {parent_refresh_method}"),
+            "refresh materialized view mv_nested_child fast",
+        ]);
+        assert_eq!(answer(&mut tk, child), r#"RS:[["1","9","2","1"],["2","4","1","1"]]"#, "{parent_refresh_method}");
+    }
+}
+
+/// Go master `TestNestedMaterializedViewFastRefreshMinMax`.
+#[test]
+fn test_nested_materialized_view_fast_refresh_min_max() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_nested_mv_minmax (a int not null, b int not null, v int not null, key idx_ab (a, b))",
+        "insert into t_nested_mv_minmax values (1, 1, 10), (1, 1, 30), (1, 2, 5), (2, 1, 8)",
+        "create materialized view log on t_nested_mv_minmax (a, b, v)",
+        "create materialized view mv_nested_parent_minmax (a, b, cnt, mx, mn) refresh fast as select a, b, count(1), max(v), min(v) from t_nested_mv_minmax group by a, b",
+        "create materialized view log on mv_nested_parent_minmax (a, b, cnt, mx, mn)",
+        "create materialized view mv_nested_child_minmax (a, cnt, mx, mn) refresh fast as select a, count(1), max(mx), min(mn) from mv_nested_parent_minmax group by a",
+    ]);
+    let child = "select a, cnt, mx, mn from mv_nested_child_minmax order by a";
+    assert_eq!(answer(&mut tk, child), r#"RS:[["1","2","30","5"],["2","1","8","8"]]"#);
+    // "Removing the parent group's MAX forces the child MAX fallback to probe
+    // the parent MV by its group-key index."
+    must_exec_all(&mut tk, &[
+        "delete from t_nested_mv_minmax where a = 1 and b = 1 and v = 30",
+        "refresh materialized view mv_nested_parent_minmax fast",
+        "refresh materialized view mv_nested_child_minmax fast",
+    ]);
+    assert_eq!(
+        answer(&mut tk, "select a, b, cnt, mx, mn from mv_nested_parent_minmax order by a, b"),
+        r#"RS:[["1","1","1","10","10"],["1","2","1","5","5"],["2","1","1","8","8"]]"#
+    );
+    assert_eq!(answer(&mut tk, child), r#"RS:[["1","2","10","5"],["2","1","8","8"]]"#);
+}
+
+/// Go master `TestMaterializedViewRefreshDryRunUsesInternalTxnInfoSchema`.
+#[test]
+fn test_materialized_view_refresh_dry_run_uses_internal_txn_info_schema() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_mv_dry_run (a int not null, b int not null)",
+        "insert into t_mv_dry_run values (1, 10), (2, 20)",
+        "create materialized view log on t_mv_dry_run (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_dry_run (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_dry_run group by a",
+    ]);
+    let last_success_read_tso = answer(&mut tk, "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info");
+    must_exec_all(&mut tk, &["insert into t_mv_dry_run values (1, 5)"]);
+    for (mode, operator) in [("complete delta apply", "MViewCompleteDeltaApply"), ("fast", "MViewDeltaMerge")] {
+        for _ in 0..2 {
+            let plan = answer(&mut tk, &format!("refresh materialized view mv_dry_run {mode} dry run"));
+            let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(plan.strip_prefix("RS:").expect(&plan)).unwrap();
+            assert!(
+                rows.iter().any(|row| row[0].as_str().is_some_and(|id| id.starts_with(&format!("  {operator}")))),
+                "{mode}: {plan}"
+            );
+            assert_eq!(answer(&mut tk, "select * from mv_dry_run order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+            assert_eq!(answer(&mut tk, "select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info"), last_success_read_tso);
+            assert_eq!(answer(&mut tk, "select count(*) from mysql.tidb_mview_refresh_hist"), r#"RS:[["0"]]"#);
+        }
+    }
+    must_exec_all(&mut tk, &["refresh materialized view mv_dry_run complete delta apply"]);
+    assert_eq!(answer(&mut tk, "select * from mv_dry_run order by a"), r#"RS:[["1","15","2"],["2","20","1"]]"#);
+}
+
+/// Go master `TestNestedMViewRefreshSourceInfoLifecycle`
+/// (`nested_refresh_source_test.go`).
+#[test]
+fn test_nested_m_view_refresh_source_info_lifecycle() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_sources (a int not null, b int not null)",
+        "insert into t_sources values (1, 10), (2, 20)",
+        "create materialized view log on t_sources (a, b)",
+        "create materialized view mv_sources (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_sources group by a",
+        "create materialized view log on mv_sources (a, s, cnt)",
+        "create materialized view mv_sources_child (a, cnt) refresh fast as select a, count(*) from mv_sources group by a",
+    ]);
+    let id = |name: &str| latest_table(&stack, name).id;
+    let (mv_id, child_id) = (id("mv_sources"), id("mv_sources_child"));
+    let (mlog_id, own_log_id) = (id("$mlog$t_sources"), id("$mlog$mv_sources"));
+    assert_eq!(
+        answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID"),
+        format!(r#"RS:[["{mv_id}","{mlog_id}"],["{child_id}","{own_log_id}"]]"#)
+    );
+    must_exec_all(&mut tk, &["drop materialized view mv_sources_child"]);
+    assert_eq!(
+        answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog)"),
+        format!(r#"RS:[["{mv_id}","{mlog_id}"]]"#)
+    );
+    must_exec_all(&mut tk, &["drop materialized view log on mv_sources"]);
+    assert_eq!(
+        answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info"),
+        format!(r#"RS:[["{mv_id}","{mlog_id}"]]"#)
+    );
+    must_exec_all(&mut tk, &["drop materialized view mv_sources"]);
+    assert_eq!(answer(&mut tk, "select count(*) from mysql.tidb_mview_fast_refresh_source_info"), r#"RS:[["0"]]"#);
+}
+
+/// Go master `TestNestedMViewRefreshSourceInfoRejectsMissingRecords`.
+#[test]
+fn test_nested_m_view_refresh_source_info_rejects_missing_records() {
+    let (_stack, mut tk, _) = new_mview_refresh_source_fixture();
+    must_exec_all(&mut tk, &[
+        "create materialized view log on mv_source_init (a, s, cnt)",
+        "create materialized view mv_source_child (a, cnt) refresh fast as select a, count(*) from mv_source_init group by a",
+    ]);
+    const CHILD_ID: &str = "(select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='mv_source_child')";
+    let source_sql = format!("select * from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {CHILD_ID}");
+    must_exec_all(&mut tk, &[&format!("delete from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {CHILD_ID}")]);
+    let state = |tk: &mut Session| {
+        [
+            answer(tk, "select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID"),
+            answer(tk, "select * from mysql.tidb_mview_refresh_info order by MVIEW_ID"),
+            answer(tk, "select * from mv_source_child order by a"),
+        ]
+    };
+    let before = state(&mut tk);
+    for method in ["fast", "complete delta apply", "complete in place", "complete out of place"] {
+        exec_err_contains(&mut tk, &format!("refresh materialized view mv_source_child {method}"), "input log records are missing");
+        assert_eq!(answer(&mut tk, &source_sql), "RS:[]", "{method}");
+        assert_eq!(state(&mut tk), before, "{method}");
+    }
+}
+
+/// Go master `TestNestedMViewRefreshSourceInfoRecoveryAtomicity`.
+#[test]
+fn test_nested_m_view_refresh_source_info_recovery_atomicity() {
+    let (stack, mut tk, mview_id) = new_mview_refresh_source_fixture();
+    must_exec_all(&mut tk, &[
+        "create materialized view log on mv_source_init (a, s, cnt)",
+        "create materialized view mv_source_child (a, cnt) refresh fast as select a, count(*) from mv_source_init group by a",
+        "create materialized view mv_source_peer (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_init group by a",
+        &format!("update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = -1 where MVIEW_ID = {mview_id}"),
+    ]);
+    let refresh_info = "select * from mysql.tidb_mview_refresh_info order by MVIEW_ID";
+    let sources = "select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID";
+    let before = answer(&mut tk, refresh_info);
+    let before_sources = answer(&mut tk, sources);
+    must_exec_all(&mut tk, &["insert into t_source_init values (1, 5), (3, 7)"]);
+    {
+        let _fail = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges",
+            r#"return("source recovery rollback")"#,
+        );
+        exec_err_contains(&mut tk, "refresh materialized view mv_source_init complete delta apply", "source recovery rollback");
+    }
+    assert_eq!(answer(&mut tk, refresh_info), before);
+    assert_eq!(answer(&mut tk, sources), before_sources);
+    assert_eq!(answer(&mut tk, "select * from mv_source_init order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+    {
+        let _fail = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewAfterReplaceSourceInfoError",
+            "return()",
+        );
+        exec_err_contains(&mut tk, "refresh materialized view mv_source_init complete delta apply", "after replacing source info");
+    }
+    assert_eq!(answer(&mut tk, refresh_info), before);
+    assert_eq!(answer(&mut tk, sources), before_sources);
+    assert_eq!(answer(&mut tk, "select * from mv_source_init order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#);
+    // "A successful COMPLETE preserves the output log, so the child still
+    // FAST refreshes. The peer's input baseline and watermark are unchanged."
+    let peer_sql = "select * from mysql.tidb_mview_refresh_info where MVIEW_ID = (select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='mv_source_peer')";
+    let peer_before = answer(&mut tk, peer_sql);
+    let computation_ts = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    {
+        let seen = Arc::clone(&computation_ts);
+        let _observe = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterReplaceSourceInfo",
+            move |ts| seen.store(*ts.downcast_mut::<u64>().unwrap(), std::sync::atomic::Ordering::Release),
+        );
+        must_exec_all(&mut tk, &["refresh materialized view mv_source_init complete delta apply"]);
+    }
+    let computation_ts = computation_ts.load(std::sync::atomic::Ordering::Acquire);
+    assert_ne!(computation_ts, 0);
+    assert_eq!(
+        answer(&mut tk, &format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = {mview_id}")),
+        format!(r#"RS:[["{computation_ts}"]]"#)
+    );
+    assert_eq!(answer(&mut tk, peer_sql), peer_before);
+    must_exec_all(&mut tk, &["refresh materialized view mv_source_child fast"]);
+    assert_eq!(answer(&mut tk, "select * from mv_source_child order by a"), r#"RS:[["1","1"],["2","1"],["3","1"]]"#);
+
+    // t.Run("child_baseline_recovery")
+    const CHILD_ID: &str = "(select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='mv_source_child')";
+    must_exec_all(&mut tk, &[
+        &format!("update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = -1 where MVIEW_ID = {CHILD_ID}"),
+        "insert into t_source_init values (4, 11)",
+        "refresh materialized view mv_source_init fast",
+    ]);
+    let before_child = answer(&mut tk, "select * from mv_source_child order by a");
+    let checkpoint_sql = format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = {CHILD_ID}");
+    let before_checkpoint = answer(&mut tk, &checkpoint_sql);
+    exec_err_contains(&mut tk, "refresh materialized view mv_source_child fast", "run COMPLETE refresh");
+    assert_eq!(answer(&mut tk, "select * from mv_source_child order by a"), before_child);
+    assert_eq!(answer(&mut tk, &checkpoint_sql), before_checkpoint);
+    must_exec_all(&mut tk, &["refresh materialized view mv_source_child complete delta apply"]);
+    assert_eq!(
+        answer(&mut tk, &format!("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {CHILD_ID}")),
+        answer(&mut tk, "select MLOG_ID from information_schema.tidb_mlogs where table_schema='test' and base_table_name='mv_source_init'")
+    );
+    let _ = &stack;
+    assert_eq!(answer(&mut tk, "select * from mv_source_child order by a"), r#"RS:[["1","1"],["2","1"],["3","1"],["4","1"]]"#);
+    must_exec_all(&mut tk, &[
+        "insert into t_source_init values (5, 13)",
+        "refresh materialized view mv_source_init fast",
+        "refresh materialized view mv_source_child fast",
+    ]);
+    assert_eq!(answer(&mut tk, "select * from mv_source_child order by a"), r#"RS:[["1","1"],["2","1"],["3","1"],["4","1"],["5","1"]]"#);
+}

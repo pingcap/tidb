@@ -387,9 +387,11 @@ fn validate_materialized_view_log_column_type_for_modify_column(
 }
 
 /// Go master `buildMaterializedViewRelatedTableInfoForModifyColumn`: the
-/// tables a base column's change rewrites, each loaded once by `load`
-/// (its schema id and a copy of its info): the log, when it tracks the
-/// column, retyped from the column's new type.
+/// tables a base column's change rewrites, each loaded once by `load` (its
+/// schema id and a copy of its info): the log, when it tracks the column,
+/// and each dependent materialized view's direct output columns, retyped
+/// from the column's new type, followed through the view's own log and
+/// dependents.
 pub(crate) fn build_materialized_view_related_table_info_for_modify_column(
     load: &mut dyn FnMut(i64, &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError>,
     op: &str,
@@ -397,27 +399,62 @@ pub(crate) fn build_materialized_view_related_table_info_for_modify_column(
     old: &tidb_model::ColumnInfo,
     new: &tidb_model::ColumnInfo,
 ) -> Result<Vec<(i64, TableInfo)>, tidb_terror::MysqlError> {
+    if base.materialized_view_base.is_none() || is_column_comment_only_change(old, new) {
+        return Ok(Vec::new());
+    }
+    // "Keep one pending TableInfo per table so all column changes are
+    // persisted together."
+    let mut related = RelatedTables { load, infos: Vec::new(), indexes: std::collections::HashMap::new() };
+    visit_materialized_view_related_tables(&mut related, op, base, old, new)?;
+    Ok(related.infos)
+}
+
+/// The pending tables of [`build_materialized_view_related_table_info_for_modify_column`].
+struct RelatedTables<'a> {
+    load: &'a mut dyn FnMut(i64, &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError>,
+    infos: Vec<(i64, TableInfo)>,
+    indexes: std::collections::HashMap<i64, usize>,
+}
+
+impl RelatedTables<'_> {
+    /// Go `loadTable`: a changed table's pending info, else a fresh copy.
+    fn load(&mut self, table_id: i64, description: &str) -> Result<(i64, TableInfo), tidb_terror::MysqlError> {
+        if let Some(&index) = self.indexes.get(&table_id) {
+            return Ok(self.infos[index].clone());
+        }
+        (self.load)(table_id, description)
+    }
+
+    /// Go `addChangedTable` (a pending table's info is Go's same pointer, so
+    /// a later change replaces it).
+    fn add_changed(&mut self, info: (i64, TableInfo)) {
+        match self.indexes.get(&info.1.id) {
+            Some(&index) => self.infos[index] = info,
+            None => {
+                self.indexes.insert(info.1.id, self.infos.len());
+                self.infos.push(info);
+            }
+        }
+    }
+}
+
+/// Go master `buildMaterializedViewRelatedTableInfoForModifyColumn`'s `visit`.
+fn visit_materialized_view_related_tables(
+    related: &mut RelatedTables<'_>,
+    op: &str,
+    base: &TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+) -> Result<(), tidb_terror::MysqlError> {
     let Some(base_info) = &base.materialized_view_base else {
-        return Ok(Vec::new());
+        return Ok(());
     };
-    if is_column_comment_only_change(old, new) {
-        return Ok(Vec::new());
-    }
-    let (mlog_id, has_mviews) = {
+    let (mlog_id, mview_ids) = {
         let base_info = base_info.read();
-        (base_info.mlog_id, !base_info.mview_ids.is_empty())
+        (base_info.mlog_id, base_info.mview_ids.iter().copied().collect::<Vec<i64>>())
     };
-    if has_mviews {
-        // Go then retypes each dependent materialized view's direct output
-        // columns from its definition (`analyzeMVColumnUsage`), which this
-        // node does not port yet.
-        return Err(unsupported(format!(
-            "{op} on base table with materialized view dependencies on this node"
-        )));
-    }
-    let mut related = Vec::new();
     if mlog_id != 0 {
-        let (schema_id, mlog) = load(mlog_id, "materialized view log")?;
+        let (schema_id, mlog) = related.load(mlog_id, "materialized view log")?;
         validate_materialized_view_log_info_for_modify_column(base, &mlog)?;
         if let Some(mlog_column) = tracked_materialized_view_log_column_for_modify_column(&mlog, old.name.lowercase())? {
             if is_null_to_not_null_change(old, new) {
@@ -429,11 +466,218 @@ pub(crate) fn build_materialized_view_related_table_info_for_modify_column(
                 validate_materialized_view_log_column_type_for_modify_column(op, &mlog, &mlog_column.read(), new)?;
             if mlog_column.read().field_type != field_type {
                 mlog_column.write().field_type = field_type;
-                related.push((schema_id, mlog));
+                related.add_changed((schema_id, mlog));
             }
         }
     }
-    Ok(related)
+    for mview_id in mview_ids {
+        let (schema_id, mview) = related.load(mview_id, "dependent materialized view")?;
+        let usage = validate_dependent_materialized_view_modify_column(op, base, &mview, old, new)?;
+        for offset in usage.direct_output_offsets {
+            let Some(slot) = mview.columns.get(offset) else {
+                return Err(invalid_ddl_job("modify column: materialized view output schema mismatch"));
+            };
+            let mview_old = slot.read().clone();
+            let mut mview_new = mview_old.clone();
+            mview_new.field_type = field_type_for_mv_related_column(&mview_old, new);
+            if mview_old.field_type == mview_new.field_type {
+                continue;
+            }
+            *slot.write() = mview_new.clone();
+            related.add_changed((schema_id, mview.clone()));
+            // "Follow the MV's actual output column name, which may differ
+            // from the base column."
+            visit_materialized_view_related_tables(related, op, &mview, &mview_old, &mview_new)?;
+        }
+    }
+    Ok(())
+}
+
+/// Go master `mvColumnUsage`.
+#[derive(Default)]
+struct MvColumnUsage {
+    direct_output_offsets: Vec<usize>,
+    is_group_key: bool,
+    unsupported_reason: &'static str,
+}
+
+/// Go master `validateDependentMaterializedViewModifyColumn`.
+fn validate_dependent_materialized_view_modify_column(
+    op: &str,
+    base: &TableInfo,
+    mview: &TableInfo,
+    old: &tidb_model::ColumnInfo,
+    new: &tidb_model::ColumnInfo,
+) -> Result<MvColumnUsage, tidb_terror::MysqlError> {
+    let Some(info) = mview.materialized_view.as_ref().map(|info| info.read().clone()).filter(|info| !info.sql_content.is_empty())
+    else {
+        return Err(invalid_ddl_job("modify column: invalid materialized view metadata"));
+    };
+    if info.base_table_ids.len() != 1 || info.base_table_ids.iter().next() != Some(&base.id) {
+        return Err(invalid_ddl_job("modify column: dependent materialized view base table mismatch"));
+    }
+    let select = parse_select_from_sql(&info.sql_content)?;
+    let usage = analyze_mv_column_usage(&select, old.name.lowercase());
+    if !usage.unsupported_reason.is_empty() {
+        return Err(unsupported(format!(
+            "{op} on base table with materialized view dependencies does not support modifying columns used in {}",
+            usage.unsupported_reason
+        )));
+    }
+    if usage.direct_output_offsets.is_empty() {
+        if usage.is_group_key {
+            return Err(unsupported(format!(
+                "{op} on base table with materialized view dependencies does not support modifying columns used only as group keys"
+            )));
+        }
+        return Ok(usage);
+    }
+    if mview.columns.len() != select.fields.fields().len() {
+        return Err(invalid_ddl_job("modify column: materialized view output schema mismatch"));
+    }
+    let not_null = |column: &tidb_model::ColumnInfo| column.field_type.has_flag(FieldTypeFlags::NOT_NULL);
+    if usage.is_group_key
+        && (old.field_type.charset() != new.field_type.charset()
+            || old.field_type.collation_name() != new.field_type.collation_name()
+            || not_null(old) != not_null(new))
+    {
+        return Err(unsupported(format!(
+            "{op} on base table with materialized view dependencies does not support changing charset/collation/nullability of group keys"
+        )));
+    }
+    for &offset in &usage.direct_output_offsets {
+        let mview_old = mview.columns.get(offset).expect("checked the output count").read().clone();
+        let field_type = field_type_for_mv_related_column(&mview_old, new);
+        let indexed = mview.indices.iter_deref().any(|index| {
+            index.read().columns.iter_deref().any(|part| part.read().name.lowercase() == mview_old.name.lowercase())
+        });
+        if !tidb_ddl_build::modify_column_type::no_reorg_data_strict(&mview_old.field_type, &field_type, indexed) {
+            return Err(unsupported(format!(
+                "{op} on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns"
+            )));
+        }
+    }
+    Ok(usage)
+}
+
+/// Go master `ddl.parseSelectFromSQL`: `parser.New().ParseSQL(sql)`, one
+/// SELECT.
+fn parse_select_from_sql(sql: &str) -> Result<tidb_ast::SelectStmt, tidb_terror::MysqlError> {
+    let statements = tidb_parser::parse_multi(sql).map_err(|error| tidb_terror::MysqlError::unknown(error.compatibility_message(sql)))?;
+    let [statement] = statements.as_slice() else {
+        return Err(invalid_ddl_job("modify column: invalid materialized view select sql"));
+    };
+    match statement {
+        tidb_ast::Stmt::Query(query) => match &**query {
+            tidb_ast::QueryStmt::Select(select) => Ok((**select).clone()),
+            _ => Err(invalid_ddl_job("modify column: materialized view definition is not a SELECT statement")),
+        },
+        _ => Err(invalid_ddl_job("modify column: materialized view definition is not a SELECT statement")),
+    }
+}
+
+/// A column reference's name (Go `ColumnNameExpr.Name.Name.L`).
+fn column_ref_name(expr: &tidb_ast::Expr) -> Option<String> {
+    match expr {
+        tidb_ast::Expr::Column(path) => path.last().map(|name| name.go_to_lower()),
+        _ => None,
+    }
+}
+
+/// Go master `analyzeMVColumnUsage`.
+fn analyze_mv_column_usage(select: &tidb_ast::SelectStmt, column: &str) -> MvColumnUsage {
+    let mut usage = MvColumnUsage::default();
+    let mut direct_output = std::collections::HashSet::new();
+    let mut alias_to_offset: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, field) in select.fields.fields().iter().enumerate() {
+        let expr = match field {
+            tidb_ast::SelectField::Wildcard(_) => {
+                usage.unsupported_reason = "SELECT *";
+                return usage;
+            }
+            tidb_ast::SelectField::Expr { expr, alias } => {
+                if let Some(alias) = alias.as_deref().filter(|alias| !alias.is_empty()) {
+                    alias_to_offset.entry(alias.go_to_lower()).or_insert(i);
+                }
+                expr
+            }
+        };
+        if column_ref_name(expr).as_deref() == Some(column) {
+            usage.direct_output_offsets.push(i);
+            direct_output.insert(i);
+            continue;
+        }
+        if expr_contains_column_ref(expr, column) {
+            usage.unsupported_reason = "non-direct SELECT expressions";
+            return usage;
+        }
+    }
+    if select.where_clause.as_ref().is_some_and(|expr| expr_contains_column_ref(expr, column)) {
+        usage.unsupported_reason = "WHERE clause";
+        return usage;
+    }
+    if select.having.as_ref().is_some_and(|expr| expr_contains_column_ref(expr, column)) {
+        usage.unsupported_reason = "HAVING clause";
+        return usage;
+    }
+    if select.order_by.iter().any(|item| expr_contains_column_ref(&item.expr, column)) {
+        usage.unsupported_reason = "ORDER BY clause";
+        return usage;
+    }
+    for item in &select.group_by {
+        // Go `*ast.PositionExpr` with `N > 0`.
+        if let tidb_ast::Expr::Int(digits) = &item.expr {
+            if let Ok(position) = digits.parse::<usize>() {
+                if position > 0 && direct_output.contains(&(position - 1)) {
+                    usage.is_group_key = true;
+                    continue;
+                }
+            }
+        }
+        if column_ref_name(&item.expr).as_deref() == Some(column) {
+            usage.is_group_key = true;
+            continue;
+        }
+        if let tidb_ast::Expr::Column(path) = &item.expr {
+            if let [name] = path.as_slice() {
+                if alias_to_offset.get(&name.go_to_lower()).is_some_and(|offset| direct_output.contains(offset)) {
+                    usage.is_group_key = true;
+                    continue;
+                }
+            }
+        }
+        if expr_contains_column_ref(&item.expr, column) {
+            usage.unsupported_reason = "GROUP BY expressions";
+            return usage;
+        }
+    }
+    usage
+}
+
+/// Go master `exprContainsColumnRef` (`columnNameExprFinder`).
+fn expr_contains_column_ref(expr: &tidb_ast::Expr, column: &str) -> bool {
+    struct Finder<'a> {
+        column: &'a str,
+        found: bool,
+    }
+    impl tidb_ast::Visitor for Finder<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.found {
+                return true;
+            }
+            if node.downcast_ref::<tidb_ast::Expr>().and_then(column_ref_name).as_deref() == Some(self.column) {
+                self.found = true;
+                return true;
+            }
+            false
+        }
+        fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+            !self.found
+        }
+    }
+    let mut finder = Finder { column, found: false };
+    tidb_ast::Visitable::accept(&mut expr.clone(), &mut finder);
+    finder.found
 }
 
 /// The `loadTable` of [`build_materialized_view_related_table_info_for_modify_column`]

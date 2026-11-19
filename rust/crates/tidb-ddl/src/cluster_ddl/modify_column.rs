@@ -2093,7 +2093,15 @@ fn finish_modify_column_without_reorg(
         active.job.state = JobState::ROLLINGBACK;
         return Err(error);
     }
-    let mut write = update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts)?;
+    let mut write = match update_version_and_table_info(txn, active, database_id, &target.info, true, start_ts) {
+        Ok(write) => write,
+        Err(error) => {
+            // "Modified the type definition of 'null' to 'not null' before
+            // this, so rollBack the job when an error occurs."
+            active.job.state = JobState::ROLLINGBACK;
+            return Err(error);
+        }
+    };
     // Go `updateVersionAndTableInfoWithCheck(..., childTableInfos...)`.
     let meta = txn.meta();
     let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
@@ -2110,11 +2118,14 @@ fn finish_modify_column_without_reorg(
             ..AffectedOption::default()
         });
     }
-    if !affected.is_empty() {
-        // Go's `updateSchemaVersion` lists the child tables in the diff.
+    // Go's `updateSchemaVersion` lists the child tables in the diff, unless
+    // a multi-schema batch's sub-job skipped its version.
+    if !affected.is_empty() && write.schema_version != 0 {
         write.diff.affected_options = GoSharedPointerSlice::from(affected);
         meta.set_schema_diff(&write.diff).map_err(meta_error)?;
     }
+    let infos: Vec<(i64, i64)> = children.iter().map(|(schema_id, child)| (*schema_id, child.id)).collect();
+    txn.record_multi_schema_infos(&infos);
     active.job.finish_table_job(
         JobState::DONE,
         SchemaState::PUBLIC,

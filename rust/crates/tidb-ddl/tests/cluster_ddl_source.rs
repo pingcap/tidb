@@ -88,7 +88,7 @@ fn plan_persisted_ddl_job_failure(
     let session = tidb_ddl::job_txn::StepSession {
         pool: state.worker.sess_pool.clone(), buffer: state.worker.step_buffer.clone(),
         sql: state.worker.step_sql.clone(), start_mode: state.worker.start_mode,
-        must_rollback_txn_on_error: state.worker.must_rollback_txn_on_error.clone(),
+        step_ctx: state.worker.step_ctx.clone(),
     };
     let mut step = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_failure(
         job_id, ts, failure, &state.delivered_job.job.as_ref().unwrap().read(),
@@ -649,7 +649,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             let session = tidb_ddl::job_txn::StepSession {
                 pool: state.worker.sess_pool.clone(), buffer: state.worker.step_buffer.clone(),
                 sql: state.worker.step_sql.clone(), start_mode: state.worker.start_mode,
-                must_rollback_txn_on_error: state.worker.must_rollback_txn_on_error.clone(),
+                step_ctx: state.worker.step_ctx.clone(),
             };
             mdl.register(&session, 20_000 + phases as u64, job.id, step.write.schema_version, "first-owner").unwrap();
             let rows = session.execute(20_000 + phases as u64,

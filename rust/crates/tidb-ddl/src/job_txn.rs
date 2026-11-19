@@ -116,7 +116,17 @@ impl<'a> JobTxn<'a> {
     /// step discards all its mutations, its session's statements included.
     pub fn set_must_rollback_txn_on_error(&self) {
         if let Some(session) = &self.session {
-            session.must_rollback_txn_on_error.store(true, std::sync::atomic::Ordering::Release);
+            session.step_ctx.must_rollback_txn_on_error.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Go `updateVersionAndTableInfo`'s `if jobCtx.multiSchemaDiff != nil {
+    /// SetSchemaDiffForMultiInfos(jobCtx.multiSchemaDiff, multiInfos...) }`.
+    pub fn record_multi_schema_infos(&self, infos: &[(i64, i64)]) {
+        if let Some(session) = &self.session {
+            if let Some(collected) = session.step_ctx.multi_schema_diff.lock().unwrap().as_mut() {
+                collected.extend_from_slice(infos);
+            }
         }
     }
 
@@ -204,13 +214,27 @@ pub struct StepSession {
     pub sql: StepSqlSlot,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
-    /// Go `jobCtx.mustRollbackTxnOnError`.
-    pub must_rollback_txn_on_error: MustRollbackTxnOnError,
+    /// Go `jobContext`'s per-step state.
+    pub step_ctx: JobStepContextRef,
 }
 
-/// Go `jobCtx.mustRollbackTxnOnError`, shared by a step's worker and its
-/// session.
-pub type MustRollbackTxnOnError = std::sync::Arc<std::sync::atomic::AtomicBool>;
+/// Go `jobContext`'s per-step state, shared by a step's worker and every
+/// session (nested sub-job transactions included) of the step.
+#[derive(Debug, Default)]
+pub struct JobStepContext {
+    /// Go `jobCtx.mustRollbackTxnOnError`: an errored or cancelled step
+    /// discards its entire transaction before persisting the updated job.
+    /// Internal SQL can flush statement buffers, and multi-schema batches can
+    /// update multiple tables.
+    pub must_rollback_txn_on_error: std::sync::atomic::AtomicBool,
+    /// Go `jobCtx.multiSchemaDiff`: the related tables (`(schema ID, table
+    /// ID)`) sub-jobs update while they cross the non-revertible boundary in
+    /// the same transaction; `None` outside such a batch.
+    pub multi_schema_diff: std::sync::Mutex<Option<Vec<(i64, i64)>>>,
+}
+
+/// A shared [`JobStepContext`].
+pub type JobStepContextRef = std::sync::Arc<JobStepContext>;
 
 /// The slot of a step's one session (see [`StepSession::sql`]).
 pub type StepSqlSlot = std::sync::Arc<

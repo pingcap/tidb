@@ -2743,7 +2743,7 @@ fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSe
         buffer: worker.step_buffer.clone(),
         sql: std::sync::Arc::clone(&worker.step_sql),
         start_mode: worker.start_mode,
-        must_rollback_txn_on_error: std::sync::Arc::clone(&worker.must_rollback_txn_on_error),
+        step_ctx: std::sync::Arc::clone(&worker.step_ctx),
     })
 }
 
@@ -3294,7 +3294,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // `mustRollbackTxnOnError` discards all its mutations, its session's
     // statements and a rollback's included.
     if (step.run_error.is_some() || active.job.state == JobState::CANCELLED)
-        && schema_state.worker.must_rollback_txn_on_error.load(std::sync::atomic::Ordering::Acquire)
+        && schema_state.worker.step_ctx.must_rollback_txn_on_error.load(std::sync::atomic::Ordering::Acquire)
     {
         step.write = job_only_write(ddl_job_id, Vec::new());
         schema_state.worker.step_buffer.reset();
