@@ -498,18 +498,17 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	flag := row.GetInt64(8)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 
-	// All the objects in the table share the same stats version.
-	// Update here before processing, so it's set even if we return early.
-	if statsVer != statistics.Version0 {
-		table.StatsVer = int(statsVer)
-		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-	}
-
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -595,18 +594,17 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	col := table.GetCol(histID)
 	flag := row.GetInt64(8)
 
-	// All the objects in the table share the same stats version.
-	// Update here before processing, so it's set even if we return early.
-	if statsVer != statistics.Version0 {
-		table.StatsVer = int(statsVer)
-		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-	}
-
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertCol(histID, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
+		// All the objects in the table shares the same stats version.
+		// Update here.
+		if statsVer != statistics.Version0 {
+			table.StatsVer = int(statsVer)
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
