@@ -24,11 +24,31 @@ import (
 )
 
 func TestShouldCheckAssumedServer(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}))
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}))
-	} else {
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}))
-		require.True(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}))
+	for _, isLegacyNextGen := range []bool{false, true} {
+		mysqlID, tableID := metadef.SystemDatabaseID, metadef.TiDBTableID
+		if isLegacyNextGen {
+			mysqlID, tableID = 1, 9999
+		}
+		// Newly created built-ins already carry the owning schema ID in the job.
+		require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{
+			Type: model.ActionCreateTable, SchemaID: mysqlID, TableID: tableID, SchemaName: "mysql", TableName: "tidb",
+		}))
+		// The owner's InfoSchema may not contain a newly created legacy built-in yet.
+		require.Equal(t, kerneltype.IsNextGen() && isLegacyNextGen,
+			shouldCheckAssumedServer(&model.Job{
+				Type: model.ActionCreateTable, SchemaID: mysqlID, TableID: 10001, SchemaName: "mysql", TableName: "tidb_import_jobs",
+			}))
+		for _, job := range []*model.Job{
+			{TableID: 100},
+			{SchemaID: mysqlID},
+			{SchemaID: mysqlID, TableID: 10000, SchemaName: "mysql", TableName: "custom_table"},
+			{SchemaID: 2, TableID: 10001, SchemaName: "test", TableName: "tidb_import_jobs"},
+			{TableID: 100, InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "mysql", Table: "tidb"}}},
+		} {
+			require.False(t, shouldCheckAssumedServer(job))
+		}
+		// Native NextGen recognizes reserved IDs even before the new table is loaded.
+		require.Equal(t, kerneltype.IsNextGen() && !isLegacyNextGen,
+			shouldCheckAssumedServer(&model.Job{SchemaID: mysqlID, TableID: metadef.ReservedGlobalIDLowerBound + 1}))
 	}
 }

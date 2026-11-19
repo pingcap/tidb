@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -173,6 +174,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
+				nodeCnt,
 				backfillMeta.CloudStorageURI,
 				logger)
 			if err != nil {
@@ -337,7 +339,17 @@ func generateReadIndexPlan(
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
-	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
+	var jobReorgCtx *ReorgContext
+	if kerneltype.IsNextGen() {
+		// Planning also reads tenant data on the shared DXF service. Use an
+		// execution context independent of the foreground DDL owner's context.
+		jobReorgCtx = NewReorgContext()
+		jobReorgCtx.ddlJobCtx = ctx
+		jobReorgCtx.resourceGroupName = resourcegroup.DefaultResourceGroupName
+		jobReorgCtx.setDDLLabelForDiagnosis(job.Type)
+	} else {
+		jobReorgCtx = d.jobContext(job.ID, job.ReorgMeta)
+	}
 	if tbl.Meta().Partition == nil {
 		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}
@@ -484,6 +496,7 @@ func generateGlobalSortIngestPlan(
 	store kv.StorageWithPD,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
 	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, uint64, error) {
@@ -544,11 +557,6 @@ func generateGlobalSortIngestPlan(
 		failpoint.Return(metaArr, totalKVSize, nil)
 	})
 
-	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
-	if err != nil {
-		return nil, totalKVSize, err
-	}
-	iCnt := int64(len(instanceIDs))
 	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		eleID := int64(0)
@@ -556,7 +564,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, int64(nodeCnt), logger)
 		if err != nil {
 			return nil, totalKVSize, errors.Trace(err)
 		}
@@ -665,9 +673,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*globalsort.SortedKVMeta{{
-				StartKey:    startKey,
-				EndKey:      endKey,
-				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
+				StartKey: startKey,
+				EndKey:   endKey,
+				// A non-empty range must not be mistaken for an empty engine.
+				TotalKVSize: max(1, kvMeta.TotalKVSize/uint64(instanceCnt)),
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,

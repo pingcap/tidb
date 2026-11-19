@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -435,4 +436,17 @@ func TestCreateMaterializedViewAndLog(t *testing.T) {
 
 	tk.MustQuery("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = ?", mlogTable.Meta().ID).Check(testkit.Rows("1"))
 	tk.MustQuery("select last_success_read_tso > 0 from mysql.tidb_mview_refresh_info where mview_id = ?", mviewTable.Meta().ID).Check(testkit.Rows("1"))
+}
+
+func TestCreateMaterializedViewLogIfNotExistsWithDDLChecker(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create materialized view log if not exists on t (a)")
+
+	tk.MustExec("create materialized view log if not exists on t (b)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.$mlog$t' already exists"))
+	tk.MustGetErrCode("create materialized view log on t (b)", 1050)
+	tk.MustGetErrCode("create materialized view log if not exists on missing (a)", 1146)
 }

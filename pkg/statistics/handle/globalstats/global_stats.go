@@ -15,8 +15,6 @@
 package globalstats
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -25,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -93,27 +90,13 @@ func MergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-) (globalStats *GlobalStats, err error) {
-	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
-		statslogutil.StatsSampleLogger().Info("use async merge global stats",
-			zap.Int64("tableID", globalTableInfo.ID),
-			zap.String("table", globalTableInfo.Name.L),
-		)
-		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return worker.Result(), nil
+) (*GlobalStats, error) {
+	worker := newGlobalStatsMerger(statsHandle, globalTableInfo, histIDs, is)
+	err := worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	statslogutil.StatsSampleLogger().Info("use blocking merge global stats",
-		zap.Int64("tableID", globalTableInfo.ID),
-		zap.String("table", globalTableInfo.Name.L),
-	)
-	return blockingMergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
+	return worker.Result(), nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -155,204 +138,6 @@ func MergePartitionStats2GlobalStatsByTableID(
 	return
 }
 
-// blockingMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
-// It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
-func blockingMergePartitionStats2GlobalStats(
-	sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64,
-	is infoschema.InfoSchema,
-	globalTableInfo *model.TableInfo,
-	isIndex bool,
-	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
-	statsHandle statstypes.StatsHandle,
-) (globalStats *GlobalStats, err error) {
-	externalCache := false
-	if allPartitionStats != nil {
-		externalCache = true
-	}
-
-	partitionNum := len(globalTableInfo.Partition.Definitions)
-	if len(histIDs) == 0 {
-		for _, col := range globalTableInfo.Columns {
-			// The virtual generated column stats can not be merged to the global stats.
-			if col.IsVirtualGenerated() {
-				continue
-			}
-			histIDs = append(histIDs, col.ID)
-		}
-	}
-
-	// Initialized the globalStats.
-	globalStats = newGlobalStats(len(histIDs))
-
-	// Slice Dimensions Explanation
-	// First dimension: Column or Index Stats
-	// Second dimension: Partition Tables
-	// Because all topN and histograms need to be collected before they can be merged.
-	// So we should store all the partition-level stats first, and merge them together.
-	allHg := make([][]*statistics.Histogram, globalStats.Num)
-	allCms := make([][]*statistics.CMSketch, globalStats.Num)
-	allTopN := make([][]*statistics.TopN, globalStats.Num)
-	allFms := make([][]*statistics.FMSketch, globalStats.Num)
-	for i := range globalStats.Num {
-		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
-		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
-		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
-		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
-	}
-
-	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
-	for _, def := range globalTableInfo.Partition.Definitions {
-		partitionID := def.ID
-		partitionTable, ok := statsHandle.TableInfoByID(is, partitionID)
-		if !ok {
-			err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
-			return
-		}
-		tableInfo := partitionTable.Meta()
-		var partitionStats *statistics.Table
-		var okLoad bool
-		if allPartitionStats != nil {
-			partitionStats, okLoad = allPartitionStats[partitionID]
-		} else {
-			okLoad = false
-		}
-		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
-		if !okLoad {
-			var err1 error
-			partitionStats, err1 = statsHandle.LoadTablePartitionStats(tableInfo, &def)
-			if err1 != nil {
-				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err1) {
-					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
-					continue
-				}
-				err = err1
-				return
-			}
-			if externalCache {
-				allPartitionStats[partitionID] = partitionStats
-			}
-		}
-
-		for i := range globalStats.Num {
-			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
-			// partitionStats will be released after the for loop.
-			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex, externalCache)
-			skipPartition := false
-			if !analyzed {
-				var missingPart string
-				if !isIndex {
-					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
-				} else {
-					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
-				}
-				if !skipMissingPartitionStats {
-					err = types.ErrPartitionStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
-					return
-				}
-				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart)
-				skipPartition = true
-			}
-
-			// Partition stats is not empty but column stats(hist, topN) is missing.
-			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
-				var missingPart string
-				if !isIndex {
-					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
-				} else {
-					missingPart = fmt.Sprintf("partition `%s` index `%s`", def.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
-				}
-				if !skipMissingPartitionStats {
-					err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", tableInfo.Name.L, missingPart))
-					return
-				}
-				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, missingPart+" hist and topN")
-				skipPartition = true
-			}
-
-			if i == 0 {
-				// In a partition, we will only update globalStats.Count once.
-				globalStats.Count += partitionStats.RealtimeCount
-				globalStats.ModifyCount += partitionStats.ModifyCount
-			}
-
-			if !skipPartition {
-				allHg[i] = append(allHg[i], hg)
-				allCms[i] = append(allCms[i], cms)
-				allTopN[i] = append(allTopN[i], topN)
-				allFms[i] = append(allFms[i], fms)
-			}
-		}
-	}
-
-	// After collect all the statistics from the partition-level stats,
-	// we should merge them together.
-	for i := range globalStats.Num {
-		if len(allHg[i]) == 0 {
-			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
-			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
-			continue
-		}
-		// FMSketch use a lot of memory, so we first deal with it and then destroy it.
-		// Merge FMSketch.
-		// NOTE: allFms maybe contain empty.
-		// missedNotNull is the non-NULL rows of the partitions whose TopN and histogram
-		// are empty, because their sample had only NULL values. Their sketches count these rows.
-		var missedNotNull int64
-		var ndvMerger statistics.PartitionNDVMerger
-		for j, fms := range allFms[i] {
-			if topNHistNotNull(allHg[i][j], allTopN[i][j]) == 0 {
-				missedNotNull += fms.NotNullRows()
-			}
-			ndvMerger.Merge(fms)
-			allFms[i][j] = nil // Release for GC.
-		}
-
-		// Update the global NDV.
-		globalStatsNDV := min(ndvMerger.NDV(), globalStats.Count)
-		sampled := ndvMerger.Sampled()
-
-		// Merge CMSketch.
-		globalStats.Cms[i] = allCms[i][0]
-		for j := 1; j < len(allCms[i]); j++ {
-			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
-			if err != nil {
-				return
-			}
-		}
-		allCms[i] = nil // Release for GC.
-
-		// Combined TopN + histogram merge that extracts
-		// histogram upper-bound Repeat counts into the TopN counter.
-		killer := &sc.GetSessionVars().SQLKiller
-		globalStats.TopN[i], globalStats.Hg[i], err = statistics.MergePartTopNAndHistToGlobal(
-			sc.GetSessionVars().StmtCtx, killer,
-			allTopN[i], allHg[i],
-			uint32(opts[ast.AnalyzeOptNumTopN]),
-			int64(opts[ast.AnalyzeOptNumBuckets]),
-			isIndex,
-		)
-		allTopN[i] = nil // Release for GC.
-		if err != nil {
-			return
-		}
-
-		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
-		// we just set the table-level NDV.
-		if globalStats.Hg[i] != nil {
-			if statistics.UniqueByLocalIndex(globalTableInfo, isIndex, histIDs[i]) {
-				globalStatsNDV = uniqueGlobalNDV(allHg[i], globalStats.Count)
-			} else if sampled {
-				globalStatsNDV = sampledGlobalNDV(globalStatsNDV, globalStats.Hg[i], globalStats.TopN[i], missedNotNull, globalStats.Count)
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-		}
-		allHg[i] = nil // Release for GC.
-	}
-	return
-}
-
 // uniqueGlobalNDV returns the global NDV of a column or index that
 // statistics.UniqueByLocalIndex accepts. Its values never repeat across
 // partitions, so the partition NDVs add up exactly, while the merged
@@ -390,7 +175,6 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			nil,
 			info.StatsVersion,
 			true,
-			util.StatsMetaHistorySourceAnalyze,
 		)
 		if err != nil {
 			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",

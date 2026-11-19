@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -37,6 +38,14 @@ import (
 type partitionItemLookupForbiddenInfoSchema struct {
 	infoschema.InfoSchema
 	t *testing.T
+	// partitionMapBuilds counts the scans of all tables. On InfoSchema V1, only the build of
+	// the partition map does such a scan through this wrapper.
+	partitionMapBuilds *int
+}
+
+func (is partitionItemLookupForbiddenInfoSchema) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
+	*is.partitionMapBuilds++
+	return is.InfoSchema.ListTablesWithSpecialAttribute(filter)
 }
 
 func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitionID int64) (infoschema.TableItem, bool) {
@@ -84,7 +93,7 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 }
 
 func TestCallSCtxFailed(t *testing.T) {
-	_, dom := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	var sctxWithFailure sessionctx.Context
 	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
@@ -95,6 +104,23 @@ func TestCallSCtxFailed(t *testing.T) {
 	require.Equal(t, "simulated error", err.Error())
 	notReleased := infosync.ContainsInternalSession(sctxWithFailure)
 	require.False(t, notReleased)
+
+	// A panic in the function is recovered and returned as an error.
+	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sessionctx.Context) error {
+		panic("simulated panic")
+	})
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
+
+	// A panic in the function of WrapTxn rolls back the writes made before the panic.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t (a int)")
+	err = util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+		_, _, err := util.ExecRows(sctx, "insert into test.t values (1)")
+		require.NoError(t, err)
+		panic("simulated panic")
+	}, util.FlagWrapTxn)
+	require.ErrorContains(t, err, "panic in CallWithSCtx")
+	tk.MustQuery("select count(*) from test.t").Check(testkit.Rows("0"))
 }
 
 func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
@@ -104,11 +130,9 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 	accessor := variable.NewMockGlobalAccessor4Tests()
 	vars.GlobalVarsAccessor = accessor
 	for _, setting := range []struct{ name, global, session string }{
-		{vardef.TiDBEnableAsyncMergeGlobalStats, "ON", "OFF"},
 		{vardef.TiDBAnalyzePartitionConcurrency, "3", "1"},
 		{vardef.TiDBAnalyzeVersion, "2", "2"},
 		{vardef.TiDBAnalyzeStoreBatchSize, "6", "7"},
-		{vardef.TiDBEnableHistoricalStats, "ON", "OFF"},
 		{vardef.TiDBPartitionPruneMode, "dynamic", "static"},
 		{vardef.TiDBEnableAnalyzeSnapshot, "ON", "OFF"},
 		{vardef.TiDBAnalyzeSkipColumnTypes, "blob", "json"},
@@ -121,8 +145,6 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 			require.NoError(t, vars.SetSystemVar(setting.name, setting.session))
 		}
 	}
-	vars.EnableAsyncMergeGlobalStats = false
-	vars.EnableHistoricalStats = false
 	vars.AnalyzeVersion = 1
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	return sctx
@@ -131,11 +153,9 @@ func newStatsSessionContextForRestoreTest(t *testing.T) *mock.Context {
 func checkRestoredStatsSessionVars(t *testing.T, sctx sessionctx.Context) {
 	t.Helper()
 	vars := sctx.GetSessionVars()
-	require.False(t, vars.EnableAsyncMergeGlobalStats)
 	require.Equal(t, 1, vars.AnalyzePartitionConcurrency)
 	require.Equal(t, 1, vars.AnalyzeVersion)
 	require.Equal(t, 7, vars.AnalyzeStoreBatchSize)
-	require.False(t, vars.EnableHistoricalStats)
 	require.Equal(t, "static", vars.PartitionPruneMode.Load())
 	require.False(t, vars.EnableAnalyzeSnapshot)
 	require.Equal(t, map[string]struct{}{"json": {}}, vars.AnalyzeSkipColumnTypes)
@@ -243,8 +263,8 @@ func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
 	var stmtTZ string
 	err = util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		// No SQL execution here; some stats paths read StmtCtx directly without SQL.
-		// Example: AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats
-		// reads sctx.GetSessionVars().StmtCtx.TimeZone() (global_stats_async.go:315)
+		// Example: globalStatsMerger.MergePartitionStats2GlobalStats (global_stats_merger.go)
+		// passes sctx.GetSessionVars().StmtCtx to the merge, which reads its TimeZone()
 		// before any SQL is executed.
 		varsTZ = sctx.GetSessionVars().Location().String()
 		stmtTZ = sctx.GetSessionVars().StmtCtx.TimeZone().String()
@@ -272,22 +292,26 @@ func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	require.NotEmpty(t, partitionInfo.Definitions)
 	partitionID := partitionInfo.Definitions[0].ID
 
+	partitionMapBuilds := 0
 	is := partitionItemLookupForbiddenInfoSchema{
-		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
-		t:          t,
+		InfoSchema:         infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
+		t:                  t,
+		partitionMapBuilds: &partitionMapBuilds,
 	}
 	snapshotGetter := util.NewSnapshotTableInfoGetter(is)
 	tbl, ok := snapshotGetter.TableInfoByID(normalInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, normalInfo.ID, tbl.Meta().ID)
+	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, "normal", item.TableName.L)
+	// A table ID lookup does not need the partition map, so the map must not exist yet.
+	require.Zero(t, partitionMapBuilds)
 	tbl, ok = snapshotGetter.TableInfoByID(partitionID)
 	require.True(t, ok)
 	require.Equal(t, partitionedInfo.ID, tbl.Meta().ID)
 	_, ok = snapshotGetter.TableInfoByID(1 << 60)
 	require.False(t, ok)
-	item, ok := snapshotGetter.TableItemByID(normalInfo.ID)
-	require.True(t, ok)
-	require.Equal(t, "normal", item.TableName.L)
 	item, ok = snapshotGetter.TableItemByID(partitionID)
 	require.True(t, ok)
 	require.Equal(t, "partitioned", item.TableName.L)
@@ -300,6 +324,8 @@ func TestSnapshotTableInfoGetterAvoidsV1PartitionScan(t *testing.T) {
 	require.Equal(t, partitionedInfo.ID, tableID)
 	_, ok = snapshotGetter.ParentTableID(1 << 60)
 	require.False(t, ok)
+	// The partition ID and unknown ID lookups above all use one map.
+	require.Equal(t, 1, partitionMapBuilds)
 }
 
 type failingStatsGlobalAccessor struct {
@@ -317,11 +343,9 @@ func (a failingStatsGlobalAccessor) GetGlobalSysVar(name string) (string, error)
 func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 	for _, failOn := range []string{
 		"",
-		vardef.TiDBEnableAsyncMergeGlobalStats,
 		vardef.TiDBAnalyzePartitionConcurrency,
 		vardef.TiDBAnalyzeVersion,
 		vardef.TiDBAnalyzeStoreBatchSize,
-		vardef.TiDBEnableHistoricalStats,
 		vardef.TiDBPartitionPruneMode,
 		vardef.TiDBEnableAnalyzeSnapshot,
 		vardef.TiDBAnalyzeSkipColumnTypes,
@@ -349,11 +373,9 @@ func TestUpdateSCtxVarsForStatsRestore(t *testing.T) {
 				require.Nil(t, restore)
 			} else {
 				require.NoError(t, err)
-				require.True(t, vars.EnableAsyncMergeGlobalStats)
 				require.Equal(t, 3, vars.AnalyzePartitionConcurrency)
 				require.Equal(t, 2, vars.AnalyzeVersion)
 				require.Equal(t, 6, vars.AnalyzeStoreBatchSize)
-				require.True(t, vars.EnableHistoricalStats)
 				require.Equal(t, "dynamic", vars.PartitionPruneMode.Load())
 				require.True(t, vars.EnableAnalyzeSnapshot)
 				require.Equal(t, map[string]struct{}{"blob": {}}, vars.AnalyzeSkipColumnTypes)

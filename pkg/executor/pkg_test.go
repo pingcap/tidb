@@ -171,9 +171,9 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 3, indexJoin),
 	}
 
-	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(indexJoin))
-	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
-	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
+	require.Same(t, indexJoin, skipAdaptiveLimitProjections(indexJoin))
+	require.Same(t, indexJoin, skipAdaptiveLimitProjections(projection))
+	require.Same(t, selection, skipAdaptiveLimitProjections(selection))
 
 	directLookup := &IndexLookUpExecutor{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 5),
@@ -188,13 +188,13 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	directProjection = &ProjectionExec{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 7, directProjection),
 	}
-	require.Same(t, directLookup, findAdaptiveLimitIndexLookupCandidate(directProjection))
+	require.Same(t, directLookup, adaptiveLimitIndexLookupCandidate(skipAdaptiveLimitProjections(directProjection)))
 	directSelection := &SelectionExec{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
 	}
-	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directSelection))
+	require.Nil(t, adaptiveLimitIndexLookupCandidate(skipAdaptiveLimitProjections(directSelection)))
 	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
-	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
+	require.Nil(t, adaptiveLimitIndexLookupCandidate(directLookup))
 	directLookup.PushedLimit = nil
 	directController := exec.NewAdaptiveLimitLookupController(exec.AdaptiveLimitConfig{
 		DemandRows:             100,
@@ -207,7 +207,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	directLookup.reportAdaptiveLimitStats = true
 	require.Same(t, directController, directLookup.adaptiveLimitController)
 	require.True(t, directLookup.reportAdaptiveLimitStats)
-	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
+	require.Nil(t, adaptiveLimitIndexLookupCandidate(directLookup))
 
 	controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
 		DemandRows: 100, InitialOuterWindow: 32, MaxOuterWindow: 128,
@@ -221,7 +221,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		},
 		keepOrder: true,
 	}
-	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	require.Same(t, indexLookup, adaptiveLimitIndexLookupCandidate(indexLookup))
 	indexLookup.adaptiveLimitController = controller
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
 	reserved, ok, err := controller.ReserveLookup(context.Background(), 32)
@@ -351,7 +351,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 
 	assertIneligible := func() {
 		indexLookup.adaptiveLimitController = nil
-		require.Nil(t, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+		require.Nil(t, adaptiveLimitIndexLookupCandidate(indexLookup))
 		require.Nil(t, indexLookup.adaptiveLimitController)
 	}
 
@@ -372,7 +372,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	assertIneligible()
 	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
 	indexLookup.adaptiveLimitController = nil
-	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	require.Same(t, indexLookup, adaptiveLimitIndexLookupCandidate(indexLookup))
 	indexLookup.adaptiveLimitController = controller
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
 	indexLookup.idxPlans = []base.PhysicalPlan{

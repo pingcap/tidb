@@ -136,6 +136,7 @@ type Executor interface {
 		oldMViewID int64,
 		shadowTableID int64,
 		buildReadTSO uint64,
+		buildSources []model.MViewRefreshSource,
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
@@ -825,7 +826,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
-	if isReservedSchemaObjInNextGen(old.ID) {
+	if isSystemSchemaInNextGen(old.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -2000,6 +2001,15 @@ func checkProtectedMaterializedViewShadowConstraint(
 	if allowInternalMViewShadowBypass(sv) {
 		return nil
 	}
+	if op == "DROP TABLE" {
+		// The DDL owner runs this check again before dropping the table.
+		if isMaterializedViewShadowTableExpired(tblInfo.Name.L, time.Now()) {
+			return nil
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp",
+		)
+	}
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 		fmt.Sprintf("%s on materialized view shadow table", op),
 	)
@@ -2031,6 +2041,27 @@ func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
+}
+
+func checkMaterializedViewGroupKeyIndexConstraints(tblInfo *model.TableInfo, indexName ast.CIStr, op string) error {
+	if tblInfo.MaterializedView == nil {
+		return nil
+	}
+	// Additional UNIQUE/PRIMARY indexes on MVs are disallowed, so the only such
+	// index is the auto-created group key. Integer clustered PKs have no IndexInfo.
+	if index := tblInfo.FindIndexByName(indexName.L); index != nil {
+		if !index.Unique && !index.Primary {
+			return nil
+		}
+		indexName = index.Name
+	} else if tblInfo.PKIsHandle && indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+		indexName = ast.NewCIStr(mysql.PrimaryKeyName)
+	} else {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		fmt.Sprintf("%s on automatically created index %s of materialized view %s", op, indexName.O, tblInfo.Name.O),
+	)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -2902,7 +2933,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
-	if isReservedSchemaObjInNextGen(meta.ID) {
+	if isSystemTableInNextGen(schema.Name.L, meta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
 	}
 	if t.Meta().Affinity != nil {
@@ -3644,7 +3675,8 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-	if metadef.IsReservedID(ntMeta.ID) {
+	// Classic also uses reserved IDs for DDL system tables.
+	if metadef.IsReservedID(ntMeta.ID) || isSystemTableInNextGen(ntSchema.Name.L, ntMeta.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
 	}
 	err = checkExchangePartition(ptMeta, ntMeta)
@@ -4778,8 +4810,8 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
-	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+func isUndroppableTable(schema, table string) bool {
+	if isSystemTableInNextGen(schema, table) {
 		return true
 	}
 	if schema == mysql.WorkloadSchema {
@@ -4883,7 +4915,7 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
@@ -5196,7 +5228,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
-	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+	if isSystemTableInNextGen(schema.Name.L, tblInfo.Name.L) {
 		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -5281,7 +5313,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
-		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+		if isSystemTableInNextGen(schemas[0].Name.L, tbl.Meta().Name.L) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
 		}
 	}
@@ -5337,7 +5369,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
-			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+			// Classify this pair by its source name. TableByID returns the pre-statement
+			// snapshot, so an earlier pair can pair schemas[0] with a different table name.
+			if isSystemTableInNextGen(schemas[0].Name.L, oldIdents[i].Name.L) {
 				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
@@ -6304,6 +6338,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast
 		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
+	if err := checkMaterializedViewGroupKeyIndexConstraints(t.Meta(), indexName, "DROP INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
 	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
@@ -8453,11 +8490,18 @@ func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIS
 	return nil
 }
 
-func isReservedSchemaObjInNextGen(id int64) bool {
+func isSystemSchemaInNextGen(schemaName string) bool {
 	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
 		failpoint.Return(false)
 	})
-	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+	return kerneltype.IsNextGen() && (metadef.IsSystemDB(schemaName) || schemaName == mysql.SysDB)
+}
+
+func isSystemTableInNextGen(schema, table string) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsBuiltinSystemTable(schema, table)
 }
 
 // AlterTableSetRegionSplitPolicy sets persistent region split policy for table
