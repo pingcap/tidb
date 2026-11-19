@@ -595,8 +595,11 @@ impl Session {
         Err(error)
     }
 
-    /// Go `GetLatestInfoSchema` of the refreshing session.
+    /// Go `domain.GetDomain(sctx).InfoSchema()`.
     pub(crate) fn refresh_latest_info_schema(&self) -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema> {
+        if let Some(domain) = self.domain_services().and_then(|services| services.domain.upgrade()) {
+            return domain.catalog.get_latest();
+        }
         match &self.node {
             Some(node) => node.latest_info_schema(),
             None => std::sync::Arc::new(
@@ -835,11 +838,10 @@ impl Session {
         outcome
     }
 
-    /// Go master's checks under the advisory lock: the view read again from
-    /// the latest schema (`TableByID`) and IN PLACE refused for a view that
-    /// gained a log. Go first waits for this node's schema to reach the
-    /// store's version (`ensureMVRefreshSchemaVersion`), which this port does
-    /// not do.
+    /// Go master's checks under the advisory lock: this node's schema brought
+    /// up to every committed DDL the refresh depends on
+    /// (`ensureMVRefreshSchemaVersion`), the view read again from the latest
+    /// schema (`TableByID`) and IN PLACE refused for a view that gained a log.
     fn recheck_refresh_target_under_lock(
         &self,
         schema: &str,
@@ -847,6 +849,12 @@ impl Session {
         mview_id: i64,
         mode: RefreshMaterializedViewMode,
     ) -> Result<(), DriverError> {
+        // "Check schema freshness under the shared lock so refresh sees MLogs
+        // committed by a previous DDL owner, even before normal schema
+        // synchronization."
+        if let Some(domain) = self.domain_services().and_then(|services| services.domain.upgrade()) {
+            ensure_mv_refresh_schema_version(&domain, &|| self.refresh_latest_info_schema(), mview_id)?;
+        }
         let catalog = self.refresh_latest_info_schema();
         let Some(current) = catalog.table_info_by_id(mview_id) else {
             return Err(DriverError::Mysql(MysqlError::from_terror(
@@ -1705,3 +1713,175 @@ fn collect_mlog_scan_plan_ids(plan: &tidb_planner_core_operator_physicalop::Phys
     }
 }
 
+/// Go `mvRefreshSchemaReloadMu`.
+static MV_REFRESH_SCHEMA_RELOAD_MU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Go `ensureMVRefreshSchemaVersion`: under the advisory lock, a refresh
+/// reloads this node's schema when the store holds a committed DDL that
+/// touches the view, its base tables or their logs (a log a previous DDL
+/// owner committed before this node synchronized it).
+fn ensure_mv_refresh_schema_version(
+    domain: &tidb_domain_core::domain::Domain,
+    latest_info_schema: &dyn Fn() -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema>,
+    mview_id: i64,
+) -> Result<(), DriverError> {
+    let required_version = mv_refresh_required_schema_version(domain, &latest_info_schema(), mview_id)?;
+    if latest_info_schema().schema_meta_version() >= required_version {
+        return Ok(());
+    }
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeSchemaReloadLock",
+        &mut required_version.clone(),
+    );
+    let _guard = MV_REFRESH_SCHEMA_RELOAD_MU
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // "Another refresh or the background schema loader may have caught up
+    // while this refresh was waiting."
+    if latest_info_schema().schema_meta_version() >= required_version {
+        return Ok(());
+    }
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeSchemaReload",
+        &mut required_version.clone(),
+    );
+    domain
+        .ddl
+        .reload_schema()
+        .map_err(|error| plain(format!("refresh materialized view: failed to reload schema: {error}")))?;
+    let current_version = latest_info_schema().schema_meta_version();
+    if current_version < required_version {
+        return Err(plain(format!(
+            "refresh materialized view: schema version {current_version} is behind required version {required_version}"
+        )));
+    }
+    Ok(())
+}
+
+/// Go `mvRefreshRequiredSchemaVersion`: the newest committed schema version
+/// this refresh must see, or 0 when the node's schema already suffices.
+fn mv_refresh_required_schema_version(
+    domain: &tidb_domain_core::domain::Domain,
+    current_is: &tidb_infoschema::SessionExtendedInfoSchema,
+    mview_id: i64,
+) -> Result<i64, DriverError> {
+    let ver = domain
+        .transactions
+        .fresh_timestamp()
+        .map_err(|error| plain(format!("refresh materialized view: failed to get schema-check timestamp: {error}")))?;
+    let mut m = domain
+        .get_snapshot_meta(ver)
+        .map_err(|error| plain(format!("refresh materialized view: failed to get schema version: {error}")))?;
+    let latest_version = tidb_infoschema::cluster_catalog::with_meta_reader(&mut m, |reader| reader.schema_version())
+        .map_err(|error| plain(format!("refresh materialized view: failed to get schema version: {error}")))?;
+    let current_version = current_is.schema_meta_version();
+    if current_version >= latest_version {
+        return Ok(0);
+    }
+    // "Use the same InfoSchema for the dependency IDs and the lower version
+    // bound."
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeCollectRelatedTables",
+        &mut (),
+    );
+    let table_ids = mv_refresh_related_table_ids(current_is, mview_id)?;
+    let mut latest_committed_version = 0;
+    for version in (current_version + 1..=latest_version).rev() {
+        let diff = tidb_infoschema::cluster_catalog::with_meta_reader(&mut m, |reader| reader.schema_diff(version))
+            .map_err(|error| {
+                plain(format!(
+                    "refresh materialized view: failed to get schema diff for version {version}: {error}"
+                ))
+            })?;
+        // "DDL can reserve versions without committing schema diffs."
+        let Some(diff) = diff else {
+            continue;
+        };
+        latest_committed_version = latest_committed_version.max(version);
+        // "Related DDL can introduce new dependencies absent from tableIDs,
+        // so require the newest committed version, including subsequent
+        // changes."
+        if latest_version - current_version
+            >= tidb_infoschema_issyncer::catalog_reload::LOAD_SCHEMA_DIFF_VERSION_GAP_THRESHOLD
+            || mv_refresh_schema_diff_affects_tables(&diff, &table_ids)
+        {
+            return Ok(latest_committed_version);
+        }
+    }
+    Ok(0)
+}
+
+/// Go `mvRefreshRelatedTableIDs`: the view, its log, its base tables and
+/// their logs.
+fn mv_refresh_related_table_ids(
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+    mview_id: i64,
+) -> Result<std::collections::HashSet<i64>, DriverError> {
+    let get_table_info = |id: i64| -> Result<tidb_model::GoShared<tidb_model::TableInfo>, DriverError> {
+        let not_found = || plain(format!("refresh materialized view: related table ID {id} not found in infoschema"));
+        let Some(v2) = is.v2() else {
+            return is.table_info_by_id(id).ok_or_else(not_found);
+        };
+        let item = v2.table_item_by_id(id).ok_or_else(not_found)?;
+        // "TableByName loads and caches missing table metadata in V2, while
+        // preserving storage errors that TableByID hides behind a false
+        // result."
+        match is.try_get_in(item.db_name.original(), item.table_name.original()) {
+            Ok(Some(tidb_infoschema::TableEntry::Kv(table))) => Ok(table.meta().clone()),
+            Ok(_) => Err(not_found()),
+            Err(error) => Err(plain(format!("refresh materialized view: failed to load related table: {error}"))),
+        }
+    };
+    let mview = get_table_info(mview_id)?;
+    let mview = mview.read();
+    let base_table_ids: Vec<i64> = match &mview.materialized_view {
+        Some(info) if !info.read().base_table_ids.is_empty() => info.read().base_table_ids.iter().copied().collect(),
+        _ => {
+            return Err(plain(format!(
+                "refresh materialized view: invalid metadata for materialized view ID {mview_id}"
+            )))
+        }
+    };
+    let mut table_ids = std::collections::HashSet::from([mview_id]);
+    if let Some(base) = &mview.materialized_view_base {
+        let mlog_id = base.read().mlog_id;
+        if mlog_id != 0 {
+            table_ids.insert(mlog_id);
+        }
+    }
+    for base_id in base_table_ids {
+        table_ids.insert(base_id);
+        let base = get_table_info(base_id)?;
+        let mlog_id = base.read().materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+        if mlog_id == 0 {
+            return Err(plain(format!(
+                "refresh materialized view: source table ID {base_id} has no materialized view log"
+            )));
+        }
+        table_ids.insert(mlog_id);
+    }
+    Ok(table_ids)
+}
+
+/// Go `mvRefreshSchemaDiffAffectsTables`.
+fn mv_refresh_schema_diff_affects_tables(
+    diff: &tidb_model::SchemaDiff,
+    table_ids: &std::collections::HashSet<i64>,
+) -> bool {
+    // "Schema/global changes and indirect metadata changes cannot be excluded
+    // by table ID. Batch CREATE TABLE is fully described by its affected
+    // options."
+    if diff.regenerate_schema_map
+        || diff.read_table_from_meta
+        || (diff.table_id <= 0 && diff.action_type != tidb_model::ActionType::ACTION_CREATE_TABLES)
+    {
+        return true;
+    }
+    if table_ids.contains(&diff.table_id) || table_ids.contains(&diff.old_table_id) {
+        return true;
+    }
+    diff.affected_options.iter_handles().flatten().any(|opt| {
+        let opt = opt.read();
+        table_ids.contains(&opt.table_id) || table_ids.contains(&opt.old_table_id)
+    })
+}

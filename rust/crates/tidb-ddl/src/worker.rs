@@ -3573,6 +3573,12 @@ where
     S: StoreClient,
 {
     fn reload_catalog(&self) -> Result<(), String> {
+        // Go `Syncer.Reload`'s `ErrorMockReloadFailed`, before its lock.
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
+            .is_some_and(|val| val.bool())
+        {
+            return Err("mock reload failed".to_owned());
+        }
         let _reload = self.catalog.lock_reload();
         let current = self.catalog.get_latest();
         let at = reload(&self.opener, self.timeout, &current, &self.catalog)

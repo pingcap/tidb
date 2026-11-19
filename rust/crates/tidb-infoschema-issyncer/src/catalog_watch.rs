@@ -556,6 +556,22 @@ impl InfoCache {
         Ok(reloaded)
     }
 
+    /// Go `InfoCache.Upsert(is, schemaTS)`: the cache holds `schema` alone and
+    /// `GetLatest` answers it, older than what was published or not. ([`Self::upsert`]
+    /// is Go's `Insert` followed by the syncer's publication.)
+    pub fn upsert_replacing(&self, schema: Arc<SessionExtendedInfoSchema>, schema_ts: u64) {
+        let _loading = self
+            .loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut versions = self
+            .historical
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        versions.upsert(Arc::clone(&schema), schema_ts);
+        *self.published.write().unwrap_or_else(std::sync::PoisonError::into_inner) = schema;
+    }
+
     /// Go `InfoCache.Upsert`: admits `catalog` and publishes it unless a newer
     /// schema version is already published; returns whether it was published.
     ///
@@ -790,6 +806,15 @@ impl Syncer {
                     if nudged {
                         worker_stats.nudged.fetch_add(1, Ordering::AcqRel);
                     }
+                    // Go `SyncLoop`: `failpoint.Inject("disableOnTickReload",
+                    // func() { failpoint.Continue() })` on the ticker arm.
+                    #[cfg(feature = "failpoints")]
+                    if !nudged
+                        && tidb_failpoint::eval("github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload")
+                            .is_some()
+                    {
+                        continue;
+                    }
                     run_one_pass(&catalog, &worker_stats, &mut pass, nudged);
                 }
             })
@@ -867,6 +892,19 @@ fn run_one_pass(
     // process: without it a prompt reload and a lucky tick look identical in
     // a log, and the live proof would be asserting nothing.
     let trigger = if nudged { "watch" } else { "tick" };
+    // Go `Syncer.Reload`'s `ErrorMockReloadFailed`, before its lock.
+    #[cfg(feature = "failpoints")]
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
+        .is_some_and(|val| val.bool())
+    {
+        stats.passes.fetch_add(1, Ordering::AcqRel);
+        stats.failures.fetch_add(1, Ordering::AcqRel);
+        tidb_logutil::bg_logger().error(
+            "reload schema in loop failed",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str("mock reload failed".to_owned()))],
+        );
+        return;
+    }
     let _reload = catalog.lock_reload();
     let current = catalog.get_latest();
     let outcome = pass(&current);

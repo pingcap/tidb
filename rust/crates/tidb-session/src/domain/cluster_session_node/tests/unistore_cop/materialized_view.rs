@@ -2173,3 +2173,179 @@ fn materialized_view_service_mlog_analyze() {
     );
     tidb_stats::AUTO_ANALYZE_MIN_CNT.store(original_min_cnt, SeqCst);
 }
+
+/// Go master `TestMaterializedViewRefreshSchemaVersion`
+/// (`pkg/executor/test/mviewoutputlog/refresh_schema_test.go`).
+#[test]
+fn test_materialized_view_refresh_schema_version() {
+    for scenario in [
+        "current", "empty_versions", "unrelated", "unrelated_fast", "unrelated_empty_versions",
+        "mlog", "mlog_then_unrelated", "reload_failure", "input_mlog_columns", "output_mlog_columns", "schema_change",
+        "schema_cache_miss", "schema_load_failure", "mlog_then_add_column", "related_empty_versions",
+        // Go's "source_oop" builds a materialized view over a materialized
+        // view, which this port refuses (register E29: nested sources).
+    ] {
+        refresh_schema_version_scenario(scenario);
+    }
+}
+
+fn refresh_schema_version_scenario(scenario: &'static str) {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    let must_exec = |tk: &mut Session, sql: &str| assert_eq!(answer(tk, sql), "OK", "{scenario}: {sql}");
+    let exec_to_err = |tk: &mut Session, sql: &str| {
+        let answer = answer(tk, sql);
+        assert!(answer.starts_with("ERR"), "{scenario}: {sql}: {answer}");
+        answer
+    };
+    for sql in [
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_schema (a int not null, b int not null)",
+        "insert into t_schema values (1, 10)",
+        "create materialized view log on t_schema (a, b)",
+        "create materialized view mv_schema (a, s, cnt) as select a, sum(b), count(1) from t_schema group by a",
+        "insert into t_schema values (2, 20)",
+    ] {
+        must_exec(&mut tk, sql);
+    }
+    let mut refresh_sql = "refresh materialized view mv_schema complete in place";
+    if scenario == "input_mlog_columns" {
+        must_exec(&mut tk, "alter table t_schema add column c int");
+    }
+    if scenario == "output_mlog_columns" {
+        must_exec(&mut tk, "create materialized view log on mv_schema (a)");
+    }
+    if scenario == "source_oop" {
+        must_exec(&mut tk, "create materialized view log on mv_schema (a, s, cnt)");
+        must_exec(&mut tk, "create materialized view mv_child (a, s, cnt) as select a, s, count(1) from mv_schema group by a, s");
+        refresh_sql = "refresh materialized view mv_child complete in place";
+    }
+    if matches!(scenario, "unrelated_fast" | "input_mlog_columns" | "output_mlog_columns" | "mlog_then_add_column") {
+        refresh_sql = "refresh materialized view mv_schema fast";
+    }
+    let _no_tick_reload =
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)");
+    let catalog = Arc::clone(&stack.factory.catalog);
+    let old_is = catalog.get_latest();
+    let mut intermediate_is = Arc::clone(&old_is);
+    match scenario {
+        "unrelated" | "unrelated_fast" | "unrelated_empty_versions" | "schema_cache_miss" | "schema_load_failure" => {
+            must_exec(&mut tk, "create table schema_bump (a int)");
+            must_exec(&mut tk, "alter table schema_bump add column b int");
+            must_exec(&mut tk, "drop table schema_bump");
+        }
+        "mlog" | "mlog_then_unrelated" => {
+            must_exec(&mut tk, "create materialized view log on mv_schema (a, s, cnt)");
+            if scenario == "mlog_then_unrelated" {
+                // "The newest diff alone cannot establish that refresh is unaffected."
+                must_exec(&mut tk, "create table schema_bump (a int)");
+            }
+        }
+        "mlog_then_add_column" => {
+            must_exec(&mut tk, "create materialized view log on mv_schema (a)");
+            intermediate_is = catalog.get_latest();
+            must_exec(&mut tk, "alter materialized view log on mv_schema add (s)");
+        }
+        "reload_failure" | "related_empty_versions" => must_exec(&mut tk, "alter table t_schema add column c int"),
+        "input_mlog_columns" => must_exec(&mut tk, "alter materialized view log on t_schema add (c)"),
+        "output_mlog_columns" => must_exec(&mut tk, "alter materialized view log on mv_schema add (s)"),
+        "source_oop" => must_exec(&mut tk, "refresh materialized view mv_schema complete out of place"),
+        "schema_change" => must_exec(&mut tk, "create database schema_bump"),
+        _ => {}
+    }
+    if matches!(scenario, "empty_versions" | "unrelated_empty_versions" | "related_empty_versions") {
+        // "Failed DDL steps can leave multiple reserved versions without diffs."
+        stack
+            .factory
+            .meta_store
+            .get()
+            .unwrap()
+            .run_in_new_txn(&tidb_gocontext::Context::background(), tidb_txnkv::INTERNAL_TXN_DDL, false, &mut |txn| {
+                tidb_meta::transaction::Mutator::new(txn).gen_schema_versions(2)?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    if scenario != "current" && scenario != "empty_versions" {
+        assert!(catalog.get_latest().schema_meta_version() > old_is.schema_meta_version(), "{scenario}");
+        // "Simulate a node whose cache has not caught up with committed DDL."
+        catalog.upsert_replacing(Arc::clone(&old_is), 0);
+    }
+    const LOAD_FAILURE: &str = "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError";
+    let _collect_call = matches!(scenario, "schema_cache_miss" | "schema_load_failure").then(|| {
+        assert!(old_is.v2().is_some(), "requires InfoSchema V2");
+        let injected = AtomicBool::new(false);
+        let old_is = Arc::clone(&old_is);
+        tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeCollectRelatedTables",
+            move |_| {
+                if injected.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                    old_is.v2().unwrap().evict_table("test", "t_schema");
+                    if scenario == "schema_load_failure" {
+                        tidb_failpoint::enable(LOAD_FAILURE, "1*return(true)").unwrap();
+                    }
+                }
+            },
+        )
+    });
+    const RELOAD_FAILURE: &str = "github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed";
+    let reload_lock_attempts = Arc::new(AtomicI32::new(0));
+    let _lock_call = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewBeforeSchemaReloadLock",
+        {
+            let attempts = Arc::clone(&reload_lock_attempts);
+            let catalog = Arc::clone(&catalog);
+            let intermediate_is = Arc::clone(&intermediate_is);
+            move |_| {
+                attempts.fetch_add(1, Ordering::AcqRel);
+                if scenario == "mlog_then_add_column" {
+                    // "Simulate a loader that caught up only to MLog creation.
+                    // The original dependency set does not contain the new MLog ID."
+                    catalog.upsert_replacing(Arc::clone(&intermediate_is), 0);
+                }
+            }
+        },
+    );
+    let mut reload_failure = (scenario != "mlog" && scenario != "mlog_then_unrelated")
+        .then(|| tidb_failpoint::enable_for_test(RELOAD_FAILURE, "return(true)"));
+    match scenario {
+        "current" | "empty_versions" | "unrelated" | "unrelated_fast" | "unrelated_empty_versions" | "schema_cache_miss" => {
+            // "Unrelated DDL and empty versions do not force a synchronous reload."
+            must_exec(&mut tk, refresh_sql);
+            assert_eq!(reload_lock_attempts.load(Ordering::Acquire), 0, "{scenario}: unaffected refresh must skip the reload mutex");
+            reload_failure = None;
+        }
+        "mlog" | "mlog_then_unrelated" => {
+            let err = exec_to_err(&mut tk, refresh_sql);
+            assert!(err.contains("with a materialized view log"), "{scenario}: {err}");
+            assert!(catalog.get_latest().schema_meta_version() > old_is.schema_meta_version(), "{scenario}");
+            assert_eq!(answer(&mut tk, "select * from mv_schema"), r#"RS:[["1","10","1"]]"#, "{scenario}");
+            return;
+        }
+        "schema_load_failure" => {
+            let err = exec_to_err(&mut tk, refresh_sql);
+            assert!(err.contains("mockLoadTableInfoError"), "{scenario}: {err}");
+            assert_eq!(reload_lock_attempts.load(Ordering::Acquire), 0, "{scenario}: a table load failure must not trigger a schema reload");
+            tidb_failpoint::disable(LOAD_FAILURE);
+            must_exec(&mut tk, refresh_sql);
+            reload_failure = None;
+        }
+        _ => {
+            let err = exec_to_err(&mut tk, refresh_sql);
+            assert!(err.contains("mock reload failed"), "{scenario}: {err}");
+            reload_failure = None;
+            // "Both the reload mutex and the MV advisory lock must be released."
+            must_exec(&mut tk, refresh_sql);
+            assert!(catalog.get_latest().schema_meta_version() > old_is.schema_meta_version(), "{scenario}");
+        }
+    }
+    drop(reload_failure);
+    assert_eq!(answer(&mut tk, "select * from mv_schema order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#, "{scenario}");
+    if scenario == "source_oop" {
+        assert_eq!(answer(&mut tk, "select * from mv_child order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#, "{scenario}");
+    }
+    if scenario == "mlog_then_add_column" {
+        assert_eq!(answer(&mut tk, "select a, s from `$mlog$mv_schema`"), r#"RS:[["2","20"]]"#, "{scenario}");
+    }
+}
