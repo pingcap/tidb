@@ -725,7 +725,9 @@ func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
 	for i := 0; i < 9; i++ {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
-	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
+	// Keep both index ranges between 1024 and 2048 rows so estimation errors cannot
+	// split a range into an extra batch. The shifted c values retain overlapping handles.
+	tk.MustExec(`update t set b = id * 2, c = (id + 1024) % 4096 * 2;`)
 	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
 	tk.MustQuery("select count(b) from t use index(idx2);").Check(testkit.Rows("4096"))
 	tk.MustQuery("select count(*) from t ignore index(idx, idx2)").Check(testkit.Rows("4096"))
