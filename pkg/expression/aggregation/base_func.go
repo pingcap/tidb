@@ -306,6 +306,8 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), divPrecIncre, divPrecIncre)
+		// AVG caps its result scale even when its argument has a wider expression scale.
+		a.RetTp.SetDecimalUnderLimit(a.RetTp.GetDecimal())
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

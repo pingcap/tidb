@@ -182,6 +182,11 @@ drop table t_mv_avg_zero;
 set div_precision_increment = 4;
 create table t_mv_avg_high (id int primary key, a int not null, b decimal(65,30));
 insert into t_mv_avg_high values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null), (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
+select a, avg(b) from t_mv_avg_high group by a order by a;
+a	avg(b)
+1	1.666666666666666666666666666667
+2	NULL
+3	99999999999999999999999999999999999.123456789012345678901234567890
 create materialized view log on t_mv_avg_high (id, a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_avg_high (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
@@ -230,7 +235,7 @@ create materialized view mv_avg_dpi (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_dpi group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_dpi' and column_name='av';
 column_type
-decimal(38,30)
+decimal(40,30)
 select * from mv_avg_dpi order by a;
 a	av	s	c	n
 1	1.666666666666666666666666666667	5.00	3	3
@@ -268,6 +273,9 @@ drop table t_mv_avg_dpi;
 set div_precision_increment = 1;
 create table t_mv_avg_round (id int primary key, a int not null, b decimal(65,30));
 insert into t_mv_avg_round values (1, 1, 0), (2, 1, 0), (3, 1, 0), (4, 1, 0), (5, 1, 0), (6, 1, 0), (7, 1, 0), (8, 1, 0), (9, 1, 0), (10, 1, 0), (11, 1, 0), (12, 1, 0), (13, 1, 0), (14, 1, 0), (15, 1, 0), (16, 1, 0), (17, 1, 0), (18, 1, 0), (19, 1, 0), (20, 1, 0), (21, 1, 0.000000000000000000000000000010);
+select avg(b) from t_mv_avg_round;
+avg(b)
+0.000000000000000000000000000000
 create materialized view log on t_mv_avg_round (id, a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_avg_round (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_round group by a;

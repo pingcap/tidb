@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
@@ -122,32 +121,20 @@ func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncremen
 }
 
 func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {
+	const selectSQL = "select a, avg(b), sum(b), count(b), count(1) from t group by a"
 	tblInfo := &model.TableInfo{
 		Name: ast.NewCIStr("mv"),
 		MaterializedView: &model.MaterializedViewInfo{
-			SQLContent: "select a, count(1) from t group by a",
+			SQLContent: selectSQL,
 		},
 	}
 
 	sql, err := buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, "TiKV", 12, "64gib")
 	require.NoError(t, err)
-	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM (")
+	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM ("+selectSQL+")")
 	require.Contains(t, sql, "WITH "+strings.Join(ddl.BuildMViewImportIntoOptions(12, "64gib"), ", "))
 
 	sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, kv.TiDB.Name(), 12, "64gib")
 	require.NoError(t, err)
-	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a", sql)
-
-	avgCol := &model.ColumnInfo{Name: ast.NewCIStr("av")}
-	avgCol.SetType(mysql.TypeNewDecimal)
-	avgCol.SetFlen(65)
-	avgCol.SetDecimal(30)
-	tblInfo.Columns = []*model.ColumnInfo{{Name: ast.NewCIStr("a")}, avgCol}
-	tblInfo.MaterializedView.SQLContent = "select a, avg(b) from t group by a"
-	for _, store := range []string{"TiKV", kv.TiDB.Name()} {
-		sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, store, 12, "64gib")
-		require.NoError(t, err)
-		require.Contains(t, sql, "CAST(SUM(`b`)/`NULLIF`(COUNT(`b`), 0) AS DECIMAL(65, 30))")
-	}
-	require.Equal(t, "select a, avg(b) from t group by a", tblInfo.MaterializedView.SQLContent)
+	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` "+selectSQL, sql)
 }

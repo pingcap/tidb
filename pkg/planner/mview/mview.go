@@ -2368,10 +2368,6 @@ func BuildCompleteDiffSource(
 		return nil, err
 	}
 
-	if _, err := mviewutil.RewriteAvgToColumnTypes(mvSel, mv); err != nil {
-		return nil, err
-	}
-
 	recomputedSource := &ast.TableSource{
 		Source: mvSel,
 		AsName: ast.NewCIStr(diffRecomputedAlias),
