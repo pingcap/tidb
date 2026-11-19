@@ -738,6 +738,9 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	if len(rows) == 0 {
 		return table, nil
 	}
+	// Recompute from the rows: DROP STATS keeps them with stats_ver = 0,
+	// and the copied table may have nothing loaded to detect that below.
+	table.StatsVer = statistics.Version0
 	for _, row := range rows {
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, err
