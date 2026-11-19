@@ -44,6 +44,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	require.True(t, ok)
+	return memTable
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -58,12 +64,51 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 
-	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
-	return logicalMemTable
+	logicalMemTable, ok := leafPlan.(*logicalop.LogicalMemTable)
+	return logicalMemTable, ok, remained
+}
+
+func TestInfoSchemaDDLJobIDExtractor(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	p := parser.New()
+	for _, ca := range []struct {
+		condition string
+		minJobID  int64
+	}{
+		{"job_id >= 42", 42},
+		{"job_id >= 42 and job_id >= 100", 100},
+		{"job_id >= 9223372036854775807", 9223372036854775807},
+		{"job_id >= -1", 0},
+		{"job_id > 42", 0},
+		{"job_id <= 42", 0},
+		{"abs(job_id) >= 42", 0},
+		{"job_id >= 42 or table_name = 't'", 0},
+		{"table_name = 't'", 0},
+	} {
+		memTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, p,
+			"select * from information_schema.ddl_jobs where "+ca.condition)
+		require.True(t, ok, ca.condition)
+		extractor := memTable.Extractor.(*plannercore.InfoSchemaDDLExtractor)
+		require.Equal(t, ca.minJobID, extractor.MinJobID, ca.condition)
+		require.NotEmpty(t, remained, ca.condition)
+		if ca.minJobID > 0 {
+			require.Contains(t, extractor.ExplainInfo(nil), fmt.Sprintf("min_job_id:%d", ca.minJobID))
+		}
+		// Re-extraction must not retain a bound from a previous predicate set.
+		extractor.Extract(se.GetPlanCtx(), memTable.Schema(), memTable.OutputNames(), nil)
+		require.Zero(t, extractor.MinJobID)
+	}
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
