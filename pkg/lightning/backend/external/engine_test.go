@@ -16,21 +16,16 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/pkg/lightning/common"
-=======
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
->>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
+	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -137,9 +132,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-<<<<<<< HEAD
-=======
-func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -162,7 +155,7 @@ func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (
 	return
 }
 
-func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []KVPair {
+func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *common.DataAndRanges) []KVPair {
 	ctx := context.Background()
 	iter := dataAndRanges.Data.NewIter(ctx, nil, nil, membuf.NewPool())
 	var allKVs []KVPair
@@ -220,13 +213,12 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	})
 
 	ctx := context.Background()
-	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
 	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{{
 		{Key: []byte{1}, Value: []byte("first")},
 		{Key: []byte{2}, Value: []byte("second")},
 	}})
 	extEngine := NewExternalEngine(
-		ctx,
 		store,
 		dataFiles,
 		statFiles,
@@ -240,14 +232,14 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 		2,
 		true,
 		4*units.MiB,
-		engineapi.OnDuplicateKeyIgnore,
+		common.OnDuplicateKeyIgnore,
 		"/",
 	)
 	t.Cleanup(func() {
 		require.NoError(t, extEngine.Close())
 	})
 
-	loadDataCh := make(chan engineapi.DataAndRanges)
+	loadDataCh := make(chan common.DataAndRanges)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- extEngine.LoadIngestData(ctx, loadDataCh)
@@ -276,7 +268,7 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	first.Data.DecRef()
 	firstReleased = true
 
-	var second engineapi.DataAndRanges
+	var second common.DataAndRanges
 	require.Eventually(t, func() bool {
 		select {
 		case second = <-loadDataCh:
@@ -304,9 +296,8 @@ func TestEngineOnDup(t *testing.T) {
 		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
-	getEngineFn := func(store storeapi.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+	getEngineFn := func(store storage.ExternalStorage, onDup common.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
-			ctx,
 			store, inDataFiles, inStatFiles,
 			[]byte{1}, []byte{5},
 			[][]byte{{1}, {2}, {3}, {4}, {5}},
@@ -319,15 +310,15 @@ func TestEngineOnDup(t *testing.T) {
 			16*units.GiB,
 			onDup,
 			"/",
-		)
+		).(*Engine)
 	}
 
 	t.Run("on duplicate ignore", func(t *testing.T) {
-		onDup := engineapi.OnDuplicateKeyIgnore
-		store := objstore.NewMemStorage()
+		onDup := common.OnDuplicateKeyIgnore
+		store := storage.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
-		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		loadDataCh := make(chan common.DataAndRanges, 4)
 		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "duplicate key found")
 		t.Cleanup(func() {
 			require.NoError(t, extEngine.Close())
@@ -335,11 +326,11 @@ func TestEngineOnDup(t *testing.T) {
 	})
 
 	t.Run("on duplicate error", func(t *testing.T) {
-		onDup := engineapi.OnDuplicateKeyError
-		store := objstore.NewMemStorage()
+		onDup := common.OnDuplicateKeyError
+		store := storage.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
-		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		loadDataCh := make(chan common.DataAndRanges, 4)
 		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key '\x01', value 'aa'")
 		t.Cleanup(func() {
 			require.NoError(t, extEngine.Close())
@@ -347,8 +338,8 @@ func TestEngineOnDup(t *testing.T) {
 	})
 
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
-		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := objstore.NewMemStorage()
+		for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
+			store := storage.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{4}, Value: []byte("bbb")},
 				{Key: []byte{1}, Value: []byte("aa")},
@@ -356,7 +347,7 @@ func TestEngineOnDup(t *testing.T) {
 				{Key: []byte{3}, Value: []byte("sds")},
 			}})
 			extEngine := getEngineFn(store, od, dfiles, sfiles)
-			loadDataCh := make(chan engineapi.DataAndRanges, 4)
+			loadDataCh := make(chan common.DataAndRanges, 4)
 			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 			t.Cleanup(func() {
 				require.NoError(t, extEngine.Close())
@@ -383,11 +374,11 @@ func TestEngineOnDup(t *testing.T) {
 			{{Key: []byte{4}, Value: []byte("bbb")}, {Key: []byte{4}, Value: []byte("bbb")}},
 		}
 		for _, cont := range [][][]KVPair{contents, contents2} {
-			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-				store := objstore.NewMemStorage()
+			for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
+				store := storage.NewMemStorage()
 				dataFiles, statFiles := prepareKVFiles(t, store, cont)
 				extEngine := getEngineFn(store, od, dataFiles, statFiles)
-				loadDataCh := make(chan engineapi.DataAndRanges, 4)
+				loadDataCh := make(chan common.DataAndRanges, 4)
 				require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 				t.Cleanup(func() {
 					require.NoError(t, extEngine.Close())
@@ -400,7 +391,7 @@ func TestEngineOnDup(t *testing.T) {
 					{Key: []byte{3}, Value: []byte("sds")},
 				}, allKVs)
 				info := extEngine.ConflictInfo()
-				if od == engineapi.OnDuplicateKeyRemove {
+				if od == common.OnDuplicateKeyRemove {
 					require.Zero(t, info.Count)
 					require.Empty(t, info.Files)
 				} else {
@@ -420,8 +411,8 @@ func TestEngineOnDup(t *testing.T) {
 	})
 
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
-		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := objstore.NewMemStorage()
+		for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
+			store := storage.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{1}, Value: []byte("aaa")},
 				{Key: []byte{1}, Value: []byte("aaa")},
@@ -429,7 +420,7 @@ func TestEngineOnDup(t *testing.T) {
 				{Key: []byte{1}, Value: []byte("aaa")},
 			}})
 			extEngine := getEngineFn(store, od, dfiles, sfiles)
-			loadDataCh := make(chan engineapi.DataAndRanges, 4)
+			loadDataCh := make(chan common.DataAndRanges, 4)
 			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 			t.Cleanup(func() {
 				require.NoError(t, extEngine.Close())
@@ -439,7 +430,7 @@ func TestEngineOnDup(t *testing.T) {
 			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
 			require.Empty(t, allKVs)
 			info := extEngine.ConflictInfo()
-			if od == engineapi.OnDuplicateKeyRemove {
+			if od == common.OnDuplicateKeyRemove {
 				require.Zero(t, info.Count)
 				require.Empty(t, info.Files)
 			} else {
@@ -459,7 +450,7 @@ func TestEngineOnDup(t *testing.T) {
 
 func TestLoadIngestDataMultiBatch(t *testing.T) {
 	ctx := context.Background()
-	store := objstore.NewMemStorage()
+	store := storage.NewMemStorage()
 	// Create data spread across 4 key ranges, with 2 files to exercise
 	// cross-file offset reuse in the multi-batch path (start > 0).
 	contents := [][]KVPair{
@@ -482,7 +473,6 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
 	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
 	extEngine := NewExternalEngine(
-		ctx,
 		store, dataFiles, statFiles,
 		[]byte{1}, []byte{9},
 		jobKeys,
@@ -493,14 +483,14 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 		8,
 		true,
 		16*units.GiB,
-		engineapi.OnDuplicateKeyError,
+		common.OnDuplicateKeyError,
 		"/",
 	)
 	t.Cleanup(func() {
 		require.NoError(t, extEngine.Close())
 	})
 
-	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	loadDataCh := make(chan common.DataAndRanges, 4)
 	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
 
@@ -521,7 +511,6 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	}, allKVs)
 }
 
->>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 type dummyWorker struct{}
 
 func (w *dummyWorker) Tune(int32, bool) {

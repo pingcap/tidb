@@ -185,12 +185,6 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-<<<<<<< HEAD
-		kvs = append(kvs, KVPair{
-			Key:   smallBlockBuf.AddBytes(k),
-			Value: smallBlockBuf.AddBytes(v),
-		})
-=======
 		key, err := smallBlockBuf.TryAddBytes(k)
 		if err != nil {
 			return err
@@ -200,7 +194,6 @@ func readOneFile(
 			return err
 		}
 		kvs = append(kvs, KVPair{Key: key, Value: value})
->>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
