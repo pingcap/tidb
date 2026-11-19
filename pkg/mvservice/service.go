@@ -190,6 +190,8 @@ type mviewTask struct {
 	lastSyncedAlertReadTSO uint64
 	alertStateInitialized  bool
 	persistedAlertLevel    string
+	// Whether the persisted DATETIME snapshot matches lastSuccessTime.
+	persistedAlertSnapshotMatches bool
 
 	orderTs    int64 // unix timestamp in milliseconds
 	retryCount atomic.Int64
@@ -537,11 +539,13 @@ func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask
 		case mvRefreshAlertLevelWarning:
 			warningCount++
 		}
-		// Schedule DDL or another checker can change the persisted alert level.
-		// A new read TSO still needs to refresh the persisted snapshot time.
+		// Schedule DDL or another checker can change the persisted alert level or
+		// snapshot time. Resolved alerts need no snapshot match: clearing their
+		// level can retain a refresh-failure row with an older snapshot time.
 		if task.alertStateInitialized &&
 			task.lastSyncedAlertReadTSO == task.lastSuccessReadTSO &&
-			task.persistedAlertLevel == alertLevel {
+			task.persistedAlertLevel == alertLevel &&
+			(alertLevel == "" || task.persistedAlertSnapshotMatches) {
 			continue
 		}
 		taskState, retryCount := getRefreshAlertExecutionState(execStates, mviewID)
@@ -577,6 +581,7 @@ func (t *MVService) markRefreshAlertStatesSynced(states []refreshAlertTask) {
 		task.lastSyncedAlertReadTSO = state.lastSuccessReadTSO
 		task.alertStateInitialized = true
 		task.persistedAlertLevel = state.alertLevel
+		task.persistedAlertSnapshotMatches = state.alertLevel != ""
 	}
 }
 
@@ -1204,6 +1209,7 @@ func (t *MVService) buildMViewRefreshAlertTasks(newPending map[int64]*mviewTask)
 			om.lastSuccessReadTSO = nm.lastSuccessReadTSO
 			om.lastSuccessTime = nm.lastSuccessTime
 			om.persistedAlertLevel = nm.persistedAlertLevel
+			om.persistedAlertSnapshotMatches = nm.persistedAlertSnapshotMatches
 			om.nextRefresh = nm.nextRefresh
 			om.orderTs = nm.orderTs
 			continue

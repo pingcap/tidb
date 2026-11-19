@@ -968,18 +968,21 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 
 	task.lastSuccessReadTSO = 22345
 	task.lastSuccessTime = now.Add(-35 * time.Second)
+	task.persistedAlertSnapshotMatches = false
 	helper.syncRefreshAlertErr = errors.New("mock alert sync failure")
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(2), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, uint64(12345), task.lastSyncedAlertReadTSO)
+	require.False(t, task.persistedAlertSnapshotMatches)
 
 	helper.syncRefreshAlertErr = nil
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(3), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, uint64(22345), task.lastSyncedAlertReadTSO)
+	require.True(t, task.persistedAlertSnapshotMatches)
 	require.Len(t, helper.lastRefreshAlertSync, 1)
 	require.Equal(t, mvRefreshAlertLevelWarning, helper.lastRefreshAlertSync[0].alertLevel)
 	require.Equal(t, uint64(22345), helper.lastRefreshAlertSync[0].lastSuccessReadTSO)

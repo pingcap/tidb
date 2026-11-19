@@ -41,6 +41,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -1773,7 +1774,7 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error) {
-	const sql = `SELECT i.NEXT_REFRESH_UNIX_SECONDS, i.MVIEW_ID, i.LAST_SUCCESS_READ_TSO, a.ALERT_LEVEL
+	const sql = `SELECT i.NEXT_REFRESH_UNIX_SECONDS, i.MVIEW_ID, i.LAST_SUCCESS_READ_TSO, a.ALERT_LEVEL, a.LAST_SUCCESS_SNAPSHOT_TIME
 FROM mysql.tidb_mview_refresh_info AS i
 LEFT JOIN mysql.tidb_mview_refresh_alert AS a ON a.MVIEW_ID = i.MVIEW_ID
 WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
@@ -1815,6 +1816,9 @@ WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 		}
 		if !row.IsNull(3) {
 			m.persistedAlertLevel = row.GetString(3)
+		}
+		if !row.IsNull(4) && !lastSuccessTime.IsZero() {
+			m.persistedAlertSnapshotMatches = row.GetTime(4).CoreTime() == types.FromGoTime(lastSuccessTime)
 		}
 		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mviewID)
 		if resolveErr == nil && found {
