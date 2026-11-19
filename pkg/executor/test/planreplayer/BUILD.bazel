@@ -8,7 +8,11 @@ go_test(
         "plan_replayer_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 8,
+=======
+    shard_count = 12,
+>>>>>>> bfcc826f420 (executor: make PLAN REPLAYER LOAD work with read-timestamp overrides in the dump (#71125))
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
