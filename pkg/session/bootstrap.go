@@ -833,10 +833,6 @@ var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessiontypes.Session) {
 	startTime := time.Now()
-	err := InitMDLVariableForBootstrap(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
-	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -846,7 +842,9 @@ func bootstrap(s sessiontypes.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			upgrade(s)
+			// Bootstrap initialization has already persisted and enabled MDL
+			// before the domain started, so no legacy MDL migration is needed.
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -854,6 +852,9 @@ func bootstrap(s sessiontypes.Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			if err := initLegacyECDSASessionToken(s.GetStore(), true); err != nil {
+				logutil.BgLogger().Fatal("disable legacy ECDSA session tokens during bootstrap failed", zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
@@ -1638,17 +1639,11 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
+// upgradeWithMDLMigration upgrades a store bootstrapped by an older TiDB server.
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessiontypes.Session) {
+func upgradeWithMDLMigration(s sessiontypes.Session, migration legacyMDLMigration) {
 	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
-	}
-
-	var ver int64
-	ver, err = getBootstrapVersion(s)
+	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
@@ -1659,7 +1654,7 @@ func upgrade(s sessiontypes.Session) {
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
 	// but during upgrade we disable it.
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99Before(s)
 	}
 
@@ -1668,7 +1663,7 @@ func upgrade(s sessiontypes.Session) {
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99After(s)
 	}
 
@@ -3595,6 +3590,8 @@ func upgradeToVer233(s sessiontypes.Session, ver int64) {
 		ADD UNIQUE INDEX unique_registration_params_v2 (
 			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

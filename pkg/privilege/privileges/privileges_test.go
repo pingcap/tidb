@@ -750,6 +750,124 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
 }
 
+func TestExchangePartitionChecksTargetTablePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE exchange_src`)
+	rootTk.MustExec(`CREATE DATABASE exchange_dst`)
+	rootTk.MustExec(`CREATE TABLE exchange_src.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+	rootTk.MustExec(`CREATE TABLE exchange_dst.nt (a int primary key)`)
+	rootTk.MustExec(`CREATE USER 'exchange_low'@'%'`)
+	rootTk.MustExec(`GRANT ALTER, DROP ON exchange_src.* TO 'exchange_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	authLow := func() {
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
+		}, nil, nil, nil))
+	}
+	exchange := func() error {
+		authLow()
+		return tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+	}
+
+	// EXCHANGE PARTITION swaps the data of both tables, so to match MySQL it requires
+	// ALTER, INSERT, CREATE and DROP on BOTH the partitioned table (pt) and the
+	// non-partitioned table (nt). Grant them one missing privilege at a time and assert
+	// each is enforced; in particular DROP on nt guards against destroying/replacing nt's
+	// existing data without the DROP privilege.
+
+	// Missing CREATE on the target table nt.
+	err := exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "CREATE command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has CREATE+INSERT, but the partitioned table pt still lacks INSERT.
+	rootTk.MustExec(`GRANT CREATE, INSERT ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "INSERT command denied")
+	require.Contains(t, err.Error(), "'pt'")
+
+	// pt now has INSERT+CREATE, but the target table nt still lacks ALTER.
+	rootTk.MustExec(`GRANT INSERT, CREATE ON exchange_src.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "ALTER command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has ALTER, but still lacks DROP: exchanging replaces nt's existing data, which
+	// MySQL gates behind DROP on nt. Without DROP the statement must still be denied.
+	rootTk.MustExec(`GRANT ALTER ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "DROP command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// Full MySQL-aligned privilege set on both tables -> allowed.
+	rootTk.MustExec(`GRANT DROP ON exchange_dst.* TO 'exchange_low'@'%'`)
+	authLow()
+	tk.MustExec(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+}
+
+func TestExchangePartitionRejectsReservedSystemTableTarget(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE DATABASE exchange_reserved`)
+	tk.MustExec(`CREATE TABLE exchange_reserved.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	err := tk.ExecToErr(`ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE mysql.tidb_ddl_job`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.tidb_ddl_job'")
+}
+
+func TestRenameTablesChecksAllPairsPrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_atk`)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_vic`)
+	rootTk.MustExec(`CREATE USER 'rename_low'@'%'`)
+	rootTk.MustExec(`GRANT ALL PRIVILEGES ON rename_priv_atk.* TO 'rename_low'@'%'`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0a (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0b (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_vic.secret (id INT)`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "rename_low",
+		Hostname:     "localhost",
+		AuthUsername: "rename_low",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_vic.secret TO rename_priv_atk.secret_stolen`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'secret'`).Check(testkit.Rows("secret"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'secret_stolen'`).Check(testkit.Rows())
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_vic.pair0b_tmp`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b'`).Check(testkit.Rows("pair0b"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'pair0b_tmp'`).Check(testkit.Rows())
+
+	tk.MustExec(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_atk.pair0b_tmp`)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows("pair0a_tmp"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b_tmp'`).Check(testkit.Rows("pair0b_tmp"))
+}
+
 func TestAnalyzeTable(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -2163,7 +2281,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	rootTk := testkit.NewTestKit(t, store)
 	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
 	// prepare session token
-	token, err := sessionstates.CreateSessionToken("testuser")
+	token, err := sessionstates.CreateSessionToken("testuser", "localhost")
 	require.NoError(t, err)
 	tokenBytes, err := json.Marshal(token)
 	require.NoError(t, err)
@@ -2194,9 +2312,29 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
 
+	// Loopback aliases still resolve to the same localhost privilege record.
+	loopbackUser := &auth.UserIdentity{Username: "testuser", Hostname: "127.0.0.1", AuthPlugin: mysql.AuthTiDBSessionToken}
+	require.NoError(t, tk.Session().Auth(loopbackUser, tokenBytes, nil, nil))
+
 	// Wrong token
 	err = tk.Session().Auth(user, nil, nil, nil)
 	require.ErrorContains(t, err, "Access denied")
+
+	// A valid token must not authenticate a different account, even when only
+	// the username case or the matched host differs.
+	rootTk.MustExec(`CREATE USER 'TESTUSER'@'localhost' IDENTIFIED BY 'other-password'`)
+	rootTk.MustExec(`CREATE USER 'testuser'@'%' IDENTIFIED BY 'other-password'`)
+	rootTk.MustExec(`GRANT ALL ON *.* TO 'TESTUSER'@'localhost', 'testuser'@'%'`)
+	for _, target := range []*auth.UserIdentity{
+		{Username: "TESTUSER", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken},
+		{Username: "testuser", Hostname: "192.0.2.1", AuthPlugin: mysql.AuthTiDBSessionToken},
+	} {
+		t.Run(target.String(), func(t *testing.T) {
+			targetTk := testkit.NewTestKit(t, store)
+			err := targetTk.Session().Auth(target, tokenBytes, nil, nil)
+			require.ErrorContains(t, err, "Access denied")
+		})
+	}
 }
 
 func TestNilHandleInConnectionVerification(t *testing.T) {

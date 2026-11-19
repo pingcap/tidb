@@ -241,6 +241,14 @@ func TestBootstrapWithError(t *testing.T) {
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
 }
 
+func disableStatsOwner(t *testing.T, se sessiontypes.Session) {
+	statsOwnerEnabled := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(statsOwnerEnabled)
+	})
+	MustExec(t, se, "set global tidb_enable_stats_owner=off")
+}
+
 func TestDDLTableCreateBackfillTable(t *testing.T) {
 	// The notifier must not poll its system table while this test recreates it.
 	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
@@ -249,6 +257,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	disableStatsOwner(t, se)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -285,6 +294,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	disableStatsOwner(t, se)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
