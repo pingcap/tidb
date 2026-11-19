@@ -20,9 +20,10 @@
 //     2D WKB.
 //
 // Both hold the same coordinates in the same order below the root header, so a conversion
-// checks the value with a scan that builds nothing and rewrites only the header. Every
-// read and scan bounds nesting at MaxDepth, consumes the input exactly and checks counts
-// before allocating.
+// rewrites only the header. Bytes from a client are checked against every rule of the
+// format once, by validate; a stored value, checked when it was written, is only walked.
+// Every walk bounds nesting at MaxDepth, consumes the input exactly and checks counts
+// against the input before allocating.
 package geocodec
 
 import (
@@ -30,8 +31,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-
-	"github.com/peterstace/simplefeatures/geom"
 )
 
 const (
@@ -74,14 +73,49 @@ const (
 	minGeometrySize = 9
 
 	// anyType lets a GEOMETRYCOLLECTION member be of any type.
-	anyType geom.GeometryType = -1
+	anyType Type = 0
 
-	// emptyPointNaN is the quiet NaN PostGIS and GEOS write for POINT EMPTY. Go's
-	// math.NaN() has another bit pattern, and the stored bytes are compared.
-	emptyPointNaN uint64 = 0x7FF8000000000000
+	// nonFinite is the exponent of a NaN or an infinity, which has every bit set.
+	nonFinite uint64 = 0x7FF0000000000000
 )
 
-// dialect selects which WKB variant a reader accepts.
+// Type is a geometry type, numbered by its WKB type code, as the parser numbers a geometry
+// column's subtype, where 0 is any type.
+type Type uint32
+
+// The geometry types.
+const (
+	TypePoint              Type = 1
+	TypeLineString         Type = 2
+	TypePolygon            Type = 3
+	TypeMultiPoint         Type = 4
+	TypeMultiLineString    Type = 5
+	TypeMultiPolygon       Type = 6
+	TypeGeometryCollection Type = 7
+)
+
+// dims says which coordinates a position has: Z adds 1 and M adds 2.
+type dims byte
+
+const (
+	dimsXY   dims = 0b00
+	dimsXYZ  dims = 0b01
+	dimsXYM  dims = 0b10
+	dimsXYZM dims = 0b11
+)
+
+// size is the number of bytes in a position.
+func (d dims) size() int {
+	switch d {
+	case dimsXY:
+		return 16
+	case dimsXYZM:
+		return 32
+	}
+	return 24
+}
+
+// dialect selects which WKB variant validate accepts.
 type dialect int
 
 const (
@@ -99,11 +133,10 @@ func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
 		return nil, 0, ErrInvalid
 	}
-	s := scanner{r: reader{buf: b[4:], dialect: dialectMySQL}, ingest: true}
-	if err := s.scan(); err != nil {
+	if _, err := validate(b[4:], dialectMySQL); err != nil {
 		return nil, 0, err
 	}
-	// The scan has checked the root header: the little-endian byte order and a type code
+	// validate has checked the root header: the little-endian byte order and a type code
 	// without flags.
 	srid = binary.LittleEndian.Uint32(b)
 	stored = make([]byte, 0, len(b)+1)
@@ -120,15 +153,15 @@ func StoredToMySQL(stored []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := scanner{r: reader{buf: payload, dialect: dialectEWKB}}
-	if err := s.scan(); err != nil {
+	notMySQL, err := skim(payload)
+	if err != nil {
 		return nil, err
 	}
-	if s.notMySQL {
+	if notMySQL {
 		return nil, ErrNotMySQLExpressible
 	}
-	// payloadOf and the scan have checked the root header: a little-endian byte order, a
-	// type word with the SRID flag, and the SRID.
+	// payloadOf and skim have checked the root header: a little-endian byte order, a type
+	// word with the SRID flag, and the SRID.
 	word := binary.LittleEndian.Uint32(payload[1:])
 	srid := binary.LittleEndian.Uint32(payload[5:])
 	body := payload[9:]
@@ -140,40 +173,33 @@ func StoredToMySQL(stored []byte) ([]byte, error) {
 }
 
 // Header returns a stored value's SRID and geometry type without parsing its body.
-func Header(stored []byte) (srid uint32, typ geom.GeometryType, err error) {
+func Header(stored []byte) (srid uint32, typ Type, err error) {
 	payload, err := payloadOf(stored)
 	if err != nil {
 		return 0, 0, err
 	}
-	r := reader{buf: payload, dialect: dialectEWKB}
-	order, err := r.byteOrder()
+	c := cursor{buf: payload}
+	order, err := c.byteOrder()
 	if err != nil {
 		return 0, 0, err
 	}
-	typ, _, _, err = r.typeWord(order, true)
+	word, err := c.uint32(order)
 	if err != nil {
 		return 0, 0, err
+	}
+	typ, _, _, ok := splitType(word)
+	if !ok {
+		return 0, 0, ErrInvalid
 	}
 	// payloadOf has checked the SRID flag.
-	if srid, err = r.uint32(order); err != nil {
+	if srid, err = c.uint32(order); err != nil {
 		return 0, 0, err
 	}
 	return srid, typ, nil
 }
 
-// encode serializes g with srid into the stored format: little-endian EWKB with the SRID
-// flag set, whatever the SRID.
-func encode(g geom.Geometry, srid uint32) ([]byte, error) {
-	w := writer{srid: srid, buf: make([]byte, 0, 32)}
-	w.buf = append(w.buf, Version1)
-	if err := w.geometry(g, 1); err != nil {
-		return nil, err
-	}
-	return w.buf, nil
-}
-
 // payloadOf returns a stored value's EWKB, whose root must carry the SRID flag every writer
-// sets. A root too short or of an unknown byte order is left to the reader to report.
+// sets. A root too short or of an unknown byte order is left to the walk to report.
 func payloadOf(stored []byte) ([]byte, error) {
 	if len(stored) == 0 {
 		return nil, ErrInvalid
@@ -182,496 +208,253 @@ func payloadOf(stored []byte) ([]byte, error) {
 		return nil, ErrUnsupportedVersion
 	}
 	payload := stored[1:]
-	r := reader{buf: payload, dialect: dialectEWKB}
-	if order, err := r.byteOrder(); err == nil {
-		if word, err := r.uint32(order); err == nil && word&ewkbSRID == 0 {
+	c := cursor{buf: payload}
+	if order, err := c.byteOrder(); err == nil {
+		if word, err := c.uint32(order); err == nil && word&ewkbSRID == 0 {
 			return nil, errStoredWithoutSRID
 		}
 	}
 	return payload, nil
 }
 
-// read reads and builds the geometry b holds in dialect d.
-func read(b []byte, d dialect) (uint32, geom.Geometry, error) {
-	r := reader{buf: b, dialect: d}
-	g, err := r.geometry(1, anyType, geom.DimXY)
-	if err != nil {
-		return 0, geom.Geometry{}, err
-	}
-	if r.pos != len(r.buf) {
-		return 0, geom.Geometry{}, ErrInvalid
-	}
-	return r.srid, g, nil
-}
-
-type reader struct {
+// cursor reads WKB from buf at pos. claimed sums the bytes every count read so far needs,
+// so nested counts cannot claim the same bytes again and allocate many times the input.
+type cursor struct {
 	buf     []byte
 	pos     int
-	dialect dialect
-	srid    uint32
-	// claimed sums the least bytes each count read so far needs, so nested counts cannot
-	// claim the same bytes again and allocate many times the value's size.
 	claimed uint64
 }
 
-func (r *reader) remaining() int { return len(r.buf) - r.pos }
-
-func (r *reader) byteOrder() (byte, error) {
-	if r.remaining() < 1 {
-		return 0, ErrInvalid
+// next returns the next n bytes and moves past them.
+func (c *cursor) next(n int) ([]byte, error) {
+	if n > len(c.buf)-c.pos {
+		return nil, ErrInvalid
 	}
-	order := r.buf[r.pos]
-	r.pos++
-	switch order {
-	case byteOrderLittle:
-	case byteOrderBig:
-		if r.dialect == dialectMySQL {
-			return 0, ErrInvalid
-		}
-	default:
-		return 0, ErrInvalid
-	}
-	return order, nil
+	b := c.buf[c.pos : c.pos+n]
+	c.pos += n
+	return b, nil
 }
 
-func (r *reader) uint32(order byte) (uint32, error) {
-	if r.remaining() < 4 {
+func (c *cursor) byteOrder() (byte, error) {
+	b, err := c.next(1)
+	if err != nil {
+		return 0, err
+	}
+	if b[0] != byteOrderLittle && b[0] != byteOrderBig {
 		return 0, ErrInvalid
 	}
-	var v uint32
-	if order == byteOrderLittle {
-		v = binary.LittleEndian.Uint32(r.buf[r.pos:])
-	} else {
-		v = binary.BigEndian.Uint32(r.buf[r.pos:])
+	return b[0], nil
+}
+
+func (c *cursor) uint32(order byte) (uint32, error) {
+	b, err := c.next(4)
+	if err != nil {
+		return 0, err
 	}
-	r.pos += 4
-	return v, nil
+	if order == byteOrderLittle {
+		return binary.LittleEndian.Uint32(b), nil
+	}
+	return binary.BigEndian.Uint32(b), nil
 }
 
 // count reads an element count and checks that its elements, at least minSize bytes each,
 // fit in the input together with every earlier count's.
-func (r *reader) count(order byte, minSize int) (int, error) {
-	n, err := r.uint32(order)
+func (c *cursor) count(order byte, minSize int) (int, error) {
+	n, err := c.uint32(order)
 	if err != nil {
 		return 0, err
 	}
 	need := uint64(n) * uint64(minSize)
-	if need > uint64(r.remaining()) || r.claimed+need > uint64(len(r.buf)) {
+	if need > uint64(len(c.buf)-c.pos) || c.claimed+need > uint64(len(c.buf)) {
 		return 0, ErrInvalid
 	}
-	r.claimed += need
+	c.claimed += need
 	return int(n), nil
 }
 
-// typeWord reads a geometry type word and returns the geometry type, its coordinate
-// type and whether an EWKB SRID follows.
-func (r *reader) typeWord(order byte, root bool) (geom.GeometryType, geom.CoordinatesType, bool, error) {
-	word, err := r.uint32(order)
-	if err != nil {
-		return 0, 0, false, err
+func bitsAt(b []byte, order byte) uint64 {
+	if order == byteOrderLittle {
+		return binary.LittleEndian.Uint64(b)
 	}
-	if r.dialect == dialectEWKB {
-		return ewkbTypeWord(word, root)
-	}
-	typ, ok := geometryTypeOf(word)
-	if !ok {
-		return 0, 0, false, ErrInvalid
-	}
-	return typ, geom.DimXY, false, nil
+	return binary.BigEndian.Uint64(b)
 }
 
-// ewkbTypeWord splits an EWKB type word into the geometry type, the coordinate type and
-// whether an SRID follows. Only the root may carry an SRID.
-func ewkbTypeWord(word uint32, root bool) (geom.GeometryType, geom.CoordinatesType, bool, error) {
-	ctype := geom.DimXY
+// splitType splits an EWKB type word into the geometry type, the coordinates of its
+// positions, and whether an SRID follows; ok is false for an unknown type code.
+func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
+	typ = Type(word &^ ewkbFlags)
 	if word&ewkbZ != 0 {
-		ctype |= geom.DimXYZ
+		d |= dimsXYZ
 	}
 	if word&ewkbM != 0 {
-		ctype |= geom.DimXYM
+		d |= dimsXYM
 	}
-	hasSRID := word&ewkbSRID != 0
-	if hasSRID && !root {
-		return 0, 0, false, ErrInvalid
-	}
-	typ, ok := geometryTypeOf(word &^ ewkbFlags)
-	if !ok {
-		return 0, 0, false, ErrInvalid
-	}
-	return typ, ctype, hasSRID, nil
-}
-
-func geometryTypeOf(code uint32) (geom.GeometryType, bool) {
-	switch code {
-	case 1:
-		return geom.TypePoint, true
-	case 2:
-		return geom.TypeLineString, true
-	case 3:
-		return geom.TypePolygon, true
-	case 4:
-		return geom.TypeMultiPoint, true
-	case 5:
-		return geom.TypeMultiLineString, true
-	case 6:
-		return geom.TypeMultiPolygon, true
-	case 7:
-		return geom.TypeGeometryCollection, true
-	}
-	return 0, false
+	return typ, d, word&ewkbSRID != 0, typ >= TypePoint && typ <= TypeGeometryCollection
 }
 
 // memberTypeOf returns the type a collection's members must have.
-func memberTypeOf(typ geom.GeometryType) geom.GeometryType {
+func memberTypeOf(typ Type) Type {
 	switch typ {
-	case geom.TypeMultiPoint:
-		return geom.TypePoint
-	case geom.TypeMultiLineString:
-		return geom.TypeLineString
-	case geom.TypeMultiPolygon:
-		return geom.TypePolygon
+	case TypeMultiPoint:
+		return TypePoint
+	case TypeMultiLineString:
+		return TypeLineString
+	case TypeMultiPolygon:
+		return TypePolygon
 	}
 	return anyType
 }
 
-// geometry reads one geometry. A member of a collection passes the element type its
-// parent requires and the parent's coordinate type, which it must match.
-func (r *reader) geometry(depth int, want geom.GeometryType, parentCType geom.CoordinatesType) (geom.Geometry, error) {
-	if depth > MaxDepth {
-		return geom.Geometry{}, ErrTooDeep
+// validate checks b, WKB in dialect d from an untrusted source, against every rule of the
+// format, building nothing and allocating nothing. It reports whether MySQL's format can
+// hold the value.
+func validate(b []byte, d dialect) (notMySQL bool, err error) {
+	v := validator{c: cursor{buf: b}, dialect: d}
+	if err := v.geometry(1, anyType, dimsXY); err != nil {
+		return false, err
 	}
-	root := depth == 1
-	order, err := r.byteOrder()
-	if err != nil {
-		return geom.Geometry{}, err
-	}
-	typ, ctype, hasSRID, err := r.typeWord(order, root)
-	if err != nil {
-		return geom.Geometry{}, err
-	}
-	if !root && (ctype != parentCType || (want != anyType && typ != want)) {
-		return geom.Geometry{}, ErrInvalid
-	}
-	if hasSRID {
-		if r.srid, err = r.uint32(order); err != nil {
-			return geom.Geometry{}, err
-		}
-	}
-	switch typ {
-	case geom.TypePoint:
-		p, err := r.point(order, ctype)
-		return p.AsGeometry(), err
-	case geom.TypeLineString:
-		ls, err := r.lineString(order, ctype)
-		return ls.AsGeometry(), err
-	case geom.TypePolygon:
-		p, err := r.polygon(order, ctype)
-		return p.AsGeometry(), err
-	}
-	n, err := r.count(order, minGeometrySize)
-	if err != nil {
-		return geom.Geometry{}, err
-	}
-	if n == 0 && r.dialect == dialectMySQL && typ != geom.TypeGeometryCollection {
-		return geom.Geometry{}, ErrInvalid
-	}
-	members := make([]geom.Geometry, n)
-	memberType := memberTypeOf(typ)
-	for i := range members {
-		if members[i], err = r.geometry(depth+1, memberType, ctype); err != nil {
-			return geom.Geometry{}, err
-		}
-	}
-	return collection(typ, members, ctype), nil
-}
-
-func collection(typ geom.GeometryType, members []geom.Geometry, ctype geom.CoordinatesType) geom.Geometry {
-	var g geom.Geometry
-	switch typ {
-	case geom.TypeMultiPoint:
-		pts := make([]geom.Point, len(members))
-		for i, m := range members {
-			pts[i] = m.MustAsPoint()
-		}
-		g = geom.NewMultiPoint(pts).AsGeometry()
-	case geom.TypeMultiLineString:
-		lss := make([]geom.LineString, len(members))
-		for i, m := range members {
-			lss[i] = m.MustAsLineString()
-		}
-		g = geom.NewMultiLineString(lss).AsGeometry()
-	case geom.TypeMultiPolygon:
-		polys := make([]geom.Polygon, len(members))
-		for i, m := range members {
-			polys[i] = m.MustAsPolygon()
-		}
-		g = geom.NewMultiPolygon(polys).AsGeometry()
-	default:
-		g = geom.NewGeometryCollection(members).AsGeometry()
-	}
-	// The constructors take the coordinate type from the members; only an empty collection
-	// needs it set.
-	if len(members) == 0 {
-		g = g.ForceCoordinatesType(ctype)
-	}
-	return g
-}
-
-// coordinates reads n positions of ctype into a flat slice. Every coordinate must be
-// finite.
-func (r *reader) coordinates(order byte, ctype geom.CoordinatesType, n int) ([]float64, error) {
-	floats := make([]float64, n*ctype.Dimension())
-	finite, err := r.floats(order, floats)
-	if err != nil {
-		return nil, err
-	}
-	if !finite {
-		return nil, ErrInvalid
-	}
-	return floats, nil
-}
-
-// floats reads len(dst) values into dst and reports whether all are finite, checked while
-// decoding since a second pass costs more.
-func (r *reader) floats(order byte, dst []float64) (bool, error) {
-	if r.remaining() < 8*len(dst) {
+	if v.c.pos != len(b) {
 		return false, ErrInvalid
 	}
-	b := r.buf[r.pos : r.pos+8*len(dst)]
-	finite := true
-	if order == byteOrderLittle {
-		for i := range dst {
-			bits := binary.LittleEndian.Uint64(b[8*i:])
-			if bits&nonFinite == nonFinite {
-				finite = false
-			}
-			dst[i] = math.Float64frombits(bits)
-		}
-	} else {
-		for i := range dst {
-			bits := binary.BigEndian.Uint64(b[8*i:])
-			if bits&nonFinite == nonFinite {
-				finite = false
-			}
-			dst[i] = math.Float64frombits(bits)
-		}
-	}
-	r.pos += len(b)
-	return finite, nil
+	return v.notMySQL, nil
 }
 
-func (r *reader) point(order byte, ctype geom.CoordinatesType) (geom.Point, error) {
-	var buf [4]float64
-	floats := buf[:ctype.Dimension()]
-	if _, err := r.floats(order, floats); err != nil {
-		return geom.Point{}, err
-	}
-	nan := 0
-	for _, f := range floats {
-		if math.IsNaN(f) {
-			nan++
-		} else if math.IsInf(f, 0) {
-			return geom.Point{}, ErrInvalid
-		}
-	}
-	switch {
-	case nan == 0:
-		return geom.NewPoint(coordinatesOf(floats, ctype)), nil
-	case nan == len(floats) && r.dialect == dialectEWKB:
-		// EWKB writes POINT EMPTY as all-NaN coordinates.
-		return geom.NewEmptyPoint(ctype), nil
-	}
-	return geom.Point{}, ErrInvalid
-}
-
-func coordinatesOf(floats []float64, ctype geom.CoordinatesType) geom.Coordinates {
-	c := geom.Coordinates{XY: geom.XY{X: floats[0], Y: floats[1]}, Type: ctype}
-	switch ctype {
-	case geom.DimXYZ:
-		c.Z = floats[2]
-	case geom.DimXYM:
-		c.M = floats[2]
-	case geom.DimXYZM:
-		c.Z, c.M = floats[2], floats[3]
-	}
-	return c
-}
-
-func (r *reader) sequence(order byte, ctype geom.CoordinatesType) (geom.Sequence, int, error) {
-	n, err := r.count(order, 8*ctype.Dimension())
-	if err != nil {
-		return geom.Sequence{}, 0, err
-	}
-	floats, err := r.coordinates(order, ctype, n)
-	if err != nil {
-		return geom.Sequence{}, 0, err
-	}
-	return geom.NewSequence(floats, ctype), n, nil
-}
-
-func (r *reader) lineString(order byte, ctype geom.CoordinatesType) (geom.LineString, error) {
-	seq, n, err := r.sequence(order, ctype)
-	if err != nil {
-		return geom.LineString{}, err
-	}
-	if n == 0 && r.dialect == dialectMySQL {
-		return geom.LineString{}, ErrInvalid
-	}
-	return geom.NewLineString(seq), nil
-}
-
-func (r *reader) polygon(order byte, ctype geom.CoordinatesType) (geom.Polygon, error) {
-	n, err := r.count(order, 4)
-	if err != nil {
-		return geom.Polygon{}, err
-	}
-	if n == 0 {
-		if r.dialect == dialectMySQL {
-			return geom.Polygon{}, ErrInvalid
-		}
-		return geom.Polygon{}.ForceCoordinatesType(ctype), nil
-	}
-	rings := make([]geom.LineString, n)
-	for i := range rings {
-		seq, points, err := r.sequence(order, ctype)
-		if err != nil {
-			return geom.Polygon{}, err
-		}
-		if points == 0 {
-			return geom.Polygon{}, ErrInvalid
-		}
-		rings[i] = geom.NewLineString(seq)
-	}
-	return geom.NewPolygon(rings), nil
-}
-
-// scanner checks a payload as the reader does, in the same order, but builds nothing and
-// allocates nothing.
-type scanner struct {
-	r reader
-	// ingest accepts big-endian geometries; StoredToMySQL, which copies the body into
-	// MySQL's little-endian format, scans without it.
-	ingest bool
-
+type validator struct {
+	c       cursor
+	dialect dialect
 	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
 	// value is known to be well-formed.
 	notMySQL bool
 }
 
-// scan scans the whole payload: one geometry, and nothing after it.
-func (s *scanner) scan() error {
-	if err := s.geometry(1, anyType, geom.DimXY); err != nil {
-		return err
-	}
-	if s.r.pos != len(s.r.buf) {
-		return ErrInvalid
-	}
-	return nil
-}
-
-// geometry scans one geometry, as reader.geometry reads one.
-func (s *scanner) geometry(depth int, want geom.GeometryType, parentCType geom.CoordinatesType) error {
+// geometry checks one geometry. A member of a collection passes the type its parent
+// requires and the parent's coordinates, which it must match.
+func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	if depth > MaxDepth {
 		return ErrTooDeep
 	}
 	root := depth == 1
-	order, err := s.r.byteOrder()
+	order, err := v.c.byteOrder()
 	if err != nil {
 		return err
 	}
-	if order != byteOrderLittle && !s.ingest {
-		return errBigEndianStored
-	}
-	typ, ctype, hasSRID, err := s.r.typeWord(order, root)
-	if err != nil {
-		return err
-	}
-	if !root && (ctype != parentCType || (want != anyType && typ != want)) {
+	if order == byteOrderBig && v.dialect == dialectMySQL {
 		return ErrInvalid
 	}
-	if ctype != geom.DimXY {
-		s.notMySQL = true
+	word, err := v.c.uint32(order)
+	if err != nil {
+		return err
+	}
+	typ, d, hasSRID, ok := splitType(word)
+	if !ok || hasSRID && !root || v.dialect == dialectMySQL && word&ewkbFlags != 0 {
+		return ErrInvalid
+	}
+	if !root && (d != parentDims || want != anyType && typ != want) {
+		return ErrInvalid
+	}
+	if d != dimsXY {
+		v.notMySQL = true
 	}
 	if hasSRID {
-		if _, err = s.r.uint32(order); err != nil {
+		if _, err := v.c.next(4); err != nil {
 			return err
 		}
 	}
+	size := d.size()
 	switch typ {
-	case geom.TypePoint:
-		return s.point(order, ctype)
-	case geom.TypeLineString:
-		return s.lineString(order, ctype)
-	case geom.TypePolygon:
-		return s.polygon(order, ctype)
+	case TypePoint:
+		return v.point(order, size)
+	case TypeLineString:
+		n, err := v.sequence(order, size)
+		if err != nil || n > 0 {
+			return err
+		}
+		return v.empty()
+	case TypePolygon:
+		return v.polygon(order, size)
 	}
-	n, err := s.r.count(order, minGeometrySize)
+	n, err := v.c.count(order, minGeometrySize)
 	if err != nil {
 		return err
 	}
-	if n == 0 && typ != geom.TypeGeometryCollection {
-		if s.r.dialect == dialectMySQL {
-			return ErrInvalid
+	if n == 0 && typ != TypeGeometryCollection {
+		if err := v.empty(); err != nil {
+			return err
 		}
-		s.notMySQL = true
 	}
-	memberType := memberTypeOf(typ)
 	for range n {
-		if err := s.geometry(depth+1, memberType, ctype); err != nil {
+		if err := v.geometry(depth+1, memberTypeOf(typ), d); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// point checks a point's coordinates as reader.point does: all finite, or, in EWKB, all
-// NaN, which is how EWKB writes POINT EMPTY.
-func (s *scanner) point(order byte, ctype geom.CoordinatesType) error {
-	dim := ctype.Dimension()
-	if s.r.remaining() < 8*dim {
+// empty records an empty geometry other than a GEOMETRYCOLLECTION, which MySQL's format
+// cannot hold and so refuses.
+func (v *validator) empty() error {
+	if v.dialect == dialectMySQL {
 		return ErrInvalid
 	}
-	coords := s.coordinates(8 * dim)
+	v.notMySQL = true
+	return nil
+}
+
+// point checks a point's coordinates: all finite, or, in EWKB, all NaN, which is how EWKB
+// writes POINT EMPTY.
+func (v *validator) point(order byte, size int) error {
+	coords, err := v.c.next(size)
+	if err != nil {
+		return err
+	}
 	if finite(coords, order) {
 		return nil
 	}
-	if s.r.dialect != dialectEWKB {
-		return ErrInvalid
-	}
-	for i := 0; i+8 <= len(coords); i += 8 {
+	for i := 0; i < len(coords); i += 8 {
 		if !math.IsNaN(math.Float64frombits(bitsAt(coords[i:], order))) {
 			return ErrInvalid
 		}
 	}
-	s.notMySQL = true
-	return nil
+	return v.empty()
 }
 
-// sequence checks a coordinate sequence as reader.sequence does and returns its length.
-func (s *scanner) sequence(order byte, ctype geom.CoordinatesType) (int, error) {
-	dim := ctype.Dimension()
-	n, err := s.r.count(order, 8*dim)
+// sequence checks a count of positions of size bytes and their coordinates, which must be
+// finite, and returns the count.
+func (v *validator) sequence(order byte, size int) (int, error) {
+	n, err := v.c.count(order, size)
 	if err != nil {
 		return 0, err
 	}
-	// count has checked that the coordinates are there.
-	coords := s.coordinates(8 * dim * n)
+	coords, err := v.c.next(n * size)
+	if err != nil {
+		return 0, err
+	}
 	if !finite(coords, order) {
 		return 0, ErrInvalid
 	}
 	return n, nil
 }
 
-// coordinates returns the next n bytes, which the caller has checked are there, and moves
-// past them.
-func (s *scanner) coordinates(n int) []byte {
-	coords := s.r.buf[s.r.pos : s.r.pos+n]
-	s.r.pos += n
-	return coords
+// polygon checks a polygon: rings of at least one point each.
+func (v *validator) polygon(order byte, size int) error {
+	n, err := v.c.count(order, 4)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return v.empty()
+	}
+	for range n {
+		points, err := v.sequence(order, size)
+		if err != nil {
+			return err
+		}
+		if points == 0 {
+			return ErrInvalid
+		}
+	}
+	return nil
 }
-
-// nonFinite is the exponent of a NaN or an infinity, which has every bit set.
-const nonFinite uint64 = 0x7FF0000000000000
 
 // finite reports whether every coordinate in coords, in byte order order, is finite.
 func finite(coords []byte, order byte) bool {
@@ -691,214 +474,108 @@ func finite(coords []byte, order byte) bool {
 	return true
 }
 
-func bitsAt(b []byte, order byte) uint64 {
-	if order == byteOrderLittle {
-		return binary.LittleEndian.Uint64(b)
+// skim walks a stored payload, validated when it was written, and reports whether MySQL's
+// format can hold it. It reads only headers and counts, and a point's first coordinate,
+// whose NaN marks POINT EMPTY; it checks only what walking and copying need.
+func skim(payload []byte) (notMySQL bool, err error) {
+	s := skimmer{c: cursor{buf: payload}}
+	if err := s.geometry(1); err != nil {
+		return false, err
 	}
-	return binary.BigEndian.Uint64(b)
+	if s.c.pos != len(payload) {
+		return false, ErrInvalid
+	}
+	return s.notMySQL, nil
 }
 
-// lineString checks a linestring as reader.lineString does.
-func (s *scanner) lineString(order byte, ctype geom.CoordinatesType) error {
-	n, err := s.sequence(order, ctype)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		if s.r.dialect == dialectMySQL {
-			return ErrInvalid
-		}
-		s.notMySQL = true
-	}
-	return nil
+type skimmer struct {
+	c        cursor
+	notMySQL bool
 }
 
-// polygon checks a polygon as reader.polygon does.
-func (s *scanner) polygon(order byte, ctype geom.CoordinatesType) error {
-	n, err := s.r.count(order, 4)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		if s.r.dialect == dialectMySQL {
-			return ErrInvalid
-		}
-		s.notMySQL = true
-		return nil
-	}
-	for range n {
-		points, err := s.sequence(order, ctype)
-		if err != nil {
-			return err
-		}
-		if points == 0 {
-			return ErrInvalid
-		}
-	}
-	return nil
-}
-
-// writer writes the stored-format payload: little-endian EWKB with the SRID flag on the
-// root.
-type writer struct {
-	buf []byte
-	// srid is written into the root's EWKB header.
-	srid uint32
-}
-
-func (w *writer) uint32(v uint32) { w.buf = binary.LittleEndian.AppendUint32(w.buf, v) }
-
-func (w *writer) float64(v float64) {
-	w.buf = binary.LittleEndian.AppendUint64(w.buf, math.Float64bits(v))
-}
-
-func (w *writer) header(typ geom.GeometryType, ctype geom.CoordinatesType, root bool) error {
-	code, ok := typeCodeOf(typ)
-	if !ok {
-		return ErrInvalid
-	}
-	if ctype.Is3D() {
-		code |= ewkbZ
-	}
-	if ctype.IsMeasured() {
-		code |= ewkbM
-	}
-	if root {
-		code |= ewkbSRID
-	}
-	w.buf = append(w.buf, byteOrderLittle)
-	w.uint32(code)
-	if root {
-		w.uint32(w.srid)
-	}
-	return nil
-}
-
-func typeCodeOf(typ geom.GeometryType) (uint32, bool) {
-	switch typ {
-	case geom.TypePoint:
-		return 1, true
-	case geom.TypeLineString:
-		return 2, true
-	case geom.TypePolygon:
-		return 3, true
-	case geom.TypeMultiPoint:
-		return 4, true
-	case geom.TypeMultiLineString:
-		return 5, true
-	case geom.TypeMultiPolygon:
-		return 6, true
-	case geom.TypeGeometryCollection:
-		return 7, true
-	}
-	return 0, false
-}
-
-// coordinates writes one position; a non-finite value is ErrInvalid, as the reader would
-// refuse it.
-func (w *writer) coordinates(c geom.Coordinates, ctype geom.CoordinatesType) error {
-	if !isFinite(c.X) || !isFinite(c.Y) || ctype.Is3D() && !isFinite(c.Z) ||
-		ctype.IsMeasured() && !isFinite(c.M) {
-		return ErrInvalid
-	}
-	w.float64(c.X)
-	w.float64(c.Y)
-	if ctype.Is3D() {
-		w.float64(c.Z)
-	}
-	if ctype.IsMeasured() {
-		w.float64(c.M)
-	}
-	return nil
-}
-
-func isFinite(f float64) bool { return math.Float64bits(f)&nonFinite != nonFinite }
-
-// emptyPoint writes POINT EMPTY as EWKB does, every coordinate the quiet NaN.
-func (w *writer) emptyPoint(ctype geom.CoordinatesType) {
-	for range ctype.Dimension() {
-		w.buf = binary.LittleEndian.AppendUint64(w.buf, emptyPointNaN)
-	}
-}
-
-func (w *writer) sequence(seq geom.Sequence, ctype geom.CoordinatesType) error {
-	n := seq.Length()
-	w.uint32(uint32(n))
-	for i := range n {
-		if err := w.coordinates(seq.Get(i), ctype); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (w *writer) geometry(g geom.Geometry, depth int) error {
+func (s *skimmer) geometry(depth int) error {
 	if depth > MaxDepth {
 		return ErrTooDeep
 	}
-	ctype := g.CoordinatesType()
-	typ := g.Type()
-	if err := w.header(typ, ctype, depth == 1); err != nil {
+	order, err := s.c.byteOrder()
+	if err != nil {
 		return err
 	}
+	// StoredToMySQL copies the body into MySQL's little-endian format.
+	if order != byteOrderLittle {
+		return errBigEndianStored
+	}
+	word, err := s.c.uint32(order)
+	if err != nil {
+		return err
+	}
+	typ, d, hasSRID, ok := splitType(word)
+	if !ok {
+		return ErrInvalid
+	}
+	// MySQL's format holds no Z, M or SRID below the root, so the body is copied only
+	// without them.
+	if d != dimsXY || hasSRID && depth > 1 {
+		s.notMySQL = true
+	}
+	if hasSRID {
+		if _, err := s.c.next(4); err != nil {
+			return err
+		}
+	}
+	size := d.size()
 	switch typ {
-	case geom.TypePoint:
-		c, ok := g.MustAsPoint().Coordinates()
-		if !ok {
-			w.emptyPoint(ctype)
-			return nil
+	case TypePoint:
+		coords, err := s.c.next(size)
+		if err != nil {
+			return err
 		}
-		return w.coordinates(c, ctype)
-	case geom.TypeLineString:
-		return w.sequence(g.MustAsLineString().Coordinates(), ctype)
-	case geom.TypePolygon:
-		rings := g.MustAsPolygon().Coordinates()
-		w.uint32(uint32(len(rings)))
-		for _, ring := range rings {
-			// The reader refuses a ring without points.
-			if ring.Length() == 0 {
-				return ErrInvalid
-			}
-			if err := w.sequence(ring, ctype); err != nil {
+		if math.IsNaN(math.Float64frombits(binary.LittleEndian.Uint64(coords))) {
+			s.notMySQL = true
+		}
+		return nil
+	case TypeLineString:
+		n, err := s.sequence(size)
+		if n == 0 {
+			s.notMySQL = true
+		}
+		return err
+	case TypePolygon:
+		n, err := s.c.count(order, 4)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			s.notMySQL = true
+		}
+		for range n {
+			if _, err := s.sequence(size); err != nil {
 				return err
 			}
 		}
-	case geom.TypeMultiPoint:
-		mp := g.MustAsMultiPoint()
-		n := mp.NumPoints()
-		w.uint32(uint32(n))
-		for i := range n {
-			if err := w.geometry(mp.PointN(i).AsGeometry(), depth+1); err != nil {
-				return err
-			}
-		}
-	case geom.TypeMultiLineString:
-		mls := g.MustAsMultiLineString()
-		n := mls.NumLineStrings()
-		w.uint32(uint32(n))
-		for i := range n {
-			if err := w.geometry(mls.LineStringN(i).AsGeometry(), depth+1); err != nil {
-				return err
-			}
-		}
-	case geom.TypeMultiPolygon:
-		mp := g.MustAsMultiPolygon()
-		n := mp.NumPolygons()
-		w.uint32(uint32(n))
-		for i := range n {
-			if err := w.geometry(mp.PolygonN(i).AsGeometry(), depth+1); err != nil {
-				return err
-			}
-		}
-	case geom.TypeGeometryCollection:
-		gc := g.MustAsGeometryCollection()
-		n := gc.NumGeometries()
-		w.uint32(uint32(n))
-		for i := range n {
-			if err := w.geometry(gc.GeometryN(i), depth+1); err != nil {
-				return err
-			}
+		return nil
+	}
+	n, err := s.c.count(order, minGeometrySize)
+	if err != nil {
+		return err
+	}
+	if n == 0 && typ != TypeGeometryCollection {
+		s.notMySQL = true
+	}
+	for range n {
+		if err := s.geometry(depth + 1); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// sequence skips a count of positions of size bytes each and returns the count.
+func (s *skimmer) sequence(size int) (int, error) {
+	n, err := s.c.count(byteOrderLittle, size)
+	if err != nil {
+		return 0, err
+	}
+	_, err = s.c.next(n * size)
+	return n, err
 }

@@ -17,438 +17,100 @@ package geocodec
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"math"
 	"math/rand/v2"
-	"strings"
 	"testing"
 
-	"github.com/peterstace/simplefeatures/geom"
 	"github.com/stretchr/testify/require"
 )
 
-func mustWKT(t testing.TB, wkt string) geom.Geometry {
-	g, err := geom.UnmarshalWKT(wkt)
-	require.NoError(t, err, wkt)
-	return g
+// line is a little-endian LINESTRING with coordinates d of the positions in fs.
+func line(d dims, fs ...float64) []byte {
+	return le(TypeLineString, d, count(len(fs)*8/d.size()), coords(fs...))
 }
 
-func mustHex(t testing.TB, s string) []byte {
-	b, err := hex.DecodeString(strings.ReplaceAll(s, " ", ""))
-	require.NoError(t, err)
-	return b
+// polygon is a little-endian POLYGON with coordinates d of the rings in rings.
+func polygon(d dims, rings ...[]float64) []byte {
+	body := make([][]byte, 0, 1+2*len(rings))
+	body = append(body, count(len(rings)))
+	for _, r := range rings {
+		body = append(body, count(len(r)*8/d.size()), coords(r...))
+	}
+	return le(TypePolygon, d, body...)
 }
 
-func mustEncode(t testing.TB, wkt string, srid uint32) []byte {
-	stored, err := encode(mustWKT(t, wkt), srid)
-	require.NoError(t, err, wkt)
-	return stored
-}
+var (
+	point12  = le(TypePoint, dimsXY, coords(1, 2))
+	line0011 = line(dimsXY, 0, 0, 1, 1)
+	triangle = polygon(dimsXY, []float64{0, 0, 0, 1, 1, 1, 0, 0})
+)
 
-// decodeStored parses a stored value into its SRID and geometry.
-func decodeStored(stored []byte) (uint32, geom.Geometry, error) {
-	payload, err := payloadOf(stored)
-	if err != nil {
-		return 0, geom.Geometry{}, err
-	}
-	return read(payload, dialectEWKB)
-}
-
-// referenceStoredToMySQL converts a stored value by decoding it into a geometry and
-// writing that with mysqlWriter. StoredToMySQL must give the same bytes or the same
-// error for every stored value that is little-endian throughout.
-func referenceStoredToMySQL(stored []byte) ([]byte, error) {
-	srid, g, err := decodeStored(stored)
-	if err != nil {
-		return nil, err
-	}
-	m := mysqlWriter{enc: writer{buf: make([]byte, 4, 32)}}
-	binary.LittleEndian.PutUint32(m.enc.buf, srid)
-	if err := m.geometry(g, 1); err != nil {
-		return nil, err
-	}
-	return m.enc.buf, nil
-}
-
-// mysqlWriter writes the WKB inside MySQL's binary format from a geometry: little-endian,
-// 2D, and no empty geometry except a GEOMETRYCOLLECTION.
-type mysqlWriter struct {
-	// enc writes counts and coordinates, which are encoded alike in both formats.
-	enc writer
-}
-
-func (m *mysqlWriter) header(typ geom.GeometryType, ctype geom.CoordinatesType) error {
-	code, ok := typeCodeOf(typ)
-	if !ok {
-		return ErrInvalid
-	}
-	if ctype != geom.DimXY {
-		return ErrNotMySQLExpressible
-	}
-	m.enc.buf = append(m.enc.buf, byteOrderLittle)
-	m.enc.uint32(code)
-	return nil
-}
-
-func (m *mysqlWriter) geometry(g geom.Geometry, depth int) error {
-	if depth > MaxDepth {
-		return ErrTooDeep
-	}
-	ctype := g.CoordinatesType()
-	typ := g.Type()
-	// WKB cannot express an empty point, and MySQL's format admits no empty geometry
-	// other than a GEOMETRYCOLLECTION.
-	if g.IsEmpty() && typ != geom.TypeGeometryCollection {
-		return ErrNotMySQLExpressible
-	}
-	if err := m.header(typ, ctype); err != nil {
-		return err
-	}
-	var n int
-	var member func(i int) geom.Geometry
-	switch typ {
-	case geom.TypePoint:
-		c, _ := g.MustAsPoint().Coordinates()
-		return m.enc.coordinates(c, ctype)
-	case geom.TypeLineString:
-		return m.enc.sequence(g.MustAsLineString().Coordinates(), ctype)
-	case geom.TypePolygon:
-		rings := g.MustAsPolygon().Coordinates()
-		m.enc.uint32(uint32(len(rings)))
-		for _, ring := range rings {
-			if err := m.enc.sequence(ring, ctype); err != nil {
-				return err
-			}
-		}
-		return nil
-	case geom.TypeMultiPoint:
-		mp := g.MustAsMultiPoint()
-		n, member = mp.NumPoints(), func(i int) geom.Geometry { return mp.PointN(i).AsGeometry() }
-	case geom.TypeMultiLineString:
-		mls := g.MustAsMultiLineString()
-		n, member = mls.NumLineStrings(), func(i int) geom.Geometry { return mls.LineStringN(i).AsGeometry() }
-	case geom.TypeMultiPolygon:
-		mp := g.MustAsMultiPolygon()
-		n, member = mp.NumPolygons(), func(i int) geom.Geometry { return mp.PolygonN(i).AsGeometry() }
-	default:
-		gc := g.MustAsGeometryCollection()
-		n, member = gc.NumGeometries(), gc.GeometryN
-	}
-	m.enc.uint32(uint32(n))
-	for i := range n {
-		if err := m.geometry(member(i), depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// checkAgainstReference requires StoredToMySQL to agree with referenceStoredToMySQL on b,
-// except that it refuses a big-endian geometry, and only then may differ.
-func checkAgainstReference(t testing.TB, b []byte) {
+// checkStoredToMySQL requires StoredToMySQL to agree with validate on a stored value b. A
+// value validate accepts it converts, refuses as one MySQL's format cannot hold when
+// validate says so, or refuses as big-endian. A value validate refuses, which no writer
+// stores, it may convert, rewriting only the header, but it never panics.
+func checkStoredToMySQL(t testing.TB, b []byte) {
 	got, err := StoredToMySQL(b)
-	want, wantErr := referenceStoredToMySQL(b)
-	if errors.Is(err, ErrInvalid) && !errors.Is(wantErr, ErrInvalid) {
-		require.ErrorIs(t, err, errBigEndianStored, "%X", b)
-		// With big-endian geometries accepted, the scan agrees with the reference.
-		payload, payloadErr := payloadOf(b)
-		require.NoError(t, payloadErr, "%X", b)
-		s := scanner{r: reader{buf: payload, dialect: dialectEWKB}, ingest: true}
-		scanErr := s.scan()
-		if scanErr == nil && s.notMySQL {
-			scanErr = ErrNotMySQLExpressible
-		}
-		require.Equal(t, wantErr, scanErr, "%X", b)
+	payload, payloadErr := payloadOf(b)
+	if payloadErr != nil {
+		require.Equal(t, payloadErr, err, "%X", b)
 		return
 	}
-	require.ErrorIs(t, err, wantErr, "%X", b)
-	require.Equal(t, want, got, "%X", b)
-}
-
-// nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
-// each holding the next, the innermost empty.
-func nestedCollections(depth int) []byte {
-	b := make([]byte, 0, depth*minGeometrySize)
-	for i := range depth {
-		b = append(b, byteOrderLittle)
-		b = binary.LittleEndian.AppendUint32(b, 7)
-		n := uint32(1)
-		if i == depth-1 {
-			n = 0
+	notMySQL, validErr := validate(payload, dialectEWKB)
+	if validErr != nil {
+		if err != nil {
+			require.True(t, errors.Is(err, ErrInvalid) || errors.Is(err, ErrTooDeep) ||
+				errors.Is(err, ErrNotMySQLExpressible), "%X: %v", b, err)
+			return
 		}
-		b = binary.LittleEndian.AppendUint32(b, n)
+		require.Len(t, got, len(payload), "%X", b)
+		require.Equal(t, payload[9:], got[9:], "%X", b)
+		return
 	}
-	return b
-}
-
-// storedChain returns a stored value at SRID 0 of depth-1 GEOMETRYCOLLECTIONs, each
-// holding the next and the innermost holding leaf, a little-endian geometry without an
-// SRID, which so sits at depth. flags are set on every collection's type word.
-func storedChain(depth int, flags uint32, leaf []byte) []byte {
-	b := []byte{Version1, byteOrderLittle}
-	b = binary.LittleEndian.AppendUint32(b, 7|flags|ewkbSRID)
-	b = binary.LittleEndian.AppendUint32(b, 0)
-	b = binary.LittleEndian.AppendUint32(b, 1)
-	for range depth - 2 {
-		b = append(b, byteOrderLittle)
-		b = binary.LittleEndian.AppendUint32(b, 7|flags)
-		b = binary.LittleEndian.AppendUint32(b, 1)
+	if errors.Is(err, errBigEndianStored) {
+		return
 	}
-	return append(b, leaf...)
-}
-
-// mysqlChain is storedChain in MySQL's binary format, without flags.
-func mysqlChain(depth int, leaf []byte) []byte {
-	b := make([]byte, 4)
-	for range depth - 1 {
-		b = append(b, byteOrderLittle)
-		b = binary.LittleEndian.AppendUint32(b, 7)
-		b = binary.LittleEndian.AppendUint32(b, 1)
+	if notMySQL {
+		require.ErrorIs(t, err, ErrNotMySQLExpressible, "%X", b)
+		return
 	}
-	return append(b, leaf...)
-}
-
-func TestStoredRoundTrip(t *testing.T) {
-	wkts := []string{
-		"POINT(1 2)",
-		"POINT Z(1 2 3)",
-		"POINT M(1 2 4)",
-		"POINT ZM(1 2 3 4)",
-		"POINT EMPTY",
-		"POINT Z EMPTY",
-		"LINESTRING(0 0,1 1,2 0)",
-		"LINESTRING ZM(0 0 1 2,1 1 3 4)",
-		"LINESTRING EMPTY",
-		"POLYGON((0 0,0 1,1 1,1 0,0 0),(0.2 0.2,0.2 0.4,0.4 0.4,0.2 0.2))",
-		"POLYGON Z((0 0 1,0 1 1,1 1 1,0 0 1))",
-		"POLYGON EMPTY",
-		"MULTIPOINT((1 2),(3 4))",
-		"MULTIPOINT M((1 2 3),EMPTY)",
-		"MULTILINESTRING((0 0,1 1),(2 2,3 3))",
-		"MULTIPOLYGON(((0 0,0 1,1 1,0 0)),((5 5,5 6,6 6,5 5)))",
-		"GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(0 0,1 1),GEOMETRYCOLLECTION(POINT(3 4)))",
-		"GEOMETRYCOLLECTION Z(POINT Z(1 2 3))",
-		"GEOMETRYCOLLECTION EMPTY",
-	}
-	for _, wkt := range wkts {
-		g := mustWKT(t, wkt)
-		for _, srid := range []uint32{0, 4326, 3857} {
-			stored, err := encode(g, srid)
-			require.NoError(t, err, wkt)
-			require.Equal(t, Version1, stored[0])
-			gotSRID, got, err := decodeStored(stored)
-			require.NoError(t, err, wkt)
-			require.Equal(t, srid, gotSRID, wkt)
-			require.True(t, geom.ExactEquals(g, got), "%s: got %s", wkt, got.AsText())
-			require.Equal(t, g.CoordinatesType(), got.CoordinatesType(), wkt)
-
-			hSRID, hType, err := Header(stored)
-			require.NoError(t, err)
-			require.Equal(t, srid, hSRID)
-			require.Equal(t, g.Type(), hType)
-		}
-	}
-}
-
-func TestStoredLayout(t *testing.T) {
-	// Every stored value carries the EWKB SRID flag and its SRID, 0 included.
-	require.Equal(t, mustHex(t, "01 01 01000020 00000000 000000000000F03F 0000000000000040"),
-		mustEncode(t, "POINT(1 2)", 0))
-	require.Equal(t, mustHex(t, "01 01 01000020 E6100000 000000000000F03F 0000000000000040"),
-		mustEncode(t, "POINT(1 2)", 4326))
-
-	// Z and M are type-word flags on every level, not ISO type codes; the SRID flag is
-	// on the root only.
-	require.Equal(t,
-		mustHex(t, "01 01 040000A0 00000000 01000000 01 01000080 000000000000F03F 0000000000000040 0000000000000840"),
-		mustEncode(t, "MULTIPOINT Z((1 2 3))", 0))
-
-	// POINT EMPTY is NaN coordinates, the quiet NaN PostGIS and GEOS write.
-	require.Equal(t, mustHex(t, "01 01 01000020 00000000 000000000000F87F 000000000000F87F"),
-		mustEncode(t, "POINT EMPTY", 0))
-
-	// A value without the SRID flag, which this package never writes, is refused.
-	flagless := mustHex(t, "01 01 01000000 000000000000F03F 0000000000000040")
-	_, _, err := decodeStored(flagless)
-	require.ErrorIs(t, err, errStoredWithoutSRID)
-	_, err = StoredToMySQL(flagless)
-	require.ErrorIs(t, err, errStoredWithoutSRID)
-}
-
-// TestStoredWithoutSRID checks that every reader of the stored format refuses a root
-// without the SRID flag, in either byte order, as ErrInvalid.
-func TestStoredWithoutSRID(t *testing.T) {
-	for _, h := range []string{
-		"01 01 01000000 000000000000F03F 0000000000000040",
-		"01 00 00000001 3FF0000000000000 4000000000000000",
-		"01 01 07000000 00000000",
-		"01 00 00000007 00000000",
-		// A root without the flag is refused before its other faults.
-		"01 01 08000000",
-		"01 01 07000000 FFFFFFFF",
-	} {
-		b := mustHex(t, h)
-		_, _, err := decodeStored(b)
-		require.ErrorIs(t, err, errStoredWithoutSRID, h)
-		require.ErrorIs(t, err, ErrInvalid, h)
-		_, err = StoredToMySQL(b)
-		require.ErrorIs(t, err, errStoredWithoutSRID, h)
-		_, _, err = Header(b)
-		require.ErrorIs(t, err, errStoredWithoutSRID, h)
-		checkAgainstReference(t, b)
-	}
-	// With the flag, the same values are read.
-	for _, h := range []string{
-		"01 01 01000020 00000000 000000000000F03F 0000000000000040",
-		"01 00 20000001 00000000 3FF0000000000000 4000000000000000",
-	} {
-		_, _, err := decodeStored(mustHex(t, h))
-		require.NoError(t, err, h)
-	}
-}
-
-// TestEncodeRefusesUnreadable checks that encode refuses what the reader would refuse, so
-// no value is stored that cannot be read back.
-func TestEncodeRefusesUnreadable(t *testing.T) {
-	nan, inf := math.NaN(), math.Inf(1)
-	emptyRing, err := geom.UnmarshalWKT("POLYGON((0 0,1 0,1 1,0 0),EMPTY)", geom.NoValidate{})
-	require.NoError(t, err)
-	for name, g := range map[string]geom.Geometry{
-		"NaN Z":                 geom.NewPointXYZ(1, 2, nan).AsGeometry(),
-		"NaN X and Y":           geom.NewPointXY(nan, nan).AsGeometry(),
-		"infinite Y":            geom.NewPointXY(1, -inf).AsGeometry(),
-		"infinite M in a line":  geom.NewLineStringXYM(0, 0, 1, 1, 1, inf).AsGeometry(),
-		"empty ring":            emptyRing,
-		"NaN Z in a collection": geom.NewGeometryCollection([]geom.Geometry{geom.NewPointXYZ(1, 2, nan).AsGeometry()}).AsGeometry(),
-	} {
-		_, err := encode(g, 0)
-		require.ErrorIs(t, err, ErrInvalid, name)
-	}
-	// POINT EMPTY is written with NaNs and read back as empty.
-	stored, err := encode(geom.NewEmptyPoint(geom.DimXYZ).AsGeometry(), 4326)
-	require.NoError(t, err)
-	srid, g, err := decodeStored(stored)
-	require.NoError(t, err)
-	require.Equal(t, uint32(4326), srid)
-	require.True(t, g.IsEmpty())
-	require.Equal(t, geom.DimXYZ, g.CoordinatesType())
-}
-
-func TestStoredRejects(t *testing.T) {
-	good := mustEncode(t, "POINT(1 2)", 4326)
-	cases := map[string][]byte{
-		"empty":        nil,
-		"version only": {Version1},
-		"a byte short": good[:len(good)-1],
-		"a byte long":  append(append([]byte{}, good...), 0),
-	}
-	hexCases := map[string]string{
-		"bad byte order":           "01 02 01000020 00000000 000000000000F03F 0000000000000040",
-		"unknown type code":        "01 01 08000020 00000000",
-		"ISO type code in EWKB":    "01 01 E9030020 00000000 000000000000F03F 0000000000000040 0000000000000840",
-		"SRID flag below the root": "01 01 04000020 00000000 01000000 01 01000020 E6100000 000000000000F03F 0000000000000040",
-		"member of the wrong type": "01 01 04000020 00000000 01000000 01 02000000 00000000",
-		"member dimension differs": "01 01 04000020 00000000 01000000 01 01000080 000000000000F03F 0000000000000040 0000000000000840",
-		"hostile count":            "01 01 07000020 00000000 FFFFFFFF",
-		"hostile point count":      "01 01 02000020 00000000 FFFFFF0F",
-		"ring without points":      "01 01 03000020 00000000 01000000 00000000",
-		"partly NaN point":         "01 01 01000020 00000000 000000000000F87F 0000000000000040",
-		"infinite coordinate":      "01 01 01000020 00000000 000000000000F07F 0000000000000040",
-		"NaN in a linestring":      "01 01 02000020 00000000 01000000 000000000000F87F 000000000000F87F",
-		// A malformed value is ErrInvalid even when it also has no MySQL form.
-		"Z point a byte short": "01 01 010000A0 00000000 000000000000F03F 0000000000000040 00000000000008",
-		"empty point then junk": "01 01 07000020 00000000 02000000 01 01000000 000000000000F87F 000000000000F87F" +
-			" 01 09000000",
-	}
-	for name, h := range hexCases {
-		cases[name] = mustHex(t, h)
-	}
-	for name, b := range cases {
-		_, _, err := decodeStored(b)
-		require.ErrorIs(t, err, ErrInvalid, name)
-		require.NotErrorIs(t, err, errStoredWithoutSRID, name)
-		_, err = StoredToMySQL(b)
-		require.ErrorIs(t, err, ErrInvalid, name)
-		checkAgainstReference(t, b)
-	}
-}
-
-func TestVersion(t *testing.T) {
-	good := mustEncode(t, "POINT(1 2)", 4326)
-	for _, version := range []byte{0, 2, 0x7f, 0xff} {
-		b := append([]byte{version}, good[1:]...)
-		_, err := StoredToMySQL(b)
-		require.ErrorIs(t, err, ErrUnsupportedVersion, "version %d", version)
-		_, _, err = Header(b)
-		require.ErrorIs(t, err, ErrUnsupportedVersion, "version %d", version)
-		_, _, err = decodeStored(b)
-		require.ErrorIs(t, err, ErrUnsupportedVersion, "version %d", version)
-		checkAgainstReference(t, b)
-	}
-	// The version is checked before anything else, so it is reported for a payload that
-	// is missing or malformed too.
-	for _, b := range [][]byte{{0}, {2}, {2, 0xff}} {
-		_, err := StoredToMySQL(b)
-		require.ErrorIs(t, err, ErrUnsupportedVersion)
-		_, _, err = Header(b)
-		require.ErrorIs(t, err, ErrUnsupportedVersion)
-	}
-}
-
-func TestStoredBigEndian(t *testing.T) {
-	// POINT(1 2) with SRID 4326, big-endian EWKB, which the reader takes.
-	stored := mustHex(t, "01 00 20000001 000010E6 3FF0000000000000 4000000000000000")
-	srid, g, err := decodeStored(stored)
-	require.NoError(t, err)
-	require.Equal(t, uint32(4326), srid)
-	require.Equal(t, "POINT(1 2)", g.AsText())
-	srid, typ, err := Header(stored)
-	require.NoError(t, err)
-	require.Equal(t, uint32(4326), srid)
-	require.Equal(t, geom.TypePoint, typ)
-
-	// StoredToMySQL copies the body unchanged, so it takes only little-endian values,
-	// which is all this package writes. A big-endian member is rejected too.
-	for _, b := range [][]byte{
-		stored,
-		mustHex(t, "01 01 04000020 E6100000 01000000 00 00000001 3FF0000000000000 4000000000000000"),
-		mustHex(t, "01 00 A0000001 000010E6 3FF0000000000000 4000000000000000 4008000000000000"),
-	} {
-		_, err = StoredToMySQL(b)
-		require.ErrorIs(t, err, ErrInvalid)
-		checkAgainstReference(t, b)
-	}
+	require.NoError(t, err, "%X", b)
+	// MySQL's format reads back as the same stored value.
+	again, srid, err := MySQLToStored(got)
+	require.NoError(t, err, "%X", b)
+	require.Equal(t, b, again, "%X", b)
+	require.Equal(t, binary.LittleEndian.Uint32(payload[5:]), srid, "%X", b)
 }
 
 func TestMySQLFormat(t *testing.T) {
 	// Bytes from MySQL 9.7.2: HEX(ST_GeomFromText('POINT(1 2)', 4326)), latitude 1 and
 	// longitude 2, which MySQL holds longitude first, as the stored format does.
 	mysql4326 := mustHex(t, "E6100000 01 01000000 0000000000000040 000000000000F03F")
-	stored, srid, err := MySQLToStored(mysql4326)
+	s, srid, err := MySQLToStored(mysql4326)
 	require.NoError(t, err)
 	require.Equal(t, uint32(4326), srid)
 
 	// The conversion rewrites the header only: the WKB body is the same bytes.
-	require.Equal(t, mustHex(t, "01 01 01000020 E6100000 0000000000000040 000000000000F03F"), stored)
-	back, err := StoredToMySQL(stored)
+	require.Equal(t, mustHex(t, "01 01 01000020 E6100000 0000000000000040 000000000000F03F"), s)
+	back, err := StoredToMySQL(s)
 	require.NoError(t, err)
 	require.Equal(t, mysql4326, back)
 
 	// Any SRID passes through, since no SRS axis order is applied.
 	mysql12345 := mustHex(t, "39300000 01 01000000 000000000000F03F 0000000000000040")
-	stored, srid, err = MySQLToStored(mysql12345)
+	s, srid, err = MySQLToStored(mysql12345)
 	require.NoError(t, err)
 	require.Equal(t, uint32(12345), srid)
-	back, err = StoredToMySQL(stored)
+	back, err = StoredToMySQL(s)
 	require.NoError(t, err)
 	require.Equal(t, mysql12345, back)
 
 	// The smallest valid value: GEOMETRYCOLLECTION EMPTY, 13 bytes.
 	smallest := mustHex(t, "00000000 01 07000000 00000000")
-	stored, _, err = MySQLToStored(smallest)
+	s, _, err = MySQLToStored(smallest)
 	require.NoError(t, err)
-	back, err = StoredToMySQL(stored)
+	back, err = StoredToMySQL(s)
 	require.NoError(t, err)
 	require.Equal(t, smallest, back)
 
@@ -471,9 +133,14 @@ func TestMySQLFormat(t *testing.T) {
 		"polygon without rings":  "00000000 01 03000000 00000000",
 		"empty multipoint":       "00000000 01 04000000 00000000",
 		"NaN point":              "00000000 01 01000000 000000000000F87F 000000000000F87F",
+		"infinite point":         "00000000 01 01000000 000000000000F07F 0000000000000040",
+		"NaN in a linestring":    "00000000 01 02000000 01000000 000000000000F87F 0000000000000040",
+		"ring without points":    "00000000 01 03000000 01000000 00000000",
 		"empty member":           "00000000 01 07000000 01000000 01 02000000 00000000",
-		"too short for an SRID":  "000000",
-		"no geometry":            "E6100000",
+		"member of the wrong type": "00000000 01 04000000 01000000 01 02000000 01000000" +
+			" 000000000000F03F 0000000000000040",
+		"too short for an SRID": "000000",
+		"no geometry":           "E6100000",
 	}
 	for name, h := range rejects {
 		_, _, err := MySQLToStored(mustHex(t, h))
@@ -481,108 +148,245 @@ func TestMySQLFormat(t *testing.T) {
 	}
 }
 
-func TestNotMySQLExpressible(t *testing.T) {
-	wkts := []string{
-		// Z and M, at the root and below it.
-		"POINT Z(1 2 3)",
-		"POINT M(1 2 4)",
-		"POINT ZM(1 2 3 4)",
-		"LINESTRING Z(0 0 1,1 1 1)",
-		"POLYGON M((0 0 1,0 1 1,1 1 1,0 0 1))",
-		"MULTIPOINT ZM((1 2 3 4))",
-		"MULTILINESTRING M((0 0 1,1 1 1))",
-		"MULTIPOLYGON Z(((0 0 1,0 1 1,1 1 1,0 0 1)))",
-		"GEOMETRYCOLLECTION Z EMPTY",
-		"GEOMETRYCOLLECTION M(GEOMETRYCOLLECTION M(POINT M(1 2 3)))",
-		"GEOMETRYCOLLECTION ZM(GEOMETRYCOLLECTION ZM(GEOMETRYCOLLECTION ZM EMPTY))",
-		// An empty geometry other than a GEOMETRYCOLLECTION, at any depth.
-		"POINT EMPTY",
-		"LINESTRING EMPTY",
-		"POLYGON EMPTY",
-		"MULTIPOINT EMPTY",
-		"MULTILINESTRING EMPTY",
-		"MULTIPOLYGON EMPTY",
-		"MULTIPOINT((1 2),EMPTY)",
-		"MULTILINESTRING((0 0,1 1),EMPTY)",
-		"MULTIPOLYGON(((0 0,0 1,1 1,0 0)),EMPTY)",
-		"GEOMETRYCOLLECTION(POINT EMPTY)",
-		"GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(LINESTRING EMPTY))",
-		"GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(MULTIPOLYGON EMPTY)))",
-		"GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(MULTILINESTRING((0 0,1 1),EMPTY)))",
-		"GEOMETRYCOLLECTION(GEOMETRYCOLLECTION EMPTY,MULTIPOINT(EMPTY))",
+func TestStoredLayout(t *testing.T) {
+	// Every stored value carries the EWKB SRID flag and its SRID, 0 included.
+	for srid, h := range map[uint32]string{
+		0:    "01 01 01000020 00000000 000000000000F03F 0000000000000040",
+		4326: "01 01 01000020 E6100000 000000000000F03F 0000000000000040",
+	} {
+		s, _, err := MySQLToStored(mysqlOf(srid, point12))
+		require.NoError(t, err)
+		require.Equal(t, mustHex(t, h), s)
 	}
-	for _, wkt := range wkts {
-		stored := mustEncode(t, wkt, 4326)
-		_, err := StoredToMySQL(stored)
-		require.ErrorIs(t, err, ErrNotMySQLExpressible, wkt)
-		checkAgainstReference(t, stored)
+}
+
+// TestStoredWithoutSRID checks that every reader of the stored format refuses a root
+// without the SRID flag, in either byte order, as ErrInvalid.
+func TestStoredWithoutSRID(t *testing.T) {
+	for _, h := range []string{
+		"01 01 01000000 000000000000F03F 0000000000000040",
+		"01 00 00000001 3FF0000000000000 4000000000000000",
+		"01 01 07000000 00000000",
+		"01 00 00000007 00000000",
+		// A root without the flag is refused before its other faults.
+		"01 01 08000000",
+		"01 01 07000000 FFFFFFFF",
+	} {
+		b := mustHex(t, h)
+		_, err := StoredToMySQL(b)
+		require.ErrorIs(t, err, errStoredWithoutSRID, h)
+		require.ErrorIs(t, err, ErrInvalid, h)
+		_, _, err = Header(b)
+		require.ErrorIs(t, err, errStoredWithoutSRID, h)
+		checkStoredToMySQL(t, b)
+	}
+	// With the flag, the same values are read.
+	for _, h := range []string{
+		"01 01 01000020 00000000 000000000000F03F 0000000000000040",
+		"01 00 20000001 00000000 3FF0000000000000 4000000000000000",
+	} {
+		_, _, err := Header(mustHex(t, h))
+		require.NoError(t, err, h)
+	}
+}
+
+// storedRejects are stored values whose structure is broken, which every reader refuses.
+func storedRejects(t testing.TB) map[string][]byte {
+	good := stored(4326, point12)
+	cases := map[string][]byte{
+		"empty":        nil,
+		"version only": {Version1},
+		"a byte short": good[:len(good)-1],
+		"a byte long":  append(append([]byte{}, good...), 0),
+	}
+	for name, h := range map[string]string{
+		"bad byte order":        "01 02 01000020 00000000 000000000000F03F 0000000000000040",
+		"unknown type code":     "01 01 08000020 00000000",
+		"ISO type code in EWKB": "01 01 E9030020 00000000 000000000000F03F 0000000000000040 0000000000000840",
+		"hostile count":         "01 01 07000020 00000000 FFFFFFFF",
+		"hostile point count":   "01 01 02000020 00000000 FFFFFF0F",
+		// A malformed value is ErrInvalid even when it also has no MySQL form.
+		"Z point a byte short": "01 01 010000A0 00000000 000000000000F03F 0000000000000040 00000000000008",
+		"empty point then junk": "01 01 07000020 00000000 02000000 01 01000000 000000000000F87F 000000000000F87F" +
+			" 01 09000000",
+	} {
+		cases[name] = mustHex(t, h)
+	}
+	return cases
+}
+
+func TestStoredRejects(t *testing.T) {
+	for name, b := range storedRejects(t) {
+		_, err := StoredToMySQL(b)
+		require.ErrorIs(t, err, ErrInvalid, name)
+		require.NotErrorIs(t, err, errStoredWithoutSRID, name)
+		if len(b) > 0 {
+			_, err = validate(b[1:], dialectEWKB)
+			require.ErrorIs(t, err, ErrInvalid, name)
+		}
+		checkStoredToMySQL(t, b)
+	}
+}
+
+// storedTrusted are stored values that break a rule of the format but not its structure,
+// with what StoredToMySQL makes of each: no writer stores one, so it does not check for it.
+var storedTrusted = []struct {
+	name, hex string
+	toMySQL   error
+}{
+	{"SRID flag below the root", "01 01 04000020 00000000 01000000 01 01000020 E6100000 000000000000F03F 0000000000000040", ErrNotMySQLExpressible},
+	{"member of the wrong type", "01 01 04000020 00000000 01000000 01 02000000 00000000", ErrNotMySQLExpressible},
+	{"member dimension differs", "01 01 04000020 00000000 01000000 01 01000080 000000000000F03F 0000000000000040 0000000000000840", ErrNotMySQLExpressible},
+	{"ring without points", "01 01 03000020 00000000 01000000 00000000", nil},
+	// A NaN first coordinate marks POINT EMPTY.
+	{"partly NaN point", "01 01 01000020 00000000 000000000000F87F 0000000000000040", ErrNotMySQLExpressible},
+	{"infinite coordinate", "01 01 01000020 00000000 000000000000F07F 0000000000000040", nil},
+	{"NaN in a linestring", "01 01 02000020 00000000 01000000 000000000000F87F 000000000000F87F", nil},
+}
+
+// TestStoredTrusted records what StoredToMySQL does with a value that breaks a rule of the
+// format but not its structure: validate refuses each, and StoredToMySQL copies the bytes
+// unless MySQL's format cannot hold them.
+func TestStoredTrusted(t *testing.T) {
+	for _, c := range storedTrusted {
+		b := mustHex(t, c.hex)
+		_, err := validate(b[1:], dialectEWKB)
+		require.ErrorIs(t, err, ErrInvalid, c.name)
+		_, err = StoredToMySQL(b)
+		require.ErrorIs(t, err, c.toMySQL, c.name)
+		checkStoredToMySQL(t, b)
+	}
+}
+
+func TestVersion(t *testing.T) {
+	good := stored(4326, point12)
+	for _, version := range []byte{0, 2, 0x7f, 0xff} {
+		b := append([]byte{version}, good[1:]...)
+		_, err := StoredToMySQL(b)
+		require.ErrorIs(t, err, ErrUnsupportedVersion, "version %d", version)
+		_, _, err = Header(b)
+		require.ErrorIs(t, err, ErrUnsupportedVersion, "version %d", version)
+	}
+	// The version is checked before anything else, so it is reported for a payload that
+	// is missing or malformed too.
+	for _, b := range [][]byte{{0}, {2}, {2, 0xff}} {
+		_, err := StoredToMySQL(b)
+		require.ErrorIs(t, err, ErrUnsupportedVersion)
+		_, _, err = Header(b)
+		require.ErrorIs(t, err, ErrUnsupportedVersion)
+	}
+}
+
+func TestStoredBigEndian(t *testing.T) {
+	// POINT(1 2) with SRID 4326, big-endian EWKB.
+	s := mustHex(t, "01 00 20000001 000010E6 3FF0000000000000 4000000000000000")
+	srid, typ, err := Header(s)
+	require.NoError(t, err)
+	require.Equal(t, uint32(4326), srid)
+	require.Equal(t, TypePoint, typ)
+	_, err = validate(s[1:], dialectEWKB)
+	require.NoError(t, err)
+
+	// StoredToMySQL copies the body unchanged, so it takes only little-endian values,
+	// which is all TiDB writes. A big-endian member is rejected too.
+	for _, b := range [][]byte{
+		s,
+		mustHex(t, "01 01 04000020 E6100000 01000000 00 00000001 3FF0000000000000 4000000000000000"),
+		mustHex(t, "01 00 A0000001 000010E6 3FF0000000000000 4000000000000000 4008000000000000"),
+	} {
+		_, err = StoredToMySQL(b)
+		require.ErrorIs(t, err, errBigEndianStored)
+		checkStoredToMySQL(t, b)
+	}
+}
+
+func TestNotMySQLExpressible(t *testing.T) {
+	gc := TypeGeometryCollection
+	values := [][]byte{
+		// Z and M, at the root and below it.
+		le(TypePoint, dimsXYZ, coords(1, 2, 3)),
+		le(TypePoint, dimsXYM, coords(1, 2, 4)),
+		le(TypePoint, dimsXYZM, coords(1, 2, 3, 4)),
+		line(dimsXYZ, 0, 0, 1, 1, 1, 1),
+		polygon(dimsXYM, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1}),
+		collectionOf(TypeMultiPoint, dimsXYZM, le(TypePoint, dimsXYZM, coords(1, 2, 3, 4))),
+		collectionOf(TypeMultiLineString, dimsXYM, line(dimsXYM, 0, 0, 1, 1, 1, 1)),
+		collectionOf(TypeMultiPolygon, dimsXYZ, polygon(dimsXYZ, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1})),
+		collectionOf(gc, dimsXYZ),
+		collectionOf(gc, dimsXYM, collectionOf(gc, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)))),
+		collectionOf(gc, dimsXYZM, collectionOf(gc, dimsXYZM, collectionOf(gc, dimsXYZM))),
+		// An empty geometry other than a GEOMETRYCOLLECTION, at any depth.
+		emptyPoint(dimsXY),
+		line(dimsXY),
+		polygon(dimsXY),
+		collectionOf(TypeMultiPoint, dimsXY),
+		collectionOf(TypeMultiLineString, dimsXY),
+		collectionOf(TypeMultiPolygon, dimsXY),
+		collectionOf(TypeMultiPoint, dimsXY, point12, emptyPoint(dimsXY)),
+		collectionOf(TypeMultiLineString, dimsXY, line0011, line(dimsXY)),
+		collectionOf(TypeMultiPolygon, dimsXY, triangle, polygon(dimsXY)),
+		collectionOf(gc, dimsXY, emptyPoint(dimsXY)),
+		collectionOf(gc, dimsXY, point12, collectionOf(gc, dimsXY, line(dimsXY))),
+		collectionOf(gc, dimsXY, collectionOf(gc, dimsXY, collectionOf(gc, dimsXY, collectionOf(TypeMultiPolygon, dimsXY)))),
+		collectionOf(gc, dimsXY, collectionOf(gc, dimsXY, collectionOf(TypeMultiLineString, dimsXY, line0011, line(dimsXY)))),
+		collectionOf(gc, dimsXY, collectionOf(gc, dimsXY), collectionOf(TypeMultiPoint, dimsXY, emptyPoint(dimsXY))),
+	}
+	for _, v := range values {
+		s := stored(4326, v)
+		_, err := StoredToMySQL(s)
+		require.ErrorIs(t, err, ErrNotMySQLExpressible, "%X", s)
+		checkStoredToMySQL(t, s)
 	}
 
 	// Empty collections have a MySQL form.
-	for _, wkt := range []string{
-		"GEOMETRYCOLLECTION EMPTY",
-		"GEOMETRYCOLLECTION(GEOMETRYCOLLECTION EMPTY,POINT(1 2))",
-		"GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(GEOMETRYCOLLECTION EMPTY))",
+	for _, v := range [][]byte{
+		collectionOf(gc, dimsXY),
+		collectionOf(gc, dimsXY, collectionOf(gc, dimsXY), point12),
+		collectionOf(gc, dimsXY, collectionOf(gc, dimsXY, collectionOf(gc, dimsXY))),
 	} {
-		stored := mustEncode(t, wkt, 4326)
-		mysql, err := StoredToMySQL(stored)
-		require.NoError(t, err, wkt)
-		checkAgainstReference(t, stored)
-		again, _, err := MySQLToStored(mysql)
-		require.NoError(t, err, wkt)
-		require.Equal(t, stored, again, wkt)
+		s := stored(4326, v)
+		mysql, err := StoredToMySQL(s)
+		require.NoError(t, err, "%X", s)
+		require.Equal(t, mysqlOf(4326, v), mysql)
+		checkStoredToMySQL(t, s)
 	}
 
 	// At the depth bound, as the deepest member.
-	emptyPoint := mustHex(t, "01 01000000 000000000000F87F 000000000000F87F")
-	zPoint := mustHex(t, "01 01000080 000000000000F03F 0000000000000040 0000000000000840")
-	for _, stored := range [][]byte{
-		storedChain(MaxDepth, 0, emptyPoint),
-		storedChain(MaxDepth, ewkbZ, zPoint),
+	for _, s := range [][]byte{
+		storedChain(MaxDepth, 0, emptyPoint(dimsXY)),
+		storedChain(MaxDepth, ewkbZ, le(TypePoint, dimsXYZ, coords(1, 2, 3))),
 	} {
-		_, err := StoredToMySQL(stored)
+		_, err := StoredToMySQL(s)
 		require.ErrorIs(t, err, ErrNotMySQLExpressible)
-		checkAgainstReference(t, stored)
+		checkStoredToMySQL(t, s)
 	}
 }
 
 func TestDepthBound(t *testing.T) {
-	// One bound applies to both directions, so a value that is stored reads back.
-	point := mustHex(t, "01 01000000 000000000000F03F 0000000000000040")
+	// One bound applies to both directions, so a value that is stored converts back.
 	garbage := bytes.Repeat([]byte{0xff}, minGeometrySize)
 	for _, c := range []struct {
 		mysql  []byte
 		stored []byte
 	}{
-		{
-			append(make([]byte, 4), nestedCollections(MaxDepth)...),
-			storedChain(MaxDepth, 0, nestedCollections(1)),
-		},
-		{mysqlChain(MaxDepth, point), storedChain(MaxDepth, 0, point)},
+		{append(make([]byte, 4), nestedCollections(MaxDepth)...), storedChain(MaxDepth, 0, nestedCollections(1))},
+		{mysqlChain(MaxDepth, point12), storedChain(MaxDepth, 0, point12)},
 	} {
-		stored, _, err := MySQLToStored(c.mysql)
+		s, _, err := MySQLToStored(c.mysql)
 		require.NoError(t, err)
-		require.Equal(t, c.stored, stored)
-		back, err := StoredToMySQL(stored)
+		require.Equal(t, c.stored, s)
+		back, err := StoredToMySQL(s)
 		require.NoError(t, err)
 		require.Equal(t, c.mysql, back)
-		_, g, err := decodeStored(stored)
-		require.NoError(t, err)
-		again, err := encode(g, 0)
-		require.NoError(t, err)
-		require.Equal(t, stored, again)
-		checkAgainstReference(t, stored)
+		checkStoredToMySQL(t, s)
 	}
 
 	for _, c := range []struct {
 		mysql  []byte
 		stored []byte
 	}{
-		{
-			append(make([]byte, 4), nestedCollections(MaxDepth+1)...),
-			storedChain(MaxDepth+1, 0, nestedCollections(1)),
-		},
-		{mysqlChain(MaxDepth+1, point), storedChain(MaxDepth+1, 0, point)},
+		{append(make([]byte, 4), nestedCollections(MaxDepth+1)...), storedChain(MaxDepth+1, 0, nestedCollections(1))},
+		{mysqlChain(MaxDepth+1, point12), storedChain(MaxDepth+1, 0, point12)},
 		// Depth is checked before anything else in a geometry. Its parent's count still
 		// needs room for the smallest geometry.
 		{mysqlChain(MaxDepth+1, garbage), storedChain(MaxDepth+1, 0, garbage)},
@@ -594,12 +398,14 @@ func TestDepthBound(t *testing.T) {
 		}
 		_, err := StoredToMySQL(c.stored)
 		require.ErrorIs(t, err, ErrTooDeep)
-		checkAgainstReference(t, c.stored)
+		_, err = validate(c.stored[1:], dialectEWKB)
+		require.ErrorIs(t, err, ErrTooDeep)
+		checkStoredToMySQL(t, c.stored)
 		// Header reads only the root, so depth does not matter to it.
 		srid, typ, err := Header(c.stored)
 		require.NoError(t, err)
 		require.Equal(t, uint32(0), srid)
-		require.Equal(t, geom.TypeGeometryCollection, typ)
+		require.Equal(t, TypeGeometryCollection, typ)
 	}
 
 	// Errors are reported in reading order: a malformed member ahead of a too-deep one
@@ -611,61 +417,69 @@ func TestDepthBound(t *testing.T) {
 	deepFirst := append(append(append([]byte{}, root...), deep...), bad...)
 	_, err := StoredToMySQL(badFirst)
 	require.ErrorIs(t, err, ErrInvalid)
-	checkAgainstReference(t, badFirst)
+	checkStoredToMySQL(t, badFirst)
 	_, err = StoredToMySQL(deepFirst)
 	require.ErrorIs(t, err, ErrTooDeep)
-	checkAgainstReference(t, deepFirst)
-
-	// A geometry built deeper than the bound is not encoded.
-	tooDeep := geom.NewGeometryCollection(nil).AsGeometry()
-	for range MaxDepth {
-		tooDeep = geom.NewGeometryCollection([]geom.Geometry{tooDeep}).AsGeometry()
-	}
-	_, err = encode(tooDeep, 0)
-	require.ErrorIs(t, err, ErrTooDeep)
+	checkStoredToMySQL(t, deepFirst)
 }
 
 func TestTruncatedAndOverLong(t *testing.T) {
-	wkts := []string{
-		"POINT(1 2)",
-		"LINESTRING(0 0,1 1,2 0)",
-		"POLYGON((0 0,0 1,1 1,1 0,0 0),(0.2 0.2,0.2 0.4,0.4 0.4,0.2 0.2))",
-		"MULTIPOINT((1 2),(3 4))",
-		"MULTILINESTRING((0 0,1 1),(2 2,3 3))",
-		"MULTIPOLYGON(((0 0,0 1,1 1,0 0)),((5 5,5 6,6 6,5 5)))",
-		"GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(LINESTRING(0 0,1 1)),GEOMETRYCOLLECTION EMPTY)",
-		"GEOMETRYCOLLECTION EMPTY",
+	gc := TypeGeometryCollection
+	values := [][]byte{
+		point12,
+		line(dimsXY, 0, 0, 1, 1, 2, 0),
+		polygon(dimsXY, []float64{0, 0, 0, 1, 1, 1, 1, 0, 0, 0}, []float64{0.2, 0.2, 0.2, 0.4, 0.4, 0.4, 0.2, 0.2}),
+		collectionOf(TypeMultiPoint, dimsXY, point12, le(TypePoint, dimsXY, coords(3, 4))),
+		collectionOf(TypeMultiLineString, dimsXY, line0011, line(dimsXY, 2, 2, 3, 3)),
+		collectionOf(TypeMultiPolygon, dimsXY, triangle, polygon(dimsXY, []float64{5, 5, 5, 6, 6, 6, 5, 5})),
+		collectionOf(gc, dimsXY, point12, collectionOf(gc, dimsXY, line0011), collectionOf(gc, dimsXY)),
+		collectionOf(gc, dimsXY),
 		// Values with no MySQL form are ErrInvalid too when malformed.
-		"POINT ZM(1 2 3 4)",
-		"GEOMETRYCOLLECTION(MULTIPOINT((1 2),EMPTY))",
+		le(TypePoint, dimsXYZM, coords(1, 2, 3, 4)),
+		collectionOf(gc, dimsXY, collectionOf(TypeMultiPoint, dimsXY, point12, emptyPoint(dimsXY))),
 	}
-	for _, wkt := range wkts {
-		stored := mustEncode(t, wkt, 4326)
-		for n := range stored {
-			_, err := StoredToMySQL(stored[:n])
-			require.ErrorIs(t, err, ErrInvalid, "%s cut to %d", wkt, n)
-			checkAgainstReference(t, stored[:n])
+	for _, v := range values {
+		s := stored(4326, v)
+		for n := range s {
+			_, err := StoredToMySQL(s[:n])
+			require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", s, n)
+			checkStoredToMySQL(t, s[:n])
 		}
-		for _, extra := range [][]byte{{0}, {1}, stored[1:]} {
-			long := append(append([]byte{}, stored...), extra...)
+		for _, extra := range [][]byte{{0}, {1}, s[1:]} {
+			long := append(append([]byte{}, s...), extra...)
 			_, err := StoredToMySQL(long)
-			require.ErrorIs(t, err, ErrInvalid, wkt)
-			checkAgainstReference(t, long)
+			require.ErrorIs(t, err, ErrInvalid, "%X", long)
+			checkStoredToMySQL(t, long)
 		}
 
-		mysql, err := referenceStoredToMySQL(stored)
+		mysql, err := StoredToMySQL(s)
 		if err != nil {
 			continue
 		}
 		for n := range mysql {
 			_, _, err := MySQLToStored(mysql[:n])
-			require.ErrorIs(t, err, ErrInvalid, "%s cut to %d", wkt, n)
+			require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", mysql, n)
 		}
 		for _, extra := range [][]byte{{0}, {1}, mysql[4:]} {
 			_, _, err := MySQLToStored(append(append([]byte{}, mysql...), extra...))
-			require.ErrorIs(t, err, ErrInvalid, wkt)
+			require.ErrorIs(t, err, ErrInvalid, "%X", mysql)
 		}
 	}
+}
+
+// randomBytes returns random bytes drawn mostly from values that are meaningful in a header,
+// so that parsing gets past the first few bytes.
+func randomBytes(rnd *rand.Rand, n int) []byte {
+	alphabet := []byte{0, 1, 2, 3, 4, 5, 6, 7, 0x20, 0x40, 0x80, 0xf0, 0x3f, 0x7f, 0xf8, 0xff}
+	b := make([]byte, n)
+	for i := range b {
+		if rnd.IntN(4) == 0 {
+			b[i] = byte(rnd.Uint32())
+		} else {
+			b[i] = alphabet[rnd.IntN(len(alphabet))]
+		}
+	}
+	return b
 }
 
 func TestGarbage(t *testing.T) {
@@ -676,65 +490,46 @@ func TestGarbage(t *testing.T) {
 		require.Error(t, err)
 		_, _, _ = Header([]byte(s))
 	}
-
-	// Random bytes drawn mostly from values that are meaningful in a header, so that
-	// parsing gets past the first few bytes.
-	alphabet := []byte{0, 1, 2, 3, 4, 5, 6, 7, 0x20, 0x40, 0x80, 0xf0, 0x3f, 0x7f, 0xf8, 0xff}
 	rnd := rand.New(rand.NewPCG(1, 2))
 	for range 20000 {
-		b := make([]byte, rnd.IntN(80))
-		for i := range b {
-			if rnd.IntN(4) == 0 {
-				b[i] = byte(rnd.Uint32())
-			} else {
-				b[i] = alphabet[rnd.IntN(len(alphabet))]
-			}
-		}
+		b := randomBytes(rnd, rnd.IntN(80))
 		if _, _, err := MySQLToStored(b); err != nil {
 			require.True(t, errors.Is(err, ErrInvalid) || errors.Is(err, ErrTooDeep), "%X: %v", b, err)
 		}
-		stored := append([]byte{Version1}, b...)
-		checkAgainstReference(t, stored)
-		_, _, _ = Header(stored)
+		s := append([]byte{Version1}, b...)
+		checkStoredToMySQL(t, s)
+		_, _, _ = Header(s)
 	}
 }
 
 func TestHeader(t *testing.T) {
-	wkts := []string{
-		"POINT(1 2)",
-		"POINT ZM(1 2 3 4)",
-		"POINT EMPTY",
-		"LINESTRING(0 0,1 1)",
-		"LINESTRING M(0 0 1,1 1 2)",
-		"POLYGON((0 0,0 1,1 1,0 0))",
-		"POLYGON EMPTY",
-		"MULTIPOINT((1 2))",
-		"MULTIPOINT Z((1 2 3))",
-		"MULTILINESTRING((0 0,1 1))",
-		"MULTILINESTRING EMPTY",
-		"MULTIPOLYGON(((0 0,0 1,1 1,0 0)))",
-		"MULTIPOLYGON M(((0 0 1,0 1 1,1 1 1,0 0 1)))",
-		"GEOMETRYCOLLECTION(POINT(1 2))",
-		"GEOMETRYCOLLECTION EMPTY",
+	values := map[Type][][]byte{
+		TypePoint:              {point12, le(TypePoint, dimsXYZM, coords(1, 2, 3, 4)), emptyPoint(dimsXY)},
+		TypeLineString:         {line0011, line(dimsXYM, 0, 0, 1, 1, 1, 2)},
+		TypePolygon:            {triangle, polygon(dimsXY)},
+		TypeMultiPoint:         {collectionOf(TypeMultiPoint, dimsXY, point12), collectionOf(TypeMultiPoint, dimsXYZ, le(TypePoint, dimsXYZ, coords(1, 2, 3)))},
+		TypeMultiLineString:    {collectionOf(TypeMultiLineString, dimsXY, line0011), collectionOf(TypeMultiLineString, dimsXY)},
+		TypeMultiPolygon:       {collectionOf(TypeMultiPolygon, dimsXY, triangle)},
+		TypeGeometryCollection: {collectionOf(TypeGeometryCollection, dimsXY, point12), collectionOf(TypeGeometryCollection, dimsXY)},
 	}
-	for _, wkt := range wkts {
-		g := mustWKT(t, wkt)
-		for _, srid := range []uint32{0, 4326, 3857, math.MaxUint32} {
-			stored, err := encode(g, srid)
-			require.NoError(t, err)
-			gotSRID, typ, err := Header(stored)
-			require.NoError(t, err, wkt)
-			require.Equal(t, srid, gotSRID, wkt)
-			require.Equal(t, g.Type(), typ, wkt)
+	for want, vs := range values {
+		for _, v := range vs {
+			for _, srid := range []uint32{0, 4326, 3857, math.MaxUint32} {
+				s := stored(srid, v)
+				gotSRID, typ, err := Header(s)
+				require.NoError(t, err, "%X", s)
+				require.Equal(t, srid, gotSRID)
+				require.Equal(t, want, typ)
 
-			// Header reads the version, byte order, type word and SRID, and no more.
-			gotSRID, typ, err = Header(stored[:10])
-			require.NoError(t, err, wkt)
-			require.Equal(t, srid, gotSRID, wkt)
-			require.Equal(t, g.Type(), typ, wkt)
-			for n := range 10 {
-				_, _, err = Header(stored[:n])
-				require.ErrorIs(t, err, ErrInvalid, "%s cut to %d", wkt, n)
+				// Header reads the version, byte order, type word and SRID, and no more.
+				gotSRID, typ, err = Header(s[:10])
+				require.NoError(t, err, "%X", s)
+				require.Equal(t, srid, gotSRID)
+				require.Equal(t, want, typ)
+				for n := range 10 {
+					_, _, err = Header(s[:n])
+					require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", s, n)
+				}
 			}
 		}
 	}
@@ -754,198 +549,80 @@ func TestHeader(t *testing.T) {
 	}
 }
 
-// geomGen generates random geometries of one coordinate type.
-type geomGen struct {
-	rnd   *rand.Rand
-	ctype geom.CoordinatesType
-	// empty is the chance that a geometry other than a GEOMETRYCOLLECTION is empty.
-	empty float64
-}
-
-var allTypes = []geom.GeometryType{
-	geom.TypePoint,
-	geom.TypeLineString,
-	geom.TypePolygon,
-	geom.TypeMultiPoint,
-	geom.TypeMultiLineString,
-	geom.TypeMultiPolygon,
-	geom.TypeGeometryCollection,
-}
-
-// maxGenDepth bounds how deep generated collections nest.
-const maxGenDepth = 4
-
-func (gen *geomGen) isEmpty() bool { return gen.rnd.Float64() < gen.empty }
-
-func (gen *geomGen) float() float64 {
-	switch gen.rnd.IntN(6) {
-	case 0:
-		return 0
-	case 1:
-		return math.Copysign(0, -1)
-	case 2:
-		return math.SmallestNonzeroFloat64 * float64(1+gen.rnd.IntN(1000))
-	case 3:
-		return math.Copysign(math.MaxFloat64, gen.rnd.NormFloat64())
-	}
-	return gen.rnd.NormFloat64() * 1000
-}
-
-func (gen *geomGen) sequence(n int) geom.Sequence {
-	floats := make([]float64, n*gen.ctype.Dimension())
-	for i := range floats {
-		floats[i] = gen.float()
-	}
-	return geom.NewSequence(floats, gen.ctype)
-}
-
-func (gen *geomGen) point() geom.Point {
-	if gen.isEmpty() {
-		return geom.NewEmptyPoint(gen.ctype)
-	}
-	return geom.NewPoint(gen.sequence(1).Get(0))
-}
-
-func (gen *geomGen) lineString() geom.LineString {
-	n := 0
-	if !gen.isEmpty() {
-		n = 1 + gen.rnd.IntN(5)
-	}
-	return geom.NewLineString(gen.sequence(n))
-}
-
-func (gen *geomGen) polygon() geom.Polygon {
-	if gen.isEmpty() {
-		return geom.Polygon{}.ForceCoordinatesType(gen.ctype)
-	}
-	rings := make([]geom.LineString, 1+gen.rnd.IntN(3))
-	for i := range rings {
-		rings[i] = geom.NewLineString(gen.sequence(1 + gen.rnd.IntN(5)))
-	}
-	return geom.NewPolygon(rings)
-}
-
-// members returns how many members a MULTIPOINT, MULTILINESTRING or MULTIPOLYGON has.
-func (gen *geomGen) members() int {
-	if gen.isEmpty() {
-		return 0
-	}
-	return 1 + gen.rnd.IntN(3)
-}
-
-func (gen *geomGen) geometry(typ geom.GeometryType, depth int) geom.Geometry {
-	switch typ {
-	case geom.TypePoint:
-		return gen.point().AsGeometry()
-	case geom.TypeLineString:
-		return gen.lineString().AsGeometry()
-	case geom.TypePolygon:
-		return gen.polygon().AsGeometry()
-	case geom.TypeMultiPoint:
-		pts := make([]geom.Point, gen.members())
-		for i := range pts {
-			pts[i] = gen.point()
-		}
-		return geom.NewMultiPoint(pts).ForceCoordinatesType(gen.ctype).AsGeometry()
-	case geom.TypeMultiLineString:
-		lss := make([]geom.LineString, gen.members())
-		for i := range lss {
-			lss[i] = gen.lineString()
-		}
-		return geom.NewMultiLineString(lss).ForceCoordinatesType(gen.ctype).AsGeometry()
-	case geom.TypeMultiPolygon:
-		polys := make([]geom.Polygon, gen.members())
-		for i := range polys {
-			polys[i] = gen.polygon()
-		}
-		return geom.NewMultiPolygon(polys).ForceCoordinatesType(gen.ctype).AsGeometry()
-	}
-	// A GEOMETRYCOLLECTION is expressible empty, so it is empty a quarter of the time.
-	members := make([]geom.Geometry, gen.rnd.IntN(4))
-	for i := range members {
-		types := allTypes
-		if depth >= maxGenDepth {
-			types = allTypes[:len(allTypes)-1]
-		}
-		members[i] = gen.geometry(types[gen.rnd.IntN(len(types))], depth+1)
-	}
-	return geom.NewGeometryCollection(members).ForceCoordinatesType(gen.ctype).AsGeometry()
-}
-
-func (gen *geomGen) srid() uint32 {
-	switch gen.rnd.IntN(4) {
-	case 0:
-		return 0
-	case 1:
-		return 4326
-	case 2:
-		return 3857
-	}
-	return gen.rnd.Uint32()
-}
-
-// TestStoredToMySQLMatchesReference compares StoredToMySQL, which rewrites the header,
-// with decoding the value and writing it with the MySQL-dialect writer, over generated
-// geometries of every type and coordinate type, with and without empty members.
-func TestStoredToMySQLMatchesReference(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(20261002, 1))
-	expressible, notExpressible := 0, 0
-	for _, ctype := range []geom.CoordinatesType{geom.DimXY, geom.DimXYZ, geom.DimXYM, geom.DimXYZM} {
+// TestGenerated checks the conversions on generated values of every type and coordinate
+// type, with and without empty members and big-endian members, against what the generator
+// knows about each.
+func TestGenerated(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(20261111, 1))
+	expressible, notExpressible, bigEndian := 0, 0, 0
+	for _, d := range []dims{dimsXY, dimsXYZ, dimsXYM, dimsXYZM} {
 		for _, empty := range []float64{0, 0.15} {
-			gen := geomGen{rnd: rnd, ctype: ctype, empty: empty}
-			for i := range 700 {
-				g := gen.geometry(allTypes[i%len(allTypes)], 1)
-				require.Equal(t, ctype, g.CoordinatesType())
-				srid := gen.srid()
-				stored, err := encode(g, srid)
-				require.NoError(t, err)
+			for _, big := range []float64{0, 0.3} {
+				gen := wkbGen{rnd: rnd, d: d, empty: empty, big: big}
+				for i := range 500 {
+					typ := allTypes[i%len(allTypes)]
+					wkb, notMySQL := gen.geometry(typ, 1)
+					srid := gen.srid()
+					s := stored(srid, wkb)
 
-				got, err := StoredToMySQL(stored)
-				want, wantErr := referenceStoredToMySQL(stored)
-				require.Equal(t, wantErr, err, g.AsText())
-				require.Equal(t, want, got, g.AsText())
-				if err != nil {
-					require.ErrorIs(t, err, ErrNotMySQLExpressible, g.AsText())
-					require.False(t, ctype == geom.DimXY && empty == 0, g.AsText())
-					notExpressible++
-					continue
+					gotNotMySQL, err := validate(s[1:], dialectEWKB)
+					require.NoError(t, err, "%X", s)
+					require.Equal(t, notMySQL, gotNotMySQL, "%X", s)
+					gotSRID, gotType, err := Header(s)
+					require.NoError(t, err, "%X", s)
+					require.Equal(t, srid, gotSRID)
+					require.Equal(t, typ, gotType)
+					checkStoredToMySQL(t, s)
+
+					mysql, err := StoredToMySQL(s)
+					if errors.Is(err, errBigEndianStored) {
+						require.Positive(t, big)
+						bigEndian++
+						continue
+					}
+					if notMySQL {
+						require.ErrorIs(t, err, ErrNotMySQLExpressible, "%X", s)
+						notExpressible++
+						continue
+					}
+					require.NoError(t, err, "%X", s)
+					require.Equal(t, mysqlOf(srid, wkb), mysql)
+					again, gotSRID, err := MySQLToStored(mysql)
+					require.NoError(t, err, "%X", mysql)
+					require.Equal(t, s, again)
+					require.Equal(t, srid, gotSRID)
+					expressible++
 				}
-				require.Equal(t, geom.DimXY, ctype, g.AsText())
-				expressible++
-
-				// MySQL's format reads back as the same stored value.
-				again, gotSRID, err := MySQLToStored(got)
-				require.NoError(t, err, g.AsText())
-				require.Equal(t, stored, again, g.AsText())
-				require.Equal(t, srid, gotSRID)
 			}
 		}
 	}
 	require.Greater(t, expressible, 1000)
 	require.Greater(t, notExpressible, 3000)
+	require.Greater(t, bigEndian, 1000)
 }
 
-// TestStoredToMySQLMutations compares StoredToMySQL with the reference on generated
-// stored values with one byte changed, which reach the checks a well-formed value does
-// not.
-func TestStoredToMySQLMutations(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(20261002, 2))
-	values := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf8, 0xff}
-	for _, ctype := range []geom.CoordinatesType{geom.DimXY, geom.DimXYZM} {
-		gen := geomGen{rnd: rnd, ctype: ctype, empty: 0.1}
-		for i := range 70 {
-			stored, err := encode(gen.geometry(allTypes[i%len(allTypes)], 1), gen.srid())
-			require.NoError(t, err)
-			// Every position of a small value, a sample of a large one.
-			positions := rnd.Perm(len(stored))[:min(len(stored), 200)]
-			for _, pos := range positions {
-				b := append([]byte{}, stored...)
-				for _, v := range values {
+// TestGeneratedMutations checks StoredToMySQL and MySQLToStored on generated values with one
+// byte changed, which reach the checks a well-formed value does not.
+func TestGeneratedMutations(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(20261111, 2))
+	values := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf0, 0xf8, 0x7f, 0xff}
+	for _, d := range []dims{dimsXY, dimsXYZM} {
+		gen := wkbGen{rnd: rnd, d: d, empty: 0.1, big: 0.1}
+		for i := range 100 {
+			wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
+			s := stored(gen.srid(), wkb)
+			for _, pos := range rnd.Perm(len(s))[:min(len(s), 100)] {
+				b := append([]byte{}, s...)
+				for _, v := range append(values, s[pos]^byte(1+rnd.IntN(255))) {
 					b[pos] = v
-					checkAgainstReference(t, b)
+					checkStoredToMySQL(t, b)
+					m := mysqlOf(0, b[1:])
+					if got, _, err := MySQLToStored(m); err == nil {
+						back, err := StoredToMySQL(got)
+						require.NoError(t, err, "%X", m)
+						require.Equal(t, m, back)
+					}
 				}
-				b[pos] = stored[pos] ^ byte(1+rnd.IntN(255))
-				checkAgainstReference(t, b)
 			}
 		}
 	}
@@ -963,34 +640,31 @@ func TestNestedCountsAllocs(t *testing.T) {
 		b = binary.LittleEndian.AppendUint32(b, uint32((cap(b)-len(b)-4)/minGeometrySize))
 	}
 	b = append(b, make([]byte, pad)...)
-	stored := storedFromMySQL(b)
+	s := storedFromMySQL(b)
 	_, _, err := MySQLToStored(b)
 	require.ErrorIs(t, err, ErrInvalid)
-	_, err = StoredToMySQL(stored)
+	_, err = StoredToMySQL(s)
 	require.ErrorIs(t, err, ErrInvalid)
 	require.NotErrorIs(t, err, errStoredWithoutSRID)
-	checkAgainstReference(t, stored)
-	// The reader allocates only the root's members before the second count fails, and
-	// the scan nothing.
-	allocs := testing.AllocsPerRun(1, func() {
-		_, _, _ = read(b[4:], dialectMySQL)
-	})
-	require.Equal(t, 1.0, allocs)
-	allocs = testing.AllocsPerRun(1, func() {
-		_, _, _ = MySQLToStored(b)
-	})
-	require.Equal(t, 0.0, allocs)
+	checkStoredToMySQL(t, s)
+	for _, f := range []func(){
+		func() { _, _, _ = MySQLToStored(b) },
+		func() { _, _ = StoredToMySQL(s) },
+	} {
+		require.Equal(t, 0.0, testing.AllocsPerRun(1, f))
+	}
 }
 
 func TestStoredToMySQLAllocs(t *testing.T) {
-	stored := mustEncode(t, "GEOMETRYCOLLECTION(POINT(1 2),MULTIPOLYGON(((0 0,0 1,1 1,0 0))),"+
-		"GEOMETRYCOLLECTION(LINESTRING(0 0,1 1,2 2)))", 4326)
-	// The scan allocates nothing: the one allocation is the result.
+	gc := TypeGeometryCollection
+	s := stored(4326, collectionOf(gc, dimsXY, point12, collectionOf(TypeMultiPolygon, dimsXY, triangle),
+		collectionOf(gc, dimsXY, line(dimsXY, 0, 0, 1, 1, 2, 2))))
+	// skim allocates nothing: the one allocation is the result.
 	allocs := testing.AllocsPerRun(100, func() {
-		_, _ = StoredToMySQL(stored)
+		_, _ = StoredToMySQL(s)
 	})
 	require.Equal(t, 1.0, allocs)
-	for _, b := range [][]byte{mustEncode(t, "POINT Z(1 2 3)", 0), stored[:len(stored)-1]} {
+	for _, b := range [][]byte{stored(0, le(TypePoint, dimsXYZ, coords(1, 2, 3))), s[:len(s)-1]} {
 		allocs = testing.AllocsPerRun(100, func() {
 			_, _ = StoredToMySQL(b)
 		})
@@ -998,47 +672,76 @@ func TestStoredToMySQLAllocs(t *testing.T) {
 	}
 }
 
+// TestIngestAllocs checks that MySQLToStored's validate allocates nothing: a value that
+// converts allocates its result, and a value that does not convert allocates nothing,
+// whatever its counts claim.
+func TestIngestAllocs(t *testing.T) {
+	deep := mysqlChain(MaxDepth-1, multiPointWKB(10000))
+	for _, c := range []struct {
+		b      []byte
+		allocs float64
+	}{
+		{deep, 1},
+		{hostileCounts(), 0},
+		{deep[:len(deep)-1], 0},
+	} {
+		allocs := testing.AllocsPerRun(3, func() { _, _, _ = MySQLToStored(c.b) })
+		require.Equal(t, c.allocs, allocs, "%X", c.b[:min(len(c.b), 32)])
+	}
+}
+
 func FuzzMySQLToStored(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
-	f.Add(mustHex(f, "00000000 01 07000000 01000000 01 03000000 01000000 04000000"+
-		" 0000000000000000 0000000000000000 000000000000F03F 0000000000000000"+
-		" 000000000000F03F 000000000000F03F 0000000000000000 0000000000000000"))
-	f.Add(mustHex(f, "00000000 01 07000000 02000000 01 01000000 000000000000F03F 0000000000000040"+
-		" 01 04000000 01000000 01 01000000 0000000000000840 0000000000001040"))
+	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, triangle)))
+	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, point12,
+		collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(3, 4))))))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		stored, _, err := MySQLToStored(b)
+		s, _, err := MySQLToStored(b)
 		if err != nil {
 			return
 		}
-		require.Len(t, stored, len(b)+1)
+		require.Len(t, s, len(b)+1)
 		// MySQL's format is canonical: whatever is stored converts back to the same bytes.
-		out, err := StoredToMySQL(stored)
+		out, err := StoredToMySQL(s)
 		require.NoError(t, err)
 		require.Equal(t, b, out)
-		checkAgainstReference(t, stored)
+		checkStoredToMySQL(t, s)
 	})
 }
 
 func FuzzStoredToMySQL(f *testing.F) {
-	for _, wkt := range []string{
-		"POINT(1 2)",
-		"POLYGON Z((0 0 1,0 1 1,1 1 1,0 0 1))",
-		"GEOMETRYCOLLECTION(MULTIPOINT((1 2)),LINESTRING EMPTY)",
-		"GEOMETRYCOLLECTION(MULTIPOLYGON(((0 0,0 1,1 1,0 0))),GEOMETRYCOLLECTION EMPTY)",
+	gc := TypeGeometryCollection
+	for _, v := range [][]byte{
+		point12,
+		polygon(dimsXYZ, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1}),
+		collectionOf(gc, dimsXY, collectionOf(TypeMultiPoint, dimsXY, point12), line(dimsXY)),
+		collectionOf(gc, dimsXY, collectionOf(TypeMultiPolygon, dimsXY, triangle), collectionOf(gc, dimsXY)),
 	} {
-		f.Add(mustEncode(f, wkt, 4326))
+		f.Add(stored(4326, v))
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
-		checkAgainstReference(t, b)
-		out, err := StoredToMySQL(b)
+		checkStoredToMySQL(t, b)
+		_, _, _ = Header(b)
+	})
+}
+
+// FuzzSkim checks that skim, which trusts its input, never panics or allocates on
+// arbitrary bytes, and agrees with validate on what validate accepts.
+func FuzzSkim(f *testing.F) {
+	f.Add(stored(4326, point12)[1:])
+	f.Add(stored(0, collectionOf(TypeMultiPoint, dimsXYM, emptyPoint(dimsXYM)))[1:])
+	f.Add(nestedCollections(MaxDepth))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		require.Zero(t, testing.AllocsPerRun(1, func() { _, _ = skim(b) }), "%X", b)
+		notMySQL, err := validate(b, dialectEWKB)
 		if err != nil {
 			return
 		}
-		// What converts reads back, and converts again to the same bytes.
-		again, _, err := MySQLToStored(out)
-		require.NoError(t, err)
-		out2, err := StoredToMySQL(again)
-		require.NoError(t, err)
-		require.Equal(t, out, out2)
+		skimNotMySQL, err := skim(b)
+		if errors.Is(err, errBigEndianStored) {
+			return
+		}
+		require.NoError(t, err, "%X", b)
+		require.Equal(t, notMySQL, skimNotMySQL, "%X", b)
 	})
 }
