@@ -234,7 +234,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_LeastDuration:
 		f = &builtinLeastDurationSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to useLinearSearch
 	case tipb.ScalarFuncSig_IntervalReal:
 		f = &builtinIntervalRealSig{base, false}
 	case tipb.ScalarFuncSig_GEInt:

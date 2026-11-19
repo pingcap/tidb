@@ -2340,3 +2340,7 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue70813
+select interval(10, 30, 1, 17), interval(10.5, 30, 1, 17), interval(7, 17, 17, 4, 17, 1, 16, 20, 0, 19), interval(7.5, 17, 17, 4, 17, 1, 16, 20, 0, 19);
+select interval(23, 1, 15, 17, 30, 44, 200), interval(23, 1, 15, 17, 23, 23, 30, 44, 200, 300);
