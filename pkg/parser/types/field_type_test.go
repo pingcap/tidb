@@ -15,11 +15,13 @@ package types_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	// import parser_driver
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
@@ -192,6 +194,74 @@ func TestFieldType(t *testing.T) {
 	ft.SetDecimal(0)
 	require.Equal(t, "char(0)", ft.String())
 	require.True(t, HasCharset(ft))
+
+	t.Run("BinaryAttribute", func(t *testing.T) {
+		// COUNT and SUM result metadata has BinaryFlag and a binary charset.
+		for _, tc := range []struct {
+			name     string
+			tp       byte
+			flen     int
+			decimal  int
+			expected string
+		}{
+			{"count", mysql.TypeLonglong, 21, 0, "bigint(21)"},
+			{"sum", mysql.TypeNewDecimal, 41, 0, "decimal(41,0)"},
+			{"double", mysql.TypeDouble, -1, -1, "double"},
+			{"date", mysql.TypeDate, -1, -1, "date"},
+			{"time", mysql.TypeDuration, -1, -1, "time"},
+			{"datetime", mysql.TypeDatetime, -1, -1, "datetime"},
+			{"timestamp", mysql.TypeTimestamp, -1, -1, "timestamp"},
+		} {
+			for _, cs := range []string{charset.CharsetBin, ""} {
+				t.Run(tc.name+"/charset="+cs, func(t *testing.T) {
+					ft := NewFieldType(tc.tp)
+					ft.SetFlen(tc.flen)
+					ft.SetDecimal(tc.decimal)
+					ft.SetCharset(cs)
+					ft.SetCollate(cs)
+					ft.AddFlag(mysql.BinaryFlag | mysql.NotNullFlag)
+					t.Run("String", func(t *testing.T) {
+						require.Equal(t, tc.expected, ft.String())
+					})
+					t.Run("ParseString", func(t *testing.T) {
+						_, err := parser.New().ParseOneStmt("CREATE TABLE example_db.mv_count (g INT(11) NOT NULL, `n` "+ft.String()+" NOT NULL, PRIMARY KEY (g))", "", "")
+						require.NoError(t, err)
+					})
+					t.Run("Restore", func(t *testing.T) {
+						var restored strings.Builder
+						require.NoError(t, ft.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &restored)))
+						require.Equal(t, strings.ToUpper(tc.expected), restored.String())
+						_, err := parser.New().ParseOneStmt("CREATE TABLE t (`n` "+restored.String()+" NOT NULL)", "", "")
+						require.NoError(t, err)
+					})
+				})
+			}
+		}
+
+		for _, expected := range []string{
+			"bigint(21) UNSIGNED ZEROFILL",
+			"decimal(41,0) UNSIGNED",
+			"char(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
+			"varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
+			"tinytext BINARY", "text BINARY", "mediumtext BINARY", "longtext BINARY",
+			"binary(10)", "varbinary(10)", "tinyblob", "blob", "mediumblob", "longblob",
+			"enum('a','b') BINARY", "set('a','b') BINARY",
+		} {
+			t.Run(expected, func(t *testing.T) {
+				stmt, err := parser.New().ParseOneStmt("CREATE TABLE t (`n` "+expected+")", "", "")
+				require.NoError(t, err)
+				ft := stmt.(*ast.CreateTableStmt).Cols[0].Tp
+				ft.AddFlag(mysql.BinaryFlag)
+				if ft.GetCharset() == charset.CharsetUTF8MB4 {
+					// Column COLLATE options are applied to the type during DDL processing.
+					ft.SetCollate(charset.CollationUTF8MB4)
+				}
+				require.Equal(t, expected, ft.String())
+				_, err = parser.New().ParseOneStmt("CREATE TABLE t (`n` "+ft.String()+")", "", "")
+				require.NoError(t, err)
+			})
+		}
+	})
 }
 
 func TestHasCharsetFromStmt(t *testing.T) {

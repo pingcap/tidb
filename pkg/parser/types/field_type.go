@@ -539,6 +539,26 @@ func (ft *FieldType) InfoSchemaStr() string {
 // String joins the information of FieldType and returns a string.
 // Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
 func (ft *FieldType) String() string {
+	return ft.formatString(ft.hasBinaryAttribute())
+}
+
+// StringForExplain preserves internal flags in diagnostic output and normalized plans.
+// Unlike String, its output is not a SQL type declaration.
+func (ft *FieldType) StringForExplain() string {
+	return ft.formatString(mysql.HasBinaryFlag(ft.flag) && ft.GetType() != mysql.TypeString)
+}
+
+// BinaryFlag also marks numeric and temporal result metadata; only string types
+// with a non-binary charset accept the SQL BINARY attribute.
+func (ft *FieldType) hasBinaryAttribute() bool {
+	if !mysql.HasBinaryFlag(ft.flag) || ft.charset == charset.CharsetBin {
+		return false
+	}
+	tp := ft.GetType()
+	return IsTypeChar(tp) || IsTypeBlob(tp) || tp == mysql.TypeVarString || tp == mysql.TypeEnum || tp == mysql.TypeSet
+}
+
+func (ft *FieldType) formatString(binaryAttribute bool) string {
 	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.flag) {
 		strs = append(strs, "UNSIGNED")
@@ -546,7 +566,7 @@ func (ft *FieldType) String() string {
 	if mysql.HasZerofillFlag(ft.flag) {
 		strs = append(strs, "ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.flag) && ft.GetType() != mysql.TypeString {
+	if binaryAttribute {
 		strs = append(strs, "BINARY")
 	}
 
@@ -602,7 +622,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 	if mysql.HasZerofillFlag(ft.flag) {
 		ctx.WriteKeyWord(" ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.flag) && ft.charset != charset.CharsetBin {
+	if ft.hasBinaryAttribute() {
 		ctx.WriteKeyWord(" BINARY")
 	}
 

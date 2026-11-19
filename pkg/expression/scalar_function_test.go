@@ -115,6 +115,27 @@ func TestScalarFunction(t *testing.T) {
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
+
+	t.Run("CastBinaryFlag", func(t *testing.T) {
+		for _, tc := range []struct {
+			tp       byte
+			flen     int
+			expected string
+		}{
+			{mysql.TypeLonglong, 21, "bigint(21) BINARY"},
+			{mysql.TypeNewDecimal, 41, "decimal(41,0) BINARY"},
+		} {
+			tp := types.NewFieldType(tc.tp)
+			tp.SetFlen(tc.flen)
+			tp.SetDecimal(0)
+			types.SetBinChsClnFlag(tp)
+			cast := BuildCastFunction(ctx, a, tp).(*ScalarFunction)
+			require.Equal(t, "cast(Column#1, "+tc.expected+")", cast.String())
+			require.Equal(t, "cast(Column#1, "+tc.expected+")", cast.ExplainInfo(ctx))
+			require.Equal(t, "cast(?, "+tc.expected+")", cast.ExplainNormalizedInfo())
+			require.Equal(t, "cast(?, "+tc.expected+")", cast.ExplainNormalizedInfo4InList())
+		}
+	})
 }
 
 func TestScalarFunctionEqualAfterCleanHashCode(t *testing.T) {
