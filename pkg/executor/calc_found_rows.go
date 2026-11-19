@@ -30,12 +30,9 @@ import (
 // error or an early close.
 type CalcFoundRowsExec struct {
 	exec.BaseExecutor
-	// Open is serialized with other lifecycle calls. Close cancels before
-	// taking mu so it can interrupt a child Open running inside Next.
-	closeCtx context.Context
-	cancel   context.CancelFunc
-	// mu protects branch Open/Close and the completed total, but not child Next.
+	// Serialize Next and Close; cancellation comes from the caller context.
 	mu          sync.Mutex
+	closed      bool
 	countOpened bool
 	dataOpened  bool
 	done        bool
@@ -44,56 +41,47 @@ type CalcFoundRowsExec struct {
 
 // Open implements exec.Executor.
 func (e *CalcFoundRowsExec) Open(ctx context.Context) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.closeCtx, e.cancel = context.WithCancel(ctx)
+	e.closed = false
 	e.countOpened = false
 	e.dataOpened = true
 	e.done = false
 	e.foundRows = 0
-	return exec.Open(e.closeCtx, e.Children(0))
+	return exec.Open(ctx, e.Children(0))
 }
 
 // Next implements exec.Executor.
 func (e *CalcFoundRowsExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
 	e.mu.Lock()
-	closedErr, done := e.closeCtx.Err(), e.done
-	e.mu.Unlock()
-	if closedErr != nil {
-		return closedErr
+	defer e.mu.Unlock()
+	req.Reset()
+	if e.closed {
+		return context.Canceled
 	}
-	if done {
+	if e.done {
 		return nil
 	}
 	if err := exec.Next(ctx, e.Children(0), req); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := e.closeCtx.Err(); err != nil {
-		return err
-	}
 	if req.NumRows() != 0 {
 		return nil
 	}
-	if err := e.finishData(); err != nil {
+	e.dataOpened = false
+	if err := exec.Close(e.Children(0)); err != nil {
+		return err
+	}
+	if err := e.releaseDataCTEStorage(); err != nil {
 		return err
 	}
 	failpoint.InjectCall("afterCalcFoundRowsData", e.Ctx())
-	// Count is consumed and closed within this call. Data reads keep their
-	// caller's context because data workers may retain it between chunks.
-	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(e.closeCtx, cancel)
-	defer func() { stop(); cancel() }()
-	if err := e.openCount(ctx); err != nil {
-		return err
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	count := e.Children(1)
+	e.countOpened = true
+	if err := exec.Open(ctx, count); err != nil {
+		return err
+	}
 	chk := exec.TryNewCacheChunk(count)
 	if err := exec.Next(ctx, count, chk); err != nil {
 		return err
@@ -104,46 +92,9 @@ func (e *CalcFoundRowsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if chk.NumRows() != 1 || chk.GetRow(0).IsNull(0) {
 		return errors.New("SQL_CALC_FOUND_ROWS count plan did not produce a count")
 	}
-	return e.finishCount(uint64(chk.GetRow(0).GetInt64(0)))
-}
-
-func (e *CalcFoundRowsExec) finishData() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.closeCtx.Err(); err != nil {
-		return err
-	}
-	e.dataOpened = false
-	if err := exec.Close(e.Children(0)); err != nil {
-		return err
-	}
-	return e.releaseDataCTEStorage()
-}
-
-func (e *CalcFoundRowsExec) openCount(ctx context.Context) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.closeCtx.Err(); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	e.countOpened = true
-	return exec.Open(ctx, e.Children(1))
-}
-
-func (e *CalcFoundRowsExec) finishCount(total uint64) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.closeCtx.Err(); err != nil {
-		return err
-	}
+	total := uint64(chk.GetRow(0).GetInt64(0))
 	e.countOpened = false
-	if err := exec.Close(e.Children(1)); err != nil {
-		return err
-	}
-	if err := e.closeCtx.Err(); err != nil {
+	if err := exec.Close(count); err != nil {
 		return err
 	}
 	e.foundRows = total
@@ -153,18 +104,14 @@ func (e *CalcFoundRowsExec) finishCount(total uint64) error {
 
 // FoundRows reports the total after successful count execution.
 func (e *CalcFoundRowsExec) FoundRows() (uint64, bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	return e.foundRows, e.done
 }
 
 // Close implements exec.Executor.
 func (e *CalcFoundRowsExec) Close() error {
-	if e.cancel != nil {
-		e.cancel()
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.closed = true
 	if e.countOpened {
 		e.countOpened = false
 		return exec.Close(e.Children(1))

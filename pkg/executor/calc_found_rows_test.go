@@ -172,75 +172,78 @@ func TestCalcFoundRowsExec(t *testing.T) {
 		require.Zero(t, count.opens.Load())
 	})
 
-	t.Run("close at handoff", func(t *testing.T) {
+	t.Run("cancellation at handoff", func(t *testing.T) {
 		e, data, count := newExec(nil, 9)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		fp := "github.com/pingcap/tidb/pkg/executor/afterCalcFoundRowsData"
-		require.NoError(t, failpoint.EnableCall(fp, func(sessionctx.Context) { require.NoError(t, e.Close()) }))
+		require.NoError(t, failpoint.EnableCall(fp, func(sessionctx.Context) { cancel() }))
 		t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
 		require.NoError(t, exec.Open(ctx, e))
 		require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), context.Canceled)
+		require.NoError(t, e.Close())
 		require.Zero(t, count.opens.Load())
 		require.EqualValues(t, 1, data.closes.Load())
 		_, available := e.FoundRows()
 		require.False(t, available)
 	})
 
-	for _, phase := range []string{"data next", "count open", "count next", "count next returns rows"} {
-		t.Run("concurrent close during "+phase, func(t *testing.T) {
-			e, data, count := newExec(nil, 9)
-			ctx, cancel := context.WithCancel(ctx)
-			defer cancel()
-			entered := make(chan struct{})
-			block := func(ctx context.Context) error { close(entered); <-ctx.Done(); return ctx.Err() }
-			switch phase {
-			case "data next":
-				closed := make(chan struct{})
-				data.onClose = func() error { close(closed); return nil }
-				data.onNext = func(context.Context, *chunk.Chunk) error {
-					close(entered)
-					<-closed
-					return context.Canceled
-				}
-			case "count open":
-				count.onOpen = block
-			case "count next", "count next returns rows":
-				count.onNext = func(ctx context.Context, req *chunk.Chunk) error {
-					err := block(ctx)
-					if phase == "count next returns rows" {
-						req.AppendInt64(0, 9)
-						return nil
-					}
-					return err
-				}
-			}
-			require.NoError(t, exec.Open(ctx, e))
-			nextResult := make(chan error, 1)
-			go func() { nextResult <- exec.Next(ctx, e, exec.NewFirstChunk(e)) }()
-			select {
-			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("child did not reach blocking operation")
-			}
-			closeResult := make(chan error, 1)
-			go func() { closeResult <- e.Close() }()
-			select {
-			case err := <-closeResult:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("Close did not interrupt child operation")
-			}
-			select {
-			case err := <-nextResult:
-				require.ErrorIs(t, err, context.Canceled)
-			case <-time.After(5 * time.Second):
-				t.Fatal("Next did not return after Close")
-			}
-			require.EqualValues(t, 1, data.closes.Load())
-			require.Equal(t, count.opens.Load(), count.closes.Load())
-			_, available := e.FoundRows()
-			require.False(t, available)
-		})
-	}
+	t.Run("cancelled count does not publish", func(t *testing.T) {
+		e, _, count := newExec(nil, 9)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		count.onNext = func(_ context.Context, req *chunk.Chunk) error {
+			cancel()
+			req.AppendInt64(0, 9)
+			return nil
+		}
+		require.NoError(t, exec.Open(ctx, e))
+		require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), context.Canceled)
+		require.NoError(t, e.Close())
+		_, available := e.FoundRows()
+		require.False(t, available)
+		require.EqualValues(t, 1, count.closes.Load())
+	})
+
+	t.Run("close waits for next", func(t *testing.T) {
+		e, data, count := newExec(nil, 9)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		entered := make(chan struct{})
+		data.onNext = func(ctx context.Context, _ *chunk.Chunk) error {
+			close(entered)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		require.NoError(t, exec.Open(ctx, e))
+		nextResult := make(chan error, 1)
+		go func() { nextResult <- exec.Next(ctx, e, exec.NewFirstChunk(e)) }()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("child did not enter Next")
+		}
+		// Next owns the lifecycle lock until the caller cancels its context.
+		require.False(t, e.mu.TryLock())
+		closeResult := make(chan error, 1)
+		go func() { closeResult <- e.Close() }()
+		cancel()
+		select {
+		case err := <-nextResult:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Next did not return after caller cancellation")
+		}
+		select {
+		case err := <-closeResult:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Close did not return after Next")
+		}
+		require.EqualValues(t, 1, data.closes.Load())
+		require.Zero(t, count.opens.Load())
+	})
+
 }
 
 func TestRecordSetFoundRows(t *testing.T) {
