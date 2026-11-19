@@ -194,13 +194,6 @@ func buildMViewDeltaMergeAggMappings(
 			DependencyColID:    deps,
 			RequiredExactState: aggInfo.RequiredExactState,
 		}
-		if aggInfo.Kind == mview.AggAvg {
-			// The AVG merger must use the physical MV output type, not AVG(SUM(...))'s inferred type.
-			if outputColID < 0 || outputColID >= len(sourceFieldTypes) || sourceFieldTypes[outputColID] == nil {
-				return nil, errors.Errorf("AVG output column %d type is unavailable", outputColID)
-			}
-			aggDesc.RetTp = sourceFieldTypes[outputColID].Clone()
-		}
 		if countStarMappingIdx < 0 && aggInfo.Kind == mview.AggCountStar {
 			countStarMappingIdx = mappingIdx
 		}
