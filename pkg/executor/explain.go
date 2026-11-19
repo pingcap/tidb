@@ -60,7 +60,8 @@ func (e *ExplainExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// FoundRows forwards the analyzed query's total instead of counting plan rows.
+// FoundRows forwards a completed total when the analyzed executor provides one.
+// Otherwise the result set falls back to ordinary returned-row counting.
 func (e *ExplainExec) FoundRows() (uint64, bool) {
 	if e.explain.Analyze && e.analyzeExec != nil {
 		return e.analyzeExec.FoundRows()

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -97,7 +98,16 @@ func TestFoundRowsAfterShowAndExplain(t *testing.T) {
 	t.Run("found rows after explain", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		for _, sql := range []string{"explain select * from t limit 1", "describe select * from t limit 1"} {
+		target := testkit.NewTestKit(t, store)
+		target.MustExec("use test")
+		target.MustQuery("select * from t")
+		process := target.Session().ShowProcess()
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{process}})
+		for _, sql := range []string{
+			"explain select * from t limit 1",
+			"describe select * from t limit 1",
+			fmt.Sprintf("explain for connection %d", process.ID),
+		} {
 			tk.MustQuery("select * from t")
 			tk.MustQuery(sql)
 			tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
@@ -118,6 +128,8 @@ func TestFoundRowsAfterShowAndExplain(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("create view found_rows_view as select a from t")
+		tk.MustExec("create sequence found_rows_seq")
+		tk.MustExec("create placement policy found_rows_policy followers=1")
 		tk.MustExec("create user 'found_rows_show'@'localhost'")
 		defer tk.MustExec("drop user 'found_rows_show'@'localhost'")
 		cases := []struct {
@@ -128,6 +140,9 @@ func TestFoundRowsAfterShowAndExplain(t *testing.T) {
 			{"show errors", true},
 			{"show create table t", true},
 			{"show create view found_rows_view", true},
+			{"show create sequence found_rows_seq", true},
+			{"show create placement policy found_rows_policy", true},
+			{"show create resource group default", true},
 			{"show create database test", true},
 			{"show create user 'found_rows_show'@'localhost'", true},
 			{"show grants for 'found_rows_show'@'localhost'", true},

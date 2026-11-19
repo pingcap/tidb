@@ -1109,6 +1109,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
+		sc.PreserveFoundRows = true
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
 		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
@@ -1209,12 +1210,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 		// Some SHOW statements leave FOUND_ROWS() unchanged in MySQL.
+		// TiDB's additional SHOW CREATE forms follow the same introspection rule.
 		// SHOW SESSION_STATES must also preserve it when exporting session state.
 		switch stmt.Tp {
 		case ast.ShowWarnings, ast.ShowErrors:
 			// SHOW COUNT(*) WARNINGS/ERRORS sets FOUND_ROWS() to 1.
 			sc.PreserveFoundRows = !stmt.CountWarningsOrErrors
 		case ast.ShowCreateTable, ast.ShowCreateView, ast.ShowCreateDatabase, ast.ShowCreateUser,
+			ast.ShowCreateSequence, ast.ShowCreatePlacementPolicy, ast.ShowCreateResourceGroup,
 			ast.ShowGrants, ast.ShowPrivileges, ast.ShowProfiles, ast.ShowMasterStatus, ast.ShowBinlogStatus,
 			ast.ShowProcessList, ast.ShowSessionStates:
 			sc.PreserveFoundRows = true

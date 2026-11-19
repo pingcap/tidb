@@ -223,7 +223,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if a.stmt != nil {
 		a.stmt.recordStatementRURootEOF()
 		rows := a.returnedRows
-		if total, ok := a.executor.FoundRows(); ok {
+		if total, ok := e.FoundRows(); ok {
 			rows = total
 		}
 		sessVars := a.stmt.Ctx.GetSessionVars()
