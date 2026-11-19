@@ -270,9 +270,21 @@ fn served_default(deflt: Deflt) -> String {
 fn served_information_schema_columns_are_go_tables_go() {
     let source = std::fs::read_to_string(go_root().join("pkg/infoschema/tables.go"))
         .expect("read pkg/infoschema/tables.go");
-    let constants = go_constants();
-    let vars = go_column_vars(&source);
-    let tables = go_table_columns(&source, &constants);
+    let mut constants = go_constants();
+    let mut vars = go_column_vars(&source);
+    let mut tables = go_table_columns(&source, &constants);
+    // Go master's materialized view tables (`bb23c552354`), which this
+    // branch's `tables.go` predates, come from a Go master snippet.
+    let master = include_str!("../testdata/go_master_mview_tables.go.txt");
+    for (constant, name) in [
+        ("TableTiDBMViews", "TIDB_MVIEWS"),
+        ("TableTiDBMLogs", "TIDB_MLOGS"),
+        ("TableTiDBTableMViewDependencies", "TIDB_TABLE_MVIEW_DEPENDENCIES"),
+    ] {
+        constants.insert(constant.to_owned(), name.to_owned());
+    }
+    vars.extend(go_column_vars(master));
+    tables.extend(go_table_columns(master, &constants));
     let mut mismatches = Vec::new();
     for (table, columns) in SERVED_TABLES {
         let var = tables

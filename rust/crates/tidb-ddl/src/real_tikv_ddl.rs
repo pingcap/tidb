@@ -1119,6 +1119,12 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                 mut job,
             } => {
                 check_owner().map_err(ClusterDdlError::SchemaSync)?;
+                // Go `transitOneJobStepAndWaitSync`'s `beforeWaitSchemaSynced`
+                // (job, schemaVer), as a snapshot the callback reads.
+                tidb_failpoint::inject_call(
+                    "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced",
+                    &mut ((*job).clone(), version),
+                );
                 if publish_version {
                     // Non-MDL recovery republishes the latest nonempty diff;
                     // MDL recovery only waits for its retained row.
@@ -1188,6 +1194,10 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                     }
                 }
                 let mut job = committed.job;
+                tidb_failpoint::inject_call(
+                    "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced",
+                    &mut ((*job).clone(), 0_i64),
+                );
                 tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
                 *job_w.job.as_ref().unwrap().write() = *job;
                 return Ok(());
@@ -1206,6 +1216,10 @@ fn transit_one_job_step_and_wait_sync<S: StoreClient>(
                 // calls it now.
                 let mut job = committed.job;
                 if schema_state.pending_version.is_none() {
+                    tidb_failpoint::inject_call(
+                        "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced",
+                        &mut ((*job).clone(), 0_i64),
+                    );
                     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", &mut *job);
                 }
                 *job_w.job.as_ref().unwrap().write() = *job;

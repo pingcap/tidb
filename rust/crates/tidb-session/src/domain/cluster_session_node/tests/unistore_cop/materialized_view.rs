@@ -4412,3 +4412,142 @@ fn materialized_view_infoschema_privileges_as_go_master() {
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlaceConcurrentChildFast`
+/// (`nested_oop_test.go`): a child FAST refresh paused at its data statement
+/// fails once its parent's OUT OF PLACE cutover lands, and keeps its old
+/// input log registration until a COMPLETE refresh.
+///
+/// Ignored until register row X05 (3): Go's FAST build takes a fresh
+/// for-update timestamp (`updateForUpdateTS`), while this port's merge
+/// validates at the transaction's earlier one, so the paused child does not
+/// see the cutover and succeeds.
+#[test]
+#[ignore = "register X05 (3): a statement's fresh for-update timestamp is deferred to its first read"]
+fn test_materialized_view_refresh_complete_out_of_place_concurrent_child_fast() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (stack, mut tk, old_mv) = new_mview_refresh_source_fixture();
+    must_exec_all(&mut tk, &[
+        "create materialized view log on mv_source_init (a, s, cnt)",
+        "create materialized view mv_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from mv_source_init group by a",
+        "insert into t_source_init values (3, 30)",
+    ]);
+    let child_id = latest_table(&stack, "mv_child").id;
+    let before_child_log = single_value(&mut tk, &format!("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {child_id}"));
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let paused = Arc::new(AtomicBool::new(false));
+    let pause = std::sync::Mutex::new(Some((entered_tx, release_rx)));
+    let _pause = tidb_failpoint::enable_call_for_test(
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning",
+        {
+            let paused = Arc::clone(&paused);
+            move |_| {
+                if !paused.swap(true, Ordering::AcqRel) {
+                    if let Some((entered, release)) = pause.lock().unwrap().take() {
+                        entered.send(()).unwrap();
+                        let _ = release.recv();
+                    }
+                }
+            }
+        },
+    );
+    let mut child = stack.factory.open_session(session_context(2162)).unwrap();
+    must_exec_all(&mut child, &["set tidb_mview_enable = on", "use test"]);
+    let child_done = std::thread::spawn(move || answer(&mut child, "refresh materialized view mv_child fast"));
+    entered_rx.recv_timeout(std::time::Duration::from_secs(30)).expect("child FAST did not reach its data statement");
+    let mut parent = stack.factory.open_session(session_context(2163)).unwrap();
+    must_exec_all(&mut parent, &["set tidb_mview_enable = on", "use test"]);
+    let parent_done = std::thread::spawn(move || answer(&mut parent, "refresh materialized view mv_source_init complete out of place"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let id_sql = "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='mv_source_init'";
+    while single_value(&mut tk, id_sql) == old_mv.to_string() {
+        assert!(std::time::Instant::now() < deadline, "the parent's cutover did not land");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    release_tx.send(()).unwrap();
+    let child_answer = child_done.join().unwrap();
+    assert!(child_answer.starts_with("ERR"), "child FAST: {child_answer}");
+    assert_eq!(parent_done.join().unwrap(), "OK");
+    assert_eq!(answer(&mut tk, "select * from mv_child order by a"), r#"RS:[["1","10","1","1"],["2","20","1","1"]]"#);
+    // "The parent's registration moves to its new ID; the child keeps its old
+    // input log registration until COMPLETE succeeds."
+    assert_eq!(
+        single_value(&mut tk, "select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=(select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='mv_child')"),
+        before_child_log
+    );
+    must_exec_all(&mut tk, &["refresh materialized view mv_child complete delta apply", "refresh materialized view mv_child fast"]);
+    assert_eq!(answer(&mut tk, "select * from mv_child order by a"), r#"RS:[["1","10","1","1"],["2","20","1","1"],["3","30","1","1"]]"#);
+}
+
+/// Go master `TestAlterMaterializedViewLogAddColumnRefreshLockLifetime`
+/// (`pkg/ddl/tests/materializedviewlog/mview_output_log_test.go`): ADD COLUMN
+/// on a view's own log holds the view's refresh advisory lock until its
+/// delivery ends (schema sync of the done or rolled-back step included), and
+/// the worker releases it before reuse.
+#[test]
+fn test_alter_materialized_view_log_add_column_refresh_lock_lifetime() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for columns in ["s", "s, cnt"] {
+        for rollback in [false, true] {
+            let (stack, _users, mut tk) = go_master_mview_stack();
+            must_exec_all(&mut tk, &[
+                "set tidb_mview_enable = on",
+                "use test",
+                "create table t_alter_mlog_lock (a int not null, b int not null)",
+                "create materialized view log on t_alter_mlog_lock (a, b)",
+                "create materialized view mv_alter_mlog_lock (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_alter_mlog_lock group by a",
+                "create materialized view log on mv_alter_mlog_lock (a)",
+            ]);
+            let mv = latest_table(&stack, "mv_alter_mlog_lock");
+            let lock_name = format!("mv_refresh_{}_{}", mv.db_id, mv.id);
+            let _cancel = rollback.then(|| {
+                let cancel_tk = std::sync::Mutex::new(stack.factory.open_session(session_context(2164)).unwrap());
+                let cancelled = AtomicBool::new(false);
+                tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", move |job| {
+                    let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                    if job.table_name.to_string() != "$mlog$mv_alter_mlog_lock" || cancelled.swap(true, Ordering::AcqRel) {
+                        return;
+                    }
+                    let id = job.id;
+                    let answer = answer(&mut cancel_tk.lock().unwrap(), &format!("admin cancel ddl jobs {id}"));
+                    assert!(answer.contains("successful"), "{answer}");
+                })
+            });
+            let (paused_tx, paused_rx) = std::sync::mpsc::channel::<()>();
+            let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+            let pause = std::sync::Mutex::new(Some((paused_tx, resume_rx)));
+            let _before = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", move |arg| {
+                let (job, _) = arg.downcast_mut::<(tidb_model::Job, i64)>().unwrap();
+                if job.table_name.to_string() == "$mlog$mv_alter_mlog_lock" && (job.is_done() || job.is_rollback_done()) {
+                    if let Some((paused, resume)) = pause.lock().unwrap().take() {
+                        paused.send(()).unwrap();
+                        let _ = resume.recv();
+                    }
+                }
+            });
+            let mut alter = stack.factory.open_session(session_context(2165)).unwrap();
+            must_exec_all(&mut alter, &["set tidb_mview_enable = on", "use test"]);
+            let sql = format!("alter materialized view log on mv_alter_mlog_lock add column ({columns})");
+            let ddl = std::thread::spawn(move || answer(&mut alter, &sql));
+            paused_rx
+                .recv_timeout(std::time::Duration::from_secs(15))
+                .unwrap_or_else(|_| panic!("timeout waiting for ADD COLUMN schema sync ({columns}, rollback={rollback})"));
+            let mut tk_lock = stack.factory.open_session(session_context(2166)).unwrap();
+            must_exec_all(&mut tk_lock, &["set tidb_mview_enable = on", "use test"]);
+            let refused = answer(&mut tk_lock, "refresh materialized view mv_alter_mlog_lock fast");
+            assert!(refused.starts_with("ERR 8182 "), "{columns}, rollback={rollback}: {refused}");
+            resume_tx.send(()).unwrap();
+            let done = ddl.join().unwrap();
+            if rollback {
+                assert!(done.contains("Cancelled DDL job"), "{done}");
+            } else {
+                assert_eq!(done, "OK");
+            }
+            // "the worker must release the lock before reuse"
+            assert_eq!(answer(&mut tk_lock, &format!("select get_lock('{lock_name}', 1)")), r#"RS:[["1"]]"#);
+            assert_eq!(answer(&mut tk_lock, &format!("select release_lock('{lock_name}')")), r#"RS:[["1"]]"#);
+            must_exec_all(&mut tk_lock, &["refresh materialized view mv_alter_mlog_lock fast"]);
+        }
+    }
+}

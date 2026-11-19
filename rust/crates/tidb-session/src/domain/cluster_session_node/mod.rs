@@ -974,15 +974,20 @@ impl<'s> ClusterServerSession<'s> {
         // classified or locked here before the statement compiles.
         self.node.activate_statement_txn = self.activates_txn_at_build(stmt);
         let shape = self.autocommit_dml_shape(stmt).unwrap_or(StatementReadShape::Unknown);
-        // Go `executorBuilder.getSnapshotTS`: an INSERT / UPDATE / DELETE
-        // reads at the statement's for-update timestamp; any other write
-        // (SET, DDL-adjacent statements) at its read timestamp.
+        // Go `executorBuilder.getSnapshotTS`: an INSERT / UPDATE / DELETE,
+        // and Go master's materialized view merge and delta apply
+        // (`inMViewDeltaMergeStmt`, `inMViewCompleteDeltaApplyStmt`), read at
+        // the statement's for-update timestamp; any other write (SET,
+        // DDL-adjacent statements) at its read timestamp.
         let is_dml = matches!(
             stmt,
             Stmt::Dml(dml) if matches!(
                 dml.as_ref(),
                 tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
             )
+        ) || matches!(
+            stmt,
+            Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::RefreshMaterializedViewImplement(_))
         );
         let attempt = self.with_prelocked_statement(
             shape,
