@@ -392,7 +392,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 tidb_vardef::tidb_vars::TIDB_OPT_MPP_OUTER_JOIN_FIXED_BUILD_SIDE,
                 false,
             ),
-            tiflash_concurrency_factor: number(tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR, 24.0),
+            tiflash_concurrency_factor: self.session_vars().cop_tiflash_concurrency_factor,
         };
         env.session.enable_chunk_rpc = enabled("tidb_enable_chunk_rpc", true);
 

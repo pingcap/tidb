@@ -1262,7 +1262,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// `ErrWindowRangeBoundNotConstant` and `ErrWindowFrameIllegal`.
     pub fn build_window_function_frame_bound(
-        &self,
+        &mut self,
         spec: &NamedWindowSpec,
         order_by: &[ColumnSortItem],
         bound: &AstFrameBound,
@@ -1323,8 +1323,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             None => (offset, None),
         };
 
-        // Go `evalAstExprWithPlanCtx` (`:6920`): rewrite against no schema,
-        // then `Eval` on the empty row; either failing is
+        // Go `evalAstExprWithPlanCtx` (`:6920`): rewrite over a fake dual
+        // (`rewriteAstExprWithPlanCtx`, which evaluates a subquery), then
+        // `Eval` on the empty row; either failing is
         // `ErrWindowRangeBoundNotConstant`.
         let not_constant = || {
             PlanError::from(
@@ -1333,7 +1334,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )
         };
         let rewritten = self
-            .rewrite_scalar(value_expr, &Schema::default(), &[], &BTreeMap::new())
+            .rewrite_ast_expr_with_plan_ctx(value_expr)
             .map_err(|_| not_constant())?;
         let constant = match rewritten {
             Expression::Constant(_) => rewritten,
@@ -1435,7 +1436,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// Either bound's error.
     pub fn build_window_function_frame(
-        &self,
+        &mut self,
         spec: &NamedWindowSpec,
         order_by: &[ColumnSortItem],
     ) -> Result<Option<WindowFrame>, PlanError> {

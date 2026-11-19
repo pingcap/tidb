@@ -308,6 +308,11 @@ pub struct SessionVars {
     /// statement's tracker takes when it starts (`tidb_mem_quota_query`'s
     /// `SetSession`; Go tests assign it directly).
     pub mem_quota_query: i64,
+    /// Go's typed `SessionVars.CopTiFlashConcurrencyFactor`, which the cost
+    /// model reads (`tidb_opt_tiflash_concurrency_factor`'s `SetSession`); a
+    /// `skipInit` variable, so reading it never stores the global into the
+    /// session as `GetSessionOrGlobalSystemVar` would.
+    pub cop_tiflash_concurrency_factor: f64,
     /// Go's typed `SessionVars.TiFlashQuerySpillRatio`.
     ti_flash_query_spill_ratio: f64,
     /// Go's typed `SessionVars.PessimisticTransactionFairLocking`.
@@ -668,6 +673,7 @@ impl Default for SessionVars {
             ti_flash_mem_quota_query_per_node:
                 tidb_vardef::defaults::DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
             mem_quota_query: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY,
+            cop_tiflash_concurrency_factor: tidb_vardef::defaults::DEF_OPT_TIFLASH_CONCURRENCY_FACTOR,
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             pessimistic_transaction_fair_locking: false,
             bulk_dml_enabled: false,
@@ -868,8 +874,20 @@ impl SessionVars {
         // does not exclude -- session scope, not noop, not one of Go's
         // `skipInit` variables -- at its GLOBAL value or, for a session-only
         // variable, its registry value.
+        // Go sets each one not already held through
+        // `SetSystemVarWithRelaxedValidation`, whose `SetSession` hooks keep
+        // a charset and its collation in lockstep (`collation_server` writes
+        // the `skipInit` `character_set_server`).
+        let mut paired = Vec::new();
         for (name, value) in globals.session_cache() {
-            systems.entry(name).or_insert(value);
+            if systems.contains_key(&name) {
+                continue;
+            }
+            paired.extend(charset_collation_pair(&name, &value));
+            systems.insert(name, value);
+        }
+        for (name, value) in paired {
+            systems.insert(name.to_owned(), value);
         }
         // A client that set `CLIENT_INTERACTIVE` starts with
         // `wait_timeout = interactive_timeout`.
@@ -916,6 +934,7 @@ impl SessionVars {
         let ti_flash_mem_quota_query_per_node =
             Self::ti_flash_mem_quota_query_per_node_from_systems(&systems);
         let mem_quota_query = Self::mem_quota_query_from_systems(&systems);
+        let cop_tiflash_concurrency_factor = Self::cop_tiflash_concurrency_factor_from_systems(&systems);
         let ti_flash_query_spill_ratio = Self::ti_flash_query_spill_ratio_from_systems(&systems);
         let pessimistic_transaction_fair_locking =
             Self::pessimistic_transaction_fair_locking_from_systems(&systems);
@@ -948,6 +967,7 @@ impl SessionVars {
         self.ti_flash_max_bytes_before_ext_sort = ti_flash_max_bytes_before_ext_sort;
         self.ti_flash_mem_quota_query_per_node = ti_flash_mem_quota_query_per_node;
         self.mem_quota_query = mem_quota_query;
+        self.cop_tiflash_concurrency_factor = cop_tiflash_concurrency_factor;
         self.ti_flash_query_spill_ratio = ti_flash_query_spill_ratio;
         self.pessimistic_transaction_fair_locking = pessimistic_transaction_fair_locking;
         self.bulk_dml_enabled = bulk_dml_enabled;
@@ -1096,6 +1116,17 @@ impl SessionVars {
                 .get(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
                 .map_or("", String::as_str),
             tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY,
+        )
+    }
+
+    /// Go `tidb_opt_tiflash_concurrency_factor`'s `SetSession`:
+    /// `tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)`.
+    fn cop_tiflash_concurrency_factor_from_systems(systems: &HashMap<String, String>) -> f64 {
+        crate::varsutil::tidb_opt_float64(
+            systems
+                .get(tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR)
+                .map_or("", String::as_str),
+            tidb_vardef::defaults::DEF_OPT_TIFLASH_CONCURRENCY_FACTOR,
         )
     }
 
@@ -1693,6 +1724,7 @@ impl SessionVars {
         let mut restores_ti_flash_max_bytes_before_ext_sort = false;
         let mut restores_ti_flash_mem_quota_query_per_node = false;
         let mut restores_mem_quota_query = false;
+        let mut restores_cop_tiflash_concurrency_factor = false;
         let mut restores_ti_flash_query_spill_ratio = false;
         let mut restores_pessimistic_transaction_fair_locking = false;
         let mut restores_bulk_dml_enabled = false;
@@ -1724,6 +1756,8 @@ impl SessionVars {
             restores_ti_flash_mem_quota_query_per_node |=
                 key == tidb_vardef::tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE;
             restores_mem_quota_query |= key == tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY;
+            restores_cop_tiflash_concurrency_factor |=
+                key == tidb_vardef::tidb_vars::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR;
             restores_ti_flash_query_spill_ratio |=
                 key == tidb_vardef::tidb_vars::TIFLASH_QUERY_SPILL_RATIO;
             restores_pessimistic_transaction_fair_locking |=
@@ -1801,6 +1835,10 @@ impl SessionVars {
         }
         if restores_mem_quota_query {
             self.mem_quota_query = Self::mem_quota_query_from_systems(&self.systems);
+        }
+        if restores_cop_tiflash_concurrency_factor {
+            self.cop_tiflash_concurrency_factor =
+                Self::cop_tiflash_concurrency_factor_from_systems(&self.systems);
         }
         if restores_ti_flash_mem_quota_query_per_node {
             self.ti_flash_mem_quota_query_per_node =
@@ -1976,36 +2014,7 @@ impl SessionVars {
         if let Some(hook) = get_sys_var(&key).and_then(|def| def.set_session) {
             hook(self, &value)?;
         }
-        // Go's charset/collation hooks keep each pair in lockstep. A charset
-        // write selects that charset's default collation (except
-        // `character_set_client`/`character_set_results`), while a collation
-        // write mirrors its owning charset into the corresponding charset
-        // variable. Keep the derived names in the session image so all later
-        // reads observe the same side effects as Go's `SessionVars.systems`.
-        let charset_default_collation = match key.as_str() {
-            "character_set_connection" => tidb_charset::get_charset_info(&value)
-                .ok()
-                .map(|charset| ("collation_connection", charset.default_collation)),
-            "character_set_database" => tidb_charset::get_charset_info(&value)
-                .ok()
-                .map(|charset| ("collation_database", charset.default_collation)),
-            "character_set_server" => tidb_charset::get_charset_info(&value)
-                .ok()
-                .map(|charset| ("collation_server", charset.default_collation)),
-            _ => None,
-        };
-        let collation_charset = match key.as_str() {
-            "collation_connection" => tidb_charset::get_collation_by_name(&value)
-                .ok()
-                .map(|collation| ("character_set_connection", collation.charset_name)),
-            "collation_database" => tidb_charset::get_collation_by_name(&value)
-                .ok()
-                .map(|collation| ("character_set_database", collation.charset_name)),
-            "collation_server" => tidb_charset::get_collation_by_name(&value)
-                .ok()
-                .map(|collation| ("character_set_server", collation.charset_name)),
-            _ => None,
-        };
+        let paired = charset_collation_pair(&key, &value);
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -2017,11 +2026,7 @@ impl SessionVars {
         if let Some(other) = alias_of(&key) {
             self.note_system_change(other);
         }
-        if let Some((name, value)) = charset_default_collation {
-            self.systems.insert(name.to_owned(), value);
-            self.note_system_change(name);
-        }
-        if let Some((name, value)) = collation_charset {
+        if let Some((name, value)) = paired {
             self.systems.insert(name.to_owned(), value);
             self.note_system_change(name);
         }
@@ -2475,6 +2480,17 @@ impl SessionVars {
     /// TidbOptInt64(val, DefTiDBMemQuotaQuery)`; the session tracker's limit
     /// (`s.MemTracker.SetBytesLimit`) is taken from it when each statement
     /// starts.
+    pub(crate) fn set_session_tidb_opt_tiflash_concurrency_factor(
+        &mut self,
+        value: &str,
+    ) -> Result<(), VarError> {
+        self.cop_tiflash_concurrency_factor = crate::varsutil::tidb_opt_float64(
+            value,
+            tidb_vardef::defaults::DEF_OPT_TIFLASH_CONCURRENCY_FACTOR,
+        );
+        Ok(())
+    }
+
     pub(crate) fn set_session_tidb_mem_quota_query(&mut self, value: &str) -> Result<(), VarError> {
         self.mem_quota_query =
             crate::varsutil::tidb_opt_int64(value, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_QUERY);
@@ -2508,5 +2524,32 @@ impl SessionVars {
     pub(crate) fn set_session_tidb_analyze_store_batch_size(&mut self, value: &str) -> Result<(), VarError> {
         self.analyze_store_batch_size = value.parse::<i64>().expect("analyze store batch size validation stores an integer");
         Ok(())
+    }
+}
+
+/// Go's charset/collation `SetSession` hooks keep each pair in lockstep: a
+/// charset write selects that charset's default collation (except
+/// `character_set_client` / `character_set_results`), and a collation write
+/// mirrors its owning charset into the corresponding charset variable. The
+/// variable written and its value, for `key = value`.
+fn charset_collation_pair(key: &str, value: &str) -> Option<(&'static str, String)> {
+    let default_collation = |name: &'static str| {
+        tidb_charset::get_charset_info(value)
+            .ok()
+            .map(|charset| (name, charset.default_collation.to_owned()))
+    };
+    let owning_charset = |name: &'static str| {
+        tidb_charset::get_collation_by_name(value)
+            .ok()
+            .map(|collation| (name, collation.charset_name.to_owned()))
+    };
+    match key {
+        "character_set_connection" => default_collation("collation_connection"),
+        "character_set_database" => default_collation("collation_database"),
+        "character_set_server" => default_collation("collation_server"),
+        "collation_connection" => owning_charset("character_set_connection"),
+        "collation_database" => owning_charset("character_set_database"),
+        "collation_server" => owning_charset("character_set_server"),
+        _ => None,
     }
 }

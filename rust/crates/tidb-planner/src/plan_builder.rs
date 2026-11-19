@@ -2977,6 +2977,22 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         Ok(matches!(plan, LogicalPlan::TableDual(_)))
     }
 
+    /// Go `rewriteAstExprWithPlanCtx(sctx, expr, nil, nil, false)`: `expr`
+    /// rewritten in `expressionClause` over a fake, column-less
+    /// `LogicalTableDual`, so an uncorrelated subquery in it is planned and
+    /// evaluated (`handleScalarSubquery`) rather than refused.
+    pub fn rewrite_ast_expr_with_plan_ctx(&mut self, expr: &Expr) -> Result<Expression, PlanError> {
+        let dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+        let saved_clause = self.cur_clause;
+        self.cur_clause = ClauseCode::Expression;
+        let mut expr = expr.clone();
+        let rewritten = self
+            .lower_scalar_subqueries(LogicalPlan::TableDual(dual), &mut expr)
+            .and_then(|(plan, _)| self.rewrite_scalar_with_plan(&expr, &plan, &BTreeMap::new()));
+        self.cur_clause = saved_clause;
+        rewritten
+    }
+
     /// Go `buildSelection`'s "If there is condition which is always false,
     /// return dual plan directly." The dual carries the plan's own schema,
     /// except over a plain `LogicalJoin`, whose `FullSchema` and `FullNames`

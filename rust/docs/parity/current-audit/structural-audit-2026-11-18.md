@@ -43,7 +43,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 
 | Row | Statement | Go | Rust |
 | --- | --- | --- | --- |
-| A08 | `SHOW SESSION_STATES` on a new session | `sys-vars` has `character_set_server` | `sys-vars` has `tidb_opt_tiflash_concurrency_factor` instead |
 | B03 | `tidb-server -store unistore -path ...` | starts | `unsupported option -store` |
 | E33 | `BINLOG 'abc'` | OK | 1105 `this statement kind (ADMIN Binlog) is not supported yet` |
 | E33 | `REFRESH STATS t3` | OK | 1105 `... (ADMIN RefreshStats) ...` |

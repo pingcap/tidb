@@ -1064,7 +1064,9 @@ fn window_range_bound_evaluates_a_non_literal_like_go() {
             "SELECT a, SUM(a) OVER (ORDER BY c RANGE BETWEEN INTERVAL {bound} DAY PRECEDING AND CURRENT ROW) FROM t"
         )
     };
-    for bound in ["@v", "1+1"] {
+    // Go `evalAstExprWithPlanCtx` plans and evaluates a subquery bound over
+    // a fake dual (`rewriteAstExprWithPlanCtx`).
+    for bound in ["@v", "1+1", "(select 1)"] {
         assert_eq!(
             row_text(session.run(&frame(bound))),
             [["1", "1"], ["2", "3"], ["3", "3"]],

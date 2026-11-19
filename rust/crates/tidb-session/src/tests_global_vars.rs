@@ -2068,6 +2068,24 @@ fn set_global_rebuilds_the_sysvar_cache_from_the_in_process_table() {
     );
 }
 
+/// Go `EncodeStates` keeps a variable a new session holds in `systems`:
+/// loading the session cache runs `collation_server`'s `SetSession`, which
+/// writes the `skipInit` `character_set_server`, while the cost model reads
+/// `tidb_opt_tiflash_concurrency_factor` from its typed field and never
+/// stores it. Captured from Go: a new session's `SHOW SESSION_STATES` has
+/// `character_set_server` and not `tidb_opt_tiflash_concurrency_factor`.
+#[test]
+fn session_states_carry_the_variables_a_new_session_holds() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session.run("CREATE TABLE ss_t (a INT)").unwrap();
+    session.run("SELECT * FROM ss_t WHERE a > 1").unwrap();
+    let state = row_text(session.run("SHOW SESSION_STATES"))[0][0].clone();
+    let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+    let vars = state["sys-vars"].as_object().expect("sys-vars");
+    assert_eq!(vars.get("character_set_server").and_then(|v| v.as_str()), Some("utf8mb4"));
+    assert!(!vars.contains_key("tidb_opt_tiflash_concurrency_factor"));
+}
+
 /// Go `SysVar.SkipInit` leaves a `skipInit` variable out of a new session's
 /// copy; `GetSessionOrGlobalSystemVar` stores the GLOBAL value into the
 /// session at its first read. Captured from Go (`probe_skipinit.py`): a
