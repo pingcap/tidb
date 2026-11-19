@@ -137,6 +137,16 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
+<<<<<<< HEAD
+=======
+		if !hasFrames || isRuntimeGoexitGroup(groupHeader) {
+			// A goroutine can be sampled after its user function has returned,
+			// in runtime.goexit or runtime.goexit1. debug=1 hides runtime.goexit.
+			// Resolve every raw PC so only runtime exit stacks bypass the allowlist.
+			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
+			continue
+		}
+>>>>>>> 7a158c6afbe (config: recognize runtime exit tails in diagnostic goroutine profiles (#72536))
 
 		allowed := false
 		for _, function := range allowedFunctions {
@@ -155,6 +165,30 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 	t.Logf("Checked %d goroutines in %d aggregated groups against the diagnostic allowlist", checked, len(groups))
 }
 
+<<<<<<< HEAD
+=======
+func isRuntimeGoexitGroup(header []byte) bool {
+	fields := bytes.Fields(header)
+	if len(fields) <= 2 {
+		return false
+	}
+	for _, field := range fields[2:] {
+		pc, err := strconv.ParseUint(string(field), 0, strconv.IntSize)
+		if err != nil {
+			return false
+		}
+		// Resolve each PC separately so an unknown PC cannot be skipped while
+		// expanding a stack containing known frames.
+		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
+		frame, more := frames.Next()
+		if (frame.Function != "runtime.goexit" && frame.Function != "runtime.goexit1") || more {
+			return false
+		}
+	}
+	return true
+}
+
+>>>>>>> 7a158c6afbe (config: recognize runtime exit tails in diagnostic goroutine profiles (#72536))
 func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
 	t.Helper()
 	if kerneltype.IsNextGen() {
