@@ -1286,8 +1286,8 @@ fn session_migration_restores_dependency_order_rng_warnings_and_bindings() {
     target.run("SET tidb_allow_mpp=OFF").unwrap();
     target.decode_session_states(&state.to_string()).unwrap();
     assert_eq!(target.vars().get_system("tidb_enforce_mpp").unwrap(), "ON");
-    assert_eq!(source.rand.get_seed1(), target.rand.get_seed1());
-    assert_eq!(source.rand.get_seed2(), target.rand.get_seed2());
+    assert_eq!(source.vars.rng.get_seed1(), target.vars.rng.get_seed1());
+    assert_eq!(source.vars.rng.get_seed2(), target.vars.rng.get_seed2());
     assert_eq!(source.warnings, target.warnings);
     assert_eq!(
         source.run("SHOW SESSION BINDINGS").unwrap(),

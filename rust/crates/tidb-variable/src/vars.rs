@@ -409,6 +409,10 @@ pub struct SessionVars {
     /// Go `TxnCtx.StartTS`: the open transaction's start timestamp, `0`
     /// when none is open.
     pub current_tso: CurrentTso,
+    /// Go `SessionVars.Rng`: the session's `RAND()` generator, seeded from
+    /// the wall clock (`mathutil.NewWithTime()`) and by `rand_seed1` /
+    /// `rand_seed2`'s `SetSession`; statement contexts share it.
+    pub rng: Arc<tidb_mathutil::MysqlRng>,
     /// Go `SessionVars.SysErrorCount`.
     pub sys_error_count: usize,
     /// Go `SessionVars.User` in its two spellings: the matched grant
@@ -650,6 +654,7 @@ impl Default for SessionVars {
             in_multi_stmts: false,
             sys_warning_count: 0,
             current_tso: CurrentTso::default(),
+            rng: Arc::new(tidb_mathutil::MysqlRng::new_with_time()),
             sys_error_count: 0,
             current_user: None,
             auth_plugin: String::new(),
@@ -1990,6 +1995,20 @@ impl SessionVars {
     /// Go `last_plan_from_binding`'s `GetSession`: `s.PrevFoundInBinding`.
     pub(crate) fn get_session_last_plan_from_binding(&self) -> Result<String, VarError> {
         Ok(bool_to_on_off(self.prev_found_in_binding).to_owned())
+    }
+
+    /// Go `rand_seed1`'s `SetSession`: `s.Rng.SetSeed1(uint32(
+    /// tidbOptPositiveInt32(val, 0)))` (validation has already clamped the
+    /// value into `0..=MaxInt32`).
+    pub(crate) fn set_session_rand_seed1(&mut self, value: &str) -> Result<(), VarError> {
+        self.rng.set_seed1(value.parse::<u32>().unwrap_or(0));
+        Ok(())
+    }
+
+    /// Go `rand_seed2`'s `SetSession`.
+    pub(crate) fn set_session_rand_seed2(&mut self, value: &str) -> Result<(), VarError> {
+        self.rng.set_seed2(value.parse::<u32>().unwrap_or(0));
+        Ok(())
     }
 
     /// Go `rand_seed1`'s and `rand_seed2`'s `GetSession`: always `"0"`; the

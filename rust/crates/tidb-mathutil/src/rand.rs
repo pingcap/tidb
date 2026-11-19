@@ -27,6 +27,12 @@ pub struct MysqlRng {
     state: Mutex<State>,
 }
 
+impl std::fmt::Debug for MysqlRng {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MysqlRng").finish_non_exhaustive()
+    }
+}
+
 impl MysqlRng {
     /// Creates the RNG with the exact Go wrapping/truncation seed derivation.
     pub fn new_with_seed(seed: i64) -> Self {

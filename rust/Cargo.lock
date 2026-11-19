@@ -11431,6 +11431,7 @@ dependencies = [
  "tidb-kv",
  "tidb-log",
  "tidb-logutil",
+ "tidb-mathutil",
  "tidb-memory",
  "tidb-metrics",
  "tidb-model",

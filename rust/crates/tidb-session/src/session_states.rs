@@ -158,14 +158,14 @@ impl Session {
             }
             system_vars.insert(definition.name, value);
         }
-        system_vars.insert("rand_seed1", self.rand.get_seed1().to_string());
-        system_vars.insert("rand_seed2", self.rand.get_seed2().to_string());
+        system_vars.insert("rand_seed1", self.vars.rng.get_seed1().to_string());
+        system_vars.insert("rand_seed2", self.vars.rng.get_seed2().to_string());
         let mut states = SessionStates {
             resource_group_name: self.vars.resource_group.clone(),
             ..SessionStates::default()
         };
-        system_vars.insert("rand_seed1", self.rand.get_seed1().to_string());
-        system_vars.insert("rand_seed2", self.rand.get_seed2().to_string());
+        system_vars.insert("rand_seed1", self.vars.rng.get_seed1().to_string());
+        system_vars.insert("rand_seed2", self.vars.rng.get_seed2().to_string());
         states.system_vars = system_vars
             .into_iter()
             .map(|(name, value)| (name.to_owned(), value))
@@ -363,8 +363,6 @@ impl Session {
                             ),
                         ],
                     );
-                } else {
-                    self.seed_rand_from_sysvar(name)?;
                 }
             }
         }

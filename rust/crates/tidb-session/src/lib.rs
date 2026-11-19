@@ -895,7 +895,6 @@ pub struct Session {
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
-    rand: Arc<MysqlRng>,
     /// Go `SessionVars.PreparedStmtNameToID` / `PreparedStmts`: the SQL-level
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
@@ -1181,7 +1180,6 @@ impl Session {
             extension_statement: None,
             auth_plugin_verification: None,
             privilege_bypassed: false,
-            rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
             protocol_session_states: Default::default(),
             prepared_params: None,
@@ -1327,12 +1325,6 @@ impl Drop for Session {
     }
 }
 
-/// Go `mathutil.NewWithTime()`: seeds a session's unseeded-`RAND()` generator
-/// from the wall clock, which is what makes two sessions' `RAND()` sequences
-/// differ without either being told to.
-fn new_time_seeded_rand() -> Arc<MysqlRng> {
-    Arc::new(MysqlRng::new_with_time())
-}
 
 
 mod account;

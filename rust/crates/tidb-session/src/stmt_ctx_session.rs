@@ -203,7 +203,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
     fn rand_ref(&self) -> &Arc<MysqlRng> {
-        &self.rand
+        &self.vars.rng
     }
 
     fn builtin_function_usage_inc_fn(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
@@ -217,7 +217,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
     fn rand_mut(&mut self) -> &mut Arc<MysqlRng> {
-        &mut self.rand
+        &mut self.vars.rng
     }
 
     fn retry_auto_ids_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>> {
