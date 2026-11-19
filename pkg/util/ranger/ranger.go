@@ -40,6 +40,9 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
+// errInvalidTimestampRange requests a wider range with the original conditions retained as filters.
+var errInvalidTimestampRange = errors.New("invalid TIMESTAMP range endpoint")
+
 func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (bool, error) {
 	l, err := codec.EncodeKey(loc, nil, low.value)
 	err = ec.HandleError(err)
@@ -125,14 +128,26 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
+// The second return value reports fallback to full range because of invalid TIMESTAMP endpoints or the memory limit.
 func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+<<<<<<< HEAD
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
+=======
+	rangePoints, err := convertPointsInPlace(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
+	if errors.Cause(err) == errInvalidTimestampRange {
+		return FullRange(), true, nil
+	}
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before converting points to ranges.
+<<<<<<< HEAD
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
+=======
+	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize {
+		sctx.RecordRangeFallback(rangeMaxSize)
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 		var fullRange Ranges
 		if mysql.HasNotNullFlag(newTp.GetFlag()) {
 			fullRange = FullNotNullRange()
@@ -161,7 +176,22 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
+<<<<<<< HEAD
 	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
+=======
+	if p.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp {
+		t := p.value.GetMysqlTime()
+		// Check before ConvertTo can adjust an invalid date near a DST transition.
+		// UTC checks calendar validity without rejecting valid local DST-gap times.
+		if !t.IsZero() {
+			if _, err := t.GoTime(time.UTC); err != nil {
+				sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), p.value))
+				return errInvalidTimestampRange
+			}
+		}
+	}
+	casted, err := p.value.ConvertTo(sctx.TypeCtx, newTp)
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 	if err != nil {
 		// skip plan cache in this case for safety.
 		sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
@@ -178,7 +208,7 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
-			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
+			// Keep calendar-valid out-of-range values as bounds; invalid dates were rejected above.
 		} else if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
@@ -270,16 +300,27 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // appended to point ranges. For example, we have an index (a, b), if the condition is (a > 1 and b = 2), then we can not
 // build a conjunctive ranges for this index.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
-// rangeMaxSize and the function rejects appending points to ranges.
+// The second return value reports that invalid TIMESTAMP endpoints or the memory limit prevented appending points.
 func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoints []*point,
 	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+<<<<<<< HEAD
 	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, false, false)
+=======
+	rangePoints, err := convertPointsInPlace(sctx, rangePoints, newTp, false, false)
+	if errors.Cause(err) == errInvalidTimestampRange {
+		return origin, true, nil
+	}
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before appending points to ranges.
+<<<<<<< HEAD
 	if rangeMaxSize > 0 && estimateMemUsageForAppendPoints2Ranges(origin, convertedPoints) > rangeMaxSize {
+=======
+	if rangeMaxSize > 0 && estimateMemUsageForAppendPoints2Ranges(origin, rangePoints) > rangeMaxSize {
+		sctx.RecordRangeFallback(rangeMaxSize)
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 		return origin, true, nil
 	}
 	var newIndexRanges Ranges
@@ -390,7 +431,12 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+<<<<<<< HEAD
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
+=======
+	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize {
+		sctx.RecordRangeFallback(rangeMaxSize)
+>>>>>>> 2a6eaa16c20 (planner: safely fall back for invalid TIMESTAMP range bounds (#72603))
 		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
 	}
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
@@ -436,7 +482,6 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		sctx.RecordRangeFallback(rangeMaxSize)
 		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
@@ -449,8 +494,8 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMaxSize limits the memory used by ranges; 0 disables only memory-limit fallback.
+// Conditions not represented by the returned ranges must still be applied as filters.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
@@ -460,8 +505,8 @@ func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.R
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conds must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMemQuota limits the memory used by ranges; 0 disables only memory-limit fallback.
+// Conditions not represented by the returned ranges must still be applied as filters.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
@@ -497,7 +542,6 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds 
 			return nil, nil, nil, errors.Trace(err)
 		}
 		if rangeFallback {
-			d.sctx.RecordRangeFallback(d.rangeMaxSize)
 			return ranges, accessConds[:i], accessConds[i:], nil
 		}
 	}
@@ -530,7 +574,6 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(eqAndInCount int, accessConds 
 		return nil, nil, nil, errors.Trace(err)
 	}
 	if rangeFallback {
-		d.sctx.RecordRangeFallback(d.rangeMaxSize)
 		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil
