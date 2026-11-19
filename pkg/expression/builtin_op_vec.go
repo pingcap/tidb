@@ -800,6 +800,61 @@ func (b *builtinIntIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	return nil
 }
 
+func (b *builtinJSONIsTrueSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		isNull := buf.IsNull(i)
+		if b.keepNull && isNull {
+			result.SetNull(i, true)
+			continue
+		}
+		if !isNull && !buf.GetJSON(i).IsZero() {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
+func (b *builtinJSONIsFalseSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	numRows := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(numRows, false)
+	i64s := result.Int64s()
+	for i := range numRows {
+		if !buf.IsNull(i) && buf.GetJSON(i).IsZero() {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
 func (b *builtinDurationIsNullSig) vectorized() bool {
 	return true
 }

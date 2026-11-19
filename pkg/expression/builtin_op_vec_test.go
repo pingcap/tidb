@@ -157,6 +157,36 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 
 func TestVectorizedBuiltinOpFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinOpCases)
+
+	jsonValues := []any{
+		types.CreateBinaryJSON(int64(0)),
+		types.CreateBinaryJSON(int64(1)),
+		types.CreateBinaryJSON([]any{int64(1), int64(2)}),
+		types.CreateBinaryJSON(map[string]any{"key": int64(0)}),
+		nil,
+	}
+	for _, funcName := range []string{ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity} {
+		ctx := createContext(t)
+		baseFunc, _, input, result := genVecBuiltinFuncBenchCase(ctx, funcName, vecExprBenchCase{
+			retEvalType:   types.ETInt,
+			childrenTypes: []types.EvalType{types.ETJson},
+			geners:        []dataGenerator{makeGivenValsOrDefaultGener(jsonValues, types.ETJson)},
+			chunkSize:     len(jsonValues),
+		})
+		require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		require.NoError(t, baseFunc.vecEvalInt(ctx, input, result))
+		for i := range input.NumRows() {
+			scalar, isNull, err := baseFunc.evalInt(ctx, input.GetRow(i))
+			require.NoError(t, err)
+			require.Equal(t, result.IsNull(i), isNull)
+			if !isNull {
+				require.Equal(t, result.GetInt64(i), scalar)
+			}
+		}
+		require.Equal(t, uint16(0), ctx.GetSessionVars().StmtCtx.WarningCount())
+	}
 }
 
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
