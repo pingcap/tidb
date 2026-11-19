@@ -411,3 +411,4 @@ mod write_order_limit_source;
 mod mysql_bootstrap_classic_source;
 mod mysql_bootstrap_source;
 mod mysql_bootstrap_tableinfo_source;
+mod executor_test_oomtest_oom_test;

@@ -107,19 +107,30 @@ impl KillStop {
 struct CancelOnExceed {
     base: BaseOomAction,
     killer: Arc<SqlKiller>,
+    conn_id: u64,
+    log_hook: Option<OomLogHook>,
     acted: AtomicBool,
 }
 
+/// Go `memory.LogOnExceed.SetLogHook`'s hook: the domain's
+/// `ExpensiveQueryHandle().LogOnQueryExceedMemQuota`, called with the
+/// connection ID instead of the action's own log line.
+pub type OomLogHook = Arc<dyn Fn(u64) + Send + Sync>;
+
 impl ActionOnExceed for CancelOnExceed {
     fn action(&self, t: &Arc<Tracker>) {
+        // Go `PanicOnExceed.Action`: the hook, or Go's log line.
         if !self.acted.swap(true, SeqCst) {
-            tracing::warn!(
-                conn = t.session_id.load(SeqCst),
-                label = t.label(),
-                consumed = t.bytes_consumed(),
-                limit = t.get_bytes_limit(),
-                "memory exceeds quota"
-            );
+            match &self.log_hook {
+                Some(hook) => hook(self.conn_id),
+                None => tidb_logutil::bg_logger().warn(
+                    "memory exceeds quota",
+                    &[
+                        tidb_log::Field::new("conn", tidb_log::Value::U64(t.session_id.load(SeqCst))),
+                        tidb_logutil::zap_error(tidb_memory::mem_exceed_error(t)),
+                    ],
+                ),
+            }
         }
         self.killer
             .send_kill_signal(KillSignal::QueryMemoryExceeded);
@@ -163,10 +174,14 @@ fn fallback_spill_storage() -> Arc<SpillStorage> {
     }))
 }
 
+/// Go `ResetContextOfStmt`'s OOM action for the session tracker:
+/// `PanicOnExceed` (here [`CancelOnExceed`]) or `LogOnExceed`, each with
+/// `SetLogHook(logOnQueryExceedMemQuota)`.
 fn install_oom_action(
     session: &Arc<Tracker>,
     oom_action: OomAction,
     connection_id: u64,
+    log_hook: Option<&OomLogHook>,
 ) -> Arc<SqlKiller> {
     let killer = Arc::clone(&session.killer);
     killer.reset();
@@ -176,11 +191,19 @@ fn install_oom_action(
             session.set_action_on_exceed(Some(Arc::new(CancelOnExceed {
                 base: BaseOomAction::default(),
                 killer: Arc::clone(&killer),
+                conn_id: connection_id,
+                log_hook: log_hook.cloned(),
                 acted: AtomicBool::new(false),
             })));
         }
         OomAction::Log => {
-            session.set_action_on_exceed(Some(Arc::new(LogOnExceed::default())));
+            let mut action = LogOnExceed::default();
+            action.conn_id = connection_id;
+            if let Some(hook) = log_hook {
+                let hook = Arc::clone(hook);
+                action.set_log_hook(Box::new(move |conn_id| hook(conn_id)));
+            }
+            session.set_action_on_exceed(Some(Arc::new(action)));
         }
     }
     killer
@@ -216,6 +239,7 @@ pub struct SessionMemory {
 
 #[derive(Clone)]
 struct SessionMemoryConfig {
+    log_hook: Option<OomLogHook>,
     spill_storage: Option<Arc<SpillStorage>>,
     arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
     tmp_storage_on_oom: bool,
@@ -263,6 +287,7 @@ impl SessionMemory {
             session,
             disk_session,
             config: Arc::new(Mutex::new(SessionMemoryConfig {
+                log_hook: None,
                 spill_storage: None,
                 arbitrator: None,
                 tmp_storage_on_oom: true,
@@ -270,6 +295,12 @@ impl SessionMemory {
             })),
             query_cancellation: tidb_sqlkiller::QueryCancellation::default(),
         }
+    }
+
+    /// Installs the OOM actions' log hook (Go `ResetContextOfStmt`'s
+    /// `sessDom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota`).
+    pub fn set_log_hook(&self, hook: OomLogHook) {
+        self.config.lock().unwrap().log_hook = Some(hook);
     }
 
     /// The session's SQL killer (Go `SessionVars.SQLKiller`), shared by every
@@ -399,7 +430,12 @@ impl SessionMemory {
     ) -> StatementMemory {
         let connection_id = self.session.session_id.load(SeqCst);
         let config = self.config.lock().unwrap().clone();
-        let killer = install_oom_action(&self.session, config.oom_action, connection_id);
+        let killer = install_oom_action(
+            &self.session,
+            config.oom_action,
+            connection_id,
+            config.log_hook.as_ref(),
+        );
         if self.query_cancellation.requested() {
             killer.send_kill_signal(KillSignal::QueryInterrupted);
         }

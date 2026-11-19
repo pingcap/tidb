@@ -2345,6 +2345,12 @@ impl Session {
         &self.vars
     }
 
+    /// The session's variables, for a test that assigns one directly (Go
+    /// `tk.Session().GetSessionVars().MemQuotaQuery = 1`).
+    pub fn vars_mut(&mut self) -> &mut SessionVars {
+        &mut self.vars
+    }
+
     /// Applies one already-validated internal-session variable update.
     ///
     /// Go's statistics session reset writes the typed `SessionVars` fields
@@ -2483,6 +2489,12 @@ impl Session {
 
     /// Installs the server-owned process memory arbitrator for statements this
     /// session starts after the authority becomes available.
+    /// Go `ResetContextOfStmt`'s OOM log hook: the domain's
+    /// `ExpensiveQueryHandle().LogOnQueryExceedMemQuota`.
+    pub fn set_oom_log_hook(&mut self, hook: tidb_variable::mem_quota::OomLogHook) {
+        self.session_memory.set_log_hook(hook);
+    }
+
     pub fn set_mem_arbitrator(&mut self, arbitrator: Arc<tidb_memory::MemArbitrator>) {
         self.session_memory.set_mem_arbitrator(arbitrator);
     }

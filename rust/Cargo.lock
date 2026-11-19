@@ -11405,6 +11405,8 @@ dependencies = [
  "tidb-hack",
  "tidb-intest",
  "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-memory",
  "tidb-metrics",
  "tidb-model",

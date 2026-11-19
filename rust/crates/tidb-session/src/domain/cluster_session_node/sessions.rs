@@ -515,6 +515,10 @@ impl DomainSessions for Domain {
         if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
             session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
+        let expensive_query = self.expensive_query_handle();
+        session.set_oom_log_hook(Arc::new(move |conn_id| {
+            expensive_query.log_on_query_exceed_mem_quota(conn_id);
+        }));
 
         session.set_global_vars_accessor(Arc::new(self.global_vars.clone()));
         Ok(session)

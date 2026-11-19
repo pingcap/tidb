@@ -188,8 +188,6 @@ mod table_sample;
 mod check_index_range;
 mod admin_index_exec;
 #[cfg(test)]
-mod tests_oomtest_source;
-#[cfg(test)]
 mod tests_passwordtest_source;
 pub mod union_scan;
 pub mod view;

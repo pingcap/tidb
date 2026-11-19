@@ -272,7 +272,7 @@ impl ActionOnExceed for PanicOnExceed {
 
 /// Formats Go's `errMemExceedThreshold.GenWithStackByArgs(label, consumed,
 /// limit, tree)`.
-fn mem_exceed_error(t: &Arc<Tracker>) -> TerrorError {
+pub fn mem_exceed_error(t: &Arc<Tracker>) -> TerrorError {
     let template = ERR_MEM_EXCEED_THRESHOLD.message().to_string();
     ERR_MEM_EXCEED_THRESHOLD.fast_gen(
         &template,

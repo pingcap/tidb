@@ -24,7 +24,8 @@ mod process;
 mod tracker;
 
 pub use action::{
-    ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction, LogOnExceed, PanicOnExceed,
+    mem_exceed_error, ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction, LogOnExceed,
+    PanicOnExceed,
     DEF_CURSOR_FETCH_SPILL_PRIORITY, DEF_LOG_PRIORITY, DEF_PANIC_PRIORITY, DEF_RATE_LIMIT_PRIORITY,
     DEF_SPILL_PRIORITY,
 };

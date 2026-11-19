@@ -1034,7 +1034,7 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
     /// small tasks get (`smallTaskConcurrency`).
     fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
         let tasks = self.logical_order.len();
-        let use_row_hints = !self.metadata.request_source.internal;
+        let use_row_hints = opt_row_hint(self.metadata.request_source.internal);
         let small = if use_row_hints {
             self.runtime.small_task_count()
         } else {
@@ -1124,7 +1124,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
     }
 
     fn use_row_hints(&self) -> bool {
-        !self.metadata.request_source.internal
+        opt_row_hint(self.metadata.request_source.internal)
     }
 
     fn start_worker(&mut self) {}
@@ -1270,4 +1270,13 @@ mod checksum_variables_tests {
             tikv_client::Variables::default().backoff_weight
         );
     }
+}
+
+/// Go `optRowHint`: an internal request takes no extra concurrency from row
+/// count hints, nor does any request under `disableFixedRowCountHint`.
+fn opt_row_hint(request_source_internal: bool) -> bool {
+    if request_source_internal {
+        return false;
+    }
+    tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint").is_none()
 }
