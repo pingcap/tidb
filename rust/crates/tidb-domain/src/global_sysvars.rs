@@ -1235,49 +1235,6 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
-            // Go `SetGlobal`: `oracles.EnableTSValidation.Store(TiDBOptOn(val))`.
-            TIDB_ENABLE_TS_VALIDATION => {
-                tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on, SeqCst)
-            }
-            // Go's `TiDBEnableMDL` hook runs `SwitchMDL` -> `SetEnableMDL`. A
-            // node that leaves the process flag at its `false` default
-            // acknowledges DDL schema versions on the classic per-node key
-            // while a Go owner with metadata locking on waits for the
-            // per-job key, so every Go-issued DDL on the cluster blocks until
-            // the node is gone. Following the value the cluster holds is not
-            // a switch, so Go's running-job guard (enforced by the cluster
-            // writer for a user's `SET GLOBAL`) does not apply here.
-            TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
-            TIDB_SCHEMA_CACHE_SIZE => {
-                let bytes = tidb_variable::varsutil::parse_byte_size(value)
-                    .map(|(bytes, _)| bytes)
-                    .or_else(|| value.parse::<u64>().ok())
-                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
-                tidb_vardef::SCHEMA_CACHE_SIZE.store(bytes, SeqCst);
-            }
-            TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE => {
-                tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on, SeqCst)
-            }
-            TIDB_COMMITTER_CONCURRENCY => {
-                if let Ok(value) = value.parse::<i32>() {
-                    tidb_tikvutil::COMMITTER_CONCURRENCY.store(value, SeqCst);
-                }
-            }
-            TIDB_REDACT_LOG => tidb_mysql::errors::set_redaction_mode(match value {
-                "ON" => tidb_mysql::errors::RedactionMode::Enabled,
-                "MARKER" => tidb_mysql::errors::RedactionMode::Marker,
-                _ => tidb_mysql::errors::RedactionMode::Disabled,
-            }),
-            TIDB_ANALYZE_DEFAULT_NUM_BUCKETS => {
-                if let Ok(value) = value.parse::<u64>() {
-                    tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(value, SeqCst);
-                }
-            }
-            TIDB_ANALYZE_DEFAULT_NUM_TOP_N => {
-                if let Ok(value) = value.parse::<u64>() {
-                    tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(value, SeqCst);
-                }
-            }
             PD_ENABLE_FOLLOWER_HANDLE_REGION
             | TIDB_ENABLE_TSO_FOLLOWER_PROXY
             | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME

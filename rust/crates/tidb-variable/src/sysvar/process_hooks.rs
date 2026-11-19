@@ -368,3 +368,45 @@ get_global! {
     get_tidb_memory_usage_alarm_ratio => go_g(tidb_vardef::memory_usage_alarm_ratio());
     get_tidb_force_priority => priority_to_str(tidb_vardef::FORCE_PRIORITY.load(SeqCst));
 }
+
+set_global! {
+    // Go `TiDBAnalyzeDefaultNumBuckets` / `TopN`: `strconv.ParseUint` then
+    // `Store`; the registry's unsigned type has validated the value.
+    set_tidb_analyze_default_num_buckets => |s| if let Ok(v) = s.parse::<u64>() {
+        tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(v, SeqCst);
+    };
+    set_tidb_analyze_default_num_top_n => |s| if let Ok(v) = s.parse::<u64>() {
+        tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.store(v, SeqCst);
+    };
+    set_tidb_enable_auto_analyze_priority_queue => |s| {
+        tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.store(on(s), SeqCst);
+    };
+    // Go: `oracles.EnableTSValidation.Store(TiDBOptOn(val))`.
+    set_tidb_enable_ts_validation => |s| {
+        tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.store(on(s), SeqCst);
+    };
+    // Go: `tikvutil.CommitterConcurrency.Store(int32(TidbOptInt64(val, def)))`.
+    set_tidb_committer_concurrency => |s| tidb_tikvutil::COMMITTER_CONCURRENCY.store(
+        crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY) as i32,
+        SeqCst,
+    );
+    // Go `TiDBEnableMDL`: `if vardef.IsMDLEnabled() != TiDBOptOn(val) {
+    // SwitchMDL(TiDBOptOn(val)) }`, whose effect on this node is the switch.
+    set_tidb_enable_metadata_lock => |s| {
+        if tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()) != on(s) {
+            tidb_vardef::set_enable_mdl(on(s));
+        }
+    };
+}
+
+get_global! {
+    get_tidb_analyze_default_num_buckets => tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(SeqCst).to_string();
+    get_tidb_analyze_default_num_top_n => tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(SeqCst).to_string();
+    get_tidb_enable_auto_analyze_priority_queue => on_off(tidb_vardef::ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE.load(SeqCst));
+    get_tidb_committer_concurrency => tidb_tikvutil::COMMITTER_CONCURRENCY.load(SeqCst).to_string();
+    get_tidb_enable_metadata_lock => on_off(tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()));
+    get_tidb_schema_cache_size => tidb_vardef::SCHEMA_CACHE_SIZE_ORIGIN_TEXT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+}

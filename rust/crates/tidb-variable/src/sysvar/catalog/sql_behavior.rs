@@ -398,7 +398,7 @@ pub(super) static ENTRIES: [SysVarDef; 25] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_ts_validation),
         get_session: None,
         get_global: None,
     },

@@ -234,3 +234,42 @@ fn global_reads_of_process_state_use_gos_formatting() {
         tk.must_exec(&format!("set global {name} = default"));
     }
 }
+
+/// The `SetGlobal` / `GetGlobal` Go keeps on these variables themselves:
+/// the analyze defaults, the auto-analyze priority queue, TS validation, the
+/// committer concurrency, the metadata-lock switch, the schema cache size's
+/// origin text and the process-wide log redaction.
+#[test]
+fn variables_carry_their_own_process_state_hooks() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_analyze_default_num_buckets = 300");
+    assert_eq!(tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.load(SeqCst), 300);
+    tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS.store(301, SeqCst);
+    tk.must_query("select @@global.tidb_analyze_default_num_buckets").check(["301"]);
+    tk.must_exec("set global tidb_analyze_default_num_topn = 50");
+    assert_eq!(tidb_vardef::ANALYZE_DEFAULT_NUM_TOP_N.load(SeqCst), 50);
+    tk.must_exec("set global tidb_enable_ts_validation = OFF");
+    assert!(!tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.load(SeqCst));
+    tk.must_exec("set global tidb_enable_ts_validation = ON");
+    assert!(tikv_client::oracle::oracles::ENABLE_TS_VALIDATION.load(SeqCst));
+    tk.must_exec("set global tidb_committer_concurrency = 64");
+    assert_eq!(tidb_tikvutil::COMMITTER_CONCURRENCY.load(SeqCst), 64);
+    tidb_tikvutil::COMMITTER_CONCURRENCY.store(65, SeqCst);
+    tk.must_query("select @@global.tidb_committer_concurrency").check(["65"]);
+    tk.must_exec("set global tidb_schema_cache_size = '600MB'");
+    tk.must_query("select @@global.tidb_schema_cache_size").check(["600MB"]);
+    tk.must_exec("set global tidb_redact_log = MARKER");
+    assert!(matches!(tidb_mysql::errors::redaction_mode(), tidb_mysql::errors::RedactionMode::Marker));
+    for name in [
+        "tidb_analyze_default_num_buckets",
+        "tidb_analyze_default_num_topn",
+        "tidb_enable_ts_validation",
+        "tidb_committer_concurrency",
+        "tidb_schema_cache_size",
+        "tidb_redact_log",
+    ] {
+        tk.must_exec(&format!("set global {name} = default"));
+    }
+}

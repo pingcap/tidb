@@ -2323,12 +2323,28 @@ impl SessionVars {
                 globals.run_set_global_hook(tidb_vardef::tidb_vars::TIDB_SCHEMA_CACHE_SIZE, value)?;
             }
         }
+        // Go: `vardef.SchemaCacheSize.Store(bt)`,
+        // `vardef.SchemaCacheSizeOriginText.Store(str)`.
+        tidb_vardef::SCHEMA_CACHE_SIZE.store(
+            bytes.unwrap_or(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        *tidb_vardef::SCHEMA_CACHE_SIZE_ORIGIN_TEXT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value.to_owned();
         Ok(())
     }
 
     /// Go `TiDBRedactLog`'s `SetGlobal`: `s.EnableRedactLog = val`.
     pub(crate) fn set_global_tidb_redact_log(&mut self, value: &str) -> Result<(), VarError> {
         self.set_enable_redact_log(value.to_owned());
+        // NOTE: switch of errors is a singleton, thus we can not set it for
+        // different sessions (Go `errors.RedactLogEnabled.Store(val)`).
+        tidb_mysql::errors::set_redaction_mode(match value {
+            "ON" => tidb_mysql::errors::RedactionMode::Enabled,
+            "MARKER" => tidb_mysql::errors::RedactionMode::Marker,
+            _ => tidb_mysql::errors::RedactionMode::Disabled,
+        });
         Ok(())
     }
 

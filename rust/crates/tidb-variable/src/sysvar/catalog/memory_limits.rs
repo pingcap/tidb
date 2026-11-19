@@ -797,7 +797,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         set_session: None,
         set_global: Some(crate::vars::SessionVars::set_global_tidb_schema_cache_size),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_schema_cache_size),
     },
     SysVarDef {
         name: "tidb_server_memory_limit",

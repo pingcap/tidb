@@ -315,6 +315,11 @@ pub static TXN_ENTRY_SIZE_LIMIT: AtomicU64 =
 pub static SCHEMA_CACHE_SIZE: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
 
+/// Go `vardef.SchemaCacheSizeOriginText`: the value text `tidb_schema_cache_size`
+/// was set with, which its `GetGlobal` reads back.
+pub static SCHEMA_CACHE_SIZE_ORIGIN_TEXT: std::sync::LazyLock<std::sync::Mutex<String>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(defaults::DEF_TIDB_SCHEMA_CACHE_SIZE.to_string()));
+
 /// Go `vardef.CircuitBreakerPDMetadataErrorRateThresholdRatio`, stored as
 /// the IEEE-754 bit pattern for lock-free process-wide reads by the PD
 /// circuit breaker.
