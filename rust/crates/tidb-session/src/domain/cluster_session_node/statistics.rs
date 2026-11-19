@@ -287,6 +287,25 @@ impl<'s> ClusterServerSession<'s> {
         Ok(NO_ROWS)
     }
 
+    /// Go `executeRefreshStatsOnCurrentInstance`.
+    pub(super) fn run_refresh_stats(
+        &mut self,
+        refresh: &tidb_ast::RefreshStatsStmt,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let service = self.stats_statement_service();
+        self
+            .session
+            .run_refresh_stats(refresh, service.as_ref())
+            .map_err(super::map_error)?;
+        Ok(NO_ROWS)
+    }
+
+    /// Go `broadcast`.
+    pub(super) fn run_broadcast(&mut self, query: &str) -> Result<WriteOutcome, SqlQueryError> {
+        self.session.broadcast(query).map_err(super::map_error)?;
+        Ok(NO_ROWS)
+    }
+
     pub(super) fn run_drop_stats(
         &mut self,
         physical_ids: &[i64],
@@ -632,6 +651,41 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
             target_ids,
         )
         .map_err(tidb_driver_error::DriverError::unsupported)
+    }
+
+    fn init_stats(
+        &self,
+        table_ids: &[i64],
+        mode: tidb_stats_handle::bootstrap::InitialStatsLoad,
+    ) -> Result<(), tidb_driver_error::DriverError> {
+        // Go `h.Pool.SPool().WithForceBlockGCSession`.
+        let pool = self.session_pool.as_ref().ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported("this node has no statistics session pool")
+        })?;
+        let targets = crate::domain::real_tikv_node::schema_following::current_stats_targets(
+            self.catalog.as_ref(),
+        )
+        .map_err(tidb_driver_error::DriverError::unsupported)?;
+        let snapshot = tidb_stats_handle::bootstrap::init_stats(
+            Arc::new(tidb_domain_core::sys_session::OwnedStatsPool(Arc::clone(pool))),
+            &targets,
+            table_ids,
+            mode,
+        )
+        .map_err(tidb_driver_error::DriverError::unsupported)?;
+        // "If tableIDs is empty, it means we load all the tables' stats meta
+        // and histograms": `h.Replace(cache)`; else `h.Put` each table the
+        // load found.
+        if table_ids.is_empty() {
+            self.stats.store(snapshot);
+        } else {
+            for (table_id, state) in snapshot {
+                if let Some(table) = state.loaded() {
+                    self.stats.publish_analyzed_table(table_id, Arc::clone(table));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {

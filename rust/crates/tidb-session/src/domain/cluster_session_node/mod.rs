@@ -291,6 +291,11 @@ enum StatementRoute {
     StatsLock(ClusterStatsLockStatement),
     /// One `DROP STATS`, over the physical ids Go's `executeDropStats` names.
     DropStats(Vec<i64>),
+    /// One `REFRESH STATS` on this instance (Go
+    /// `executeRefreshStatsOnCurrentInstance`), its objects qualified.
+    RefreshStats(Box<tidb_ast::RefreshStatsStmt>),
+    /// Go `broadcast`: the statement every TiDB runs from remote.
+    Broadcast(String),
 }
 
 use tidb_executor::stats_exec::FlushStatsDeltaTargets;
@@ -1344,7 +1349,7 @@ impl<'s> ClusterServerSession<'s> {
             .session
             .compile_statement(stmt)
             .map_err(map_error)?;
-        self.route_for(stmt, executor)
+        self.route_for(stmt, &executor)
     }
 
     /// The executor this node runs a compiled statement with: the job-running
@@ -1353,7 +1358,7 @@ impl<'s> ClusterServerSession<'s> {
     fn route_for(
         &mut self,
         stmt: &tidb_ast::Stmt,
-        executor: CompiledExecutor,
+        executor: &CompiledExecutor,
     ) -> Result<StatementRoute, SqlQueryError> {
         // The BDR role lives in the cluster's meta key; the session answers
         // from the store this node installed. Without one, answering from
@@ -1372,7 +1377,28 @@ impl<'s> ClusterServerSession<'s> {
         }
         match executor {
             // Go `SimpleExec.Next` switches on the statement node.
-            CompiledExecutor::Simple => {
+            CompiledExecutor::Simple(planned) => {
+                // Go `executeRefreshStats` / `executeFlushStatsDelta`: a
+                // statement from remote runs here; a CLUSTER one is
+                // restored, fully qualified, and broadcast to every TiDB.
+                if let Stmt::Admin(admin) = planned.as_ref() {
+                    let cluster = match admin.as_ref() {
+                        tidb_ast::AdminStmt::RefreshStats(refresh) => {
+                            if !refresh.cluster_wide || self.session.is_from_remote() {
+                                return Ok(StatementRoute::RefreshStats(refresh.clone()));
+                            }
+                            true
+                        }
+                        tidb_ast::AdminStmt::Flush(flush) => matches!(
+                            flush.target,
+                            tidb_ast::FlushStmtType::StatsDelta { cluster: true, .. }
+                        ),
+                        _ => false,
+                    };
+                    if cluster && !self.session.is_from_remote() {
+                        return Ok(StatementRoute::Broadcast(planned.restore()));
+                    }
+                }
                 if let Some(targets) = self.session.flush_stats_delta_targets(stmt) {
                     return Ok(StatementRoute::FlushStatsDelta(targets));
                 }
@@ -1423,6 +1449,12 @@ impl<'s> ClusterServerSession<'s> {
                 },
                 _ => Ok(StatementRoute::DdlExec),
             },
+            // Go `reloadClusterBindings`: "broadcast the reload bindings
+            // command to the entire cluster, including the current node
+            // itself."
+            CompiledExecutor::ReloadClusterBindings => {
+                Ok(StatementRoute::Broadcast("ADMIN RELOAD BINDINGS".to_owned()))
+            }
             CompiledExecutor::Other => Ok(StatementRoute::Ordinary),
         }
     }
@@ -1499,6 +1531,12 @@ impl<'s> ClusterServerSession<'s> {
             }
             StatementRoute::DropStats(physical_ids) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))
+            }
+            StatementRoute::RefreshStats(refresh) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_refresh_stats(&refresh))
+            }
+            StatementRoute::Broadcast(query) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_broadcast(&query))
             }
             StatementRoute::Ordinary => return Ok(None),
         };
@@ -2029,7 +2067,7 @@ impl<'s> ClusterServerSession<'s> {
                 .session
                 .compile_statement_for_prepare(prepared_ast.statement())
                 .map_err(map_error)?;
-            self.route_for(prepared_ast.statement(), executor)?;
+            self.route_for(prepared_ast.statement(), &executor)?;
             self.session.truncate_warnings(warnings_before);
             // Keep ordinary DML's parsed tree as well.  The MySQL binary
             // protocol prepares YCSB's INSERT/UPDATE/DELETE once and then
@@ -2839,16 +2877,18 @@ impl<'s> ClusterServerSession<'s> {
         };
         // An account statement's `SimpleExec` commits the user's transaction
         // after `Compile` ([`Self::run_account_executor`]).
-        if executor == CompiledExecutor::Simple && Session::is_account_statement(stmt) {
+        if matches!(executor, CompiledExecutor::Simple(_)) && Session::is_account_statement(stmt) {
             return Ok(CompiledStatement::AccountSimple);
         }
         // The node's own executors answer whatever shape the plan has.
-        let route = self.route_for(stmt, executor)?;
+        let route = self.route_for(stmt, &executor)?;
         if !matches!(route, StatementRoute::Ordinary) {
             return Ok(CompiledStatement::StoredState(route));
         }
         // The session's FLUSH commits it the same way (`SimpleExec.autoNewTxn`).
-        if executor == CompiledExecutor::Simple && Session::simple_exec_new_txn_in_stmt(stmt) {
+        if matches!(executor, CompiledExecutor::Simple(_))
+            && Session::simple_exec_new_txn_in_stmt(stmt)
+        {
             return Ok(CompiledStatement::AccountSimple);
         }
         if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))

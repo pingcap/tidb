@@ -124,7 +124,7 @@ fn stats_targets(catalog: &SessionExtendedInfoSchema) -> Result<Vec<tidb_stats_h
 /// schema follower. Go's statistics handle does the equivalent on every
 /// cache update: a DDL must not leave a newly added table, or a changed column
 /// type, outside later `mysql.stats_*` reads.
-fn current_stats_targets(catalog: &InfoCache) -> Result<Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget>, String> {
+pub(crate) fn current_stats_targets(catalog: &InfoCache) -> Result<Vec<tidb_stats_handle_syncload::real_tikv_stats::StatsTarget>, String> {
     let current = catalog.get_latest();
     stats_targets(&current)
 }

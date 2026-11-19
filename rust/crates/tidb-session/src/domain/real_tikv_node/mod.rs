@@ -35,7 +35,7 @@ use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserSt
 use tidb_domain_core::node_config::NodeConfig;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
-mod schema_following;
+pub(crate) mod schema_following;
 
 pub use schema_following::{
     connect_etcd_client, new_node_stats, spawn_catalog_reloader, spawn_node_stats,

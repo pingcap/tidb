@@ -425,6 +425,10 @@ pub struct Session {
     precompiled: Option<crate::identity::PrecompiledStatement>,
     /// Go `preprocessor.inPrepare`: prepared DDL retains its prepared resolve context.
     in_prepare: bool,
+    /// Go `Simple.IsFromRemote` / `SQLBindPlan.IsFromRemote`: the statement
+    /// running is a peer's broadcast (`pbToBroadcastQuery`), which runs on
+    /// this instance and is never broadcast again.
+    pub(crate) from_remote: bool,
     /// What the session's executors reach through Go's `Domain`; `None` for
     /// an in-process session.
     domain_services: Option<crate::domain_services::DomainServices>,
@@ -1022,6 +1026,7 @@ impl Session {
             account_sql: None,
             precompiled: None,
             in_prepare: false,
+            from_remote: false,
             domain_services: None,
             privilege_change_notifier: None,
             pending_privilege_users: None,
@@ -2059,6 +2064,22 @@ impl Session {
             text(owner.id()),
             Datum::Bytes(queries.join(&b'\n')),
         ]])
+    }
+
+    /// Whether the running statement is a peer's broadcast.
+    pub fn is_from_remote(&self) -> bool {
+        self.from_remote
+    }
+
+    /// Go `broadcast` over this session's `kv.TiDB` client.
+    pub fn broadcast(&mut self, sql: &str) -> Result<(), DriverError> {
+        let ctx = self.statement_context(false);
+        let viewer = self.viewer_state();
+        let result = self.with_catalog_mut(|is| {
+            tidb_executor::simple::broadcast(&viewer, is, &ctx, sql)
+        });
+        self.drain_eval_warnings(&ctx);
+        result
     }
 
     /// Go fetchClusterConfig checks CONFIG before discovery and reports per-node

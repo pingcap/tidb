@@ -421,6 +421,11 @@ impl TestKit {
     }
 
     /// Go `domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo`.
+    /// Go `dom.StatsHandle().GetPhysicalTableStats(id, tblInfo)`.
+    pub fn stats_table_for_test(&self, physical_id: i64) -> Option<std::sync::Arc<tidb_stats::Table>> {
+        self.session.stats_table_for_test(physical_id)
+    }
+
     pub fn update_table_replica_info(&mut self, physical_id: i64, available: bool) {
         tidb_session::domain::mock_store::domain_of(&self.session)
             .expect("a mock-store session")

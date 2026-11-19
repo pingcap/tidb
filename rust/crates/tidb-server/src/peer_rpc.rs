@@ -201,20 +201,44 @@ pub(crate) fn store_sessions(
     Arc::new(move || Ok(Session::with_catalog(catalog.clone())))
 }
 
+impl PeerService {
+    /// [`Self::handle`] on a thread of its own, outside the server's async
+    /// runtime. Go serves each RPC on its own goroutine, which may block; a
+    /// request here can run a statement (a broadcast query) whose store
+    /// calls block on the store's own runtime, which refuses to run inside
+    /// another runtime's context -- a `spawn_blocking` thread included.
+    async fn handle_blocking(
+        &self,
+        request: coprocessor::Request,
+    ) -> Result<coprocessor::Response, tonic::Status> {
+        let service = self.clone();
+        let (respond, response) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("peer-coprocessor".into())
+            .spawn(move || {
+                let _ = respond.send(service.handle(request));
+            })
+            .map_err(|error| tonic::Status::internal(error.to_string()))?;
+        response
+            .await
+            .map_err(|_| tonic::Status::internal("the peer coprocessor handler panicked"))
+    }
+}
+
 #[tonic::async_trait]
 impl tikvpb::tikv_server::Tikv for PeerService {
     async fn coprocessor(
         &self,
         request: tonic::Request<coprocessor::Request>,
     ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
-        Ok(tonic::Response::new(self.handle(request.into_inner())))
+        Ok(tonic::Response::new(self.handle_blocking(request.into_inner()).await?))
     }
 
     async fn coprocessor_stream(
         &self,
         request: tonic::Request<coprocessor::Request>,
     ) -> Result<tonic::Response<ReplyStream<coprocessor::Response>>, tonic::Status> {
-        let response = self.handle(request.into_inner());
+        let response = self.handle_blocking(request.into_inner()).await?;
         let responses = if response.other_error.is_empty() {
             let select = tipb::SelectResponse::decode(response.data)
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;

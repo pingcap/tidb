@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
     "unresolved": 11,
-    "open": 5,
-    "partial": 6
+    "open": 6,
+    "partial": 5
   },
   "findings": [
     {
@@ -64,14 +64,6 @@
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
     },
     {
-      "id": "E33",
-      "status": "partial",
-      "group": "Executor, DML and expressions",
-      "finding": "Statements Go executes that still reach the session's fallback (1105 `this statement kind (...) is not supported yet`): `REFRESH STATS` (Go `SimpleExec.executeRefreshStats`: `Handle.InitStats(Lite)` for the named tables on this instance, or a `BroadcastQuery` coprocessor request to every TiDB for `CLUSTER`; this port has neither the per-table republish nor the TiDB-to-TiDB broadcast). Fixed 2026-11-19: `DISTRIBUTE TABLE`, `SHOW DISTRIBUTION JOB[S]`, `CANCEL DISTRIBUTION JOB` and `SHOW TABLE ... DISTRIBUTIONS` (Go `distribute.go` and `show.go` over a port of `infosync/region.go`, whose PD client a test replaces as `SetPDHttpCliForTest` does; `distribute_table_test.go` ported), `ALTER RANGE ... PLACEMENT POLICY` (Go `executeAlterRange` over a port of `infosync`'s `placementManager` -- PD's, or the mock that a node without PD delivers its DDL bundles to -- with `GetRangePlacementPolicyName` in DROP / ALTER POLICY and SHOW PLACEMENT's RANGE rows; `TestAlterRangePlacementPolicy` ported), `SET CONFIG` (Go `SetConfigExec`, its value parsed as `SetExpr` and rewritten in the plan, posted through the internal HTTP client; `TestSetClusterConfig` ported), `BINLOG '...'` answers OK (Go ignores it), `ADMIN SHOW t NEXT_ROW_ID` runs the `SHOW TABLE t NEXT_ROW_ID` executor with the table qualified as Go's preprocessor does, and `CREATE STATISTICS` / `DROP STATISTICS` / `GRANT PROXY` answer Go's 8108 `Unsupported type *ast.XxxStmt`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs` (the `ADMIN {}` / `{}` fallbacks), `rust/crates/tidb-executor/src/admin.rs` (`admin_next`), `rust/crates/tidb-planner/src/plan_builder/stmt_build.rs`",
-      "go_owner": "`pkg/executor/builder.go` (`build`), `pkg/executor/simple.go`, `pkg/executor/set_config.go`, `pkg/executor/distribute.go`, `pkg/executor/simple.go` (`executeAlterRange`, REFRESH STATS)"
-    },
-    {
       "id": "N07",
       "status": "open",
       "group": "Domain and process services",
@@ -94,9 +86,17 @@
       "finding": "A statement's memory crosses `tidb_mem_quota_query` at a different point than Go's, so a different OOM action handles it. Go `TestMemTracker4DeleteExec` (`disableFixedRowCountHint`, `EnabledRateLimitAction`, quota 500) expects the copr `rateLimitAction` to delegate (`memory exceeds quota, rateLimitAction delegate to fallback action`): the multi-table DELETE's readers are open when the quota is crossed. Here each reader installs its `RateLimitAction` (one token, enabled) on the session tracker, but the statement reaches its 2112 B peak only after they finished, and the session chain then holds a finished spill action and the log action; the rate limiter is never invoked. The executor tracks the rows it holds rather than Go's chunk capacity (`tidb-variable` `mem_quota.rs`), which moves where the peak happens. Port: `tidb-session/tests/executor_test_oomtest_oom_test.rs` (`test_mem_tracker4_delete_exec`, last assertion omitted).",
       "rust_evidence": "`rust/crates/tidb-copr/src/cop_paging/cop_iterator.rs` (`RateLimitAction`), the executors' memory tracking (`tidb-executor`), `rust/crates/tidb-session/tests/executor_test_oomtest_oom_test.rs`",
       "go_owner": "`pkg/store/copr/coprocessor.go` (`rateLimitAction`), `pkg/executor/test/oomtest/oom_test.go` (`TestMemTracker4DeleteExec`), `pkg/util/chunk` memory accounting"
+    },
+    {
+      "id": "E43",
+      "status": "open",
+      "group": "Executor, DML and expressions",
+      "finding": "ANALYZE flushes the pending statistics deltas of this instance only. Go `flushStatsDeltaForAnalyze` restores `FLUSH STATS_DELTA <objects> CLUSTER` and broadcasts it to every TiDB (`tryBroadcast`, tolerating a peer that answers `this exec type ... doesn't support yet`); only a Go test binary whose servers have no reachable RPC endpoint dumps locally (`runningUnderGoTest`, `flushAnalyzeStatsDeltaForTest`). Here `AnalyzeExec` calls `AnalyzeService::flush_stats_delta` on this node, so a peer's buffered deltas can be applied after the analyze captured `mysql.stats_meta` and count twice. The broadcast itself is ported (`tidb-executor` `simple::broadcast`, used by `REFRESH STATS` / `FLUSH STATS_DELTA ... CLUSTER` and `ADMIN RELOAD CLUSTER BINDINGS`); what is missing is the analyze caller and Go's test-binary fallback rule.",
+      "rust_evidence": "`rust/crates/tidb-executor/src/analyze/exec.rs` (`AnalyzeService::flush_stats_delta`), `rust/crates/tidb-session/src/domain/cluster_session_node/statistics.rs` (`ClusterAnalyzeService`)",
+      "go_owner": "`pkg/executor/analyze.go` (`flushStatsDeltaForAnalyze`, `tryBroadcast`, `flushAnalyzeStatsDeltaForTest`)"
     }
   ],
   "unresolved": 11,
-  "open": 5,
-  "partial": 6
+  "open": 6,
+  "partial": 5
 }

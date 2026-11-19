@@ -25,9 +25,8 @@ pub trait DomainSessionSettings {
         self: &Arc<Self>,
     ) -> Arc<dyn Fn() -> Result<Session, String> + Send + Sync>;
 
-    /// Go `IsFromRemote` plans run on this instance alone; this node's
-    /// statements never broadcast, so an internal session runs a received
-    /// broadcast statement as-is.
+    /// Go `IsFromRemote` plans run on this instance alone: an internal
+    /// session runs a received broadcast statement marked as from remote.
     fn broadcast_query_runner(
         self: &Arc<Self>,
     ) -> Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
@@ -74,6 +73,10 @@ impl DomainSessionSettings for Domain {
                         let session = slot.as_mut().ok_or_else(|| {
                             tidb_syssession::SysSessionError::new("broadcast session is closed")
                         })?;
+                        // Go `pbToBroadcastQuery` plans the statement with
+                        // `IsFromRemote`, so it runs here and is never
+                        // broadcast again.
+                        session.from_remote = true;
                         let result = (|| -> Result<(), String> {
                             let mut result = session.node_conn().execute(query).map_err(|e| e.message)?;
                             let source = result.source();
@@ -81,6 +84,7 @@ impl DomainSessionSettings for Domain {
                             source.close().map_err(|e| e.to_string())?;
                             Ok(())
                         })();
+                        session.from_remote = false;
                         if result.is_err() {
                             lease.avoid_reuse();
                         }

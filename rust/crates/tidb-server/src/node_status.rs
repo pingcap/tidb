@@ -687,6 +687,44 @@ mod tests {
         );
     }
 
+    /// Go `broadcast`: `REFRESH STATS ... CLUSTER`, `FLUSH STATS_DELTA ...
+    /// CLUSTER` and `ADMIN RELOAD CLUSTER BINDINGS` reach every TiDB -- here
+    /// this node, through its own status port -- which runs each one from
+    /// remote (`pbToBroadcastQuery`'s `IsFromRemote`), never broadcasting it
+    /// again.
+    #[test]
+    fn cluster_statements_broadcast_to_every_tidb() {
+        use tidb_session::domain::cluster_session_node::DomainSessions as _;
+        let (stack, _status) = served_stack();
+        let mut session = stack
+            .factory
+            .open_session(crate::domain_test_support::session_context(1135))
+            .unwrap();
+        for sql in [
+            "CREATE DATABASE bc",
+            "USE bc",
+            "CREATE TABLE t (a INT, b INT, INDEX idx(a))",
+            "INSERT INTO t VALUES (1,1),(2,2),(3,3)",
+            "ANALYZE TABLE t ALL COLUMNS WITH 1 TOPN, 2 BUCKETS",
+        ] {
+            session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
+        let id: i64 = text_rows(session.run(
+            "SELECT TIDB_TABLE_ID FROM information_schema.tables WHERE table_schema = 'bc' AND table_name = 't'",
+        ))[0][0]
+            .parse()
+            .unwrap();
+        let index_loaded = |session: &tidb_session::Session| {
+            session.stats_table_for_test(id).unwrap().hist_coll.get_index(1).is_some()
+        };
+        session.run("REFRESH STATS t LITE CLUSTER").unwrap();
+        assert!(!index_loaded(&session), "a lite refresh leaves the index unloaded");
+        session.run("REFRESH STATS t FULL CLUSTER").unwrap();
+        assert!(index_loaded(&session), "a full refresh loads the index");
+        session.run("FLUSH STATS_DELTA t CLUSTER").unwrap();
+        session.run("ADMIN RELOAD CLUSTER BINDINGS").unwrap();
+    }
+
     fn run(factory: &Arc<Domain>, sql: &str) {
         factory
             .advanced_sys_session_pool()

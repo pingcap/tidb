@@ -44,14 +44,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | Row | Statement | Go | Rust |
 | --- | --- | --- | --- |
 | B03 | `tidb-server -store unistore -path ...` | starts | `unsupported option -store` |
-| E33 | `BINLOG 'abc'` | OK | 1105 `this statement kind (ADMIN Binlog) is not supported yet` |
-| E33 | `REFRESH STATS t3` | OK | 1105 `... (ADMIN RefreshStats) ...` |
-| E33 | ``ALTER RANGE global PLACEMENT POLICY = `default` `` | OK | 1105 `... (ADMIN AlterRange) ...` |
-| E33 | `ADMIN SHOW t3 NEXT_ROW_ID` | empty set | 1105 `... (ADMIN ShowNextRowId) ...` |
-| E33 | ``SET CONFIG tidb `log.level` = 'info'`` | 1105 `TiDB doesn't support to change configs online, please use SQL variables` | 1105 `... (ADMIN SetConfig) ...` |
-| E33 | `SHOW DISTRIBUTION JOBS` | 1105 `get leader failed, pd http cli is nil` (no PD) | 1105 `... (ADMIN Show) ...` |
-| E33 | `CANCEL DISTRIBUTION JOB 1` | 1105 `get leader failed, balance-range-scheduler` | 1105 `... (ADMIN CancelDistributionJob) ...` |
-| E33 | `CREATE STATISTICS s1 (correlation) ON t3(a, b)`, `DROP STATISTICS s1`, `GRANT PROXY ...` | 8108 `Unsupported type *ast.CreateStatisticsStmt` (and so on) | 1105 `... is not supported yet` |
 
 Probed with equal answers (not findings): `CAST ... AS UNSIGNED ARRAY`
 outside an index, expression indexes, generated and non-literal column

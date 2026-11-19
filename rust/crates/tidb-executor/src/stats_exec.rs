@@ -40,6 +40,15 @@ pub enum FlushStatsDeltaTargets {
 pub trait StatsStatementService {
     /// Go `DumpStatsDeltaToKV` for `target_ids`; empty means every table.
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), DriverError>;
+    /// Go `Handle.InitStats` (`IndexFull`) or `Handle.InitStatsLite` for
+    /// `table_ids` over the latest schema. Empty ids load every table and
+    /// the result replaces the cache (`Replace`); otherwise each loaded
+    /// table is put into it (`Put`).
+    fn init_stats(
+        &self,
+        table_ids: &[i64],
+        mode: tidb_stats_handle::bootstrap::InitialStatsLoad,
+    ) -> Result<(), DriverError>;
     /// Go `DeleteTableStatsFromKV(ids, soft = true)` and the cache refresh
     /// after it.
     fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), DriverError>;
@@ -186,6 +195,81 @@ pub trait StatsExec: AnalyzeExec {
             FlushStatsDeltaTargets::All => service.flush_stats_delta(&[]),
             FlushStatsDeltaTargets::Tables(ids) => service.flush_stats_delta(ids),
         }
+    }
+
+    /// Go `executeRefreshStatsOnCurrentInstance`: the planned (qualified,
+    /// deduplicated) objects resolve to table ids -- a database to its
+    /// tables, a missing database warning 1049 and a missing table 1146,
+    /// each skipped -- and `Handle.InitStats(Lite)` reloads them; `*.*`
+    /// reloads every table. When every named object is missing nothing is
+    /// reloaded.
+    fn run_refresh_stats(
+        &mut self,
+        stmt: &tidb_ast::RefreshStatsStmt,
+        service: &dyn StatsStatementService,
+    ) -> Result<(), DriverError> {
+        let is_global_scope = matches!(stmt.objects.as_slice(), [tidb_ast::StatsObject::Global]);
+        let mut table_ids = Vec::new();
+        if !is_global_scope {
+            let current_database = self.session_vars().current_db.clone();
+            let mut warnings = Vec::new();
+            {
+                let is = self.catalog_ignoring_poison();
+                for refresh_object in &stmt.objects {
+                    match refresh_object {
+                        tidb_ast::StatsObject::Database(database) => {
+                            if !is.schema_exists(database) {
+                                let error = tidb_terror::MysqlError::from_terror(
+                                    &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                                        .gen_with_stack_by_args(&[database.as_str().into()]),
+                                );
+                                warnings.push((error.code, error.message));
+                                continue;
+                            }
+                            let tables = is
+                                .schema_table_infos(database)
+                                .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                            table_ids.extend(tables.iter().map(|table| table.read().id));
+                        }
+                        tidb_ast::StatsObject::Table { database, table } => {
+                            let database = database.as_deref().unwrap_or(&current_database);
+                            match is.table_info_by_name(database, table) {
+                                Some((_, info)) => table_ids.push(info.read().id),
+                                None => {
+                                    let error = tidb_terror::MysqlError::from_terror(
+                                        &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                                            .gen_with_stack_by_args(&[database.into(), table.into()]),
+                                    );
+                                    warnings.push((error.code, error.message));
+                                }
+                            }
+                        }
+                        // Go: "No other scopes should be here".
+                        tidb_ast::StatsObject::Global => {}
+                    }
+                }
+            }
+            for (code, message) in warnings {
+                self.append_routed_warning(code, message);
+            }
+            // If all specified databases or tables do not exist, we do nothing.
+            if table_ids.is_empty() {
+                return Ok(());
+            }
+        }
+        use tidb_stats_handle::bootstrap::InitialStatsLoad;
+        let mode = match stmt.mode {
+            Some(tidb_ast::RefreshStatsMode::Lite) => InitialStatsLoad::Lite,
+            Some(tidb_ast::RefreshStatsMode::Full) => InitialStatsLoad::IndexFull,
+            None if tidb_config::config_tree::config::get_global_config()
+                .performance
+                .lite_init_stats =>
+            {
+                InitialStatsLoad::Lite
+            }
+            None => InitialStatsLoad::IndexFull,
+        };
+        service.init_stats(&table_ids, mode)
     }
 
     /// Go `SimpleExec.executeDropStats`' id resolution. `None` is a statement

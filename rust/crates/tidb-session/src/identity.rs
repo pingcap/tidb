@@ -1689,7 +1689,7 @@ pub(crate) struct PrecompiledStatement {
 /// The executor Go's `executorBuilder.build` picks for a compiled plan, as
 /// far as this session's node runs it differently from the session's own
 /// statement path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CompiledExecutor {
     /// Go `DDLExec` (`core.DDL`).
     Ddl,
@@ -1699,8 +1699,12 @@ pub enum CompiledExecutor {
     LoadStats,
     /// Go `LockStatsExec` / `UnlockStatsExec`.
     StatsLock,
-    /// Go `SimpleExec` (`core.Simple`), which switches on the statement node.
-    Simple,
+    /// Go `SimpleExec` (`core.Simple`), which switches on the planned
+    /// statement node (`Simple.Statement`: a `REFRESH STATS` or `FLUSH
+    /// STATS_DELTA` with its objects qualified and deduplicated).
+    Simple(Box<tidb_ast::Stmt>),
+    /// Go `SQLBindExec.reloadClusterBindings` (`OpReloadClusterBindings`).
+    ReloadClusterBindings,
     /// Any other plan, or a query / DML the session compiles itself.
     Other,
 }
@@ -1713,7 +1717,15 @@ impl CompiledExecutor {
             Plan::Analyze(_) => Self::Analyze,
             Plan::LoadStats(_) => Self::LoadStats,
             Plan::LockStats(_) | Plan::UnlockStats(_) => Self::StatsLock,
-            Plan::Simple(_) => Self::Simple,
+            Plan::Simple(simple) => Self::Simple(Box::new(simple.statement.clone())),
+            Plan::SqlBind(bind)
+                if matches!(
+                    bind.op,
+                    tidb_planner::common_plans::SqlBindOp::ReloadClusterBindings
+                ) =>
+            {
+                Self::ReloadClusterBindings
+            }
             _ => Self::Other,
         }
     }

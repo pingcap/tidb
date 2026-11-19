@@ -169,3 +169,68 @@ fn role_identity(spec: &tidb_ast::RoleIdentity) -> (String, String) {
     (spec.role.clone(), host)
 }
 
+
+/// Go `broadcast`: one `BroadcastQuery` coprocessor request on the `kv.TiDB`
+/// store to every TiDB (`SetTiDBServerID(0)`), this one included, each of
+/// which runs `sql` as a statement from remote (`pbToBroadcastQuery`). The
+/// response is consumed to its end -- "Must consume & close the response,
+/// otherwise coprocessor task will leak" -- and its first error is the
+/// statement's.
+pub fn broadcast(
+    viewer: &crate::memtable_reader::ViewerState,
+    is: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+    sql: &str,
+) -> Result<(), DriverError> {
+    use tidb_proto::tipb;
+    let broadcast_exec = tipb::Executor {
+        tp: Some(tipb::ExecType::TypeBroadcastQuery as i32),
+        broadcast_query: Some(tipb::BroadcastQuery {
+            query: Some(sql.to_owned()),
+        }),
+        ..Default::default()
+    };
+    let (time_zone_name, time_zone_offset) = ctx.session_zone().dag_zone();
+    let dag_req = tipb::DagRequest {
+        time_zone_name: Some(time_zone_name),
+        time_zone_offset: Some(time_zone_offset),
+        // Go: `if sc.RuntimeStatsColl != nil`.
+        collect_execution_summaries: ctx.cop_response_sink().is_some().then_some(true),
+        flags: Some(ctx.push_down_flags()),
+        executors: vec![broadcast_exec],
+        ..Default::default()
+    };
+    let mut builder = tidb_distsql::RequestBuilder::from_context(
+        &crate::table_reader::dist_sql_context(ctx),
+    );
+    builder
+        .set_dag_request(
+            crate::table_reader::executor_shapes(&dag_req),
+            prost::Message::encode_to_vec(&dag_req),
+        )
+        .set_store_type(tidb_txnkv::StoreType::TiDb)
+        // Send to all TiDB instances.
+        .set_tidb_server_id(0)
+        .set_start_ts(u64::MAX);
+    let kv_req = builder
+        .build_transport_request(ctx.statement_memory().coprocessor_request_cancellation())
+        .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
+    let mut resp = viewer.tidb_store_reader(is, ctx).client.send(&kv_req);
+    let result = loop {
+        match resp.next() {
+            Ok(Some(_)) => {}
+            // all remote tasks finished cleanly
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(error),
+        }
+    };
+    let _ = resp.close();
+    result.map_err(|error| {
+        DriverError::Mysql(match error {
+            tidb_txnkv::QueryResponseError::Sql { code, message } => {
+                crate::MysqlError::sql_error(code, message)
+            }
+            error => crate::MysqlError::unknown(error.to_string()),
+        })
+    })
+}

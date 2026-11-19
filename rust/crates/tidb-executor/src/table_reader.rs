@@ -100,18 +100,7 @@ impl TiDbTableReaderExecutor {
         let plan_id = isize::try_from(self.meta.id()).unwrap_or(0);
         // Go `TableReaderExecutor.memTracker`, under the statement's.
         let memory_tracker = Some(ctx.statement_memory().operator_tracker(self.meta.id()));
-        let mut context = DistSqlContext::new();
-        context.request.dist_sql_concurrency = ctx.dist_sql_scan_concurrency();
-        context.request.store_batch_size = ctx.store_batch_size();
-        context.request.resource_group_name = ctx.resource_group_name().to_owned();
-        context.request.in_restricted_sql = ctx.request_source().internal;
-        context.request.request_source_type = ctx.request_source().source_type.clone();
-        context.request.explicit_request_source_type =
-            ctx.request_source().explicit_source_type.clone();
-        context.request.replica_read = ctx.replica_read();
-        context.request.max_execution_time_ms = ctx.max_execution_time_ms();
-        context.request.priority = crate::remote_scan::get_kv_priority(ctx.statement_priority());
-        context.request.not_fill_cache = ctx.not_fill_cache();
+        let context = dist_sql_context(ctx);
         let kv_context = ctx
             .statement_kv_context()
             .as_ref()
@@ -169,8 +158,26 @@ impl TiDbTableReaderExecutor {
     }
 }
 
+/// Go `SessionVars.GetDistSQLCtx()`, the part `RequestBuilder.SetFromSessionVars`
+/// reads.
+pub(crate) fn dist_sql_context(ctx: &crate::StmtContext) -> DistSqlContext {
+    let mut context = DistSqlContext::new();
+    context.request.dist_sql_concurrency = ctx.dist_sql_scan_concurrency();
+    context.request.store_batch_size = ctx.store_batch_size();
+    context.request.resource_group_name = ctx.resource_group_name().to_owned();
+    context.request.in_restricted_sql = ctx.request_source().internal;
+    context.request.request_source_type = ctx.request_source().source_type.clone();
+    context.request.explicit_request_source_type =
+        ctx.request_source().explicit_source_type.clone();
+    context.request.replica_read = ctx.replica_read();
+    context.request.max_execution_time_ms = ctx.max_execution_time_ms();
+    context.request.priority = crate::remote_scan::get_kv_priority(ctx.statement_priority());
+    context.request.not_fill_cache = ctx.not_fill_cache();
+    context
+}
+
 /// The executor shapes `RequestBuilder.SetDAGRequest` reads off the DAG.
-fn executor_shapes(dag: &tipb::DagRequest) -> RequestEnvelope {
+pub(crate) fn executor_shapes(dag: &tipb::DagRequest) -> RequestEnvelope {
     RequestEnvelope::new(
         dag.executors
             .iter()
