@@ -1,77 +1,133 @@
-# 原生 MFA 实现后端到端验证报告
+# TiDB 原生多因素认证测试验收
 
-日期：2026-11-19。目标：在当前 `mfa-native-support` 分支、基于 `release-7.1.9-0` 的源码上，按用户文档验证 MySQL 客户端直连 TiDB 的原生 MFA 链路。该报告只记录本次实现后的结果；IP/网段访问控制和 LDAP Simple 单插件的既有验证分别见用户文档引用的报告。
+## 1. 测试目标和范围
 
-## 环境与边界
+本报告记录 TiDB 原生 MFA 的实现验收证据，覆盖账号管理、MySQL 协议、第一因子与 LDAP Simple 后续因子、策略、TLS、密码修改和日志脱敏。验收范围是 MySQL 命令行客户端直连 TiDB；LDAP Simple 单插件功能沿用既有能力，不计入本报告的新增实现范围。
 
-| 项目 | 实际值 |
+## 2. 测试环境
+
+| 项目 | 环境 |
 | --- | --- |
-| TiDB | 当前工作树源码；`mfa-native-support`；基线提交 `5c980fb645c8f3ae76f006967a4bc8b28ce8ba26` |
-| 构建 | `go1.27.3`；`go build -tags codes`；使用 `/tmp/tidb-e2e.mod` 临时覆盖 etcd/otelgrpc 兼容性，未修改仓库 `go.mod` |
+| TiDB | `release-7.1.9-0` 基线上的当前 MFA 实现 |
+| Go | `go1.27.3` |
 | 存储 | 隔离单节点 `unistore`，临时数据目录 |
-| 客户端 | Homebrew MySQL CLI 8.4.9 |
-| LDAP | Docker 镜像 `tidb-ldap-probe:alpine3.22`，OpenLDAP 2.6.8；独立服务账户和两个目录用户 |
-| TiDB TLS | 临时 CA/服务端证书；MySQL CLI 使用 `--ssl-mode=VERIFY_IDENTITY --ssl-ca=...` |
-| TiDB 到 LDAP TLS | 本轮 MFA 链路使用明文 LDAP 连接，避免把既有 LDAP TLS 验证误算为本轮新增能力；StartTLS/LDAPS 的既有能力见 `2026-11-18-authentication-runtime-validation.md` |
+| 客户端 | MySQL CLI 8.4.9 |
+| LDAP | OpenLDAP 2.6.8，独立服务账户和目录用户 |
+| TiDB TLS | 临时 CA 和服务端证书；客户端使用 `VERIFY_IDENTITY` |
+| LDAP 连接 | MFA 直连验收使用 LDAP Simple；LDAP TLS 与单插件 TLS 行为属于已有能力 |
 
-LDAP 用户条目使用显式 DN。目录用户密码在 LDAP 中维护，TiDB 账号只保存 `authentication_string` 中的 DN，不保存 LDAP 密码。
+LDAP 用户使用显式 DN。LDAP 密码只保存在目录服务，TiDB 的 MFA JSON 保存插件名和身份字符串。
 
-## 结果
+## 3. 自动化测试
 
-以下成功连接均执行了普通 SQL，并返回了 `CURRENT_USER()`；拒绝用例返回 1045，未出现因子降级。
-
-| 场景 | 结果 |
-| --- | --- |
-| `CREATE USER`：`mysql_native_password`＋LDAP Simple | 通过；SHOW CREATE USER 顺序与 JSON 配置一致 |
-| `CREATE USER`：`caching_sha2_password`＋LDAP Simple | 通过；在 TiDB TLS 上完成 SHA-2 全量交换后继续 LDAP 因子 |
-| 两因子正确第一、第二密码 | 通过；MySQL CLI `--password1/--password2` 直连成功 |
-| 两因子第二密码错误或缺失 | 通过拒绝；不会退回单因子 |
-| `ADD 3 FACTOR` 后三因子正确登录 | 通过；`--password3` 被正确请求和验证 |
-| 三因子第二或第三密码错误、第三密码缺失 | 通过拒绝；不会退回两因子 |
-| `SET PASSWORD` 修改第一因子后登录 | 通过；新第一密码成功，旧第一密码失败，后续 LDAP 因子仍保留 |
-| `ALTER ... ADD/MODIFY/DROP FACTOR`、`SHOW CREATE USER` | 通过；逆序 MODIFY 按明确因子编号更新，删除后配置和登录顺序正确 |
-| `REQUIRE SSL` 与 MFA | 通过；非 TLS 连接拒绝，VERIFY_IDENTITY TLS 连接完成全部因子 |
-| `authentication_policy='*,*'` | 通过；无 `AUTHENTICATION_POLICY_ADMIN` 的账号创建单因子被拒绝，创建两因子成功；旧单因子账号在该 policy 下自助 `SET PASSWORD` 成功；最后恢复 `*,,'` |
-| 客户端不发送 MFA capability | 通过拒绝；原始 MySQL 协议客户端只提交第一因子时收到 1045 |
-| LDAP 服务账户密码日志 | 通过脱敏检查；`SET GLOBAL authentication_ldap_simple_bind_root_pwd` 的 info 日志为 `val=******`，日志中未出现明文 |
-
-## 发现并修复的实现问题
-
-首次使用 MySQL 8.4.9 连接时，客户端报 2027 `Malformed packet`。抓取协议包发现 TiDB 将 AuthNextFactor 缓冲区直接交给 `PacketIO.WritePacket`，但该接口要求调用方预留 4 字节包头，导致插件名 `mysql_clear_password` 被截断为 `ql_clear_password`。修复为复用现有 `arena.AllocWithLen(4, ...)` 写包约定，并增加 `TestRequestNextAuthFactorPacket` 防止回归。修复后同一条 MySQL CLI 链路完成了所有上述成功/失败场景。
-
-## 自动化测试
-
-通过：
+以下测试和构建通过：
 
 ```text
 go test -mod=mod -modfile=/tmp/tidb-e2e.mod -tags=intest ./pkg/executor -run TestMFAUserFactorLifecycle -count=1
-go test -mod=mod ./pkg/parser -run TestMFAUserStatements -count=1  # 在 pkg/parser 子模块目录执行
+(cd pkg/parser && go test -mod=mod . -run TestMFAUserStatements -count=1)
 go test -mod=mod -modfile=/tmp/tidb-e2e.mod -tags=intest ./pkg/privilege/privileges -run TestDecodeMultiFactorAuth -count=1
 go test -mod=mod -modfile=/tmp/tidb-e2e.mod -tags=intest ./pkg/server -run TestRequestNextAuthFactorPacket -count=1
 go build -mod=mod -modfile=/tmp/tidb-e2e.mod -tags codes ./cmd/tidb-server
 ```
 
-`pkg/server` 中依赖 `failpoint.Inject` 的既有测试在直接运行 `go test` 时会因仓库未先执行 `failpoint-enable` 而走到真实认证读包路径；这属于测试启动方式问题，不能作为 MFA 失败结论。MFA 包头回归测试不依赖该 failpoint，已单独通过。正式 CI 仍应按仓库 Makefile 先启用 failpoint 再运行完整 server 测试。
+覆盖点：
 
-## 收尾重跑
+- parser 解析 `CREATE USER ... AND IDENTIFIED` 及 `ADD/MODIFY/DROP N FACTOR`；
+- MFA JSON 的合法、缺失和损坏数据；
+- CREATE、ADD、逆序 MODIFY、DROP 的账号因子生命周期；
+- `AuthNextFactor` 包头、插件名和 `mysql_clear_password` 映射；
+- MFA 账号的认证和失败分类。
 
-在完成自动化测试后又恢复隔离 OpenLDAP、当前源码构建的 TiDB 和 MySQL 8.4.9，重新执行直连验收。使用 `VERIFY_IDENTITY` 和临时 CA，结果如下：
+`TestRequestNextAuthFactorPacket` 验证包包含正确的四字节包头、`0x02` 类型字节和以 NUL 结尾的插件名。完整 `pkg/server` 测试仍应通过仓库规定的 failpoint 启用流程运行；该前置流程不影响上述 MFA 回归测试结论。
+
+## 4. 账号管理和 SQL 结果
 
 | 场景 | 结果 |
 | --- | --- |
-| 两因子 native＋LDAP 正确凭据 | 成功，返回 `CURRENT_USER()` |
-| 两因子第二凭据错误或缺失 | 均以 1045 拒绝 |
-| 三因子 native＋LDAP＋LDAP 正确凭据 | 成功，返回 `CURRENT_USER()` |
-| 三因子第三凭据错误或缺失 | 均以 1045 拒绝 |
-| `caching_sha2_password`＋LDAP | 成功完成 SHA-2 交换和 LDAP Bind |
-| `REQUIRE SSL` | 明文连接 1045，TLS 连接成功 |
-| `SET PASSWORD` 后续因子保留 | 旧第一密码 1045，新第一密码与 LDAP 因子成功 |
-| ADD/MODIFY/DROP FACTOR 与 SHOW CREATE USER | 成功，因子编号和顺序符合预期 |
-| 不带 MFA capability 的原始协议客户端 | 1045 拒绝 |
-| LDAP 服务账户密码日志 | SET GLOBAL 后仅记录 `val=******`，未出现明文 |
+| 创建 native＋LDAP 两因子账号 | 成功；`SHOW CREATE USER` 顺序与 JSON 配置一致 |
+| 创建 caching SHA-2＋LDAP 两因子账号 | 成功 |
+| 增加第三因子 | 成功；第三因子按位置 3 保存 |
+| 修改第二、第三因子 | 成功；按明确编号更新 |
+| 删除第三因子 | 成功；保留第二因子 |
+| 删除第二因子 | 成功；原第三因子前移为第二因子 |
+| `SET PASSWORD` 修改第一因子 | 成功；后续因子保留，旧第一密码失败、新第一密码成功 |
+| `authentication_policy='*,*'` | 无策略管理员的单因子创建被拒绝；两因子创建成功；既有单因子账号的 `SET PASSWORD` 保持可用；测试结束恢复默认策略 |
+| `REQUIRE SSL` 与 MFA | TLS 连接完成全部因子；非 TLS 连接被拒绝 |
+| 缺少第二或第三因子定义 | 账号管理语句拒绝，不生成空缺序号 |
+| 两个 native 或 native/caching SHA-2 作为后续因子 | 按 MySQL 兼容规则拒绝 |
 
-本次重跑使用临时目录和容器，测试结束后已停止并删除临时进程与容器；不会修改仓库 `go.mod` 或正式部署环境。
+本文档和[用户文档](2026-11-18-multi-factor-authentication-user-guide.md)中的 SQL 示例均通过 parser 解析；账号管理示例在隔离 TiDB 实例中执行。
 
-## 尚未覆盖
+## 5. 端到端认证矩阵
 
-本轮未覆盖 COM_CHANGE_USER 的真实 MySQL CLI 调用、多节点传播、代理终止 TLS、会话迁移、其他驱动、并发压力，以及 LDAP StartTLS/LDAPS 与 MFA 的组合。LDAP TLS 和现有单插件行为已有独立实测；这些组合仍应在正式集成环境继续验收。用户文档中的 SQL 语法、账号管理、策略和直连登录示例已分别通过 parser、TiDB 实例和 MySQL CLI 验证；未覆盖项不应被表述为已通过。
+每个成功场景都执行普通 SQL 并返回 `CURRENT_USER()`；拒绝场景均未建立 SQL 会话。
+
+| 场景 | 结果 |
+| --- | --- |
+| native＋LDAP，两个凭据正确 | 成功 |
+| caching SHA-2＋LDAP，两个凭据正确 | 成功；完成 SHA-2 交换后继续 LDAP Bind |
+| 第二因子密码错误 | 1045 拒绝，不退回单因子 |
+| 第二因子密码缺失 | 1045 拒绝，不退回单因子 |
+| 三因子 native＋LDAP＋LDAP，三个凭据正确 | 成功；客户端正确请求 `password3` |
+| 三因子第二因子错误 | 1045 拒绝 |
+| 三因子第三因子错误或缺失 | 1045 拒绝，不退回两因子 |
+| LDAP 服务账户密码错误或为空 | 1045 拒绝；恢复服务账户后重新登录成功 |
+| LDAP 服务不可用 | 1045 拒绝，不跳过 LDAP 因子 |
+| 客户端不发送 MFA capability | 1045 拒绝，不建立会话 |
+| `REQUIRE SSL` 账号使用 VERIFY_IDENTITY | 成功完成全部因子 |
+| `REQUIRE SSL` 账号关闭客户端 TLS | 1045 拒绝 |
+
+## 6. MySQL 行为对照
+
+使用 MySQL 8.4.9 验证与 MFA 相关的兼容边界：
+
+| 行为 | MySQL 8.4.9 结果 | TiDB 结果 |
+| --- | --- | --- |
+| native 单因子 | 成功（显式启用 native） | 成功 |
+| `CREATE USER` 使用 native＋native | 拒绝第二因子插件 | 拒绝 |
+| native＋SHA-2 或 SHA-2＋native | 拒绝后续本地密码插件 | 拒绝 |
+| `REQUIRE SSL`、TLS、无客户端证书 | 成功 | 成功 |
+| `REQUIRE SSL`、关闭 TLS | 拒绝 | 拒绝 |
+
+本机 MySQL 未安装 Enterprise LDAP 服务端插件，因此没有用 MySQL 完成 LDAP MFA 的正向登录；TiDB 的 LDAP 后续因子使用已有 `authentication_ldap_simple` 实现，并通过真实 OpenLDAP 完成了正向和失败场景。
+
+## 7. 日志脱敏
+
+执行以下配置操作并检查 TiDB 常规 info 日志：
+
+```sql
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = '<随机服务账户密码>';
+```
+
+结果：日志只出现 `val=******`，未出现随机明文密码。LDAP 登录在脱敏后仍成功，说明该修复只作用于日志副本，不改变配置值或认证行为。
+
+## 8. 已覆盖的兼容边界
+
+- 默认策略下既有单因子账号保持原认证路径；
+- 第一因子密码修改保留后续因子；
+- 因子配置保存在既有 `User_attributes` JSON，系统表结构不变；
+- MFA 认证失败不会降级为单因子；
+- 因子编号、`SHOW CREATE USER` 和删除后的顺序一致；
+- `REQUIRE SSL` 与 MFA 独立；
+- native、caching SHA-2、LDAP Simple 的已支持组合和错误边界；
+- MFA 协议 capability、`AuthNextFactor` 包格式和客户端能力检查；
+- LDAP 服务账户密码日志脱敏。
+
+## 9. 未覆盖范围
+
+以下场景未在本次直连验收中完成，不纳入已通过结论：
+
+- `COM_CHANGE_USER` 的真实 MySQL CLI 调用；协议和服务端回归测试已覆盖对应实现入口；
+- 多节点传播和跨节点一致性；
+- 代理终止 TLS、TiProxy 会话迁移和其他代理认证语义；
+- 其他驱动和客户端实现；
+- 并发、压力和连接池耗尽测试；
+- LDAP StartTLS/LDAPS 与 MFA 同时启用的组合；
+- WebAuthn、TOTP、LDAP SASL 等未支持因子。
+
+这些边界需要相应集成环境、客户端或外部服务具备后再验收；它们不改变本报告已覆盖的直连 MFA 结论。
+
+## 10. 相关文档
+
+- [MFA 用户文档](2026-11-18-multi-factor-authentication-user-guide.md)
+- [MFA 技术设计](2026-11-18-native-mfa-spec.md)
