@@ -21,6 +21,7 @@ tidb-worker-stack = { path = "../tidb-worker-stack" }
 rand = "0.10"
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }

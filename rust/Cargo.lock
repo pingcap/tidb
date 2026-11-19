@@ -5041,6 +5041,7 @@ dependencies = [
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-syssession",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-timeutil",
  "tidb-txnkv",

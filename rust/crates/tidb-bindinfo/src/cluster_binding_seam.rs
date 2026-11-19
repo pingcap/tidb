@@ -20,25 +20,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tidb_infoschema_issyncer::catalog_watch::InfoCache;
-use tidb_syssession::mysql_system_tables::SystemTableView;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = crate::binding_operator::LEASE;
-const COLUMNS: &[&str] = &[
-    "original_sql",
-    "bind_sql",
-    "default_db",
-    "status",
-    "create_time",
-    "update_time",
-    "charset",
-    "collation",
-    "source",
-    "sql_digest",
-    "plan_digest",
-];
 
 /// Go `NewBindingHandle`'s `sPool`: the domain's internal sessions. Each
 /// operation owns its transaction; no user transaction supplies storage.
@@ -92,9 +78,11 @@ impl ClusterBindings for StoredBindings {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let catalog = self.catalog.get_latest();
-        let view = SystemTableView::locate(&catalog, "bind_info", COLUMNS)
-            .map_err(|error| error.to_string())?;
-        let start = view.record_prefix(&[]).map_err(|error| error.to_string())?;
+        let (_, bind_info) = catalog
+            .try_table_info_by_name("mysql", "bind_info")
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "table mysql.bind_info does not exist".to_owned())?;
+        let start = tidb_tablecodec::table_key::gen_table_record_prefix(bind_info.read().id);
         let mut end = start.clone();
         // Record prefixes end in '_r'; its successor bounds precisely this table.
         *end.last_mut().expect("record prefix") += 1;
