@@ -780,6 +780,10 @@ impl Session {
                         "refresh materialized view: input log records are missing for {schema}.{name}"
                     )));
                 }
+                tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterAcquireAdvisoryLock"), &mut ());
+                if let Some(value) = tidb_failpoint::eval(&format!("{FP}mockRefreshMaterializedViewErrorBeforeInsertHist")) {
+                    return Err(plain(value.string()));
+                }
                 if mode == RefreshMaterializedViewMode::CompleteOutOfPlace {
                     return self.refresh_complete_out_of_place_locked(
                         controller,
@@ -1341,6 +1345,8 @@ impl Session {
                 ddl.create_materialized_view_shadow_table(info.db_id, schema, shadow, &refresh.ddl_statement_context())
             })?;
             shadow_needs_cleanup = true;
+            tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewOutOfPlaceAfterCreateShadow"), &mut ());
+            tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow"), |_| {});
             // Go `buildMVRefreshOutOfPlaceBuildSQL`: a TiKV store loads the
             // shadow by IMPORT INTO with the refresh's import options, any
             // other by INSERT INTO.

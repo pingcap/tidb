@@ -157,6 +157,22 @@ fn purge_info_missing_table() -> DriverError {
     plain("required system table mysql.tidb_mlog_purge_info does not exist")
 }
 
+/// Go master `mvMaintainMemQuotaAppliedOn<site>` (`(session MemQuotaQuery,
+/// MViewMaintainMemQuota)`) and `mvMaintainIsolationReadEnginesAppliedOn<site>`
+/// (`(session engines, MViewMaintainIsolationReadEngines)`).
+fn inject_maintenance_vars_applied(session: &mut Session, mem_quota: &str, engines: &str, site: &str) {
+    let applied = read_vars(session, &["tidb_mem_quota_query", "tidb_isolation_read_engines"]).unwrap_or_default();
+    let applied_quota = applied.first().and_then(|value| value.parse::<i64>().ok()).unwrap_or_default();
+    tidb_failpoint::inject_call(
+        &format!("github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOn{site}"),
+        &mut (applied_quota, mem_quota.parse::<i64>().unwrap_or_default()),
+    );
+    tidb_failpoint::inject_call(
+        &format!("github.com/pingcap/tidb/pkg/executor/mvMaintainIsolationReadEnginesAppliedOn{site}"),
+        &mut (applied.get(1).cloned().unwrap_or_default(), engines.to_owned()),
+    );
+}
+
 /// Go master `applyMLogPurgeMaintenanceSessionVars` for a manual purge (not
 /// best effort): materialized views enabled and the user's maintenance
 /// memory quota and read engines applied; the answer is what restores them.
@@ -1034,6 +1050,7 @@ impl Session {
         // transaction.
         let mut purge = self.open_refresh_system_session()?;
         let restore_purge = apply_mlog_purge_maintenance_session_vars(&mut purge, &mem_quota, &engines)?;
+        inject_maintenance_vars_applied(&mut purge, &mem_quota, &engines, "PurgeSession");
         // Go master: the purge advisory lock a cutover retiring this log
         // also takes. "Do not retry acquisition: this statement may hold MDL
         // needed by cutover. The later transaction cleanup runs before this
@@ -1076,6 +1093,7 @@ impl Session {
                 return Err(error);
             }
         };
+        inject_maintenance_vars_applied(&mut delete, &mem_quota, &engines, "PurgeDeleteSession");
         let mut restore_delete_threads = Vec::new();
         // Go: the purge and delete sessions run under the task's cancelable
         // context.

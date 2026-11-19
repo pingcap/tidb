@@ -1045,8 +1045,10 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
             return Ok(PersistedDdlJobOutcome::Finished);
         }
     })();
-    // Go `deliveryJob`'s deferred `wk.sess.ReleaseAllAdvisoryLocks()`:
-    // job-scoped locks outlive the steps but not the delivery.
+    // Go `deliveryJob`'s deferred `afterDeliveryJob` and
+    // `wk.sess.ReleaseAllAdvisoryLocks()`: job-scoped locks outlive the
+    // steps but not the delivery.
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", &mut job_w);
     schema_state.worker.release_all_advisory_locks();
     outcome
 }

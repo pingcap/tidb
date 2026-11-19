@@ -4551,3 +4551,412 @@ fn test_alter_materialized_view_log_add_column_refresh_lock_lifetime() {
         }
     }
 }
+
+/// Go master `TestAlterMaterializedViewLogAddColumnPausedRejectsOutOfPlaceRefresh`
+/// (`mview_output_log_test.go`): an ADD COLUMN on a view's own log paused
+/// at an intermediate state releases its worker's lock, an OUT OF PLACE
+/// refresh refuses the intermediate log before it creates any shadow, and the
+/// resumed job waits for a running refresh without counting failures.
+#[test]
+fn test_alter_materialized_view_log_add_column_paused_rejects_out_of_place_refresh() {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+    use tidb_model::SchemaState as S;
+    let cases = [
+        ("delete_only", "s", S::DELETE_ONLY, false, "fast", false),
+        ("write_only", "s", S::WRITE_ONLY, false, "complete delta apply", false),
+        ("write_reorganization", "s", S::WRITE_REORGANIZATION, false, "fast", false),
+        ("multiple_columns", "s, cnt", S::WRITE_REORGANIZATION, false, "fast", false),
+        ("stale_schema", "s, cnt", S::WRITE_REORGANIZATION, true, "complete delta apply", false),
+        ("between_sub_jobs_fast", "s, cnt", S::WRITE_REORGANIZATION, false, "fast", true),
+        ("between_sub_jobs_delta_apply", "s, cnt", S::WRITE_REORGANIZATION, false, "complete delta apply", true),
+    ];
+    for (name, columns, state, stale, refresh_mode, between_sub_jobs) in cases {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t_paused_mlog (a int not null, b int not null)",
+            "insert into t_paused_mlog values (1, 10)",
+            "create materialized view log on t_paused_mlog (a, b)",
+            "create materialized view mv_paused_mlog (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_paused_mlog group by a",
+            "create materialized view log on mv_paused_mlog (a)",
+            "insert into t_paused_mlog values (2, 20)",
+        ]);
+        let catalog = Arc::clone(&stack.factory.catalog);
+        let old_is = catalog.get_latest();
+        let mv = latest_table(&stack, "mv_paused_mlog");
+        let lock_name = format!("mv_refresh_{}_{}", mv.db_id, mv.id);
+        let mut tk_ctl = stack.factory.open_session(session_context(2171)).unwrap();
+        must_exec_all(&mut tk_ctl, &["set tidb_mview_enable = on", "use test"]);
+        let no_reload =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)");
+
+        let job_id = Arc::new(AtomicI64::new(0));
+        let pause_requested = Arc::new(AtomicBool::new(false));
+        let (pause_result_tx, pause_result_rx) = std::sync::mpsc::channel::<String>();
+        let (lock_conflict_tx, lock_conflict_rx) = std::sync::mpsc::channel::<tidb_model::Job>();
+        let pauser = std::sync::Mutex::new(stack.factory.open_session(session_context(2172)).unwrap());
+        let _after_sync = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", {
+            let (job_id, pause_requested) = (Arc::clone(&job_id), Arc::clone(&pause_requested));
+            let pause_result_tx = std::sync::Mutex::new(pause_result_tx);
+            let lock_conflict_tx = std::sync::Mutex::new(lock_conflict_tx);
+            move |job| {
+                let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                if job.table_name.to_string() != "$mlog$mv_paused_mlog" {
+                    return;
+                }
+                if job.id == job_id.load(Ordering::Acquire)
+                    && job.error.as_ref().is_some_and(|error| { let error = error.read().clone(); tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.equal(Some(&error as &(dyn std::error::Error + 'static))) })
+                {
+                    let _ = lock_conflict_tx.lock().unwrap().send(job.clone());
+                }
+                if let Some(info) = &job.multi_schema_info {
+                    for (i, sub) in info.read().sub_jobs.iter_deref().enumerate() {
+                        let want = if between_sub_jobs && i > 0 { S::NONE } else { state };
+                        if sub.read().schema_state != want {
+                            return;
+                        }
+                    }
+                } else if job.schema_state != state {
+                    return;
+                }
+                // "Multi-column DDL first publishes the analyze-state change.
+                // Let that schema version synchronize before pausing."
+                if job.multi_schema_info.is_some()
+                    && !between_sub_jobs
+                    && job.reorg_meta.as_ref().is_some_and(|meta| meta.read().analyze_state == tidb_model::reorg::analyze_state::NONE)
+                {
+                    return;
+                }
+                if pause_requested.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                job_id.store(job.id, Ordering::Release);
+                let paused = answer(&mut pauser.lock().unwrap(), &format!("admin pause ddl jobs {}", job.id));
+                let _ = pause_result_tx.lock().unwrap().send(paused);
+            }
+        });
+        let (paused_tx, paused_rx) = std::sync::mpsc::channel::<()>();
+        let _after_delivery = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", {
+            let job_id = Arc::clone(&job_id);
+            let paused_tx = std::sync::Mutex::new(Some(paused_tx));
+            move |job_w| {
+                let job_w = job_w.downcast_mut::<tidb_model::JobW>().unwrap();
+                let Some(job) = job_w.job.as_ref() else { return };
+                let job = job.read();
+                if job.id == job_id.load(Ordering::Acquire) && job.is_paused() {
+                    if let Some(paused) = paused_tx.lock().unwrap().take() {
+                        let _ = paused.send(());
+                    }
+                }
+            }
+        });
+        let mut alter = stack.factory.open_session(session_context(2173)).unwrap();
+        must_exec_all(&mut alter, &["set tidb_mview_enable = on", "use test"]);
+        let alter_sql = format!("alter materialized view log on mv_paused_mlog add column ({columns})");
+        let ddl = std::thread::spawn(move || answer(&mut alter, &alter_sql));
+        let pause = pause_result_rx.recv_timeout(std::time::Duration::from_secs(15)).expect("timeout requesting ADD COLUMN pause");
+        assert!(pause.contains("successful"), "{name}: {pause}");
+        paused_rx.recv_timeout(std::time::Duration::from_secs(15)).expect("timeout waiting for ADD COLUMN to release its worker");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while answer(&mut tk_ctl, &format!("select is_used_lock('{lock_name}') is null")) != r#"RS:[["1"]]"# {
+            assert!(std::time::Instant::now() < deadline, "{name}: the paused job still holds {lock_name}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // "An OOP refresh must reject intermediate output-log metadata before
+        // submitting any shadow/cutover DDL that could block a resumed ADD
+        // COLUMN."
+        let shadow_created = Arc::new(AtomicBool::new(false));
+        {
+            let seen = Arc::clone(&shadow_created);
+            let _shadow = tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow",
+                move |_| seen.store(true, Ordering::Release),
+            );
+            let _before_hist = tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist",
+                r#"return("OOP passed the intermediate MLog schema")"#,
+            );
+            if stale {
+                catalog.upsert_replacing(Arc::clone(&old_is), 0);
+            }
+            let refused = answer(&mut tk_ctl, "refresh materialized view mv_paused_mlog complete out of place");
+            assert!(refused.starts_with("ERR 8182 "), "{name}: {refused}");
+            assert!(refused.contains("materialized view log schema change is in progress"), "{name}: {refused}");
+            assert!(!shadow_created.load(Ordering::Acquire), "{name}");
+        }
+        if stale {
+            assert!(catalog.get_latest().schema_meta_version() > old_is.schema_meta_version(), "{name}");
+        }
+        // "rejected refresh must release its lock"
+        assert_eq!(answer(&mut tk_ctl, &format!("select get_lock('{lock_name}', 1)")), r#"RS:[["1"]]"#, "{name}");
+        assert_eq!(answer(&mut tk_ctl, &format!("select release_lock('{lock_name}')")), r#"RS:[["1"]]"#, "{name}");
+        assert_eq!(answer(&mut tk_ctl, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]", "{name}");
+        drop(no_reload);
+        tk_ctl.domain_services().unwrap().domain.upgrade().unwrap().ddl.reload_schema().unwrap();
+
+        must_exec_all(&mut tk_ctl, &["set global tidb_ddl_error_count_limit = 1"]);
+        let (refresh_paused_tx, refresh_paused_rx) = std::sync::mpsc::channel::<()>();
+        let (allow_tx, allow_rx) = std::sync::mpsc::channel::<()>();
+        let hold = std::sync::Mutex::new(Some((refresh_paused_tx, allow_rx)));
+        let data_changes = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges",
+            move |_| {
+                if let Some((paused, allow)) = hold.lock().unwrap().take() {
+                    paused.send(()).unwrap();
+                    let _ = allow.recv();
+                }
+            },
+        );
+        let mut tk_refresh = stack.factory.open_session(session_context(2174)).unwrap();
+        must_exec_all(&mut tk_refresh, &["set tidb_mview_enable = on", "use test"]);
+        let refresh_sql = format!("refresh materialized view mv_paused_mlog {refresh_mode}");
+        let refresh = std::thread::spawn(move || answer(&mut tk_refresh, &refresh_sql));
+        refresh_paused_rx.recv_timeout(std::time::Duration::from_secs(15)).expect("timeout waiting for refresh data changes");
+
+        // "Resuming an existing schema change must wait for refresh without
+        // exhausting the DDL failure budget or rolling back intermediate
+        // columns."
+        let resumed = answer(&mut tk_ctl, &format!("admin resume ddl jobs {}", job_id.load(Ordering::Acquire)));
+        assert!(resumed.contains("successful"), "{name}: {resumed}");
+        for _ in 0..3 {
+            let job = lock_conflict_rx
+                .recv_timeout(std::time::Duration::from_secs(15))
+                .unwrap_or_else(|_| panic!("{name}: timeout waiting for resumed ADD COLUMN lock conflict"));
+            assert_eq!(job.state, tidb_model::JobState::RUNNING, "{name}");
+            assert_eq!(job.error_count, 0, "{name}: refresh lock waits must not count as DDL failures");
+            assert!(!ddl.is_finished(), "{name}: ADD COLUMN finished before refresh released its lock");
+        }
+        allow_tx.send(()).unwrap();
+        assert_eq!(refresh.join().unwrap(), "OK", "{name}");
+        drop(data_changes);
+        assert_eq!(ddl.join().unwrap(), "OK", "{name}");
+        must_exec_all(&mut tk_ctl, &["refresh materialized view mv_paused_mlog complete out of place"]);
+        assert_eq!(answer(&mut tk_ctl, "select * from mv_paused_mlog order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#, "{name}");
+    }
+}
+
+/// A one-shot latch: `wait` blocks until `open`.
+#[derive(Clone, Default)]
+struct Latch(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+impl Latch {
+    fn open(&self) {
+        *self.0 .0.lock().unwrap() = true;
+        self.0 .1.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut opened = self.0 .0.lock().unwrap();
+        while !*opened {
+            opened = self.0 .1.wait(opened).unwrap();
+        }
+    }
+
+    fn wait_for(&self, what: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut opened = self.0 .0.lock().unwrap();
+        while !*opened {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(!left.is_zero(), "timeout waiting for {what}");
+            opened = self.0 .1.wait_timeout(opened, left).unwrap().0;
+        }
+    }
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency`
+/// (`nested_oop_test.go`): an OUT OF PLACE cutover retiring a log waits for
+/// the log's running purge (cancelling it) without mutating metadata or
+/// holding the schema-version lock, a purge holding the old metadata fails
+/// fast on the advisory lock, and the cutover's total wait is bounded.
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_purge_concurrency() {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    for stage in ["running", "starting", "resolved", "timeout"] {
+        let (stack, mut tk, old_mv) = new_mview_refresh_source_fixture();
+        must_exec_all(&mut tk, &[
+            "create materialized view log on mv_source_init (a, s, cnt)",
+            "insert into t_source_init values (3, 30)",
+            "refresh materialized view mv_source_init fast",
+        ]);
+        let old_log = single_value(
+            &mut tk,
+            "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='$mlog$mv_source_init'",
+        );
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(10)");
+        let state_sqls = [
+            "select * from mysql.tidb_mview_refresh_info order by MVIEW_ID",
+            "select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID",
+            "select * from mysql.tidb_mlog_purge_info order by MLOG_ID",
+            "select TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' order by TABLE_NAME",
+        ];
+        let cutover_attempts = Arc::new(AtomicI32::new(0));
+        let mut guards = Vec::new();
+        let before: Vec<String> = if stage == "timeout" {
+            let before = state_sqls.iter().map(|sql| answer(&mut tk, sql)).collect();
+            guards.push(tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/ddl/mockMViewOutOfPlacePurgeAdvisoryLockTimeout",
+                "return(1000)",
+            ));
+            let attempts = Arc::clone(&cutover_attempts);
+            guards.push(tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", move |job| {
+                let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                if job.type_ == tidb_model::ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER && job.table_id == old_mv {
+                    attempts.fetch_add(1, Ordering::AcqRel);
+                }
+            }));
+            before
+        } else {
+            Vec::new()
+        };
+
+        let (entered, release, running, release_running) = (Latch::default(), Latch::default(), Latch::default(), Latch::default());
+        let paused = Arc::new(AtomicBool::new(false));
+        let running_paused = Arc::new(AtomicBool::new(false));
+        let pause = {
+            let (entered, release, paused) = (entered.clone(), release.clone(), Arc::clone(&paused));
+            move || {
+                if !paused.swap(true, Ordering::AcqRel) {
+                    entered.open();
+                    release.wait();
+                }
+            }
+        };
+        match stage {
+            // "The advisory lock is held, but no running history exists yet."
+            "starting" => {
+                let pause = pause.clone();
+                guards.push(tidb_failpoint::enable_call_for_test(
+                    "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeDeleteSession",
+                    move |_| pause(),
+                ));
+            }
+            // "Old metadata/MDL is held before advisory lock acquisition."
+            "resolved" => {
+                let pause = pause.clone();
+                guards.push(tidb_failpoint::enable_call_for_test(
+                    "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession",
+                    move |_| pause(),
+                ));
+            }
+            _ => {}
+        }
+        if stage != "resolved" {
+            let pause = pause.clone();
+            let (running, release_running, running_paused) = (running.clone(), release_running.clone(), Arc::clone(&running_paused));
+            guards.push(tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/executor/purgeMaterializedViewLogDeleteSQL",
+                move |_| {
+                    if stage == "running" || stage == "timeout" {
+                        pause();
+                    } else if !running_paused.swap(true, Ordering::AcqRel) {
+                        running.open();
+                        release_running.wait();
+                    }
+                },
+            ));
+        }
+        let (requested, _requested_guard) = wait_cancel_watcher_requested("mlog-purge-");
+        let retried = Latch::default();
+        {
+            let retried = retried.clone();
+            guards.push(tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/ddl/mViewOutOfPlacePurgeAdvisoryLockRetry",
+                move |_| retried.open(),
+            ));
+        }
+        let retiring = Arc::new(AtomicBool::new(false));
+        {
+            let retiring = Arc::clone(&retiring);
+            guards.push(tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/ddl/mViewOutOfPlaceBeforeRetireMLog",
+                move |_| retiring.store(true, Ordering::Release),
+            ));
+        }
+
+        let mut purger = stack.factory.open_session(session_context(2175)).unwrap();
+        must_exec_all(&mut purger, &["set tidb_mview_enable = on", "use test"]);
+        let purge = std::thread::spawn(move || answer(&mut purger, "purge materialized view log on mv_source_init"));
+        entered.wait_for("purge pause point");
+        let mut refresher = stack.factory.open_session(session_context(2176)).unwrap();
+        must_exec_all(&mut refresher, &["set tidb_mview_enable = on", "use test"]);
+        let cutover = std::thread::spawn(move || answer(&mut refresher, "refresh materialized view mv_source_init complete out of place"));
+        let id_sql = "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='mv_source_init'";
+
+        if stage == "resolved" {
+            // "Cutover commits, then waits for this statement's old MDL. Purge
+            // must fail instead of waiting for the advisory lock."
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while single_value(&mut tk, id_sql) == old_mv.to_string() {
+                assert!(std::time::Instant::now() < deadline, "the cutover did not land");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            release.open();
+            let purged = purge.join().unwrap();
+            assert!(purged.starts_with("ERR 8182 "), "{stage}: {purged}");
+        } else {
+            if stage == "starting" {
+                retried.wait_for("cutover retry before running history exists");
+                assert_eq!(
+                    answer(&mut tk, &format!("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID={old_log} and PURGE_STATUS='running'")),
+                    r#"RS:[["0"]]"#
+                );
+                release.open();
+                running.wait_for("purge running history");
+            }
+            requested.recv_timeout(std::time::Duration::from_secs(10)).expect("cutover cancellation observed by purge");
+            assert!(!retiring.load(Ordering::Acquire), "{stage}: cutover must wait before mutating runtime metadata");
+            if stage == "timeout" {
+                // "Purge still holds the lock after observing cancellation.
+                // The total budget must fail the job instead of restarting DDL
+                // retries."
+                let cut = cutover.join().unwrap();
+                assert!(cut.starts_with("ERR 8182 "), "{cut}");
+                assert!(
+                    cut.contains("refresh materialized view complete OUT OF PLACE cutover for test.mv_source_init: timed out waiting for materialized view log purge; retry refresh"),
+                    "{cut}"
+                );
+                assert_eq!(cutover_attempts.load(Ordering::Acquire), 1);
+                assert!(!retiring.load(Ordering::Acquire));
+                let after: Vec<String> = state_sqls.iter().map(|sql| answer(&mut tk, sql)).collect();
+                assert_eq!(after, before);
+                assert_eq!(answer(&mut tk, "select * from mv_source_init order by a"), r#"RS:[["1","10","1"],["2","20","1"],["3","30","1"]]"#);
+                release.open();
+                let purged = purge.join().unwrap();
+                assert!(purged.contains("materialized view task canceled manually"), "{purged}");
+                guards.clear();
+                must_exec_all(&mut tk, &[
+                    "refresh materialized view mv_source_init complete out of place",
+                    "purge materialized view log on mv_source_init",
+                ]);
+                continue;
+            }
+            // "A cancelled purge may still be finishing a DELETE batch.
+            // Waiting must not hold the shared schema-version lock."
+            let mut other = stack.factory.open_session(session_context(2177)).unwrap();
+            assert_eq!(answer(&mut other, "use test"), "OK");
+            let other = std::thread::spawn(move || answer(&mut other, "create table t_unrelated_to_purge (a int)"));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !other.is_finished() {
+                assert!(std::time::Instant::now() < deadline, "{stage}: unrelated DDL while cutover waits");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(other.join().unwrap(), "OK");
+            assert_eq!(single_value(&mut tk, id_sql), old_mv.to_string(), "{stage}");
+            release.open();
+            release_running.open();
+            let purged = purge.join().unwrap();
+            assert!(purged.contains("materialized view task canceled manually"), "{stage}: {purged}");
+        }
+        assert_eq!(cutover.join().unwrap(), "OK", "{stage}");
+        assert_eq!(
+            answer(&mut tk, &format!("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID={old_log}")),
+            r#"RS:[["0"]]"#,
+            "{stage}"
+        );
+        must_exec_all(&mut tk, &["insert into t_source_init values (4, 40)", "refresh materialized view mv_source_init fast"]);
+        assert_eq!(answer(&mut tk, "select count(*) > 0 from `$mlog$mv_source_init`"), r#"RS:[["1"]]"#, "{stage}");
+        must_exec_all(&mut tk, &["purge materialized view log on mv_source_init"]);
+    }
+}

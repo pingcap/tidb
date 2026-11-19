@@ -1456,7 +1456,23 @@ impl Session {
         let read_only = matches!(stmt, Stmt::Query(_)) && !query_has_lock(stmt);
         self.mdl_statement_locks = !(read_only && !self.in_transaction() && self.is_autocommit());
         if self.mdl_statement_locks {
-            self.record_mdl_named_tables(names)?;
+            // Go `handleTableName` binds PURGE MATERIALIZED VIEW LOG's
+            // target like any table name the statement writes.
+            let mut names = names.to_vec();
+            if let Stmt::Admin(admin) = stmt {
+                if let tidb_ast::AdminStmt::PurgeMaterializedViewLog(purge) = admin.as_ref() {
+                    let (db, table) = match purge.table.as_slice() {
+                        [table] => (String::new(), table.clone()),
+                        [db, table] => (db.clone(), table.clone()),
+                        _ => (String::new(), String::new()),
+                    };
+                    names.push((tidb_hack::go_to_lower(&db), tidb_hack::go_to_lower(&table)));
+                }
+            }
+            self.record_mdl_named_tables(&names)?;
+            if !read_only {
+                self.record_mdl_implicit_mlogs(&names);
+            }
         }
         Ok(())
     }
@@ -1560,6 +1576,40 @@ impl Session {
             }
         }
         Ok(updated)
+    }
+
+    /// Go master `tryLockMDLAndUpdateSchemaIfNecessary`'s second half: "Writes
+    /// also depend on the implicit MLog schema" -- a public base table's log
+    /// joins the map too.
+    fn record_mdl_implicit_mlogs(&mut self, names: &[(String, String)]) {
+        let (Some(sink), Some(latest)) = (self.mdl_related_tables.clone(), self.latest_info_schema.clone()) else {
+            return;
+        };
+        if !tidb_vardef::is_mdl_enabled(false) || self.snapshot_schema.is_some() || self.is_staleness_txn() {
+            return;
+        }
+        let version = self.cluster_schema_version_now();
+        let current_db = self.current_database().to_owned();
+        for (db, table) in names {
+            let db = if db.is_empty() { &current_db } else { db };
+            let Some((_, info)) = latest.latest().table_info_by_name(db, table) else {
+                continue;
+            };
+            let mlog_id = {
+                let info = info.read();
+                if info.state != tidb_model::SchemaState::PUBLIC {
+                    continue;
+                }
+                info.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id)
+            };
+            if mlog_id == 0 || !self.mdl_statement_tables.lock().is_ok_and(|mut locked| locked.insert(mlog_id)) {
+                continue;
+            }
+            sink.record_table(mlog_id, version);
+            if let Some(process) = &self.process {
+                process.registry().transaction_related_table(process.id(), mlog_id);
+            }
+        }
     }
 
     /// Runs a statement whose table refs carry `AS OF TIMESTAMP`, against
