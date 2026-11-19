@@ -69,6 +69,13 @@ pub enum InfoSchemaExtractorKind {
     Columns,
     /// Go `InfoSchemaTiDBIndexUsageExtractor` (`TIDB_INDEX_USAGE`).
     TiDBIndexUsage,
+    /// Go master `InfoSchemaTiDBMViewsExtractor` (`TIDB_MVIEWS`).
+    TiDBMViews,
+    /// Go master `InfoSchemaTiDBMLogsExtractor` (`TIDB_MLOGS`).
+    TiDBMLogs,
+    /// Go master `InfoSchemaTiDBTableMViewDependenciesExtractor`
+    /// (`TIDB_TABLE_MVIEW_DEPENDENCIES`).
+    TiDBTableMViewDependencies,
 }
 
 const TABLE_SCHEMA: &str = "table_schema";
@@ -86,6 +93,14 @@ const SEQUENCE_SCHEMA: &str = "sequence_schema";
 const SEQUENCE_NAME: &str = "sequence_name";
 const COLUMN_NAME: &str = "column_name";
 const DDL_STATE_NAME: &str = "state";
+const MVIEW_SCHEMA: &str = "mview_schema";
+const MVIEW_NAME: &str = "mview_name";
+const MVIEW_ID: &str = "mview_id";
+const MLOG_NAME: &str = "mlog_name";
+const MLOG_ID: &str = "mlog_id";
+const BASE_TABLE_SCHEMA: &str = "base_table_schema";
+const BASE_TABLE_NAME: &str = "base_table_name";
+const BASE_TABLE_ID: &str = "base_table_id";
 
 /// Go `patternMatchable`: the name columns a `LIKE` is turned into a regexp
 /// for.
@@ -98,6 +113,13 @@ const PATTERN_MATCHABLE: &[&str] = &[
     SEQUENCE_SCHEMA,
     SEQUENCE_NAME,
     COLUMN_NAME,
+    MVIEW_SCHEMA,
+    MVIEW_NAME,
+    MVIEW_ID,
+    MLOG_NAME,
+    BASE_TABLE_SCHEMA,
+    BASE_TABLE_NAME,
+    BASE_TABLE_ID,
 ];
 
 impl InfoSchemaExtractorKind {
@@ -120,6 +142,11 @@ impl InfoSchemaExtractorKind {
             Self::ReferConst => &[CONSTRAINT_SCHEMA, TABLE_NAME, CONSTRAINT_NAME],
             Self::Sequence => &[SEQUENCE_SCHEMA, SEQUENCE_NAME],
             Self::Columns => &[TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME],
+            Self::TiDBMViews => &[TABLE_SCHEMA, MVIEW_NAME, MVIEW_ID],
+            Self::TiDBMLogs => &[TABLE_SCHEMA, MLOG_NAME, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, BASE_TABLE_ID],
+            Self::TiDBTableMViewDependencies => {
+                &[TABLE_SCHEMA, TABLE_NAME, TABLE_ID, MLOG_NAME, MLOG_ID, MVIEW_SCHEMA, MVIEW_NAME, MVIEW_ID]
+            }
         }
     }
 }

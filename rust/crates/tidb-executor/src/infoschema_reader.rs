@@ -314,6 +314,9 @@ pub const SERVED_TABLES: &[&str] = &[
     "SCHEMA_PRIVILEGES",
     "TABLE_PRIVILEGES",
     "COLUMN_PRIVILEGES",
+    "TIDB_MVIEWS",
+    "TIDB_MLOGS",
+    "TIDB_TABLE_MVIEW_DEPENDENCIES",
 ];
 
 /// Whether [`table_rows`] answers `name`.
@@ -413,6 +416,15 @@ pub fn table_rows(
                 .map(|c| vec![text(c.name), text(c.charset)])
                 .collect(),
         );
+    }
+    if name.go_lower_eq("TIDB_MVIEWS") {
+        return Some(tidb_mviews_rows(catalog, visibility, &ctx.session_zone()));
+    }
+    if name.go_lower_eq("TIDB_MLOGS") {
+        return Some(tidb_mlogs_rows(catalog, visibility));
+    }
+    if name.go_lower_eq("TIDB_TABLE_MVIEW_DEPENDENCIES") {
+        return Some(tidb_table_mview_dependencies_rows(catalog, visibility));
     }
     if name.go_lower_eq("SCHEMA_PRIVILEGES")
         || name.go_lower_eq("TABLE_PRIVILEGES")
@@ -3000,4 +3012,164 @@ mod tiflash_system_table_tests {
         assert_eq!(rows[0][at("INDEX_NAME")], text("ib"));
         assert_eq!(rows[0][at("TIFLASH_INSTANCE")], text("tf1:3930"));
     }
+}
+
+/// Every table of `catalog`, with its schema's name, in Go's
+/// `ListSchemasAndTables` order.
+fn all_table_infos(catalog: &SessionExtendedInfoSchema) -> Vec<(String, tidb_model::TableInfo)> {
+    visible_tables(catalog, &SchemaVisibility::unrestricted(), ANY_PRIV)
+        .into_iter()
+        .filter_map(|(schema, table)| {
+            catalog.table_info_by_name(&schema, &table).map(|(_, info)| (schema, info.read().clone()))
+        })
+        .collect()
+}
+
+/// A table's `(schema name, info)` by ID (Go `is.TableByID` and
+/// `infoschema.SchemaByTable`).
+fn table_info_and_schema_by_id(catalog: &SessionExtendedInfoSchema, table_id: i64) -> Option<(String, tidb_model::TableInfo)> {
+    let info = catalog.table_info_by_id(table_id)?.read().clone();
+    let schema = catalog.schema_name_by_table_id(table_id)?;
+    Some((schema, info))
+}
+
+/// Go master `memtableRetriever.setDataFromTiDBMViews`.
+fn tidb_mviews_rows(
+    catalog: &SessionExtendedInfoSchema,
+    visibility: &SchemaVisibility,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table) in all_table_infos(catalog) {
+        let Some(mview) = table.materialized_view.as_ref().map(|info| info.read().clone()) else {
+            continue;
+        };
+        if !visibility.allows(&schema, table.name.original(), ANY_PRIV) {
+            continue;
+        }
+        rows.push(vec![
+            text(CATALOG),
+            text(&schema),
+            Datum::Int(table.id),
+            text(table.name.original()),
+            text(&mview.sql_content),
+            text(&table.comment),
+            update_time_datum(table.update_ts, zone),
+            text(&mview.refresh_method),
+            text(&mview.refresh_start_with),
+            text(&mview.refresh_next),
+        ]);
+    }
+    rows
+}
+
+/// Go master `memtableRetriever.setDataFromTiDBMLogs`: a log is shown to a
+/// session that may SELECT it or its base table.
+fn tidb_mlogs_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table) in all_table_infos(catalog) {
+        let Some(mlog) = table.materialized_view_log.as_ref().map(|info| info.read().clone()) else {
+            continue;
+        };
+        // Go `getMLogBaseTableInfo`.
+        let base_id = mlog.base_table_id;
+        let (base_schema, base_name) = match (base_id != 0).then(|| table_info_and_schema_by_id(catalog, base_id)).flatten() {
+            Some((base_schema, base)) => (base_schema, base.name.original().to_owned()),
+            None => (schema.clone(), String::new()),
+        };
+        let need_output = visibility.allows(&schema, table.name.original(), PrivMask::Select)
+            || (!base_name.is_empty() && visibility.allows(&base_schema, &base_name, PrivMask::Select));
+        if !need_output {
+            continue;
+        }
+        let columns: Vec<&str> = mlog.columns.iter().map(|column| column.original()).collect();
+        let purge = |value: &str| {
+            if mlog.purge_method.is_empty() && mlog.purge_start_with.is_empty() && mlog.purge_next.is_empty() {
+                Datum::Null
+            } else {
+                text(value)
+            }
+        };
+        rows.push(vec![
+            text(CATALOG),
+            text(&schema),
+            Datum::Int(table.id),
+            text(table.name.original()),
+            text(&columns.join(",")),
+            text(CATALOG),
+            text(&base_schema),
+            Datum::Int(base_id),
+            text(&base_name),
+            purge(&mlog.purge_method),
+            purge(&mlog.purge_start_with),
+            purge(&mlog.purge_next),
+        ]);
+    }
+    rows
+}
+
+/// Go master `memtableRetriever.setDataFromTiDBTableMViewDependencies`: one
+/// row per base table, its log and each dependent view, shown to a session
+/// that may SELECT the base table, its log or the view.
+fn tidb_table_mview_dependencies_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table) in all_table_infos(catalog) {
+        let Some(base) = table.materialized_view_base.as_ref().map(|info| info.read().clone()) else {
+            continue;
+        };
+        // Go `getBaseTableMLogInfo`.
+        if base.mlog_id == 0 {
+            continue;
+        }
+        let Some(mlog_name) = catalog
+            .table_info_by_id(base.mlog_id)
+            .filter(|mlog| mlog.read().materialized_view_log.is_some())
+            .map(|mlog| mlog.read().name.original().to_owned())
+        else {
+            continue;
+        };
+        let need_output = visibility.allows(&schema, table.name.original(), PrivMask::Select)
+            || visibility.allows(&schema, &mlog_name.go_to_lower(), PrivMask::Select);
+        // Go `getBaseTableMViewDependencies`.
+        let mut seen = std::collections::HashSet::new();
+        let mut deps: Vec<(String, i64, String)> = Vec::new();
+        for mview_id in base.mview_ids.iter().copied() {
+            if seen.contains(&mview_id) {
+                continue;
+            }
+            let Some((mview_schema, mview)) = table_info_and_schema_by_id(catalog, mview_id) else {
+                continue;
+            };
+            if mview.materialized_view.is_none() {
+                continue;
+            }
+            seen.insert(mview_id);
+            deps.push((mview_schema, mview.id, mview.name.original().to_owned()));
+        }
+        deps.sort_by(|(left_schema, left_id, left_name), (right_schema, right_id, right_name)| {
+            left_schema
+                .go_to_lower()
+                .cmp(&right_schema.go_to_lower())
+                .then_with(|| left_name.go_to_lower().cmp(&right_name.go_to_lower()))
+                .then_with(|| left_id.cmp(right_id))
+        });
+        for (mview_schema, mview_id, mview_name) in deps {
+            if !(need_output || visibility.allows(&mview_schema, &mview_name.go_to_lower(), PrivMask::Select)) {
+                continue;
+            }
+            rows.push(vec![
+                text(CATALOG),
+                text(&schema),
+                Datum::Int(table.id),
+                text(table.name.original()),
+                Datum::Int(base.mlog_id),
+                text(&mlog_name),
+                text(CATALOG),
+                text(&mview_schema),
+                Datum::Int(mview_id),
+                text(&mview_name),
+            ]);
+        }
+    }
+    rows
 }

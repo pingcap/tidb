@@ -4320,3 +4320,95 @@ fn test_nested_m_view_refresh_source_info_recovery_atomicity() {
     ]);
     assert_eq!(answer(&mut tk, "select * from mv_source_child order by a"), r#"RS:[["1","1"],["2","1"],["3","1"],["4","1"],["5","1"]]"#);
 }
+
+/// Go master's `tests/integrationtest/t/executor/infoschema_mv.test`
+/// (`bb23c552354`: `TIDB_MVIEWS`, `TIDB_MLOGS` and
+/// `TIDB_TABLE_MVIEW_DEPENDENCIES` with their predicate extractors), replayed
+/// from a Go master `2a6eb11aeb9` capture (`testdata/mview_infoschema_go.jsonl`).
+#[test]
+fn materialized_view_infoschema_tables_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_infoschema_go.jsonl"));
+}
+
+/// Go master `TestInformationSchemaMaterializedView`
+/// (`pkg/executor/test/materializedview/materialized_view_infoschema_test.go`).
+#[test]
+fn test_information_schema_materialized_view() {
+    // t.Run("TiDBMViews")
+    {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t (a int not null, b int not null)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_meta (a, s, cnt) comment='mv-meta' refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        ]);
+        let mv_id = latest_table(&stack, "mv_meta").id;
+        assert_eq!(
+            answer(&mut tk, "select table_catalog, table_schema, mview_id, mview_name, mview_comment, refresh_method, refresh_start, refresh_next from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'"),
+            format!(r#"RS:[["def","test","{mv_id}","mv_meta","mv-meta","FAST","","DATE_ADD(NOW(), INTERVAL 1 HOUR)"]]"#)
+        );
+        assert_eq!(
+            answer(&mut tk, "select mview_modify_time is not null from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'"),
+            r#"RS:[["1"]]"#
+        );
+        assert_eq!(
+            answer(&mut tk, "select mview_sql_content like 'SELECT%' from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'"),
+            r#"RS:[["1"]]"#
+        );
+    }
+    // t.Run("TiDBMLogs")
+    {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable = on",
+            "use test",
+            "create table t (a int not null, b int not null)",
+            "create materialized view log on t (a, b) purge start with now() next date_add(now(), interval 1 hour)",
+        ]);
+        let base = latest_table(&stack, "t");
+        let (mlog_id, base_id) = (mlog_id(&base), base.id);
+        assert_eq!(
+            answer(&mut tk, "select table_catalog, table_schema, mlog_id, mlog_name, mlog_columns, base_table_catalog, base_table_schema, base_table_id, base_table_name, purge_method, purge_start, purge_next from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$t'"),
+            format!(r#"RS:[["def","test","{mlog_id}","$mlog$t","a,b","def","test","{base_id}","t","DEFERRED","NOW()","DATE_ADD(NOW(), INTERVAL 1 HOUR)"]]"#)
+        );
+    }
+}
+
+/// The visibility rules of Go master's `setDataFromTiDBMViews` /
+/// `setDataFromTiDBMLogs` / `setDataFromTiDBTableMViewDependencies` (a log
+/// shown for its own or its base table's SELECT, a dependency row for the
+/// base table's, the log's or the view's), replayed from a Go master
+/// `2a6eb11aeb9` capture where `low:` statements run as an unprivileged
+/// account (`testdata/mview_infoschema_privileges_go.jsonl`).
+#[test]
+fn materialized_view_infoschema_privileges_as_go_master() {
+    let (stack, users, mut root) = go_master_mview_stack();
+    let mut low: Option<Session> = None;
+    let mut mismatches = Vec::new();
+    for line in include_str!("../../../../../testdata/mview_infoschema_privileges_go.jsonl").lines() {
+        let (sql, go): (String, String) = serde_json::from_str(line).unwrap();
+        let rust = match sql.strip_prefix("low: ") {
+            Some(sql) => {
+                let session = low.get_or_insert_with(|| {
+                    stack
+                        .factory
+                        .open_session(super::super::node_fixture::session_context_with_identity(2161, log_in(&users, "low")))
+                        .unwrap()
+                });
+                answer(session, sql)
+            }
+            None => answer(&mut root, &sql),
+        };
+        let rows = |answer: &str| answer.strip_prefix("RS:").map(|rows| serde_json::from_str::<serde_json::Value>(rows).unwrap());
+        let same = match (rows(&rust), rows(&go)) {
+            (Some(rust), Some(go)) => rust == go,
+            _ => rust == go,
+        };
+        if !same {
+            mismatches.push(format!("{sql}\n  go:   {go}\n  rust: {rust}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}

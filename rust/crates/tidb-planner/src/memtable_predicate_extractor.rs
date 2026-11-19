@@ -1959,6 +1959,9 @@ impl MemTableExtractor {
             "VIEWS" => info_schema(Kind::Views),
             "KEY_COLUMN_USAGE" => info_schema(Kind::KeyColumnUsage),
             "TABLE_CONSTRAINTS" => info_schema(Kind::TableConstraints),
+            "TIDB_MVIEWS" => info_schema(Kind::TiDBMViews),
+            "TIDB_MLOGS" => info_schema(Kind::TiDBMLogs),
+            "TIDB_TABLE_MVIEW_DEPENDENCIES" => info_schema(Kind::TiDBTableMViewDependencies),
             "TIKV_REGION_STATUS" => Self::TiKVRegionStatus(TiKVRegionStatusExtractor::default()),
             _ => return None,
         })
