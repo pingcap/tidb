@@ -187,7 +187,6 @@ type mviewTask struct {
 	// Suppress repeated overdue logs for the same lastSuccessReadTSO.
 	lastLoggedWarningTSO   uint64
 	lastLoggedOverdueTSO   uint64
-	lastSyncedAlertLevel   string
 	lastSyncedAlertReadTSO uint64
 	alertStateInitialized  bool
 	persistedAlertLevel    string
@@ -538,9 +537,9 @@ func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask
 		case mvRefreshAlertLevelWarning:
 			warningCount++
 		}
-		// Schedule DDL can clear the persisted alert without changing the snapshot.
+		// Schedule DDL or another checker can change the persisted alert level.
+		// A new read TSO still needs to refresh the persisted snapshot time.
 		if task.alertStateInitialized &&
-			task.lastSyncedAlertLevel == alertLevel &&
 			task.lastSyncedAlertReadTSO == task.lastSuccessReadTSO &&
 			task.persistedAlertLevel == alertLevel {
 			continue
@@ -575,7 +574,6 @@ func (t *MVService) markRefreshAlertStatesSynced(states []refreshAlertTask) {
 		if !ok || task == nil {
 			continue
 		}
-		task.lastSyncedAlertLevel = state.alertLevel
 		task.lastSyncedAlertReadTSO = state.lastSuccessReadTSO
 		task.alertStateInitialized = true
 		task.persistedAlertLevel = state.alertLevel
