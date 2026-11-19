@@ -19,7 +19,6 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -627,16 +626,16 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 
 		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
 			if val.(bool) {
-				// Ensure that spill can get `syncLock`.
-				time.Sleep(1 * time.Millisecond)
+				// Ensure the current partition has finished spilling before the next chunk.
+				e.curPartition.waitForSpillTriggeredForTest()
 			}
 		})
 	}
 
 	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
 		if val.(bool) {
-			// Ensure that spill is triggered before returning data.
-			time.Sleep(50 * time.Millisecond)
+			// Ensure the current partition has finished spilling before returning data.
+			e.curPartition.waitForSpillTriggeredForTest()
 		}
 	})
 
