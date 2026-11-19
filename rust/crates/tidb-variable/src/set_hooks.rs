@@ -264,16 +264,29 @@ struct SetVarsContext<'a> {
     warnings: std::cell::RefCell<Vec<crate::sysvar::VarWarning>>,
 }
 
+impl SetVarsContext<'_> {
+    /// Go's closures read `tidb_snapshot` as the typed `SnapshotTS`, which a
+    /// failed `SET tidb_snapshot` rolls back while its system string stays
+    /// (as the store's own lookup does).
+    fn session_value(&self, name: &str) -> Option<String> {
+        if name.eq_ignore_ascii_case("tidb_snapshot") {
+            Some(self.vars.snapshot_ts().to_string())
+        } else {
+            self.vars.get_system(name).ok()
+        }
+    }
+}
+
 impl crate::sysvar::VarsContext for SetVarsContext<'_> {
     fn read(&self, name: &str) -> Option<String> {
         if self.scope == crate::sysvar::SCOPE_SESSION {
-            self.vars.get_system(name).ok()
+            self.session_value(name)
         } else {
             self.vars.get_global(name).ok()
         }
     }
     fn session_read(&self, name: &str) -> Option<String> {
-        self.vars.get_system(name).ok()
+        self.session_value(name)
     }
     /// Every caller of `run_set_closures` is a user's `SET`.
     fn stmt_is_set(&self) -> bool {
