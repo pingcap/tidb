@@ -182,8 +182,8 @@ func TestAcquireRuntimeHandle(t *testing.T) {
 		sessPool := &runtimeHandleTestSessPool{}
 		createCount := 0
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(createSessionManager *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
-				*createSessionManager = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+			func(createSessionManager *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*createSessionManager = func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
 					createCount++
 					return newRuntimeHandleTestSessionManager(targetStore, sessPool), nil
 				}
@@ -329,8 +329,8 @@ func TestEvictRuntime(t *testing.T) {
 		factoryGetter := unusedRuntimeHandleFactoryGetter(t)
 		createCount := 0
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(createSessionManager *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
-				*createSessionManager = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+			func(createSessionManager *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*createSessionManager = func(_ context.Context, ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
 					createCount++
 					newStore := &runtimeHandleTestStore{ks: ks}
 					newSessPool := &runtimeHandleTestSessPool{}
@@ -443,8 +443,8 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		t.Cleanup(mgr.Close)
 		created := false
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(create *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
-				*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+			func(create *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*create = func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
 					created = true
 					return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil
 				}
@@ -554,8 +554,8 @@ func TestEagerRuntimeRelease(t *testing.T) {
 
 		created := make(chan struct{}, 1)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(create *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
-				*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+			func(create *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*create = func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
 					select {
 					case <-store.closed:
 					default:
@@ -597,8 +597,8 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		mgr.CloseKS(ks)
 		newPool := &runtimeHandleTestSessPool{}
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(create *func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
-				*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+			func(create *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+				*create = func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
 					return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, newPool), nil
 				}
 			})
@@ -645,4 +645,193 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		require.Nil(t, ordinary)
 		require.ErrorContains(t, err, "closed")
 	})
+}
+
+func TestRuntimeInitializationIsolation(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	for _, tc := range []struct {
+		name       string
+		creatorErr error
+	}{
+		{"creator cancellation", context.Canceled},
+		{"ordinary creation failure", kv.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, _, _, _ := newRuntimeHandleTestManager(t, "ready")
+			factory := unusedRuntimeHandleFactoryGetter(t)
+			creatorCtx, cancelCreator := context.WithCancel(context.Background())
+			defer cancelCreator()
+			started := make(chan struct{})
+			unblock := make(chan struct{})
+			finishCreate := sync.OnceFunc(func() { close(unblock) })
+			createCount := 0
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+				func(create *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+					*create = func(ctx context.Context, ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+						createCount++
+						if ctx == creatorCtx {
+							close(started)
+							<-unblock
+							if err := ctx.Err(); err != nil {
+								return nil, err
+							}
+							return nil, kv.ErrNotExist
+						}
+						return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil
+					}
+				})
+			var workers sync.WaitGroup
+			defer func() {
+				finishCreate()
+				workers.Wait()
+			}()
+			acquire := func(ctx context.Context, ks, holder string) <-chan error {
+				done := make(chan error, 1)
+				workers.Go(func() {
+					handle, err := mgr.AcquireWithContext(ctx, ks, holder, factory)
+					if err == nil {
+						handle.Release(false)
+					}
+					done <- err
+				})
+				return done
+			}
+			creator := acquire(creatorCtx, "cold", "creator")
+			<-started
+			select {
+			case err := <-acquire(context.Background(), "ready", "other"):
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("unrelated keyspace acquire and release waited for cold initialization")
+			}
+
+			waitForCreator := func(ctx context.Context, holder string) <-chan error {
+				observed := &observedRuntimeContext{Context: ctx, waiting: make(chan struct{})}
+				done := acquire(observed, "cold", holder)
+				select {
+				case <-observed.waiting:
+				case <-time.After(5 * time.Second):
+					t.Fatal("same-keyspace waiter did not enter a cancelable wait")
+				}
+				return done
+			}
+			ctx, cancelWaiter := context.WithCancel(context.Background())
+			defer cancelWaiter()
+			canceledWaiter := waitForCreator(ctx, "canceled")
+			cancelWaiter()
+			require.ErrorIs(t, <-canceledWaiter, context.Canceled)
+
+			waiter := waitForCreator(context.Background(), "waiting")
+			if tc.creatorErr == context.Canceled {
+				cancelCreator()
+			}
+			finishCreate()
+			require.ErrorIs(t, <-creator, tc.creatorErr)
+			if tc.creatorErr == context.Canceled {
+				require.NoError(t, <-waiter)
+				require.Equal(t, 2, createCount)
+			} else {
+				require.ErrorIs(t, <-waiter, tc.creatorErr)
+				require.Equal(t, 1, createCount)
+			}
+		})
+	}
+}
+
+func TestGCSweepKeepsRemainingRuntimesAvailable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	t.Cleanup(mgr.Close)
+	closing := make(chan string, 1)
+	unblock := make(chan struct{})
+	var firstClose sync.Once
+	for _, ks := range []string{"a", "b"} {
+		store := &runtimeHandleTestStore{ks: ks, onClose: func() {
+			firstClose.Do(func() {
+				closing <- ks
+				<-unblock
+			})
+		}}
+		mgr.runtimes[ks] = &runtimeEntry{
+			sessMgr:       newRuntimeHandleTestSessionManager(store, &runtimeHandleTestSessPool{}),
+			activeHolders: make(map[string]struct{}),
+			lastReleaseAt: time.Now().Add(-time.Hour),
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		mgr.sweepIdleRuntimes(time.Minute)
+	}()
+	var finish sync.Once
+	finishSweep := func() {
+		finish.Do(func() { close(unblock) })
+		<-done
+	}
+	defer finishSweep()
+	ks := "a"
+	if <-closing == ks {
+		ks = "b"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	handle, err := mgr.AcquireWithContext(ctx, ks, "holder", unusedRuntimeHandleFactoryGetter(t))
+	require.NoError(t, err, "a slow close must leave unrelated idle candidates available")
+	handle.Release(false)
+	finishSweep()
+	require.Contains(t, mgr.GetAllKeyspace(), ks, "the newly released runtime is no longer idle long enough")
+}
+
+func TestRuntimeShutdownDuringInitialization(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	t.Cleanup(mgr.Close)
+	store := &runtimeHandleTestStore{ks: "cold"}
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+		func(create *func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error)) {
+			*create = func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, error) {
+				close(started)
+				<-unblock
+				return newRuntimeHandleTestSessionManager(store, &runtimeHandleTestSessPool{}), nil
+			}
+		})
+	acquired := make(chan error, 1)
+	go func() {
+		handle, err := mgr.Acquire("cold", "holder", unusedRuntimeHandleFactoryGetter(t))
+		if handle != nil {
+			handle.Release(false)
+		}
+		acquired <- err
+	}()
+	<-started
+	closed := make(chan struct{})
+	go func() { mgr.Close(); close(closed) }()
+	var once sync.Once
+	finish := func() {
+		once.Do(func() { close(unblock) })
+		<-closed
+	}
+	defer finish()
+	require.Eventually(t, func() bool {
+		mgr.mu.RLock()
+		defer mgr.mu.RUnlock()
+		return mgr.closed
+	}, 5*time.Second, time.Millisecond)
+	select {
+	case <-closed:
+		t.Fatal("shutdown returned while a runtime was initializing")
+	default:
+	}
+	finish()
+	require.ErrorContains(t, <-acquired, "closed")
+	require.Empty(t, mgr.GetAllKeyspace())
+	require.Equal(t, 1, store.closeCount)
 }

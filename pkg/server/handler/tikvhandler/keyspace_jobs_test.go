@@ -28,10 +28,16 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/server/handler"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +66,34 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/keyspaces/jobs/active", nil))
 		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+	t.Run("request body size limit", func(t *testing.T) {
+		const maxBytes = 256 << 10
+		const input = `{"keyspaces":["ks"]}`
+		atLimit := input + strings.Repeat(" ", maxBytes-len(input))
+		for _, tc := range []struct {
+			body string
+			code int
+		}{
+			{atLimit, http.StatusOK},
+			{atLimit + " ", http.StatusBadRequest},
+			{strings.Repeat(" ", maxBytes) + input, http.StatusBadRequest},
+			{input + ` "` + strings.Repeat("x", 2*maxBytes) + `"`, http.StatusBadRequest},
+		} {
+			body := strings.NewReader(tc.body)
+			req := httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active", body)
+			req.ContentLength = -1
+			w := httptest.NewRecorder()
+			var checked bool
+			h := &KeyspaceActiveJobsHandler{checkKeyspace: func(context.Context, string) (keyspaceJobCounts, error) {
+				checked = true
+				return keyspaceJobCounts{}, nil
+			}}
+			h.ServeHTTP(w, req)
+			require.Equal(t, tc.code, w.Code)
+			require.Equal(t, tc.code == http.StatusOK, checked)
+			require.LessOrEqual(t, len(tc.body)-body.Len(), maxBytes+1)
+		}
 	})
 	t.Run("batch size limit", func(t *testing.T) {
 		names := make([]string, 1000)
@@ -262,13 +296,45 @@ func TestKeyspaceActiveJobsCounts(t *testing.T) {
 	}
 	tk.MustExec(`insert into mysql.tidb_ddl_job(job_id,reorg,schema_ids,table_ids,job_meta,type,processing)
         values (99999,0,'1','1','invalid job meta',1,0)`)
-	_, err = countActiveKeyspaceJobs(context.Background(), tk.Session())
-	require.Error(t, err)
+	t.Run("inspect each chunk before reading more", func(t *testing.T) {
+		se := &singleChunkJobSession{Context: tk.Session(), SQLExecutor: tk.Session().GetSQLExecutor()}
+		_, err := countActiveKeyspaceJobs(context.Background(), se)
+		require.ErrorContains(t, err, "invalid character")
+	})
 	tk.MustExec("delete from mysql.tidb_ddl_job")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = countActiveKeyspaceJobs(ctx, tk.Session())
 	require.Error(t, err)
+}
+
+// singleChunkJobSession returns an error if the caller fetches past a malformed job.
+type singleChunkJobSession struct {
+	sessionctx.Context
+	sqlexec.SQLExecutor
+}
+
+func (s *singleChunkJobSession) GetSQLExecutor() sqlexec.SQLExecutor { return s }
+
+func (s *singleChunkJobSession) ExecuteInternal(ctx context.Context, query string, args ...any) (sqlexec.RecordSet, error) {
+	rs, err := s.SQLExecutor.ExecuteInternal(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &singleChunkJobResult{RecordSet: rs}, nil
+}
+
+type singleChunkJobResult struct {
+	sqlexec.RecordSet
+	read bool
+}
+
+func (r *singleChunkJobResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if r.read {
+		return errors.New("fetched another chunk before inspecting the malformed job")
+	}
+	r.read = true
+	return r.RecordSet.Next(ctx, chk)
 }
 
 type jobCountTestPool struct {
@@ -297,6 +363,17 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.DDL().OwnerManager().CampaignCancel()
 	tk := testkit.NewTestKit(t, store)
+	t.Run("missing keyspace", func(t *testing.T) {
+		if !kv.IsSystemKS(store) {
+			t.Skip("requires a SYSTEM keyspace")
+		}
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore", func(open *func(string) (kv.Storage, error)) {
+			*open = func(string) (kv.Storage, error) { return nil, errors.New("unexpected store open") }
+		})
+		h := NewKeyspaceActiveJobsHandler(handler.NewTikvHandlerTool(store.(helper.Storage)))
+		_, err := h.countKeyspace(context.Background(), "missing_ks")
+		require.ErrorContains(t, err, "ENTRY_NOT_FOUND")
+	})
 	for _, tc := range []string{"success", "acquire error", "session error", "query error", "cancellation"} {
 		t.Run(tc, func(t *testing.T) {
 			var events []string
@@ -334,7 +411,7 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 			case "acquire error":
 				require.Error(t, err)
 				require.Empty(t, events)
-			case "session error":
+			case "session error", "cancellation":
 				require.Error(t, err)
 				require.Equal(t, []string{"release(true)"}, events)
 			default:

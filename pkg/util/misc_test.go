@@ -16,6 +16,7 @@ package util
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509/pkix"
 	"testing"
 	"time"
@@ -35,6 +36,18 @@ import (
 )
 
 func TestRunWithRetry(t *testing.T) {
+	t.Run("cancel between attempts", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		attempts := 0
+		err := RunWithRetryContext(ctx, 2, 1000, func() (bool, error) {
+			attempts++
+			cancel()
+			return true, errors.New("retry")
+		})
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, 1, attempts)
+	})
 	t.Run("success", func(t *testing.T) {
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {

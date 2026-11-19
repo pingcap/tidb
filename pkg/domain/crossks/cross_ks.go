@@ -70,21 +70,30 @@ type runtimeEntry struct {
 	closeDone chan struct{}
 }
 
+// runtimeInit coordinates callers opening the same keyspace. The creator sets
+// err before closing done. A canceled creator leaves other callers free to retry.
+type runtimeInit struct {
+	done chan struct{}
+	err  error
+}
+
 // Manager manages all cross keyspace sessions.
 type Manager struct {
 	mu sync.RWMutex
 	// the store of current instance
 	store kv.Storage
 	// keyspace name -> runtime entry
-	runtimes map[string]*runtimeEntry
-	closed   bool
+	runtimes     map[string]*runtimeEntry
+	initializing map[string]*runtimeInit
+	closed       bool
 }
 
 // NewManager creates a new cross keyspace session manager.
 func NewManager(store kv.Storage) *Manager {
 	return &Manager{
-		store:    store,
-		runtimes: make(map[string]*runtimeEntry),
+		store:        store,
+		runtimes:     make(map[string]*runtimeEntry),
+		initializing: make(map[string]*runtimeInit),
 	}
 }
 
@@ -123,7 +132,7 @@ func (m *Manager) GetOrCreate(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	entry, err := m.getOrCreateEntryLocked(context.Background(), ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +151,8 @@ func (m *Manager) Acquire(
 	return m.AcquireWithContext(context.Background(), ks, holderID, ksSessFactoryGetter)
 }
 
-// AcquireWithContext allows cancellation while waiting for a closing runtime.
+// AcquireWithContext allows cancellation while opening the store or waiting
+// for another caller to initialize or close the runtime.
 func (m *Manager) AcquireWithContext(
 	ctx context.Context,
 	ks string,
@@ -185,12 +195,12 @@ func (m *Manager) tryAcquire(
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if m.closed {
-		return nil, nil, errors.New("cross keyspace runtime manager is closed")
-	}
-	entry, err := m.getOrCreateEntryWithoutLock(ks, ksSessFactoryGetter)
+	entry, err := m.getOrCreateEntryLocked(ctx, ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, nil, err
+	}
+	if m.closed {
+		return nil, nil, errors.New("cross keyspace runtime manager is closed")
 	}
 	if entry.closeDone != nil {
 		return nil, entry.closeDone, nil
@@ -226,37 +236,72 @@ func (m *Manager) validateTargetKS(ks string) error {
 	return nil
 }
 
-func (m *Manager) getOrCreateEntryWithoutLock(
+// getOrCreateEntryLocked is called with m.mu held and returns with it held so
+// acquisition can register a holder atomically. Initialization and waits run
+// outside the lock.
+func (m *Manager) getOrCreateEntryLocked(
+	ctx context.Context,
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
-) (*runtimeEntry, error) {
-	if entry, ok := m.runtimes[ks]; ok {
-		return entry, nil
-	}
-	if m.closed {
-		return nil, errors.New("cross keyspace runtime manager is closed")
+) (entry *runtimeEntry, err error) {
+	for {
+		if entry := m.runtimes[ks]; entry != nil {
+			return entry, nil
+		}
+		if m.closed {
+			return nil, errors.New("cross keyspace runtime manager is closed")
+		}
+		pending := m.initializing[ks]
+		if pending == nil {
+			break
+		}
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-pending.done:
+		}
+		m.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if pending.err != nil {
+			return nil, pending.err
+		}
+		// A holder may already have closed this runtime before we woke up.
 	}
 
+	pending := &runtimeInit{done: make(chan struct{})}
+	m.initializing[ks] = pending
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		if entry != nil {
+			m.runtimes[ks] = entry
+		} else if ctx.Err() == nil {
+			pending.err = err
+		}
+		delete(m.initializing, ks)
+		close(pending.done)
+	}()
 	createSessionManager := m.createSessionManager
 	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
-	mgr, err := createSessionManager(ks, ksSessFactoryGetter)
+	mgr, err := createSessionManager(ctx, ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
-	entry := &runtimeEntry{
+	return &runtimeEntry{
 		sessMgr:       mgr,
 		activeHolders: make(map[string]struct{}),
-	}
-	m.runtimes[ks] = entry
-	return entry, nil
+	}, nil
 }
 
 func (*Manager) createSessionManager(
+	openCtx context.Context,
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, err error) {
 	startTime := time.Now()
-	getStoreFn := getOrCreateStore
+	getStoreFn := func(ks string) (kv.Storage, error) { return getOrCreateStore(openCtx, ks) }
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
 	var store kv.Storage
 	store, err = getStoreFn(ks)
@@ -489,33 +534,27 @@ func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 }
 
 func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
-	type evictedRuntime struct {
-		targetKS string
-		entry    *runtimeEntry
-	}
-
-	evicted := make([]evictedRuntime, 0, 1)
-	now := time.Now()
-	m.mu.Lock()
-	for targetKS, entry := range m.runtimes {
-		if len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() {
+	// Take a snapshot of the keys only. Check holders and claim each close just
+	// before teardown, so slow teardown of another keyspace cannot block reuse.
+	cutoff := time.Now().Add(-idleTimeout)
+	m.mu.RLock()
+	keyspaces := slices.Collect(maps.Keys(m.runtimes))
+	m.mu.RUnlock()
+	for _, ks := range keyspaces {
+		m.mu.Lock()
+		entry := m.runtimes[ks]
+		if entry == nil || len(entry.activeHolders) > 0 || entry.lastReleaseAt.IsZero() ||
+			entry.lastReleaseAt.After(cutoff) || !m.claimCloseWithoutLock(entry) {
+			m.mu.Unlock()
 			continue
 		}
-		if now.Sub(entry.lastReleaseAt) < idleTimeout {
-			continue
-		}
-		if m.claimCloseWithoutLock(entry) {
-			evicted = append(evicted, evictedRuntime{targetKS: targetKS, entry: entry})
-		}
-	}
-	m.mu.Unlock()
-
-	for _, item := range evicted {
+		lastReleaseAt := entry.lastReleaseAt
+		m.mu.Unlock()
 		logutil.BgLogger().Info("evict idle cross keyspace runtime",
-			zap.String("targetKS", item.targetKS),
+			zap.String("targetKS", ks),
 			zap.Duration("idleTimeout", idleTimeout),
-			zap.Time("lastReleaseAt", item.entry.lastReleaseAt))
-		m.finishClose(item.targetKS, item.entry)
+			zap.Time("lastReleaseAt", lastReleaseAt))
+		m.finishClose(ks, entry)
 	}
 }
 
@@ -523,8 +562,16 @@ func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	m.closed = true
-	runtimes := maps.Clone(m.runtimes)
+	initializing := slices.Collect(maps.Values(m.initializing))
 	m.mu.Unlock()
+	// No more initializations can start. Wait for every creator to publish its
+	// runtime or clean up its partial initialization before taking the snapshot.
+	for _, pending := range initializing {
+		<-pending.done
+	}
+	m.mu.RLock()
+	runtimes := maps.Clone(m.runtimes)
+	m.mu.RUnlock()
 
 	for ks, entry := range runtimes {
 		m.mu.Lock()
@@ -538,11 +585,11 @@ func (m *Manager) Close() {
 	}
 }
 
-func getOrCreateStore(targetKS string) (kv.Storage, error) {
+func getOrCreateStore(ctx context.Context, targetKS string) (kv.Storage, error) {
 	if targetKS == keyspace.System {
 		return kvstore.GetSystemStorage(), nil
 	}
-	return kvstore.InitStorage(targetKS)
+	return kvstore.InitStorageWithContext(ctx, targetKS)
 }
 
 type runtimeHandle struct {

@@ -1404,9 +1404,10 @@ Example HTTP 200 response:
 Each successful result includes both counts, including zeros. An unsuccessful
 result contains `error` and omits both counts; successful results from other
 keyspaces are preserved. Results follow the input order after deduplication.
-Split lists longer than 1,000 entries across requests. Oversized or malformed
-requests return HTTP 400 before any keyspace is checked. Methods other than
-POST return HTTP 405.
+The JSON request body can be up to 256 KiB, including whitespace. Split larger
+bodies or lists longer than 1,000 entries across requests. Oversized or
+malformed requests return HTTP 400 before any keyspace is checked. Methods
+other than POST return HTTP 405.
 
 DDL counts include queued, running, pausing, paused, cancelling, and
 rolling-back jobs. Done, synced, cancelled, and rollback-done jobs are excluded,
@@ -1416,9 +1417,10 @@ DXF task keeps its import job active. Finished, failed, and cancelled imports ar
 excluded. Counts are observations made during the request, not a cluster-wide
 atomic snapshot.
 
-SQL queries and waits for a closing runtime honor request cancellation and share
-one 10-second deadline across the batch. Runtime/session initialization and
-teardown use their existing internal timeouts, so a response can take longer.
+PD keyspace lookups, SQL queries, waits for another caller to open or close a
+runtime, and storage-open retry delays honor request cancellation and share one
+10-second deadline across the batch. Individual runtime and session initialization
+operations and teardown can take longer.
 After each check, including a failed check, the handler returns or destroys
 the borrowed session and releases its runtime handle. If it was the last holder,
 the handler closes the runtime immediately. Other holders can continue using

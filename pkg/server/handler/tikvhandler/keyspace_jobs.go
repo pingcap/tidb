@@ -24,11 +24,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsession "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,7 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/naming"
 )
 
-const maxActiveJobsKeyspacesPerRequest = 1000
+const (
+	maxActiveJobsKeyspacesPerRequest = 1000
+	maxActiveJobsRequestBytes        = 256 << 10
+)
 
 type keyspaceJobCounts struct {
 	DDLJobs    int64 `json:"ddl_jobs"`
@@ -72,13 +75,13 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		Keyspaces   []string `json:"keyspaces"`
 		Concurrency int      `json:"concurrency"`
 	}
-	decoder := json.NewDecoder(req.Body)
-	if err := decoder.Decode(&input); err != nil {
-		handler.WriteError(w, errors.Annotate(err, "invalid JSON request"))
+	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, maxActiveJobsRequestBytes))
+	if err != nil {
+		handler.WriteError(w, err)
 		return
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		handler.WriteError(w, errors.New("request must contain exactly one JSON object"))
+	if err := json.Unmarshal(body, &input); err != nil {
+		handler.WriteError(w, errors.Annotate(err, "invalid JSON request"))
 		return
 	}
 	if len(input.Keyspaces) == 0 {
@@ -142,6 +145,13 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS string) (_ keyspaceJobCounts, err error) {
 	acquire := h.acquireRuntime
 	if acquire == nil {
+		// Opening a new store retries missing keyspaces during provisioning.
+		// An active-job check can report the missing keyspace immediately.
+		if store, ok := h.Store.(kv.StorageWithPD); ok {
+			if _, err := store.GetPDClient().LoadKeyspace(ctx, targetKS); err != nil {
+				return keyspaceJobCounts{}, errors.Annotatef(err, "failed to load keyspace %s from PD", targetKS)
+			}
+		}
 		dom, domErr := session.GetDomain(h.Store)
 		if domErr != nil {
 			return keyspaceJobCounts{}, domErr
@@ -153,6 +163,9 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 		return keyspaceJobCounts{}, err
 	}
 	defer runtime.Release(true)
+	if err := ctx.Err(); err != nil {
+		return keyspaceJobCounts{}, err
+	}
 	pool := runtime.SysSessionPool()
 	resource, err := pool.Get()
 	if err != nil {
@@ -172,16 +185,9 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 
 func countActiveKeyspaceJobs(ctx context.Context, se sessionctx.Context) (keyspaceJobCounts, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	jobs, err := ddl.GetAllDDLJobs(ctx, se)
+	ddlJobs, err := countActiveDDLJobs(ctx, se)
 	if err != nil {
 		return keyspaceJobCounts{}, err
-	}
-	var counts keyspaceJobCounts
-	for _, job := range jobs {
-		// InFinalState also includes paused jobs, which remain active here.
-		if !job.IsFinished() && !job.IsSynced() {
-			counts.DDLJobs++
-		}
 	}
 	rows, err := ddlsession.NewSession(se).Execute(ctx,
 		"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')",
@@ -189,6 +195,40 @@ func countActiveKeyspaceJobs(ctx context.Context, se sessionctx.Context) (keyspa
 	if err != nil {
 		return keyspaceJobCounts{}, err
 	}
-	counts.ImportJobs = rows[0].GetInt64(0)
-	return counts, nil
+	return keyspaceJobCounts{DDLJobs: ddlJobs, ImportJobs: rows[0].GetInt64(0)}, nil
+}
+
+func countActiveDDLJobs(ctx context.Context, se sessionctx.Context) (count int64, err error) {
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select job_meta from mysql.tidb_ddl_job")
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+
+	// Job metadata includes the query and DDL arguments. Request a small chunk
+	// and reuse it throughout the scan, including when the queue has a backlog.
+	chk := rs.NewChunk(nil)
+	chk.SetRequiredRows(8, chk.RequiredRows())
+	for {
+		if err := rs.Next(ctx, chk); err != nil {
+			return 0, err
+		}
+		if chk.NumRows() == 0 {
+			return count, nil
+		}
+		for i := range chk.NumRows() {
+			var job model.Job
+			if err := job.Decode(chk.GetRow(i).GetBytes(0)); err != nil {
+				return 0, err
+			}
+			// InFinalState also includes paused jobs, which remain active here.
+			if !job.IsFinished() && !job.IsSynced() {
+				count++
+			}
+		}
+	}
 }
