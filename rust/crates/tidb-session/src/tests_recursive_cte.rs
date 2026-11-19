@@ -45,6 +45,9 @@ fn cte_storage_obeys_the_session_spill_policy_and_quota() {
     // `./gorun` on this branch: at 2000 bytes the CTE spills and answers 128
     // with temporary storage on, and is 8175 with it off. (At one byte Go
     // cancels either way: the projections' chunks alone exceed it.)
+    // The capture runs outside Go's test binaries, whose `intest` bootstrap
+    // stores `tidb_mem_oom_action = LOG`; a server's default cancels.
+    session.run("SET @@global.tidb_mem_oom_action = 'CANCEL'").unwrap();
     session.run("SET @@tidb_mem_quota_query = 2000").unwrap();
     session
         .run("SET @@global.tidb_enable_tmp_storage_on_oom = 1")

@@ -4095,8 +4095,9 @@ fn explain_analyze_insert_root_reports_insert_runtime_stats_like_go() {
     ] {
         let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {sql}")));
         assert_eq!(rows[0][0], "Insert_1", "{sql}");
-        // `Open` creates the executor's tracker and `Close` releases it.
-        assert!(!rows[0][5].contains("open:0s") && !rows[0][5].contains("close:0s"), "{}", rows[0][5]);
+        // `Open` creates the executor's tracker, so it is timed; a `Close`
+        // can finish inside one clock tick (`close:0s`) in an optimized build.
+        assert!(!rows[0][5].contains("open:0s"), "{}", rows[0][5]);
         let info = mask_durations(&rows[0][5]);
         let (stats_text, ru) = info.split_once(", RU:").unwrap_or((&info, ""));
         assert_eq!(stats_text, format!("{basic}{stats}"), "{sql}");

@@ -2319,6 +2319,10 @@ impl<'s> ClusterServerSession<'s> {
             let telemetry = self.session.statement_telemetry();
             let result = self.open_statement_result(shape, &resource_group, |session| {
                 session.set_binary_prepared_execution(true);
+                // Go `Compile` counts the statement once a plan serves it:
+                // the retained SELECT's, or one `Optimize` builds. A retained
+                // plan that does not bind for these values serves nothing.
+                let mut cached_select_served = false;
                 let opened = (|| {
                     if let Some(point) = &cached_point_get {
                         if let Some(opened) = session.open_prepared_point_get(
@@ -2362,6 +2366,7 @@ impl<'s> ClusterServerSession<'s> {
                         None => None,
                     };
                     if let Some(cached) = &cached_select {
+                        cached_select_served = true;
                         session.open_prepared_record_set_for(
                             cached,
                             prepared_ast
@@ -2388,7 +2393,7 @@ impl<'s> ClusterServerSession<'s> {
                     }
                 })();
                 session.set_binary_prepared_execution(false);
-                if direct || session.successful_compiles() != compiles {
+                if fast || cached_select_served || session.successful_compiles() != compiles {
                     if let Some(count) = stmt_node_count.take() {
                         count.record();
                     }
