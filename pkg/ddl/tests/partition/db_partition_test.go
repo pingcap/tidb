@@ -2607,14 +2607,17 @@ func TestPartitionErrorCode(t *testing.T) {
 	// Reduce the impact on DML when executing partition DDL
 	tk1.MustExec("use test")
 	tk1.MustExec("set global tidb_enable_metadata_lock=0")
+
+	// Creating a TestKit can switch InfoSchema versions. Initialize both sessions
+	// before CREATE TABLE so the switch is applied before the transaction starts.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec(`create table t(id int primary key)
 		partition by hash(id) partitions 4;`)
 	tk1.MustExec("begin")
 	tk1.MustExec("insert into t values(1);")
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
 	tk1.MustExec("commit")
 }
