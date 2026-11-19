@@ -189,9 +189,23 @@ fn ttl_global_hooks_update_the_worker_settings() {
     );
 }
 
-/// Go's `TiDBEnableMDL` `SetGlobal` hook reaches `vardef.SetEnableMDL` from
-/// the sysvar cache rebuild, so a loaded or set global value decides which
-/// etcd key this node acknowledges DDL schema versions on.
+/// The node's `SwitchMDL` as its cluster writer registers it for
+/// `tidb_enable_metadata_lock` (Go `variable.SwitchMDL`), reduced to its
+/// process switch.
+fn register_switch_mdl(globals: &tidb_domain::global_sysvars::GlobalSysvars) {
+    globals.register_set_global_hook(
+        tidb_vardef::tidb_vars::TIDB_ENABLE_MDL,
+        std::sync::Arc::new(|value: &str| {
+            tidb_vardef::set_enable_mdl(tidb_vardef::option_values::tidb_opt_on(value));
+            Ok(())
+        }),
+    );
+}
+
+/// Go's `TiDBEnableMDL` `SetGlobal` (the domain's `SwitchMDL`) runs from the
+/// sysvar cache rebuild as from a `SET GLOBAL`, so a loaded or set global
+/// value decides which etcd key this node acknowledges DDL schema versions
+/// on.
 #[test]
 fn enable_mdl_global_hook_updates_the_process_switch() {
     let _serialised = process_switch_tests();
@@ -204,6 +218,7 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
 
     let _restore = RestoreEnableMdl(tidb_vardef::is_mdl_enabled(false));
     let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    register_switch_mdl(&globals);
 
     globals
         .set(tidb_vardef::tidb_vars::TIDB_ENABLE_MDL, "OFF".to_owned())
@@ -222,6 +237,7 @@ fn enable_mdl_global_hook_updates_the_process_switch() {
     // answering ON.
     tidb_vardef::set_enable_mdl(false);
     let fresh_cluster = tidb_domain::global_sysvars::GlobalSysvars::new();
+    register_switch_mdl(&fresh_cluster);
     fresh_cluster.load_from_cluster([("autocommit".to_owned(), "ON".to_owned())]);
     assert_eq!(
         tidb_vardef::is_mdl_enabled(false),
@@ -245,6 +261,7 @@ fn replacing_empty_global_image_uses_mdl_default() {
     tidb_vardef::set_enable_mdl(false);
 
     let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    register_switch_mdl(&globals);
     globals.replace_from(&tidb_domain::global_sysvars::GlobalSysvars::from_cluster_rows([]));
 
     assert!(tidb_vardef::is_mdl_enabled(false));

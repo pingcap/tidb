@@ -566,23 +566,6 @@ fn runtime_global_value(name: &str) -> Option<String> {
     }
 }
 
-fn is_auto_analyze_setting(name: &str) -> bool {
-    matches!(
-        name,
-        tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE
-            | tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE
-            | tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY
-    )
-}
-
-fn is_resource_control_setting(name: &str) -> bool {
-    matches!(
-        name,
-        tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL
-            | tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE
-    )
-}
-
 
 impl GlobalSysvars {
     /// This table with `other`'s registered `SetGlobal` hooks: Go's hooks
@@ -1239,17 +1222,11 @@ impl GlobalSysvars {
             .map(|bytes| (bytes as i64).to_string())
     }
 
-    /// Whether [`Self::apply_set_global_hook`] has an arm for `name`: Go's
-    /// `SysVar.SetGlobal != nil` for the variables whose process-wide effect
-    /// this node models. The sysvar cache rebuild calls the hook only for
-    /// these.
+    /// Go's `SysVar.SetGlobal != nil` for a variable whose `SetGlobal` this
+    /// port runs in [`Self::write`] rather than through a hook:
+    /// `tidb_cloud_storage_uri`.
     fn has_set_global_hook(name: &str) -> bool {
-        use tidb_vardef::tidb_vars::*;
-        matches!(
-            name,
-            TIDB_CLOUD_STORAGE_URI | TIDB_ENABLE_MDL
-        ) || is_auto_analyze_setting(name)
-            || is_resource_control_setting(name)
+        name == tidb_vardef::tidb_vars::TIDB_CLOUD_STORAGE_URI
     }
 
     /// Go `SysVar.SetGlobal` for the variables whose process-wide product
@@ -1268,28 +1245,30 @@ impl GlobalSysvars {
         {
             return;
         }
-        // Go `SetGlobalFromHook`: the variable's own `SetGlobal` (its
-        // process state, e.g. `vardef`'s atomics and the LDAP impls), then
-        // what this node publishes for it below. Its refusal stopped an
-        // explicit write before the store; here it is Go's logged-and-
-        // ignored rebuild error.
-        if let Some(set_global) = get_sys_var(name).and_then(|def| def.set_global) {
-            let _ = set_global(&mut tidb_variable::vars::SessionVars::new(), value);
+        // Go `SetGlobalFromHook`: the variable's one `SetGlobal` -- its own
+        // (its process state, e.g. `vardef`'s atomics and the LDAP impls) or
+        // the one a package outside the registry gave it (Go
+        // `RegisterSysVar`: the domain's `SwitchMDL`, the MV service, the
+        // workload repository), which the node registers here. Its refusal
+        // stopped an explicit write before the store; here it is Go's
+        // logged-and-ignored rebuild error.
+        match get_sys_var(name).and_then(|def| def.set_global) {
+            Some(set_global) => {
+                let _ = set_global(&mut tidb_variable::vars::SessionVars::new(), value);
+            }
+            None => {
+                let _ = tidb_variable::GlobalVarAccessor::run_set_global_hook(self, name, value);
+            }
         }
-        use tidb_vardef::tidb_vars::*;
-        let on = value.eq_ignore_ascii_case("ON") || value == "1";
-        match name {
-            // Go's `TiDBEnableMDL` `SetGlobal` is the domain's `SwitchMDL`
-            // (registered by the node's cluster writer for a user's `SET
-            // GLOBAL`). A node that leaves the process flag at its `false`
-            // default acknowledges DDL schema versions on the classic
-            // per-node key while a Go owner with metadata locking on waits
-            // for the per-job key, so every Go-issued DDL on the cluster
-            // blocks until the node is gone. Following the value the cluster
-            // holds is not a switch, so the running-job guard does not apply.
-            TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
-            _ => {}
-        }
+    }
+
+    /// Whether a package outside the registry gave `name` its `SetGlobal`.
+    fn has_registered_set_global_hook(&self, name: &str) -> bool {
+        self.set_global_hooks
+            .0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&name.to_ascii_lowercase())
     }
 
     /// Go `session.SetGlobalSysVar` / `SetInstanceSysVar`: validate the value
@@ -1809,6 +1788,7 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
                 has_global_scope: def.has_global_scope(),
                 skip_sysvar_cache: def.skip_sysvar_cache(),
                 has_set_global: def.set_global.is_some()
+                    || self.0.has_registered_set_global_hook(def.name)
                     || GlobalSysvars::has_set_global_hook(def.name),
             })
             .collect()
