@@ -379,7 +379,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=COOLDOWN)")
 	require.Eventually(t, func() bool {
-		return tk.QueryToErr("select /*+ resource_group(rg2) */ * from t") == nil
+		return tk.ExecToErr("select /*+ resource_group(rg2) */ * from t") == nil
 	}, watchCleanupTimeout, tryInterval)
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustExec("alter resource group rg2 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
