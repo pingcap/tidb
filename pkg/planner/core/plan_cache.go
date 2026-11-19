@@ -173,7 +173,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			if !schemaChanged || (alterDefaultDatabase && infoschema.ErrSchemaInReadOnlyMode.Equal(err)) {
+			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
 				return err
 			}
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())

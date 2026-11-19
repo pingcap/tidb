@@ -336,26 +336,26 @@ alter schema read_only read only 1;
 
 -- error 3989
 prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
--- error 8113
-execute stmt_insert using @a, @b; # error 3989 is wrapped by prepare/execute as 8113
--- error 8113
+-- error 3989
+execute stmt_insert using @a, @b;
+-- error 3989
 execute stmt_update using @b, @a;
--- error 8113
+-- error 3989
 execute stmt_delete using @a;
--- error 8113
+-- error 3989
 execute stmt_select_for_update using @a;
 execute stmt_select using @a;
--- error 8113
+-- error 3989
 execute stmt_truncate;
--- error 8113
+-- error 3989
 execute stmt_drop_database;
--- error 8113
+-- error 3989
 execute stmt_alter_database;
--- error 8113
+-- error 3989
 execute stmt_create_table;
--- error 8113
+-- error 3989
 execute stmt_drop_table;
--- error 8113
+-- error 3989
 execute stmt_alter_table;
 
 ## test prepared SELECT plans stay cached across read-only transitions under RR

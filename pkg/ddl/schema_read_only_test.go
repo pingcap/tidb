@@ -279,6 +279,58 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			}
 		}
 	})
+	t.Run("PreparedReadOnlyErrorCode", func(t *testing.T) {
+		for _, cache := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cache=%t", cache), func(t *testing.T) {
+				enableReadOnlyDDLFp(t)
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %t", cache))
+				tk.MustExec("create database ro")
+				tk.MustExec("create table ro.t(id int primary key, v int)")
+				statements := []string{
+					"insert into ro.t values (?, 1)",
+					"update ro.t set v = 2 where id = ?",
+					"delete from ro.t where id = ?",
+					"select * from ro.t where id = ? for update",
+					"truncate table ro.t",
+					"drop database ro",
+					"alter database ro charset gbk",
+					"create table ro.new_table(id int)",
+					"drop table ro.t",
+					"alter table ro.t add column extra int",
+				}
+				for i, sql := range statements {
+					tk.MustExec(fmt.Sprintf("prepare stmt%d from '%s'", i, sql))
+				}
+				// Warm the INSERT plan; the other statements have only been prepared.
+				for _, id := range []int{1, 2} {
+					tk.MustExec(fmt.Sprintf("set @id = %d", id))
+					tk.MustExec("execute stmt0 using @id")
+				}
+				require.Equal(t, cache, tk.Session().GetSessionVars().FoundInPlanCache)
+				tk.MustExec("set @id = 3")
+				tk.MustExec("alter database ro read only = 1")
+				for i := range statements {
+					execute := fmt.Sprintf("execute stmt%d", i)
+					if i < 4 {
+						execute += " using @id"
+					}
+					tk.MustGetErrCode(execute, 3989)
+				}
+				tk.MustQuery("select * from ro.t order by id").Check(testkit.Rows("1 1", "2 1"))
+				tk.MustExec("alter database ro read only = 0")
+				tk.MustExec("execute stmt0 using @id")
+				tk.MustQuery("select * from ro.t order by id").Check(testkit.Rows("1 1", "2 1", "3 1"))
+				// Unrelated column and schema errors must retain their original codes.
+				tk.MustExec("prepare select_stmt from 'select v from ro.t'")
+				tk.MustExec("alter table ro.t drop column v")
+				tk.MustGetErrCode("execute select_stmt", 1054)
+				tk.MustExec("drop table ro.t")
+				tk.MustGetErrCode("execute select_stmt", 8113)
+			})
+		}
+	})
 	t.Run("PreparedMultiDeleteUsesPrepareDB", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)

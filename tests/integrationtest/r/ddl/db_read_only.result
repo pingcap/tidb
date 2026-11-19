@@ -332,27 +332,27 @@ alter schema read_only read only 1;
 prepare stmt from 'insert into t1 values(?, ?)';
 Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_insert using @a, @b;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_update using @b, @a;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_delete using @a;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_select_for_update using @a;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_select using @a;
 a	b
 execute stmt_truncate;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_drop_database;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_alter_database;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_create_table;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_drop_table;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 execute stmt_alter_table;
-Error 8113 (HY000): Schema change caused error: [schema:3989]Schema 'read_only' is in read only mode.
+Error 3989 (HY000): Schema 'read_only' is in read only mode.
 alter schema read_only read only 0;
 set @a = 1;
 execute stmt_select using @a;
