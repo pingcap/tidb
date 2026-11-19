@@ -116,23 +116,13 @@ pub fn new_privilege_handle(
 pub fn load_privilege_loop(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
-    session_pool: &Arc<tidb_domain_core::sys_session::DomainSysSessionPool>,
+    domain: &Arc<tidb_domain_core::domain::Domain>,
 ) -> Result<Option<PrivilegeReloader>, RunConfiguredNodeError> {
     if config.skip_grant_table {
         return Ok(None);
     }
     let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
-    // Go `sctx.GetSQLExecutor().ExecuteInternal(ctx, "set @@autocommit = 1")`
-    // on the loop's session -- whose first statement also loads the session's
-    // copy of the global tier, building the sysvar cache before
-    // `LoadSysVarCacheLoop` starts.
-    use tidb_stats_handle_storage::stats_read_writer::StatsSessionPool as _;
-    tidb_domain_core::sys_session::StatsPool { session_pool: Some(session_pool) }
-        .call_with_sctx(
-            &mut |sctx| tidb_stats_handle_util::exec_rows(sctx, "set @@autocommit = 1", &[]).map(drop),
-            &[],
-        )
-        .map_err(|error| engine(error.message))?;
+    crate::domain::cluster_session_node::init_privilege_loop_session(domain).map_err(engine)?;
     let accounts = users.accounts();
     // Go's handle starts empty: each user loads as it is first used
     // (`ensureActiveUser`) until the first event's `UpdateAll`.

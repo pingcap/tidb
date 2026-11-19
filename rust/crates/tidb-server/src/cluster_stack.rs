@@ -221,11 +221,8 @@ pub fn cluster_session_stack(
     // Go `LoadPrivilegeLoop`, on the domain's sessions, before
     // `LoadSysVarCacheLoop` (`bootstrapSessionImpl`). The reloader must drop
     // before the authority's shutdown drain, like the catalog reloader.
-    let privilege_reloader = tidb_session::domain::real_tikv_node::load_privilege_loop(
-        config,
-        &users,
-        &factory.advanced_sys_session_pool(),
-    )?;
+    let privilege_reloader =
+        tidb_session::domain::real_tikv_node::load_privilege_loop(config, &users, &factory)?;
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist:
     // each rebuild reads `mysql.global_variables` through them.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(

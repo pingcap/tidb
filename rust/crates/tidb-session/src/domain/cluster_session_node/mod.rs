@@ -329,7 +329,7 @@ mod sessions;
 mod ttl_sessions;
 mod mv_service_sessions;
 mod upgrade_session;
-pub use upgrade_session::{provision_accounts, run_upgrade};
+pub use upgrade_session::{init_privilege_loop_session, provision_accounts, run_upgrade};
 pub use login_policy::DomainLoginPolicy;
 pub use sessions::*;
 mod cross_ks_session;

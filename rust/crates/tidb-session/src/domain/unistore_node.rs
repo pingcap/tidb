@@ -858,11 +858,7 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     let schema_sync_ack = start_mdl_check_loop(schema_sync_ack)?;
     crate::domain::real_tikv_node::new_privilege_handle(&users, factory.advanced_sys_session_pool());
     // Go `LoadPrivilegeLoop`, before `LoadSysVarCacheLoop` (`bootstrapSessionImpl`).
-    let privilege_reloader = crate::domain::real_tikv_node::load_privilege_loop(
-        config,
-        users,
-        &factory.advanced_sys_session_pool(),
-    )?;
+    let privilege_reloader = crate::domain::real_tikv_node::load_privilege_loop(config, users, &factory)?;
     // Go `LoadSysVarCacheLoop`, started once the domain's sessions exist.
     let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),

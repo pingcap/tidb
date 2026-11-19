@@ -3225,23 +3225,40 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
 
     let process_id = Arc::new(AtomicU64::new(0));
     let pool = factory.advanced_sys_session_pool();
-    tidb_stats_handle_util::call_with_sctx(
-        pool.as_ref(),
-        |context| {
-            super::super::cluster_stats_session(context).with_session(|session| {
-                let analyze = Arc::new(KillingSystemAnalyze {
-                    inner: crate::domain::cluster_session_node::node_services(session.node.domain()).analyze(),
-                    processes: factory.processes(),
-                    factory: Arc::downgrade(&factory),
-                    process_id: Arc::clone(&process_id),
-                });
-                session.set_analyzer(&factory, analyze);
+    let analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze> = Arc::new(KillingSystemAnalyze {
+        inner: crate::domain::cluster_session_node::node_services(&factory).analyze(),
+        processes: factory.processes(),
+        factory: Arc::downgrade(&factory),
+        process_id: Arc::clone(&process_id),
+    });
+    // Each pooled session holds the services it was created with, and the
+    // pool already holds the sessions the node's loops used (the privilege
+    // loop's among them): the seam goes onto every session the auto-analyze
+    // can be handed, held at once so the pool hands out distinct ones.
+    fn install_on_pooled(
+        pool: &tidb_domain_core::sys_session::DomainSysSessionPool,
+        factory: &Arc<tidb_domain_core::domain::Domain>,
+        analyze: &Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
+        depth: usize,
+    ) {
+        if depth == 0 {
+            return;
+        }
+        tidb_stats_handle_util::call_with_sctx(
+            pool,
+            |context| {
+                super::super::cluster_stats_session(context).with_session(|session| {
+                    session.set_analyzer(factory, Arc::clone(analyze));
+                    Ok(())
+                })?;
+                install_on_pooled(pool, factory, analyze, depth - 1);
                 Ok(())
-            })
-        },
-        &[],
-    )
-    .expect("the pooled system session takes the seam");
+            },
+            &[],
+        )
+        .expect("the pooled system session takes the seam");
+    }
+    install_on_pooled(pool.as_ref(), &factory, &analyze, 4);
 
     let source = super::super::ClusterPriorityQueueSource {
         factory: Arc::downgrade(&factory),

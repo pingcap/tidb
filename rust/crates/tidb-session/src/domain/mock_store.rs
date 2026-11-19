@@ -134,9 +134,15 @@ impl MockStoreDomain {
         mock_tiflash: usize,
     ) -> Result<Arc<Self>, String> {
         let image = bootstrap_image(&config.cluster_security)?;
+        // The fixture's accounts, taken before the node's privilege loop
+        // replaces `users`' table with the store's.
+        let accounts = tidb_privilege::load::cluster_image_from_registry(&users.accounts());
         let stack =
             unistore_cluster_session_stack_from(&config, &users, None, None, Some(&image), mock_tiflash)
             .map_err(|error| format!("unistore stack: {error:?}"))?;
+        // A node's accounts are its store's `mysql.user`: the fixture's are
+        // made the store's own, as Go's tests run `CREATE USER`.
+        super::cluster_session_node::provision_accounts(&stack.factory, &accounts)?;
         let dist_task_loop = stack.factory.init_dist_task_loop()?;
         let domain = Arc::new(Self {
             stack,

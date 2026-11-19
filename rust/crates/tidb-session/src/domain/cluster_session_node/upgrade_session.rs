@@ -105,7 +105,7 @@ fn quoted(value: &str) -> String {
 /// `mysql.user` (Go's one account source).
 pub fn provision_accounts(
     domain: &Arc<Domain>,
-    accounts: &tidb_privilege::PrivilegeRegistry,
+    accounts: &tidb_privilege::loaded::ClusterPrivileges,
 ) -> Result<(), String> {
     // A statement runs on a SQL worker's stack, never the caller's.
     std::thread::scope(|scope| {
@@ -119,9 +119,9 @@ pub fn provision_accounts(
 
 fn provision_accounts_on_worker(
     domain: &Arc<Domain>,
-    accounts: &tidb_privilege::PrivilegeRegistry,
+    accounts: &tidb_privilege::loaded::ClusterPrivileges,
 ) -> Result<(), String> {
-    let desired = tidb_privilege::load::cluster_image_from_registry(accounts).users;
+    let desired = &accounts.users;
     let context = super::open_pool_session(domain, 0)?;
     let run = |sql: &str| -> Result<Vec<Vec<Datum>>, String> {
         let mut result = None;
@@ -151,7 +151,7 @@ fn provision_accounts_on_worker(
             run(&format!("DROP USER {}", account(user, host)))?;
         }
     }
-    for wanted in &desired {
+    for wanted in desired {
         let identified = format!(
             "IDENTIFIED WITH {} AS {}",
             quoted(&wanted.plugin),
@@ -174,4 +174,32 @@ fn provision_accounts_on_worker(
         }
     }
     Ok(())
+}
+
+/// Go `LoadPrivilegeLoop`'s first act on its own session (`ses[3]` of
+/// `bootstrapSessionImpl`, not one of the system pool's):
+/// `ExecuteInternal(ctx, "set @@autocommit = 1")`. Being that session's
+/// first statement, it also loads the session's copy of the global tier,
+/// which builds the sysvar cache before `LoadSysVarCacheLoop` starts.
+pub fn init_privilege_loop_session(domain: &Arc<Domain>) -> Result<(), String> {
+    std::thread::scope(|scope| {
+        tidb_worker_stack::sql_worker_thread("tidb-privilege-loop")
+            .spawn_scoped(scope, || {
+                let context = super::open_pool_session(domain, 0)?;
+                let mut result = None;
+                cluster_stats_session(&*context)
+                    .with_session(|session| {
+                        result = Some(session.execute_internal("set @@autocommit = 1"));
+                        Ok(())
+                    })
+                    .map_err(|error| error.to_string())?;
+                result
+                    .expect("the session ran the statement")
+                    .map(drop)
+                    .map_err(|error| error.message)
+            })
+            .map_err(|error| error.to_string())?
+            .join()
+            .map_err(|_| "the privilege loop session panicked".to_owned())?
+    })
 }
