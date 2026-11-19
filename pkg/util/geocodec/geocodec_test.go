@@ -161,13 +161,11 @@ func TestStoredLayout(t *testing.T) {
 }
 
 // TestStoredWithoutSRID checks that every reader of the stored format refuses a root
-// without the SRID flag, in either byte order, as ErrInvalid.
+// without the SRID flag, as ErrInvalid.
 func TestStoredWithoutSRID(t *testing.T) {
 	for _, h := range []string{
 		"01 01 01000000 000000000000F03F 0000000000000040",
-		"01 00 00000001 3FF0000000000000 4000000000000000",
 		"01 01 07000000 00000000",
-		"01 00 00000007 00000000",
 		// A root without the flag is refused before its other faults.
 		"01 01 08000000",
 		"01 01 07000000 FFFFFFFF",
@@ -180,14 +178,9 @@ func TestStoredWithoutSRID(t *testing.T) {
 		require.ErrorIs(t, err, errStoredWithoutSRID, h)
 		checkStoredToMySQL(t, b)
 	}
-	// With the flag, the same values are read.
-	for _, h := range []string{
-		"01 01 01000020 00000000 000000000000F03F 0000000000000040",
-		"01 00 20000001 00000000 3FF0000000000000 4000000000000000",
-	} {
-		_, _, err := Header(mustHex(t, h))
-		require.NoError(t, err, h)
-	}
+	// With the flag, the same value is read.
+	_, _, err := Header(mustHex(t, "01 01 01000020 00000000 000000000000F03F 0000000000000040"))
+	require.NoError(t, err)
 }
 
 // storedRejects are stored values whose structure is broken, which every reader refuses.
@@ -278,26 +271,38 @@ func TestVersion(t *testing.T) {
 }
 
 func TestStoredBigEndian(t *testing.T) {
-	// POINT(1 2) with SRID 4326, big-endian EWKB.
+	// POINT(1 2) with SRID 4326, big-endian EWKB, which a client may send.
 	s := mustHex(t, "01 00 20000001 000010E6 3FF0000000000000 4000000000000000")
-	srid, typ, err := Header(s)
-	require.NoError(t, err)
-	require.Equal(t, uint32(4326), srid)
-	require.Equal(t, TypePoint, typ)
-	_, err = validate(s[1:], dialectEWKB)
+	_, err := validate(s[1:], dialectEWKB)
 	require.NoError(t, err)
 
-	// StoredToMySQL copies the body unchanged, so it takes only little-endian values,
-	// which is all TiDB writes. A big-endian member is rejected too.
+	// A stored value is little-endian, which is all TiDB writes: a big-endian root is
+	// refused, with or without the SRID flag, whole or cut short.
 	for _, b := range [][]byte{
 		s,
-		mustHex(t, "01 01 04000020 E6100000 01000000 00 00000001 3FF0000000000000 4000000000000000"),
 		mustHex(t, "01 00 A0000001 000010E6 3FF0000000000000 4000000000000000 4008000000000000"),
+		mustHex(t, "01 00 00000001 3FF0000000000000 4000000000000000"),
+		mustHex(t, "01 00 20000001"),
+		mustHex(t, "01 00"),
 	} {
 		_, err = StoredToMySQL(b)
-		require.ErrorIs(t, err, errBigEndianStored)
+		require.ErrorIs(t, err, errBigEndianStored, "%X", b)
+		require.ErrorIs(t, err, ErrInvalid, "%X", b)
+		_, _, err = Header(b)
+		require.ErrorIs(t, err, errBigEndianStored, "%X", b)
 		checkStoredToMySQL(t, b)
 	}
+
+	// A big-endian member is refused by StoredToMySQL, which walks the value; Header reads
+	// only the root.
+	member := mustHex(t, "01 01 04000020 E6100000 01000000 00 00000001 3FF0000000000000 4000000000000000")
+	_, err = StoredToMySQL(member)
+	require.ErrorIs(t, err, errBigEndianStored)
+	srid, typ, err := Header(member)
+	require.NoError(t, err)
+	require.Equal(t, uint32(4326), srid)
+	require.Equal(t, TypeMultiPoint, typ)
+	checkStoredToMySQL(t, member)
 }
 
 func TestNotMySQLExpressible(t *testing.T) {

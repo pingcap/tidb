@@ -53,7 +53,7 @@ var (
 	ErrNotMySQLExpressible = errors.New("geometry cannot be expressed in MySQL's binary format")
 
 	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
-	// StoredToMySQL cannot copy into MySQL's little-endian format.
+	// every writer writes little-endian.
 	errBigEndianStored = fmt.Errorf("%w: big-endian geometry in a stored value", ErrInvalid)
 	// errStoredWithoutSRID is the ErrInvalid of a stored value whose root has no SRID flag.
 	errStoredWithoutSRID = fmt.Errorf("%w: stored geometry without the SRID flag", ErrInvalid)
@@ -179,11 +179,11 @@ func Header(stored []byte) (srid uint32, typ Type, err error) {
 		return 0, 0, err
 	}
 	c := cursor{buf: payload}
-	order, err := c.byteOrder()
-	if err != nil {
+	// payloadOf has checked that the root is not big-endian and has the SRID flag.
+	if _, err := c.byteOrder(); err != nil {
 		return 0, 0, err
 	}
-	word, err := c.uint32(order)
+	word, err := c.uint32(byteOrderLittle)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -191,15 +191,15 @@ func Header(stored []byte) (srid uint32, typ Type, err error) {
 	if !ok {
 		return 0, 0, ErrInvalid
 	}
-	// payloadOf has checked the SRID flag.
-	if srid, err = c.uint32(order); err != nil {
+	if srid, err = c.uint32(byteOrderLittle); err != nil {
 		return 0, 0, err
 	}
 	return srid, typ, nil
 }
 
-// payloadOf returns a stored value's EWKB, whose root must carry the SRID flag every writer
-// sets. A root too short or of an unknown byte order is left to the walk to report.
+// payloadOf returns a stored value's EWKB, whose root must be little-endian and carry the
+// SRID flag, as every writer writes it. A root too short or of an unknown byte order is
+// left to the walk to report.
 func payloadOf(stored []byte) ([]byte, error) {
 	if len(stored) == 0 {
 		return nil, ErrInvalid
@@ -208,11 +208,11 @@ func payloadOf(stored []byte) ([]byte, error) {
 		return nil, ErrUnsupportedVersion
 	}
 	payload := stored[1:]
-	c := cursor{buf: payload}
-	if order, err := c.byteOrder(); err == nil {
-		if word, err := c.uint32(order); err == nil && word&ewkbSRID == 0 {
-			return nil, errStoredWithoutSRID
-		}
+	if len(payload) > 0 && payload[0] == byteOrderBig {
+		return nil, errBigEndianStored
+	}
+	if len(payload) >= 5 && payload[0] == byteOrderLittle && binary.LittleEndian.Uint32(payload[1:])&ewkbSRID == 0 {
+		return nil, errStoredWithoutSRID
 	}
 	return payload, nil
 }
@@ -501,11 +501,10 @@ func (s *skimmer) geometry(depth int) error {
 	if err != nil {
 		return err
 	}
-	// StoredToMySQL copies the body into MySQL's little-endian format.
 	if order != byteOrderLittle {
 		return errBigEndianStored
 	}
-	word, err := s.c.uint32(order)
+	word, err := s.c.uint32(byteOrderLittle)
 	if err != nil {
 		return err
 	}
@@ -541,7 +540,7 @@ func (s *skimmer) geometry(depth int) error {
 		}
 		return err
 	case TypePolygon:
-		n, err := s.c.count(order, 4)
+		n, err := s.c.count(byteOrderLittle, 4)
 		if err != nil {
 			return err
 		}
@@ -555,7 +554,7 @@ func (s *skimmer) geometry(depth int) error {
 		}
 		return nil
 	}
-	n, err := s.c.count(order, minGeometrySize)
+	n, err := s.c.count(byteOrderLittle, minGeometrySize)
 	if err != nil {
 		return err
 	}
