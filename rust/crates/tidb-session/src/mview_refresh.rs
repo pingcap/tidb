@@ -862,6 +862,13 @@ impl Session {
                     .gen_with_stack_by_args(&[schema.to_owned().into(), name.to_owned().into()]),
             )));
         };
+        if mode == RefreshMaterializedViewMode::CompleteOutOfPlace {
+            // "A resumed MLog DDL can hold the DDL scheduling claim while
+            // waiting for this lock. Reject its intermediate schema before
+            // submitting any shadow/cutover DDL, which would otherwise form a
+            // circular wait."
+            check_mv_refresh_out_of_place_mlog_schema(&catalog, schema, &current.read())?;
+        }
         if mode == RefreshMaterializedViewMode::CompleteInPlace
             && current.read().materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0)
         {
@@ -1088,6 +1095,7 @@ impl Session {
                 }
                 read_tso = target_tso;
             }
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", &mut ());
             if let Some(value) =
                 tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges")
             {
@@ -1361,6 +1369,10 @@ impl Session {
                 )));
             }
             let sources = self.resolve_mv_complete_refresh_sources(info.id, build_read_tso)?;
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad",
+                &mut build_read_tso.clone(),
+            );
             // Go `getMVRefreshOutOfPlaceShadowTableID`.
             // Go `buildSctx.GetLatestInfoSchema()`.
             let shadow_table_id = build
@@ -1569,6 +1581,37 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// Go master `checkMVRefreshOutOfPlaceMLogSchema`: the view's own log must
+/// have no column mid-change.
+fn check_mv_refresh_out_of_place_mlog_schema(
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+    schema: &str,
+    mview: &tidb_model::TableInfo,
+) -> Result<(), DriverError> {
+    let mlog_id = mview.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+    if mlog_id == 0 {
+        return Ok(());
+    }
+    let Some(mlog) = is.table_info_by_id(mlog_id) else {
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
+                schema.to_owned().into(),
+                tidb_model::table::materialized_view_log_table_name(&mview.name).original().to_owned().into(),
+            ]),
+        )));
+    };
+    if mlog.read().columns.iter_deref().any(|column| column.read().state != tidb_model::SchemaState::PUBLIC) {
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
+                "cannot refresh materialized view {schema}.{} complete OUT OF PLACE: materialized view log schema change is in progress, please retry later",
+                mview.name.original()
+            )
+            .into()]),
+        )));
+    }
+    Ok(())
 }
 
 /// Go master `checkMVRefreshLogBaseline`. "Keep diagnostic name lookups on

@@ -770,7 +770,7 @@ pub(crate) fn check_drop_materialized_view_log_has_no_dependent_mvs(
 
 /// Go `getTableInfo` over the job's mutator: the table, or Go's
 /// database / table not-exists error.
-fn get_table_info(txn: &mut JobTxn<'_>, table_id: i64, schema_id: i64) -> Result<TableInfo, DdlPlanError> {
+pub(super) fn get_table_info(txn: &mut JobTxn<'_>, table_id: i64, schema_id: i64) -> Result<TableInfo, DdlPlanError> {
     let meta = txn.meta();
     match meta.table(schema_id, table_id) {
         Ok(Some(table)) => Ok(table),

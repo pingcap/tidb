@@ -2729,3 +2729,76 @@ fn test_materialized_view_refresh_complete_out_of_place_rebinds_dependent_materi
         must_exec_all(&mut tk, &[&format!("drop materialized view {name}")]);
     }
 }
+
+/// Go master `TestAlterMaterializedViewLogAddColumnRefreshConflict`
+/// (`pkg/ddl/tests/materializedviewlog/mview_output_log_test.go`): ADD COLUMN
+/// on a view's own log while a refresh holds the view's refresh lock fails
+/// with 8182 and leaves no intermediate column; after the refresh it runs and
+/// the log tracks the new columns.
+#[test]
+fn test_alter_materialized_view_log_add_column_refresh_conflict() {
+    for mode in ["fast", "complete delta apply", "complete out of place"] {
+        for columns in ["s", "s, cnt"] {
+            alter_mlog_add_column_refresh_conflict(mode, columns);
+        }
+    }
+}
+
+fn alter_mlog_add_column_refresh_conflict(mode: &'static str, columns: &'static str) {
+    use std::sync::mpsc;
+    let case = format!("{mode}/{columns}");
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_alter_mlog (a int not null, b int not null)",
+        "insert into t_alter_mlog values (1, 10)",
+        "create materialized view log on t_alter_mlog (a, b)",
+        "create materialized view mv_alter_mlog (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_alter_mlog group by a",
+        "create materialized view log on mv_alter_mlog (a)",
+        "insert into t_alter_mlog values (2, 20)",
+    ]);
+    let (paused_tx, paused_rx) = mpsc::channel::<()>();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
+    let paused_tx = std::sync::Mutex::new(Some(paused_tx));
+    let resume_rx = std::sync::Mutex::new(resume_rx);
+    let pause = move || {
+        if let Some(paused) = paused_tx.lock().unwrap().take() {
+            let _ = paused.send(());
+            let _ = resume_rx.lock().unwrap().recv();
+        }
+    };
+    let pause_failpoint = if mode == "complete out of place" {
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad"
+    } else {
+        "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges"
+    };
+    let pause_guard = tidb_failpoint::enable_call_for_test(pause_failpoint, move |_| pause());
+    let mut tk_refresh = stack.factory.open_session(session_context(2133)).unwrap();
+    must_exec_all(&mut tk_refresh, &["set tidb_mview_enable = on", "use test"]);
+    let refresh_done = std::thread::spawn(move || answer(&mut tk_refresh, &format!("refresh materialized view mv_alter_mlog {mode}")));
+    paused_rx.recv_timeout(std::time::Duration::from_secs(15)).unwrap_or_else(|_| panic!("{case}: timeout waiting for refresh"));
+
+    let alter_sql = format!("alter materialized view log on mv_alter_mlog add column ({columns})");
+    let err = answer(&mut tk, &alter_sql);
+    assert!(err.starts_with("ERR 8182 "), "{case}: ADD COLUMN must not complete while refresh holds its lock: {err}");
+    assert!(err.contains("materialized view refresh is running"), "{case}: {err}");
+    let mlog = latest_table(&stack, "$mlog$mv_alter_mlog");
+    let tracked: Vec<String> =
+        mlog.materialized_view_log.as_ref().unwrap().read().columns.iter().map(|column| column.original().to_owned()).collect();
+    assert_eq!(tracked, vec!["a".to_owned()], "{case}");
+    assert_eq!(mlog.columns.len(), 3, "{case}: a rejected ADD COLUMN must leave no intermediate columns");
+
+    let _ = resume_tx.send(());
+    assert_eq!(refresh_done.join().unwrap().get(..2), Some("OK"), "{case}: refresh");
+    must_exec_all(&mut tk, &[&alter_sql, "insert into t_alter_mlog values (3, 30)"]);
+    drop(pause_guard);
+    must_exec_all(&mut tk, &["refresh materialized view mv_alter_mlog fast"]);
+    assert_eq!(answer(&mut tk, "select a, s from `$mlog$mv_alter_mlog` where a = 3"), r#"RS:[["3","30"]]"#, "{case}");
+    must_exec_all(&mut tk, &["update t_alter_mlog set b = 31 where a = 3", "refresh materialized view mv_alter_mlog fast"]);
+    assert_eq!(
+        answer(&mut tk, "select s from `$mlog$mv_alter_mlog` where a = 3 and `_MLOG$_DML_TYPE` = 'U' order by s"),
+        r#"RS:[["30"],["31"]]"#,
+        "{case}"
+    );
+}

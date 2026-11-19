@@ -434,6 +434,7 @@ fn run_sub_job_step(
     start_ts: u64,
     outcomes: &[ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    worker: Option<&DdlStepWorker>,
 ) -> SubJobStep {
     let proxy_job = sub.read().to_proxy_job(&active.job, seq as i64);
     if skip_version {
@@ -493,14 +494,14 @@ fn run_sub_job_step(
         start_ts,
         outcome.map(std::slice::from_ref).unwrap_or_default(),
         row_ids,
-        // Recover is never a sub-job.
-        None,
+        // Go: a sub-job runs on the parent's `w.sess`.
+        worker,
     ) {
         Ok(mut step) => {
             // Go `countForError` on the proxy.
             let run_error = step.run_error.take();
             if let Some(error) = &run_error {
-                record_ddl_plan_error(&mut proxy.job, error);
+                record_ddl_action_error(&mut proxy.job, error);
             }
             SubJobStep {
                 proxy,
@@ -509,7 +510,8 @@ fn run_sub_job_step(
             }
         }
         Err(error) => {
-            record_ddl_plan_error(&mut proxy.job, &error);
+            // Go `countForError` on the proxy.
+            record_ddl_action_error(&mut proxy.job, &error);
             let ddl_job_id = proxy.job.id;
             SubJobStep {
                 proxy,
@@ -598,6 +600,7 @@ pub(super) fn on_multi_schema_change(
     start_ts: u64,
     outcomes: &[ReorgOutcome],
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    worker: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {
         return Err(cancel_ddl_job(
@@ -633,6 +636,7 @@ pub(super) fn on_multi_schema_change(
                     start_ts,
                     outcomes,
                     row_ids,
+                    worker,
                 );
                 update_parent_job_from_proxy(&active.job, &proxy.job);
                 if step.reorg.is_some() {
@@ -688,6 +692,7 @@ pub(super) fn on_multi_schema_change(
                 start_ts,
                 outcomes,
                 row_ids,
+                worker,
             );
             update_parent_job_from_proxy(&active.job, &proxy.job);
             if step.reorg.is_some() {
@@ -751,6 +756,7 @@ pub(super) fn on_multi_schema_change(
                 start_ts,
                 outcomes,
                 row_ids,
+                worker,
             );
             update_parent_job_from_proxy(&active.job, &proxy.job);
             if step.reorg.is_some() {
@@ -850,6 +856,7 @@ pub(super) fn on_multi_schema_change(
             start_ts,
             outcomes,
             row_ids,
+            worker,
         );
         update_parent_job_from_proxy(&active.job, &proxy.job);
         if step.reorg.is_some() {

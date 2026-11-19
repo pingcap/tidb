@@ -232,6 +232,70 @@ fn refresh_mlog_added_column_from_base(
     Ok(())
 }
 
+/// Go master `(*worker).acquireMLogBaseMVRefreshLock`: ADD COLUMN on a
+/// materialized view's own log takes the view's refresh advisory lock.
+/// "Internal refresh sessions do not participate in MDL. Exclude refreshes
+/// that could still write with the old MLog columns or skip logging updates
+/// to newly tracked columns. The scheduler releases the lock after the whole
+/// job, including multi-schema sub-jobs, rollback and schema
+/// synchronization."
+fn acquire_mlog_base_mv_refresh_lock(
+    txn: &mut JobTxn<'_>,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    info: &TableInfo,
+    worker: Option<&DdlStepWorker>,
+) -> Result<(), DdlPlanError> {
+    let Some(log) = &info.materialized_view_log else {
+        return Ok(());
+    };
+    let base_id = log.read().base_table_id;
+    let base = super::materialized_view::get_table_info(txn, base_id, active.job.schema_id)?;
+    if base.materialized_view.is_none() {
+        return Ok(());
+    }
+    let worker = worker.ok_or_else(|| {
+        DdlPlanError::plain_refusal("alter materialized view log: the DDL step has no worker session")
+    })?;
+    let lock_name = tidb_mviewutil::refresh_advisory_lock_name(active.job.schema_id, base.id);
+    match worker.get_advisory_lock(&lock_name, 1) {
+        Ok(()) => Ok(()),
+        Err(tidb_sessionctx::advisory_lock_state::AdvisoryLockError::Timeout) => {
+            let error = DdlPlanError::from(tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
+                "cannot alter materialized view log on {}.{}: materialized view refresh is running, please retry later",
+                active.job.schema_name,
+                base.name.original()
+            )
+            .into()]));
+            if is_unstarted_mlog_add_column_job(&active.job, info) {
+                // "A new job must not retain its DDL scheduling claim while an
+                // OOP refresh holds the lock and waits for its cutover DDL. A
+                // resumed job with existing schema changes must finish or roll
+                // them back."
+                return Err(cancel_ddl_job(active, error));
+            }
+            Err(error)
+        }
+        Err(error) => Err(DdlPlanError::plain_refusal(error.to_string())),
+    }
+}
+
+/// Go master `isUnstartedMLogAddColumnJob`: "A StateNone proxy may follow an
+/// already-started column sub-job. Its non-public columns persist across
+/// pauses and owner changes."
+fn is_unstarted_mlog_add_column_job(job: &tidb_model::Job, info: &TableInfo) -> bool {
+    job.schema_state == SchemaState::NONE
+        && info.columns.iter_deref().all(|column| column.read().state == SchemaState::PUBLIC)
+}
+
+/// Go master `isMLogAddColumnRefreshLockWait`: "Refresh lock contention is an
+/// expected wait for an already-started MLog ADD COLUMN, including its
+/// multi-schema parent."
+pub(crate) fn is_mlog_add_column_refresh_lock_wait(job: &tidb_model::Job, error: &DdlPlanError) -> bool {
+    job.is_running()
+        && matches!(job.type_, ActionType::ACTION_ADD_COLUMN | ActionType::ACTION_MULTI_SCHEMA_CHANGE)
+        && error.equal(&tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT)
+}
+
 /// Go `onAddColumn`.
 pub(super) fn on_add_column(
     txn: &mut JobTxn<'_>,
@@ -239,6 +303,7 @@ pub(super) fn on_add_column(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    worker: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return drop_column::on_drop_column(txn, catalog, active, start_ts);
@@ -267,6 +332,7 @@ pub(super) fn on_add_column(
         }
         Err((false, error)) => return Err(error),
     };
+    acquire_mlog_base_mv_refresh_lock(txn, active, &info, worker)?;
     refresh_mlog_added_column_from_base(txn, active, &info, column.as_ref(), &args)
         .map_err(|error| cancel_ddl_job(active, error))?;
     let column = match column {

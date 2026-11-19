@@ -2976,7 +2976,7 @@ fn dispatch_persisted_action(
             txn, catalog, active, row_ids,
         ),
         ActionType::ACTION_ADD_COLUMN => {
-            add_column::on_add_column(txn, catalog, active, start_ts, row_ids)
+            add_column::on_add_column(txn, catalog, active, start_ts, row_ids, sessions)
         }
         ActionType::ACTION_DROP_COLUMN => {
             drop_column::on_drop_column(txn, catalog, active, start_ts)
@@ -2989,6 +2989,7 @@ fn dispatch_persisted_action(
                 start_ts,
                 reorg_outcomes,
                 row_ids,
+                sessions,
             )
         }
         ActionType::ACTION_ADD_FOREIGN_KEY => foreign_key::on_create_foreign_key(
@@ -4906,7 +4907,9 @@ fn record_ddl_cancellation_error(
 }
 
 fn count_ddl_action_error(job: &mut Job, error: &DdlPlanError, load_limit: &dyn Fn() -> i64) {
-    record_ddl_plan_error(job, error);
+    if !record_ddl_action_error(job, error) {
+        return;
+    }
     if !job.is_cancelled() {
         let limit = load_limit();
         if job.error_count > limit && job.is_running() && job.is_rollbackable() {
@@ -4969,6 +4972,18 @@ pub(crate) fn recover_ddl_action<T>(action: impl FnOnce() -> T) -> Result<T, ()>
 fn record_ddl_plan_error(job: &mut Job, error: &DdlPlanError) {
     job.error = Some(GoShared::new(error.to_job_error()));
     job.error_count += 1;
+}
+
+/// Go `countForError` up to its error count: the job carries the error, and
+/// counts it unless it is an already-started MLog ADD COLUMN waiting for a
+/// refresh (Go master `isMLogAddColumnRefreshLockWait`). Whether it counted.
+pub(super) fn record_ddl_action_error(job: &mut Job, error: &DdlPlanError) -> bool {
+    job.error = Some(GoShared::new(error.to_job_error()));
+    if add_column::is_mlog_add_column_refresh_lock_wait(job, error) {
+        return false;
+    }
+    job.error_count += 1;
+    true
 }
 
 /// Outcome of an action that could not complete its staged work.
