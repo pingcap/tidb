@@ -8061,6 +8061,8 @@ func isRetryableDDLCancelErr(err error) bool {
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	// This switch is only for Starter upgrades. Checking here avoids extra handling
+	// for temporary DDL and execution wrappers in the planner or executor builder.
 	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !ctx.GetSessionVars().InRestrictedSQL {
 		return errors.New("Schema changes are temporarily unavailable during maintenance and will be available again soon")
 	}
