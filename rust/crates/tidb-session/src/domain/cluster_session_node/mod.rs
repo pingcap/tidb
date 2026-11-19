@@ -2058,7 +2058,7 @@ impl<'s> ClusterServerSession<'s> {
             std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
         let bound_probe = prepared_ast.bind(&probe).map_err(map_error)?;
         let result_columns = match self.session.plan_bound_prepared_columns(bound_probe) {
-            Ok(columns) => crate::domain::pipeline_session::select_fields(&columns),
+            Ok(fields) => fields,
             // A variable error (Go's `variable` package) is the statement's
             // own failure and is reported at prepare time.
             Err(error)

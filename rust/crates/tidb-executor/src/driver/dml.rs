@@ -2371,27 +2371,33 @@ fn run_insert_rows(
             if let Some(allocated) = first_allocated {
                 ctx.publish_last_insert_id(allocated);
             }
-            // Go `AllocHandleIDs` asks the SESSION's row-id shard generator for
-            // the shard covering the next `n` ids, and only when the table
-            // declares shard bits -- asking otherwise would advance a generator
-            // whose run length is observable (`tidb_shard_allocate_step`).
-            let shard = if target(catalog, &database, &table_name).shard_row_id_bits() > 0 {
-                ctx.next_row_id_shard(1) as i64
-            } else {
+            // Go `InsertExec.exec`'s normal arm: every
+            // `tidb_shard_allocate_step` rows, `addRecordWithAutoIDHint`
+            // reserves the next rows' ids as one batch (`AddRecord`'s
+            // `WithReserveAutoIDHint`); IGNORE, ON DUPLICATE KEY UPDATE and
+            // REPLACE add their rows without the hint.
+            let reserve_auto_id = if insert.ignore || has_on_duplicate || insert.replace {
                 0
+            } else {
+                let size_hint_step = usize::try_from(ctx.shard_allocate_step()).unwrap_or(usize::MAX).max(1);
+                if position % size_hint_step == 0 {
+                    size_hint_step.min(new_rows.len() - position) as u64
+                } else {
+                    0
+                }
             };
             let insert_result = if skip_primary_duplicate_check {
                 target(catalog, &database, &table_name)
                     .with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, row,
                         written_row_id,
-                        shard,
+                        reserve_auto_id,
                         ctx,
                         lazy_dup_check,
                     ))
             } else {
                 target(catalog, &database, &table_name).with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked(store, row,
                     written_row_id,
-                    shard,
+                    reserve_auto_id,
                     ctx,
                     lazy_dup_check,
                 ))

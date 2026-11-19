@@ -160,6 +160,25 @@ impl<'s> ClusterServerSession<'s> {
         self.run_parsed_statement_output(sql, stmt)
     }
 
+    /// [`Self::run_statement_output`] with the result set's fields.
+    pub(crate) fn run_statement_fields(
+        &mut self,
+        sql: &str,
+    ) -> Result<(Vec<tidb_executor::adapter::ResultFieldMetadata>, StmtOutput), tidb_driver_error::DriverError> {
+        let stmt = match self.session.parse_at_statement_boundary(sql).map_err(map_error) {
+            Ok(stmt) => stmt,
+            Err(error) => {
+                self.session.record_parse_failure_coded(
+                    error.code,
+                    error.message.clone(),
+                    error.identity,
+                );
+                return Err(driver_error_of(error));
+            }
+        };
+        self.run_parsed_statement_fields(sql, stmt)
+    }
+
     /// Replaces the domain's analyzer this session's statements reach (its
     /// services' `analyze`, which `AnalyzeExec` runs through), for a test
     /// that observes or fails the analysis.
@@ -211,11 +230,24 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: Stmt,
     ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
+        self.run_parsed_statement_fields(sql, stmt).map(|(_, output)| output)
+    }
+
+    /// [`Self::run_parsed_statement_output`], also answering the result
+    /// set's fields (Go `rs.Fields()`); a statement without a result set has
+    /// none.
+    pub(crate) fn run_parsed_statement_fields(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+    ) -> Result<(Vec<tidb_executor::adapter::ResultFieldMetadata>, StmtOutput), tidb_driver_error::DriverError> {
         let executed = self
             .reborrow()
             .execute_stmt(sql, &stmt)
             .map_err(driver_error_of)?
-            .map(|mut result| drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql));
+            .map(|mut result| {
+                drain_result_with_fields(result.source()).map_err(tidb_driver_error::DriverError::Mysql)
+            });
         if let Some(output) = executed {
             // Go `writeChunks` takes the result's chunk from the statement's
             // pool (`rs.NewChunk(sessVars.GetChunkAllocator())`), marking
@@ -240,7 +272,7 @@ impl<'s> ClusterServerSession<'s> {
         // whether it created the table (an IF NOT EXISTS that found it leaves
         // the 1050 note), placement-policy DDL reports nothing created, and
         // the rest report the affected rows.
-        Ok(match &stmt {
+        Ok((Vec::new(), match &stmt {
             Stmt::Ddl(ddl) => match &**ddl {
                 tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
                     !self
@@ -255,7 +287,7 @@ impl<'s> ClusterServerSession<'s> {
                 _ => StmtOutput::Affected(self.node.ok_packet.affected_rows),
             },
             _ => StmtOutput::Affected(self.node.ok_packet.affected_rows),
-        })
+        }))
     }
 }
 
@@ -307,6 +339,13 @@ impl super::NodeConn {
 /// The rows and column types of an opened result, closed afterwards as the
 /// connection's writer closes it.
 fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_terror::MysqlError> {
+    drain_result_with_fields(source).map(|(_, output)| output)
+}
+
+/// [`drain_result`], also answering the result's fields (Go `rs.Fields()`).
+fn drain_result_with_fields(
+    source: &mut dyn ResultSetSource,
+) -> Result<(Vec<tidb_executor::adapter::ResultFieldMetadata>, StmtOutput), tidb_terror::MysqlError> {
     let fields = source.fields()?;
     let native = source.field_types().to_vec();
     let columns = fields
@@ -331,6 +370,6 @@ fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_ter
     }
     source.finish()?;
     source.close()?;
-    Ok(StmtOutput::Rows { columns, rows })
+    Ok((fields, StmtOutput::Rows { columns, rows }))
 }
 

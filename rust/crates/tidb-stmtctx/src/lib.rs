@@ -19,3 +19,34 @@ pub mod process_plan;
 pub mod used_stats;
 
 pub use process_plan::{BriefPlanSource, PlanSource, ProcessPlanInfo, RunawayRuleKillAction, StoredPlan};
+
+/// Go `stmtctx.ReservedRowIDAlloc`: the row ids a statement reserved as one
+/// batch (`AddRecord` with `WithReserveAutoIDHint`), handed out in order.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReservedRowIdAlloc {
+    base: i64,
+    max: i64,
+}
+
+impl ReservedRowIdAlloc {
+    /// Go `Reset`: the reserved ids become `(base, max]`.
+    pub fn reset(&mut self, base: i64, max: i64) {
+        self.base = base;
+        self.max = max;
+    }
+
+    /// Go `Consume`: the next reserved id, or `None` once exhausted.
+    pub fn consume(&mut self) -> Option<i64> {
+        if self.base < self.max {
+            self.base += 1;
+            return Some(self.base);
+        }
+        None
+    }
+
+    /// Go `Exhausted`.
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        self.base >= self.max
+    }
+}

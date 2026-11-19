@@ -1446,6 +1446,8 @@ pub struct StmtContextData {
     /// new one, which is what keeps the lost update closed.
     retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     row_id_shards: Arc<Mutex<RowIdShardGenerator>>,
+    /// Go `StmtCtx.ReservedRowIDAlloc`: this statement's reserved row ids.
+    reserved_row_id_alloc: Arc<Mutex<tidb_stmtctx::ReservedRowIdAlloc>>,
     /// Go `table.getIncrementAndOffset`'s inputs: `@@auto_increment_increment`
     /// and `@@auto_increment_offset`, which put the allocated ids on an
     /// arithmetic progression. See [`StmtContext::auto_increment_step`].
@@ -3666,6 +3668,7 @@ impl StmtContext {
             given_insert_id: Arc::default(),
             retry_auto_ids: session.retry_auto_ids,
             row_id_shards: session.row_id_shards,
+            reserved_row_id_alloc: Arc::default(),
             auto_increment_step: (1, 1),
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
@@ -6929,6 +6932,12 @@ impl StmtContext {
     /// Go `GetRowIDShardGenerator().GetCurrentShard(count)`: the shard
     /// covering the next `count` generated row ids. ONE generator serves both
     /// `SHARD_ROW_ID_BITS` and `AUTO_RANDOM`, as Go's does.
+    /// Go `SessionVars.ShardAllocateStep` (`tidb_shard_allocate_step`).
+    #[must_use]
+    pub fn shard_allocate_step(&self) -> u64 {
+        self.shard_allocate_step
+    }
+
     pub fn next_row_id_shard(&self, count: u64) -> u64 {
         self.row_id_shards
             .lock()
@@ -7428,6 +7437,10 @@ impl tidb_tblctx::MutateContext for StmtContext {
 
     fn next_row_id_shard(&self, count: u64) -> u64 {
         StmtContext::next_row_id_shard(self, count)
+    }
+
+    fn get_reserved_row_id_alloc(&self) -> Option<&std::sync::Mutex<tidb_stmtctx::ReservedRowIdAlloc>> {
+        Some(&self.reserved_row_id_alloc)
     }
 
     fn tmp_table_max_size(&self) -> i64 {

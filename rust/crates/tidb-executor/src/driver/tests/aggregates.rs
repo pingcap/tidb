@@ -2229,7 +2229,7 @@ fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
         panic!("not a query");
     };
     let (executed_columns, mut rows) = run_select_meta_on(sql, &catalog, &ctx).unwrap();
-    let planned_columns = plan_query_result_columns(query, &catalog, "test", &ctx).unwrap();
+    let (planned_columns, _) = plan_query_result_columns(query, &catalog, "test", &ctx).unwrap();
     assert_eq!(
         executed_columns, planned_columns,
         "the delivered pipeline's columns must be the planned statement's, or \

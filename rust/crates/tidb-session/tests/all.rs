@@ -30,6 +30,8 @@ mod executor_parallel_apply_test;
 mod executor_test_plancache_plan_cache_test;
 mod executor_test_seqtest_prepared_test;
 mod executor_test_aggregate_aggregate_test;
+mod executor_join_test_mergejoin_merge_join_test;
+mod table_tables_test_partition_partition_test;
 mod insert_auto_random_rebase_source;
 mod tests_ddl_table_cache;
 mod tests_ddl_modify_column_types;

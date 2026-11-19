@@ -731,10 +731,15 @@ pub fn plan_query_result_columns(
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Vec<(String, FieldType)>, DriverError> {
+) -> Result<PlannedResultColumns, DriverError> {
     let physical = plan_query_meta_stmt(query, catalog, current_db, ctx)?;
     physical_builder::planned_result_columns(query, &physical)
 }
+
+/// A planned query's result columns and the plan's output names (Go
+/// `p.Schema()` and `p.OutputNames()`), which `colNames2ResultFields` turns
+/// into the result fields.
+pub type PlannedResultColumns = (Vec<(String, FieldType)>, Vec<tidb_datatype::FieldNameMetadata>);
 
 /// Go turns a subquery's result `Datum` into an `expression.Constant`; the
 /// same value has to travel back through the AST here, so it becomes the

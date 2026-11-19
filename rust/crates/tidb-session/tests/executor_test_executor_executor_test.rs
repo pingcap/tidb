@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/executor/test/executor/executor_test.go` (`TestIssue19148`, `TestPartitionHashCode`, `TestPrevStmtDesensitization`, `TestDecimalDivPrecisionIncrement`, `TestIssue38756`, `TestIssue50308`, `TestIssue52984`, `TestIssues49377`, `TestPointGetOrderby`, `TestSelectVar`, `TestUnionLimit`, `TestUnion2`), on the mock store through the session, as Go's testkit
+//! Go `pkg/executor/test/executor/executor_test.go` (`TestIssue19148`, `TestPartitionHashCode`, `TestPrevStmtDesensitization`, `TestDecimalDivPrecisionIncrement`, `TestIssue38756`, `TestIssue50308`, `TestIssue52984`, `TestIssues49377`, `TestPointGetOrderby`, `TestSelectVar`, `TestUnionLimit`, `TestUnion2`, `TestColumnName`, `TestMaxOneRow`), on the mock store through the session, as Go's testkit
 //! runs them.
 
 use crate::support::testkit::*;
@@ -263,7 +263,6 @@ fn test_union_limit() {
 
 /// Go `TestUnion2`.
 #[test]
-#[ignore = "register E40: a subquery over the union output in a set operation ORDER BY is refused"]
 fn test_union2() {
     let mut tk = TestKit::new();
     tk.must_exec("use test");
@@ -502,4 +501,131 @@ fn test_union2() {
     );
     tk.must_query("select a from t union select 10 order by a")
         .check(["1", "2", "10"]);
+}
+
+/// Go `TestColumnName`.
+#[test]
+fn test_column_name() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("drop table if exists t");
+    tk.must_exec("create table t (c int, d int)");
+    // disable only full group by
+    tk.must_exec("set sql_mode='STRICT_TRANS_TABLES'");
+    let (mut rs, mut err) = tk.exec_rs("select 1 + c, count(*) from t");
+    assert!(err.is_none(), "{err:?}");
+    let mut fields = rs.fields().to_vec();
+    assert_eq!(fields.len(), 2 as usize);
+    assert_eq!("1 + c", fields[0].org_name.to_lowercase());
+    assert_eq!("1 + c", fields[0].name.to_lowercase());
+    assert_eq!("count(*)", fields[1].org_name.to_lowercase());
+    assert_eq!("count(*)", fields[1].name.to_lowercase());
+    (rs, err) = tk.exec_rs("select (c) > all (select c from t) from t");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!(fields.len(), 1 as usize);
+    assert_eq!(
+        "(c) > all (select c from t)",
+        fields[0].org_name.to_lowercase()
+    );
+    assert_eq!("(c) > all (select c from t)", fields[0].name.to_lowercase());
+    tk.must_exec("begin");
+    tk.must_exec("insert t values(1,1)");
+    (rs, err) = tk.exec_rs("select c d, d c from t");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!(fields.len(), 2 as usize);
+    assert_eq!("c", fields[0].org_name.to_lowercase());
+    assert_eq!("d", fields[0].name.to_lowercase());
+    assert_eq!("d", fields[1].org_name.to_lowercase());
+    assert_eq!("c", fields[1].name.to_lowercase());
+    // Test case for query a column of a table.
+    // In this case, all attributes have values.
+    (rs, err) = tk.exec_rs("select c as a from t as t2");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!("c", fields[0].org_name.to_lowercase());
+    assert_eq!("a", fields[0].name.to_lowercase());
+    assert_eq!("t", fields[0].org_table.to_lowercase());
+    assert_eq!("t2", fields[0].table.to_lowercase());
+    assert_eq!("test", fields[0].schema.to_lowercase());
+    // Test case for query a expression which only using constant inputs.
+    // In this case, the table, org_table and database attributes will all be empty.
+    (rs, err) = tk.exec_rs("select hour(1) as a from t as t2");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!("a", fields[0].org_name.to_lowercase());
+    assert_eq!("a", fields[0].name.to_lowercase());
+    assert_eq!("", fields[0].org_table.to_lowercase());
+    assert_eq!("", fields[0].table.to_lowercase());
+    assert_eq!("", fields[0].schema.to_lowercase());
+    // Test case for query a column wrapped with parentheses and unary plus.
+    // In this case, the column name should be its original name.
+    (rs, err) = tk.exec_rs("select (c), (+c), +(c), +(+(c)), ++c from t");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    for i in 0..5 {
+        assert_eq!("c", fields[i].org_name.to_lowercase());
+        assert_eq!("c", fields[i].name.to_lowercase());
+    }
+    // Test issue https://github.com/pingcap/tidb/issues/9639 .
+    // Both window function and expression appear in final result field.
+    tk.must_exec("set @@tidb_enable_window_function = 1");
+    (rs, err) = tk.exec_rs("select 1+1, row_number() over() num from t");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!("1+1", fields[0].org_name.to_lowercase());
+    assert_eq!("1+1", fields[0].name.to_lowercase());
+    assert_eq!("num", fields[1].org_name.to_lowercase());
+    assert_eq!("num", fields[1].name.to_lowercase());
+    tk.must_exec("set @@tidb_enable_window_function = 0");
+    (rs, err) = tk.exec_rs("select if(1,c,c) from t;");
+    assert!(err.is_none(), "{err:?}");
+    fields = rs.fields().to_vec();
+    assert_eq!("if(1,c,c)", fields[0].org_name.to_lowercase());
+    // It's a compatibility issue. Should be empty instead.
+    assert_eq!("if(1,c,c)", fields[0].name.to_lowercase());
+}
+
+/// Go `TestMaxOneRow`.
+#[test]
+fn test_max_one_row() {
+    let mut tk = TestKit::new();
+    tk.must_exec(r#"use test"#);
+    tk.must_exec(r#"drop table if exists t1"#);
+    tk.must_exec(r#"drop table if exists t2"#);
+    tk.must_exec(r#"create table t1(a double, b double);"#);
+    tk.must_exec(r#"create table t2(a double, b double);"#);
+    tk.must_exec(r#"insert into t1 values(1, 1), (2, 2), (3, 3);"#);
+    tk.must_exec(r#"insert into t2 values(0, 0);"#);
+    tk.must_exec(r#"set @@tidb_init_chunk_size=1;"#);
+    // Go's `tk.Exec` opens the record set and the error surfaces at its
+    // first `Next`; the kit drains the result set inside `exec_rs`.
+    let (_, err) = tk.exec_rs(r#"select (select t1.a from t1 where t1.a > t2.a) as a from t2;"#);
+    assert!(err.is_some());
+    assert_eq!(
+        "[executor:1242]Subquery returns more than 1 row",
+        err.expect("an error").error_string()
+    );
+}
+
+/// The session's `ONLY_FULL_GROUP_BY` flag reaches the planner: Go calls
+/// `checkOnlyFullGroupBy` only when `sql_mode` has the flag
+/// (`logical_plan_builder.go:3731`), so a non-aggregated select field beside
+/// an aggregate is accepted when the mode omits it and rejected (8123) when
+/// the mode has it. (Rust regression: the bridge once forwarded only
+/// `tidb_enable_new_only_full_group_by_check`.)
+#[test]
+fn the_session_only_full_group_by_flag_reaches_the_planner() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table t (c int, d int)");
+    tk.must_exec("set sql_mode = ''");
+    let (rs, err) = tk.exec_rs("select 1 + c, count(*) from t");
+    assert!(err.is_none(), "{err:?}");
+    let names: Vec<&str> = rs.fields().iter().map(|field| field.name.as_str()).collect();
+    assert_eq!(names, ["1 + c", "count(*)"]);
+    tk.must_exec("set sql_mode = 'ONLY_FULL_GROUP_BY'");
+    let error = tk.must_get_err_code("select 1 + c, count(*) from t", 8123);
+    assert!(error.message.contains("only_full_group_by"), "{error:?}");
 }

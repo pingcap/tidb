@@ -2141,6 +2141,22 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 return Ok(());
             }
         }
+        // Go `toColumn`: a qualified name the union's output does not carry
+        // names a table of one of its SELECTs.
+        if matches!(plan, LogicalPlan::UnionAll(_)) && !v.table.original.is_empty() {
+            return Err(RewriteError::Mysql(tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_TABLENAME_NOT_ALLOWED_HERE.gen_with_stack_by_args(&[
+                    v.table.original.clone().into(),
+                    "SELECT".into(),
+                    clause.message().into(),
+                ]),
+            )));
+        }
+        let clause = if clause == ClauseCode::GlobalOrderBy {
+            ClauseCode::OrderBy
+        } else {
+            clause
+        };
         Err(RewriteError::Mysql(
             tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[

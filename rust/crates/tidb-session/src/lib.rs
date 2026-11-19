@@ -2563,9 +2563,9 @@ impl Session {
     pub fn plan_bound_prepared_columns(
         &mut self,
         mut statement: Stmt,
-    ) -> Result<Vec<(String, FieldType)>, DriverError> {
+    ) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, DriverError> {
         if let Some(columns) = session_states::prepared_columns(&statement) {
-            return Ok(columns);
+            return Ok(crate::domain::pipeline_session::select_fields(&columns));
         }
         let parameters = tidb_executor::bound_parameter_values(&mut statement)?;
         // Go's expression rewriter validates and resolves variables during
@@ -2580,9 +2580,15 @@ impl Session {
         let ctx = self
             .statement_context(false)
             .with_prepared_params(parameters.unwrap_or_default());
-        self.with_catalog_retrieving(&ctx, |catalog| {
+        // Go `PrepareExec`: `e.Fields = colNames2ResultFields(p.Schema(),
+        // p.OutputNames(), vars.CurrentDB)`.
+        let (columns, names) = self.with_catalog_retrieving(&ctx, |catalog| {
             tidb_executor::plan_query_result_columns(&query, catalog, &current_db, &ctx)
-        })
+        })?;
+        Ok(crate::domain::pipeline_session::result_set_fields(
+            &columns,
+            (&names, &current_db),
+        ))
     }
 
     /// Resolves PREPARE result metadata with NULL markers without publishing
@@ -2791,12 +2797,30 @@ impl Session {
             .finish_execute_stmt(cost, affected_rows, in_txn);
     }
 
-    /// Like [`Session::run`], but a query result also carries its column
-    /// metadata (`(name, type)` per column) for wire-protocol fronts.
-    ///
-    /// Captured from TiDB: a statement that fails leaves its own error in the
-    /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
-    /// a failure reports it.
+    /// Go `SessionVars.StmtCtx.MemTracker` / `DiskTracker` after a
+    /// statement: the last statement's trackers, which stay in place until
+    /// the next statement resets the context. `None` before any statement
+    /// produced a result set.
+    pub fn stmt_ctx_trackers(
+        &self,
+    ) -> Option<(Arc<tidb_memory::Tracker>, Arc<tidb_memory::Tracker>)> {
+        self.statement_result_authority.borrow().as_ref().map(|authority| {
+            let memory = authority.statement_memory();
+            (Arc::clone(memory.stmt_tracker()), Arc::clone(memory.stmt_disk_tracker()))
+        })
+    }
+
+    /// Go `SessionVars.MemTracker` / `DiskTracker`: the session roots the
+    /// last statement's trackers hang from.
+    pub fn session_trackers(
+        &self,
+    ) -> Option<(Arc<tidb_memory::Tracker>, Arc<tidb_memory::Tracker>)> {
+        self.statement_result_authority.borrow().as_ref().map(|authority| {
+            let memory = authority.statement_memory();
+            (Arc::clone(memory.session_tracker()), Arc::clone(memory.session_disk_tracker()))
+        })
+    }
+
     /// Go `session.PrepareStmt`: the statement prepared for the binary
     /// protocol, its parameter count and result fields on the handle.
     pub fn prepare_stmt(
@@ -2818,6 +2842,21 @@ impl Session {
         self.node_conn().execute_prepared_output(statement, values)
     }
 
+    /// [`Session::run_with_columns`] with the result set's fields (Go
+    /// `rs.Fields()`: `colNames2ResultFields` over the plan's output names).
+    pub fn run_with_fields(
+        &mut self,
+        sql: &str,
+    ) -> Result<(Vec<tidb_executor::adapter::ResultFieldMetadata>, StmtOutput), DriverError> {
+        self.node_conn().run_statement_fields(sql)
+    }
+
+    /// Like [`Session::run`], but a query result also carries its column
+    /// metadata (`(name, type)` per column) for wire-protocol fronts.
+    ///
+    /// Captured from TiDB: a statement that fails leaves its own error in the
+    /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
+    /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         self.node_conn().run_statement_output(sql)
     }

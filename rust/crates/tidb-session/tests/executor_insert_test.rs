@@ -386,7 +386,6 @@ fn test_insert_null_in_non_strict_mode() {
 
 /// Go `TestAllocateContinuousRowID`.
 #[test]
-#[ignore = "register X14: AddRecord's statement-scoped row-id reservation (Go ReservedRowIDAlloc) is not ported; concurrent inserts interleave _tidb_rowid"]
 fn test_allocate_continuous_row_id() {
     let mut tk = TestKit::new();
     tk.must_exec(r#"use test"#);

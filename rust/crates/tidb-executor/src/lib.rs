@@ -216,7 +216,7 @@ pub use driver::{
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, parameter_count, parsed_parameter_count,
-    plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_query_result_columns,
+    plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_query_result_columns, PlannedResultColumns,
     run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
     run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,

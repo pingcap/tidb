@@ -7677,14 +7677,20 @@ fn physical_result_columns(plan: &PhysicalPlan, schema: &Schema) -> Vec<(String,
 pub(super) fn planned_result_columns(
     query: &tidb_ast::QueryStmt,
     physical: &PhysicalPlan,
-) -> Result<Vec<(String, FieldType)>, DriverError> {
+) -> Result<super::PlannedResultColumns, DriverError> {
     let schema = plan_schema(physical)?;
-    Ok(match query {
+    let columns = match query {
         tidb_ast::QueryStmt::Select(select) => {
             result_columns(select, &schema, physical.base().base.output_names())
         }
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, &schema),
-    })
+    };
+    // The names `open_query` hands its record set (`recordSet.Fields()`).
+    let names = forwarded_output_names(physical)
+        .iter()
+        .map(|name| name.names.clone())
+        .collect();
+    Ok((columns, names))
 }
 
 /// Go's common query execution seam: both SELECT and set-operation logical

@@ -271,7 +271,7 @@ fn test_prepared_update() {
 
 /// Go `TestPrepared`.
 #[test]
-#[ignore = "register E39: PREPARE result fields lack DBName/TableAsName (Go colNames2ResultFields)"]
+#[ignore = "register X05 (1): the binary EXECUTE plans a cacheable SELECT before the statement snapshot is bound, so its uncorrelated subquery reads no rows"]
 fn test_prepared() {
     let mut flags = [false, true];
     for flag in flags.clone() {

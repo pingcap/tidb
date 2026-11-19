@@ -2493,6 +2493,43 @@ impl TableCommon {
         Ok(())
     }
 
+    /// Go `AllocHandleIDs`: `n` row ids (`_tidb_rowid`) as the batch
+    /// `(base, max]` from the table's RowIDAllocType allocator (independent
+    /// of the service-backed AUTO_INCREMENT authority for SepAutoInc), both
+    /// ends composed with the shard covering the batch when the table
+    /// declares `SHARD_ROW_ID_BITS`
+    /// (`GetRowIDShardGenerator().GetCurrentShard(n)`).
+    pub fn alloc_handle_ids(
+        &self,
+        ctx: Option<&dyn tidb_tblctx::MutateContext>,
+        n: u64,
+    ) -> Result<(i64, i64), KvTableError> {
+        let (base, max) = self
+            .row_id_allocator_in(ctx)
+            .alloc_batch_in(
+                &tidb_autoid::AutoIdCall::with_timeout(std::time::Duration::from_secs(30)),
+                n,
+                1,
+                1,
+            )
+            .map_err(|error| match error {
+                AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
+                _ => KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
+                    &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED.gen_with_stack_by_args(&[]),
+                )),
+            })?;
+        let (base, max) = (base as i64, max as i64);
+        let shard_bits = self.shard_row_id_bits();
+        if shard_bits == 0 {
+            return Ok((base, max));
+        }
+        let shard = ctx.map_or(0, |ctx| ctx.next_row_id_shard(n) as i64);
+        Ok((
+            compose_row_id_shard(shard_bits, shard, base),
+            compose_row_id_shard(shard_bits, shard, max),
+        ))
+    }
+
     /// The handle a row's values produce.
     ///
     /// A table with no clustered handle gets Go's `_tidb_rowid`, and that
@@ -2516,7 +2553,7 @@ impl TableCommon {
         &mut self,
         row: &[Datum],
         zone: &SessionTimeZone,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
@@ -2539,27 +2576,34 @@ impl TableCommon {
                 ))),
             },
             None => {
-                // Go AllocHandle uses RowIDAllocType, independent of the
-                // service-backed AUTO_INCREMENT authority for SepAutoInc.
-                let handle = self
-                    .row_id_allocator_in(ctx)
-                    .alloc(1, 1)
-                    .map_err(|error| match error {
-                        AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
-                        _ => KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                            &tidb_autoid::autoid_errors::ERR_AUTOINC_READ_FAILED
-                                .gen_with_stack_by_args(&[]),
-                        )),
-                    })?;
-                // Go `AllocHandleIDs`: `if meta.ShardRowIDBits > 0 { base =
-                // shardFmt.Compose(shard, base) }`. Composing here rather
-                // than at the caller keeps the ONE place a heap table's
-                // handle is minted responsible for its whole shape.
-                Ok(TableHandle::Int(compose_row_id_shard(
-                    self.shard_row_id_bits(),
-                    shard,
-                    handle as i64,
-                )))
+                // Go `AddRecord`: "Reserve a batch of auto ID in the
+                // statement context. The reserved ID could be used in the
+                // future within this statement, by the following AddRecord()
+                // operation. Make the IDs continuous benefit for the
+                // performance of TiKV."
+                let reserved = ctx.and_then(|ctx| ctx.get_reserved_row_id_alloc());
+                if reserve_auto_id > 0 {
+                    if let Some(reserved) = reserved {
+                        let (base, max) = self.alloc_handle_ids(ctx, reserve_auto_id)?;
+                        reserved
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .reset(base, max);
+                    }
+                }
+                // Go `AllocHandle`: "First try to alloc if the statement has
+                // reserved auto ID."
+                if let Some(reserved) = reserved {
+                    let consumed = reserved
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .consume();
+                    if let Some(row_id) = consumed {
+                        return Ok(TableHandle::Int(row_id));
+                    }
+                }
+                let (_, row_id) = self.alloc_handle_ids(ctx, 1)?;
+                Ok(TableHandle::Int(row_id))
             }
         }
     }
@@ -3853,10 +3897,10 @@ impl TableCommon {
         store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(store, row, row_id, shard, ctx, false, false, None, true)
+        self.insert_row_in(store, row, row_id, reserve_auto_id, ctx, false, false, None, true)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -3874,7 +3918,7 @@ impl TableCommon {
         store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: &dyn tidb_tblctx::MutateContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
@@ -3888,7 +3932,7 @@ impl TableCommon {
                     store,
                     row,
                     row_id,
-                    shard,
+                    reserve_auto_id,
                     ctx,
                     lazy_dup_check,
                     false,
@@ -3963,7 +4007,7 @@ impl TableCommon {
         store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: &dyn tidb_tblctx::MutateContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
@@ -3974,7 +4018,7 @@ impl TableCommon {
                     store,
                     row,
                     row_id,
-                    shard,
+                    reserve_auto_id,
                     ctx,
                     lazy_dup_check,
                     true,
@@ -4042,7 +4086,7 @@ impl TableCommon {
         store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: &dyn tidb_exprctx::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
@@ -4054,7 +4098,7 @@ impl TableCommon {
             store,
             row,
             row_id,
-            shard,
+            reserve_auto_id,
             ctx,
             lazy_dup_check,
             skip_primary_duplicate_check,
@@ -4074,7 +4118,7 @@ impl TableCommon {
         store: &mut dyn TableStorage,
         row: &[Datum],
         row_id: Option<i64>,
-        shard: i64,
+        reserve_auto_id: u64,
         ctx: &dyn tidb_exprctx::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
@@ -4119,7 +4163,7 @@ impl TableCommon {
         };
         let handle = match explicit_handle {
             Some(handle) => handle,
-            None => self.handle_of_row(row, &zone, shard, stats_ctx)?,
+            None => self.handle_of_row(row, &zone, reserve_auto_id, stats_ctx)?,
         };
         let row_encoding = stats_ctx.map_or_else(
             tidb_tblctx::RowEncodingConfig::default,
@@ -4464,12 +4508,7 @@ impl TableCommon {
         {
             // Go partitionedTableUpdateRecord removes then AddRecords a heap
             // row crossing partitions, allocating a fresh hidden row ID.
-            let shard = if self.shard_row_id_bits() > 0 {
-                ctx.next_row_id_shard(1) as i64
-            } else {
-                0
-            };
-            new_handle = self.handle_of_row(row, &zone, shard, Some(ctx))?;
+            new_handle = self.handle_of_row(row, &zone, 0, Some(ctx))?;
         }
         // Go `partitionedTableUpdateRecord`'s reorganization half is decided
         // before the row's own write: a heap row whose reorganized copy

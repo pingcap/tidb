@@ -104,6 +104,8 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
 
     /// Go `GetRowIDShardGenerator`: the shard a batch of row ids takes.
     fn next_row_id_shard(&self, count: u64) -> u64;
+    /// Go `GetReservedRowIDAlloc`: the statement's reserved row ids.
+    fn get_reserved_row_id_alloc(&self) -> Option<&std::sync::Mutex<tidb_stmtctx::ReservedRowIdAlloc>>;
 
     /// Go `GetTemporaryTableSupport().GetTemporaryTableSizeLimit`.
     fn tmp_table_max_size(&self) -> i64;

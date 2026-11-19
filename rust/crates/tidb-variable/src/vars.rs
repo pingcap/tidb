@@ -2239,17 +2239,18 @@ pub fn parse_read_timestamp(
 /// value bootstrap seeds into `mysql.global_variables` and `SET x = DEFAULT`
 /// resolves to.
 ///
-/// The environment is the stock one. `store_is_tikv` is a PROCESS fact in Go
-/// (`config.GetGlobalConfig().Store`) that this tier is not told, so
-/// `tidb_enable_async_commit`/`tidb_enable_1pc` resolve to their non-TiKV-store
-/// defaults here; every other override is unconditional.
+/// `store_is_tikv` is a PROCESS fact in Go (`config.GetGlobalConfig().Store`)
+/// that this tier is not told, so `tidb_enable_async_commit`/`tidb_enable_1pc`
+/// resolve to their non-TiKV-store defaults here. `in_test` is Go's
+/// `intest.InTest`: a test build bootstraps `tidb_mem_oom_action = LOG` and
+/// `tidb_enable_auto_analyze = OFF`.
 pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
     tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
         def.name,
         &crate::sysvar::effective_default(def),
         tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
             store_is_tikv: false,
-            in_test: false,
+            in_test: tidb_intest::IN_TEST,
             next_gen: false,
         },
     )

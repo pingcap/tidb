@@ -214,10 +214,26 @@ impl TestKit {
 
     /// Go `tk.Exec(sql)` read as `(rs, err)`.
     pub fn exec_rs(&mut self, sql: &str) -> (TkResult, Option<MysqlError>) {
-        match self.exec(sql) {
-            Ok(StmtResult::Rows(rows)) => (TkResult::new(sql, &rows), None),
+        let multi = self.session.split_statements(sql, true).is_ok_and(|statements| statements.len() > 1);
+        if multi {
+            return match self.exec(sql) {
+                Ok(StmtResult::Rows(rows)) => (TkResult::new(sql, &rows), None),
+                Ok(_) => (TkResult::nil(), None),
+                Err(error) => (TkResult::nil(), Some(error)),
+            };
+        }
+        match self.session.run_with_fields(sql) {
+            Ok((fields, tidb_executor::StmtOutput::Rows { rows, .. })) => {
+                let mut rs = TkResult::new(sql, &rows);
+                rs.fields = fields;
+                (rs, None)
+            }
+            Ok((_, tidb_executor::StmtOutput::Affected(rows))) => {
+                self.affected_rows = rows;
+                (TkResult::nil(), None)
+            }
             Ok(_) => (TkResult::nil(), None),
-            Err(error) => (TkResult::nil(), Some(error)),
+            Err(error) => (TkResult::nil(), Some(error.to_mysql_error())),
         }
     }
 
@@ -421,6 +437,8 @@ impl TestKit {
 pub struct TkResult {
     sql: String,
     rows: Vec<Vec<String>>,
+    /// Go `rs.Fields()`, when the result came from a record set.
+    fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
 }
 
 /// Go `ResultSetToStringSlice`'s rendering of one datum.
@@ -443,7 +461,14 @@ impl TkResult {
                 .iter()
                 .map(|row| row.iter().map(go_string).collect())
                 .collect(),
+            fields: Vec::new(),
         }
+    }
+
+    /// Go `rs.Fields()`.
+    #[must_use]
+    pub fn fields(&self) -> &[tidb_executor::adapter::ResultFieldMetadata] {
+        &self.fields
     }
 
     /// Go `res.Check(testkit.Rows(...))`: each expected row is its cells
@@ -492,7 +517,7 @@ impl TkResult {
     /// Go `var r [][]any`: a result no query has filled yet (`r == nil`).
     #[must_use]
     pub fn nil() -> Self {
-        Self { sql: String::new(), rows: Vec::new() }
+        Self { sql: String::new(), rows: Vec::new(), fields: Vec::new() }
     }
 
     /// Go `r == nil` for a [`TkResult::nil`] not yet assigned.

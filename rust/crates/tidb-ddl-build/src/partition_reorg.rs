@@ -121,12 +121,7 @@ impl KvTablePartitionReorg for TableCommon {
                     // Go `RemoveRecord` + `AddRecord` in the source
                     // partition, which gives the row a fresh handle.
                     self.remove_record(store, physical_id, &row, &handle, &zone)?;
-                    let shard = if self.shard_row_id_bits() > 0 {
-                        ctx.next_row_id_shard(1) as i64
-                    } else {
-                        0
-                    };
-                    handle = self.handle_of_row(&row, &zone, shard, Some(ctx))?;
+                    handle = self.handle_of_row(&row, &zone, 0, Some(ctx))?;
                     self.add_partition_copy(
                         store,
                         physical_id,

@@ -5092,11 +5092,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// The expression build error for any item, or an out-of-range position.
     pub fn build_sort(
         &mut self,
-        plan: LogicalPlan,
+        mut plan: LogicalPlan,
         items: &[tidb_ast::OrderItem],
         markers: &BTreeMap<MarkerKind, Vec<Column>>,
     ) -> Result<LogicalPlan, PlanError> {
-        self.cur_clause = ClauseCode::OrderBy;
+        // Go `buildSortWithCheck`: a sort over a UNION ALL resolves its items
+        // in the global ORDER clause.
+        self.cur_clause = if matches!(plan, LogicalPlan::UnionAll(_)) {
+            ClauseCode::GlobalOrderBy
+        } else {
+            ClauseCode::OrderBy
+        };
         let (schema, _) = snapshot_schema_and_names(&plan);
 
         let mut by_items = Vec::with_capacity(items.len());
@@ -5126,7 +5132,24 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     column.index = position as i64 - 1;
                     Expression::Column(column)
                 }
-                None => self.rewrite_scalar_with_plan(&scratch, &plan, markers)?,
+                None => {
+                    // Go `buildSort`: `newExpr, np, err := b.rewrite(ctx,
+                    // item.Expr, p, aggMapper, true); p = np` -- a subquery
+                    // in the by-item becomes an Apply below the sort (the
+                    // set operation's ORDER BY; a SELECT's ORDER BY already
+                    // moved its subqueries into auxiliary fields).
+                    let mut scratch = scratch;
+                    let (next, lowered) = self.lower_scalar_subqueries(plan, &mut scratch)?;
+                    plan = next;
+                    if lowered {
+                        let mut lowered_markers = markers.clone();
+                        let (grown, _) = snapshot_schema_and_names(&plan);
+                        lowered_markers.insert(MarkerKind::Column, grown.columns);
+                        self.rewrite_scalar_with_plan(&scratch, &plan, &lowered_markers)?
+                    } else {
+                        self.rewrite_scalar_with_plan(&scratch, &plan, markers)?
+                    }
+                }
             };
             // go's ORDER BY rewrite keeps the explicit COLLATE on the by-item's
             // RetType: the sort compares the key under the item's own

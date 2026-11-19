@@ -855,9 +855,10 @@ pub fn run_mview_delta_merge(
                 } else if !old_exists {
                     stats.writer.row_ops += 1;
                     stats.writer.insert_rows += 1;
-                    let shard = if kv.shard_row_id_bits() > 0 { ctx.next_row_id_shard(1) as i64 } else { 0 };
+                    // Go `AddRecord` without a reservation hint.
+                    let reserve_auto_id = 0;
                     kv.with_statement_store(ctx, |table, store| {
-                        table.insert_row_with_row_id_checked(store, &new, None, shard, ctx, true)
+                        table.insert_row_with_row_id_checked(store, &new, None, reserve_auto_id, ctx, true)
                     })
                     .map_err(super::dml::kv_write_error)?;
                     if let Some(mlog) = mlog {

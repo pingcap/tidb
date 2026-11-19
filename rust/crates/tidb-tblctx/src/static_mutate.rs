@@ -41,6 +41,8 @@ struct Shared {
     memory: StatementMemory,
     warnings: Mutex<Vec<tidb_context::SqlWarn>>,
     row_id_shard: OnceLock<u64>,
+    /// Go `StaticMutateContext.reservedRowIDAlloc`.
+    reserved_row_id_alloc: std::sync::Mutex<tidb_stmtctx::ReservedRowIdAlloc>,
 }
 
 /// A statement context with no session behind it.
@@ -470,6 +472,10 @@ impl MutateContext for StaticMutateContext {
             .shared
             .row_id_shard
             .get_or_init(|| u64::from(tidb_fastrand::uint32()))
+    }
+
+    fn get_reserved_row_id_alloc(&self) -> Option<&std::sync::Mutex<tidb_stmtctx::ReservedRowIdAlloc>> {
+        Some(&self.shared.reserved_row_id_alloc)
     }
 
     /// Go `DefTiDBTmpTableMaxSize`.

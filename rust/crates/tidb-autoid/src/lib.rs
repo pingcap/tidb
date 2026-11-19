@@ -832,7 +832,9 @@ impl AutoIdAllocator {
         self.alloc_batch_in(call, 1, increment, offset)
             .map(|(_, max)| max)
     }
-    fn alloc_batch_in(
+    /// Go `Allocator.Alloc(ctx, n, increment, offset)`: `n` ids as the
+    /// batch `(base, max]`.
+    pub fn alloc_batch_in(
         &self,
         call: &AutoIdCall,
         n: u64,

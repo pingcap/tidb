@@ -427,12 +427,7 @@ impl TableCommon {
             None
         };
         if collides == Some(true) {
-            let shard = if self.shard_row_id_bits() > 0 {
-                ctx.next_row_id_shard(1) as i64
-            } else {
-                0
-            };
-            copy_handle = self.handle_of_row(new_row, &ctx.session_zone(), shard, Some(ctx))?;
+            copy_handle = self.handle_of_row(new_row, &ctx.session_zone(), 0, Some(ctx))?;
         }
         Ok(Some(ReorgUpdate {
             remove_from,
