@@ -1429,6 +1429,17 @@ func buildMLogDeltaSelect(
 			if err != nil {
 				return nil, err
 			}
+			if argCol, ok := argExpr.(*ast.ColumnNameExpr); ok {
+				if col := model.FindColumnInfo(mlogTable.Columns, argCol.Name.Name.L); col != nil && col.GetType() == mysql.TypeEnum {
+					// Preserve ENUM's numeric index before IF combines it with the negated
+					// branch and loses the ENUM type needed for SUM's numeric conversion.
+					argExpr = &ast.FuncCastExpr{
+						Expr:         argExpr,
+						Tp:           mvCols[ac.info.MVOffset].FieldType.Clone(),
+						FunctionType: ast.CastFunction,
+					}
+				}
+			}
 			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
 			phase1Fields = append(phase1Fields, &ast.SelectField{
 				Expr:   aggSum(ifExpr(addedCond, argExpr, &ast.UnaryOperationExpr{Op: opcode.Minus, V: argExpr})),

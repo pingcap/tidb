@@ -94,6 +94,58 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	)).Check(testkit.Rows("success 1 1 1 1 1 1 1 1"))
 }
 
+func TestMaterializedViewRefreshFastSumEnumSet(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		initialSum, insertedSum string
+		updatedSum              string
+	}{
+		{name: "enum", initialSum: "4", insertedSum: "6", updatedSum: "7"},
+		{name: "set", initialSum: "5", insertedSum: "7", updatedSum: "9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table zz_sum_t (g int not null, v " + tc.name + "('a','b','c'), key(g))")
+			tk.MustExec("create materialized view log on zz_sum_t (g, v)")
+			tk.MustExec("insert into zz_sum_t values (1,'a'), (1,'c')")
+			tk.MustExec("create materialized view zz_sum_mv (g, cnt, s, cv) refresh fast " +
+				"as select g, count(1), sum(v), count(v) from zz_sum_t group by g")
+			tk.MustExec("create materialized view log on zz_sum_mv (g, cnt, s, cv)")
+			tk.MustQuery("select g, cnt, s, cv from zz_sum_mv").Check(testkit.Rows("1 2 " + tc.initialSum + " 2"))
+
+			tk.MustExec("insert into zz_sum_t values (1,'b')")
+			tk.MustExec("refresh materialized view zz_sum_mv fast")
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			tk.MustQuery("select g, cnt, s, cv from zz_sum_mv").Check(testkit.Rows("1 3 " + tc.insertedSum + " 3"))
+			tk.MustQuery("select g, count(1), sum(v), count(v) from zz_sum_t group by g").
+				Check(testkit.Rows("1 3 " + tc.insertedSum + " 3"))
+			tk.MustQuery("select * from `$mlog$zz_sum_mv`").Sort().Check(testkit.Rows(
+				"1 2 "+tc.initialSum+" 2 U -1", "1 3 "+tc.insertedSum+" 3 U 1"))
+			tk.MustExec("refresh materialized view zz_sum_mv complete delta apply")
+			tk.MustQuery("select g, cnt, s, cv from zz_sum_mv").Check(testkit.Rows("1 3 " + tc.insertedSum + " 3"))
+			// A complete recompute must find no differences and emit no further log rows.
+			tk.MustQuery("select count(*) from `$mlog$zz_sum_mv`").Check(testkit.Rows("2"))
+
+			// Exercise both signs of the delta, new groups, and nullable SUM dependencies.
+			tk.MustExec("update zz_sum_t set v = 'c' where v = 'b'")
+			tk.MustExec("refresh materialized view zz_sum_mv fast")
+			tk.MustQuery("select * from zz_sum_mv").Check(testkit.Rows("1 3 " + tc.updatedSum + " 3"))
+			tk.MustExec("delete from zz_sum_t where v = 'c'")
+			tk.MustExec("insert into zz_sum_t values (1,null), (2,'b')")
+			tk.MustExec("refresh materialized view zz_sum_mv fast")
+			tk.MustQuery("select * from zz_sum_mv order by g").Check(testkit.Rows("1 2 1 1", "2 1 2 1"))
+			tk.MustExec("update zz_sum_t set v = null where g = 1")
+			tk.MustExec("refresh materialized view zz_sum_mv fast")
+			tk.MustQuery("select * from zz_sum_mv order by g").Check(testkit.Rows("1 2 <nil> 0", "2 1 2 1"))
+			tk.MustExec("delete from zz_sum_t where g = 1")
+			tk.MustExec("refresh materialized view zz_sum_mv fast")
+			tk.MustQuery("select * from zz_sum_mv").Check(testkit.Rows("2 1 2 1"))
+		})
+	}
+}
+
 func TestMaterializedViewRefreshStatementResult(t *testing.T) {
 	for _, tc := range []struct {
 		mode                               string
