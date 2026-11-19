@@ -2802,3 +2802,14 @@ fn alter_mlog_add_column_refresh_conflict(mode: &'static str, columns: &'static 
         "{case}"
     );
 }
+
+/// Go master `6aec16d0234`'s DDL safeguards, replayed from a Go master
+/// `2a6eb11aeb9` node (`testdata/mview_ddl_safeguards_go.jsonl`,
+/// `tools/e29/p21`): CREATE MATERIALIZED VIEW [LOG] IF NOT EXISTS notes
+/// 1050, the view's automatically created group key (a PRIMARY key or the
+/// unique key of a nullable group) refuses DROP / RENAME / INVISIBLE, and a
+/// plain table named like a shadow drops.
+#[test]
+fn materialized_view_ddl_safeguards_answer_as_go_master() {
+    replay_go_master(include_str!("../../../../../testdata/mview_ddl_safeguards_go.jsonl"));
+}

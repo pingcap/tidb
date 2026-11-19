@@ -42,7 +42,7 @@ const REFRESH_HIST_STATUS_SUCCESS: &str = "success";
 const REFRESH_HIST_STATUS_FAILED: &str = "failed";
 
 /// Go master `mvRefreshShadowTablePrefix`.
-const MV_REFRESH_SHADOW_TABLE_PREFIX: &str = "__mv_shadow_";
+const MV_REFRESH_SHADOW_TABLE_PREFIX: &str = tidb_mviewutil::SHADOW_TABLE_PREFIX;
 
 pub(crate) fn plain(message: impl Into<String>) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message.into()))

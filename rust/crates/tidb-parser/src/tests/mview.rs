@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go master `eca4674a6f`'s materialized view parser tests
+//! Go master `eca4674a6f`'s materialized view parser tests (with
+//! `6aec16d0234`'s IF NOT EXISTS rows)
 //! (`parser_test.go`: `TestMaterializedViewDDLStatements`,
 //! `TestRefreshMaterializedViewStatements`,
 //! `TestMaterializedViewDuplicateOptionsErrMsg`,
@@ -97,6 +98,22 @@ fn materialized_view_ddl_statements() {
         ("PURGE MATERIALIZED VIEW LOG ON test.t", true, "PURGE MATERIALIZED VIEW LOG ON `test`.`t`"),
         ("DROP MATERIALIZED VIEW IF EXISTS mv", true, "DROP MATERIALIZED VIEW IF EXISTS `mv`"),
         ("DROP MATERIALIZED VIEW LOG IF EXISTS ON t", true, "DROP MATERIALIZED VIEW LOG IF EXISTS ON `t`"),
+        // Go master `6aec16d0234`: CREATE ... IF NOT EXISTS.
+        ("CREATE MATERIALIZED VIEW IF NOT EXISTS test.mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `test`.`mv` (`a`) AS SELECT 1"),
+        (
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+            true,
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS `mv` (`a`) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+        ),
+        ("CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON test.t (a,b)", true, "CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `test`.`t` (`a`, `b`)"),
+        (
+            "CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON t (a) SHARD_ROW_ID_BITS = 4 PURGE START WITH now() NEXT 300 ALERT ROWS 100",
+            true,
+            "CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `t` (`a`) SHARD_ROW_ID_BITS = 4 PURGE START WITH NOW() NEXT 300 ALERT ROWS 100",
+        ),
+        ("CREATE MATERIALIZED VIEW IF NOT EXISTS log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `log` (`a`) AS SELECT 1"),
+        ("CREATE MATERIALIZED VIEW mv IF NOT EXISTS (a) AS SELECT 1", false, ""),
+        ("CREATE MATERIALIZED VIEW LOG ON IF NOT EXISTS t (a)", false, ""),
     ];
     run_test(&table);
     let want = [

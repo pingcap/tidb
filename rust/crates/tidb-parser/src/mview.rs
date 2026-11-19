@@ -70,8 +70,9 @@ impl Parser {
         self.advance();
         self.expect_word("MATERIALIZED")?;
         self.expect_kw("VIEW")?;
+        // Go master: CREATE and DROP take `LOG IF [NOT] EXISTS ON`.
         let log = self.is_kw("LOG")
-            && (self.is_kw_at(1, "ON") || (verb == "DROP" && self.is_kw_at(1, "IF")));
+            && (self.is_kw_at(1, "ON") || ((verb == "DROP" || verb == "CREATE") && self.is_kw_at(1, "IF")));
         match (verb.as_str(), log) {
             ("CREATE", false) => self.parse_create_materialized_view().map(|s| DdlStmt::CreateMaterializedView(Box::new(s))),
             ("CREATE", true) => {
@@ -269,6 +270,8 @@ impl Parser {
 
     /// Go `CreateMaterializedViewStmt`, after `CREATE MATERIALIZED VIEW`.
     fn parse_create_materialized_view(&mut self) -> PResult<CreateMaterializedViewStmt> {
+        // Go master `"CREATE" "MATERIALIZED" "VIEW" "IF" NotSym "EXISTS"`.
+        let if_not_exists = self.parse_if_not_exists()?;
         let view_name = self.parse_table_name_path()?;
         let cols = self.parse_mview_column_list()?;
         let mut comment = String::new();
@@ -289,12 +292,14 @@ impl Parser {
         };
         self.expect_kw("AS")?;
         let select = self.parse_create_view_select()?;
-        Ok(CreateMaterializedViewStmt { view_name, cols, comment, refresh, attributes, options, select })
+        Ok(CreateMaterializedViewStmt { if_not_exists, view_name, cols, comment, refresh, attributes, options, select })
     }
 
     /// Go `CreateMaterializedViewLogStmt`, after `CREATE MATERIALIZED VIEW`.
     fn parse_create_materialized_view_log(&mut self) -> PResult<CreateMaterializedViewLogStmt> {
         self.expect_kw("LOG")?;
+        // Go master `IfNotExists` before `ON`.
+        let if_not_exists = self.parse_if_not_exists()?;
         self.expect_kw("ON")?;
         let table = self.parse_table_name_path()?;
         let cols = self.parse_mview_column_list()?;
@@ -307,7 +312,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(CreateMaterializedViewLogStmt { table, cols, options, purge, accumulation_alert })
+        Ok(CreateMaterializedViewLogStmt { if_not_exists, table, cols, options, purge, accumulation_alert })
     }
 
     /// Go `MLogPurgeClause` (`PURGE IMMEDIATE` or `PURGE [START WITH e] NEXT

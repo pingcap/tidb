@@ -977,6 +977,13 @@ pub(crate) fn create_materialized_view_plan(
         ));
     };
     let schema = schema.read().clone();
+    // Go master: `if s.IfNotExists && is.TableExists(schemaName,
+    // s.ViewName.Name)` is a note (the caller's `if_not_exists_note`).
+    if stmt.if_not_exists && catalog.table_exists(&schema_name, &view_name) {
+        return Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.fast_gen_by_args(&[format!("{schema_name}.{view_name}").into()]),
+        ));
+    }
     let comment = tidb_ddl_build::validate_comment_length(
         &stmt.comment,
         &tidb_hack::go_to_lower(&view_name),

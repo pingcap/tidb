@@ -1130,6 +1130,8 @@ fn apply_rename_index(
     from: &str,
     to: &str,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
+    materialized_view::check_materialized_view_group_key_index_constraints(info, from, "RENAME INDEX")
+        .map_err(DdlPlanError::from_mysql_error)?;
     if find_index(info, from).is_none() {
         return Err(DdlPlanError::from(
             tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.gen_with_stack_by_args(&[
@@ -1231,6 +1233,10 @@ fn apply_index_visibility(
     index: &str,
     invisible: bool,
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
+    if invisible {
+        materialized_view::check_materialized_view_group_key_index_constraints(info, index, "ALTER INDEX INVISIBLE")
+            .map_err(DdlPlanError::from_mysql_error)?;
+    }
     // The index must exist AND be public, else `ErrKeyNotExists`.
     let found = find_index(info, index)
         .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);

@@ -53,10 +53,66 @@ pub(crate) fn check_protected_materialized_view_shadow_constraint(
     table: &TableInfo,
     op: &str,
 ) -> Result<(), tidb_terror::MysqlError> {
-    if table.materialized_view_shadow.is_some() {
-        return Err(unsupported(format!("{op} on materialized view shadow table")));
+    if table.materialized_view_shadow.is_none() {
+        return Ok(());
     }
-    Ok(())
+    if op == "DROP TABLE" {
+        // "The DDL owner runs this check again before dropping the table."
+        if is_materialized_view_shadow_table_expired(table.name.lowercase(), chrono::Utc::now()) {
+            return Ok(());
+        }
+        return Err(unsupported(
+            "DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp".to_owned(),
+        ));
+    }
+    Err(unsupported(format!("{op} on materialized view shadow table")))
+}
+
+/// Go master `mviewShadowTableRetention`.
+const MVIEW_SHADOW_TABLE_RETENTION: chrono::Duration = chrono::Duration::days(7);
+
+/// Go master `isMaterializedViewShadowTableExpired`: "Generated shadow names
+/// are __mv_shadow_<mviewID>_<UnixNano>."
+fn is_materialized_view_shadow_table_expired(name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let Some(suffix) = name.strip_prefix(tidb_mviewutil::SHADOW_TABLE_PREFIX) else {
+        return false;
+    };
+    let Some((_, timestamp)) = suffix.split_once('_') else {
+        return false;
+    };
+    let Some(cutoff) = (now - MVIEW_SHADOW_TABLE_RETENTION).timestamp_nanos_opt() else {
+        return false;
+    };
+    timestamp.parse::<i64>().is_ok_and(|created| created > 0 && created <= cutoff)
+}
+
+/// Go master `checkMaterializedViewGroupKeyIndexConstraints`: "Additional
+/// UNIQUE/PRIMARY indexes on MVs are disallowed, so the only such index is
+/// the auto-created group key. Integer clustered PKs have no IndexInfo."
+pub(crate) fn check_materialized_view_group_key_index_constraints(
+    table: &TableInfo,
+    index_name: &str,
+    op: &str,
+) -> Result<(), tidb_terror::MysqlError> {
+    if table.materialized_view.is_none() {
+        return Ok(());
+    }
+    let lower = tidb_hack::go_to_lower(index_name);
+    let name = if let Some(index) = table.indices.iter_deref().find(|index| index.read().name.lowercase() == lower) {
+        let index = index.read();
+        if !index.unique && !index.primary {
+            return Ok(());
+        }
+        index.name.original().to_owned()
+    } else if table.pk_is_handle && lower == tidb_hack::go_to_lower(tidb_mysql::consts::PrimaryKeyName) {
+        tidb_mysql::consts::PrimaryKeyName.to_owned()
+    } else {
+        return Ok(());
+    };
+    Err(unsupported(format!(
+        "{op} on automatically created index {name} of materialized view {}",
+        table.name.original()
+    )))
 }
 
 /// Go master `checkTableMaterializedViewConstraints`: DROP / TRUNCATE /
@@ -2893,5 +2949,32 @@ pub(super) fn cleanup_mview_out_of_place_cutover_after_commit(
             continue;
         }
         tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&TableInfo { id, ..TableInfo::default() });
+    }
+}
+
+#[cfg(test)]
+mod shadow_expiration_tests {
+    /// Go master `TestMaterializedViewShadowTableExpiration`.
+    #[test]
+    fn test_materialized_view_shadow_table_expiration() {
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let cutoff = now - chrono::Duration::days(7);
+        let name = |created: chrono::DateTime<chrono::Utc>| format!("__mv_shadow_1_{}", created.timestamp_nanos_opt().unwrap());
+        let nanosecond = chrono::Duration::nanoseconds(1);
+        for (table, expired) in [
+            (name(cutoff - nanosecond), true),
+            (name(cutoff), true),
+            (name(cutoff + nanosecond), false),
+            (name(now + chrono::Duration::hours(1)), false),
+            ("__mv_shadow_1".to_owned(), false),
+            ("__mv_shadow_1_invalid".to_owned(), false),
+            ("__mv_shadow_1_0".to_owned(), false),
+            ("__mv_shadow_1_-1".to_owned(), false),
+            ("__mv_shadow_1_9223372036854775808".to_owned(), false),
+            (name(cutoff) + "_suffix", false),
+            (name(cutoff).trim_start_matches("__").to_owned(), false),
+        ] {
+            assert_eq!(super::is_materialized_view_shadow_table_expired(&table, now), expired, "{table}");
+        }
     }
 }

@@ -52,6 +52,8 @@ pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
     let index_name = index.clone();
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     let stored = stored.read();
+    super::materialized_view::check_materialized_view_group_key_index_constraints(&stored, &index_name, "DROP INDEX")
+        .map_err(DdlPlanError::from_mysql_error)?;
     let index = find_index(&stored, &index_name);
     // Go `CheckIsDropPrimaryKey`: a general index merely named `primary` is
     // not the primary key (#14243).
@@ -155,6 +157,18 @@ fn check_drop_index(
     for arg in args.read().index_args.iter_deref() {
         let arg = arg.read();
         let name = arg.index_name.original().to_owned();
+        // Go master: "Reject before the first transition; later drop states
+        // cannot be safely cancelled. Rollback of an add-index job must still
+        // be able to remove it."
+        if !active.job.is_rollingback()
+            && find_index(&stored, &name).is_none_or(|index| index.read().state == SchemaState::PUBLIC)
+        {
+            if let Err(error) =
+                super::materialized_view::check_materialized_view_group_key_index_constraints(&stored, &name, "DROP INDEX")
+            {
+                return Err(cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)));
+            }
+        }
         let Some(index) = find_index(&stored, &name) else {
             active.job.state = JobState::CANCELLED;
             return Ok((

@@ -176,7 +176,12 @@ pub(super) fn create_materialized_view_log<S: StoreClient>(
     current_db: &str,
     context: &dyn DdlSessionContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let (report, schema, name) = submit_create_materialized_view_log(executor, stmt, current_db, context)?;
+    let (report, schema, name) =
+        match if_not_exists_note(stmt.if_not_exists, submit_create_materialized_view_log(executor, stmt, current_db, context)) {
+            Ok(Ok(submitted)) => submitted,
+            Ok(Err(satisfied)) => return Ok(satisfied),
+            Err(error) => return Err(error),
+        };
     if matches!(report, ClusterDdlReport::Applied { .. }) {
         after_create_tables(executor, &schema, &[name], context)?;
     }
@@ -303,24 +308,29 @@ pub(super) fn create_materialized_view<S: StoreClient>(
     current_db: &str,
     context: &DdlContext,
 ) -> Result<ClusterDdlReport, SqlQueryError> {
-    let catalog = executor.latest_schema();
-    let plan = super::executor_mview::create_materialized_view_plan(&catalog, stmt, current_db, context.as_ref())
+    let submitted = (|| {
+        let catalog = executor.latest_schema();
+        let plan = super::executor_mview::create_materialized_view_plan(&catalog, stmt, current_db, context.as_ref())
+            .map_err(mysql_query_error)?;
+        let field_types = super::executor_mview::materialized_view_query_output_types(
+            executor.scheduler.session_pool.as_ref(),
+            &plan.select_sql,
+            context.as_ref(),
+        )
         .map_err(mysql_query_error)?;
-    let field_types = super::executor_mview::materialized_view_query_output_types(
-        executor.scheduler.session_pool.as_ref(),
-        &plan.select_sql,
-        context.as_ref(),
-    )
-    .map_err(mysql_query_error)?;
-    let schema = plan.schema.name.original().to_owned();
-    let job = super::executor_mview::create_materialized_view_job(plan, stmt, field_types, context.as_ref())
-        .map_err(mysql_query_error)?;
-    let name = job.job.table_name.to_string();
-    let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
-    if matches!(report, ClusterDdlReport::Applied { .. }) {
-        after_create_tables(executor, &schema, &[name], context.as_ref())?;
+        let schema = plan.schema.name.original().to_owned();
+        let job = super::executor_mview::create_materialized_view_job(plan, stmt, field_types, context.as_ref())
+            .map_err(mysql_query_error)?;
+        let name = job.job.table_name.to_string();
+        let report = do_ddl_job_wrapper(executor, context.as_ref(), job)?;
+        if matches!(report, ClusterDdlReport::Applied { .. }) {
+            after_create_tables(executor, &schema, &[name], context.as_ref())?;
+        }
+        Ok(report)
+    })();
+    match if_not_exists_note(stmt.if_not_exists, submitted)? {
+        Ok(report) | Err(report) => Ok(report),
     }
-    Ok(report)
 }
 
 /// Go master `executor.CreateMaterializedViewShadowTable`: the shadow
@@ -392,6 +402,26 @@ pub(super) fn refresh_materialized_view_complete_out_of_place_cutover<S: StoreCl
 }
 
 /// Go `ErrTableDropExists` as the IF EXISTS note of a missing `qualified`.
+/// Go master's IF NOT EXISTS for CREATE MATERIALIZED VIEW [LOG]: an existing
+/// table, found by the precheck or by the job ("A concurrent creator may have
+/// won after the existence precheck"), is a note.
+fn if_not_exists_note<T>(
+    if_not_exists: bool,
+    result: Result<T, SqlQueryError>,
+) -> Result<Result<T, ClusterDdlReport>, SqlQueryError> {
+    match result {
+        Err(error) if if_not_exists && error.code == tidb_errno::errcode::ErrTableExists => {
+            Ok(Err(ClusterDdlReport::AlreadySatisfied {
+                detail: "the table already exists".into(),
+                warnings: vec![crate::real_tikv_ddl::ddl_note(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate(error.message),
+                )],
+            }))
+        }
+        other => other.map(Ok),
+    }
+}
+
 fn drop_missing_note(detail: &str, qualified: &str) -> ClusterDdlReport {
     ClusterDdlReport::AlreadySatisfied {
         detail: detail.into(),

@@ -90,6 +90,8 @@ impl MViewRefreshClause {
 /// Go `CreateMaterializedViewStmt`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateMaterializedViewStmt {
+    /// Go master `IfNotExists`.
+    pub if_not_exists: bool,
     /// Go `ViewName`.
     pub view_name: Vec<String>,
     /// Go `Cols`.
@@ -110,6 +112,9 @@ impl CreateMaterializedViewStmt {
     /// Go `CreateMaterializedViewStmt.Restore`.
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("CREATE MATERIALIZED VIEW ");
+        if self.if_not_exists {
+            out.push_str("IF NOT EXISTS ");
+        }
         push_name_path(out, &self.view_name);
         out.push(' ');
         push_column_list(out, &self.cols);
@@ -168,6 +173,8 @@ pub struct MLogAccumulationAlertClause {
 /// Go `CreateMaterializedViewLogStmt`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateMaterializedViewLogStmt {
+    /// Go master `IfNotExists`.
+    pub if_not_exists: bool,
     /// Go `Table`.
     pub table: Vec<String>,
     /// Go `Cols`.
@@ -183,7 +190,11 @@ pub struct CreateMaterializedViewLogStmt {
 impl CreateMaterializedViewLogStmt {
     /// Go `CreateMaterializedViewLogStmt.Restore`.
     pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("CREATE MATERIALIZED VIEW LOG ON ");
+        out.push_str("CREATE MATERIALIZED VIEW LOG ");
+        if self.if_not_exists {
+            out.push_str("IF NOT EXISTS ");
+        }
+        out.push_str("ON ");
         push_name_path(out, &self.table);
         out.push(' ');
         push_column_list(out, &self.cols);

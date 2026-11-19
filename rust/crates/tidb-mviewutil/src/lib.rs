@@ -26,6 +26,10 @@ pub fn refresh_advisory_lock_name(schema_id: i64, mview_id: i64) -> String {
     format!("mv_refresh_{schema_id}_{mview_id}")
 }
 
+/// Go master `ShadowTablePrefix`: an out-of-place refresh's shadow tables are
+/// `__mv_shadow_<mviewID>_<UnixNano>`.
+pub const SHADOW_TABLE_PREFIX: &str = "__mv_shadow_";
+
 /// Go master `PurgeAdvisoryLockName`: "identifies the lock shared by a log
 /// purge and DDL retiring that physical log".
 #[must_use]
