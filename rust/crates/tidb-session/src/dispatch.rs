@@ -560,6 +560,7 @@ impl Session {
             // Go master `MViewCompleteDeltaApplyExec`.
             Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
             Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
+            Plan::SetConfig(plan) => self.set_config_exec(plan).map(Some),
             // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
             Plan::AlterDdlJob(alter) => {
                 match self.domain_services() {
@@ -579,6 +580,51 @@ impl Session {
                 _ => Ok(None),
             },
         }
+    }
+
+    /// Go `SetConfigExec`: `Open` checks the target and converts the value,
+    /// `Next` posts it to the selected nodes (`GetClusterServerInfo`), each
+    /// node's failure a warning.
+    fn set_config_exec(
+        &mut self,
+        plan: &tidb_planner::common_plans::SetConfig,
+    ) -> Result<StmtOutput, DriverError> {
+        let ctx = self.statement_context(false);
+        let mut exec = tidb_executor::set_config::SetConfigExec::new(plan.clone());
+        exec.open(&ctx)?;
+        let mut warnings = Vec::new();
+        let unknown = |error: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(error));
+        // Go `TestSetConfigServerInfoKey`, else `infoschema.GetClusterServerInfo`.
+        let servers = match &self.test_set_config_server_info {
+            Some(server_info) => server_info(),
+            None => tidb_executor::calibrate_resource::get_cluster_server_info(
+                self.cluster_topology.as_deref(),
+                &mut warnings,
+            ),
+        }
+        .map_err(unknown)?;
+        let client = match &self.cluster_config {
+            Some(client) => std::sync::Arc::clone(client),
+            None => std::sync::Arc::new(
+                tidb_executor::cluster_config::ClusterConfigClient::new(&Default::default())
+                    .map_err(unknown)?,
+            ),
+        };
+        // Go `TestSetConfigHTTPHandlerKey`, else `InternalHTTPClient().Do`.
+        let post = |url: &str, body: String| client.post(url, body);
+        let handler: tidb_executor::set_config::HttpHandler<'_> = match &self.test_set_config_http_handler {
+            Some(handler) => handler.as_ref(),
+            None => &post,
+        };
+        let result = exec.next(servers, client.scheme(), handler, &mut warnings);
+        for warning in warnings {
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                tidb_context::WarningLevel::Warning,
+                1105,
+                warning,
+            ));
+        }
+        result.map(|()| StmtOutput::Affected(0))
     }
 
     /// Go `CompactTableTiFlashExec.Next` over the table the planner resolved

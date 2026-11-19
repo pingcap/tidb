@@ -401,7 +401,7 @@ impl Parser {
 
     /// Go `parseSetExpr`: `DEFAULT` is Go's `DefaultExpr`; `BINARY` and `ON`
     /// are SET-specific strings, while `OFF` stays an identifier.
-    fn parse_set_expr(&mut self) -> PResult<Expr> {
+    pub(crate) fn parse_set_expr(&mut self) -> PResult<Expr> {
         if self.is_kw("DEFAULT") {
             self.bump();
             return Ok(Expr::Default(None));

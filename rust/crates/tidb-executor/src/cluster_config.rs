@@ -38,6 +38,24 @@ impl ClusterConfigClient {
         })
     }
 
+    /// Go `util.InternalHTTPSchema()`.
+    #[must_use]
+    pub fn scheme(&self) -> &'static str {
+        self.scheme
+    }
+
+    /// One POST of `body` to `url` on the internal client: the status code,
+    /// Go's `resp.Status` text and the response body.
+    ///
+    /// # Errors
+    /// The request or its body read failing.
+    pub fn post(&self, url: &str, body: String) -> Result<(u16, String, String), String> {
+        let response = self.http.post(url).body(body).send().map_err(|error| error.to_string())?;
+        let status = response.status();
+        let text = response.text().map_err(|error| error.to_string())?;
+        Ok((status.as_u16(), status.to_string(), text))
+    }
+
     /// Fetches selected nodes concurrently. Node errors become statement warnings;
     /// successful rows retain discovery order and lexically sorted setting keys.
     pub fn fetch(&self, servers: &[ClusterServer], warnings: &mut Vec<String>) -> Vec<Vec<Datum>> {

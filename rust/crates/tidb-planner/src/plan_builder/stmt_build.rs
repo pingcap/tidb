@@ -172,7 +172,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 if matches!(set_config.value, tidb_ast::Expr::Default(_)) {
                     return Err(PlanError::internal("Unknown DEFAULT for SET CONFIG"));
                 }
-                Plan::SetConfig(set_config.clone())
+                // `b.rewrite(ctx, v.Value, mockTablePlan, nil, true)`.
+                let value = self.rewrite_ast_expr_with_plan_ctx(&set_config.value)?;
+                let (tp, instance) = match &set_config.target {
+                    tidb_ast::SetConfigTarget::Component(tp) => (tp.clone(), String::new()),
+                    tidb_ast::SetConfigTarget::Instance(instance) => (String::new(), instance.clone()),
+                };
+                Plan::SetConfig(Box::new(crate::common_plans::SetConfig {
+                    tp,
+                    instance,
+                    name: set_config.name.clone(),
+                    value,
+                }))
             }
             AdminStmt::Explain(explain) => Plan::Explain(explain.clone()),
             AdminStmt::ExplainFor(explain_for) => Plan::ExplainFor(explain_for.clone()),

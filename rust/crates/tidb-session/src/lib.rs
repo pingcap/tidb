@@ -661,6 +661,10 @@ pub struct Session {
     server_info_syncer: Option<std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
+    /// Go `executor.TestSetConfigServerInfoKey`'s session value.
+    test_set_config_server_info: Option<TestSetConfigServerInfo>,
+    /// Go `executor.TestSetConfigHTTPHandlerKey`'s session value.
+    test_set_config_http_handler: Option<TestSetConfigHttpHandler>,
     cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
     cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
     /// The domain identity getter shared with server-info publication.
@@ -1094,6 +1098,8 @@ impl Session {
             server_info_syncer: None,
             cluster_topology: None,
             cluster_config: None,
+            test_set_config_server_info: None,
+            test_set_config_http_handler: None,
             cluster_diagnostics: None,
             cluster_peer: None,
             // Go's Domain reports `serverIDForStandalone` until etcd assigns
@@ -1616,6 +1622,16 @@ impl Session {
     }
 
     /// Installs the process's shared internal HTTP configuration retriever.
+    /// Go `tk.Session().SetValue(executor.TestSetConfigServerInfoKey, f)`.
+    pub fn set_test_set_config_server_info(&mut self, server_info: TestSetConfigServerInfo) {
+        self.test_set_config_server_info = Some(server_info);
+    }
+
+    /// Go `tk.Session().SetValue(executor.TestSetConfigHTTPHandlerKey, f)`.
+    pub fn set_test_set_config_http_handler(&mut self, handler: TestSetConfigHttpHandler) {
+        self.test_set_config_http_handler = Some(handler);
+    }
+
     pub fn set_cluster_config_client(
         &mut self,
         client: Arc<tidb_executor::cluster_config::ClusterConfigClient>,
@@ -4211,3 +4227,14 @@ mod tests_extension_auth;
 mod extension;
 
 pub mod extensionimpl;
+
+/// Go `executor.TestSetConfigServerInfoKey`'s value: the servers `SET
+/// CONFIG` reads instead of `infoschema.GetClusterServerInfo`.
+pub type TestSetConfigServerInfo =
+    Arc<dyn Fn() -> Result<Vec<tidb_domain::cluster_topology::ClusterServer>, String> + Send + Sync>;
+
+/// Go `executor.TestSetConfigHTTPHandlerKey`'s value: the handler `SET
+/// CONFIG` posts each node's request to (`url`, body) -> (status code,
+/// status text, response body).
+pub type TestSetConfigHttpHandler =
+    Arc<dyn Fn(&str, String) -> Result<(u16, String, String), String> + Send + Sync>;

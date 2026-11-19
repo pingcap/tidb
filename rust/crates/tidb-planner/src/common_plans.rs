@@ -38,6 +38,20 @@ pub struct ShowNextRowID {
     pub names: Vec<FieldName>,
 }
 
+/// Go `SetConfig` (`common_plans.go`): `SET CONFIG <type | instance>
+/// <name> = <value>`, its value rewritten as an expression.
+#[derive(Clone, Debug)]
+pub struct SetConfig {
+    /// Go `Type`: the component (`tikv`, `pd`, ...), or empty.
+    pub tp: String,
+    /// Go `Instance`: the `host:port`, or empty.
+    pub instance: String,
+    /// Go `Name`.
+    pub name: String,
+    /// Go `Value`.
+    pub value: tidb_expr::expression::Expression,
+}
+
 /// Go `expression.VarAssignment`: one assignment of a planned `SET`.
 #[derive(Clone, Debug)]
 pub struct VarAssignment {
@@ -241,7 +255,7 @@ pub enum Plan {
     /// Go `PlanReplayer`.
     PlanReplayer(Box<tidb_ast::PlanReplayerStmt>),
     /// Go `SetConfig`.
-    SetConfig(Box<tidb_ast::SetConfigStmt>),
+    SetConfig(Box<SetConfig>),
     /// Go `SplitRegion` / `SplitIndexRegion`.
     SplitRegion(Box<tidb_ast::SplitRegionStmt>),
     /// Go `Analyze`.

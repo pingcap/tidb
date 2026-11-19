@@ -76,6 +76,7 @@ pub mod inspection_result;
 pub mod memtable_reader;
 pub mod metrics_reader;
 pub mod cluster_config;
+pub mod set_config;
 pub mod cluster_diagnostics;
 pub mod builder_utils;
 pub mod calibrate_resource;

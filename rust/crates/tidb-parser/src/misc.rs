@@ -109,17 +109,24 @@ impl Parser {
             SetConfigTarget::Component(self.parse_name_or_keyword()?.to_ascii_lowercase())
         };
         let mut name = String::new();
-        while !self.is_op("=") && !self.at_eof() {
+        while !self.is_op("=") && !self.is_op(":=") && !self.at_eof() {
             name.push_str(&self.bump().text);
         }
         if name.is_empty() {
             return Err(self.err_here("expected configuration name"));
         }
-        self.expect_op("=")?;
+        // Go `p.expectAny(eq, assignmentEq)`.
+        if self.is_op(":=") {
+            self.bump();
+        } else {
+            self.expect_op("=")?;
+        }
+        // Go `parseSetExpr`: yacc's `SetExpr`, so `DEFAULT`, `ON` and
+        // `BINARY` are values.
         Ok(SetConfigStmt {
             target,
             name,
-            value: self.parse_expr(prec::NONE)?,
+            value: self.parse_set_expr()?,
         })
     }
 
