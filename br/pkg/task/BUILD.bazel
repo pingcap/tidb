@@ -37,6 +37,7 @@ go_library(
         "//br/pkg/registry",
         "//br/pkg/restore",
         "//br/pkg/restore/data",
+        "//br/pkg/restore/indexrepair",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/log_client",
         "//br/pkg/restore/snap_client",
@@ -58,6 +59,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/objstore",
@@ -145,6 +147,11 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+<<<<<<< HEAD
+=======
+        "//pkg/domain",
+        "//pkg/keyspace",
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/objstore",
@@ -152,6 +159,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/statistics/util",
+        "//pkg/store/mockstore",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/types",
@@ -159,6 +167,7 @@ go_test(
         "@com_github_docker_go_units//:go-units",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
