@@ -474,6 +474,7 @@ type likeEscapeSpec struct {
 	expire                     "EXPIRE"
 	explore                    "EXPLORE"
 	extended                   "EXTENDED"
+	factor                     "FACTOR"
 	failedLoginAttempts        "FAILED_LOGIN_ATTEMPTS"
 	faultsSym                  "FAULTS"
 	fields                     "FIELDS"
@@ -1237,6 +1238,14 @@ type likeEscapeSpec struct {
 	Assignment                             "assignment"
 	AssignmentList                         "assignment list"
 	AuthOption                             "User auth option"
+	CreateUserSpec                         "CREATE USER account specification"
+	CreateUserSpecList                     "CREATE USER account specification list"
+	CreateAuthFactorList                   "CREATE USER additional authentication factors"
+	AlterUserSpec                          "ALTER USER account specification"
+	AlterUserSpecList                      "ALTER USER account specification list"
+	AlterAuthFactorOpList                  "ALTER USER MFA factor operations"
+	AlterAuthFactorOp                      "ALTER USER MFA factor operation"
+	MFAAuthOption                          "MFA authentication option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
 	BDRRole                                "BDR role (primary, secondary)"
@@ -7573,6 +7582,7 @@ UnReservedKeyword:
 |	"ACCESS"
 |	"AUTHORIZED"
 |	"EXEMPTION"
+|	"FACTOR"
 |	"LBACRULES"
 |	"OVERRIDE"
 |	"SECURED"
@@ -14507,7 +14517,7 @@ WhereClauseOptional:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"CREATE" "USER" IfNotExists CreateUserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -14540,7 +14550,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"ALTER" "USER" IfExists AlterUserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -14620,6 +14630,103 @@ UserSpecList:
 		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
 	}
 
+CreateUserSpec:
+	Username AuthOption CreateAuthFactorList
+	{
+		userSpec := &ast.UserSpec{User: $1.(*auth.UserIdentity)}
+		if $2 != nil {
+			userSpec.AuthOpt = $2.(*ast.AuthOption)
+		}
+		userSpec.AuthFactors = $3.([]*ast.AuthOption)
+		$$ = userSpec
+	}
+
+AlterUserSpec:
+	Username AuthOption CreateAuthFactorList
+	{
+		userSpec := &ast.UserSpec{User: $1.(*auth.UserIdentity)}
+		if $2 != nil {
+			userSpec.AuthOpt = $2.(*ast.AuthOption)
+		}
+		userSpec.AuthFactors = $3.([]*ast.AuthOption)
+		$$ = userSpec
+	}
+| Username AlterAuthFactorOpList
+	{
+		$$ = &ast.UserSpec{User: $1.(*auth.UserIdentity), AuthFactorOps: $2.([]*ast.AuthFactorOp)}
+	}
+
+AlterAuthFactorOpList:
+	AlterAuthFactorOp
+	{
+		$$ = []*ast.AuthFactorOp{$1.(*ast.AuthFactorOp)}
+	}
+| AlterAuthFactorOpList AlterAuthFactorOp
+	{
+		$$ = append($1.([]*ast.AuthFactorOp), $2.(*ast.AuthFactorOp))
+	}
+
+AlterAuthFactorOp:
+	"ADD" Int64Num "FACTOR" MFAAuthOption
+	{
+		$$ = &ast.AuthFactorOp{Type: ast.MFAFactorAdd, Factor: int($2.(int64)), AuthOpt: $4.(*ast.AuthOption)}
+	}
+| "MODIFY" Int64Num "FACTOR" MFAAuthOption
+	{
+		$$ = &ast.AuthFactorOp{Type: ast.MFAFactorModify, Factor: int($2.(int64)), AuthOpt: $4.(*ast.AuthOption)}
+	}
+| "DROP" Int64Num "FACTOR"
+	{
+		$$ = &ast.AuthFactorOp{Type: ast.MFAFactorDrop, Factor: int($2.(int64))}
+	}
+
+AlterUserSpecList:
+	AlterUserSpec
+	{
+		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
+	}
+| AlterUserSpecList ',' AlterUserSpec
+	{
+		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+CreateUserSpecList:
+	CreateUserSpec
+	{
+		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
+	}
+|	CreateUserSpecList ',' CreateUserSpec
+	{
+		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+CreateAuthFactorList:
+	{
+		$$ = []*ast.AuthOption{}
+	}
+|	CreateAuthFactorList "AND" MFAAuthOption
+	{
+		factors := $1.([]*ast.AuthOption)
+		$$ = append(factors, $3.(*ast.AuthOption))
+	}
+
+MFAAuthOption:
+	"IDENTIFIED" "BY" AuthString
+	{
+		$$ = &ast.AuthOption{AuthString: $3, ByAuthString: true}
+	}
+|	"IDENTIFIED" "WITH" AuthPlugin
+	{
+		$$ = &ast.AuthOption{AuthPlugin: $3}
+	}
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString
+	{
+		$$ = &ast.AuthOption{AuthPlugin: $3, AuthString: $5, ByAuthString: true}
+	}
+|	"IDENTIFIED" "WITH" AuthPlugin "AS" HashString
+	{
+		$$ = &ast.AuthOption{AuthPlugin: $3, HashString: $5, ByHashString: true}
+	}
 ConnectionOptions:
 	{
 		l := []*ast.ResourceOption{}

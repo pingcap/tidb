@@ -119,6 +119,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const mfaChangeUserErrorCode uint16 = 1873
+
 const (
 	connStatusDispatching int32 = iota
 	connStatusReading
@@ -1672,7 +1674,10 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
+	return cc.writeSQLError(ctx, m)
+}
 
+func (cc *clientConn) writeSQLError(ctx context.Context, m *mysql.SQLError) error {
 	cc.lastCode = m.Code
 	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
@@ -2717,6 +2722,14 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.user = newUser
 	cc.dbname = newDBName
 	err := cc.openSession()
+	targetMFA := false
+	if err == nil {
+		if host, _, hostErr := cc.PeerHost("YES", false); hostErr == nil {
+			if checker := privilege.GetPrivilegeManager(cc.ctx); checker != nil {
+				targetMFA = checker.HasMultiFactorAuth(newUser, host)
+			}
+		}
+	}
 	restoreOldSession := func() {
 		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
 			if err := newCtx.Close(); err != nil {
@@ -2728,32 +2741,52 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		cc.dbname = oldDBName
 		cc.authPlugin = oldAuthPlugin
 	}
-	if err != nil {
+	changeUserAuthFailure := func(authErr error) error {
+		var mfaErr *conn.MFAAuthError
+		if !targetMFA && !goerr.As(authErr, &mfaErr) {
+			return authErr
+		}
 		restoreOldSession()
-		return err
+		writeErr := cc.writeSQLError(ctx, &mysql.SQLError{
+			Code:    mfaChangeUserErrorCode,
+			State:   "28000",
+			Message: "Multi-factor authentication failed",
+		})
+		if writeErr != nil {
+			logutil.Logger(ctx).Debug("write MFA change user error failed", zap.Error(writeErr))
+		}
+		return io.EOF
+	}
+	if err != nil {
+		return changeUserAuthFailure(err)
 	}
 	fakeResp := &handshake.Response41{
 		Auth:       pass,
 		AuthPlugin: pluginName,
 		Capability: cc.capability,
 	}
-	if fakeResp.AuthPlugin != "" {
+	if fakeResp.AuthPlugin != "" || targetMFA {
 		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
 			restoreOldSession()
 			failpoint.Return(errors.Errorf("%v", val))
 		})
 		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
-			restoreOldSession()
-			return err
+			return changeUserAuthFailure(err)
 		}
 		if len(newpass) > 0 {
 			fakeResp.Auth = newpass
 		}
 	}
+	if targetMFA && fakeResp.AuthPlugin == mysql.AuthCachingSha2Password && len(fakeResp.Auth) > 0 {
+		newpass, err := cc.authSha(ctx, *fakeResp)
+		if err != nil {
+			return changeUserAuthFailure(err)
+		}
+		fakeResp.Auth = newpass
+	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
-		restoreOldSession()
-		return err
+		return changeUserAuthFailure(err)
 	}
 	if oldCtx != nil {
 		if err := oldCtx.Close(); err != nil {
@@ -2947,6 +2980,31 @@ func (cc getLastStmtInConn) PProfLabel() string {
 }
 
 var _ conn.AuthConn = &clientConn{}
+var _ conn.NextFactorAuthConn = &clientConn{}
+
+// RequestNextAuthFactor starts one of the ordered MFA plugins using the
+// MySQL AuthNextFactor packet (0x02). The plugin-specific response is a normal
+// authentication packet and is returned without interpretation.
+func (cc *clientConn) RequestNextAuthFactor(plugin string) ([]byte, error) {
+	if cc.capability&mysql.MultiFactorAuthentication == 0 {
+		return nil, errors.New("client does not support multi-factor authentication")
+	}
+	if plugin == mysql.AuthLDAPSimple || plugin == mysql.AuthLDAPSASL {
+		// LDAP server plugins use the standard clear-text client plugin.
+		plugin = mysql.AuthMySQLClearPassword
+	}
+	data := cc.alloc.AllocWithLen(4, 1+len(plugin)+1)
+	data = append(data, mysql.AuthNextFactor)
+	data = append(data, plugin...)
+	data = append(data, 0)
+	if err := cc.writePacket(data); err != nil {
+		return nil, err
+	}
+	if err := cc.flush(context.Background()); err != nil {
+		return nil, err
+	}
+	return cc.readPacket()
+}
 
 // WriteAuthMoreData implements `conn.AuthConn` interface
 func (cc *clientConn) WriteAuthMoreData(data []byte) error {

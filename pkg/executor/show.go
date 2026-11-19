@@ -1865,7 +1865,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
         user_attributes->>'$.Password_locking.failed_login_attempts',
         user_attributes->>'$.Password_locking.password_lock_secs',
         user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
-		Max_user_connections
+		Max_user_connections, user_attributes
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1878,45 +1878,46 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
 
+	userRow := rows[0]
 	authplugin := mysql.AuthNativePassword
-	if len(rows) == 1 && rows[0].GetString(0) != "" {
-		authplugin = rows[0].GetString(0)
+	if len(rows) == 1 && userRow.GetString(0) != "" {
+		authplugin = userRow.GetString(0)
 	}
 
-	accountLockedRaw := rows[0].GetString(1)
+	accountLockedRaw := userRow.GetString(1)
 	accountLocked := "LOCK"
-	if accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
+	if accountLockedRaw != "" && accountLockedRaw[len(accountLockedRaw)-1:] == "N" {
 		accountLocked = "UNLOCK"
 	}
 
-	userAttributes := rows[0].GetString(2)
+	userAttributes := userRow.GetString(2)
 	if len(userAttributes) > 0 {
 		userAttributes = fmt.Sprintf(" ATTRIBUTE '%s'", userAttributes)
 	}
 
-	tokenIssuer := rows[0].GetString(3)
+	tokenIssuer := userRow.GetString(3)
 	if len(tokenIssuer) > 0 {
 		tokenIssuer = " token_issuer " + tokenIssuer
 	}
 
 	var passwordHistory string
-	if rows[0].IsNull(4) {
+	if userRow.IsNull(4) {
 		passwordHistory = "DEFAULT"
 	} else {
-		passwordHistory = strconv.FormatUint(rows[0].GetUint64(4), 10)
+		passwordHistory = strconv.FormatUint(userRow.GetUint64(4), 10)
 	}
 
 	var passwordReuseInterval string
-	if rows[0].IsNull(5) {
+	if userRow.IsNull(5) {
 		passwordReuseInterval = "DEFAULT"
 	} else {
-		passwordReuseInterval = strconv.FormatUint(rows[0].GetUint64(5), 10) + " DAY"
+		passwordReuseInterval = strconv.FormatUint(userRow.GetUint64(5), 10) + " DAY"
 	}
 
-	passwordExpired := rows[0].GetEnum(6).String()
+	passwordExpired := userRow.GetEnum(6).String()
 	passwordLifetime := int64(-1)
-	if !rows[0].IsNull(7) {
-		passwordLifetime = rows[0].GetInt64(7)
+	if !userRow.IsNull(7) {
+		passwordLifetime = userRow.GetInt64(7)
 	}
 	passwordExpiredStr := "PASSWORD EXPIRE DEFAULT"
 	if passwordExpired == "Y" {
@@ -1927,14 +1928,14 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		passwordExpiredStr = fmt.Sprintf("PASSWORD EXPIRE INTERVAL %d DAY", passwordLifetime)
 	}
 
-	failedLoginAttempts := rows[0].GetString(8)
+	failedLoginAttempts := userRow.GetString(8)
 	if len(failedLoginAttempts) > 0 {
 		failedLoginAttempts = " FAILED_LOGIN_ATTEMPTS " + failedLoginAttempts
 	}
 
-	passwordLockTime := rows[0].GetString(9)
+	passwordLockTime := userRow.GetString(9)
 	if len(passwordLockTime) == 0 {
-		legacyDays := rows[0].GetString(10)
+		legacyDays := userRow.GetString(10)
 		if legacyDays == "-1" {
 			passwordLockTime = "UNBOUNDED"
 		} else if legacyDays != "" {
@@ -1957,8 +1958,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		passwordLockTime = " PASSWORD_LOCK_TIME " + passwordLockTime
 	}
 
-	authData := rows[0].GetString(11)
-	maxUserConnections := rows[0].GetInt64(12)
+	authData := userRow.GetString(11)
+	maxUserConnections := userRow.GetInt64(12)
 	maxUserConnectionsStr := ""
 	if maxUserConnections > 0 {
 		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
@@ -1983,6 +1984,21 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	authStr := ""
 	if !(authplugin == mysql.AuthSocket && authData == "") {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
+	}
+	var mfaFactors []privileges.AuthFactor
+	if !userRow.IsNull(13) {
+		var mfaErr error
+		mfaFactors, mfaErr = privileges.DecodeMultiFactorAuth(userRow.GetJSON(13))
+		if mfaErr != nil {
+			return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", e.User.String())
+		}
+		for _, factor := range mfaFactors {
+			factorAuth := ""
+			if factor.AuthenticationString != "" {
+				factorAuth = fmt.Sprintf(" AS '%s'", strings.ReplaceAll(factor.AuthenticationString, "'", "''"))
+			}
+			authStr += fmt.Sprintf(" AND IDENTIFIED WITH '%s'%s", factor.Plugin, factorAuth)
+		}
 	}
 
 	// FIXME: the returned string is not escaped safely

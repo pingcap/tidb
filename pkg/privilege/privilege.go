@@ -39,6 +39,10 @@ type VerificationInfo struct {
 	InSandBoxMode bool
 	// FailedDueToWrongPassword indicates that the verification failed due to wrong password.
 	FailedDueToWrongPassword bool
+	// CountFailedMFA indicates that an additional authentication factor failed.
+	CountFailedMFA bool
+	// MultiFactor indicates that the account completed an MFA exchange.
+	MultiFactor bool
 	// ResourceGroupName records the resource group name for the user.
 	ResourceGroupName string
 }
@@ -90,6 +94,10 @@ type Manager interface {
 
 	// IsAccountAutoLockEnabled verifies whether the account has enabled Failed-Login Tracking and Temporary Account Locking.
 	IsAccountAutoLockEnabled(user string, host string) bool
+
+	// HasMultiFactorAuth reports whether the exact cached account has MFA
+	// configured, including malformed MFA that must fail closed.
+	HasMultiFactorAuth(user string, host string) bool
 
 	// ConnectionVerification verifies user privilege for connection.
 	// Requires exact match on user name and host name.

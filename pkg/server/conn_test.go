@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -2254,6 +2255,49 @@ func TestLDAPAuthSwitch(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeAuthSwitch"))
 	require.NoError(t, err)
 	require.Equal(t, []byte(mysql.AuthMySQLClearPassword), respAuthSwitch)
+}
+
+func TestRequestNextAuthFactorPacket(t *testing.T) {
+	serverConn, peerConn := net.Pipe()
+	defer serverConn.Close()
+	defer peerConn.Close()
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(128),
+		capability: mysql.MultiFactorAuthentication,
+		pkt:        internal.NewPacketIO(serverutil.NewBufferedReadConn(serverConn)),
+	}
+
+	response := make(chan struct {
+		data []byte
+		err  error
+	}, 1)
+	go func() {
+		data, err := cc.RequestNextAuthFactor(mysql.AuthLDAPSimple)
+		response <- struct {
+			data []byte
+			err  error
+		}{data: data, err: err}
+	}()
+
+	var header [4]byte
+	_, err := io.ReadFull(peerConn, header[:])
+	require.NoError(t, err)
+	require.Equal(t, uint32(22), uint32(header[0])|uint32(header[1])<<8|uint32(header[2])<<16)
+	require.Equal(t, byte(0), header[3])
+	payload := make([]byte, 22)
+	_, err = io.ReadFull(peerConn, payload)
+	require.NoError(t, err)
+	require.Equal(t, append([]byte{mysql.AuthNextFactor}, []byte(mysql.AuthMySQLClearPassword+"\x00")...), payload)
+
+	responsePayload := []byte("ldap-secret\x00")
+	responseHeader := []byte{byte(len(responsePayload)), 0, 0, 1}
+	_, err = peerConn.Write(append(responseHeader, responsePayload...))
+	require.NoError(t, err)
+
+	result := <-response
+	require.NoError(t, result.err)
+	require.Equal(t, responsePayload, result.data)
 }
 
 func TestEmptyOrgName(t *testing.T) {

@@ -1228,6 +1228,14 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 // need to redact the tidb_cloud_storage_url for safety when `show processlist;`
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
+	redactedStmt.Variables = make([]*VariableAssignment, len(n.Variables))
+	for i, assignment := range n.Variables {
+		copyAssignment := *assignment
+		if assignment.IsSystem && mysql.IsLDAPBindPasswordVariable(assignment.Name) {
+			copyAssignment.Value = NewValueExpr("******", mysql.DefaultCharset, mysql.DefaultCollationName)
+		}
+		redactedStmt.Variables[i] = &copyAssignment
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -1493,9 +1501,24 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    *auth.UserIdentity
+	User          *auth.UserIdentity
+	AuthOpt       *AuthOption
+	AuthFactors   []*AuthOption
+	AuthFactorOps []*AuthFactorOp
+	IsRole        bool
+}
+
+const (
+	MFAFactorAdd = iota + 1
+	MFAFactorModify
+	MFAFactorDrop
+)
+
+// AuthFactorOp describes an ALTER USER MFA factor operation.
+type AuthFactorOp struct {
+	Type    int
+	Factor  int
 	AuthOpt *AuthOption
-	IsRole  bool
 }
 
 // Restore implements Node interface.
@@ -1509,6 +1532,30 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
 		}
 	}
+	for _, factor := range n.AuthFactors {
+		ctx.WriteKeyWord(" AND ")
+		if err := factor.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthFactors")
+		}
+	}
+	for _, op := range n.AuthFactorOps {
+		ctx.WriteKeyWord(" ")
+		switch op.Type {
+		case MFAFactorAdd:
+			ctx.WriteKeyWord("ADD ")
+		case MFAFactorModify:
+			ctx.WriteKeyWord("MODIFY ")
+		case MFAFactorDrop:
+			ctx.WriteKeyWord("DROP ")
+		}
+		ctx.WritePlainf("%d FACTOR", op.Factor)
+		if op.AuthOpt != nil {
+			ctx.WriteKeyWord(" ")
+			if err := op.AuthOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore UserSpec.AuthFactorOps")
+			}
+		}
+	}
 	return nil
 }
 
@@ -1519,6 +1566,15 @@ func (n *UserSpec) SecurityString() string {
 		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
 			withPassword = true
 		}
+	}
+	for _, factor := range n.AuthFactors {
+		if len(factor.AuthString) > 0 || len(factor.HashString) > 0 {
+			withPassword = true
+			break
+		}
+	}
+	if len(n.AuthFactorOps) > 0 {
+		withPassword = true
 	}
 	if withPassword {
 		return fmt.Sprintf("{%s password = ***}", n.User)

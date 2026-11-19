@@ -884,6 +884,8 @@ type alterUserPasswordLocking struct {
 	passwordLockTimeChangeNotFound bool
 	// containsNoOthers indicates whether User_attributes only contains one "Password_locking" element.
 	containsNoOthers bool
+	// mfaChanged makes password-locking cleanup inspect the post-MFA JSON.
+	mfaChanged bool
 }
 
 func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLockOption) error {
@@ -1060,6 +1062,11 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 	if alterUser.containsNoOthers {
 		// If we use JSON_REMOVE(user_attributes, '$.Password_locking') directly here, the result is not compatible with MySQL.
 		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=NULL`, mysql.SystemDB, mysql.UserTable)
+	} else if alterUser.mfaChanged {
+		// MFA operations may remove the last non-locking attribute in the same
+		// statement. Re-evaluate the final JSON instead of relying on the row
+		// shape read before the update.
+		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=CASE WHEN JSON_LENGTH(JSON_REMOVE(user_attributes, '$.Password_locking'))=0 THEN NULL ELSE JSON_REMOVE(user_attributes, '$.Password_locking') END`, mysql.SystemDB, mysql.UserTable)
 	} else {
 		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET user_attributes=JSON_REMOVE(user_attributes, '$.Password_locking') `, mysql.SystemDB, mysql.UserTable)
 	}
@@ -1169,7 +1176,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if passwordLocking != "" {
 		userAttributes = append(userAttributes, passwordLocking)
 	}
-	userAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
+	baseUserAttributesStr := fmt.Sprintf("{%s}", strings.Join(userAttributes, ","))
 
 	tokenIssuer := ""
 	for _, authTokenOption := range s.AuthTokenOrTLSOptions {
@@ -1221,9 +1228,24 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
+		if err := validateMFAUserSpec(e.Ctx(), spec, "", true); err != nil && !allowAuthenticationPolicyMismatch(e.Ctx(), err) {
+			return err
+		}
 		authPlugin := mysql.AuthNativePassword
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
+		} else if policy, policyErr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuthenticationPolicy); policyErr != nil {
+			return policyErr
+		} else if policyPlugin := firstAuthenticationPolicyPlugin(policy); policyPlugin != "" {
+			authPlugin = policyPlugin
+			if spec.AuthOpt != nil {
+				// EncodedPassword uses AuthPlugin to choose the same hash
+				// algorithm that is persisted in mysql.user.Plugin.
+				spec.AuthOpt.AuthPlugin = authPlugin
+			}
+		}
+		if len(spec.AuthFactors) > 0 && !strings.EqualFold(authPlugin, mysql.AuthNativePassword) && !strings.EqualFold(authPlugin, mysql.AuthCachingSha2Password) {
+			return errors.New("MFA first factor must use mysql_native_password or caching_sha2_password")
 		}
 		// Validate the strength of the password if necessary
 		if e.isValidatePasswordEnabled() && !s.IsCreateRole && mysql.IsAuthPluginClearText(authPlugin) {
@@ -1245,13 +1267,17 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStack(err.Error())
 			} else if pluginImpl, found = extensions.GetAuthPlugins()[authPlugin]; !found {
 				// If the plugin is not a registered extension auth plugin, return error
-				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(authPlugin)
 			}
 		}
 
 		pwd, ok := encodePassword(spec, pluginImpl)
 		if !ok {
 			return errors.Trace(exeerrors.ErrPasswordFormat)
+		}
+		userAttributesStr, err := createUserAttributes(baseUserAttributesStr, spec.AuthFactors)
+		if err != nil {
+			return err
 		}
 
 		recordTokenIssuer := tokenIssuer
@@ -1347,6 +1373,418 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	userList := userIdentityToUserList(users)
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
+}
+
+// createUserAttributes adds the MySQL-compatible MFA subdocument for a CREATE USER
+// statement. Existing account attributes are kept as-is when no extra factor is
+// present, so legacy account creation keeps its original JSON representation.
+func createUserAttributes(base string, factors []*ast.AuthOption) (string, error) {
+	if len(factors) == 0 {
+		return base, nil
+	}
+	if len(factors) > 2 {
+		return "", errors.New("too many authentication factors")
+	}
+	encoded := make([]json.RawMessage, 0, len(factors))
+	for _, factor := range factors {
+		value, err := encodeMFAFactor(factor)
+		if err != nil {
+			return "", err
+		}
+		encoded = append(encoded, value)
+	}
+	var attributes map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(base), &attributes); err != nil {
+		return "", errors.Annotate(err, "invalid user attributes")
+	}
+	mfa, err := json.Marshal(encoded)
+	if err != nil {
+		return "", err
+	}
+	attributes["multi_factor_authentication"] = mfa
+	result, err := json.Marshal(attributes)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+func encodeMFAFactor(factor *ast.AuthOption) (json.RawMessage, error) {
+	if factor == nil || !strings.EqualFold(factor.AuthPlugin, mysql.AuthLDAPSimple) {
+		return nil, errors.New("unsupported authentication factor")
+	}
+	authenticationString := factor.AuthString
+	if factor.ByHashString {
+		authenticationString = factor.HashString
+	}
+	value, err := json.Marshal(map[string]any{
+		"plugin":                strings.ToLower(factor.AuthPlugin),
+		"authentication_string": authenticationString,
+		"requires_registration": 0,
+		"passwordless":          0,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// buildMFAUserAttributesExpr applies all factor changes and an optional
+// attribute patch to one JSON expression. Keeping this as one assignment is
+// important because ALTER USER also updates Password_locking and metadata.
+func buildMFAUserAttributesExpr(ops []*ast.AuthFactorOp, attributesPatch string) (string, error) {
+	expr := "COALESCE(user_attributes, '{}')"
+	hasDrop := false
+	for _, op := range ops {
+		index := op.Factor - 2
+		switch op.Type {
+		case ast.MFAFactorDrop:
+			hasDrop = true
+			expr = fmt.Sprintf("JSON_REMOVE(%s, '$.multi_factor_authentication[%d]')", expr, index)
+		default:
+			factor, err := encodeMFAFactor(op.AuthOpt)
+			if err != nil {
+				return "", err
+			}
+			factorSQL := sqlescape.MustEscapeSQL("%?", string(factor))
+			switch op.Type {
+			case ast.MFAFactorModify:
+				expr = fmt.Sprintf("JSON_SET(%s, '$.multi_factor_authentication[%d]', CAST(%s AS JSON))", expr, index, factorSQL)
+			case ast.MFAFactorAdd:
+				expr = fmt.Sprintf("JSON_SET(%s, '$.multi_factor_authentication', JSON_ARRAY_APPEND(COALESCE(JSON_EXTRACT(%s, '$.multi_factor_authentication'), JSON_ARRAY()), '$', CAST(%s AS JSON)))", expr, expr, factorSQL)
+			default:
+				return "", errors.New("unknown MFA factor operation")
+			}
+		}
+	}
+	if attributesPatch != "" {
+		expr = fmt.Sprintf("JSON_MERGE_PATCH(%s, %s)", expr, sqlescape.MustEscapeSQL("%?", attributesPatch))
+	}
+	if hasDrop {
+		removed := fmt.Sprintf("JSON_REMOVE(%s, '$.multi_factor_authentication')", expr)
+		expr = fmt.Sprintf("CASE WHEN COALESCE(JSON_LENGTH(JSON_EXTRACT(%s, '$.multi_factor_authentication')), 0)=0 THEN CASE WHEN JSON_LENGTH(%s)=0 THEN NULL ELSE %s END ELSE %s END", expr, removed, removed, expr)
+	}
+	return expr, nil
+}
+
+func firstAuthenticationPolicyPlugin(policy string) string {
+	slots := strings.Split(policy, ",")
+	if len(slots) == 0 {
+		return ""
+	}
+	first := strings.TrimSpace(slots[0])
+	if first == "" || first == "*" {
+		return ""
+	}
+	return first
+}
+
+type authenticationPolicyMismatchError struct{ message string }
+
+func (e *authenticationPolicyMismatchError) Error() string { return e.message }
+
+func authenticationPolicyMismatchf(format string, args ...any) error {
+	return &authenticationPolicyMismatchError{message: fmt.Sprintf(format, args...)}
+}
+
+func allowAuthenticationPolicyMismatch(ctx sessionctx.Context, err error) bool {
+	if _, ok := err.(*authenticationPolicyMismatchError); !ok {
+		return false
+	}
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm == nil || !pm.HasExplicitlyGrantedDynamicPrivilege(ctx.GetSessionVars().ActiveRoles, "AUTHENTICATION_POLICY_ADMIN", false) ||
+		!pm.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, "AUTHENTICATION_POLICY_ADMIN", false) {
+		return false
+	}
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(err.Error()))
+	return true
+}
+
+func validateMFAUserSpec(ctx sessionctx.Context, spec *ast.UserSpec, currentPlugin string, isCreate bool) error {
+	policy, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuthenticationPolicy)
+	if err != nil {
+		return err
+	}
+	if err := resolveMFAPluginDefaults(policy, spec); err != nil {
+		return err
+	}
+	if policy == "" {
+		return errors.New("invalid authentication_policy")
+	}
+	if policy == "*,," {
+		return nil
+	}
+	if len(spec.AuthFactorOps) > 0 {
+		for _, op := range spec.AuthFactorOps {
+			if op.Factor < 2 || op.Factor > 3 {
+				return errors.Errorf("MFA factor number %d is out of range", op.Factor)
+			}
+		}
+		return nil
+	}
+	slots := strings.Split(policy, ",")
+	plugins := make([]string, 0, 1+len(spec.AuthFactors))
+	// ALTER without an authentication clause leaves the first factor and the
+	// existing MFA chain untouched. CREATE must still validate missing required
+	// factors against a non-default policy.
+	if !isCreate && spec.AuthOpt == nil && len(spec.AuthFactors) == 0 {
+		return nil
+	}
+	if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+		plugins = append(plugins, spec.AuthOpt.AuthPlugin)
+	} else if currentPlugin != "" {
+		plugins = append(plugins, currentPlugin)
+	} else if !isCreate {
+		// An ALTER ... IDENTIFIED BY clause keeps an empty plugin column's
+		// effective native-password behavior; it does not inherit CREATE's
+		// policy default.
+		plugins = append(plugins, mysql.AuthNativePassword)
+	} else if policyPlugin := firstAuthenticationPolicyPlugin(policy); policyPlugin != "" {
+		plugins = append(plugins, policyPlugin)
+	} else if len(spec.AuthFactors) == 0 {
+		plugins = append(plugins, mysql.AuthNativePassword)
+	} else {
+		// ALTER USER may leave the first factor unchanged. The explicitly
+		// supplied additional factors are still checked against their slots.
+		plugins = append(plugins, "")
+	}
+	for _, factor := range spec.AuthFactors {
+		if factor == nil {
+			return errors.New("invalid MFA factor")
+		}
+		plugin := factor.AuthPlugin
+		if plugin == "" {
+			plugin = mysql.AuthNativePassword
+		}
+		plugins = append(plugins, plugin)
+	}
+	if len(plugins) > len(slots) {
+		return authenticationPolicyMismatchf("authentication policy permits at most %d factors", len(slots))
+	}
+	required := 0
+	for _, slot := range slots {
+		if strings.TrimSpace(slot) != "" {
+			required++
+		}
+	}
+	// CREATE must satisfy all required policy slots. ALTER USER changes to
+	// the existing first factor do not force old single-factor accounts to
+	// acquire a missing additional factor; ADD/MODIFY/DROP validate the final
+	// MFA chain separately in validateMFAFactorPolicy.
+	if isCreate && len(plugins) < required {
+		return authenticationPolicyMismatchf("authentication policy requires %d factors", required)
+	}
+	for i, plugin := range plugins {
+		if plugin == "" || i >= len(slots) {
+			continue
+		}
+		if !authenticationPolicyAllows(slots[i], plugin) {
+			return authenticationPolicyMismatchf("authentication plugin %q does not satisfy authentication policy", plugin)
+		}
+	}
+	return nil
+}
+
+// resolveMFAPluginDefaults implements the only supported omitted-plugin form:
+// an additional IDENTIFIED BY clause may inherit a concrete policy plugin.
+// Wildcard and optional policy slots deliberately have no default plugin.
+func resolveMFAPluginDefaults(policy string, spec *ast.UserSpec) error {
+	slots := strings.Split(policy, ",")
+	resolve := func(authOpt *ast.AuthOption, factor int) error {
+		if authOpt == nil || authOpt.AuthPlugin != "" {
+			return nil
+		}
+		if factor-1 < 0 || factor-1 >= len(slots) {
+			return authenticationPolicyMismatchf("authentication policy does not define factor %d", factor)
+		}
+		slot := strings.TrimSpace(slots[factor-1])
+		if slot == "" || slot == "*" {
+			return authenticationPolicyMismatchf("factor %d requires an explicit authentication plugin", factor)
+		}
+		authOpt.AuthPlugin = slot
+		return nil
+	}
+	for i, factor := range spec.AuthFactors {
+		if err := resolve(factor, i+2); err != nil {
+			return err
+		}
+	}
+	for _, op := range spec.AuthFactorOps {
+		if op != nil {
+			if err := resolve(op.AuthOpt, op.Factor); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// readMFAFactors reads and validates the persisted MySQL-compatible MFA
+// section for one locked account. Account operations that need to inspect MFA
+// reject malformed metadata before building an update expression; other
+// account operations keep their existing metadata behavior.
+func readMFAFactors(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, user, host string) ([]privileges.AuthFactor, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, `SELECT user_attributes FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, user, strings.ToLower(host))
+	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	closeErr := rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return nil, nil
+	}
+	return privileges.DecodeMultiFactorAuth(rows[0].GetJSON(0))
+}
+
+func validateMFAFactorOps(existing []privileges.AuthFactor, ops []*ast.AuthFactorOp) ([]*ast.AuthFactorOp, error) {
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	if len(ops) > 2 {
+		return nil, errors.New("at most two MFA factor operations are allowed")
+	}
+	if ops[0] == nil {
+		return nil, errors.New("MFA factor number must be 2 or 3")
+	}
+	action := ops[0].Type
+	seen := make(map[int]struct{}, len(ops))
+	for _, op := range ops {
+		if op == nil || op.Factor < 2 || op.Factor > 3 {
+			return nil, errors.New("MFA factor number must be 2 or 3")
+		}
+		if op.Type != action {
+			return nil, errors.New("MFA factor operations must use the same action")
+		}
+		if _, ok := seen[op.Factor]; ok {
+			return nil, errors.Errorf("MFA factor %d is specified more than once", op.Factor)
+		}
+		seen[op.Factor] = struct{}{}
+		if action != ast.MFAFactorDrop && op.AuthOpt == nil {
+			return nil, errors.New("MFA factor requires an authentication method")
+		}
+	}
+
+	ordered := append([]*ast.AuthFactorOp(nil), ops...)
+	switch action {
+	case ast.MFAFactorAdd:
+		if len(existing)+len(ops) > 2 {
+			return nil, errors.New("too many MFA factors")
+		}
+		for _, op := range ops {
+			if op.AuthOpt == nil || !strings.EqualFold(op.AuthOpt.AuthPlugin, mysql.AuthLDAPSimple) {
+				return nil, errors.New("unsupported authentication factor")
+			}
+			if op.Factor-2 != len(existing) && !(len(existing) == 0 && op.Factor == 3 && len(ops) == 2) {
+				return nil, errors.Errorf("MFA factor %d is out of order", op.Factor)
+			}
+		}
+		if len(existing) == 0 {
+			if _, ok := seen[2]; !ok {
+				return nil, errors.New("MFA factor 2 must be added before factor 3")
+			}
+		} else if len(existing) == 1 {
+			if _, ok := seen[3]; !ok {
+				return nil, errors.New("MFA factor 3 must be added after factor 2")
+			}
+		}
+		if len(ordered) == 2 && ordered[0].Factor > ordered[1].Factor {
+			ordered[0], ordered[1] = ordered[1], ordered[0]
+		}
+	case ast.MFAFactorModify:
+		for _, op := range ops {
+			if op.Factor-2 >= len(existing) {
+				return nil, errors.Errorf("MFA factor %d does not exist", op.Factor)
+			}
+			if !strings.EqualFold(op.AuthOpt.AuthPlugin, mysql.AuthLDAPSimple) {
+				return nil, errors.New("unsupported authentication factor")
+			}
+		}
+	case ast.MFAFactorDrop:
+		for _, op := range ops {
+			if op.Factor-2 >= len(existing) {
+				return nil, errors.Errorf("MFA factor %d does not exist", op.Factor)
+			}
+		}
+		if len(ordered) == 2 && ordered[0].Factor < ordered[1].Factor {
+			ordered[0], ordered[1] = ordered[1], ordered[0]
+		}
+	default:
+		return nil, errors.New("unknown MFA factor operation")
+	}
+	return ordered, nil
+}
+
+func validateMFAFactorPolicy(ctx sessionctx.Context, firstPlugin string, existing []privileges.AuthFactor, ops []*ast.AuthFactorOp) error {
+	if firstPlugin != "" && !strings.EqualFold(firstPlugin, mysql.AuthNativePassword) && !strings.EqualFold(firstPlugin, mysql.AuthCachingSha2Password) {
+		return errors.New("MFA first factor must use mysql_native_password or caching_sha2_password")
+	}
+	policy, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuthenticationPolicy)
+	if err != nil {
+		return err
+	}
+	if policy == "" {
+		return errors.New("invalid authentication_policy")
+	}
+	slots := strings.Split(policy, ",")
+	final := append([]privileges.AuthFactor(nil), existing...)
+	if len(ops) > 0 {
+		switch ops[0].Type {
+		case ast.MFAFactorAdd:
+			for _, op := range ops {
+				final = append(final, privileges.AuthFactor{Plugin: strings.ToLower(op.AuthOpt.AuthPlugin)})
+			}
+		case ast.MFAFactorModify:
+			for _, op := range ops {
+				final[op.Factor-2] = privileges.AuthFactor{Plugin: strings.ToLower(op.AuthOpt.AuthPlugin)}
+			}
+		case ast.MFAFactorDrop:
+			for _, op := range ops {
+				final = append(final[:op.Factor-2], final[op.Factor-1:]...)
+			}
+		}
+	}
+	if len(final)+1 > len(slots) {
+		return authenticationPolicyMismatchf("authentication policy permits at most %d factors", len(slots))
+	}
+	required := 0
+	for _, slot := range slots {
+		if strings.TrimSpace(slot) != "" {
+			required++
+		}
+	}
+	if len(final)+1 < required {
+		return authenticationPolicyMismatchf("authentication policy requires %d factors", required)
+	}
+	if firstPlugin != "" {
+		if allowed := authenticationPolicyAllows(slots[0], firstPlugin); !allowed {
+			return authenticationPolicyMismatchf("authentication plugin %q does not satisfy authentication policy", firstPlugin)
+		}
+	}
+	for i, factor := range final {
+		if i+1 >= len(slots) {
+			break
+		}
+		if !authenticationPolicyAllows(slots[i+1], factor.Plugin) {
+			return authenticationPolicyMismatchf("authentication plugin %q does not satisfy authentication policy", factor.Plugin)
+		}
+	}
+	return nil
+}
+
+func authenticationPolicyAllows(slot, plugin string) bool {
+	slot = strings.TrimSpace(slot)
+	if slot == "" {
+		return true
+	}
+	return slot == "*" || strings.EqualFold(slot, plugin)
 }
 
 func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (bool, error) {
@@ -1875,6 +2313,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			failedUsers = append(failedUsers, user)
 			continue
 		}
+		if len(spec.AuthFactorOps) > 0 && !(hasCreateUserPriv || hasSystemSchemaPriv) {
+			// MFA factor changes are account-management operations. They do not
+			// inherit ALTER USER's ordinary self-service password exception.
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		}
+		if len(spec.AuthFactors) > 0 {
+			return errors.New("ALTER USER does not support AND IDENTIFIED; use ADD or MODIFY FACTOR")
+		}
+		if err := validateMFAUserSpec(e.Ctx(), spec, currentAuthPlugin, false); err != nil && !allowAuthenticationPolicyMismatch(e.Ctx(), err) {
+			return err
+		}
 
 		type AuthTokenOptionHandler int
 		const (
@@ -2052,12 +2501,46 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
 		}
+		mfaOps := spec.AuthFactorOps
+		var mfaUserAttributesExpr string
+		if len(mfaOps) > 0 {
+			existingFactors, readErr := readMFAFactors(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			if readErr != nil {
+				return readErr
+			}
+			mfaOps, err = validateMFAFactorOps(existingFactors, mfaOps)
+			if err != nil {
+				return err
+			}
+			firstPlugin := currentAuthPlugin
+			if firstPlugin == "" {
+				firstPlugin = mysql.AuthNativePassword
+			}
+			if err := validateMFAFactorPolicy(e.Ctx(), firstPlugin, existingFactors, mfaOps); err != nil && !allowAuthenticationPolicyMismatch(e.Ctx(), err) {
+				return err
+			}
+			mfaUserAttributesExpr, err = buildMFAUserAttributesExpr(mfaOps, "")
+			if err != nil {
+				return err
+			}
+			passwordLockingInfo.mfaChanged = true
+		}
 		if length := len(newAttributes); length > 0 {
 			if length > 1 || passwordLockingStr == "" {
 				passwordLockingInfo.containsNoOthers = false
 			}
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+			if mfaUserAttributesExpr != "" {
+				mfaUserAttributesExpr, err = buildMFAUserAttributesExpr(mfaOps, newAttributesStr)
+				if err != nil {
+					return err
+				}
+			} else {
+				fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+			}
+		}
+		if mfaUserAttributesExpr != "" {
+			fields = append(fields, alterField{"user_attributes=" + mfaUserAttributesExpr, nil})
 		}
 
 		switch authTokenOptionHandler {
@@ -2652,6 +3135,35 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	if !exists {
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
+	}
+	policy, policyErr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuthenticationPolicy)
+	if policyErr != nil {
+		return policyErr
+	}
+	// SET PASSWORD keeps the additional factors, but the default no-MFA path
+	// should not acquire an extra metadata lock or decode unrelated attributes.
+	needMFARead := policy != "*,,"
+	if !needMFARead {
+		if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
+			needMFARead = pm.HasMultiFactorAuth(u, h)
+		}
+	}
+	if needMFARead {
+		var mfaErr error
+		_, mfaErr = readMFAFactors(ctx, sqlExecutor, u, h)
+		if mfaErr != nil {
+			return mfaErr
+		}
+	}
+	effectiveAuthPlugin := authplugin
+	if effectiveAuthPlugin == "" {
+		effectiveAuthPlugin = mysql.AuthNativePassword
+	}
+	if firstPlugin := firstAuthenticationPolicyPlugin(policy); firstPlugin != "" && !strings.EqualFold(firstPlugin, effectiveAuthPlugin) {
+		policyErr := authenticationPolicyMismatchf("authentication plugin %q does not satisfy authentication policy", effectiveAuthPlugin)
+		if !allowAuthenticationPolicyMismatch(e.Ctx(), policyErr) {
+			return policyErr
+		}
 	}
 	if e.Ctx().InSandBoxMode() {
 		if !(s.User == nil || s.User.CurrentUser ||

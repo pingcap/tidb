@@ -416,6 +416,7 @@ var tokenMap = map[string]int{
 	"EXPANSION":                      expansion,
 	"EXPIRE":                         expire,
 	"EXPLAIN":                        explain,
+	"FACTOR":                         factor,
 	"EXPR_PUSHDOWN_BLACKLIST":        exprPushdownBlacklist,
 	"EXTENDED":                       extended,
 	"EXPLORE":                        explore,

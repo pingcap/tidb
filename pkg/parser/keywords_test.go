@@ -38,7 +38,7 @@ func TestKeywords(t *testing.T) {
 // TestKeywordsLength checks the catalog size and counts reserved entries, so
 // extension keywords such as LEARNER_COUNT cannot accidentally become reserved.
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 742, len(parser.Keywords))
+	require.Equal(t, 743, len(parser.Keywords))
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
 		if kw.Reserved {

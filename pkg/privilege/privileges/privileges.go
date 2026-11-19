@@ -74,6 +74,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
+	"AUTHENTICATION_POLICY_ADMIN",     // Manage the global MFA authentication policy.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -684,6 +685,17 @@ func (p *UserPrivileges) IsAccountAutoLockEnabled(user string, host string) bool
 	return true
 }
 
+// HasMultiFactorAuth implements the Manager interface. It intentionally
+// returns only a scope boolean so callers that use it as a pre-check cannot
+// turn cache or JSON errors into a new authentication path.
+func (p *UserPrivileges) HasMultiFactorAuth(user string, host string) bool {
+	if SkipWithGrant {
+		return false
+	}
+	record := p.Handle.Get().matchUser(user, host)
+	return record != nil && (record.MFAConfigurationInvalid || len(record.MultiFactorAuthentication) > 0)
+}
+
 // BuildSuccessPasswordLockingJSON builds success PasswordLocking JSON string.
 func BuildSuccessPasswordLockingJSON(failedLoginAttempts, passwordLockSecs int64) string {
 	return BuildPasswordLockingJSON(failedLoginAttempts, passwordLockSecs, "N", 0, time.Now().Format(time.UnixDate))
@@ -729,6 +741,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
+	info.MultiFactor = record.MFAConfigurationInvalid || len(record.MultiFactorAuthentication) > 0
 
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
@@ -741,6 +754,16 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	pwd := record.AuthenticationString
 	if !p.isValidHash(record) {
+		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+	if info.MultiFactor && !strings.EqualFold(record.AuthPlugin, mysql.AuthNativePassword) && !strings.EqualFold(record.AuthPlugin, mysql.AuthCachingSha2Password) {
+		info.CountFailedMFA = true
+		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+	if info.MultiFactor && user.AuthPlugin == mysql.AuthTiDBSessionToken {
+		// A session token represents an already authenticated session and must
+		// never bypass the account's additional factors.
+		info.CountFailedMFA = true
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
 
@@ -822,6 +845,36 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	} else if len(pwd) > 0 || len(authentication) > 0 {
 		info.FailedDueToWrongPassword = true
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+	}
+
+	if record.MFAConfigurationInvalid || len(record.MultiFactorAuthentication) > 0 {
+		if record.MFAConfigurationInvalid {
+			info.CountFailedMFA = true
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		nextFactorConn, ok := authConn.(conn.NextFactorAuthConn)
+		if !ok {
+			info.CountFailedMFA = true
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+		}
+		for _, factor := range record.MultiFactorAuthentication {
+			if !strings.EqualFold(factor.Plugin, mysql.AuthLDAPSimple) {
+				// TiDB currently exposes LDAP Simple as the additional
+				// factor. Unknown plugins are a configuration error and must
+				// not silently downgrade the account to one-factor auth.
+				info.CountFailedMFA = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+			factorResponse, factorErr := nextFactorConn.RequestNextAuthFactor(factor.Plugin)
+			if factorErr == nil {
+				factorErr = ldap.LDAPSimpleAuthImpl.AuthLDAPSimple(authUser, factor.AuthenticationString, factorResponse)
+			}
+			if factorErr != nil {
+				info.CountFailedMFA = true
+				logutil.BgLogger().Warn("verify MFA factor failed", zap.String("username", user.Username), zap.Error(factorErr))
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		}
 	}
 
 	// Login a locked account is not allowed.

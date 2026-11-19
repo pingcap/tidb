@@ -68,6 +68,46 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// validateAuthenticationPolicy validates the compact MySQL policy syntax:
+// comma-separated factor slots, where each slot is `*`, one plugin name, or
+// empty for an optional factor. TiDB accepts at most three factors, matching
+// the supported MFA account format.
+func validateAuthenticationPolicy(policy string) error {
+	if strings.TrimSpace(policy) == "" {
+		return fmt.Errorf("invalid authentication_policy: first factor is required")
+	}
+	slots := strings.Split(policy, ",")
+	if len(slots) == 0 || len(slots) > 3 {
+		return fmt.Errorf("invalid authentication_policy: expected one to three factor slots")
+	}
+	if strings.TrimSpace(slots[0]) == "" {
+		return fmt.Errorf("invalid authentication_policy: first factor is required")
+	}
+	emptySlotSeen := false
+	for _, slot := range slots {
+		if strings.TrimSpace(slot) == "" {
+			emptySlotSeen = true
+			continue
+		}
+		if emptySlotSeen {
+			return fmt.Errorf("invalid authentication_policy: optional factors must be trailing")
+		}
+		if strings.Contains(slot, ":") {
+			return fmt.Errorf("invalid authentication_policy: plugin defaults are not supported")
+		}
+		if slot == "*" {
+			continue
+		}
+		switch slot {
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password,
+			mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
+		default:
+			return fmt.Errorf("authentication plugin %q is not available", slot)
+		}
+	}
+	return nil
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -1132,6 +1172,12 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple}},
+	{Scope: ScopeGlobal, Name: AuthenticationPolicy, Value: "*,,", Type: TypeStr, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+		if err := validateAuthenticationPolicy(normalizedValue); err != nil {
+			return "", err
+		}
+		return normalizedValue, nil
+	}},
 	{
 		Scope: ScopeGlobal,
 		Name:  TiDBPersistAnalyzeOptions,
@@ -4403,6 +4449,8 @@ const (
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
 	DefaultAuthPlugin = "default_authentication_plugin"
+	// AuthenticationPolicy is the name of the MySQL-compatible MFA policy.
+	AuthenticationPolicy = "authentication_policy"
 	// LastInsertID is the name of 'last_insert_id' system variable.
 	LastInsertID = "last_insert_id"
 	// Identity is the name of 'identity' system variable.

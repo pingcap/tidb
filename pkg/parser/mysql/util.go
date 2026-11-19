@@ -13,6 +13,19 @@
 
 package mysql
 
+import "strings"
+
+// IsLDAPBindPasswordVariable reports whether a system variable contains the
+// LDAP service account password and must be redacted in statement logging.
+func IsLDAPBindPasswordVariable(name string) bool {
+	switch strings.ToLower(name) {
+	case "authentication_ldap_simple_bind_root_pwd", "authentication_ldap_sasl_bind_root_pwd":
+		return true
+	default:
+		return false
+	}
+}
+
 type lengthAndDecimal struct {
 	length  int64
 	decimal int

@@ -111,6 +111,19 @@ type MetadataInfo struct {
 type UserAttributesInfo struct {
 	MetadataInfo
 	PasswordLocking
+	MultiFactorAuthentication []AuthFactor
+	MFAConfigurationInvalid   bool
+}
+
+// AuthFactor is one of the ordered authentication methods stored in
+// mysql.user.User_attributes.multi_factor_authentication. The JSON shape is
+// kept compatible with MySQL so accounts can be inspected and migrated with
+// the same tooling.
+type AuthFactor struct {
+	Plugin               string `json:"plugin"`
+	AuthenticationString string `json:"authentication_string,omitempty"`
+	RequiresRegistration int    `json:"requires_registration,omitempty"`
+	Passwordless         int    `json:"passwordless,omitempty"`
 }
 
 // UserRecord is used to represent a user record in privilege cache.
@@ -1203,6 +1216,15 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 					continue
 				}
 				bj := row.GetJSON(i)
+				var mfaErr error
+				value.MultiFactorAuthentication, mfaErr = DecodeMultiFactorAuth(bj)
+				if mfaErr != nil {
+					// Keep the account in the cache and fail closed during
+					// authentication instead of allowing a malformed MFA
+					// document to fall through to another host row.
+					value.MFAConfigurationInvalid = true
+					value.MultiFactorAuthentication = nil
+				}
 				pathExpr, err := types.ParseJSONPathExpr("$.metadata.email")
 				if err != nil {
 					return err

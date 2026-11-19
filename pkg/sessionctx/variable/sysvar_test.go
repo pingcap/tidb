@@ -526,6 +526,15 @@ func TestSQLAutoIsNull(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
 }
 
+func TestAuthenticationPolicyValidation(t *testing.T) {
+	for _, policy := range []string{"*,,", "mysql_native_password,authentication_ldap_simple,", "*,"} {
+		require.NoError(t, validateAuthenticationPolicy(policy))
+	}
+	for _, policy := range []string{"", ",,", "*,authentication_ldap_simple:foo", "*,foo"} {
+		require.Error(t, validateAuthenticationPolicy(policy))
+	}
+}
+
 func TestLastInsertID(t *testing.T) {
 	vars := NewSessionVars(nil)
 	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), LastInsertID)

@@ -54,8 +54,11 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// AuthSwitchRequest is a protocol feature.
-const AuthSwitchRequest byte = 0xfe
+// Authentication packet markers used during the connection handshake.
+const (
+	AuthNextFactor    byte = 0x02
+	AuthSwitchRequest byte = 0xfe
+)
 
 // Server information.
 const (

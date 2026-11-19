@@ -205,6 +205,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
+	if name == variable.AuthenticationPolicy && v.IsGlobal {
+		pm := privilege.GetPrivilegeManager(e.Ctx())
+		if pm == nil || !pm.HasExplicitlyGrantedDynamicPrivilege(sessionVars.ActiveRoles, "AUTHENTICATION_POLICY_ADMIN", false) ||
+			!pm.RequestDynamicVerification(sessionVars.ActiveRoles, "AUTHENTICATION_POLICY_ADMIN", false) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("AUTHENTICATION_POLICY_ADMIN")
+		}
+	}
 
 	if sysVar.RequireDynamicPrivileges != nil {
 		semEnabled := sem.IsEnabled()
@@ -268,6 +275,8 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		showValStr := valStr
 		if name == variable.TiDBCloudStorageURI {
 			showValStr = ast.RedactURL(showValStr)
+		} else if mysql.IsLDAPBindPasswordVariable(name) {
+			showValStr = variable.MaskPwd
 		}
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {

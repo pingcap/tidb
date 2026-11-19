@@ -2919,7 +2919,7 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // Auth validates a user using an authentication string and salt.
 // If the password fails, it will keep trying other users until exhausted.
 // This means it can not be refactored to use MatchIdentity yet.
-func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) error {
+func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, authConn conn.AuthConn) (retErr error) {
 	hasPassword := "YES"
 	if len(authentication) == 0 {
 		hasPassword = "NO"
@@ -2929,6 +2929,12 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
+	mfaAuth := pm.HasMultiFactorAuth(authUser.Username, authUser.Hostname)
+	defer func() {
+		if retErr != nil && mfaAuth {
+			retErr = conn.WrapMFAAuthError(retErr)
+		}
+	}()
 	// Check whether continuous login failure is enabled to lock the account.
 	// If enabled, determine whether to unlock the account and notify TiDB to update the cache.
 	enableAutoLock := pm.IsAccountAutoLockEnabled(authUser.Username, authUser.Hostname)
@@ -2969,7 +2975,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 
 	info, err := pm.ConnectionVerification(user, authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars, authConn)
 	if err != nil {
-		if info.FailedDueToWrongPassword {
+		if info.FailedDueToWrongPassword || info.CountFailedMFA {
 			// when user enables the account locking function for consecutive login failures,
 			// the system updates the login failure count and determines whether to lock the account when authentication fails.
 			if enableAutoLock {
@@ -4865,6 +4871,12 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 	// It's insecure to migrate sandBoxMode because users can fake it.
 	if s.InSandBoxMode() {
 		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session is in sandbox mode")
+	}
+	if s.sessionVars.User != nil {
+		if checker := privilege.GetPrivilegeManager(s); checker != nil &&
+			checker.HasMultiFactorAuth(s.sessionVars.User.AuthUsername, s.sessionVars.User.AuthHostname) {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session uses multi-factor authentication")
+		}
 	}
 
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {

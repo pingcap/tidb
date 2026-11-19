@@ -16,6 +16,42 @@ package conn
 
 import "context"
 
+// MFAAuthError marks an authentication failure for an account that requires
+// more than its first factor. It preserves the original error for normal
+// logging and error handling while allowing COM_CHANGE_USER to apply MySQL's
+// disconnect rule only to MFA targets.
+type MFAAuthError struct {
+	CauseErr error
+}
+
+func (e *MFAAuthError) Error() string {
+	if e == nil || e.CauseErr == nil {
+		return "multi-factor authentication failed"
+	}
+	return e.CauseErr.Error()
+}
+
+func (e *MFAAuthError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.CauseErr
+}
+
+// Cause is provided for github.com/pingcap/errors.Cause compatibility.
+func (e *MFAAuthError) Cause() error { return e.Unwrap() }
+
+// WrapMFAAuthError marks err without changing its externally visible message.
+func WrapMFAAuthError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if existing, ok := err.(*MFAAuthError); ok {
+		return existing
+	}
+	return &MFAAuthError{CauseErr: err}
+}
+
 // AuthConn is an interface to help auth plugin to communicate with the client.
 type AuthConn interface {
 	// WriteAuthMoreData should write a (u8)1 before data.
@@ -27,4 +63,11 @@ type AuthConn interface {
 	ReadPacket() ([]byte, error)
 	// Flush flushes all packets in the connection and sends them to the client
 	Flush(ctx context.Context) error
+}
+
+// NextFactorAuthConn is implemented by protocol connections that support the
+// MySQL AuthNextFactor packet. It is optional so existing authentication
+// extensions keep the original AuthConn contract.
+type NextFactorAuthConn interface {
+	RequestNextAuthFactor(plugin string) ([]byte, error)
 }
