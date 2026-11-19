@@ -15336,6 +15336,7 @@ yynewstate:
 			}
 			if yyS[yypt-0].item != nil {
 				c.Option = yyS[yypt-0].item.(*ast.IndexOption)
+				parser.warnIgnoredIndexParser(c.Option)
 			}
 			if indexType := yyS[yypt-4].item.([]interface{})[1]; indexType != nil {
 				if c.Option == nil {
@@ -15369,6 +15370,7 @@ yynewstate:
 			}
 			if yyS[yypt-0].item != nil {
 				c.Option = yyS[yypt-0].item.(*ast.IndexOption)
+				parser.warnIgnoredIndexParser(c.Option)
 			}
 			if indexType := yyS[yypt-4].item.([]interface{})[1]; indexType != nil {
 				if c.Option == nil {
@@ -15388,6 +15390,7 @@ yynewstate:
 			}
 			if yyS[yypt-0].item != nil {
 				c.Option = yyS[yypt-0].item.(*ast.IndexOption)
+				parser.warnIgnoredIndexParser(c.Option)
 			}
 			if indexType := yyS[yypt-4].item.([]interface{})[1]; indexType != nil {
 				if c.Option == nil {
@@ -15642,6 +15645,9 @@ yynewstate:
 			}
 
 			keyType := yyS[yypt-11].item.(ast.IndexKeyType)
+			if keyType != ast.IndexKeyTypeFullText {
+				parser.warnIgnoredIndexParser(indexOption)
+			}
 			isVectorIndex := keyType == ast.IndexKeyTypeVector
 			if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
 				indexOption.Tp = model.IndexTypeHNSW
@@ -17649,8 +17655,6 @@ yynewstate:
 			parser.yyVAL.item = &ast.IndexOption{
 				ParserName: model.NewCIStr(yyS[yypt-0].ident),
 			}
-			yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-			parser.lastErrorAsWarn()
 		}
 	case 778:
 		{
@@ -22201,6 +22205,7 @@ yynewstate:
 
 			if yyS[yypt-0].item != nil {
 				c.Option = yyS[yypt-0].item.(*ast.IndexOption)
+				parser.warnIgnoredIndexParser(c.Option)
 			}
 			if indexType := yyS[yypt-4].item.([]interface{})[1]; indexType != nil {
 				if c.Option == nil {
