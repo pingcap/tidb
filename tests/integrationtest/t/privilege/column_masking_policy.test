@@ -397,6 +397,7 @@ CREATE MASKING POLICY p_prepare_restrict ON privilege__column_masking_policy.src
 
 connect (cmp_prepare_dml_conn, localhost, cmp_prepare_dml,, privilege__column_masking_policy);
 connection cmp_prepare_dml_conn;
+SET tidb_enable_plan_cache_for_subquery=1;
 --error 8277
 PREPARE stmt_prepare_restrict FROM
   'INSERT INTO privilege__column_masking_policy.dst_prepare_restrict SELECT c FROM privilege__column_masking_policy.src_prepare_restrict';
@@ -409,7 +410,22 @@ connection cmp_prepare_dml_conn;
 PREPARE stmt_prepare_restrict FROM
   'INSERT INTO privilege__column_masking_policy.dst_prepare_restrict SELECT c FROM privilege__column_masking_policy.src_prepare_restrict';
 EXECUTE stmt_prepare_restrict;
+EXECUTE stmt_prepare_restrict;
+SELECT @@last_plan_from_cache;
 SELECT c FROM privilege__column_masking_policy.dst_prepare_restrict ORDER BY c;
+connection default;
+ALTER TABLE privilege__column_masking_policy.src_prepare_restrict
+  MODIFY MASKING POLICY p_prepare_restrict SET RESTRICT ON (INSERT_INTO_SELECT);
+connection cmp_prepare_dml_conn;
+--error 8277
+EXECUTE stmt_prepare_restrict;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_restrict;
+connection default;
+ALTER TABLE privilege__column_masking_policy.src_prepare_restrict
+  MODIFY MASKING POLICY p_prepare_restrict SET RESTRICT ON NONE;
+connection cmp_prepare_dml_conn;
+EXECUTE stmt_prepare_restrict;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_restrict;
 DEALLOCATE PREPARE stmt_prepare_restrict;
 disconnect cmp_prepare_dml_conn;
 connection default;
@@ -512,6 +528,7 @@ CREATE MASKING POLICY p_prepare_ud ON privilege__column_masking_policy.src_prepa
 
 connect (cmp_prepare_ud_conn, localhost, cmp_prepare_ud,, privilege__column_masking_policy);
 connection cmp_prepare_ud_conn;
+SET tidb_enable_plan_cache_for_subquery=1;
 --error 8277
 PREPARE stmt_prepare_ud_upd FROM
   'UPDATE privilege__column_masking_policy.dst_prepare_ud
@@ -535,8 +552,46 @@ PREPARE stmt_prepare_ud_del FROM
    WHERE c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
 EXECUTE stmt_prepare_ud_del;
 SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
+# Keep scalar-subquery coverage above and exercise cacheable IN variants too.
+PREPARE stmt_prepare_ud_upd_cache FROM
+  'UPDATE privilege__column_masking_policy.dst_prepare_ud SET c = ''changed''
+   WHERE c IN (SELECT c FROM privilege__column_masking_policy.src_prepare_ud)';
+EXECUTE stmt_prepare_ud_upd_cache;
+EXECUTE stmt_prepare_ud_upd_cache;
+SELECT @@last_plan_from_cache;
+PREPARE stmt_prepare_ud_del_cache FROM
+  'DELETE FROM privilege__column_masking_policy.dst_prepare_ud
+   WHERE c IN (SELECT c FROM privilege__column_masking_policy.src_prepare_ud)';
+EXECUTE stmt_prepare_ud_del_cache;
+EXECUTE stmt_prepare_ud_del_cache;
+SELECT @@last_plan_from_cache;
+connection default;
+INSERT INTO privilege__column_masking_policy.dst_prepare_ud VALUES ('XXXXXX');
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud
+  MODIFY MASKING POLICY p_prepare_ud SET RESTRICT ON (UPDATE_SELECT, DELETE_SELECT);
+connection cmp_prepare_ud_conn;
+--error 8277
+EXECUTE stmt_prepare_ud_upd;
+--error 8277
+EXECUTE stmt_prepare_ud_del;
+--error 8277
+EXECUTE stmt_prepare_ud_upd_cache;
+--error 8277
+EXECUTE stmt_prepare_ud_del_cache;
+SELECT c FROM privilege__column_masking_policy.dst_prepare_ud;
+connection default;
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud
+  MODIFY MASKING POLICY p_prepare_ud SET RESTRICT ON NONE;
+connection cmp_prepare_ud_conn;
+EXECUTE stmt_prepare_ud_upd;
+EXECUTE stmt_prepare_ud_del;
+EXECUTE stmt_prepare_ud_upd_cache;
+EXECUTE stmt_prepare_ud_del_cache;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
 DEALLOCATE PREPARE stmt_prepare_ud_upd;
 DEALLOCATE PREPARE stmt_prepare_ud_del;
+DEALLOCATE PREPARE stmt_prepare_ud_upd_cache;
+DEALLOCATE PREPARE stmt_prepare_ud_del_cache;
 disconnect cmp_prepare_ud_conn;
 connection default;
 

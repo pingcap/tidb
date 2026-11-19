@@ -123,13 +123,13 @@ func isSourceMaskingPolicyTable(db *stream.DBReplace, tbl *stream.TableReplace) 
 // prepareMaskingPolicyStaging preserves the source policy IDs in a private
 // table, whose physical ID is saved in the regular PiTR ID map. This also lets
 // retries and subsequent log-only restores apply source-key deletes correctly.
-func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glue.Session, cfg *LogRestoreConfig, canCreate, idMapPersisted bool) error {
+func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glue.Session, cfg *LogRestoreConfig, fromFullSnapshot, idMapPersisted bool) error {
 	if !cfg.WithSysTable {
 		return nil
 	}
 	hasPolicyStage := false
 	for _, db := range cfg.tableMappingManager.DBReplaceMap {
-		for _, tbl := range db.TableMap {
+		for sourceID, tbl := range db.TableMap {
 			if !isSourceMaskingPolicyTable(db, tbl) {
 				continue
 			}
@@ -157,7 +157,7 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 				}
 				continue
 			}
-			if !canCreate {
+			if idMapPersisted || !cfg.tableMappingManager.IsTableNewToBase(sourceID, fromFullSnapshot) {
 				return errors.New("PiTR masking policy staging table is missing; restore from the full backup again")
 			}
 			// The source may have introduced masking after the baseline snapshot.

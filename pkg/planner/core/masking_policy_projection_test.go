@@ -57,6 +57,53 @@ func TestMaskingPolicyProjection(t *testing.T) {
 	tk.MustQuery("select c from t order by id").Check(testkit.Rows("X", "X"))
 }
 
+func TestMaskingPolicyViewIgnoresTemporaryShadow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table view_source(c varchar(20))")
+	tk.MustExec("insert into view_source values ('secret')")
+	tk.MustExec("create view masked_view as select c from view_source")
+	tk.MustExec("create masking policy p on view_source(c) as mask_full(c)")
+	tk.MustQuery("select c from masked_view").Check(testkit.Rows("XXXXXX"))
+	tk.MustExec("create temporary table view_source(c varchar(20))")
+	tk.MustExec("insert into view_source values ('public')")
+	tk.MustQuery("select c from masked_view").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select c from view_source").Check(testkit.Rows("public"))
+}
+
+func TestMaskingPolicySubqueryPreservesOuterClause(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table clause_source(id int primary key, c varchar(20) not null)")
+	tk.MustExec("insert into clause_source values (1,'secret')")
+	tk.MustExec("create masking policy p on clause_source(c) as mask_null(c)")
+	for _, predicate := range []string{
+		"1 in (select id from clause_source order by id limit 1)",
+		"1 = any (select id from clause_source order by id limit 1)",
+		"1 = all (select id from clause_source order by id limit 1)",
+	} {
+		tk.MustQuery("select " + predicate + ", c is null from clause_source").Check(testkit.Rows("1 1"))
+	}
+}
+
+func TestMaskingPolicyMaterializedCTEPredicateUnion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_force_inline_cte=0")
+	tk.MustExec("create table cte_predicate(c varchar(20))")
+	tk.MustExec("insert into cte_predicate values ('secret')")
+	tk.MustExec("create masking policy p on cte_predicate(c) as mask_full(c)")
+	query := "with x as (select c from cte_predicate) select 'XXXXXX' in (select c from x union all select 'public') from x"
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain format='brief' "+query).Rows()), "CTE")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+	tk.MustQuery("with x as (select c from cte_predicate) select 'secret' in (select c from x union all select 'public') from x").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_opt_force_inline_cte=1")
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+}
+
 func TestMaskingPolicyPointGet(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

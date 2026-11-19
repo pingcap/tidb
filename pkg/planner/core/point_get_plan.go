@@ -2510,7 +2510,9 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 func maskingExprsMemoryUsage(exprs []expression.Expression) (sum int64) {
 	sum = int64(cap(exprs)) * size.SizeOfInterface
 	for _, expr := range exprs {
-		sum += expr.MemoryUsage()
+		if expr != nil {
+			sum += expr.MemoryUsage()
+		}
 	}
 	return sum
 }

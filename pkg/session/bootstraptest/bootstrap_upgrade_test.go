@@ -219,14 +219,13 @@ const defaultMockUpgradeToVerLatestKind = 0
 
 func enableMockUpgradeForTest(t *testing.T, kind int) {
 	t.Helper()
+	restore := session.CaptureMockBootstrapStateForTest()
 	mock := true
 	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = kind
-	restoreBootstrapVersions := session.SaveBootstrapVersionsForTest()
 	t.Cleanup(func() {
 		mock = false
-		session.MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatestKind
-		restoreBootstrapVersions()
+		restore()
 	})
 }
 

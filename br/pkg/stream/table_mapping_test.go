@@ -52,6 +52,28 @@ func NewMockMetaInfoCollector() *MockMetaInfoCollector {
 	}
 }
 
+func TestTableNewToBaseRequiresCommittedMetadata(t *testing.T) {
+	tm := NewTableMappingManager()
+	require.False(t, tm.IsTableNewToBase(99, false))
+	tm.SetFromPiTRIDMap()
+	tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{1: NewDBReplace("mysql", 1)})
+	// An ID allocated by an auto-ID or default-CF record is not a new table.
+	tm.DBReplaceMap[1].TableMap[99] = NewTableReplace("tidb_masking_policy", 999)
+	require.False(t, tm.IsTableNewToBase(99, false))
+	require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 99, 20,
+		&tableSimpleInfo{Name: "tidb_masking_policy"}, NewMockMetaInfoCollector()))
+	require.True(t, tm.IsTableNewToBase(99, false))
+	tm.recordTableEvent(1, 99, 21, true)
+	require.False(t, tm.IsTableNewToBase(99, false))
+	require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 99, 22,
+		&tableSimpleInfo{Name: "tidb_masking_policy"}, NewMockMetaInfoCollector()))
+	base := NewDBReplace("mysql", 1)
+	base.TableMap[99] = NewTableReplace("tidb_masking_policy", 999)
+	tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{1: base})
+	require.False(t, tm.IsTableNewToBase(99, false), "a lost baseline must not be initialized empty")
+	require.False(t, tm.IsTableNewToBase(99, true), "a full backup does not authorize losing an existing baseline")
+}
+
 func (m *MockMetaInfoCollector) OnDatabaseInfo(dbId int64, dbName string, commitTs uint64) {
 	// only update if this is a newer timestamp
 	if existingTs, exists := m.dbTimestamps[dbId]; !exists || commitTs > existingTs {

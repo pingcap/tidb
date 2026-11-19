@@ -628,6 +628,10 @@ func TestDB_ExecDDL2(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, ddlJob := range ddlJobs {
+		if ddlJob.Type == model.ActionCreateMaskingPolicy {
+			// Do not inherit test_db from the preceding index job.
+			require.NoError(t, db.Session().Execute(ctx, "USE mysql"))
+		}
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}

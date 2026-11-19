@@ -793,3 +793,30 @@ func TestPreserveMaskingPolicyStagingHiddenHandle(t *testing.T) {
 	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
 	tk.MustQuery("select _tidb_rowid,policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("456 123 42 1"))
 }
+
+func TestRestoreMaskingPoliciesChecksActualTargetColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Match --no-schema: preserve the source column ID and data representation,
+	// but reuse an existing target whose column has a different name.
+	tk.MustExec("create table noschema_columns(renamed varchar(20))")
+	tk.MustExec("insert into noschema_columns values ('secret')")
+	tk.MustExec("create database staged_columns")
+	tk.MustExec("create table staged_columns.tidb_masking_policy like mysql.tidb_masking_policy")
+	tk.MustExec("insert into staged_columns.tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (1,'selected_missing','test','noschema_columns',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')")
+	backedUp := map[filter.Table]struct{}{{Schema: "test", Name: "noschema_columns"}: {}}
+	restore := func(pattern string) error {
+		f, err := filter.Parse([]string{pattern})
+		require.NoError(t, err)
+		return snapclient.RestoreMaskingPoliciesFromTemporaryTableForTest(context.Background(), tk.Session().GetRestrictedSQLExecutor(),
+			"staged_columns", true, f, true, backedUp,
+			func(_ context.Context, sql string) error { return tk.ExecToErr(sql) })
+	}
+	require.NoError(t, restore("test.unselected"))
+	require.ErrorContains(t, restore("test.noschema_columns"), "does not exist in target table")
+	tk.MustQuery("show masking policies for noschema_columns").Check(testkit.Rows())
+	tk.MustExec("alter table noschema_columns rename column renamed to c")
+	require.NoError(t, restore("test.noschema_columns"))
+	tk.MustQuery("select c from noschema_columns").Check(testkit.Rows("XXXXXX"))
+}

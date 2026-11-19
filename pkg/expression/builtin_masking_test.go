@@ -171,6 +171,23 @@ func TestMaskPartial(t *testing.T) {
 	require.Equal(t, "\xe4*******\x97", d.GetString())
 }
 
+func TestMaskPartialBinaryPadPreservesTextCharacters(t *testing.T) {
+	ctx := createContext(t)
+	args := primitiveValsToConstants(ctx, []any{"中文甲乙", 1, 1, []byte("*")})
+	f, err := newFunctionForTest(ctx, ast.MaskPartial, args...)
+	require.NoError(t, err)
+	d, err := f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "中**乙", d.GetString())
+	require.Equal(t, args[0].GetType(ctx).GetCharset(), f.GetType(ctx).GetCharset())
+	args = primitiveValsToConstants(ctx, []any{[]byte("abcdef"), 1, 1, []byte("*")})
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, args...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "a****f", d.GetString())
+}
+
 func TestMaskDate(t *testing.T) {
 	ctx := createContext(t)
 	dateInput := types.NewTime(types.FromDate(2019, 12, 30, 0, 0, 0, 0), mysql.TypeDate, 0)

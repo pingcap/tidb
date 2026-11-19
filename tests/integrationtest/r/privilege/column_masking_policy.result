@@ -385,6 +385,7 @@ GRANT SELECT, INSERT ON privilege__column_masking_policy.* TO cmp_prepare_dml;
 CREATE MASKING POLICY p_prepare_restrict ON privilege__column_masking_policy.src_prepare_restrict(c)
 AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
 RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
+SET tidb_enable_plan_cache_for_subquery=1;
 PREPARE stmt_prepare_restrict FROM
 'INSERT INTO privilege__column_masking_policy.dst_prepare_restrict SELECT c FROM privilege__column_masking_policy.src_prepare_restrict';
 Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
@@ -393,9 +394,27 @@ MODIFY MASKING POLICY p_prepare_restrict SET RESTRICT ON NONE;
 PREPARE stmt_prepare_restrict FROM
 'INSERT INTO privilege__column_masking_policy.dst_prepare_restrict SELECT c FROM privilege__column_masking_policy.src_prepare_restrict';
 EXECUTE stmt_prepare_restrict;
+EXECUTE stmt_prepare_restrict;
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
 SELECT c FROM privilege__column_masking_policy.dst_prepare_restrict ORDER BY c;
 c
 XXXXXX
+XXXXXX
+ALTER TABLE privilege__column_masking_policy.src_prepare_restrict
+MODIFY MASKING POLICY p_prepare_restrict SET RESTRICT ON (INSERT_INTO_SELECT);
+EXECUTE stmt_prepare_restrict;
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_restrict;
+COUNT(*)
+2
+ALTER TABLE privilege__column_masking_policy.src_prepare_restrict
+MODIFY MASKING POLICY p_prepare_restrict SET RESTRICT ON NONE;
+EXECUTE stmt_prepare_restrict;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_restrict;
+COUNT(*)
+3
 DEALLOCATE PREPARE stmt_prepare_restrict;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_toggle;
 DROP USER IF EXISTS cmp_prepare_toggle;
@@ -480,6 +499,7 @@ GRANT SELECT, UPDATE, DELETE ON privilege__column_masking_policy.* TO cmp_prepar
 CREATE MASKING POLICY p_prepare_ud ON privilege__column_masking_policy.src_prepare_ud(c)
 AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
 RESTRICT ON (UPDATE_SELECT, DELETE_SELECT) ENABLE;
+SET tidb_enable_plan_cache_for_subquery=1;
 PREPARE stmt_prepare_ud_upd FROM
 'UPDATE privilege__column_masking_policy.dst_prepare_ud
 SET c = (SELECT c FROM privilege__column_masking_policy.src_prepare_ud LIMIT 1)';
@@ -501,8 +521,49 @@ EXECUTE stmt_prepare_ud_del;
 SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
 COUNT(*)
 0
+PREPARE stmt_prepare_ud_upd_cache FROM
+'UPDATE privilege__column_masking_policy.dst_prepare_ud SET c = ''changed''
+WHERE c IN (SELECT c FROM privilege__column_masking_policy.src_prepare_ud)';
+EXECUTE stmt_prepare_ud_upd_cache;
+EXECUTE stmt_prepare_ud_upd_cache;
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+PREPARE stmt_prepare_ud_del_cache FROM
+'DELETE FROM privilege__column_masking_policy.dst_prepare_ud
+WHERE c IN (SELECT c FROM privilege__column_masking_policy.src_prepare_ud)';
+EXECUTE stmt_prepare_ud_del_cache;
+EXECUTE stmt_prepare_ud_del_cache;
+SELECT @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+INSERT INTO privilege__column_masking_policy.dst_prepare_ud VALUES ('XXXXXX');
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud
+MODIFY MASKING POLICY p_prepare_ud SET RESTRICT ON (UPDATE_SELECT, DELETE_SELECT);
+EXECUTE stmt_prepare_ud_upd;
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
+EXECUTE stmt_prepare_ud_del;
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
+EXECUTE stmt_prepare_ud_upd_cache;
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
+EXECUTE stmt_prepare_ud_del_cache;
+Error 8277 (HY000): Access to masked column 'c' is blocked by the masking policy RESTRICT ON setting. Contact the policy administrator to check the expression and current user or role.
+SELECT c FROM privilege__column_masking_policy.dst_prepare_ud;
+c
+XXXXXX
+ALTER TABLE privilege__column_masking_policy.src_prepare_ud
+MODIFY MASKING POLICY p_prepare_ud SET RESTRICT ON NONE;
+EXECUTE stmt_prepare_ud_upd;
+EXECUTE stmt_prepare_ud_del;
+EXECUTE stmt_prepare_ud_upd_cache;
+EXECUTE stmt_prepare_ud_del_cache;
+SELECT COUNT(*) FROM privilege__column_masking_policy.dst_prepare_ud;
+COUNT(*)
+0
 DEALLOCATE PREPARE stmt_prepare_ud_upd;
 DEALLOCATE PREPARE stmt_prepare_ud_del;
+DEALLOCATE PREPARE stmt_prepare_ud_upd_cache;
+DEALLOCATE PREPARE stmt_prepare_ud_del_cache;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_snapshot_compat;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_snapshot_compat_ts;
 DROP USER IF EXISTS cmp_snapshot, cmp_snapshot_stale;

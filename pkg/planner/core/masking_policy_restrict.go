@@ -102,7 +102,7 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 			return
 		}
 		colInfo := model.FindColumnInfoByID(ds.TableInfo.Columns, col.ID)
-		if colInfo == nil {
+		if colInfo == nil || colInfo.State != model.StatePublic {
 			return
 		}
 		key := [2]int64{ds.TableInfo.ID, colInfo.ID}

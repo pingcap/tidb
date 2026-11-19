@@ -71,7 +71,8 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 		// Two different original values must not be deduplicated even though
 		// they have the same masked value.
 		result := tk.MustQuery("select val from t_union where id = 1 union distinct select val from t_union where id = 2")
-		result.Check(testkit.Rows("XXXXXX", "XXXXXX"))
+		result.Sort().Check(testkit.Rows("XXXXXX", "XXXXXX"))
+		tk.MustQuery("select val from t_union where id=1 union distinct select val from t_union where id=1").Check(testkit.Rows("XXXXXX"))
 	})
 
 	// Test aggregate with HAVING

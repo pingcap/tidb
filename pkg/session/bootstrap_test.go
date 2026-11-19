@@ -249,6 +249,19 @@ func disableStatsOwner(t *testing.T, se sessiontypes.Session) {
 	MustExec(t, se, "set global tidb_enable_stats_owner=off")
 }
 
+func TestDDLBootstrapPreservesStatsOwnerSetting(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(fmt.Sprint(initial), func(t *testing.T) {
+			old := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(initial)
+			t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(old) })
+			t.Run("backfill", TestDDLTableCreateBackfillTable)
+			require.Equal(t, initial, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+			t.Run("notifier", TestDDLTableCreateDDLNotifierTable)
+			require.Equal(t, initial, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+		})
+	}
+}
+
 func TestDDLTableCreateBackfillTable(t *testing.T) {
 	// The notifier must not poll its system table while this test recreates it.
 	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)

@@ -1014,6 +1014,33 @@ func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyConcurrentColumnShapeChange(t *testing.T) {
+	for _, tc := range []struct{ oldType, newType string }{
+		{"double", "bigint"}, {"varchar(20)", "varchar(30)"}, {"decimal(10,2)", "decimal(12,3)"},
+	} {
+		t.Run(tc.oldType, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table shape_change(c " + tc.oldType + ")")
+			other := testkit.NewTestKit(t, store)
+			other.MustExec("use test")
+			prepared, release := make(chan struct{}), make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitModifyColumnJob", func() { close(prepared); <-release })
+			done := make(chan error, 1)
+			go func() { done <- other.ExecToErr("alter table shape_change modify column c " + tc.newType) }()
+			<-prepared
+			tk.MustExec("create masking policy p on shape_change(c) as mask_full(c)")
+			close(release)
+			err := <-done
+			require.ErrorContains(t, err, "masked column type/length/precision change is forbidden")
+			tk.MustQuery("select expression from mysql.tidb_masking_policy where table_name='shape_change'").Check(testkit.Rows("MASK_FULL(`c`)"))
+			tk.MustExec("alter table shape_change rename column c to d")
+			tk.MustQuery("select expression from mysql.tidb_masking_policy where table_name='shape_change'").Check(testkit.Rows("MASK_FULL(`d`)"))
+		})
+	}
+}
+
 func TestMaskingPolicyRecoverTable(t *testing.T) {
 	for _, recoverSQL := range []string{"recover table t_recover_mask", "flashback table t_recover_mask to recovered_mask"} {
 		t.Run(recoverSQL, func(t *testing.T) {

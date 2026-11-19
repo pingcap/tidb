@@ -501,6 +501,14 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
+		// A derived table, view or CTE used by UPDATE is a SELECT source too.
+		// Plain target-table reads keep their ordinary UPDATE semantics.
+		if _, baseTable := p.(*logicalop.DataSource); b.inUpdateStmt && (!isTableName || !baseTable) {
+			if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, ast.MaskingPolicyRestrictOpUpdateSelect); err != nil {
+				return nil, err
+			}
+		}
+
 		if x.AsName.L != "" {
 			if x.Lateral {
 				// LATERAL derived tables: clone output names to avoid mutating shared

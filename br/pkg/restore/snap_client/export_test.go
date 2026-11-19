@@ -182,3 +182,6 @@ func NewSnapFileImporterOptionsForTest(
 func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
 	return importer.paginateScanRegion(ctx, startKey, endKey)
 }
+
+// RestoreMaskingPoliciesFromTemporaryTableForTest exposes policy replay to integration tests.
+var RestoreMaskingPoliciesFromTemporaryTableForTest = restoreMaskingPoliciesFromTemporaryTable

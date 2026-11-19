@@ -133,3 +133,25 @@ func TestRestoreMaskingPoliciesRejectsMissingTargetColumn(t *testing.T) {
 	require.Len(t, executed, 1)
 	require.Contains(t, executed[0], "`p3`")
 }
+
+func TestRestoreMaskingPoliciesRejectsMissingSelectedColumn(t *testing.T) {
+	f, err := filter.Parse([]string{"test.selected"})
+	require.NoError(t, err)
+	for _, selected := range []bool{false, true} {
+		name := "unselected"
+		if selected {
+			name = "selected"
+		}
+		row := chunk.MutRowFromValues("p", "test", name, "missing", "mask_full(missing)", "ENABLED", "NONE", int64(1)).ToRow()
+		calls := 0
+		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: []chunk.Row{row}},
+			"tmp_mysql", true, f, true, map[filter.Table]struct{}{{Schema: "test", Name: name}: {}},
+			func(context.Context, string) error { calls++; return nil })
+		if selected {
+			require.ErrorContains(t, err, "does not exist in target table")
+		} else {
+			require.NoError(t, err)
+		}
+		require.Zero(t, calls)
+	}
+}

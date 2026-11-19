@@ -139,6 +139,24 @@ func (tm *TableMappingManager) IsFromPiTRIDMap() bool {
 	return tm.fromPitrIdMap
 }
 
+// IsTableNewToBase checks absence from the complete snapshot/predecessor map.
+// Log-only restores additionally require committed table metadata in this
+// interval; placeholders and unknown predecessors cannot prove an empty baseline.
+func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot bool) bool {
+	if !fullSnapshot && (!tm.fromPitrIdMap || tm.baseTableIDs == nil) {
+		return false
+	}
+	if _, exists := tm.baseTableIDs[tableID]; exists {
+		return false
+	}
+	if fullSnapshot {
+		return true
+	}
+	source, observed := tm.latestTableSources[tableID]
+	event, committed := tm.tableEvents[tableLocationKey{dbID: source.dbID, tableID: tableID}]
+	return observed && committed && !event.deleted
+}
+
 func NewTableMappingManager() *TableMappingManager {
 	return &TableMappingManager{
 		DBReplaceMap:          make(map[UpstreamID]*DBReplace),

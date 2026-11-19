@@ -116,6 +116,53 @@ func TestMaskingPolicyRestrictOnNoneToggle(t *testing.T) {
 	tkUser.MustQuery("select c from dst_toggle").Check(testkit.Rows("XXXXXX"))
 }
 
+func TestMaskingPolicyUpdateDerivedTableRestrictions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table update_source(c varchar(20))")
+	root.MustExec("create table update_target(c varchar(20))")
+	root.MustExec("insert into update_source values ('secret')")
+	root.MustExec("insert into update_target values ('unchanged')")
+	root.MustExec("create masking policy p on update_source(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (update_select)")
+	root.MustExec("create user derived_update_user")
+	root.MustExec("grant select,update on test.* to derived_update_user")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "derived_update_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	for _, sql := range []string{
+		"update update_target join (select c from update_source) s on true set update_target.c=s.c",
+		"with s as (select c from update_source) update update_target join s on true set update_target.c=s.c",
+	} {
+		user.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		root.MustQuery("select c from update_target").Check(testkit.Rows("unchanged"))
+	}
+	user.MustExec("update update_target set c=concat(c,'!')")
+	root.MustExec("update update_target join (select c from update_source) s on true set update_target.c=s.c")
+	root.MustQuery("select c from update_target").Check(testkit.Rows("secret"))
+}
+
+func TestMaskingPolicyRestrictionSourceBindings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database source_db")
+	tk.MustExec("use test")
+	tk.MustExec("create table protected(c varchar(20))")
+	tk.MustExec("create table source_db.protected(c varchar(20))")
+	tk.MustExec("create table plain(c varchar(20))")
+	tk.MustExec("create table binding_dst(c varchar(20))")
+	tk.MustExec("insert into source_db.protected values ('public')")
+	tk.MustExec("insert into plain values ('plain')")
+	tk.MustExec("create masking policy p on protected(c) as mask_full(c) restrict on (insert_into_select)")
+	tk.MustExec("insert into binding_dst with x as (select c from source_db.protected) select c from x")
+	tk.MustExec("insert into binding_dst select protected.c from (select 'constant' as c from plain) protected")
+	tk.MustQuery("select c from binding_dst order by c").Check(testkit.Rows("constant", "public"))
+	tk.MustExec("create masking policy p on source_db.protected(c) as mask_full(c) restrict on (insert_into_select)")
+	tk.MustGetErrCode("insert into binding_dst with x as (select c from source_db.protected) select c from x", errno.ErrAccessDeniedToMaskedColumn)
+	tk.MustGetErrCode("insert into binding_dst select p.c from (select c from source_db.protected) p", errno.ErrAccessDeniedToMaskedColumn)
+}
+
 func TestMaskingPolicyRestrictOnInsertSelectStar(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tkRoot := testkit.NewTestKit(t, store)
