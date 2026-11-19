@@ -277,6 +277,9 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
+	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -309,8 +312,10 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
 	if enableFailPoint {
-		// Even with this failpoint, partition count can still be 1 on some schedules.
+		// This failpoint waits for each partition to finish spilling, so the next
+		// chunk is always stored in a new partition.
 		sortPartitionNum := exe.GetSortPartitionListLenForTest()
+		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all full partitions are spilled.
 		for i := 0; i < sortPartitionNum; i++ {

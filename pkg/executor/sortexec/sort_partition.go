@@ -316,6 +316,14 @@ func (s *sortPartition) isSpillTriggered() bool {
 	return s.spillStatus == spillTriggered
 }
 
+func (s *sortPartition) waitForSpillTriggeredForTest() {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	for s.spillStatus != spillTriggered {
+		s.cond.Wait()
+	}
+}
+
 func (s *sortPartition) isSpillTriggeredNoLock() bool {
 	return s.spillStatus == spillTriggered
 }
