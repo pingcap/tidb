@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashSet};
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use crate::analyze::AnalyzeError as ComputeError;
 use crate::analyze::{
-    AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
+    AnalyzePlan, AnalyzedColumn, AnalyzedHistogram, AnalyzedIndex,
 };
 use tidb_model::index::IndexInfo;
 use tidb_model::table_info::TableInfo;
@@ -43,14 +43,11 @@ use tidb_model::SchemaState;
 use tidb_infoschema::cluster_catalog::PagedMetaSnapshot;
 
 
-use tidb_kv::key::prefix_scan_end;
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
-use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
+use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_table::origin_default::origin_default;
 
 pub use crate::analyze::{resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2};
-use tidb_stats::row_sample_collector::SampleMemoryExceeded;
-use tidb_stats::row_sample_collector::SampleMemoryQuota;
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
 /// which tables.
@@ -131,147 +128,6 @@ pub struct AnalyzeReport {
     /// The Bernoulli rate in force, or `1.0` under `WITH n SAMPLES`.
     pub sample_rate: f64,
 }
-
-/// Runs one `ANALYZE TABLE` against one snapshot.
-///
-/// `realtime_count` is the table's `mysql.stats_meta.count` as this snapshot
-/// sees it -- what Go's `getAdjustedSampleRate` calls `RealtimeCount` -- and
-/// `None` means the table has no row there at all.
-///
-/// `version` is the sampling snapshot TSO stored in `AnalyzeResults.Snapshot`.
-/// Pinned Go stamps the histogram rows with the later statistics-save
-/// transaction version; the real cluster boundary performs that replacement
-/// after this snapshot-only sampler returns.
-/// Rows one paged read of the analyzed table returns.
-///
-/// Go's analyze consumes coprocessor batches as they land and never holds
-/// every row of the table; this page size is the same idea over a record-range
-/// walk. A few thousand rows keeps peak residency at a few megabytes while
-/// still amortizing the per-page cursor bookkeeping.
-const ANALYZE_SCAN_PAGE_ROWS: usize = 8_192;
-
-fn finite_successor(key: &[u8]) -> Result<Vec<u8>, AnalyzeError> {
-    prefix_scan_end(key).ok_or_else(|| {
-        AnalyzeError::Read(SystemTableError::Snapshot(
-            "a scanned record key has no successor".to_owned(),
-        ))
-    })
-}
-
-pub fn analyze_table<S: PagedMetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    options: &AnalyzeOptions,
-    realtime_count: Option<i64>,
-    version: u64,
-    selected_column_ids: Option<&HashSet<i64>>,
-) -> Result<AnalyzeReport, AnalyzeError> {
-    if table.partition.is_some() {
-        return Err(AnalyzeError::unsupported(format!(
-            "analyzing the partitioned table `{}` requires an explicit physical partition target",
-            table.name.original()
-        )));
-    }
-    analyze_physical_table(
-        snapshot,
-        table,
-        table.id,
-        options,
-        realtime_count,
-        version,
-        selected_column_ids,
-    )
-}
-
-/// Runs one physical table or partition using the logical table's schema.
-pub fn analyze_physical_table<S: PagedMetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    physical_id: i64,
-    options: &AnalyzeOptions,
-    realtime_count: Option<i64>,
-    version: u64,
-    selected_column_ids: Option<&HashSet<i64>>,
-) -> Result<AnalyzeReport, AnalyzeError> {
-    analyze_physical_table_with_progress(
-        snapshot,
-        table,
-        physical_id,
-        options,
-        realtime_count,
-        version,
-        selected_column_ids,
-        |_| {},
-    )
-}
-
-pub(crate) fn analyze_physical_table_with_progress<S: PagedMetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    physical_id: i64,
-    options: &AnalyzeOptions,
-    realtime_count: Option<i64>,
-    version: u64,
-    selected_column_ids: Option<&HashSet<i64>>,
-    mut progress: impl FnMut(i64),
-) -> Result<AnalyzeReport, AnalyzeError> {
-    let plan = cluster_analyze_plan(table, selected_column_ids, false)?;
-    let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
-    let eval_context = crate::StmtContext::for_query();
-    let virtuals = virtual_samples::VirtualSamples::new(table, &plan, &eval_context)?;
-
-    let names: Vec<&str> = plan
-        .columns()
-        .iter()
-        .map(|column| column.name.as_str())
-        .collect();
-    let mut physical_table = table.clone();
-    physical_table.id = physical_id;
-    let view = SystemTableView::project(table.name.original(), &physical_table, &names);
-    // The rows stream into the sampler one page at a time, exactly as Go's
-    // region collectors feed it: nothing here may materialize the whole table
-    // first, because a table this engine analyzes can be the largest thing the
-    // node ever reads at once.
-    let mut cursor = view.record_prefix(&[])?;
-    let range_end = finite_successor(&cursor)?;
-    loop {
-        if cursor.as_slice() >= range_end.as_slice() {
-            break;
-        }
-        let page = snapshot
-            .scan_page(&cursor, &range_end, ANALYZE_SCAN_PAGE_ROWS)
-            .map_err(|error| AnalyzeError::Read(error.into()))?;
-        if page.is_empty() {
-            break;
-        }
-        for (key, value) in &page {
-            let stored = SystemRow::parse(&view, key, value)?;
-            let mut columns = Vec::with_capacity(plan.columns().len());
-            for column in plan.columns() {
-                // `stored_datum`, not `datum`: a stored NULL is NULL, while a
-                // column the row has no entry for reads as its origin default.
-                columns.push(
-                    stored
-                        .stored_datum(&column.name)?
-                        .cloned()
-                        .unwrap_or_else(|| column.absent_value.clone()),
-                );
-            }
-            virtuals.materialize(&mut columns, &eval_context)?;
-            run.push(&columns)?;
-        }
-        progress(i64::try_from(page.len()).unwrap_or(i64::MAX));
-        let last_key = page
-            .last()
-            .map(|(key, _)| key.clone())
-            .expect("a non-empty page has a last pair");
-        cursor = finite_successor(&last_key)?;
-    }
-    let analyzed = run.finish()?;
-
-    Ok(report_from_analyzed(analyzed, physical_id, version))
-}
-
 fn report_from_analyzed(
     analyzed: crate::analyze::AnalyzedTable,
     physical_id: i64,
@@ -633,7 +489,7 @@ mod tests {
             let mut collector = RowSampleCollector::from_proto(
                 &proto,
                 SamplePolicy::Bernoulli { sample_rate: 1.0 },
-                super::SampleMemoryQuota::unlimited(),
+                tidb_stats::row_sample_collector::SampleMemoryQuota::unlimited(),
             )
             .unwrap();
             let mut sketch = tidb_stats::FmSketch::new(1000);

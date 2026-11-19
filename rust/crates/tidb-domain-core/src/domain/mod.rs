@@ -2531,34 +2531,6 @@ pub struct ClusterHistoricalStatsHandle {
 }
 
 impl ClusterHistoricalStatsHandle {
-    pub fn commit_stats_plan(
-        &self,
-        build: impl FnOnce(
-            &mut SnapshotMetaSnapshot,
-            u64,
-        ) -> Result<tidb_syssession::stats_table_rows::StatsWritePlan, String>,
-    ) -> Result<(), String> {
-        let snapshot = self.transactions.open_snapshot("default")?;
-        let read_ts = snapshot.start_ts();
-        let mut meta = SnapshotMetaSnapshot::new(snapshot);
-        let plan = build(&mut meta, read_ts)?;
-        self.transactions
-            .commit_optimistic_mutations(
-                plan.mutations,
-                read_ts,
-                "default",
-                // Go's stats writes run under `StatsCtx`
-                // (`kv.InternalTxnStatsForegroundPriority`).
-                crate::session_transaction::restricted_transaction_options(&self.global_vars)
-                    .with_request_source(tidb_txnkv::RequestSource {
-                        internal: true,
-                        source_type: tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY.to_owned(),
-                        explicit_source_type: String::new(),
-                    }),
-            )
-            .map_err(|error| error.message)
-    }
-
     fn physical_table<'catalog>(
         catalog: &'catalog SessionExtendedInfoSchema,
         physical_id: i64,

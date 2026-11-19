@@ -40,9 +40,8 @@ mod tagged_ptr_source;
 mod taobench_repro_source;
 mod window_executor_source;
 mod explain_exec_source;
-mod analyze_added_column_source;
 mod analyze_commit_size_source;
-mod analyze_generated_column_source;
+
 mod analyze_panic_error_source;
 mod brie_source;
 mod cluster_config_source;
