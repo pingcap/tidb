@@ -143,6 +143,9 @@ pub trait TxnContext: isolation::ProviderSessionVars {
     fn rc_check_ts(&self) -> bool;
     /// Sets Go `StmtCtx.RCCheckTS` for the running statement.
     fn set_rc_check_ts(&mut self);
+    /// Go `OnPessimisticStmtStart`'s gate: `PessimisticTransactionFairLocking`
+    /// on a client connection (`ConnectionID != 0`) outside restricted SQL.
+    fn pessimistic_fair_locking(&self) -> bool;
     /// Go `isolation.NeedSetRCCheckTSFlag(sctx, node)`.
     fn need_set_rc_check_ts_flag(&self, node: &tidb_ast::Stmt) -> bool;
     /// Whether the statement is a locking read (`SELECT ... FOR UPDATE`):
@@ -199,6 +202,29 @@ pub trait TxnContextProvider: Send {
         &mut self,
         _cx: &mut dyn TxnContext,
         _node: Option<&tidb_ast::Stmt>,
+    ) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+    /// Go `OnPessimisticStmtStart` (base: nothing). A pessimistic provider
+    /// starts the statement's fair locking when the session asks for it.
+    ///
+    /// # Errors
+    ///
+    /// Fair locking could not start.
+    fn on_pessimistic_stmt_start(&mut self, _cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+        Ok(())
+    }
+    /// Go `OnPessimisticStmtEnd` (base: nothing). A pessimistic provider
+    /// ends the statement's fair-locking scope: done when it succeeded,
+    /// cancelled (its retry-round locks released) when it failed.
+    ///
+    /// # Errors
+    ///
+    /// Fair locking could not end.
+    fn on_pessimistic_stmt_end(
+        &mut self,
+        _cx: &mut dyn TxnContext,
+        _is_successful: bool,
     ) -> Result<(), SqlQueryError> {
         Ok(())
     }

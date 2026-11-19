@@ -62,9 +62,15 @@ impl TestKit {
         Self::from_session(Session::with_catalog(self.session.shared_catalog()))
     }
 
-    /// Go `testkit.NewTestKitWithSession`.
+    /// Go `testkit.NewTestKitWithSession`; the session gets the next
+    /// connection id, as Go's `newSession` does
+    /// (`se.SetConnectionID(testKitIDGenerator.Inc())`).
     #[must_use]
-    pub fn from_session(session: Session) -> Self {
+    pub fn from_session(mut session: Session) -> Self {
+        static TEST_KIT_ID_GENERATOR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        session.set_connection_id(
+            TEST_KIT_ID_GENERATOR.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1,
+        );
         Self {
             session,
             affected_rows: 0,

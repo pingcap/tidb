@@ -533,6 +533,13 @@ impl StatementLifecycle<'_> {
             if autocommit_write {
                 savepoint = self.txn.buffer().checkpoint();
             }
+            // Go `handlePessimisticDML` / `handlePessimisticSelectForUpdate`:
+            // `OnPessimisticStmtStart` before the statement executes (a no-op
+            // for an optimistic provider).
+            if let Err(error) = self.on_provider_pessimistic_stmt_start() {
+                let _ = self.finish_snapshot();
+                break Err(error);
+            }
             let outcome = run(&mut self.session);
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
             // for the transaction an autocommit statement ends: recorded
@@ -564,10 +571,8 @@ impl StatementLifecycle<'_> {
                     }
                     match self.lock_pessimistic_statement_keys(&savepoint) {
                         Ok(PessimisticStep::Done) => {
-                            if let Some(transaction) = self.txn.current() {
-                                if let Err(error) = transaction.finish_pessimistic_statement(true) {
-                                    break Err(SqlQueryError::unknown(error));
-                                }
+                            if let Err(error) = self.on_provider_pessimistic_stmt_end(true) {
+                                break Err(error);
                             }
                         }
                         Ok(PessimisticStep::Retry { lock_error }) => {
@@ -683,8 +688,8 @@ impl StatementLifecycle<'_> {
             self.txn.rollback_implicit();
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.
-            if let Some(transaction) = self.txn.explicit() {
-                let _ = transaction.finish_pessimistic_statement(false);
+            if self.txn.explicit().is_some() {
+                let _ = self.on_provider_pessimistic_stmt_end(false);
                 // The statement's writes go; the transaction keeps its
                 // earlier writes and native lock ownership.
                 self.txn.buffer().restore(savepoint);
@@ -975,6 +980,26 @@ impl StatementLifecycle<'_> {
         )
     }
 
+    /// Go `OnPessimisticStmtStart` on the session transaction's provider.
+    fn on_provider_pessimistic_stmt_start(&mut self) -> Result<(), SqlQueryError> {
+        let in_txn = self.session.in_transaction();
+        let Some(provider) = self.txn.provider_mut() else {
+            return Ok(());
+        };
+        let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
+        provider.on_pessimistic_stmt_start(&mut cx)
+    }
+
+    /// Go `OnPessimisticStmtEnd` on the session transaction's provider.
+    fn on_provider_pessimistic_stmt_end(&mut self, is_successful: bool) -> Result<(), SqlQueryError> {
+        let in_txn = self.session.in_transaction();
+        let Some(provider) = self.txn.provider_mut() else {
+            return Ok(());
+        };
+        let mut cx = SessionTxnContext { session: self.session, in_txn, locking_read: false };
+        provider.on_pessimistic_stmt_end(&mut cx, is_successful)
+    }
+
     /// Go `OnStmtStart(node)`, or `OnStmtRetry` when `retry`, on the session
     /// transaction's provider, if one is entered.
     fn on_provider_stmt_event(&mut self, retry: bool) -> Result<(), SqlQueryError> {
@@ -1087,10 +1112,9 @@ impl StatementLifecycle<'_> {
             false,
         );
         if autocommit_write {
-            // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair
-            // locking follows the session variable; a client connection is
-            // neither internal nor restricted SQL.
-            let fair_locking = vars.pessimistic_transaction_fair_locking();
+            // Fair locking starts per statement, from the provider's
+            // `OnPessimisticStmtStart`.
+            let fair_locking = false;
             let isolation = self.session.isolation_for_provider();
             self.txn.enter_implicit_write(
                 autocommit_pessimistic,

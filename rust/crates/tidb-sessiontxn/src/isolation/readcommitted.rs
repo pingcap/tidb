@@ -65,6 +65,23 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
         self.txn
     }
 
+    // Go `basePessimisticTxnContextProvider.OnPessimisticStmtStart`.
+    fn on_pessimistic_stmt_start(&mut self, cx: &mut dyn TxnContext) -> Result<(), SqlQueryError> {
+        self.txn.set_fair_locking(cx.pessimistic_fair_locking());
+        Ok(())
+    }
+
+    // Go `basePessimisticTxnContextProvider.OnPessimisticStmtEnd`.
+    fn on_pessimistic_stmt_end(
+        &mut self,
+        _cx: &mut dyn TxnContext,
+        is_successful: bool,
+    ) -> Result<(), SqlQueryError> {
+        self.txn
+            .finish_pessimistic_statement(is_successful)
+            .map_err(SqlQueryError::unknown)
+    }
+
     fn get_stmt_read_ts(&mut self, _cx: &mut dyn TxnContext) -> Result<u64, SqlQueryError> {
         txn_start_ts(&*self.txn)?;
         Ok(self.txn.for_update_ts())

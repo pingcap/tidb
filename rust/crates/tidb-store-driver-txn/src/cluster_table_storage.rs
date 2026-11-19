@@ -688,7 +688,7 @@ where
     /// `@@tidb_pessimistic_txn_fair_locking` as it stood at `BEGIN`; reaches
     /// the locking transaction when the lazy pessimistic state is promoted
     /// (Go `OnPessimisticStmtStart` -> `KVTxn.StartFairLocking`).
-    fair_locking: bool,
+    fair_locking: Arc<std::sync::atomic::AtomicBool>,
     /// The session's schema lease checker, carried into the commit together
     /// with the physical tables the commit writes (Go
     /// `SetOptionsBeforeCommit`, `base.go:560-616`).
@@ -891,7 +891,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            arm_fair_locking(&mut state, self.fair_locking);
+            arm_fair_locking(&mut state, self.fair_locking.load(std::sync::atomic::Ordering::Acquire));
             match &mut *state {
                 SessionTransactionState::Pessimistic { transaction, .. } => transaction
                     .advance_for_update_ts()
@@ -972,7 +972,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             start_ts,
             timeout,
             pessimistic: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             schema_lease_checker: None,
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
@@ -1000,7 +1000,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             start_ts,
             timeout,
             pessimistic: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             schema_lease_checker: None,
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
@@ -1026,7 +1026,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             start_ts,
             timeout,
             pessimistic: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             schema_lease_checker: None,
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
@@ -1055,7 +1055,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             start_ts,
             timeout,
             pessimistic: true,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             schema_lease_checker: None,
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
@@ -1088,7 +1088,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             start_ts,
             timeout,
             pessimistic: true,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             schema_lease_checker: None,
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
@@ -1144,8 +1144,8 @@ impl<S: StoreClient> SessionTransaction<S> {
     /// `@@tidb_pessimistic_txn_fair_locking` reaching this transaction. Only a
     /// pessimistic transaction locks, so only it can lock fairly; the flag
     /// reaches the transaction as each locking statement starts.
-    pub const fn set_fair_locking(&mut self, enabled: bool) {
-        self.fair_locking = enabled;
+    pub fn set_fair_locking(&self, enabled: bool) {
+        self.fair_locking.store(enabled, std::sync::atomic::Ordering::Release);
     }
 
     /// Whether the locking transaction locks fairly -- Go
@@ -1192,7 +1192,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let outcome = lock_pessimistic(
             &mut state,
-            self.fair_locking,
+            self.fair_locking.load(std::sync::atomic::Ordering::Acquire),
             self.timeout,
             &keys,
             &BTreeSet::new(),
@@ -1264,7 +1264,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let outcome = lock_pessimistic(
             &mut state,
-            self.fair_locking,
+            self.fair_locking.load(std::sync::atomic::Ordering::Acquire),
             self.timeout,
             &keys,
             &presume_not_exists,
@@ -1372,7 +1372,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking,
-            fair_locking: self.fair_locking,
+            fair_locking: Arc::clone(&self.fair_locking),
             statement_lock_failure: Arc::clone(&self.statement_lock_failure),
             bound_buffer: Arc::clone(&self.bound_buffer),
         }
@@ -1968,7 +1968,7 @@ struct SessionSnapshot<S: StoreClient> {
     /// and reads it under `RCCheckTS` isolation.
     check_ts_in_write_stmt: bool,
     /// `@@tidb_pessimistic_txn_fair_locking` as the transaction captured it.
-    fair_locking: bool,
+    fair_locking: Arc<std::sync::atomic::AtomicBool>,
     /// See [`SessionTransaction::take_statement_lock_failure`].
     statement_lock_failure: StatementLockFailureSlot,
     /// See `SessionTransaction::bound_buffer`.
@@ -1989,7 +1989,7 @@ impl<S: StoreClient> SessionSnapshot<S> {
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            arm_fair_locking(&mut state, self.fair_locking);
+            arm_fair_locking(&mut state, self.fair_locking.load(std::sync::atomic::Ordering::Acquire));
             let advanced = match &mut *state {
                 SessionTransactionState::Pessimistic { transaction, .. } => transaction
                     .advance_for_update_ts()
@@ -2363,7 +2363,7 @@ impl<S: StoreClient> SessionSnapshot<S> {
             .unwrap_or_default();
         let outcome = lock_pessimistic(
             &mut state,
-            self.fair_locking,
+            self.fair_locking.load(std::sync::atomic::Ordering::Acquire),
             self.timeout,
             &keys,
             &BTreeSet::new(),
@@ -2622,7 +2622,7 @@ mod tests {
             check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         };
@@ -2805,7 +2805,7 @@ mod tests {
             check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         };
@@ -2826,7 +2826,7 @@ mod tests {
             check_ts_in_write_stmt: false,
             read_options: Default::default(),
             locking: false,
-            fair_locking: false,
+            fair_locking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
         };

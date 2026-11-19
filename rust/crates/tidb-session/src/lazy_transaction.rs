@@ -386,6 +386,12 @@ impl OpenClusterTransaction for LazyClusterTransaction {
             .map_or(0, |transaction| transaction.for_update_ts())
     }
 
+    fn set_fair_locking(&self, enabled: bool) {
+        if let Some(transaction) = self.shared.state().open.as_ref() {
+            transaction.set_fair_locking(enabled);
+        }
+    }
+
     fn advance_for_update_ts(&self) -> Result<u64, String> {
         let mut state = self.shared.state();
         Shared::activate_in(&mut state)?;

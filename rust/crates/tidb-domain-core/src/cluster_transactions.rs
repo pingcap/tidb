@@ -641,6 +641,11 @@ pub trait OpenClusterTransaction: Send {
     fn finish_pessimistic_statement(&self, _successful: bool) -> Result<(), String> {
         Ok(())
     }
+
+    /// Go `OnPessimisticStmtStart` -> `StartFairLocking`: whether this
+    /// statement's locks are taken fairly. The optimistic default locks
+    /// nothing.
+    fn set_fair_locking(&self, _enabled: bool) {}
 }
 
 /// Rebuilds and stages one Go SQL statement inside a caller-owned pessimistic
@@ -1412,6 +1417,10 @@ where
 
     fn finish_pessimistic_statement(&self, successful: bool) -> Result<(), String> {
         SessionTransaction::finish_statement(self, successful).map_err(|error| error.to_string())
+    }
+
+    fn set_fair_locking(&self, enabled: bool) {
+        SessionTransaction::set_fair_locking(self, enabled);
     }
 }
 

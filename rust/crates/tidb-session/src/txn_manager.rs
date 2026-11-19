@@ -200,6 +200,12 @@ impl TxnContext for SessionTxnContext<'_> {
     fn set_rc_check_ts(&mut self) {
         self.session.set_stmt_rc_check_ts();
     }
+    fn pessimistic_fair_locking(&self) -> bool {
+        let vars = self.session.vars();
+        vars.pessimistic_transaction_fair_locking()
+            && vars.connection_id.is_some_and(|id| id != 0)
+            && !vars.restricted_sql
+    }
     fn need_set_rc_check_ts_flag(&self, node: &tidb_ast::Stmt) -> bool {
         self.session.need_set_rc_check_ts_flag(node)
     }
@@ -553,9 +559,9 @@ impl TxnManager {
         }
         let pessimistic = Self::is_pessimistic(session);
         self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, true);
-        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
-        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
-        let fair_locking = session.vars().pessimistic_transaction_fair_locking();
+        // Fair locking starts per statement, from the provider's
+        // `OnPessimisticStmtStart`.
+        let fair_locking = false;
         let transactions = Arc::clone(&self.transactions);
         let current_tso = session.current_tso();
         let observer = session.transaction_observer();
@@ -606,9 +612,9 @@ impl TxnManager {
         }
         let pessimistic = Self::is_pessimistic(session);
         self.decide_could_retry(session, pessimistic, EnterNewTxnType::WithBeginStmt, true);
-        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
-        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
-        let fair_locking = session.vars().pessimistic_transaction_fair_locking();
+        // Fair locking starts per statement, from the provider's
+        // `OnPessimisticStmtStart`.
+        let fair_locking = false;
         let transaction = self
             .transactions
             .begin(
