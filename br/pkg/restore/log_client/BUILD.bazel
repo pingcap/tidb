@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/metautil",
         "//br/pkg/restore",
+        "//br/pkg/restore/indexrepair",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/internal/import_client",
         "//br/pkg/restore/internal/rawkv",
@@ -54,8 +55,11 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/redact",
+<<<<<<< HEAD
+=======
+        "//pkg/util/sqlexec",
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
         "@com_github_docker_go_units//:go-units",
-        "@com_github_fatih_color//:color",
         "@com_github_gogo_protobuf//proto",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
