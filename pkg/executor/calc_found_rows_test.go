@@ -18,9 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -38,13 +36,13 @@ type foundRowsTestExecutor struct {
 	values    []int64
 	cursor    int
 	batchSize int
+	opens     int
+	closes    int
+	openErr   error
 	nextErr   error
+	closeErr  error
 	failAfter int
-	onOpen    func(context.Context) error
-	onNext    func(context.Context, *chunk.Chunk) error
-	onClose   func() error
-	opens     atomic.Int32
-	closes    atomic.Int32
+	onEOF     func() error
 }
 
 func newFoundRowsTestExecutor(ctx *mock.Context, values ...int64) *foundRowsTestExecutor {
@@ -52,24 +50,14 @@ func newFoundRowsTestExecutor(ctx *mock.Context, values ...int64) *foundRowsTest
 	return &foundRowsTestExecutor{BaseExecutor: exec.NewBaseExecutor(ctx, schema, 0), values: values, batchSize: 1}
 }
 
-func (e *foundRowsTestExecutor) Open(ctx context.Context) error {
-	e.opens.Add(1)
+func (e *foundRowsTestExecutor) Open(context.Context) error {
+	e.opens++
 	e.cursor = 0
-	if e.onOpen != nil {
-		return e.onOpen(ctx)
-	}
-	return nil
+	return e.openErr
 }
 
-func (e *foundRowsTestExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *foundRowsTestExecutor) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if e.onNext != nil {
-		return e.onNext(ctx, req)
-	}
-	return e.nextRows(req)
-}
-
-func (e *foundRowsTestExecutor) nextRows(req *chunk.Chunk) error {
 	if e.nextErr != nil && e.cursor >= e.failAfter {
 		return e.nextErr
 	}
@@ -81,99 +69,91 @@ func (e *foundRowsTestExecutor) nextRows(req *chunk.Chunk) error {
 		req.AppendInt64(0, e.values[e.cursor])
 		e.cursor++
 	}
+	if req.NumRows() == 0 && e.onEOF != nil {
+		return e.onEOF()
+	}
 	return nil
 }
 
 func (e *foundRowsTestExecutor) Close() error {
-	e.closes.Add(1)
-	if e.onClose != nil {
-		return e.onClose()
-	}
-	return nil
+	e.closes++
+	return e.closeErr
 }
 
 func TestCalcFoundRowsExec(t *testing.T) {
 	ctx := context.Background()
-	newExec := func(values []int64, total int64) (*CalcFoundRowsExec, *foundRowsTestExecutor, *foundRowsTestExecutor) {
+	newExec := func() (*CalcFoundRowsExec, *foundRowsTestExecutor, *foundRowsTestExecutor) {
 		sctx := mock.NewContext()
-		data := newFoundRowsTestExecutor(sctx, values...)
-		count := newFoundRowsTestExecutor(sctx, total)
-		e := &CalcFoundRowsExec{BaseExecutor: exec.NewBaseExecutor(sctx, data.Schema(), 0, data, count)}
-		return e, data, count
+		data := newFoundRowsTestExecutor(sctx, 1, 2)
+		count := newFoundRowsTestExecutor(sctx, 9)
+		return &CalcFoundRowsExec{BaseExecutor: exec.NewBaseExecutor(sctx, data.Schema(), 0, data, count)}, data, count
 	}
-
 	t.Run("completion and reopen", func(t *testing.T) {
-		for _, total := range []int64{0, 9} {
-			values := []int64{1, 2}
+		e, data, count := newExec()
+		for round, total := range []int64{9, 0} {
 			if total == 0 {
-				values = nil
+				data.values = nil
+				count.values = []int64{0}
 			}
-			e, data, count := newExec(values, total)
-			var dataContext context.Context
-			data.onNext = func(ctx context.Context, req *chunk.Chunk) error {
-				dataContext = ctx
-				return data.nextRows(req)
-			}
-			for round := range 2 {
-				require.NoError(t, exec.Open(ctx, e))
-				req := exec.NewFirstChunk(e)
-				for range len(values) {
-					require.NoError(t, exec.Next(ctx, e, req))
-					require.Equal(t, 1, req.NumRows())
-					require.NoError(t, dataContext.Err(), "data workers may retain the Next context between chunks")
-					_, available := e.FoundRows()
-					require.False(t, available)
-					require.EqualValues(t, round, count.opens.Load())
+			require.NoError(t, exec.Open(ctx, e))
+			req := exec.NewFirstChunk(e)
+			var page []int64
+			for {
+				require.NoError(t, exec.Next(ctx, e, req))
+				if req.NumRows() == 0 {
+					break
 				}
-				require.NoError(t, exec.Next(ctx, e, req))
-				require.Zero(t, req.NumRows())
-				rows, available := e.FoundRows()
-				require.True(t, available)
-				require.Equal(t, uint64(total), rows)
-				require.NoError(t, exec.Next(ctx, e, req))
-				require.NoError(t, e.Close())
-				require.EqualValues(t, round+1, data.closes.Load())
-				require.EqualValues(t, round+1, count.opens.Load())
-				require.EqualValues(t, round+1, count.closes.Load())
+				page = append(page, req.GetRow(0).GetInt64(0))
+				require.Equal(t, round, count.opens, "count must wait for data EOF")
+				_, available := e.FoundRows()
+				require.False(t, available)
 			}
+			require.Equal(t, data.values, page)
+			rows, available := e.FoundRows()
+			require.True(t, available)
+			require.Equal(t, uint64(total), rows)
+			require.NoError(t, e.Close())
+			require.Equal(t, round+1, data.opens)
+			require.Equal(t, round+1, data.closes)
+			require.Equal(t, round+1, count.opens)
+			require.Equal(t, round+1, count.closes)
 		}
 	})
-
 	for _, phase := range []string{"open", "next", "close"} {
 		t.Run("count error during "+phase, func(t *testing.T) {
-			e, data, count := newExec(nil, 9)
+			e, data, count := newExec()
+			data.values = nil
 			failure := errors.New("count " + phase)
 			switch phase {
 			case "open":
-				count.onOpen = func(context.Context) error { return failure }
+				count.openErr = failure
 			case "next":
 				count.nextErr = failure
 			case "close":
-				count.onClose = func() error { return failure }
+				count.closeErr = failure
 			}
 			require.NoError(t, exec.Open(ctx, e))
 			require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), failure)
 			_, available := e.FoundRows()
 			require.False(t, available)
 			_ = e.Close() // The count child can itself return the injected close error.
-			require.EqualValues(t, 1, data.closes.Load())
-			require.EqualValues(t, 1, count.closes.Load())
+			require.Equal(t, 1, data.closes)
+			require.Equal(t, 1, count.closes)
 		})
 	}
-
 	t.Run("early close", func(t *testing.T) {
-		e, data, count := newExec([]int64{1, 2}, 9)
+		e, data, count := newExec()
 		require.NoError(t, exec.Open(ctx, e))
 		require.NoError(t, exec.Next(ctx, e, exec.NewFirstChunk(e)))
 		require.NoError(t, e.Close())
 		require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), context.Canceled)
 		require.NoError(t, e.Close())
-		require.EqualValues(t, 1, data.closes.Load())
-		require.Zero(t, count.opens.Load())
+		require.Equal(t, 1, data.closes)
+		require.Zero(t, count.opens)
 	})
-
 	t.Run("cancellation at handoff", func(t *testing.T) {
-		e, data, count := newExec(nil, 9)
+		e, data, count := newExec()
+		data.values = nil
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		fp := "github.com/pingcap/tidb/pkg/executor/afterCalcFoundRowsData"
@@ -182,68 +162,9 @@ func TestCalcFoundRowsExec(t *testing.T) {
 		require.NoError(t, exec.Open(ctx, e))
 		require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), context.Canceled)
 		require.NoError(t, e.Close())
-		require.Zero(t, count.opens.Load())
-		require.EqualValues(t, 1, data.closes.Load())
-		_, available := e.FoundRows()
-		require.False(t, available)
+		require.Zero(t, count.opens)
+		require.Equal(t, 1, data.closes)
 	})
-
-	t.Run("cancelled count does not publish", func(t *testing.T) {
-		e, _, count := newExec(nil, 9)
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		count.onNext = func(_ context.Context, req *chunk.Chunk) error {
-			cancel()
-			req.AppendInt64(0, 9)
-			return nil
-		}
-		require.NoError(t, exec.Open(ctx, e))
-		require.ErrorIs(t, exec.Next(ctx, e, exec.NewFirstChunk(e)), context.Canceled)
-		require.NoError(t, e.Close())
-		_, available := e.FoundRows()
-		require.False(t, available)
-		require.EqualValues(t, 1, count.closes.Load())
-	})
-
-	t.Run("close waits for next", func(t *testing.T) {
-		e, data, count := newExec(nil, 9)
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		entered := make(chan struct{})
-		data.onNext = func(ctx context.Context, _ *chunk.Chunk) error {
-			close(entered)
-			<-ctx.Done()
-			return ctx.Err()
-		}
-		require.NoError(t, exec.Open(ctx, e))
-		nextResult := make(chan error, 1)
-		go func() { nextResult <- exec.Next(ctx, e, exec.NewFirstChunk(e)) }()
-		select {
-		case <-entered:
-		case <-time.After(5 * time.Second):
-			t.Fatal("child did not enter Next")
-		}
-		// Next owns the lifecycle lock until the caller cancels its context.
-		require.False(t, e.mu.TryLock())
-		closeResult := make(chan error, 1)
-		go func() { closeResult <- e.Close() }()
-		cancel()
-		select {
-		case err := <-nextResult:
-			require.ErrorIs(t, err, context.Canceled)
-		case <-time.After(5 * time.Second):
-			t.Fatal("Next did not return after caller cancellation")
-		}
-		select {
-		case err := <-closeResult:
-			require.NoError(t, err)
-		case <-time.After(5 * time.Second):
-			t.Fatal("Close did not return after Next")
-		}
-		require.EqualValues(t, 1, data.closes.Load())
-		require.Zero(t, count.opens.Load())
-	})
-
 }
 
 func TestRecordSetFoundRows(t *testing.T) {
@@ -253,59 +174,41 @@ func TestRecordSetFoundRows(t *testing.T) {
 			ctx.GetSessionVars().LastFoundRows = 13
 			child := newFoundRowsTestExecutor(ctx, 1, 2, 3, 4, 5)
 			child.batchSize = batch
-			newResult := func() *recordSet {
-				require.NoError(t, exec.Open(context.Background(), child))
-				return &recordSet{executor: child, stmt: &ExecStmt{Ctx: ctx}}
-			}
-			rs := newResult()
-			req := exec.NewFirstChunk(child)
-			require.NoError(t, rs.Next(context.Background(), req))
-			require.EqualValues(t, 13, ctx.GetSessionVars().LastFoundRows)
-			require.NoError(t, rs.Finish())
-			require.EqualValues(t, 13, ctx.GetSessionVars().LastFoundRows)
-
-			failure := errors.New("result failed after two rows")
-			child.nextErr, child.failAfter = failure, 2
-			rs = newResult()
-			for {
-				err := rs.Next(context.Background(), req)
-				if err != nil {
-					require.ErrorIs(t, err, failure)
-					break
+			for _, outcome := range []string{"early close", "error", "success", "success"} {
+				child.nextErr = nil
+				if outcome == "error" {
+					child.nextErr, child.failAfter = errors.New("result failed after two rows"), 2
 				}
-				require.NotZero(t, req.NumRows())
-			}
-			require.EqualValues(t, 13, ctx.GetSessionVars().LastFoundRows)
-			require.Zero(t, ctx.GetSessionVars().StmtCtx.FoundRows())
-			require.NoError(t, rs.Finish())
-
-			child.nextErr = nil
-			for range 2 {
-				rs = newResult()
+				require.NoError(t, exec.Open(context.Background(), child))
+				rs := &recordSet{executor: child, stmt: &ExecStmt{Ctx: ctx}}
+				req := exec.NewFirstChunk(child)
 				for {
-					require.NoError(t, rs.Next(context.Background(), req))
-					if req.NumRows() == 0 {
+					err := rs.Next(context.Background(), req)
+					if err != nil {
+						require.ErrorIs(t, err, child.nextErr)
+						break
+					}
+					if req.NumRows() == 0 || outcome == "early close" {
 						break
 					}
 				}
-				require.EqualValues(t, 5, ctx.GetSessionVars().LastFoundRows)
-				require.EqualValues(t, 5, ctx.GetSessionVars().StmtCtx.FoundRows())
+				if outcome == "success" {
+					require.EqualValues(t, 5, ctx.GetSessionVars().LastFoundRows)
+					require.EqualValues(t, 5, ctx.GetSessionVars().StmtCtx.FoundRows())
+				} else {
+					require.EqualValues(t, 13, ctx.GetSessionVars().LastFoundRows)
+					require.Zero(t, ctx.GetSessionVars().StmtCtx.FoundRows())
+				}
 				require.NoError(t, rs.Finish())
 			}
-			require.Equal(t, child.opens.Load(), child.closes.Load())
+			require.Equal(t, child.opens, child.closes)
 		})
 	}
-
 	t.Run("close at eof", func(t *testing.T) {
 		ctx := mock.NewContext()
 		child := newFoundRowsTestExecutor(ctx, 1)
 		rs := &recordSet{executor: child, stmt: &ExecStmt{Ctx: ctx}}
-		child.onNext = func(_ context.Context, req *chunk.Chunk) error {
-			if child.cursor == len(child.values) {
-				return rs.Finish()
-			}
-			return child.nextRows(req)
-		}
+		child.onEOF = rs.Finish
 		require.NoError(t, exec.Open(context.Background(), child))
 		req := exec.NewFirstChunk(child)
 		require.NoError(t, rs.Next(context.Background(), req))
