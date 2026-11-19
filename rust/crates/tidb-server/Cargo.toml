@@ -226,19 +226,11 @@ tempfile.workspace = true
 # embedded store by `cluster_session_node::tests::corpus_unistore`.
 difftest-result-tests = { path = "../../difftests/result-tests" }
 
-# Manual cluster diagnostic; ordinary package builds only link tidb-server.
-[[bin]]
-name = "cluster-session-smoke"
-path = "src/bin/cluster-session-smoke.rs"
-required-features = ["diagnostics"]
-
 [[test]]
 name = "all"
 path = "tests/all.rs"
 
 [features]
-# Opt in only for the maintained RealTiKV diagnostic runners.
-diagnostics = []
 # Go's `nextgen` build tag: `cargo build -p tidb-server --features nextgen`
 # selects the Next Generation kernel (`tidb_config::kerneltype::is_next_gen`),
 # whose bootstrap lays the `mysql` schema out at reserved ids. The default

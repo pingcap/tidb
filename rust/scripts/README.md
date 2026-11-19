@@ -14,17 +14,7 @@ cargo nextest run --locked -p tidb-session -E 'test(<filter>)'
 cargo nextest run --locked -p tidb-executor -E 'test(window_executor_source)'
 ```
 
-`cargo build --locked -p tidb-server` builds only the server executable. The
-cluster-session diagnostic is opt-in; its live runners enable `diagnostics`
-explicitly. For manual use from `rust/`:
-
-```bash
-cargo build --locked -p tidb-server --features diagnostics --bin cluster-session-smoke
-target/debug/cluster-session-smoke --pd <address> --schema <database> --sql '<statement>'
-```
-
-The feature only selects the diagnostic target; it adds no dependencies or
-runtime behavior.
+`cargo build --locked -p tidb-server` builds the server executable.
 
 Integration suites use their crate's `tests/all.rs` aggregate (for example
 `tidb-planner` and `tidb-txnkv` keep their primitive translations under

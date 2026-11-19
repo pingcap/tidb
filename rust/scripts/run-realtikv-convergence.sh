@@ -9,7 +9,6 @@
 # What each earlier script proved separately, and this one proves at once:
 #
 #   run-realtikv-catalog-load.sh    the catalog comes from the cluster
-#   run-realtikv-session-driver.sh  the session driver reads cluster storage
 #   server wire/concurrency tests the MySQL front end authenticates and drains
 #   run-realtikv-optimistic-2pc.sh  writes publish through the 2PC
 #
