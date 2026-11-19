@@ -1785,10 +1785,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-<<<<<<< HEAD
-	for i := 0; i < len(input); i++ {
-=======
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	hasAsyncLoadForTable := func() bool {
@@ -1810,8 +1807,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	require.True(t, stat.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
 	require.True(t, stat.GetIdx(tblInfo.Indices[0].ID).IsFullLoad())
 	require.False(t, hasAsyncLoadForTable())
-	for i := range input {
->>>>>>> 5aa4aa8f8c5 (planner: harden subset index stats test warm-up (#67662))
+	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
 		})
