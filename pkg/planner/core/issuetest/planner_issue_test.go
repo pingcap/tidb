@@ -981,6 +981,35 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-72560-order-by-null-constant-arithmetic-uses-index-order
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t (id int primary key, c int not null, key i(c))")
+		tk.MustExec("insert into t values (1, 30), (2, 10), (3, 20)")
+		tk.MustExec("analyze table t")
+		for _, orderBy := range []string{"null-c desc, id", "null-c, id", "c-null, id", "null+c desc, id", "c+null, id"} {
+			tk.MustQuery("select /* issue:72560 */ id from t use index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+			tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+		}
+		// non-NULL constants can still use the index order without a Sort
+		query := "select /* issue:72560 */ id from t use index(i) order by 1-c desc, id"
+		tk.MustQuery(query).Check(testkit.Rows("2", "3", "1"))
+		plan := tk.MustQuery("explain format = 'brief' " + query)
+		plan.MultiCheckContain([]string{"index:i(c)", "keep order:true"})
+		plan.CheckNotContain("Sort")
+
+		// parameters may become NULL on a later execution, so a cached plan must keep the Sort
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare s from 'select /* issue:72560 */ id from t use index(i) order by nullif(?, 0) - c desc, id'")
+		tk.MustExec("set @p = 1")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
