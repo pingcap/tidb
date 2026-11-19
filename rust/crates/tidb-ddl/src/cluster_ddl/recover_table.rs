@@ -41,6 +41,8 @@ pub struct DdlStepWorker {
     pub store: Option<Arc<dyn SnapshotMetaAt>>,
     /// Go `jobCtx.store`'s region cache and PD client.
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `jobCtx.autoidCli`.
+    pub auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
     /// The advisory locks `w.sess` holds for this delivery (Go

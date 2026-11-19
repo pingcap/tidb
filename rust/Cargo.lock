@@ -4971,6 +4971,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-autoid-service"
+version = "0.0.0"
+dependencies = [
+ "tidb-autoid",
+ "tidb-ddl",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-meta",
+ "tidb-owner",
+ "tidb-txnkv",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+]
+
+[[package]]
 name = "tidb-aws-sdk"
 version = "0.0.0"
 dependencies = [
@@ -9373,6 +9390,7 @@ dependencies = [
  "tempfile",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-autoid-service",
  "tidb-bindinfo",
  "tidb-br",
  "tidb-build-tags",
@@ -9610,6 +9628,7 @@ dependencies = [
  "tempfile",
  "tidb-ast",
  "tidb-autoid",
+ "tidb-autoid-service",
  "tidb-bindinfo",
  "tidb-breakpoint",
  "tidb-build-tags",

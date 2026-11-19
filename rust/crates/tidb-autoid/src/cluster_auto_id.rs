@@ -604,6 +604,22 @@ impl ClusterAutoIdStore {
         Arc::new(self)
     }
 
+    /// Go `kv.RunInNewTxn(ctx, store, true, ...)` over this counter (the
+    /// AutoID service's `GetAutoIDAccessors(...).IncrementID(...)`):
+    /// `decide` sees the stored value (`idAcc.Get()`) and answers the value
+    /// to store (`idAcc.Inc`) -- `None` commits nothing -- and the caller's
+    /// outcome. A write conflict re-reads and decides again.
+    ///
+    /// # Errors
+    ///
+    /// The read, the commit, or too many conflicts.
+    pub fn run_in_new_txn<T>(&self, decide: impl Fn(i64) -> (Option<i64>, T)) -> Result<T, AutoIdStoreError> {
+        self.transact(|stored| {
+            let (next, outcome) = decide(stored as i64);
+            (next.map(|next| next as u64), outcome)
+        })
+    }
+
     /// Runs one read-modify-write attempt against the counter key.
     ///
     /// `decide` sees the stored value as its 64-bit pattern -- Go's absent key

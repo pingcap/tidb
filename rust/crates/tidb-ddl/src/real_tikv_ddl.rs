@@ -432,6 +432,12 @@ pub trait IndexBackfiller: Sync {
         None
     }
 
+    /// Go `ddlCtx.autoidCli`: the AutoID service a job's rebase goes
+    /// through. `None` for a worker without one.
+    fn auto_id_client(&self) -> Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
+        None
+    }
+
     /// Go `checkForeignKeyConstrain` for an `ADD FOREIGN KEY`: the child's
     /// existing rows against its parent, through the same snapshot and
     /// buffer as the other stages.
@@ -1003,6 +1009,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         step_sql: Default::default(),
         store: Some(Arc::new(StoreSnapshotMeta { opener: Arc::clone(&opener), timeout })),
         region_store: backfiller.region_store(),
+        auto_ids: backfiller.auto_id_client(),
         start_mode: backfiller.start_mode(),
         advisory_locks: Default::default(),
     };
@@ -1595,7 +1602,8 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             transaction
                 .snapshot()
                 .map_err(|error| ClusterDdlError::backfill_storage(error))?,
-        );
+        )
+        .with_auto_ids_opt(schema_state.worker.auto_ids.as_ref());
         match plan_persisted_ddl_job_step(
             &mut snapshot,
             phase.ddl_job_id,

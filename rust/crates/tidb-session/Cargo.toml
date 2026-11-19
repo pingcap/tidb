@@ -158,6 +158,7 @@ tidb-workloadlearning = { path = "../tidb-workloadlearning" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-extension = { path = "../tidb-extension" }
 tidb-privilege-ldap = { path = "../tidb-privilege-ldap" }
+tidb-autoid-service = { path = "../tidb-autoid-service" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-parser = { path = "../tidb-parser" }

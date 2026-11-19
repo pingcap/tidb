@@ -193,11 +193,11 @@ impl SnapshotMetaSnapshot {
     /// Lets a job reach the auto-ID service (see
     /// [`MetaSnapshot::auto_id_client`]).
     #[must_use]
-    pub fn with_auto_ids_opt<C: tidb_autoid::service_rpc::AutoIdServiceRpc>(
+    pub fn with_auto_ids_opt(
         mut self,
-        auto_ids: Option<&std::sync::Arc<C>>,
+        auto_ids: Option<&std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     ) -> Self {
-        self.auto_ids = auto_ids.map(|client| std::sync::Arc::clone(client) as std::sync::Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>);
+        self.auto_ids = auto_ids.cloned();
         self
     }
 }

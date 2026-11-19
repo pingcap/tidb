@@ -352,6 +352,7 @@ members = [
     "crates/tidb-variable",
     "crates/tidb-kv",
     "crates/tidb-autoid",
+    "crates/tidb-autoid-service",
     "crates/tidb-table",
     "crates/tidb-tblctx",
     "crates/tidb-structure",

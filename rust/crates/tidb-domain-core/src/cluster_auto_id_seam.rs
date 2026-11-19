@@ -56,7 +56,7 @@ where
 {
     opener: RealOptimisticTransactionOpener<S>,
     timeout: Duration,
-    service: Option<Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
+    service: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     allocators: Mutex<HashMap<(i64, AutoIdKind), (AllocatorMark, TableAutoId)>>,
     /// The same lifetime rule for SEQUENCE allocators: one per sequence table
     /// id and published `TableInfo` (its `update_ts`), so a reserved cache
@@ -100,7 +100,7 @@ where
     }
 
     /// Compose the process-wide AutoID service transport for cluster tables.
-    pub fn with_service(mut self, service: Arc<tidb_autoid::auto_id_client::AutoIdClient>) -> Self {
+    pub fn with_service(mut self, service: Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>) -> Self {
         self.service = Some(service);
         self
     }

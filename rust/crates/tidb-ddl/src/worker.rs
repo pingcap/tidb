@@ -1048,6 +1048,8 @@ where
     /// Go `jobCtx.store`'s region cache and PD client, bound once the node
     /// has its region store.
     region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
+    /// Go `ddlCtx.autoidCli`, bound once the node has its AutoID service.
+    auto_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>>,
     /// Go `ddlCtx.startMode`.
     start_mode: crate::StartMode,
 }
@@ -1124,6 +1126,7 @@ where
         ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
         session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         region_store: Arc<std::sync::OnceLock<Arc<dyn tidb_kv::region_map::RegionStore>>>,
+        auto_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>>,
         start_mode: crate::StartMode,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
@@ -1250,6 +1253,7 @@ where
                             let ddl_job_done_ch_map = Arc::clone(&ddl_job_done_ch_map);
                             let session_pool = Arc::clone(&session_pool);
                             let region_store = region_store.get().cloned();
+                            let auto_ids = auto_ids.get().cloned();
                             let running_jobs = Arc::clone(&running_jobs);
                             let pool = Arc::clone(target_pool);
                             let job_desc = job.to_string();
@@ -1267,6 +1271,7 @@ where
                                 let backfiller =
                                     KvTableIndexBackfiller::new(&row_ids, &session_pool)
                                         .with_region_store(region_store)
+                                        .with_auto_ids(auto_ids)
                                         .with_start_mode(start_mode)
                                         .with_owner(Arc::clone(&owner), Arc::clone(&stop));
                                 // Go `getJobRunCtx`: the job context carries
@@ -1445,6 +1450,7 @@ where
                 let ddl_job_done_ch_map = Arc::clone(&self.ddl_job_done_ch_map);
                 let session_pool = Arc::clone(&self.session_pool);
                 let region_store = Arc::clone(&self.region_store);
+                let auto_ids = Arc::clone(&self.auto_ids);
                 let start_mode = self.start_mode;
                 let owner = self
                     .owner
@@ -1471,6 +1477,7 @@ where
                         ddl_job_done_ch_map,
                         session_pool,
                         region_store,
+                        auto_ids,
                         start_mode,
                     )
                 }
@@ -1497,7 +1504,7 @@ where
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    auto_ids: Option<Arc<tidb_autoid::auto_id_client::AutoIdClient>>,
+    auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     /// The etcd client this node announces its catalog changes through, so
     /// peers' watches fire promptly. `None` leaves them to their lease tick;
     /// a failed announcement is a warning, never a failed DDL.
@@ -1569,7 +1576,8 @@ where
     }
 
     /// DDL rebases use the process AutoID service rather than stale IID metadata.
-    pub fn with_auto_ids(mut self, client: Arc<tidb_autoid::auto_id_client::AutoIdClient>) -> Self {
+    pub fn with_auto_ids(mut self, client: Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>) -> Self {
+        let _ = self.scheduler.auto_ids.set(Arc::clone(&client));
         self.auto_ids = Some(client);
         self
     }
@@ -1712,6 +1720,7 @@ where
             ddl_job_done_ch_map: Arc::default(),
             session_pool,
             region_store: Arc::default(),
+            auto_ids: Arc::default(),
             start_mode: executor_start_mode,
         });
         let owner: Arc<dyn tidb_owner::Manager> = match (global_owner.as_ref(), notifier.as_ref()) {
@@ -1737,7 +1746,8 @@ where
                 backfiller:Arc::new({let scheduler=Arc::downgrade(&scheduler);move || {
                     let scheduler=scheduler.upgrade().expect("DDL owns backfill task factories");
                     Arc::new(KvTableIndexBackfiller::new(&scheduler.row_ids,&scheduler.session_pool)
-                        .with_start_mode(scheduler.start_mode).with_region_store(scheduler.region_store.get().cloned())) as Arc<dyn IndexBackfiller>
+                        .with_start_mode(scheduler.start_mode).with_region_store(scheduler.region_store.get().cloned())
+                        .with_auto_ids(scheduler.auto_ids.get().cloned())) as Arc<dyn IndexBackfiller>
                 }}),
             }
         ));
@@ -4352,6 +4362,8 @@ struct KvTableIndexBackfiller {
     session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     /// Go `jobCtx.store`'s region cache and PD client.
     region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
+    /// Go `ddlCtx.autoidCli`.
+    auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     start_mode: crate::StartMode,
     /// Go `ddlCtx.ownerManager` and `ddlCtx.ctx`: whether this node still
@@ -4369,6 +4381,7 @@ impl KvTableIndexBackfiller {
             row_ids: Arc::clone(row_ids),
             session_pool: Arc::clone(session_pool),
             region_store: None,
+            auto_ids: None,
             start_mode: crate::StartMode::Normal,
             owner: None,
         }
@@ -4386,6 +4399,11 @@ impl KvTableIndexBackfiller {
 
     fn with_region_store(mut self, store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>) -> Self {
         self.region_store = store;
+        self
+    }
+
+    fn with_auto_ids(mut self, auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>) -> Self {
+        self.auto_ids = auto_ids;
         self
     }
 }
@@ -4422,6 +4440,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
 
     fn region_store(&self) -> Option<Arc<dyn tidb_kv::region_map::RegionStore>> {
         self.region_store.clone()
+    }
+
+    fn auto_id_client(&self) -> Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>> {
+        self.auto_ids.clone()
     }
 
     fn start_mode(&self) -> crate::StartMode {

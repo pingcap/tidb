@@ -76,6 +76,55 @@ fn install_brie_node(
     ))));
 }
 
+/// Go `setupAutoIDService`: the AutoID service over the node's store,
+/// campaigning for its leader key through the store's (keyspace-prefixed)
+/// etcd client with `AdvertiseAddress:StatusPort` as its ID. Go logs and
+/// serves without it when the store has no etcd.
+fn setup_auto_id_service(
+    config: &NodeConfig,
+    stack: &ClusterStack,
+    authority: &tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority,
+) -> Option<Arc<tidb_autoid_service::Service>> {
+    let etcd = stack.factory.etcd_client()?;
+    let self_addr = join_host_port(&config.advertise_address, config.status_port);
+    let keyspace_id = authority
+        .tikv_store()
+        .store()
+        .keyspace()
+        .context_keyspace_id()
+        .unwrap_or(tikv_client::tikv::NULLSPACE_ID);
+    match tidb_autoid_service::Service::new(
+        &self_addr,
+        etcd as Arc<dyn tidb_owner::OwnerStore>,
+        Arc::new(authority.transaction_opener()),
+        keyspace_id,
+    ) {
+        Ok(service) => {
+            tidb_logutil::bg_logger().info(
+                "register auto service at",
+                &[tidb_log::Field::new("addr", tidb_log::Value::Str(self_addr))],
+            );
+            Some(service)
+        }
+        Err(error) => {
+            tidb_logutil::bg_logger().error(
+                "new autoid service fail",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+            );
+            None
+        }
+    }
+}
+
+/// Go `net.JoinHostPort`.
+fn join_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_spill_storage::SpillStorage>,
@@ -132,6 +181,13 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // retires last of the workers, and `StopRepository` stops it first.
     let workload_repository = tidb_workloadrepo::node::setup_repository(&stack.factory);
     stack.workers.push(Box::new(Arc::clone(&workload_repository)));
+    // Go `startStatusServerAndRPCServer`'s `setupAutoIDService`: a TiKV
+    // node with a status port serves the AutoID service.
+    let auto_id = if config.report_status {
+        setup_auto_id_service(&config, &stack, &authority)
+    } else {
+        None
+    };
     run_with_process_shutdown(stack, authority, move |mut stack: ClusterStack| {
         let factory = Arc::clone(&stack.factory);
         let users = Arc::clone(&stack.users);
@@ -187,6 +243,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             metrics_profile,
             gc_resolve_locks,
             keyspace_domain,
+            auto_id.clone(),
         )
         .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
         let address = node.local_addr().map_err(|error| {
@@ -211,6 +268,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stack.stats_receipt.pseudo,
         );
         let outcome = node.run().map_err(|error| RunConfiguredNodeError::Node(Box::new(error)));
+        // Go `Server.Close`: `s.autoIDService.Close()`.
+        if let Some(service) = &auto_id {
+            service.close();
+        }
         workload_repository.stop();
         // The reload threads hold their own transaction openers; joining
         // them here releases those PD handles before the authority's
@@ -255,6 +316,7 @@ fn start_cluster_status(
     metrics_profile: Option<crate::tikv_handler::MetricsProfileSession>,
     gc_resolve_locks: Option<crate::http_status::GcResolveLocks>,
     keyspace_domain: Option<Arc<tidb_domain_core::domain::Domain>>,
+    auto_id: Option<Arc<tidb_autoid_service::Service>>,
 ) -> std::io::Result<Option<crate::http_status::StatusServer>> {
     // Go Server.Run starts status HTTP beside SQL when ReportStatus is set.
     // Publishing server info alone does not make that endpoint reachable.
@@ -290,6 +352,7 @@ fn start_cluster_status(
             metrics_profile,
             gc_resolve_locks,
             keyspace_domain,
+            auto_id,
         },
     ) {
         Ok(server) => {
@@ -345,14 +408,63 @@ mod status_tests {
             None,
             None,
             None,
-            None, None, None, None, None, None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None, None, None, None, None, None
         )
         .unwrap()
         .is_none());
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         config.report_status = true;
         config.status_port = occupied.local_addr().unwrap().port();
-        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None).is_err());
+        assert!(start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None).is_err());
+    }
+
+    /// Go `setupAutoIDService`: the AutoID service answers on the status
+    /// port beside its HTTP routes, where the AutoID client dials the leader.
+    #[test]
+    fn cluster_status_serves_the_auto_id_service() {
+        struct StatusLeader(String);
+        impl tidb_autoid::auto_id_client::AutoIdLeader for StatusLeader {
+            fn leader(&self) -> Result<Option<String>, tidb_autoid::service_rpc::AutoIdServiceRpcError> {
+                Ok(Some(self.0.clone()))
+            }
+        }
+        let config = crate::parse_node_config([
+            "--store=tikv",
+            "--path=127.0.0.1:2379",
+            "--status=0",
+            "--status-host=127.0.0.1",
+        ])
+        .unwrap();
+        let tracker = Arc::new(crate::sql_node::ConnectionTracker::default());
+        let schema = Arc::new(|| tidb_infoschema::SessionExtendedInfoSchema::init_with_db_infos(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            1,
+        ));
+        let (_pd, opener) = tidb_ddl::embedded_store::in_process_write_stack().unwrap();
+        let service = tidb_autoid_service::Service::mock_for_test(Arc::new(opener), u32::MAX);
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some(service))
+            .unwrap()
+            .unwrap();
+        let client = tidb_autoid::auto_id_client::AutoIdClient::new(
+            Arc::new(StatusLeader(server.local_addr().to_string())),
+            config.cluster_security.clone(),
+        )
+        .unwrap();
+        let request = |n| tidb_autoid::service_rpc::AutoIdServiceAllocRequest {
+            db_id: 2,
+            table_id: 104,
+            n,
+            increment: 1,
+            offset: 1,
+            unsigned: false,
+            keyspace_id: u32::MAX,
+        };
+        let call = tidb_autoid::AutoIdCall::background();
+        use tidb_autoid::service_rpc::AutoIdServiceRpc as _;
+        assert_eq!(client.alloc_auto_id(&call, request(1)).unwrap(), (0, 1));
+        assert_eq!(client.alloc_auto_id(&call, request(10)).unwrap(), (1, 11));
     }
 
     #[test]
@@ -371,7 +483,7 @@ mod status_tests {
             Vec::new(),
             1,
         ));
-        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None)
+        let server = start_cluster_status(&config, tracker, schema, test_settings(), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None)
             .unwrap()
             .expect("cluster startup must bind the advertised status service like Go");
         for path in ["/status", "/metrics", "/settings", "/config", "/schema"] {

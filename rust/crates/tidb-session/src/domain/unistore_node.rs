@@ -640,10 +640,16 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         tidb_ddl::StartMode::Bootstrap,
     )?;
 
+    // Go `autoid.MockForTest`: a store without a cluster serves the AutoID
+    // service itself, which `AUTO_ID_CACHE 1` tables allocate from and DDL
+    // rebases through. Its requests name the Nullspace keyspace.
+    let auto_id_service: Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc> =
+        tidb_autoid_service::Service::mock_for_test(Arc::new(opener.clone()), u32::MAX);
     // One registry for the whole node: sessions' INSERTs, the DDL owner's and
     // the statistics writers' `mysql.*` rows, and the reload's rebases.
     let node_auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> = Arc::new(
-        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
+        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT)
+            .with_service(Arc::clone(&auto_id_service)),
     );
     let (catalog, reloader, schema_validator) =
         crate::domain::real_tikv_node::spawn_catalog_reloader(
@@ -764,6 +770,7 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
         .map_err(|error| {
             crate::domain::real_tikv_node::RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
         })?
+        .with_auto_ids(auto_id_service)
         .with_region_store(Arc::clone(&region_store)),
     );
 

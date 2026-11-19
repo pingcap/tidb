@@ -159,8 +159,10 @@ pub fn run_unistore_cluster_session(
                 schema_storage: Some(crate::node_status::schema_storage(&factory)),
                 ttl_job_trigger: Some(crate::node_status::ttl_job_trigger(&factory)),
                 stats_priority_queue: Some(crate::node_status::stats_priority_queue(&factory)),
-                // Go registers the region routes only for a TiKV store.
+                // Go registers the region routes and the AutoID service
+                // only for a TiKV store.
                 regions: None,
+                auto_id: None,
                 mvcc: factory.region_store.clone(),
                 cluster_upgrade: crate::node_status::cluster_upgrade(&factory),
                 flash_replica_deprecated: Some(crate::node_status::flash_replica_deprecated(&factory)),

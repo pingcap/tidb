@@ -98,6 +98,9 @@ pub fn start_status_listener(
 /// has no source for it.
 #[derive(Default, Clone)]
 pub struct StatusRoutes {
+    /// Go `setupAutoIDService`'s service, registered on the status gRPC
+    /// server of a TiKV node.
+    pub auto_id: Option<Arc<tidb_autoid_service::Service>>,
     /// Go status handlers over the opened store and its domain.
     pub keyspace_domain: Option<Arc<tidb_domain_core::domain::Domain>>,
     /// Go's `/schema` family, read from the live catalog.
@@ -284,6 +287,15 @@ pub fn start_status_listener_with_routes(
                     grpc = grpc.add_service(
                         tidb_proto::tikvpb::tikv_server::TikvServer::new(peer)
                             .max_encoding_message_size(max_send),
+                    );
+                }
+                // Go `setupAutoIDService`'s `pb.RegisterAutoIDAllocServer`.
+                if let Some(service) = routes.auto_id.clone() {
+                    grpc = grpc.add_service(
+                        tikv_client::proto::autoid::auto_id_alloc_server::AutoIdAllocServer::new(
+                            tidb_autoid_service::GrpcService(service),
+                        )
+                        .max_encoding_message_size(max_send),
                     );
                 }
                 // Go `topsql.RegisterPubSubServer(s)`.

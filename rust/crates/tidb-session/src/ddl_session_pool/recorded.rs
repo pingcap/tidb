@@ -105,6 +105,7 @@ impl RecordedDdlSession {
                 step_sql: Default::default(),
                 store: None,
                 region_store: None,
+                auto_ids: None,
                 start_mode: tidb_ddl::StartMode::Normal,
                 advisory_locks: Default::default(),
             },
