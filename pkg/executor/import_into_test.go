@@ -1031,6 +1031,22 @@ func TestStarterDisableUserDDLAndImport(t *testing.T) {
 		tk.MustExec("delete from starter_source")
 	})
 
+	t.Run("rejected table lock preserves session state", func(t *testing.T) {
+		t.Cleanup(config.RestoreFunc())
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableTableLock = true
+		})
+		lockTK := testkit.NewTestKit(t, store)
+		lockTK.MustExec("use test")
+		require.ErrorContains(t, lockTK.ExecToErr("lock tables starter_target write"), ddlUnavailableMessage)
+		require.Empty(t, lockTK.Session().GetAllTableLocks())
+		lockTK.MustExec("create temporary table starter_lock_temp (a int)")
+		lockTK.MustExec("insert into starter_lock_temp values (1)")
+		lockTK.MustQuery("select * from starter_lock_temp").Check(testkit.Rows("1"))
+		lockTK.MustExec("drop temporary table starter_lock_temp")
+		lockTK.MustExec("unlock tables")
+	})
+
 	t.Run("IMPORT INTO", func(t *testing.T) {
 		// NextGen permits FROM SELECT only for materialized view maintenance.
 		vars := tk.Session().GetSessionVars()

@@ -6651,6 +6651,10 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
+	// Check admission before recording provisional session locks.
+	if err := checkUserDDLJobAllowed(ctx); err != nil {
+		return err
+	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
 	err := e.doDDLJob2(ctx, job, args)
@@ -8057,14 +8061,21 @@ func isRetryableDDLCancelErr(err error) bool {
 		!dbterror.ErrDDLJobNotFound.Equal(err)
 }
 
+func checkUserDDLJobAllowed(ctx sessionctx.Context) error {
+	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !ctx.GetSessionVars().InRestrictedSQL {
+		return errors.New("Schema changes are temporarily unavailable during maintenance and will be available again soon")
+	}
+	return nil
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
 	// This switch is only for Starter upgrades. Checking here avoids extra handling
 	// for temporary DDL and execution wrappers in the planner or executor builder.
-	if config.GetGlobalConfig().StarterParams.DisableUserDDLAndImport && !ctx.GetSessionVars().InRestrictedSQL {
-		return errors.New("Schema changes are temporarily unavailable during maintenance and will be available again soon")
+	if err := checkUserDDLJobAllowed(ctx); err != nil {
+		return err
 	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
