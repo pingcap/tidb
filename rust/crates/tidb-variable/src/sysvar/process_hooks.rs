@@ -390,13 +390,6 @@ set_global! {
         crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_COMMITTER_CONCURRENCY) as i32,
         SeqCst,
     );
-    // Go `TiDBEnableMDL`: `if vardef.IsMDLEnabled() != TiDBOptOn(val) {
-    // SwitchMDL(TiDBOptOn(val)) }`, whose effect on this node is the switch.
-    set_tidb_enable_metadata_lock => |s| {
-        if tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()) != on(s) {
-            tidb_vardef::set_enable_mdl(on(s));
-        }
-    };
 }
 
 get_global! {

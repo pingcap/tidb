@@ -7459,9 +7459,23 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
 
 #[test]
 fn stats_gc_runs_periodically_only_after_ownership_is_acquired() {
+    // Go `UpdateTableStatsLoop` campaigns the statistics owner at boot only
+    // when `instance.tidb_enable_stats_owner` is on; this node starts off it,
+    // so the campaign below is its first ownership.
+    let was_enabled = tidb_config::config_tree::config::get_global_config()
+        .instance
+        .tidb_enable_stats_owner
+        .load();
+    let set_enabled = |enabled: bool| {
+        tidb_config::config_tree::config::update_global(|config| {
+            config.instance.tidb_enable_stats_owner = tidb_config::config_tree::AtomicBool::new(enabled);
+        });
+    };
+    set_enabled(false);
     let (stack, _users) = cop_backed_stack_with_stats_lease(Some(
         tidb_domain_core::node_config::StatsLease::Positive(Duration::from_millis(1)),
     ));
+    set_enabled(was_enabled);
     let factory = &stack.factory;
     let owner = factory.stats_owner.as_ref().unwrap();
     let mut session = factory.open_session(session_context(79)).unwrap();

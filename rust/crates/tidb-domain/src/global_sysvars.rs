@@ -1235,6 +1235,15 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
+            // Go's `TiDBEnableMDL` `SetGlobal` is the domain's `SwitchMDL`
+            // (registered by the node's cluster writer for a user's `SET
+            // GLOBAL`). A node that leaves the process flag at its `false`
+            // default acknowledges DDL schema versions on the classic
+            // per-node key while a Go owner with metadata locking on waits
+            // for the per-job key, so every Go-issued DDL on the cluster
+            // blocks until the node is gone. Following the value the cluster
+            // holds is not a switch, so the running-job guard does not apply.
+            TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
             PD_ENABLE_FOLLOWER_HANDLE_REGION
             | TIDB_ENABLE_TSO_FOLLOWER_PROXY
             | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
