@@ -168,7 +168,7 @@ func TestPessimisticDeadlockLogRedaction(t *testing.T) {
 			sessVars.EnableRedactLog = tc.mode
 			errors.RedactLogEnabled.Store(tc.globalMode)
 			core, recorded := observer.New(zap.InfoLevel)
-			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
 			require.NoError(t, provider.OnStmtStart(ctx, nil))
 			deadlock := &tikverr.ErrDeadlock{
 				Deadlock: &kvrpcpb.Deadlock{
