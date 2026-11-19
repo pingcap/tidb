@@ -101,6 +101,19 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	// The original stmt must still work independently.
 	ids = runAndCollect(id1, 25)
 	require.Equal(t, []int64{3}, ids)
+
+	// Both statements must resolve the original name after its table ID changes.
+	tk.MustExec("create table t2_new (id bigint primary key, val int)")
+	tk.MustExec("insert into t2_new values (4, 40)")
+	tk.MustExec("rename table t2 to t2_old, t2_new to t2")
+	require.Equal(t, []int64{4}, runAndCollect(id2, 5))
+	require.Equal(t, []int64{4}, runAndCollect(id2, 5))
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values (5, 50)")
+	require.Equal(t, []int64{4, 5}, runAndCollect(id2, 5))
+	require.Equal(t, []int64{5}, runAndCollect(id1, 45))
+	tk.MustExec("rollback")
 }
 
 // TestPrepareStmtDedupCacheSchemaChange verifies that a DDL (schema version bump)
