@@ -227,7 +227,8 @@ func initUnfinishedPathsFromExpr(
 					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
-					collectedCNFItems[k] = true
+					// The ranges from it are not exact, so it still needs to be rechecked.
+					collectedCNFItems[k] = !mvAccessFilterNeedsRecheck(cnfItem)
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
