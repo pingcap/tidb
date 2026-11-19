@@ -147,6 +147,7 @@ import (
 	hintFirstMatch      "FIRSTMATCH"
 	hintLooseScan       "LOOSESCAN"
 	hintMaterialization "MATERIALIZATION"
+	hintPreferSkipScan  "PREFER_SKIP_SCAN"
 
 %type	<ident>
 	Identifier                             "identifier (including keywords)"
@@ -740,6 +741,7 @@ SupportedIndexLevelOptimizerHintName:
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"TIFLASH_LM_FILTER"
+|	"PREFER_SKIP_SCAN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"

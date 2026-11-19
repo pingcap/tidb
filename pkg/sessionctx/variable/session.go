@@ -1380,6 +1380,9 @@ type SessionVars struct {
 	// preferRangeScan allows optimizer to always prefer range scan over table scan.
 	preferRangeScan bool
 
+	// enableSkipScan controls whether the optimizer can use skip index scan.
+	enableSkipScan bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
@@ -2394,6 +2397,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DDLReorgPriority:                 kv.PriorityLow,
 		allowInSubqToJoinAndAgg:          vardef.DefOptInSubqToJoinAndAgg,
 		preferRangeScan:                  vardef.DefOptPreferRangeScan,
+		enableSkipScan:                   vardef.DefOptEnableSkipScan,
 		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
 		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
@@ -2618,6 +2622,17 @@ func (s *SessionVars) GetAllowPreferRangeScan() bool {
 // SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
+}
+
+// GetEnableSkipScan returns whether skip index scan is enabled.
+func (s *SessionVars) GetEnableSkipScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptEnableSkipScan)
+	return s.enableSkipScan
+}
+
+// SetEnableSkipScan sets whether skip index scan is enabled.
+func (s *SessionVars) SetEnableSkipScan(val bool) {
+	s.enableSkipScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
