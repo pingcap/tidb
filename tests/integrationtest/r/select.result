@@ -554,17 +554,17 @@ HashJoin	12.00	root		CARTESIAN left outer join, left cond:[eq(select.t2.a, 1)]
   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=t3.a;
 id	estRows	task	access object	operator info
-HashJoin	4.00	root		left outer join, equal:[eq(select.t2.a, select.t3.a)]
-├─Projection(Build)	4.00	root		select.t1.a, select.t1.b, select.t3.a, select.t3.b
-│ └─HashJoin	4.00	root		inner join, equal:[eq(select.t3.a, select.t1.a)]
-│   ├─TableReader(Build)	2.00	root		data:Selection
-│   │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
-│   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
-│   └─TableReader(Probe)	4.00	root		data:Selection
-│     └─Selection	4.00	cop[tikv]		not(isnull(select.t1.a))
-│       └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
-└─TableReader(Probe)	3.00	root		data:TableFullScan
-  └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+Projection	4.00	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
+└─HashJoin	4.00	root		left outer join, equal:[eq(select.t2.a, select.t3.a)]
+  ├─HashJoin(Build)	4.00	root		inner join, equal:[eq(select.t3.a, select.t1.a)]
+  │ ├─TableReader(Build)	2.00	root		data:Selection
+  │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
+  │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	4.00	root		data:Selection
+  │   └─Selection	4.00	cop[tikv]		not(isnull(select.t1.a))
+  │     └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+  └─TableReader(Probe)	3.00	root		data:TableFullScan
+    └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	4.00	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
@@ -595,65 +595,66 @@ Projection	4.00	root		select.t1.a, select.t1.b, select.t2.a, select.t2.b, select
       └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t2 right join t3 on t3.a=t2.a right join t1 on t2.a=t1.a;
 id	estRows	task	access object	operator info
-HashJoin	4.00	root		right outer join, equal:[eq(select.t2.a, select.t1.a)]
-├─Projection(Build)	2.00	root		select.t2.a, select.t2.b, select.t3.a, select.t3.b
-│ └─HashJoin	2.00	root		inner join, equal:[eq(select.t3.a, select.t2.a)]
-│   ├─TableReader(Build)	2.00	root		data:Selection
-│   │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
-│   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
-│   └─TableReader(Probe)	3.00	root		data:Selection
-│     └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
-│       └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
-└─TableReader(Probe)	4.00	root		data:TableFullScan
-  └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+Projection	4.00	root		select.t2.a, select.t2.b, select.t3.a, select.t3.b, select.t1.a, select.t1.b
+└─HashJoin	4.00	root		right outer join, equal:[eq(select.t2.a, select.t1.a)]
+  ├─HashJoin(Build)	2.00	root		inner join, equal:[eq(select.t3.a, select.t2.a)]
+  │ ├─TableReader(Build)	2.00	root		data:Selection
+  │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
+  │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	3.00	root		data:Selection
+  │   └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
+  │     └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t4.a;
 id	estRows	task	access object	operator info
-HashJoin	4.00	root		left outer join, equal:[eq(select.t2.a, select.t4.a)]
-├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	2.00	root		data:Selection
-│ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	9990.00	root		data:Selection
-│   └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
-  ├─TableReader(Build)	3.00	root		data:Selection
-  │ └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
-  │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+HashJoin	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
+├─HashJoin(Build)	3.00	root		left outer join, equal:[eq(select.t2.a, select.t4.a)]
+│ ├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
+│ │ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
+│ │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ │ └─TableReader(Probe)	9990.00	root		data:Selection
+│ │   └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
+│ │     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│ └─TableReader(Probe)	3.00	root		data:Selection
+│   └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
+│     └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	4.00	root		data:TableFullScan
+  └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t3.a;
 id	estRows	task	access object	operator info
-HashJoin	4.00	root		left outer join, equal:[eq(select.t2.a, select.t3.a)]
-├─HashJoin(Build)	2.50	root		left outer join, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	2.00	root		data:Selection
-│ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	9990.00	root		data:Selection
-│   └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
-  ├─TableReader(Build)	3.00	root		data:Selection
-  │ └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
-  │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+HashJoin	5.00	root		left outer join, equal:[eq(select.t3.a, select.t4.a)]
+├─HashJoin(Build)	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
+│ ├─HashJoin(Build)	3.00	root		left outer join, equal:[eq(select.t2.a, select.t3.a)]
+│ │ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
+│ │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ │ └─TableReader(Probe)	3.00	root		data:Selection
+│ │   └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
+│ │     └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+│ └─TableReader(Probe)	4.00	root		data:TableFullScan
+│   └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
+    └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
-HashJoin	4.00	root		left outer join, equal:[eq(select.t1.a, select.t4.a)]
-├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	2.00	root		data:Selection
-│ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	9990.00	root		data:Selection
-│   └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
+Projection	4.00	root		select.t1.a, select.t1.b, select.t2.a, select.t2.b, select.t3.a, select.t3.b, select.t4.a, select.t4.b
+└─HashJoin	4.00	root		left outer join, equal:[eq(select.t1.a, select.t2.a)]
   ├─TableReader(Build)	3.00	root		data:Selection
   │ └─Selection	3.00	cop[tikv]		not(isnull(select.t2.a))
   │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+  └─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(select.t1.a, select.t4.a)]
+    ├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
+    │ ├─TableReader(Build)	2.00	root		data:Selection
+    │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
+    │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+    │ └─TableReader(Probe)	9990.00	root		data:Selection
+    │   └─Selection	9990.00	cop[tikv]		not(isnull(select.t4.a))
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─TableReader(Probe)	4.00	root		data:TableFullScan
+      └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
 drop table if exists t3;
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
@@ -682,7 +683,7 @@ id
 2
 EXPLAIN SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
+MergeJoin_8	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
 ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
 │ └─TableFullScan_29	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
@@ -692,7 +693,7 @@ id
 2
 EXPLAIN SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
+MergeJoin_8	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
 ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
 │ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 └─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27

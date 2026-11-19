@@ -54,14 +54,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		return nil
 	}
 
-	isTableDual, err := p.PrunePartitions(b.ctx)
+	isTableDual, err := p.PrunePartitions(b.sctx)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 	if isTableDual {
 		return &TableDualExec{
-			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
+			BaseExecutorV2: exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
 			numReturned:    0,
 		}
@@ -74,10 +74,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		}()
 	}
 
-	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+	b.sctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &PointGetExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		BaseExecutor:       exec.NewBaseExecutor(b.sctx, p.Schema(), p.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(p),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
@@ -94,7 +94,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		b.err = err
 		return nil
 	}
-	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
+	if b.sctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
 	}
 	if e.RuntimeStats() != nil {
@@ -106,7 +106,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	}
 
 	if p.IndexInfo != nil {
-		sctx := b.ctx.GetSessionVars().StmtCtx
+		sctx := b.sctx.GetSessionVars().StmtCtx
 		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
 	}
 
@@ -595,7 +595,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 			return nil, err
 		}
 
-		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1, false)
 		if err != nil {
 			return nil, err
 		}
@@ -655,7 +655,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = kv.GetValue(ctx, e.txn.GetMemBuffer(), key)
 		if err == nil {
 			return val, err
 		}
@@ -685,7 +685,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	return kv.GetValue(ctx, e.snapshot, key)
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
@@ -717,7 +717,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, handle, chk)
+		return rd.DecodeToChunk(rowVal, 0, handle, chk)
 	}
 	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
 }

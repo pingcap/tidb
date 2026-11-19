@@ -31,6 +31,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// Version constants for BackfillTaskMeta.
+const (
+	BackfillTaskMetaVersion0 = iota
+	BackfillTaskMetaVersion1
+)
+
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
@@ -42,6 +48,8 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+
+	Version int `json:"version,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -163,7 +171,9 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(
+			ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize,
+			s.GetExecID(), s.GetTaskBase().Concurrency)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -225,7 +235,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	return common.IsRetryableError(err) || isRetryableError(err)
+	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 
 func (s *backfillDistExecutor) Close() {

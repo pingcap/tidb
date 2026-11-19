@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
 
@@ -51,17 +51,14 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.String(), urlGot.String())
 }
 
-func (s *mockGCSSuite) checkExternalFields(taskID int64, externalMetaCleanedUp bool) {
+func (s *mockGCSSuite) checkExternalFields(taskID int64, sortStorageURI string, externalMetaCleanedUp bool) {
 	s.T().Helper()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	mgr, err := storage.GetTaskManager()
 	s.NoError(err)
-	task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
-	s.NoError(err)
-	taskMeta := importinto.TaskMeta{}
-	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
-	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	// Historical task metadata is redacted and must not be used for storage I/O.
+	store, err := importer.GetSortStore(ctx, sortStorageURI)
 	s.NoError(err)
 	defer store.Close()
 
@@ -208,7 +205,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	// check sensitive info is redacted
 	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
 	s.NoError(err)
-	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
+	redactedSortStorageURI := "gs://sorted/import?endpoint=xxxxxx&access-key=xxxxxx&secret-access-key=xxxxxx"
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	s.Equal(uint64(6), jobInfo.Summary.ImportedRows)
 	taskManager, err := storage.GetTaskManager()
@@ -253,7 +250,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Len(files, 0)
 
 	// check subtask external field
-	s.checkExternalFields(taskID, true)
+	s.checkExternalFields(taskID, sortStorageURI, true)
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
@@ -283,6 +280,39 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 }
 
+func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
+	var allData []string
+	for i := 0; i < 10; i++ {
+		var content []byte
+		keyCnt := 1000
+		for j := 0; j < keyCnt; j++ {
+			idx := i*keyCnt + j
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+		}
+		if i == 9 {
+			// add a duplicate key "test-123"
+			content = append(content, []byte("99999999,test-123\n")...)
+		}
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
+			Content:     content,
+		})
+	}
+	slices.Sort(allData)
+	s.prepareAndUseDB("gs_multi_files")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
+	// 1 subtask, encoding 10 files using 4 threads.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
+		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
+	err := s.tk.QueryToErr(importSQL)
+	require.ErrorContains(s.T(), err, "duplicate key found")
+	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
+	// TODO: decode the key to use readable value in the error message.
+	require.ErrorContains(s.T(), err, "746573742d313233")
+}
+
 func (s *mockGCSSuite) TestSplitRangeForTable() {
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.1.csv"},
@@ -306,7 +336,7 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	})
 	dom, err := session.GetDomain(s.store)
 	require.NoError(s.T(), err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(s.T(), err)
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)

@@ -32,3 +32,12 @@ func TestCheckPointLimit(t *testing.T) {
 	require.Equal(t, time.Hour*100, config.DefaultTiDBConfig().GetCheckPointLagLimit())
 	require.Equal(t, time.Hour*48, config.DefaultCommandConfig().GetCheckPointLagLimit())
 }
+
+func TestResolveLockInterval(t *testing.T) {
+	require.Equal(t, config.DefaultTickInterval*2, config.DefaultTiDBConfig().GetResolveLockInterval())
+
+	conf := config.DefaultCommandConfig().(*config.CommandConfig)
+	require.Equal(t, config.DefaultTickInterval*2, conf.GetResolveLockInterval())
+	conf.TickDuration = 10 * time.Second
+	require.Equal(t, 20*time.Second, conf.GetResolveLockInterval())
+}

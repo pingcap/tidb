@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -59,6 +60,15 @@ func NewKS3Storage(
 	backend *backuppb.S3,
 	opts *ExternalStorageOptions,
 ) (obj *KS3Storage, errRet error) {
+	// Backends may also come directly from persisted protobuf configuration.
+	// Reject a context before making requests that would silently omit it.
+	if backend.SseKmsEncryptionContext != "" {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "sse-kms-context is not supported by the KS3 driver")
+	}
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// Discard the URL-bearing parser error before entering the SDK.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid KS3 endpoint URL")
+	}
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle
@@ -349,6 +359,11 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
 			switch aerr.Code() {
 			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
+				return false, nil
+			}
+		}
+		if rerr, ok := errors.Cause(err).(awserr.RequestFailure); ok {
+			if rerr.StatusCode() == 404 {
 				return false, nil
 			}
 		}
@@ -786,4 +801,9 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec Copy
 		}
 	}
 	return nil
+}
+
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() Features {
+	return FeatureStrongConsistency
 }

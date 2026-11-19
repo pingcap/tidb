@@ -544,7 +544,9 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// So here skip to reserve the allocators when repairing table.
 			diff.Type != model.ActionRepairTable &&
 			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-			diff.Type != model.ActionAlterSequence {
+			diff.Type != model.ActionAlterSequence &&
+			// Exchange partition updates auto IDs in meta store, so we need to reload allocators to pick up the new values.
+			diff.Type != model.ActionExchangeTablePartition {
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
@@ -941,6 +943,13 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 		}
 	}
 	dbInfo.Deprecated.Tables = tables
+}
+
+// SetSchemaVersion updates the schema version of the building infoschema.
+// It is useful when we intentionally skip applying some schema diffs but still
+// need to advance the schema version to reflect where the infoschema is synced to.
+func (b *Builder) SetSchemaVersion(version int64) {
+	b.infoSchema.schemaMetaVersion = version
 }
 
 // Build builds and returns the built infoschema.

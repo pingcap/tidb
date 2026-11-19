@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -169,8 +170,14 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	// A bucket's upper bound is a value observed in the data, so a zero
+	// Repeat is not a count of zero rows: it means no point frequency was
+	// recorded for it. Merged global histograms produce such buckets when
+	// an upper falls on a merge cut, and the sampled builder produces them
+	// when the estimated NDV exceeds the histogram's row count. Fall
+	// through to the uniform estimate rather than report an exact zero.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
@@ -296,8 +303,11 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt *= increaseFactor
 
-		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := cnt >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {

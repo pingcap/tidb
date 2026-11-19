@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -214,17 +215,16 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	p1.checkMatchProcessor(t, processor, true)
 
 	tk.MustExec("set @@tidb_read_staleness=-5")
+	// Keep NOW()-5s inside p1's millisecond despite the timestamp variable's float conversion.
+	sc := tk.Session().GetSessionVars().StmtCtx
+	sc.ResetInStmtCache(stmtctx.StmtNowTsCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, p1.tm.Add(5*time.Second+time.Millisecond/2))
+	sc.ResetInStmtCache(stmtctx.StmtSafeTSCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, uint64(0))
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
-	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
-	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
-	evaluator = processor.GetStalenessTSEvaluatorForPrepare()
-	evaluatorTS, err = evaluator(ctx, tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, expectedTS, evaluatorTS)
+	p1.checkMatchProcessor(t, processor, true)
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
@@ -335,13 +335,16 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	p1.checkMatchProcessor(t, processor, true)
 
 	tk.MustExec("set @@tidb_read_staleness=-5")
+	// Keep NOW()-5s inside p1's millisecond despite the timestamp variable's float conversion.
+	sc := tk.Session().GetSessionVars().StmtCtx
+	sc.ResetInStmtCache(stmtctx.StmtNowTsCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, p1.tm.Add(5*time.Second+time.Millisecond/2))
+	sc.ResetInStmtCache(stmtctx.StmtSafeTSCacheKey)
+	sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, uint64(0))
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
-	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
-	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
-	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	p1.checkMatchProcessor(t, processor, true)
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
@@ -427,4 +430,36 @@ func createProcessor(t *testing.T, se sessionctx.Context) staleread.Processor {
 	require.Nil(t, processor.GetStalenessTSEvaluatorForPrepare())
 	require.Nil(t, processor.GetStalenessInfoSchema())
 	return processor
+}
+
+func TestConsistentCalculateAsOfTsExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.Session().GetSessionVars().TimeZone = time.UTC
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`select now(3) - interval 1 second`, "", "")
+	require.NoError(t, err)
+	secondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+	stmt, err = p.ParseOneStmt(`select now(3) - interval 3 second`, "", "")
+	require.NoError(t, err)
+	threeSecondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+	se := tk.Session()
+	se.GetSessionVars().StmtCtx = stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	ts1, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+
+	ts2, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+	require.Equal(t, ts1, ts2)
+
+	ts3, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), threeSecondTsExpr)
+	require.NoError(t, err)
+	require.True(t, ts3 < ts1)
+	require.Equal(t, ts1-ts3, uint64(2000<<18))
 }

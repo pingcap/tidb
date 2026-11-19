@@ -74,7 +74,7 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 		return
 	}
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
-	for _, p := range ds.PossibleAccessPaths {
+	for _, p := range ds.AllPossibleAccessPaths {
 		if p.IsTablePath() {
 			continue
 		}
@@ -84,11 +84,41 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
-					exprToColumn[col.VirtualExpr] = col
+					// Replacing a literal with a generated column that is itself a pure constant is not
+					// semantically neutral across outer joins, because null-augmentation can turn the
+					// generated column into NULL while the original literal stays constant.
+					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
+						continue
+					}
+					addGenerateColumn(ectx, exprToColumn, col)
 				}
 			}
 		}
 	}
+}
+
+// addGenerateColumn records col as the substitution target for its virtual expression.
+//
+// Several expression indexes on one table may repeat the same expression, and DDL creates a
+// separate hidden generated column per index. Those columns are interchangeable as substitution
+// targets, so only one of them is kept: without this the map holds one entry per index and
+// substitute() picks between them in Go's randomized map order, which makes the resulting plan
+// differ between plan builds of the same statement.
+//
+// The canonical column is the one with the smallest UniqueID, i.e. the one declared earliest on
+// the table, so the choice is stable across plan builds.
+func addGenerateColumn(ectx expression.EvalContext, exprToColumn ExprColumnMap, col *expression.Column) {
+	for candidateExpr, existing := range exprToColumn {
+		if !existing.EqualByExprAndID(ectx, col) {
+			continue
+		}
+		if existing.UniqueID <= col.UniqueID {
+			return
+		}
+		delete(exprToColumn, candidateExpr)
+		break
+	}
+	exprToColumn[col.VirtualExpr] = col
 }
 
 func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) bool {
@@ -96,6 +126,9 @@ func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candi
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	if (*expr).Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
+		if expression.MaybeOverOptimized4PlanCache(lp.SCtx().GetExprCtx(), []expression.Expression{*expr}) {
+			lp.SCtx().GetExprCtx().SetSkipPlanCache("generated column substitution with mutable constants can affect index selection")
+		}
 		*expr = col
 		appendSubstituteColumnStep(lp, candidateExpr, col, opt)
 		changed = true
@@ -209,22 +242,14 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-						x.Schema().ColumnIndex(column) != -1 {
-						aggFunc.Args[i] = column
-						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
-					}
+					tryToSubstituteExpr(&aggFunc.Args[i], lp, candidateExpr, tp, x.Schema(), column, opt)
 				}
 			}
 		}
 		for i := 0; i < len(x.GroupByItems); i++ {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-					x.Schema().ColumnIndex(column) != -1 {
-					x.GroupByItems[i] = column
-					appendSubstituteColumnStep(lp, candidateExpr, column, opt)
-				}
+				tryToSubstituteExpr(&x.GroupByItems[i], lp, candidateExpr, tp, x.Schema(), column, opt)
 			}
 		}
 	}

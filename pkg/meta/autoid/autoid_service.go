@@ -88,13 +88,21 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
+	var bo backoffer
+retry:
 	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := bo.Backoff(ctx); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -128,18 +136,21 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
 
 	var bo backoffer
+	start := time.Now()
 retry:
 	cli, ver, err := sp.GetClient(ctx)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -149,11 +160,20 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
+			// If the RPC error is caused by a canceled context (e.g. KILL QUERY),
+			// return immediately instead of resetting the connection and retrying.
+			// This prevents a canceled statement from blocking for minutes due to
+			// repeated resetConn + backoff cycles.
+			if ctx.Err() != nil {
+				return 0, 0, errors.Trace(ctx.Err())
+			}
 			sp.resetConn(ver, err)
-			bo.Backoff()
+			if err := bo.Backoff(ctx); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -169,8 +189,8 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMin = 5 * time.Millisecond
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
@@ -180,7 +200,10 @@ func (b *backoffer) Reset() {
 	b.Duration = backoffMin
 }
 
-func (b *backoffer) Backoff() {
+// Backoff sleeps for the current duration. If ctx is provided and canceled during
+// the sleep, it returns early with the context error. This prevents a canceled
+// context from being blocked by the full backoff duration.
+func (b *backoffer) Backoff(ctx ...context.Context) error {
 	if b.Duration == 0 {
 		b.Duration = backoffMin
 	}
@@ -188,7 +211,18 @@ func (b *backoffer) Backoff() {
 	if b.Duration > backoffMax {
 		b.Duration = backoffMax
 	}
+	if len(ctx) > 0 && ctx[0] != nil {
+		timer := time.NewTimer(b.Duration)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-ctx[0].Done():
+			return ctx[0].Err()
+		}
+	}
 	time.Sleep(b.Duration)
+	return nil
 }
 
 func (d *ClientDiscover) resetConn(version uint64, reason error) {
@@ -273,8 +307,14 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
+			// Same as Alloc: check ctx before resetting connection and retrying.
+			if ctx.Err() != nil {
+				return errors.Trace(ctx.Err())
+			}
 			sp.resetConn(ver, err)
-			bo.Backoff()
+			if err := bo.Backoff(ctx); err != nil {
+				return errors.Trace(err)
+			}
 			goto retry
 		}
 		return errors.Trace(err)

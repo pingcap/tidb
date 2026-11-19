@@ -93,12 +93,19 @@ type DDLReorgMeta struct {
 	TargetScope       string                           `json:"target_scope"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
+	MaxNodeCount      int                              `json:"max_node_count"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
 	// Note: Don't get or set these two variables directly, use the functions instead.
 	Concurrency   atomic.Int64 `json:"concurrency"`
 	BatchSize     atomic.Int64 `json:"batch_size"`
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
+}
+
+// ShallowCopy creates a shallow copy of DDLReorgMeta.
+func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
+	newMeta := *dm
+	return &newMeta
 }
 
 // GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,

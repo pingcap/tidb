@@ -1,0 +1,9 @@
+diff --git a/etcdserver/api/v3rpc/grpc.go b/etcdserver/api/v3rpc/grpc.go
+index 9c85861c5..72a66f9e3 100644
+--- a/etcdserver/api/v3rpc/grpc.go
++++ b/etcdserver/api/v3rpc/grpc.go
+@@ -60,3 +60,1 @@
+-		chainUnaryInterceptors = append(chainUnaryInterceptors, otelgrpc.UnaryServerInterceptor(s.Cfg.ExperimentalTracerOptions...))
+-		chainStreamInterceptors = append(chainStreamInterceptors, otelgrpc.StreamServerInterceptor(s.Cfg.ExperimentalTracerOptions...))
+-
++		opts = append(opts, grpc.StatsHandler(otelgrpc.NewServerHandler(s.Cfg.ExperimentalTracerOptions...)))

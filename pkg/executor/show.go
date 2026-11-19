@@ -292,6 +292,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -637,7 +639,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 
 	var snapshot uint64
 	txn, err := e.Ctx().Txn(false)
@@ -705,10 +707,21 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
+	// SHOW COLUMNS displays information only for those columns for which you have some privilege.
+	// https://dev.mysql.com/doc/refman/8.4/en/show-columns.html
+	// 1. If you have table privilege, all columns can be shown
+	// 2. If you have only some columns privielge, these columns can be shown
+	// 3. If you have neither table or column privilege, an error is returned
+	passTblPrivCheck, passColPrivCheck := false, false
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	priv := mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", priv) {
+			passTblPrivCheck = true
+		}
+	} else {
+		passTblPrivCheck = true
 	}
 
 	var cols []*table.Column
@@ -727,6 +740,13 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
+		}
+		if !passTblPrivCheck {
+			if !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, priv) {
+				// check privileges in column level
+				continue
+			}
+			passColPrivCheck = true
 		}
 		desc := table.NewColDesc(col)
 		var columnDefault any
@@ -774,6 +794,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			})
 		}
 	}
+	if !passTblPrivCheck && !passColPrivCheck {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
 	return nil
 }
 
@@ -788,10 +811,21 @@ func (e *ShowExec) fetchShowIndex() error {
 
 	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
+	// SHOW INDEX requires some privilege for any column in the table.
+	// https://dev.mysql.com/doc/refman/8.4/en/show-index.html
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		passCheck := false
+		for _, col := range tb.VisibleCols() {
+			if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, mysql.AllPrivMask) {
+				passCheck = true
+				break
+			}
+		}
+		if !passCheck {
+			return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+		}
 	}
 
 	if tb.Meta().PKIsHandle {
@@ -1246,6 +1280,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
@@ -1447,6 +1484,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		if err != nil {
 			return err
 		}
+	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
 	}
 
 	// add partition info here.
@@ -1759,7 +1800,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days'
+        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
+        Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1834,6 +1876,15 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
 		}
 	}
+
+	authData := rows[0].GetString(10)
+
+	maxUserConnections := rows[0].GetInt64(11)
+	maxUserConnectionsStr := ""
+	if maxUserConnections > 0 {
+		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1850,15 +1901,14 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		require = privValue.RequireStr()
 	}
 
-	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
 	authStr := ""
 	if !(authplugin == mysql.AuthSocket && authData == "") {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
@@ -1892,7 +1942,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		if r.Hostname == "" {
 			r.Hostname = "%"
 		}
-		if !checker.FindEdge(e.Ctx(), r, e.User) {
+		if !checker.FindEdge(r, e.User) {
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}
@@ -2350,7 +2400,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
-		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+		if token, err = sessionstates.CreateSessionToken(user.AuthUsername, user.AuthHostname); err != nil {
 			return err
 		}
 	}
@@ -2563,11 +2613,11 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}
-	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.

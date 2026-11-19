@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -661,12 +662,26 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global pd_enable_follower_handle_region = 0")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
+	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_batch_query_region = 1")
+	tk.MustQuery("select @@tidb_enable_batch_query_region").Check(testkit.Rows("1"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_batch_query_region = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats is deprecated and will be removed in a future release."))
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats is deprecated and will be removed in a future release."))
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_historical_stats_for_capture = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_enable_historical_stats_for_capture is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@tidb_enable_historical_stats_for_capture").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_historical_stats_for_capture = default")
+	tk.MustExec("set global tidb_historical_stats_duration = '1h'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 tidb_historical_stats_duration is deprecated and will be removed in a future release."))
+	tk.MustQuery("select @@tidb_historical_stats_duration").Check(testkit.Rows("1h0m0s"))
+	tk.MustExec("set global tidb_historical_stats_duration = default")
 
 	// test for tidb_enable_column_tracking
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
@@ -1826,4 +1841,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := variable.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		variable.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", variable.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set global tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", variable.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }

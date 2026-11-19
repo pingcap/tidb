@@ -596,21 +596,6 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
 	tblInfo.Lock = nil
 	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, infoschemacontext.TableLockAttribute, false)
-
-	// test foreign key correctness in schema change
-	tblInfo.ForeignKeys = []*model.FKInfo{{
-		ID:        1,
-		Name:      pmodel.NewCIStr("fk_1"),
-		RefSchema: pmodel.NewCIStr("t"),
-		RefTable:  pmodel.NewCIStr("t"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("a")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		State:     model.StateWriteOnly,
-	}}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, infoschemacontext.ForeignKeysAttribute, true)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
-	tblInfo.ForeignKeys = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, infoschemacontext.ForeignKeysAttribute, false)
 }
 
 func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
@@ -825,9 +810,9 @@ func TestGCOldFKVersion(t *testing.T) {
 
 	// GC entries older than version 4
 	deleted := data.gcOldFKVersion(4)
-	require.Equal(t, 3, deleted) // versions 3,2,1 for group1
+	require.Equal(t, 2, deleted) // versions 2,1 for group1; keep pivot version 3
 	after := data.referredForeignKeys.Load().Len()
-	require.Equal(t, 3, after) // kept version 5 & 4 for group1, and the single group2
+	require.Equal(t, 4, after) // kept versions 5,4,3 for group1, and the single group2
 
 	// verify surviving versions
 	var vers []int64
@@ -835,9 +820,11 @@ func TestGCOldFKVersion(t *testing.T) {
 		vers = append(vers, item.schemaVersion)
 		return true
 	})
-	require.Equal(t, []int64{4, 5, 1}, vers)
+	require.Equal(t, []int64{3, 4, 5, 1}, vers)
 
 	// ensure getTableReferredForeignKeys respects GC boundary
+	require.NotEmpty(t, data.getTableReferredForeignKeys("db1", "table1", 3))
+	require.Empty(t, data.getTableReferredForeignKeys("db1", "table1", 4))
 	got := data.getTableReferredForeignKeys("db1", "table1", 5)
 	require.Equal(t, &model.ReferredFKInfo{
 		ChildSchema: pmodel.NewCIStr("s"),

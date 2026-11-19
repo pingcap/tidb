@@ -125,8 +125,7 @@ func (s *importIntoSuite) TestGetNextStep() {
 	task.Step = proto.StepInit
 	ext = &importScheduler{GlobalSort: true}
 	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
-		proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts,
-		proto.ImportStepConflictResolution, proto.ImportStepPostProcess, proto.StepDone} {
+		proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}

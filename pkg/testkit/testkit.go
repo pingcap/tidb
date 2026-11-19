@@ -624,11 +624,10 @@ func containGlobal(rs *Result) bool {
 	return false
 }
 
-// MustNoGlobalStats checks if there is no global stats.
+// MustNoGlobalStats checks if there are no global histograms or buckets.
+// It intentionally ignores global stats_meta rows, because stats-delta flushes
+// may maintain logical/global row counts even when no global histograms exist.
 func (tk *TestKit) MustNoGlobalStats(table string) {
-	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
-		tk.require.Fail("global stats should not be found")
-	}
 	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
 		tk.require.Fail("global stats should not be found")
 	}
@@ -798,4 +797,10 @@ func LoadTableStats(fileName string, dom *domain.Domain) error {
 		return err
 	}
 	return nil
+}
+
+// MockGCSavePoint mocks a GC save point. It's used in tests that need to set TiDB snapshot.
+func (tk *TestKit) MockGCSavePoint() {
+	safePoint := "20160102-15:04:05 -0700"
+	tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%s', '') ON DUPLICATE KEY UPDATE variable_value = '%s', comment=''`, safePoint, safePoint))
 }

@@ -29,10 +29,7 @@ import (
 
 // UpdateColsNull2NotNull changes the null option of columns of an index.
 func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
-	nullCols, err := getNullColInfos(tblInfo, indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 
 	for _, col := range nullCols {
 		col.AddFlag(mysql.NotNullFlag)
@@ -66,10 +63,7 @@ func convertAddIdxJob2RollbackJob(
 	originalState := allIndexInfos[0].State
 	for _, indexInfo := range allIndexInfos {
 		if indexInfo.Primary {
-			nullCols, err := getNullColInfos(tblInfo, indexInfo)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
+			nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 			for _, col := range nullCols {
 				// Field PreventNullInsertFlag flag reset.
 				col.DelFlag(mysql.PreventNullInsertFlag)
@@ -103,6 +97,12 @@ func convertAddIdxJob2RollbackJob(
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// This job has not published any index metadata. A same-named index
+		// may belong to an earlier job and must not be rolled back here.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -151,11 +151,11 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	switch args.ModifyColumnType {
-	case ModifyTypeNone:
+	case model.ModifyTypeNone:
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
-	case ModifyTypeNoReorg, ModifyTypeNoReorgWithCheck, ModifyTypePrecheck:
+	case model.ModifyTypeNoReorg, model.ModifyTypeNoReorgWithCheck, model.ModifyTypePrecheck:
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
@@ -170,7 +170,7 @@ func rollingbackModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		// StatePublic couldn't be cancelled.
 		job.State = model.JobStateRunning
 		return ver, nil
-	case ModifyTypeReorg, ModifyTypeIndexReorg:
+	case model.ModifyTypeReorg, model.ModifyTypeIndexReorg:
 		// reorg-type rolling back
 		if args.ChangingColumn == nil {
 			// The job hasn't been handled and we cancel it directly.

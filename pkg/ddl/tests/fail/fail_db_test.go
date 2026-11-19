@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -422,6 +423,13 @@ func TestRunDDLJobPanic(t *testing.T) {
 }
 
 func TestPartitionAddIndexGC(t *testing.T) {
+	// The injected GC safe point deliberately invalidates active reads. Keep
+	// the unrelated DDL notifier from querying its system table during the test.
+	statsOwnerEnabled := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()
+	config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(false)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(statsOwnerEnabled)
+	})
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
 	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
@@ -489,7 +497,7 @@ func TestModifyColumn(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
-	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1690]constant 222 overflows tinyint")
+	tk.MustGetErrMsg("alter table t change column a aa tinyint after c", "[types:1265]Data truncated for column 'a', value is '222'")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +

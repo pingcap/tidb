@@ -177,6 +177,15 @@ func TestMeta(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 
+	legacyDisabled, err := m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.False(t, legacyDisabled)
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	legacyDisabled, err = m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
@@ -441,6 +450,19 @@ func TestMeta(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
+	// A new transaction and a snapshot both observe the durable one-way flag.
+	restartedTxn, err := store.Begin()
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewMutator(restartedTxn).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+	require.NoError(t, restartedTxn.Rollback())
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+
 	// Test for DDLJobHistoryKey.
 	key = meta.DDLJobHistoryKey(m, 888)
 	require.Equal(t, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7}, key)
@@ -624,6 +646,52 @@ func TestAutoRandomTableIDKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
+func TestIterDatabases(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+
+	db1 := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("db1")}
+	db2 := &model.DBInfo{ID: 2, Name: pmodel.NewCIStr("db2")}
+	db3 := &model.DBInfo{ID: 3, Name: pmodel.NewCIStr("db3")}
+
+	require.NoError(t, m.CreateDatabase(db1))
+	require.NoError(t, m.CreateDatabase(db2))
+	require.NoError(t, m.CreateDatabase(db3))
+
+	var names []string
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		names = append(names, info.Name.O)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, names, 3)
+	sort.Strings(names)
+	require.Equal(t, []string{"db1", "db2", "db3"}, names)
+
+	count := 0
+	sentinel := errors.New("stop")
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		count++
+		if count == 2 {
+			return sentinel
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, sentinel))
+	require.Equal(t, 2, count)
+
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
 func TestSequenceKey(b *testing.T) {
 	var tableID int64 = 10
 	key := meta.SequenceKey(tableID)
@@ -668,6 +736,16 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{
+			Level: "s",
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
 		State:          model.StatePublic,
 	}
@@ -707,6 +785,33 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
 		State:         model.StatePublic,
@@ -735,11 +840,13 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	// The order matter!
 	// IsTableInfoMustLoad relies on the order of the json marshal result,
 	// or the internal of the json marshal in other words.
-	// This test cover the invariance, if Go std library changes, we can catch it.
-	tableInfo := &model.TableInfo{}
+	// This test covers the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{Level: "s"},
+	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"affinity":{"level":"s"},"revision":0}`
 	require.Equal(t, expect, string(b))
 }
 
@@ -947,13 +1054,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			},
 			Enable: true,
 		},
-		ForeignKeys: []*model.FKInfo{{
-			ID:       1,
-			Name:     pmodel.NewCIStr("fk"),
-			RefTable: pmodel.NewCIStr("t"),
-			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
-			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		}},
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
 			LocationLabels: []string{"a,b,c"},
@@ -973,6 +1073,9 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 			IntervalTimeUnit: int(ast.TimeUnitDay),
 			Enable:           true,
 			JobInterval:      "1h",
+		},
+		Affinity: &model.TableAffinityInfo{
+			Level: "1",
 		},
 	}
 
@@ -995,10 +1098,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
-	// foreign key info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
-	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
 	// tiflash replica info
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
@@ -1015,6 +1114,10 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+	// affinity
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Affinity, tblInfoRes[0].TableInfos[0].Affinity)
 }
 
 func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {

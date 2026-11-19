@@ -67,10 +67,21 @@ func TestUptime(t *testing.T) {
 }
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
+	// CreateMockStore in other tests calls DisableStats4Test and leaves the
+	// process-wide stats lease negative. Stats init, which holds the GC-blocking
+	// transaction, only runs when the lease is positive.
+	origStatsLease := session.GetStatsLease()
+	session.SetStatsLease(3 * time.Second)
+	defer session.SetStatsLease(origStatsLease)
+
 	origConfig := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
+	session.SetStatsLease(3 * time.Second)
+	// Here I didn't restore the original stats lease because it's not exposed in this version.
+	// It should be acceptable because most of the tests will set lease to -1 to disable the stats lease.
+
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))

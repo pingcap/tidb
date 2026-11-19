@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -65,7 +68,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -200,7 +203,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -238,10 +241,19 @@ func TestBootstrapWithError(t *testing.T) {
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
 }
 
+func disableStatsOwner(t *testing.T, se sessiontypes.Session) {
+	statsOwnerEnabled := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(statsOwnerEnabled)
+	})
+	MustExec(t, se, "set global tidb_enable_stats_owner=off")
+}
+
 func TestDDLTableCreateBackfillTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	disableStatsOwner(t, se)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -274,6 +286,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	disableStatsOwner(t, se)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -1616,27 +1629,33 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
 	}
+	checkUpgraded := func() {
+		s := CreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, int64(ver139), ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := getBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
+	checkUpgraded()
 	dom.Close()
 }
 
@@ -2590,4 +2609,502 @@ func TestTiDBUpgradeToVer219(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+}
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo225(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version224
+	ver224 := version224
+	seV224 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver224))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV224, ver224)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV224, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	ver, err := getBootstrapVersion(seV224)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver224), ver)
+	seV224.Close()
+
+	// upgrade to current version
+	dom.Close()
+	storeBootstrappedLock.Lock()
+	delete(storeBootstrapped, store.UUID())
+	storeBootstrappedLock.Unlock()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}
+
+func TestUpgradeFromVer220ToCurrentBootstrapVersion(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV220 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV220, "USE mysql")
+
+	// Simulate the v8.5.2 schema for `mysql.tidb_pitr_id_map` (pre-version221, no restore_id + old primary key).
+	// Bootstrap sessions use INT_ONLY to keep compatible behavior with old TiDB versions.
+	require.NoError(t, seV220.GetSessionVars().SetSystemVar(variable.TiDBEnableClusteredIndex, variable.IntOnly))
+	MustExec(t, seV220, "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
+	MustExec(t, seV220, `CREATE TABLE mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`)
+
+	// Simulate a cluster bootstrapped/upgraded to v8.5.2 (version220).
+	ver220 := version220
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(ver220)))
+	revertVersionAndVariables(t, seV220, ver220)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	seV220.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	defer seCurVer.Close()
+	MustExec(t, seCurVer, "USE mysql")
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	require.Equal(t, currentBootstrapVersion, mustGetStoreBootstrapVersion(store))
+
+	requirePITRIDMapSchemaFixed(t, seCurVer)
+}
+
+func TestUpgradeToVer227FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	se := CreateSessionAndSetID(t, store)
+
+	// Simulate a customer branch bootstrapped with version221 but missing the upstream's
+	// schema change for `mysql.tidb_pitr_id_map` (no restore_id + old primary key).
+	// Bootstrap sessions use INT_ONLY to keep compatible behavior with old TiDB versions.
+	require.NoError(t, se.GetSessionVars().SetSystemVar(variable.TiDBEnableClusteredIndex, variable.IntOnly))
+	MustExec(t, se, "DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
+	MustExec(t, se, `CREATE TABLE mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`)
+	// The customer branch `release-8.5-20250606-v8.5.2` uses version221 for adding `i_user` indexes.
+	// Simulate these bootstrap DDLs before triggering the upgrade flow.
+	doReentrantDDL(se, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(se, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+
+	MustExec(t, se, "UPDATE mysql.tidb SET VARIABLE_VALUE=? WHERE VARIABLE_NAME=?", version221, tidbServerVersionVar)
+	se.Close()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version221)))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// Trigger upgrade flow.
+	dom.Close()
+	unsetStoreBootstrapped(store.UUID())
+	domUpgraded, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	// Validate schema is upgraded.
+	se2 := CreateSessionAndSetID(t, store)
+	defer se2.Close()
+	requirePITRIDMapSchemaFixed(t, se2)
+}
+
+func TestUpgradeToVer228BackfillsIgnoreInlistPlanDigest(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver227 := version227
+	seV227 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver227))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV227, ver227)
+
+	// Simulate a cluster upgraded through the old path where the variable existed in code
+	// but its row was never backfilled into mysql.global_variables.
+	MustExec(t, seV227, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	res := MustExecToRecodeSet(t, seV227, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	require.NoError(t, res.Close())
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, variable.Off, chk.GetRow(0).GetString(1))
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_ignore_inlist_plan_digest")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	require.NoError(t, res.Close())
+}
+
+func requirePITRIDMapSchemaFixed(t *testing.T, se sessiontypes.Session) {
+	t.Helper()
+	ctx := context.Background()
+
+	// Make sure the expected column exists (table exists as well).
+	MustExec(t, se, "SELECT restore_id FROM mysql.tidb_pitr_id_map LIMIT 0")
+	rs := MustExecToRecodeSet(t, se, `
+		SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX)
+		FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA='mysql' AND TABLE_NAME='tidb_pitr_id_map' AND INDEX_NAME='PRIMARY'`)
+	defer func() { require.NoError(t, rs.Close()) }()
+
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, "restore_id,restored_ts,upstream_cluster_id,segment_id", req.GetRow(0).GetString(0))
+}
+
+func TestTiDBUpgradeToVer230(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver229 := version229
+	seV229 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver229))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV229, ver229)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Verify the indexes exist after bootstrap
+	createWatchSQL := getTableCreateSQLFn(seV229, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL := getTableCreateSQLFn(seV229, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Remove the indexes to simulate the old version
+	seV229.SetValue(sessionctx.Initing, true)
+	seV229.GetSessionVars().SQLMode = 0
+	mustExecute(seV229, "ALTER TABLE mysql.tidb_runaway_watch DROP INDEX idx_start_time")
+	mustExecute(seV229, "ALTER TABLE mysql.tidb_runaway_watch_done DROP INDEX idx_done_time")
+	createWatchSQL = getTableCreateSQLFn(seV229, "tidb_runaway_watch")
+	require.NotContains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seV229, "tidb_runaway_watch_done")
+	require.NotContains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify the indexes have been created after upgrade
+	createWatchSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+}
+
+// TestTiDBUpgradeToVer232 verifies version232 repairs the v8.5.5 hotfix family
+// upgrade (see the version232 comment in bootstrap.go). It exercises the
+// release-8.5-20260323-v8.5.5 case, where both `max_node_count` and `i_user`
+// indexes are missing; the release-8.5-20260527-v8.5.5 case (only
+// `max_node_count` missing, `i_user` already present) is covered by the same
+// re-apply plus `ErrDupKeyName`/`ErrColumnExists` tolerance.
+func TestTiDBUpgradeToVer232(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	getTableCreateSQLFn := func(se sessiontypes.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err := res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Simulate the 0323 final state: version225 applied, but `max_node_count`
+	// and `i_user` indexes were never created (0323 reused version224/225 for
+	// other DDLs).
+	ver225 := version225
+	seV225 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver225))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV225, ver225)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// Drop `max_node_count` (upstream version224 DDL, skipped on both 0323 and 0527).
+	seV225.SetValue(sessionctx.Initing, true)
+	seV225.GetSessionVars().SQLMode = 0
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task DROP COLUMN max_node_count")
+	mustExecute(seV225, "ALTER TABLE mysql.tidb_global_task_history DROP COLUMN max_node_count")
+	createTaskSQL := getTableCreateSQLFn(seV225, "tidb_global_task")
+	require.NotContains(t, createTaskSQL, "max_node_count")
+
+	// Drop all `i_user` indexes (upstream version225 DDL, skipped on 0323).
+	privTables := []string{"user", "global_priv", "db", "tables_priv", "columns_priv", "global_grants", "default_roles"}
+	for _, tbl := range privTables {
+		mustExecute(seV225, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX i_user", tbl))
+		createSQL := getTableCreateSQLFn(seV225, tbl)
+		require.NotContains(t, createSQL, "i_user")
+	}
+
+	// Upgrade to current version; version232 should repair the missing column
+	// and indexes.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify `max_node_count` has been re-added.
+	createTaskSQL = getTableCreateSQLFn(seCurVer, "tidb_global_task")
+	require.Contains(t, createTaskSQL, "max_node_count")
+	createTaskHistorySQL := getTableCreateSQLFn(seCurVer, "tidb_global_task_history")
+	require.Contains(t, createTaskHistorySQL, "max_node_count")
+
+	// Verify all `i_user` indexes have been re-added.
+	for _, tbl := range privTables {
+		createSQL := getTableCreateSQLFn(seCurVer, tbl)
+		require.Contains(t, createSQL, "i_user")
+	}
+}
+
+func TestUpgradeToVer233AddsRestoreRouteIdentity(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Simulate a cluster bootstrapped before version 233: the restore registry
+	// still has the legacy unique index and no route identity columns.
+	sePre := CreateSessionAndSetID(t, store)
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params_v2")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_hash")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN route_strings")
+	MustExec(t, sePre, "ALTER TABLE mysql.tidb_restore_registry DROP COLUMN source_filter_strings")
+	MustExec(t, sePre, `ALTER TABLE mysql.tidb_restore_registry ADD UNIQUE INDEX unique_registration_params (
+		filter_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.FinishBootstrap(int64(version232)))
+	revertVersionAndVariables(t, sePre, version232)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	sePre.Close()
+	dom.Close()
+
+	domCurrent, err := BootstrapSession(store)
+	require.NoError(t, err)
+	seCurrent := CreateSessionAndSetID(t, store)
+
+	result := MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND column_name IN ('source_filter_strings', 'route_strings', 'route_hash')`)
+	chunk := result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(3), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND column_name IN ('source_filter_strings', 'route_strings') AND data_type='mediumtext'`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(2), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT column_name, sub_part FROM information_schema.statistics
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND index_name='unique_registration_params_v2' AND non_unique=0 ORDER BY seq_in_index`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, 7, chunk.NumRows())
+	expectedIndexColumns := []string{"filter_hash", "route_hash", "start_ts", "restored_ts",
+		"upstream_cluster_id", "with_sys_table", "cmd"}
+	for i, expected := range expectedIndexColumns {
+		require.Equal(t, expected, chunk.GetRow(i).GetString(0))
+		if expected == "cmd" {
+			require.Equal(t, int64(256), chunk.GetRow(i).GetInt64(1))
+		} else {
+			require.True(t, chunk.GetRow(i).IsNull(1))
+		}
+	}
+	require.NoError(t, result.Close())
+
+	result = MustExecToRecodeSet(t, seCurrent, `SELECT COUNT(*) FROM information_schema.statistics
+		WHERE table_schema='mysql' AND table_name='tidb_restore_registry'
+		AND index_name='unique_registration_params'`)
+	chunk = result.NewChunk(nil)
+	require.NoError(t, result.Next(ctx, chunk))
+	require.Equal(t, int64(0), chunk.GetRow(0).GetInt64(0))
+	require.NoError(t, result.Close())
+
+	// Two independent restores may share a source filter as long as their route
+	// fingerprints differ: the v2 unique index must accept both.
+	insert := `INSERT INTO mysql.tidb_restore_registry
+		(filter_strings, filter_hash, source_filter_strings, route_strings, route_hash, start_ts, restored_ts,
+		 upstream_cluster_id, with_sys_table, status, cmd)
+		VALUES ('*.*', 'filter', 'db.t', ?, ?, 1, 2, 3, false, 'running', 'restore')`
+	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`x`.`t`\"]", "route-1")
+	MustExec(t, seCurrent, insert, "[\"`db`.`t`:`y`.`t`\"]", "route-2")
+
+	// The upgraded schema must be indistinguishable from a freshly bootstrapped
+	// one (column order and index included), otherwise two clusters running the
+	// same binary would report different `SHOW CREATE TABLE` output.
+	freshStore, freshDom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, freshStore.Close()) }()
+	defer freshDom.Close()
+	seFresh := CreateSessionAndSetID(t, freshStore)
+	defer seFresh.Close()
+	require.Equal(t, restoreRegistrySchema(t, seFresh), restoreRegistrySchema(t, seCurrent))
+
+	// Re-running the migration against an already migrated schema (the state a
+	// cluster is in when a newer branch already applied its own restore-registry
+	// migration) must be a no-op: every DDL is reentrant on
+	// ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
+	upgradedSchema := restoreRegistrySchema(t, seCurrent)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version232)))
+	revertVersionAndVariables(t, seCurrent, version232)
+	require.NoError(t, txn.Commit(ctx))
+	unsetStoreBootstrapped(store.UUID())
+	seCurrent.Close()
+	domCurrent.Close()
+
+	domAgain, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domAgain.Close()
+	seAgain := CreateSessionAndSetID(t, store)
+	defer seAgain.Close()
+	ver, err := getBootstrapVersion(seAgain)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	require.Equal(t, upgradedSchema, restoreRegistrySchema(t, seAgain))
+}
+
+// restoreRegistrySchema renders the user-visible schema of
+// mysql.tidb_restore_registry, including the column order.
+func restoreRegistrySchema(t *testing.T, se sessiontypes.Session) string {
+	ctx := context.Background()
+	res := MustExecToRecodeSet(t, se, "SHOW CREATE TABLE mysql.tidb_restore_registry")
+	chunk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chunk))
+	require.Equal(t, 1, chunk.NumRows())
+	ddl := chunk.GetRow(0).GetString(1)
+	require.NoError(t, res.Close())
+	// The auto-increment counter depends on how many registrations the cluster
+	// has seen, not on the schema.
+	return regexp.MustCompile(` AUTO_INCREMENT=\d+`).ReplaceAllString(ddl, "")
 }

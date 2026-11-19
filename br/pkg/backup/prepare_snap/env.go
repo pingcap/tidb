@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -103,7 +103,7 @@ type CliEnv struct {
 }
 
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
-	stores, err := c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := c.Cache.PDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}

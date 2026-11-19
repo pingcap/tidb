@@ -454,12 +454,12 @@ func TestAddIndexDiskQuotaTS(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	testAddIndexDiskQuotaTS(tk)
+	testAddIndexDiskQuotaTS(t, tk)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	testAddIndexDiskQuotaTS(tk)
+	testAddIndexDiskQuotaTS(t, tk)
 }
 
-func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
+func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -471,10 +471,23 @@ func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustExec("alter table t add index idx_test(b);")
-	ingest.ForceSyncFlagForTest.Store(false)
 	tk.MustExec("update t set b = b + 1;")
+
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(uint64) {
+		counter.Inc()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
+		counter.Dec()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		assert.Equal(t, int32(0), counter.Load())
+	})
+	tk.MustExec("alter table t add index idx_test2(b);")
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
@@ -622,6 +635,37 @@ func TestAddIndexIngestFailures(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b);")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockResetEngineFailed"))
 	tk.MustExec(`set global tidb_enable_dist_task=off;`)
+}
+
+func TestAddIndexLocalSortDiskSpace(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=on;`)
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_enable_dist_task=off;`)
+	})
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop index idx on t;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "1*return"))
+	tk.MustExec("alter table t add index idx2(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed"))
+	tk.MustExec("admin check table t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return"))
+	err := tk.ExecToErr("alter table t add index idx3(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient"))
+	require.ErrorContains(t, err, "Check ingest environment failed")
+	require.ErrorContains(t, err, "mock insufficient local sort disk space")
 }
 
 func TestAddIndexImportFailed(t *testing.T) {

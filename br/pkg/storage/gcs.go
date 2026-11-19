@@ -169,6 +169,12 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
 	return errors.Trace(err)
 }
 
@@ -234,7 +240,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 	object := s.objectName(name)
 	_, err := s.GetBucketHandle().Object(object).Attrs(ctx)
 	if err != nil {
-		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
@@ -294,6 +300,10 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
+	startOffset := ""
+	if opt.StartAfter != "" {
+		startOffset = s.objectName(opt.StartAfter)
+	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -302,7 +312,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		prefix += opt.ObjPrefix
 	}
 
-	query := &storage.Query{Prefix: prefix}
+	query := &storage.Query{Prefix: prefix, StartOffset: startOffset}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
@@ -323,6 +333,9 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
 		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 		path = strings.TrimPrefix(path, "/")
+		if opt.StartAfter != "" && path <= opt.StartAfter {
+			continue
+		}
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}
@@ -390,6 +403,13 @@ const gcsClientCnt = 16
 
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
+	// url.Parse only checks syntax. SDK normalization and validation can reject
+	// endpoints accepted here and expose endpoint credentials in SDK errors.
+	// Error redaction should be fixed upstream rather than duplicating SDK rules here.
+	if _, err := url.Parse(gcs.Endpoint); err != nil {
+		// Do not retain the parser error, which contains the credential-bearing URL.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid GCS endpoint URL")
+	}
 	var clientOps []option.ClientOption
 	if opts.NoCredentials {
 		clientOps = append(clientOps, option.WithoutAuthentication())
@@ -686,4 +706,9 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *gcsObjectReader) GetFileSize() (int64, error) {
 	return r.totalSize, nil
+}
+
+// Features implements FeatureProvider.
+func (*GCSStorage) Features() Features {
+	return FeatureStrongConsistency | FeatureSupportsStartAfter
 }

@@ -8,12 +8,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -65,13 +69,24 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	// No need to cache the coproceesor result
-	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		// No need to cache the coprocessor result.
+		conf.TiKVClient.CoprCache.CapacityMB = 0
+	})
 
 	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
+	if len(cfg.Schemas) > 0 {
+		extraDBNames := make([]string, 0, len(cfg.Schemas))
+		for schema := range cfg.Schemas {
+			extraDBNames = append(extraDBNames, utils.UnquoteName(schema))
+		}
+		filter := gluetidb.FilterLoadSpecifiedDBAndSysDBs(extraDBNames)
+		restore := setTiDBGlueDBFilter(filter)
+		defer restore()
+	}
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(err)
@@ -99,6 +114,9 @@ func printWorkaroundOnFullRestoreError(err error) {
 }
 
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
+	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
+		return err
+	}
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
 	}
@@ -121,6 +139,9 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 }
 
 func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
+	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
+		return err
+	}
 	cfg := task.Config{LogProgress: HasLogFile()}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
@@ -140,6 +161,15 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func rejectRestoreRenameFlag(command *cobra.Command, cmdName string) error {
+	renameFlag := command.Flag(task.FlagRename)
+	if renameFlag != nil && renameFlag.Changed {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported by %s", task.FlagRename, cmdName)
+	}
+	return nil
+}
+
 // NewRestoreCommand returns a restore subcommand.
 func NewRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -154,6 +184,7 @@ func NewRestoreCommand() *cobra.Command {
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
+			kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil
@@ -182,6 +213,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -196,6 +228,7 @@ func newDBRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -209,6 +242,7 @@ func newTableRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -251,5 +285,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }

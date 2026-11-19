@@ -197,9 +197,21 @@ func Selectivity(
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
 				lengths = append(lengths, idxStats.Info.Columns[i].Length)
 			}
-			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
-			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
-			if len(idxCols) > len(idxStats.Info.Columns) {
+			// The found columns can outnumber the columns held by the index, because the handle is
+			// appended to the index key when storing index data to key-value store:
+			// (idx_col1, ...., idx_coln, handle_col1, ..., handle_colm). That is one column for an
+			// int handle and possibly several for a clustered common handle. Every appended column
+			// needs its own length entry, because range building indexes lengths in step with the
+			// columns.
+			//
+			// The appended columns are given the full length even when the clustered index declares
+			// a prefix for them. These lengths only shape the ranges built here for estimation -
+			// the ranges the storage layer scans come from path.IdxColLens, which fillIndexPath
+			// fills from the primary key prefix metadata, and getMaskAndRanges takes those ranges
+			// verbatim whenever a filled path exists. The appended dimensions are estimated from
+			// the handle columns' own column statistics, which hold untruncated values, so bounds
+			// truncated to the stored prefix would be compared against the wrong domain.
+			for range len(idxCols) - len(lengths) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
 			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
@@ -207,7 +219,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+			cnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, idxCols)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -783,6 +795,24 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 	return nil
 }
 
+// findPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func findPrefixOfIndex(cols []*expression.Column, idxColIDs []int64) []*expression.Column {
+	retCols := make([]*expression.Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
+}
+
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
 func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
@@ -804,7 +834,7 @@ func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, 
 		}
 		return retCols
 	}
-	return expression.FindPrefixOfIndex(cols, idxColIDs)
+	return findPrefixOfIndex(cols, idxColIDs)
 }
 
 func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
@@ -869,8 +899,9 @@ func getMaskAndSelectivityForMVIndex(
 	}
 	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
 	// buildPartialPaths4MVIndex() in planner/core.
-	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols)
-	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.GetIdx(id).Info, coll)
+	idxInfo := coll.GetIdx(id).Info
+	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols, idxInfo)
+	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, idxInfo, coll)
 	if err != nil || !ok {
 		return 1.0, 0, false
 	}
@@ -1247,6 +1278,7 @@ var (
 		sctx planctx.PlanContext,
 		filters []expression.Expression,
 		idxCols []*expression.Column,
+		idxInfo *model.IndexInfo,
 	) (
 		accessFilters,
 		remainingFilters []expression.Expression,

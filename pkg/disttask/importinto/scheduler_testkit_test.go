@@ -88,7 +88,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -248,7 +248,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -355,26 +355,29 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
-	// to collect-conflicts state
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
-	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.ImportStepCollectConflicts, task.Step)
-	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, "running", gotJobInfo.Status)
-	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
-	// to conflict-resolution state
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
-	require.NoError(t, err)
-	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(&task.TaskBase)
-	require.Equal(t, proto.ImportStepConflictResolution, task.Step)
-	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, "running", gotJobInfo.Status)
-	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
+	t.Run("conflict resolution part", func(t *testing.T) {
+		t.Skip("the feature is disabled temporarily")
+		// to collect-conflicts state
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.NoError(t, err)
+		require.Len(t, subtaskMetas, 0)
+		task.Step = ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepCollectConflicts, task.Step)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "running", gotJobInfo.Status)
+		require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
+		// to conflict-resolution state
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.NoError(t, err)
+		require.Len(t, subtaskMetas, 0)
+		task.Step = ext.GetNextStep(&task.TaskBase)
+		require.Equal(t, proto.ImportStepConflictResolution, task.Step)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "running", gotJobInfo.Status)
+		require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
+	})
 	// on next stage, to post-process stage
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)

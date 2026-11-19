@@ -91,6 +91,14 @@ func (hot HistogramOperationType) String() string {
 }
 
 // AnalyzeOpt stores the analyze option type and value.
+// A nil Value means the option was specified as DEFAULT: the persisted value
+// for the analyzed target is cleared and the analyze behaves as if the option
+// had never been persisted for it. A partition then falls back to the
+// table-level saved value if one exists, otherwise the system default applies.
+// The DEFAULT keyword is deliberately the only way to express a reset; no
+// literal "magic" value is reserved for it, because that cannot work uniformly
+// (0 TOPN is already a valid pinned value that disables TopN collection, and
+// a literal would pin a fixed BUCKETS/TOPN value rather than follow the default).
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
 	Value ValueExpr
@@ -169,7 +177,11 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WritePlainf(" %v ", opt.Value.GetValue())
+			if opt.Value == nil {
+				ctx.WriteKeyWord(" DEFAULT ")
+			} else {
+				ctx.WritePlainf(" %v ", opt.Value.GetValue())
+			}
 			ctx.WritePlain(AnalyzeOptionString[opt.Type])
 		}
 	}
@@ -348,4 +360,105 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
+}
+
+// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
+func (n *FlushStmt) DedupFlushObjects() {
+	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
+}
+
+func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
+	if len(objects) == 0 {
+		return objects
+	}
+
+	type tableKey struct {
+		dbName    string
+		tableName string
+	}
+
+	dbSeen := make(map[string]struct{})
+	tableSeen := make(map[tableKey]struct{})
+	result := make([]*StatsObject, 0, len(objects))
+
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		// Global scope supersedes everything else. Keep the first global target only.
+		case StatsObjectScopeGlobal:
+			return []*StatsObject{obj}
+		case StatsObjectScopeDatabase:
+			dbKey := obj.DBName.L
+			if _, exists := dbSeen[dbKey]; exists {
+				continue
+			}
+			dbSeen[dbKey] = struct{}{}
+
+			// Remove tables from the same database that might have been added earlier.
+			filtered := result[:0]
+			for _, existing := range result {
+				if existing.StatsObjectScope == StatsObjectScopeTable {
+					existingDBKey := existing.DBName.L
+					if existingDBKey != "" && existingDBKey == dbKey {
+						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
+						delete(tableSeen, tblKey)
+						continue
+					}
+				}
+				filtered = append(filtered, existing)
+			}
+			result = append(filtered, obj)
+		case StatsObjectScopeTable:
+			dbKey := obj.DBName.L
+			if dbKey != "" {
+				if _, exists := dbSeen[dbKey]; exists {
+					continue
+				}
+			}
+			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
+			if _, exists := tableSeen[tblKey]; exists {
+				continue
+			}
+			tableSeen[tblKey] = struct{}{}
+			result = append(result, obj)
+		}
+	}
+
+	return result
+}
+
+type StatsObjectScopeType int
+
+const (
+	// StatsObjectScopeTable is the scope of a table.
+	StatsObjectScopeTable StatsObjectScopeType = iota + 1
+	// StatsObjectScopeDatabase is the scope of a database.
+	StatsObjectScopeDatabase
+	// StatsObjectScopeGlobal is the scope of all databases.
+	StatsObjectScopeGlobal
+)
+
+type StatsObject struct {
+	StatsObjectScope StatsObjectScopeType
+	DBName           model.CIStr
+	TableName        model.CIStr
+}
+
+func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.StatsObjectScope {
+	case StatsObjectScopeTable:
+		if o.DBName.O != "" {
+			ctx.WriteName(o.DBName.O)
+			ctx.WritePlain(".")
+		}
+		ctx.WriteName(o.TableName.O)
+	case StatsObjectScopeDatabase:
+		ctx.WriteName(o.DBName.O)
+		ctx.WritePlain(".*")
+	case StatsObjectScopeGlobal:
+		ctx.WritePlain("*.*")
+	default:
+		// This should never happen.
+		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
+	}
+	return nil
 }

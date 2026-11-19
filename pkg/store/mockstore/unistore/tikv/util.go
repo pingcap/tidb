@@ -75,5 +75,8 @@ func userKeysToHashVals(keys ...y.Key) []uint64 {
 }
 
 func safeCopy(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
 	return append([]byte{}, b...)
 }

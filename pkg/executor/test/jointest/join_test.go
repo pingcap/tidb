@@ -29,6 +29,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIndexMergeJoinInnerHashAggOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table imj_outer(id int primary key, c0 int, c1 int, c2 varchar(50))")
+	tk.MustExec("create table imj_inner(id int primary key, c0 int, c1 int, c2 varchar(50), key(c0))")
+	tk.MustExec("insert into imj_outer values (1,10,100,'a'),(2,20,200,'b'),(3,30,300,'c'),(4,null,400,'d'),(5,10,500,'e'),(6,20,null,'f'),(7,40,700,'g'),(8,50,800,'h')")
+	values := make([]string, 500)
+	for i := range values {
+		values[i] = fmt.Sprintf("(%d,%d,%d,'r')", i+1, []int{10, 20, 30, 60}[i%4], i)
+	}
+	tk.MustExec("insert into imj_inner values " + strings.Join(values, ","))
+	tk.MustExec("analyze table imj_outer, imj_inner")
+	tk.MustExec("set tidb_enable_index_merge_join = on")
+	query := "select c0 from imj_outer where c0 in (select c0 from imj_inner) group by c0 order by c0"
+	plan := fmt.Sprint(tk.MustQuery("explain " + query).Rows())
+	require.NotContains(t, plan, "IndexMergeJoin")
+	for range 20 {
+		tk.MustQuery(query).Check(testkit.Rows("10", "20", "30"))
+	}
+	control := "select /*+ INL_MERGE_JOIN(i) */ count(*) from imj_outer o join imj_inner i on o.c0=i.c0"
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain "+control).Rows()), "IndexMergeJoin")
+	tk.MustQuery(control).Check(testkit.Rows("625"))
+}
+
 func TestJoin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -775,21 +800,23 @@ func TestIssue30211(t *testing.T) {
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
 	}()
+	tk.MustExec("insert into t1 values(1),(2);")
+	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
 
-	for i := 1; i <= 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values (%d),(%d),(%d),(%d)", i, i, i, i))
-	}
+	// the memory used in planner stage is less than the memory used in executor stage, so we have to use
+	// the Plan Cache so that the query will not be canceled during compilation.
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustExec("prepare stmt2 from 'select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
 
-	for i := 1; i <= 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values (%d),(%d),(%d),(%d)", i, i, i, i))
-	}
-	tk.MustExec("set @@tidb_mem_quota_query = 8000;")
+	tk.MustExec("set @@tidb_mem_quota_query=1000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err := tk.QueryToErr("execute stmt1")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err = tk.QueryToErr("execute stmt2")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 

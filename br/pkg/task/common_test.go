@@ -3,13 +3,18 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/operation"
+	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -33,6 +38,33 @@ func (f fakeValue) Type() string {
 }
 
 func TestUrlNoQuery(t *testing.T) {
+	for _, testCase := range []struct{ name, input, expected string }{
+		{flagStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY#FAKE_FLAG_FRAGMENT", "s3://bucket/path"},
+		{FlagStreamFullBackupStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY", "s3://bucket/path"},
+		{flagCheckpointStorage, "local://FAKE_FLAG_USER:FAKE_FLAG_PASS@/tmp/checkpoint?token=FAKE_FLAG_QUERY", "local:///tmp/checkpoint"},
+		{"upstream-storage", "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY#FAKE_FLAG_FRAGMENT", "s3://bucket/path"},
+		{"downstream-storage", "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY#FAKE_FLAG_FRAGMENT", "s3://bucket/path"},
+		{"azblob.account-key", "FAKE_FLAG_AZURE_KEY", "<redacted>"},
+		{"azblob.sas-token", "FAKE_FLAG_SAS", "<redacted>"},
+		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@account.blob.core.windows.net/container?sig=FAKE_FLAG_SIGNATURE", "https://account.blob.core.windows.net/container"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			field := flagToZapField(&pflag.Flag{Name: testCase.name, Value: fakeValue(testCase.input)})
+			output := field.String
+			if stringer, ok := field.Interface.(fmt.Stringer); ok {
+				output = stringer.String()
+			}
+			for _, secret := range []string{"FAKE_FLAG_USER", "FAKE_FLAG_PASS", "FAKE_FLAG_QUERY", "FAKE_FLAG_FRAGMENT", "FAKE_FLAG_AZURE_KEY", "FAKE_FLAG_SAS", "FAKE_FLAG_SIGNATURE"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+			require.Equal(t, testCase.expected, output)
+		})
+	}
 	testCases := []struct {
 		inputName     string
 		expectedName  string
@@ -52,10 +84,22 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    `s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`,
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
 			expectedValue: "s3://bucket/prefix/",
+		},
+		{
+			inputName:     flagCheckpointStorage,
+			expectedName:  "checkpoint-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
 		},
 		{
 			inputName:     flagFullBackupCipherKey,
@@ -73,6 +117,12 @@ func TestUrlNoQuery(t *testing.T) {
 			inputName:     "azblob.encryption-key",
 			expectedName:  "azblob.encryption-key",
 			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "s3.sse-kms-context",
+			expectedName:  "s3.sse-kms-context",
+			inputValue:    `{"tenant":"context-value"}`,
 			expectedValue: "<redacted>",
 		},
 		{
@@ -104,6 +154,58 @@ func TestTiDBConfigUnchanged(t *testing.T) {
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
+}
+
+func TestEnsureOperationContext(t *testing.T) {
+	t.Run("creates command boundary identity", func(t *testing.T) {
+		var cfg Config
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.NotEmpty(t, cfg.OperationContext.OperationID)
+		require.False(t, cfg.OperationContext.StartedAt.IsZero())
+	})
+
+	t.Run("keeps existing identity snapshot", func(t *testing.T) {
+		startedAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+				StartedAt:   startedAt,
+			},
+		}
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.Equal(t, "operation-id", cfg.OperationContext.OperationID)
+		require.Equal(t, startedAt, cfg.OperationContext.StartedAt)
+	})
+
+	t.Run("rejects incomplete identity snapshot", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation started time")
+	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {
@@ -298,12 +400,19 @@ func expectedDefaultBackupConfig() BackupConfig {
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
+		Layout:           repo.LayoutLegacy,
 		TableConcurrency: 64,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	// ParseFromFlags validates and caches the (empty) name router, and the flag
+	// parser materializes Rename as an empty slice, so mirror both here.
+	emptyRouter, err := nameroute.Parse([]string{})
+	if err != nil {
+		panic(err)
+	}
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{
@@ -314,17 +423,23 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"},
+			SysCheckCollation:         true,
 		},
 		NoSchema:                 false,
+		Rename:                   []string{},
 		LoadStats:                true,
 		FastLoadSysTables:        true,
 		PDConcurrency:            0x1,
 		StatsConcurrency:         0xc,
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
+		RegionScanConcurrency:    256,
 		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
 	}
 }
 
@@ -350,6 +465,26 @@ func TestDefaultRestore(t *testing.T) {
 }
 
 func TestParseAndValidateMasterKeyInfo(t *testing.T) {
+	for _, testCase := range []struct{ name, input string }{
+		{"missing AWS region", "aws-kms:///key-id?AWS_ACCESS_KEY_ID=FAKE_KMS_AK&AWS_SECRET_ACCESS_KEY=FAKE_KMS_SK"},
+		{"malformed URL", "aws-kms://FAKE_KMS_USER:FAKE_KMS_PASS@/key%zz?AWS_SECRET_ACCESS_KEY=FAKE_KMS_PARSE_SK"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := &Config{}
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			flags.String(flagMasterKeyConfig, testCase.input, "")
+			flags.String(flagMasterKeyCipherType, "aes256-ctr", "")
+
+			err := cfg.parseAndValidateMasterKeyInfo(false, flags)
+
+			require.Error(t, err)
+			for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+				for _, secret := range []string{"FAKE_KMS_AK", "FAKE_KMS_SK", "FAKE_KMS_USER", "FAKE_KMS_PASS", "FAKE_KMS_PARSE_SK"} {
+					t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+				}
+			}
+		})
+	}
 	tests := []struct {
 		name         string
 		input        string
@@ -484,4 +619,8 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (cfg *RestoreConfig) CreateStorageCheckpointMetaManagersForTest(ctx context.Context, clusterID, restoreID uint64) error {
+	return cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID)
 }

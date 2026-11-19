@@ -129,7 +129,13 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
+		query := "SELECT"
+		if onlyForAnalyzedTables {
+			query += " /*+ use_index(mysql.stats_meta, tbl) */"
+		} else {
+			query += " /*+ use_index(mysql.stats_meta, idx_ver) */"
+		}
+		query += " version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if onlyForAnalyzedTables {
@@ -334,6 +340,11 @@ func (s *StatsCacheImpl) Put(id int64, t *statistics.Table) {
 // TriggerEvict triggers the cache to evict some items.
 func (s *StatsCacheImpl) TriggerEvict() {
 	s.Load().TriggerEvict()
+}
+
+// WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
+func (s *StatsCacheImpl) WaitForAsyncUpdates() {
+	s.Load().WaitForAsyncUpdates()
 }
 
 // MaxTableStatsVersion returns the version of the current cache, which is defined as

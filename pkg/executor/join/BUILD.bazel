@@ -73,6 +73,7 @@ go_test(
     name = "join_test",
     timeout = "short",
     srcs = [
+        "adaptive_limit_outer_test.go",
         "bench_test.go",
         "concurrent_map_test.go",
         "hash_table_v1_test.go",
@@ -114,7 +115,6 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/disk",
-        "//pkg/util/hack",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/sqlkiller",

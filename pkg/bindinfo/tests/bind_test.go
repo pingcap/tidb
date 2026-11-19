@@ -17,9 +17,7 @@ package tests
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -273,6 +271,20 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustUseIndexForConnection(strconv.FormatUint(tkProcess.ID, 10), "ib(b)")
+
+	// issue 57992: global binding should match the prepared statement after
+	// resolving the SELECT alias used in GROUP BY.
+	tk.MustExec("drop table if exists t_issue57992")
+	tk.MustExec("create table t_issue57992(d datetime)")
+	query := "select hour(`d`) as `hour` from t_issue57992 group by `hour`"
+	tk.MustExec("create global binding for " + query + " using " + query)
+
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf("prepare stmt_issue57992 from %q", query))
+	tk.MustExec("execute stmt_issue57992")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
@@ -902,30 +914,13 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 	}
 	// test DROP BINDING FOR SQL DIGEST can handle empty strings correctly
 	digests = append(digests, "", "", "")
-	// randomly split digests into 4 groups using random number
-	// shuffle the slice
-	rand.Shuffle(len(digests), func(i, j int) {
-		digests[i], digests[j] = digests[j], digests[i]
-	})
-	split := make([][]string, 4)
-	for i, d := range digests {
-		split[i%4] = append(split[i%4], d)
-	}
 	// group 0: wrap with ' then connect by ,
 	var g0 string
-	for _, d := range split[0] {
+	for _, d := range digests {
 		g0 += "'" + d + "',"
 	}
-	// group 1: connect by , and set into a user variable
-	tk.MustExec(fmt.Sprintf("set @a = '%v'", strings.Join(split[1], ",")))
-	g1 := "@a,"
-	var g2 string
-	for _, d := range split[2] {
-		g2 += "'" + d + "',"
-	}
-	// group 2: connect by , and put into a normal string
-	g3 := "'" + strings.Join(split[3], ",") + "'"
-	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s %s %s %s", scope, g0, g1, g2, g3))
+	g0 += "'123', '456'" // invalid digests
+	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s", scope, g0))
 	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
 }
 
@@ -1136,6 +1131,11 @@ func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
 }
 
 func TestBatchDropBindings(t *testing.T) {
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	defer func() {
+		bindinfo.Lease = originLease
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)

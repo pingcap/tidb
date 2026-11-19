@@ -5,6 +5,7 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -16,10 +17,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -28,6 +31,13 @@ import (
 const (
 	sysUserTableName = "user"
 )
+
+var planPeplayerTables = map[string]map[string]struct{}{
+	"mysql": {
+		"plan_replayer_status": {},
+		"plan_replayer_task":   {},
+	},
+}
 
 var statsTables = map[string]map[string]struct{}{
 	"mysql": {
@@ -77,11 +87,55 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
+		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
+		// Therefore actually the table is empty.
+		"advisory_locks": {},
+		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
+		"analyze_jobs": {},
+		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
+		"analyze_options": {},
+		// Distributed eXecution Framework
+		// Records the tidb node information, no need to recovered.
+		"dist_framework_meta":             {},
+		"tidb_global_task":                {},
+		"tidb_global_task_history":        {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
+		// DDL internal system tables.
+		"tidb_ddl_history": {},
+		"tidb_ddl_job":     {},
+		"tidb_ddl_reorg":   {},
+		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
+		"tidb_ddl_notifier": {},
+		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
+		"tidb_import_jobs": {},
+
+		"help_topic": {},
+		// records the RU for each resource group temporary, no need to recovered.
+		"request_unit_by_group": {},
+		// load the table data into the memory.
+		"table_cache_meta": {},
+
+		// TiDB runaway internal information.
+		"tidb_runaway_queries":    {},
+		"tidb_runaway_watch":      {},
+		"tidb_runaway_watch_done": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":  {},
+		"tidb_ttl_table_status": {},
+		"tidb_ttl_task":         {},
+
+		// TiDB internal timers.
+		"tidb_timers": {},
+
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},
 		"index_advisor_results": {},
 
+		// TiDB internal system table to synchronize metadata locks across nodes.
+		"tidb_mdl_info": {},
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 
@@ -94,13 +148,13 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	},
 }
 
-type checkPrivilegeTableRowsCollateCompatiblitySQLPair struct {
+type checkPrivilegeTableRowsCollateCompatibilitySQLPair struct {
 	upstreamCollateSQL   string
 	downstreamCollateSQL string
 	columns              map[string]struct{}
 }
 
-var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatiblitySQLPair{
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatibilitySQLPair{
 	"mysql": {
 		"db": {
 			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
@@ -135,118 +189,36 @@ func (t *SchemaVersionPairT) DownstreamVersion() string {
 	return fmt.Sprintf("%d.%d", t.DownstreamVersionMajor, t.DownstreamVersionMinor)
 }
 
-type schemaUpdateSQL struct {
-	schemaName string
-	tableName  string
-	sql        string
-}
-
-type versionSchemaUpdateSQL struct {
-	versionMajor int64
-	versionMinor int64
-	updateSQLs   []schemaUpdateSQL
-}
-
-var upgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
-	// upgrade from v8.1.0 to v8.5.0, update stats table schema
-	{versionMajor: 8, versionMinor: 1, updateSQLs: []schemaUpdateSQL{
-		{
-			schemaName: "mysql",
-			tableName:  "stats_meta",
-			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		},
-	}},
-	// TODO: add new update here if version > 8.1.0
-}
-
-var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
-	// TODO: add new update here if version > 8.5.0
-	// downgrade from v8.5.0 to v8.1.0, update stats table schema
-	{versionMajor: 8, versionMinor: 5, updateSQLs: []schemaUpdateSQL{
-		{
-			schemaName: "mysql",
-			tableName:  "stats_meta",
-			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
-		},
-	}},
-}
-
-func upgradeStatsTableSchema(
-	ctx context.Context,
-	renamedTables map[string]map[string]struct{},
-	fromMajor, fromMinor, toMajor, toMinor int64,
-	execution func(context.Context, string) error,
-) error {
-	for _, updateSQL := range upgradeStatsTableSchemaList {
-		if fromMajor > updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor > updateSQL.versionMinor) {
-			continue
-		}
-		if toMajor < updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor <= updateSQL.versionMinor) {
-			break
-		}
-		for _, sql := range updateSQL.updateSQLs {
-			if tables, ok := renamedTables[sql.schemaName]; ok {
-				if _, ok := tables[sql.tableName]; ok {
-					if err := execution(ctx, sql.sql); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func downgradeStatsTableSchema(
-	ctx context.Context,
-	statisticTables map[string]map[string]struct{},
-	fromMajor, fromMinor, toMajor, toMinor int64,
-	execution func(context.Context, string) error,
-) error {
-	for _, updateSQL := range downgradeStatsTableSchemaList {
-		if fromMajor < updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor < updateSQL.versionMinor) {
-			continue
-		}
-		if toMajor > updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor >= updateSQL.versionMinor) {
-			break
-		}
-		for _, sql := range updateSQL.updateSQLs {
-			if tables, ok := statisticTables[sql.schemaName]; ok {
-				if _, ok := tables[sql.tableName]; ok {
-					if err := execution(ctx, sql.sql); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func updateStatsTableSchema(
 	ctx context.Context,
 	renamedTables map[string]map[string]struct{},
-	versionPair SchemaVersionPairT,
+	infoSchema infoschema.InfoSchema,
 	execution func(context.Context, string) error,
 ) error {
-	if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
-		versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
-		return nil
+	for schemaName, tableNames := range renamedTables {
+		for tableName := range tableNames {
+			tableFunctions, ok := updateStatsMetaSchemaFunctionMap[schemaName]
+			if !ok {
+				continue
+			}
+			updateFunction, ok := tableFunctions[tableName]
+			if !ok {
+				continue
+			}
+			downstreamTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr(schemaName), pmodel.NewCIStr(tableName))
+			if err != nil {
+				return errors.Annotatef(err, "failed to get downstream table info, schema: %s, table: %s", schemaName, tableName)
+			}
+			upstreamTableInfo, err := infoSchema.TableInfoByName(utils.TemporaryDBName(schemaName), pmodel.NewCIStr(tableName))
+			if err != nil {
+				return errors.Annotatef(err, "failed to get upstream table info, schema: %s, table: %s", utils.TemporaryDBName(schemaName).O, tableName)
+			}
+			if err := updateFunction(ctx, downstreamTableInfo, upstreamTableInfo, execution); err != nil {
+				return errors.Annotatef(err, "failed to update stats table schema, schema: %s, table: %s", schemaName, tableName)
+			}
+		}
 	}
-	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor ||
-		(versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
-			versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor) {
-		return upgradeStatsTableSchema(ctx, renamedTables,
-			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-			execution,
-		)
-	}
-	return downgradeStatsTableSchema(ctx, renamedTables,
-		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-		versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-		execution,
-	)
+	return nil
 }
 
 func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{}, notifier func() error) error {
@@ -342,6 +314,15 @@ func isStatsTable(schemaName string, tableName string) bool {
 
 func isRenameableSysTable(schemaName string, tableName string) bool {
 	tableMap, ok := renameableSysTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
 	if !ok {
 		return false
 	}
@@ -469,7 +450,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 	var err error
 	for _, table := range tables {
 		if table == "user" {
-			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
+			if serr := rc.dom.NotifyUpdateAllUsersPrivilege(); serr != nil {
 				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
 				err = multierr.Append(err, berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to flush privileges"))
 			} else {
@@ -489,9 +470,27 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) (retErr error) {
 	dbName := db.Name.L
 	tableName := ti.Name.L
+	if rc.txnTotalSizeLimit > 0 {
+		sessionVars := rc.db.Session().GetSessionCtx().GetSessionVars()
+		originMemQuota := sessionVars.MemQuotaQuery
+		if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery)
+		}
+		defer func() {
+			if err := sessionVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+				log.Warn("failed to restore session variable",
+					zap.String("var", variable.TiDBMemQuotaQuery),
+					zap.Int64("restore-to", originMemQuota),
+					zap.Error(err),
+				)
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", variable.TiDBMemQuotaQuery))
+			}
+		}()
+	}
+
 	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
@@ -523,6 +522,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		return nil
 	}
 
+	if isPlanReplayerTables(dbName, tableName) {
+		return nil
+	}
+
 	if isUnrecoverableTable(dbName, tableName) {
 		return nil
 	}
@@ -541,7 +544,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		if rc.checkPrivilegeTableRowsCollateCompatiblity {
+		if rc.privilegeTableRowsCollateCompatibility {
 			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
 				return err
 			}
@@ -617,11 +620,17 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip when the backed up mysql.user table is missing columns.
+				// mysql.user may gain new columns in newer TiDB versions. In that case the
+				// schemas are still logically compatible, but loading the backed-up data
+				// directly into the temporary table with the newer schema can fail checksum
+				// validation because the upstream snapshot does not contain the new column.
+				// Fall back to non-physical loading for mysql.user when the backup is
+				// missing target columns.
 				if backupTi.Name.L == sysUserTableName {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					canLoadSysTablePhysical = false
 					continue
 				}
 				log.Error("missing column in backup data",
@@ -698,22 +707,24 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	dbNameL, tableNameL string,
 	upstreamTable, downstreamTable *model.TableInfo,
 ) error {
-	collateCompatiblityTableMap, exists := collateCompatibilityTables[dbNameL]
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
 	if !exists {
 		return nil
 	}
-	collateCompatibilityColumnMap, exists := collateCompatiblityTableMap[tableNameL]
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
 	if !exists {
 		return nil
 	}
 	colCount := 0
+	upstreamCollations := make(map[string]string, len(collateCompatibilityColumnMap.columns))
 	for _, col := range upstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
-			if col.GetCollate() != "utf8mb4_bin" {
+			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, upstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
+			upstreamCollations[col.Name.L] = col.GetCollate()
 			colCount += 1
 		}
 	}
@@ -722,12 +733,23 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 			"incompatible column collate, upstream table %s.%s has only %d columns with collate utf8mb4_bin",
 			dbNameL, tableNameL, colCount)
 	}
+	matchingCollations := 0
+	for _, col := range downstreamTable.Columns {
+		if upstreamCollation, exists := upstreamCollations[col.Name.L]; exists && upstreamCollation == col.GetCollate() {
+			matchingCollations++
+		}
+	}
+	// Only collation conversions can introduce collisions between privilege rows.
+	// Upgraded clusters may retain bin columns, so matching bin-to-bin schemas are valid too.
+	if matchingCollations == len(collateCompatibilityColumnMap.columns) {
+		return nil
+	}
 	colCount = 0
 	for _, col := range downstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, downstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
 			colCount += 1

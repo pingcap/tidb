@@ -97,7 +97,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	require.NoError(t, err0)
 	_, err1 := tk0.Exec(sqlExecute)
 	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
-	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
+	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."), err1.Error())
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
@@ -213,4 +213,23 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 	tk.MustExec("insert ignore into tbl_2 values ( 942,33,-1915007317,3408149,-3699,193,'Trywdis',1876334369465184864,115,null );")
 	tk.MustExec("set global tidb_mem_quota_analyze=128;")
 	tk.MustExecToErr("analyze table tbl_2;")
+}
+
+func TestAnalyzeSessionMemTrackerDetachOnClose(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err := tk.ExecToErr("analyze table test.not_exists with 1 topn")
+	require.Error(t, err)
+
+	vars := tk.Session().GetSessionVars()
+	// Clear any residue from the analyze statement to make the delta deterministic.
+	vars.MemTracker.ReplaceBytesUsed(0)
+	base := executor.GlobalAnalyzeMemoryTracker.BytesConsumed()
+	vars.MemTracker.Consume(1024)
+	require.Equal(t, base+1024, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
+
+	tk.Session().Close()
+	require.Equal(t, base, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
 }

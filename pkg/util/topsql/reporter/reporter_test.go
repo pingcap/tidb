@@ -15,6 +15,7 @@
 package reporter
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
+	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -338,26 +341,26 @@ func TestCollectCapacity(t *testing.T) {
 
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	registerSQL(5000)
-	require.Equal(t, int64(5000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(5000), tsr.normalizedSQLMap.size())
 	registerPlan(1000)
-	require.Equal(t, int64(1000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(1000), tsr.normalizedPlanMap.size())
 
 	registerSQL(20000)
-	require.Equal(t, int64(10000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedSQLMap.size())
 	registerPlan(20000)
-	require.Equal(t, int64(10000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxCollect.Store(20000)
 	registerSQL(50000)
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
 	registerPlan(50000)
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
 	tsr.processCPUTimeData(1, genRecord(20000))
 	require.Equal(t, 5001, len(tsr.collecting.records))
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 }
 
 func TestCollectInternal(t *testing.T) {
@@ -518,6 +521,264 @@ func TestReporterWorker(t *testing.T) {
 	assert.Len(t, data.DataRecords, 1)
 	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
 	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+}
+
+func TestProcessStmtStatsData(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+	topsqlstate.GlobalState.MaxStatementCount.Store(3)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	r.Start()
+	defer r.Close()
+
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       1,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 0,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S3",
+			PlanDigest: "P3",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       3,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 2,
+		},
+	})
+
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 3)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes <
+			data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes
+	})
+	// Check Si, Pi and corresponding item value i.
+	for i, record := range data.DataRecords {
+		j := i + 1
+		assert.Equal(t, []byte(fmt.Sprintf("S%d", j)), record.SqlDigest)
+		assert.Equal(t, []byte(fmt.Sprintf("P%d", j)), record.PlanDigest)
+		assert.Equal(t, uint64(j), record.Items[0].StmtNetworkInBytes+record.Items[0].StmtNetworkOutBytes)
+	}
+	// S3, P3 has no recorded CPU time data, so the CpuTimeMs is 0.
+	assert.Equal(t, uint32(0), data.DataRecords[2].Items[0].CpuTimeMs)
+
+	// Check cases with others and evicted
+	r.Collect(nil)
+	// S1/P1 and S4/P4 will be evicted since MaxStatementCount is 3 and its cputime is the lowest.
+	r.Collect([]collector.SQLCPUTimeRecord{
+		{
+			SQLDigest:  []byte("S1"),
+			PlanDigest: []byte("P1"),
+			CPUTimeMs:  1,
+		},
+		{
+			SQLDigest:  []byte("S2"),
+			PlanDigest: []byte("P2"),
+			CPUTimeMs:  2,
+		},
+		{
+			SQLDigest:  []byte("S3"),
+			PlanDigest: []byte("P3"),
+			CPUTimeMs:  3,
+		},
+		{
+			SQLDigest:  []byte("S4"),
+			PlanDigest: []byte("P4"),
+			CPUTimeMs:  0,
+		},
+		{
+			SQLDigest:  []byte("S7"),
+			PlanDigest: []byte("P7"),
+			CPUTimeMs:  7,
+		},
+	})
+	r.CollectStmtStatsMap(nil)
+	// S1/P1 and S7/P7 will be picked from network dimension, and added
+	// Also S2/P2 is not picked from network dimension, while it is not evicted in cputime data, so it won't be added to others.
+	// S4/P4 is not picked from network dimension, and evicted in cputime data, so it will be added to others.
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       10,
+			NetworkInBytes:  10,
+			NetworkOutBytes: 0,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S2",
+			PlanDigest: "P2",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       2,
+			NetworkInBytes:  0,
+			NetworkOutBytes: 2,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S4",
+			PlanDigest: "P4",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       4,
+			NetworkInBytes:  1,
+			NetworkOutBytes: 3,
+		},
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S6",
+			PlanDigest: "P6",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:       6,
+			NetworkInBytes:  2,
+			NetworkOutBytes: 4,
+		},
+	})
+
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+	assert.Len(t, data.DataRecords, 6)
+	sort.Slice(data.DataRecords, func(i, j int) bool {
+		return (data.DataRecords[i].Items[0].StmtNetworkInBytes+data.DataRecords[i].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[i].Items[0].CpuTimeMs) <
+			(data.DataRecords[j].Items[0].StmtNetworkInBytes+data.DataRecords[j].Items[0].StmtNetworkOutBytes)*100+uint64(data.DataRecords[j].Items[0].CpuTimeMs)
+	})
+	// DataRecords should be:
+	// S3, P3, CpuTime=3, Network=0
+	// S7, P7, CpuTime=7, Network=0
+	// S2, P2, CpuTime=2, Network=2
+	// Other,  CpuTime=1, Network=4
+	// S6, P6, CpuTime=0, Network=6
+	// S1, P1, CpuTime=0, Network=10
+	assert.Equal(t, []byte("S3"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, uint32(3), data.DataRecords[0].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[0].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S7"), data.DataRecords[1].SqlDigest)
+	assert.Equal(t, uint32(7), data.DataRecords[1].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(0), data.DataRecords[1].Items[0].StmtNetworkInBytes+data.DataRecords[0].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S2"), data.DataRecords[2].SqlDigest)
+	assert.Equal(t, uint32(2), data.DataRecords[2].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(2), data.DataRecords[2].Items[0].StmtNetworkInBytes+data.DataRecords[2].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte(nil), data.DataRecords[3].SqlDigest)
+	assert.Equal(t, uint32(1), data.DataRecords[3].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(4), data.DataRecords[3].Items[0].StmtNetworkInBytes+data.DataRecords[3].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S6"), data.DataRecords[4].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[4].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(6), data.DataRecords[4].Items[0].StmtNetworkInBytes+data.DataRecords[4].Items[0].StmtNetworkOutBytes)
+	assert.Equal(t, []byte("S1"), data.DataRecords[5].SqlDigest)
+	assert.Equal(t, uint32(0), data.DataRecords[5].Items[0].CpuTimeMs)
+	assert.Equal(t, uint64(10), data.DataRecords[5].Items[0].StmtNetworkInBytes+data.DataRecords[5].Items[0].StmtNetworkOutBytes)
+}
+
+func TestReporterBackpressureRetainsMetadata(t *testing.T) {
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+
+	queuedCount := cap(tsr.reportCollectedDataChan)
+	require.Positive(t, queuedCount)
+	for i := range queuedCount {
+		sqlDigest := []byte(fmt.Sprintf("queued-sql-%d", i))
+		planDigest := []byte(fmt.Sprintf("queued-plan-%d", i))
+		tsr.RegisterSQL(sqlDigest, fmt.Sprintf("select %d", i), false)
+		tsr.RegisterPlan(planDigest, fmt.Sprintf("point_get_%d", i), false)
+		tsr.processCPUTimeData(uint64(i+1), cpuRecords{{
+			SQLDigest:  sqlDigest,
+			PlanDigest: planDigest,
+			CPUTimeMs:  uint32(i + 1),
+		}})
+		tsr.takeDataAndSendToReportChan()
+	}
+	require.Equal(t, queuedCount, len(tsr.reportCollectedDataChan))
+
+	droppedSQLDigest := []byte("dropped-sql")
+	droppedPlanDigest := []byte("dropped-plan")
+	tsr.RegisterSQL(droppedSQLDigest, "select dropped", false)
+	tsr.RegisterPlan(droppedPlanDigest, "point_get_dropped", false)
+	tsr.processCPUTimeData(uint64(queuedCount+1), cpuRecords{{
+		SQLDigest:  droppedSQLDigest,
+		PlanDigest: droppedPlanDigest,
+		CPUTimeMs:  1,
+	}})
+	fullBefore := reporterCounterValue(t, reporter_metrics.IgnoreReportChannelFullCounter)
+	backpressureBefore := reporterCounterValue(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)
+	done := make(chan struct{})
+	go func() {
+		tsr.takeDataAndSendToReportChan()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("takeDataAndSendToReportChan blocked on a full channel")
+	}
+
+	require.Empty(t, tsr.collecting.records)
+	require.Empty(t, tsr.collecting.evicted)
+	require.Len(t, tsr.normalizedSQLMap.toProto(), 1)
+	require.Len(t, tsr.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	require.InDelta(t, 1.0, reporterCounterValue(t, reporter_metrics.IgnoreReportChannelFullCounter)-fullBefore, 1e-9)
+	require.InDelta(t, 1.0, reporterCounterValue(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)-backpressureBefore, 1e-9)
+
+	for range queuedCount {
+		queued := <-tsr.reportCollectedDataChan
+		require.Len(t, queued.collected.getReportRecords(), 1)
+		require.Len(t, queued.normalizedSQLMap.toProto(), 1)
+		require.Len(t, queued.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	}
+
+	tsr.processCPUTimeData(uint64(queuedCount+2), cpuRecords{{
+		SQLDigest:  droppedSQLDigest,
+		PlanDigest: droppedPlanDigest,
+		CPUTimeMs:  1,
+	}})
+	tsr.takeDataAndSendToReportChan()
+	recovered := <-tsr.reportCollectedDataChan
+	require.Len(t, recovered.collected.getReportRecords(), 1)
+	require.Len(t, recovered.normalizedSQLMap.toProto(), 1)
+	require.Len(t, recovered.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan), 1)
+	require.Equal(t, 2, queuedCount)
+}
+
+func reporterCounterValue(t *testing.T, counter interface{ Write(*dto.Metric) error }) float64 {
+	t.Helper()
+	pb := &dto.Metric{}
+	require.NoError(t, counter.Write(pb))
+	return pb.GetCounter().GetValue()
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {

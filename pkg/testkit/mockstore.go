@@ -48,6 +48,16 @@ import (
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
 var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
 
+// RunTestWithDefaultPlanner runs the test body against a fresh mock store and TestKit.
+//
+// It used to run the body once per planner mode; the Cascades planner has been
+// removed, so there is only one planner mode left.
+func RunTestWithDefaultPlanner(t *testing.T, testFunc func(t *testing.T, tk *TestKit), opts ...mockstore.MockTiKVStoreOption) {
+	store := CreateMockStore(t, opts...)
+	tk := NewTestKit(t, store)
+	testFunc(t, tk)
+}
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	if *WithTiKV != "" {

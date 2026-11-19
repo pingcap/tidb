@@ -116,6 +116,8 @@ const (
 	SessionID
 	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
 	BackgroundGoroutineLifecycleHooks
+	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
+	PrewriteEncounterLockPolicy
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
@@ -192,7 +194,14 @@ const (
 	// InternalTxnCacheTable is the type of cache table usage.
 	InternalTxnCacheTable = InternalTxnOthers
 	// InternalTxnStats is the type of statistics txn.
+	// NOTE: This is only used for analyze requests to provide better resource control.
 	InternalTxnStats = "stats"
+	// InternalTxnStatsForegroundPriority is the type of statistics txn that
+	// should run at foreground priority.
+	// It separates non-analyze statistics requests, such as sync load, async load,
+	// and init stats, from analyze requests. These requests can affect user query
+	// latency, so resource control should not throttle them.
+	InternalTxnStatsForegroundPriority = "StatsForegroundPriority"
 	// InternalTxnBindInfo is the type of bind info txn.
 	InternalTxnBindInfo = InternalTxnOthers
 	// InternalTxnSysVar is the type of sys var txn.
@@ -242,6 +251,8 @@ const (
 	LossyDDLColumnReorgSource = 1
 	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
+	// LightningPhysicalImportTxnSource the 17th bit is set as the txn source for Lightning physical import.
+	LightningPhysicalImportTxnSource = 1 << 16
 )
 
 // SetCDCWriteSource sets the TiCDC write source in the txnSource.

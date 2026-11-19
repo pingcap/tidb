@@ -21,3 +21,10 @@ drop table t;
 drop view if exists v;
 create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;
 desc v;
+
+# should use index lookup after adding user index, table scan is not expected
+explain format = 'brief' select * from mysql.user where user = 'xxx';
+explain format = 'brief' select * from mysql.user where user = 'xxx' or user = 'yyy';
+explain format = 'brief' select * from mysql.global_priv where user = 'xxx';
+explain format = 'brief' select * from mysql.global_grants where user = 'xxx' or user = 'yyy';
+explain format = 'brief' select * from mysql.db where user = 'xxx';

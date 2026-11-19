@@ -23,7 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -421,7 +421,7 @@ func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec
 		return errors.Annotatef(err, "failed to copy blob from %s to %s", url, spec.To)
 	}
 	copyID := resp.CopyID
-	deref := aws.StringValue
+	deref := aws.ToString
 
 	for {
 		prop, err := dstBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
@@ -488,6 +488,10 @@ func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage
 }
 
 func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
+	if _, err := url.Parse(clientBuilder.GetServiceURL()); err != nil {
+		// Neither the parser error nor the SDK error is safe: both contain the URL.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid Azure endpoint URL")
+	}
 	serviceClient, err := clientBuilder.GetServiceClient()
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to create azure service client")
@@ -828,6 +832,11 @@ func (r *azblobObjectReader) reopenReader() error {
 		}
 	}
 
+	if r.pos == r.totalSize {
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		return nil
+	}
+
 	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: r.pos,
@@ -902,4 +911,9 @@ func (u *azblobUploader) Close(ctx context.Context) error {
 	}
 	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
+}
+
+// Features implements FeatureProvider.
+func (*AzureBlobStorage) Features() Features {
+	return FeatureStrongConsistency
 }

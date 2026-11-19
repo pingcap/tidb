@@ -113,6 +113,15 @@
                                       }
                                     },
                                     {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                        "EssentialLoaded": false,
+                                        "InValidForCollPseudo": true,
+                                        "IsInvalid": true,
+                                        "NDV": 0,
+                                        "TotalCount": 0
+                                      }
+                                    },
+                                    {
                                       "Name": "i",
                                       "Result": 250
                                     }
@@ -163,6 +172,15 @@
                                           "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
+                                            "TotalCount": 0
+                                          }
+                                        },
+                                        {
+                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                            "EssentialLoaded": false,
+                                            "InValidForCollPseudo": true,
+                                            "IsInvalid": true,
+                                            "NDV": 0,
                                             "TotalCount": 0
                                           }
                                         },
@@ -379,6 +397,15 @@
                                       }
                                     },
                                     {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                        "EssentialLoaded": false,
+                                        "InValidForCollPseudo": true,
+                                        "IsInvalid": true,
+                                        "NDV": 0,
+                                        "TotalCount": 0
+                                      }
+                                    },
+                                    {
                                       "Name": "i",
                                       "Result": 10
                                     }
@@ -539,6 +566,15 @@
                                       }
                                     },
                                     {
+                                      "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                        "EssentialLoaded": false,
+                                        "InValidForCollPseudo": true,
+                                        "IsInvalid": true,
+                                        "NDV": 0,
+                                        "TotalCount": 0
+                                      }
+                                    },
+                                    {
                                       "Name": "i",
                                       "Result": 30
                                     }
@@ -592,6 +628,15 @@
                                           "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
+                                            "TotalCount": 0
+                                          }
+                                        },
+                                        {
+                                          "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
+                                            "EssentialLoaded": false,
+                                            "InValidForCollPseudo": true,
+                                            "IsInvalid": true,
+                                            "NDV": 0,
                                             "TotalCount": 0
                                           }
                                         },

@@ -63,7 +63,7 @@ const (
 
 const (
 	// Todo: make it configable
-	gRPCTimeOut = 25 * time.Minute
+	gRPCTimeOut = 200 * time.Minute
 )
 
 // RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
@@ -76,6 +76,8 @@ const (
 	// RewriteModeKeyspace means the rewrite rule could be applied to keyspace.
 	RewriteModeKeyspace
 )
+
+const DownloadRateLimitTTLSeconds = 3600
 
 type storeTokenChannelMap struct {
 	sync.RWMutex
@@ -133,6 +135,8 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 }
 
 type SnapFileImporter struct {
+	taskId string
+
 	cipher     *backuppb.CipherInfo
 	apiVersion kvrpcpb.APIVersion
 
@@ -147,6 +151,7 @@ type SnapFileImporter struct {
 	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) (afterIngest func() error, err error)
 
 	concurrencyPerStore uint
+	pdReqTokens         chan struct{}
 
 	kvMode      KvMode
 	rawStartKey []byte
@@ -167,6 +172,8 @@ type SnapFileImporterOptions struct {
 	rewriteMode  RewriteMode
 	tikvStores   []*metapb.Store
 
+	// scanConcurrency is the max in-flight PD scan-region requests during import.
+	scanConcurrency     uint
 	concurrencyPerStore uint
 	createCallBacks     []func(*SnapFileImporter) error
 	closeCallbacks      []func(*SnapFileImporter) error
@@ -180,6 +187,7 @@ func NewSnapFileImporterOptions(
 	rewriteMode RewriteMode,
 	tikvStores []*metapb.Store,
 	concurrencyPerStore uint,
+	scanConcurrency uint,
 	createCallbacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) *SnapFileImporterOptions {
@@ -190,25 +198,10 @@ func NewSnapFileImporterOptions(
 		backend:             backend,
 		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
+		scanConcurrency:     scanConcurrency,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
 		closeCallbacks:      closeCallbacks,
-	}
-}
-
-func NewSnapFileImporterOptionsForTest(
-	splitClient split.SplitClient,
-	importClient importclient.ImporterClient,
-	tikvStores []*metapb.Store,
-	rewriteMode RewriteMode,
-	concurrencyPerStore uint,
-) *SnapFileImporterOptions {
-	return &SnapFileImporterOptions{
-		metaClient:          splitClient,
-		importClient:        importClient,
-		tikvStores:          tikvStores,
-		rewriteMode:         rewriteMode,
-		concurrencyPerStore: concurrencyPerStore,
 	}
 }
 
@@ -221,7 +214,13 @@ func NewSnapFileImporter(
 	if options.concurrencyPerStore == 0 {
 		return nil, errors.New("concurrencyPerStore must be greater than 0")
 	}
+	var pdReqTokens chan struct{}
+	if options.scanConcurrency > 0 {
+		pdReqTokens = utils.BuildWorkerTokenChannel(options.scanConcurrency)
+	}
 	fileImporter := &SnapFileImporter{
+		taskId: uuid.New().String(),
+
 		apiVersion: apiVersion,
 		kvMode:     kvMode,
 
@@ -234,6 +233,7 @@ func NewSnapFileImporter(
 		rewriteMode:         options.rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: options.concurrencyPerStore,
+		pdReqTokens:         pdReqTokens,
 		cond:                sync.NewCond(new(sync.Mutex)),
 		closeCallbacks:      options.closeCallbacks,
 	}
@@ -288,9 +288,39 @@ func (importer *SnapFileImporter) Close() error {
 	return nil
 }
 
+func (importer *SnapFileImporter) acquirePDReqToken(ctx context.Context) error {
+	if importer.pdReqTokens != nil {
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case <-importer.pdReqTokens:
+			return nil
+		}
+	}
+	return nil
+}
+
+func (importer *SnapFileImporter) releasePDReqToken() {
+	if importer.pdReqTokens != nil {
+		importer.pdReqTokens <- struct{}{}
+	}
+}
+
+func (importer *SnapFileImporter) paginateScanRegion(
+	ctx context.Context, startKey, endKey []byte,
+) ([]*split.RegionInfo, error) {
+	if err := importer.acquirePDReqToken(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer importer.releasePDReqToken()
+	return split.PaginateScanRegion(ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+}
+
 func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {
 	req := &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     importer.taskId,
 		SpeedLimit: rateLimit,
+		TtlSeconds: DownloadRateLimitTTLSeconds,
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)
@@ -419,8 +449,7 @@ func (importer *SnapFileImporter) Import(
 
 	err = utils.WithRetry(ctx, func() error {
 		// Scan regions covered by the file range
-		regionInfos, errScanRegion := split.PaginateScanRegion(
-			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+		regionInfos, errScanRegion := importer.paginateScanRegion(ctx, startKey, endKey)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
@@ -433,9 +462,10 @@ func (importer *SnapFileImporter) Import(
 		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)), zap.Int("pool size", workerpoolsize))
 		start := time.Now()
 		// Try to download and ingest the file in every region
-		for _, regionInfo := range regionInfos {
+		for i, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
+			ectx := logutil.ContextWithField(ectx, zap.Int("region#", i), zap.Int("total#", len(regionInfos)))
 			workerpool.ApplyOnErrorGroup(eg, func() error {
 				downloadMetas, errDownload := importer.download(ectx, info, backupFileSets, importer.cipher, importer.apiVersion)
 				if errDownload != nil {
@@ -463,7 +493,7 @@ func (importer *SnapFileImporter) Import(
 			})
 		}
 		return eg.Wait()
-	}, utils.NewImportSSTBackoffer())
+	}, utils.VerboseRetry(utils.NewImportSSTBackoffer(), logutil.CL(ctx)))
 	if err != nil {
 		logutil.CL(ctx).Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
 		return errors.Trace(err)
@@ -752,17 +782,24 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			defer func() {
 				importer.releaseToken(tokenCh)
 			}()
-			for _, downloadReqMap := range downloadReqs {
-				for _, req := range downloadReqMap {
+			for i, downloadReqMap := range downloadReqs {
+				logger0 := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
+				for j, req := range downloadReqMap {
 					var err error
 					var resp *import_sstpb.DownloadResponse
-					resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+					logger := logger0.With(zap.String("reqName", j))
+					resp, err = utils.WithRetryV2(ectx, utils.VerboseRetry(utils.NewDownloadSSTBackoffer(), logger), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 						dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 						defer cancel()
 						if len(req.Ssts) == 0 {
 							// fallback to single download
 							return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
 						}
+						logger.Info("Sending batch download SST request.",
+							zap.Uint64("store_id", peer.GetStoreId()),
+							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
+							logutil.Region(regionInfo.Region),
+						)
 						return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
 					})
 					if err != nil {
@@ -772,7 +809,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
 					}
 					if resp.GetIsEmpty() {
-						log.Warn("download file skipped", zap.String("filename", req.Name),
+						logger.Warn("download file skipped", zap.String("filename", req.Name),
 							logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
 						continue
 					}
@@ -999,6 +1036,7 @@ func (importer *SnapFileImporter) ingest(
 		errPb := ingestResp.GetError()
 		switch {
 		case errPb == nil:
+			logutil.CL(ctx).Info("finish ingesting into a region.", logutil.Region(info.Region), zap.Int("sst", len(downloadMetas)))
 			return nil
 		case errPb.NotLeader != nil:
 			// If error is `NotLeader`, update the region info and retry

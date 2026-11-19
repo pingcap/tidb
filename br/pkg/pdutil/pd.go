@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -158,10 +159,10 @@ func NewPdController(
 	}
 	pdClient, err := pd.NewClientWithContext(
 		ctx, pdAddrs, securityOption,
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		log.Error("fail to create pd client", zap.Error(err))
@@ -568,6 +569,9 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 	ctx context.Context,
 	pdConfigGenerators map[string]pauseConfigGenerator,
 ) (origin ClusterConfig, modified ClusterConfig, err error) {
+	failpoint.Inject("removeSchedulersError", func() {
+		failpoint.Return(ClusterConfig{}, ClusterConfig{}, errors.New("injected scheduler removal failure"))
+	})
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
 			opentracing.ChildOf(span.Context()))

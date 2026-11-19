@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -93,8 +94,8 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
 	RequestRetryInterval = 200 * time.Millisecond
-	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
-	SyncBundlesMaxRetry = 3
+	// RequestPDMaxRetry is the max retry times for sync placement bundles
+	RequestPDMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -129,6 +130,21 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
+}
+
+type syncerOptions struct {
+	disableRPC bool
+}
+
+// SyncerOption configures a Syncer during construction.
+type SyncerOption func(*syncerOptions)
+
+// WithDisableRPC marks the published server info as ineligible for TiDB RPC.
+// Domain passes it when the domain is started as standalone BR.
+func WithDisableRPC() SyncerOption {
+	return func(options *syncerOptions) {
+		options.disableRPC = true
+	}
 }
 
 // ServerInfo represents the server's basic information.
@@ -186,6 +202,10 @@ type StaticServerInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+	// DisableRPC marks that this process should not be selected as a TiDB
+	// RPC target, such as standalone BR. Missing/false means the node can serve
+	// TiDB-type RPC requests, which keeps compatibility with older server info.
+	DisableRPC bool `json:"disable_rpc,omitempty"`
 }
 
 // DynamicServerInfo represents the dynamic information of the server.
@@ -251,7 +271,12 @@ func GlobalInfoSyncerInit(
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
 	infoCache infoschemaMinTS,
+	options ...SyncerOption,
 ) (*InfoSyncer, error) {
+	args := &syncerOptions{}
+	for _, option := range options {
+		option(args)
+	}
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
 			WithCallerID("tidb-info-syncer").
@@ -265,7 +290,7 @@ func GlobalInfoSyncerInit(
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
 	}
-	is.info.Store(getServerInfo(id, serverIDGetter))
+	is.info.Store(getServerInfo(id, serverIDGetter, args.disableRPC))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -276,6 +301,10 @@ func GlobalInfoSyncerInit(
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
+
+	// Initialize affinity package
+	affinity.InitManager(is.pdHTTPCli)
+
 	return is, nil
 }
 
@@ -448,6 +477,12 @@ func GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	failpoint.Inject("mockGetAllServerInfo", func(val failpoint.Value) {
 		res := make(map[string]*ServerInfo)
 		err := json.Unmarshal([]byte(val.(string)), &res)
+		// Match the server ID lookup initialized when reading info from etcd.
+		for _, info := range res {
+			if info != nil {
+				info.ServerIDGetter = func() uint64 { return info.JSONServerID }
+			}
+		}
 		failpoint.Return(res, err)
 	})
 	is, err := getGlobalInfoSyncer()
@@ -684,14 +719,14 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
-	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+	return PutRuleBundlesWithRetry(ctx, bundles, RequestPDMaxRetry, RequestRetryInterval)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		info := is.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, info.DisableRPC)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -827,9 +862,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
-		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue {
-			// Ignore DDL sessions.
-			continue
+		// StatementContext.Reset overwrites even atomic fields. Hold a reference
+		// while reading the flag; if resetting, conservatively keep the txn TS.
+		if info.StmtCtx != nil && info.RefCountOfStmtCtx != nil && info.RefCountOfStmtCtx.TryIncrease() {
+			isDDL := info.StmtCtx.IsDDLJobInQueue.Load()
+			info.RefCountOfStmtCtx.Decrease()
+			if isDDL {
+				continue
+			}
 		}
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
@@ -1082,7 +1122,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, disableRPC bool) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticServerInfo: StaticServerInfo{
@@ -1093,6 +1133,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			Lease:          cfg.Lease,
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
+			DisableRPC:     disableRPC,
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),

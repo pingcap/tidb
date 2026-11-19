@@ -101,6 +101,51 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiDBMaxKeysRead(t *testing.T) {
+	sv := GetSysVar(TiDBMaxKeysRead)
+	require.NotNil(t, sv)
+	vars := NewSessionVars(nil)
+
+	// Negative values should be clipped to 0.
+	val, err := sv.Validate(vars, "-1", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Zero is valid (unlimited).
+	val, err = sv.Validate(vars, "0", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Positive values are accepted.
+	val, err = sv.Validate(vars, "1000", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
+
+	// SetSession sets MaxKeysRead.
+	require.Nil(t, sv.SetSessionFromHook(vars, "500"))
+	require.Equal(t, uint64(500), vars.MaxKeysRead)
+
+	// IsHintUpdatableVerified must be true.
+	require.True(t, sv.IsHintUpdatableVerified)
+}
+
+func TestGetMaxKeysRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	vars.MaxKeysRead = 100
+
+	// Outside SELECT statement: returns 0.
+	vars.StmtCtx.InSelectStmt = false
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+
+	// Inside SELECT statement: returns configured value.
+	vars.StmtCtx.InSelectStmt = true
+	require.Equal(t, uint64(100), vars.GetMaxKeysRead())
+
+	// Zero means unlimited regardless of context.
+	vars.MaxKeysRead = 0
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{TiDBMaxBytesBeforeTiFlashExternalJoin, TiDBMaxBytesBeforeTiFlashExternalGroupBy, TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {
@@ -1264,7 +1309,7 @@ func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	initValue, err := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
 	require.NoError(t, err)
-	require.Equal(t, initValue, Off)
+	require.Equal(t, initValue, On)
 	// Set to On(init at start)
 	err1 := mock.SetGlobalSysVar(context.Background(), TiDBIgnoreInlistPlanDigest, On)
 	require.NoError(t, err1)
@@ -1486,13 +1531,13 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Set to noop
+	// Set to noop. Unknown schemes drop the query on read; the stored value keeps it.
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, noopURI)
 	require.NoError(t, err)
 	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
 	require.NoError(t, err1)
-	require.Equal(t, noopURI, val)
+	require.Equal(t, "noop://blackhole", val)
 	require.Equal(t, noopURI, CloudStorageURI.Load())
 
 	// Set to s3, should fail
@@ -1567,6 +1612,16 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			TiDBEnableAutoAnalyze,
 			BoolToOnOff(DefTiDBEnableAutoAnalyze),
 			Off,
+		},
+		{
+			TiDBRedactLog,
+			On,
+			Off,
+		},
+		{
+			TiDBEnableAdaptiveLimitScan,
+			BoolToOnOff(DefTiDBEnableAdaptiveLimitScan),
+			On,
 		},
 		{
 			TiDBRowFormatVersion,
@@ -1742,6 +1797,34 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio(t *testing.T) {
+	sv := GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio)
+	vars := NewSessionVars(nil)
+
+	// Too low, will get raised to the min value
+	val, err := sv.Validate(vars, "-1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MinValue, 10), val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'", warn.Error())
+
+	// Too high, will get lowered to the max value
+	val, err = sv.Validate(vars, "1.1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MaxValue, 10), val)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'", warn.Error())
+
+	// valid
+	val, err = sv.Validate(vars, "0.9", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.9", val)
+
+	val, err = sv.Validate(vars, "0.0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.0", val)
+}
+
 func TestEnableWindowFunction(t *testing.T) {
 	vars := NewSessionVars(nil)
 	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
@@ -1776,6 +1859,9 @@ func TestTiDBHashJoinVersion(t *testing.T) {
 
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
+	sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
+	require.NotNil(t, sysVar)
+	require.Equal(t, "3", sysVar.Value)
 
 	tests := []struct {
 		name                string
@@ -1819,9 +1905,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			RunAutoAnalyze.Store(tt.autoAnalyze)
 			EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
 
-			sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
-			require.NotNil(t, sysVar)
-
 			_, err := sysVar.Validate(vars, tt.input, ScopeGlobal)
 			if tt.expectError {
 				require.Error(t, err)
@@ -1830,4 +1913,83 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
+	sv := GetSysVar(TiDBOptPartialOrderedIndexForTopN)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasSessionScope())
+	require.True(t, sv.HasGlobalScope())
+	require.True(t, sv.IsHintUpdatableVerified)
+	require.Equal(t, TypeEnum, sv.Type)
+	require.Equal(t, "DISABLE", sv.Value)
+
+	vars := NewSessionVars(nil)
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := sv.Validate(vars, "COST", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "COST", val)
+
+	val, err = sv.Validate(vars, "cost", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "COST", val)
+
+	val, err = sv.Validate(vars, "DISABLE", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", val)
+
+	val, err = sv.Validate(vars, "disable", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", val)
+
+	_, err = sv.Validate(vars, "ON", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "OFF", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "1", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "0", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "true", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "false", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "2", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "-1", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "yes", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	_, err = sv.Validate(vars, "no", ScopeSession)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can't be set to the value of")
+
+	err = sv.SetSessionFromHook(vars, "COST")
+	require.NoError(t, err)
+	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
+
+	err = sv.SetSessionFromHook(vars, "DISABLE")
+	require.NoError(t, err)
+	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }

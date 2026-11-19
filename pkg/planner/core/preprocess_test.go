@@ -280,6 +280,10 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
+
+		// LATERAL derived tables pass preprocessing; validation happens in the planner.
+		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
+		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)

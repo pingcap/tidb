@@ -283,15 +283,15 @@ func generateNonPartitionPlan(
 	}
 
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
@@ -303,7 +303,8 @@ func generateNonPartitionPlan(
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := recordRegionMetas[0]
 		for _, m := range recordRegionMetas[1:] {
@@ -313,11 +314,15 @@ func generateNonPartitionPlan(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -330,7 +335,7 @@ func generateNonPartitionPlan(
 			// It should be different for each subtask to determine if there are duplicate entries.
 			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
 			if err != nil {
-				return true, nil
+				return true, err
 			}
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
@@ -352,8 +357,9 @@ func generateNonPartitionPlan(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {
@@ -471,6 +477,11 @@ func generateGlobalSortIngestPlan(
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	failpoint.Inject("mockAllocNewTSError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(0, errors.New("mock alloc new TS error"))
+		}
+	})
 	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {

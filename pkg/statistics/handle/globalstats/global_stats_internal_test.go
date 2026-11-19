@@ -63,7 +63,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where is_index=0").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tint global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
-		"test tint global c 0 1 12 2 17 17 0",
+		"test tint global c 0 1 12 2 11 17 0",
 		"test tint p0 c 0 0 2 1 1 2 0",
 		"test tint p0 c 0 1 3 1 3 3 0",
 		"test tint p1 c 0 0 3 1 11 13 0",
@@ -77,7 +77,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tint global c 1 0 5 2 1 4 0",    // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tint global c 1 1 12 2 17 17 0", // same with the column's
+		"test tint global c 1 1 12 2 11 17 0", // same with the column's
 		"test tint p0 c 1 0 2 1 1 2 0",
 		"test tint p0 c 1 1 3 1 3 3 0",
 		"test tint p1 c 1 0 3 1 11 13 0",
@@ -122,7 +122,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdouble global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
-		"test tdouble global c 0 1 12 2 17 17 0",
+		"test tdouble global c 0 1 12 2 11 17 0",
 		"test tdouble p0 c 0 0 2 1 1 2 0",
 		"test tdouble p0 c 0 1 3 1 3 3 0",
 		"test tdouble p1 c 0 0 3 1 11 13 0",
@@ -139,7 +139,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdouble global c 1 0 5 2 1 4 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdouble global c 1 1 12 2 17 17 0",
+		"test tdouble global c 1 1 12 2 11 17 0",
 		"test tdouble p0 c 1 0 2 1 1 2 0",
 		"test tdouble p0 c 1 1 3 1 3 3 0",
 		"test tdouble p1 c 1 0 3 1 11 13 0",
@@ -187,7 +187,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdecimal global c 0 0 5 2 1.00 4.00 0", // bucket.ndv is not maintained for column histograms
-		"test tdecimal global c 0 1 12 2 17.00 17.00 0",
+		"test tdecimal global c 0 1 12 2 11.00 17.00 0",
 		"test tdecimal p0 c 0 0 2 1 1.00 2.00 0",
 		"test tdecimal p0 c 0 1 3 1 3.00 3.00 0",
 		"test tdecimal p1 c 0 0 3 1 11.00 13.00 0",
@@ -204,7 +204,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdecimal global c 1 0 5 2 1.00 4.00 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdecimal global c 1 1 12 2 17.00 17.00 0",
+		"test tdecimal global c 1 1 12 2 11.00 17.00 0",
 		"test tdecimal p0 c 1 0 2 1 1.00 2.00 0",
 		"test tdecimal p0 c 1 1 3 1 3.00 3.00 0",
 		"test tdecimal p1 c 1 0 3 1 11.00 13.00 0",
@@ -252,7 +252,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdatetime global c 0 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0", // bucket.ndv is not maintained for column histograms
-		"test tdatetime global c 0 1 12 2 2000-01-17 00:00:00 2000-01-17 00:00:00 0",
+		"test tdatetime global c 0 1 12 2 2000-01-11 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 0 0 2 1 2000-01-01 00:00:00 2000-01-02 00:00:00 0",
 		"test tdatetime p0 c 0 1 3 1 2000-01-03 00:00:00 2000-01-03 00:00:00 0",
 		"test tdatetime p1 c 0 0 3 1 2000-01-11 00:00:00 2000-01-13 00:00:00 0",
@@ -269,7 +269,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tdatetime global c 1 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tdatetime global c 1 1 12 2 2000-01-17 00:00:00 2000-01-17 00:00:00 0",
+		"test tdatetime global c 1 1 12 2 2000-01-11 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 1 0 2 1 2000-01-01 00:00:00 2000-01-02 00:00:00 0",
 		"test tdatetime p0 c 1 1 3 1 2000-01-03 00:00:00 2000-01-03 00:00:00 0",
 		"test tdatetime p1 c 1 0 3 1 2000-01-11 00:00:00 2000-01-13 00:00:00 0",
@@ -317,7 +317,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tstring global c 0 0 5 2 a1 a4 0", // bucket.ndv is not maintained for column histograms
-		"test tstring global c 0 1 12 2 b17 b17 0",
+		"test tstring global c 0 1 12 2 b11 b17 0",
 		"test tstring p0 c 0 0 2 1 a1 a2 0",
 		"test tstring p0 c 0 1 3 1 a3 a3 0",
 		"test tstring p1 c 0 0 3 1 b11 b13 0",
@@ -334,7 +334,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
 		"test tstring global c 1 0 5 2 a1 a4 0", // 4 is popped from p0.TopN, so g.ndv = p0.ndv+1
-		"test tstring global c 1 1 12 2 b17 b17 0",
+		"test tstring global c 1 1 12 2 b11 b17 0",
 		"test tstring p0 c 1 0 2 1 a1 a2 0",
 		"test tstring p0 c 1 1 3 1 a3 a3 0",
 		"test tstring p1 c 1 0 3 1 b11 b13 0",
@@ -359,14 +359,47 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
 	testKit.MustExec("explain select * from t where a > 0 and b > 0")
-	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
-		"test t global a 0 0 2 2 0 2 0",
-		"test t global b 0 0 3 1 1 2 0",
-		"test t global b 0 1 10 1 4 4 0",
+	testKit.MustQuery("show stats_topn where table_name = 't'").Sort().Check(testkit.Rows(
+		"test t global a 0 1 6",
+		"test t global b 0 2 4",
+		"test t p0 a 0 0 4",
+		"test t p0 b 0 3 3",
+		"test t p1 a 0 1 6",
+		"test t p1 b 0 2 3",
+		"test t p2 a 0 2 2",
+		"test t p2 b 0 1 2",
+	))
+	// Global TopN merge picks b=2 (p1 TopN=3 + p0 hist upper-bound
+	// repeat=1 = 4). The leftover TopN entries (b=3 count 3, b=1
+	// count 2) become virtual single-value buckets in the merge, so
+	// column b's 8 histogram rows land in three global buckets:
+	// [1,1] mass 2 (p2's two b=1 rows, Repeat 2 at the bucket upper),
+	// [1,3] mass 5 (p1's interior b=1 row plus all four b=3 rows,
+	// Repeat 4) and [4,4] mass 1 (the b=4 row, Repeat 1).
+	//
+	// The b=3 group stays together across histogram and virtual TopN
+	// refs, so its full frequency is retained. The b=1 estimate is still
+	// 2 rather than 3 because p1's b=1 row is unidentifiable interior mass.
+	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
+		"test t global a 0 0 4 4 0 0 0",
+		"test t global a 0 1 6 2 2 2 0",
+		"test t global b 0 0 2 2 1 1 0",
+		"test t global b 0 1 7 4 1 3 0",
+		"test t global b 0 2 8 1 4 4 0",
+		"test t p0 b 0 0 1 1 2 2 0",
+		"test t p1 b 0 0 2 1 1 3 0",
+		"test t p1 b 0 1 3 1 4 4 0",
 	))
 }
 
 func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
+	originAutoAnalyze := tk.MustQuery("select @@global.tidb_enable_auto_analyze").Rows()[0][0].(string)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze=%q", originAutoAnalyze))
+	// Disable auto analyze to ensure that stats are not automatically collected
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	originTableFullScanCostFactor := tk.MustQuery("select @@session.tidb_opt_table_full_scan_cost_factor").Rows()[0][0].(string)
+	defer tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_table_full_scan_cost_factor=%s", originTableFullScanCostFactor))
+
 	tk.MustExec("use test")
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
@@ -406,18 +439,15 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
-	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	// Set table cost factor high to ensure index is preferred without bindings.
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
@@ -434,7 +464,7 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 }

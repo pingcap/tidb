@@ -536,10 +536,21 @@ func TestCursorExceedQuota(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	_, err = conn.ExecContext(context.Background(), "set tidb_max_chunk_size = 32;", nil)
+	require.NoError(t, err)
 	_, err = conn.ExecContext(context.Background(), "set tidb_mem_quota_query = 1;", nil)
 	require.NoError(t, err)
 	_, err = conn.ExecContext(context.Background(), "set global tidb_enable_tmp_storage_on_oom = 'ON'", nil)
 	require.NoError(t, err)
+	// Wait for the asynchronous quota failure before checking the cursor error.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/testRowContainerDeadLock", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/testRowContainerDeadLock"))
+	}()
 
 	rawStmt, err := conn.Prepare("SELECT * FROM test.t1")
 	require.NoError(t, err)

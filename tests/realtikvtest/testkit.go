@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.opencensus.io/stats/view"
@@ -62,11 +64,21 @@ var (
 	RetainOldData = false
 )
 
+// CurrentPDAddr returns the PD address derived from the current -tikv-path value.
+// It parses flags on demand so callers don't depend on TestMain ordering.
+func CurrentPDAddr() string {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	return mustParsePDAddr(*TiKVPath)
+}
+
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
+	PDAddr = CurrentPDAddr()
 	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -102,6 +114,14 @@ func RunTestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func mustParsePDAddr(tikvPath string) string {
+	pdAddrs, _, _, err := tikvcfg.ParsePath(tikvPath)
+	if err != nil {
+		panic(err)
+	}
+	return strings.Join(pdAddrs, ",")
 }
 
 // CreateMockStoreAndSetup return a new kv.Storage.
@@ -147,10 +167,13 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 			}
 			for _, table := range tables {
-				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+				err := tk.ExecToErr(fmt.Sprintf("alter table %s nocache", table))
+				if err != nil && !infoschema.ErrTableNotExists.Equal(err) {
+					require.NoError(t, err)
+				}
 			}
 			if len(tables) > 0 {
-				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+				tk.MustExec(fmt.Sprintf("drop table if exists %s", strings.Join(tables, ",")))
 			}
 		}
 	} else {

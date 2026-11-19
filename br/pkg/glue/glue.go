@@ -53,7 +53,7 @@ type Glue interface {
 type Session interface {
 	Execute(ctx context.Context, sql string) error
 	ExecuteInternal(ctx context.Context, sql string, args ...any) error
-	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
+	CreateDatabaseOnExistError(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error

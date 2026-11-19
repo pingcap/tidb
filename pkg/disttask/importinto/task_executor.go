@@ -94,6 +94,9 @@ func getTableImporter(
 		return nil, err
 	}
 
+	failpoint.Inject("createTableImporterForTest", func() {
+		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+	})
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
@@ -148,6 +151,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
+	defer func() {
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		s.tableImporter.Backend().CleanupAllLocalEngines(context.Background())
+	}()
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 		if err != nil {
@@ -174,6 +183,9 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
+	defer func() {
+		s.sharedVars.Delete(subtaskMeta.ID)
+	}()
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
@@ -275,7 +287,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		}
 	}
 
-	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -362,10 +373,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
 	}
-	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	wctx := workerpool.NewContext(ctx)
 	op := external.NewMergeOperator(
@@ -377,7 +384,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		int(m.GetResource().CPU.Capacity()),
 		false,
-		onDup,
+		common.OnDuplicateKeyIgnore,
 	)
 
 	if err = external.MergeOverlappingFiles(
@@ -496,10 +503,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
@@ -514,7 +517,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:  0,
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
-			OnDup:         onDup,
+			OnDup:         common.OnDuplicateKeyIgnore,
 			FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
 		},
 		TS: sm.TS,

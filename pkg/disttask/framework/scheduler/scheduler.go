@@ -470,6 +470,12 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
+		// calculate the number of subtasks, so we need to do this before
+		// filtering nodes by available slots in scheduleSubtask.
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	}
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
 	if len(eligibleNodes) == 0 {
@@ -601,13 +607,16 @@ func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 	if err != nil {
 		return nil, err
 	}
-	if len(serverInfos) == 0 {
-		return nil, errors.New("not found instance")
-	}
-
 	serverNodes = make([]*infosync.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
+		// Standalone BR publishes server info without running a task executor.
+		if serverInfo.DisableRPC {
+			continue
+		}
 		serverNodes = append(serverNodes, serverInfo)
+	}
+	if len(serverNodes) == 0 {
+		return nil, errors.New("not found instance")
 	}
 	return serverNodes, nil
 }

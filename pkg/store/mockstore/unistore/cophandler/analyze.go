@@ -189,7 +189,7 @@ type analyzeIndexProcessor struct {
 	topNCurValuePair statistics.TopNMeta
 }
 
-func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
+func (p *analyzeIndexProcessor) Process(key, _ []byte, _ uint64) error {
 	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
 	if err != nil {
 		return err
@@ -237,7 +237,7 @@ type analyzeCommonHandleProcessor struct {
 	rowBuf       []byte
 }
 
-func (p *analyzeCommonHandleProcessor) Process(key, value []byte) error {
+func (p *analyzeCommonHandleProcessor) Process(key, value []byte, _ uint64) error {
 	values, _, err := tablecodec.CutCommonHandle(key, p.colLen)
 	if err != nil {
 		return err
@@ -483,12 +483,12 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *analyzeColumnsExec) Process(key, value []byte) error {
+func (e *analyzeColumnsExec) Process(key, value []byte, _ uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, 0, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -615,7 +615,7 @@ type analyzeMixedExec struct {
 	topNCurValuePair statistics.TopNMeta
 }
 
-func (e *analyzeMixedExec) Process(key, value []byte) error {
+func (e *analyzeMixedExec) Process(key, value []byte, _ uint64) error {
 	// common handle
 	values, _, err := tablecodec.CutCommonHandle(key, e.colLen)
 	if err != nil {
@@ -653,7 +653,7 @@ func (e *analyzeMixedExec) Process(key, value []byte) error {
 	}
 
 	// columns
-	err = e.analyzeColumnsExec.Process(key, value)
+	err = e.analyzeColumnsExec.Process(key, value, 0)
 	return err
 }
 

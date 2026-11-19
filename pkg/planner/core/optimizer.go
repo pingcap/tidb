@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -98,6 +99,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
+	&CorrelateSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
@@ -304,10 +306,6 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
-	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
-		flag |= rule.FlagPruneColumnsAgain
-	}
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
@@ -322,6 +320,16 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
+	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
+	// A second column-prune pass is worthwhile when any rule above column
+	// pruning is enabled.
+	if flag&rule.FlagPruneColumns != 0 {
+		const abovePruneColumns = ^(rule.FlagPruneColumns | (rule.FlagPruneColumns - 1))
+		if flag&abovePruneColumns != 0 {
+			flag |= rule.FlagPruneColumnsAgain
+		}
 	}
 	return flag
 }
@@ -416,7 +424,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
 }
@@ -435,26 +442,6 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	rfGenerator.GenerateRuntimeFilter(plan)
 	logutil.BgLogger().Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
-}
-
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
-// @brief: push down some filter conditions to the table scan operator
-// @param: sctx: session context
-// @param: plan: the physical plan to be pruned
-// @note: this optimization is only applied when the TiFlash is used.
-// @note: the following conditions should be satisfied:
-//   - Only the filter conditions with high selectivity should be pushed down.
-//   - The filter conditions which contain heavy cost functions should not be pushed down.
-//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
-	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
-		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
-	}
 }
 
 /*
@@ -648,6 +635,21 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
+func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
+	minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppServerInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
+		// TiFlash may restart with a different CPU configuration while keeping the same
+		// address, so refresh the cached logical core count when StartTimestamp changes.
+		if mppServerInfo == nil || mppServerInfo.StartTimestamp != info.StartTimestamp {
+			serversNeedingRefresh = append(serversNeedingRefresh, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppServerInfo.LogicalCPUCount)
+	}
+	return
+}
+
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
@@ -657,19 +659,28 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
-	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+
+	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
+
+	if len(serversNeedingRefresh) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversNeedingRefresh, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+							Address:         serversNeedingRefresh[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,
+						})
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
+				}
 			}
 		}
 	}
+
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	return true, minLogicalCores
 }
@@ -946,27 +957,30 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
-	// the parallel apply has three limitation:
-	// 1. the parallel implementation now cannot keep order;
-	// 2. the inner child has to support clone;
-	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
+	// The parallel apply has two limitations:
+	// 1. The inner child has to support clone.
+	// 2. If one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
+	// Note: ordering is now preserved via a reorder buffer (KeepOrder=true)
+	// when the outer side requires sorted output, so order is no longer a limitation.
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
+		hasOrder := apply.GetChildReqProps(outerIdx).NeedKeepOrder()
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
-		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
+		supportClone := err == nil // limitation 1
+		if supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			// When the outer side requires ordering, use a reorder buffer
+			// in the executor to preserve row order while still running
+			// inner workers in parallel.
+			if hasOrder {
+				apply.KeepOrder = true
 			}
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
 		}
-		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// Because of limitation 2, we cannot parallelize Apply operators in this Apply's inner side,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
 		return apply
@@ -1201,7 +1215,7 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
-	if disableReuseChunk, continueIterating := checkOverlongColType(sctx, plan); disableReuseChunk || !continueIterating {
+	if disableReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
 	for _, child := range plan.Children() {
@@ -1209,20 +1223,23 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	}
 }
 
-// checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
+// checkSkipReuseChunkForOverlongType walks the root-side physical plan tree top-down and stops at
+// the first reader / point get boundary. Only those operators materialize rows into the reusable
+// chunk owned by the current statement, so higher-level physical operators only decide whether the
+// traversal should continue.
+func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
 		return false, false
 	}
 	switch plan.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader,
 		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader:
-		if existsOverlongType(plan.Schema(), false) {
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
-	case *PointGetPlan:
-		if existsOverlongType(plan.Schema(), true) {
+	case *PointGetPlan, *BatchPointGetPlan:
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true, false
 		}
@@ -1230,8 +1247,8 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) (skipRe
 		// Other physical operators do not read data, so we can continue to iterate.
 		return false, true
 	}
-	// PhysicalReader and PointGet is at the root, their children are nil or on the tikv/tiflash side.
-	// So we can stop iterating.
+	// Once we reach a reader / point get, its children are nil or stay on the coprocessor side, so
+	// no other root-side operator can affect the reusable-chunk decision.
 	return false, false
 }
 
@@ -1247,21 +1264,30 @@ var (
 	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
 )
 
-// existsOverlongType Check if exists long type column.
-// If pointGet is true, we will check the total Flen of all columns, if it exceeds maxFlenForOverlongType,
-// we will disable chunk reuse.
-// For a point get, there is only one row, so we can easily estimate the size.
-// However, for a non-point get, there may be many rows, and it is impossible to determine the memory size used.
-// Therefore, we can only forcibly skip the reuse chunk.
-func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
+// shouldSkipReuseChunkForPhysicalPlan checks whether one reader / point get should skip chunk reuse
+// because of overlong output columns. The decision is based on retained reusable-chunk memory rather
+// than full query output size.
+//
+// For readers with trusted row-count stats, we estimate:
+//
+//	average size of overlong columns * min(estimated row count, MaxChunkSize)
+//
+// All relaxed paths first require server memory >= MaxMemoryLimitForOverlongType; otherwise chunk
+// reuse is unconditionally disabled. Point gets and batch point gets have an exact operator-level
+// row bound, while non-point readers only take the relaxed path when row-count stats are trusted.
+// Only readers with trusted row-count stats use observed average sizes.
+func shouldSkipReuseChunkForPhysicalPlan(plan base.PhysicalPlan) bool {
+	schema := plan.Schema()
 	if schema == nil {
 		return false
 	}
 	totalFlen := 0
+	overlongColumns := make([]*expression.Column, 0, len(schema.Columns))
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			// These types are still treated as unbounded here, so keep the old conservative behavior.
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			// if the column is varchar and the length of
@@ -1271,28 +1297,93 @@ func existsOverlongType(schema *expression.Schema, pointGet bool) bool {
 			if column.RetType.GetFlen() <= 1000 {
 				continue
 			}
-			if pointGet {
-				totalFlen += column.RetType.GetFlen()
-				if checkOverlongTypeForPointGet(totalFlen) {
-					return true
-				}
-				continue
-			}
-			return true
+			totalFlen += column.RetType.GetFlen()
+			overlongColumns = append(overlongColumns, column)
 		}
 	}
-	return false
+	if totalFlen == 0 {
+		return false
+	}
+	return !allowReuseChunkForOverlongType(plan, overlongColumns, totalFlen)
 }
 
-func checkOverlongTypeForPointGet(totalFlen int) bool {
+// allowReuseChunkForOverlongType applies the relaxed rule for bounded overlong columns. It first
+// checks the host-memory gate, then estimates the retained memory of one reusable chunk instead of
+// the whole result set.
+func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*expression.Column, totalFlen int) bool {
 	totalMemory, err := memory.MemTotal()
-	if err != nil || totalMemory <= 0 {
-		return true
+	if err != nil || totalMemory <= 0 || totalMemory < MaxMemoryLimitForOverlongType {
+		return false
 	}
-	if totalMemory >= MaxMemoryLimitForOverlongType {
-		if totalFlen <= maxFlenForOverlongType {
+	estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(plan)
+	if estimatedRows <= 0 {
+		// Without a trusted row bound, keep the old conservative behavior for non-point readers.
+		return false
+	}
+
+	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
+	rowsPerReusableChunk := estimatedRows
+	switch plan.(type) {
+	case *PointGetPlan:
+	default:
+		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
+	}
+
+	statsInfo := plan.StatsInfo()
+	estimatedBytesPerRow := float64(totalFlen)
+	if hasTrustedStats && hasUsableOverlongTypeSizeStats(statsInfo, overlongColumns) {
+		// Real stats let us use the observed average size instead of the schema worst case.
+		estimatedBytesPerRow = getAvgRowSize(statsInfo, overlongColumns)
+	}
+	estimatedReusableChunkBytes := rowsPerReusableChunk * estimatedBytesPerRow
+	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
+}
+
+func hasUsableOverlongTypeSizeStats(statsInfo *property.StatsInfo, overlongColumns []*expression.Column) bool {
+	if statsInfo == nil || statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+		statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+		return false
+	}
+	for _, column := range overlongColumns {
+		colStats := statsInfo.HistColl.GetCol(column.UniqueID)
+		if colStats == nil {
+			return false
+		}
+		// Keep the schema-level fallback when this column would still fall back to EstimateTypeWidth.
+		if !colStats.IsHandle && colStats.TotColSize == 0 && colStats.NullCount != statsInfo.HistColl.RealtimeCount {
 			return false
 		}
 	}
 	return true
+}
+
+// estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
+// estimate together with a flag indicating whether the caller may use observed average row sizes.
+// Point gets and batch point gets have an exact operator-level row bound. Non-point readers only
+// enter the relaxed path when row-count stats are trusted.
+func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
+	statsInfo := plan.StatsInfo()
+	if statsInfo == nil || statsInfo.RowCount <= 0 {
+		return 0, false
+	}
+
+	switch plan.(type) {
+	case *PointGetPlan:
+		return math.Ceil(statsInfo.RowCount), true
+	case *BatchPointGetPlan:
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+			return math.Ceil(statsInfo.RowCount), false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	case *PhysicalTableReader, *PhysicalIndexReader,
+		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader:
+		// Non-point readers only take the relaxed path when row-count stats are trusted.
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+			statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+			return 0, false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	default:
+		return 0, false
+	}
 }

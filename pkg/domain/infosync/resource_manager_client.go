@@ -26,6 +26,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 type mockResourceManagerClient struct {
@@ -144,7 +145,7 @@ func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.R
 	return nil, 0, nil
 }
 
-func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
 	if bytes.Equal(pd.GroupSettingsPathPrefixBytes, key) {
 		return m.eventCh, nil
 	}

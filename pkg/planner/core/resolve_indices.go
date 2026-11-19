@@ -722,6 +722,13 @@ func (p *PhysicalTopN) ResolveIndices() (err error) {
 		}
 		p.PartitionBy[i].Col = newCol.(*expression.Column)
 	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
+	}
 	return
 }
 
@@ -761,6 +768,13 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	}
 	if foundCnt < p.schema.Len() {
 		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
 	}
 	return
 }
@@ -821,6 +835,18 @@ func (p *PhysicalTableScan) ResolveIndices() (err error) {
 func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
 	for i, column := range p.schema.Columns {
 		column.Index = i
+	}
+	for i, expr := range p.LateMaterializationFilterCondition {
+		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(p.schema)
+		if err != nil {
+			// Check if there is duplicate virtual expression column matched.
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.schema)
+			if isOk {
+				p.LateMaterializationFilterCondition[i] = newCond
+				continue
+			}
+			return err
+		}
 	}
 	return
 }

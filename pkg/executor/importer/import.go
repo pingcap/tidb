@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -63,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -77,6 +79,8 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
+	// DataFormatAuto represents format is not set in IMPORT INTO, we will determine format automatically.
+	DataFormatAuto = "auto"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -166,6 +170,11 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
+
+	// default character set
+	defaultCharacterSet = "utf8mb4"
+	// default field null def
+	defaultFieldNullDef = []string{`\N`}
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -223,14 +232,14 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	// Location is used to convert time type for parquet, see
+	// LocationID is used to convert time type for parquet, see
 	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
-	Location *time.Location
+	LocationID string
 
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
 	// it might be nil when using LOAD DATA and no charset is specified.
-	// for IMPORT INTO, it is always non-nil.
+	// for IMPORT INTO, it is always non-nil and default to be defaultCharacterSet.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -246,6 +255,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -263,6 +273,8 @@ type Plan struct {
 	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
+	// only initialized for IMPORT INTO, used when format is detected automatically
+	specifiedOptions map[string]*plannercore.LoadDataOpt
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -312,6 +324,7 @@ type LoadDataController struct {
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 
+	location  *time.Location
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
@@ -408,21 +421,14 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to CSV
-		format = DataFormatCSV
+		format = DataFormatAuto
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
-	// those are the default values for lightning CSV format too
-	lineFieldsInfo := plannercore.LineFieldsInfo{
-		FieldsTerminatedBy: `,`,
-		FieldsEnclosedBy:   `"`,
-		FieldsEscapedBy:    `\`,
-		LinesStartingBy:    ``,
-		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
-		// But user cannot set this to empty explicitly.
-		LinesTerminatedBy: ``,
-	}
-
+	lineFieldsInfo := newDefaultLineFieldsInfo()
+	// TiDB doesn't support setting zones like UTC+8, it should be parsable by
+	// ParseTimeZone, i.e. in IANA format like Asia/Shanghai, or in offset form
+	// like +08:00.
+	location := userSctx.GetSessionVars().Location()
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
@@ -432,10 +438,10 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		Path:           plan.Path,
 		Format:         format,
 		Restrictive:    restrictive,
-		FieldNullDef:   []string{`\N`},
+		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
-		Location:         userSctx.GetSessionVars().Location(),
+		LocationID:       timeutil.ZoneName(location),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -451,6 +457,19 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		return nil, err
 	}
 	return p, nil
+}
+
+func newDefaultLineFieldsInfo() plannercore.LineFieldsInfo {
+	// those are the default values for lightning CSV format too
+	return plannercore.LineFieldsInfo{
+		FieldsTerminatedBy: `,`,
+		FieldsEnclosedBy:   `"`,
+		FieldsEscapedBy:    `\`,
+		LinesStartingBy:    ``,
+		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
+		// But user cannot set this to empty explicitly.
+		LinesTerminatedBy: ``,
+	}
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -499,10 +518,28 @@ func ASTArgsFromStmt(stmt string) (*ASTArgs, error) {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
+	// Parquet workers need a concrete timezone identity, not a worker-local fallback.
+	if plan.Format == DataFormatParquet && strings.EqualFold(plan.LocationID, "SYSTEM") {
+		return nil, errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
+	loc := time.UTC
+	// historically, we store *time.Location in Plan, but *time.Location cannot
+	// be marshaled into JSON. New task metadata stores a timezone specifier
+	// string (IANA name or offset form), and resolves it when creating the
+	// controller. Old task metadata has no LocationID, so use UTC as the
+	// compatibility fallback before the location is passed to parquet parsing.
+	if plan.LocationID != "" {
+		location, err := timeutil.ParseTimeZone(plan.LocationID)
+		if err != nil {
+			return nil, errors.Wrapf(err, "invalid location %s", plan.LocationID)
+		}
+		loc = location
+	}
 	c := &LoadDataController{
 		Plan:            plan,
 		ASTArgs:         astArgs,
 		Table:           tbl,
+		location:        loc,
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
@@ -515,6 +552,12 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 		return nil, err
 	}
 	return c, nil
+}
+
+// ParquetLocation returns the timezone used to interpret parquet temporal values.
+// Callers should treat the returned location as read-only controller state.
+func (e *LoadDataController) ParquetLocation() *time.Location {
+	return e.location
 }
 
 // InitTiKVConfigs initializes some TiKV related configs.
@@ -532,7 +575,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != DataFormatAuto {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
@@ -573,7 +616,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
-	v := "utf8mb4"
+	v := defaultCharacterSet
 	p.Charset = &v
 }
 
@@ -598,8 +641,11 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
+	p.specifiedOptions = specifiedOptions
 
-	if p.Format != DataFormatCSV {
+	// DataFormatAuto means format is unspecified from stmt,
+	// will validate below CSV options when init data files.
+	if p.Format != DataFormatCSV && p.Format != DataFormatAuto {
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
@@ -772,6 +818,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true
+	}
+
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(variable.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
 	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
@@ -1134,14 +1187,15 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize        int64
 		compressionRatio = 1.0
+		totalSize        int64
+		sourceType       mydump.SourceType
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
+	isAutoDetectingFormat := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
-	sourceType := e.getSourceType()
 	if idx == -1 {
 		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
@@ -1159,12 +1213,17 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if err := e.detectAndUpdateFormat(fileNameKey); err != nil {
+			return err
+		}
+		sourceType = e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
+			ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
@@ -1191,6 +1250,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
+				// pick arbitrary one file to detect the format.
+				if err := e.detectAndUpdateFormat(remotePath); err != nil {
+					return err
+				}
+				sourceType = e.getSourceType()
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				totalSize += size
 				return nil
@@ -1218,6 +1282,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
+					ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
 				}
 				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
@@ -1226,10 +1291,48 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err
 		}
 	}
+	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
+		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+			return err2
+		}
+	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+// detectAndUpdateFormat resolves auto format and validates Parquet's captured location.
+func (e *LoadDataController) detectAndUpdateFormat(path string) error {
+	if e.Format == DataFormatAuto {
+		e.Format = parseFileType(path)
+		e.logger.Info("detect and update import plan format based on file extension",
+			zap.String("file", path), zap.String("detected format", e.Format))
+		e.Parameters.Format = e.Format
+	}
+	if e.Format == DataFormatParquet && strings.EqualFold(e.LocationID, "SYSTEM") {
+		return errors.New("cannot import parquet with an unresolved SYSTEM time zone")
+	}
+	return nil
+}
+
+func parseFileType(path string) string {
+	path = strings.ToLower(path)
+	ext := filepath.Ext(path)
+	// avoid duplicate compress extension
+	if ext == ".gz" || ext == ".gzip" || ext == ".zstd" || ext == ".zst" || ext == ".snappy" {
+		path = strings.TrimSuffix(path, ext)
+		ext = filepath.Ext(path)
+	}
+	switch ext {
+	case ".sql":
+		return DataFormatSQL
+	case ".parquet":
+		return DataFormatParquet
+	default:
+		// if file do not contain file extension, use ".csv" as default format
+		return DataFormatCSV
+	}
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
@@ -1373,6 +1476,17 @@ func (p *Plan) IsLocalSort() bool {
 // IsGlobalSort returns true if we sort data on global storage.
 func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
+}
+
+// non CSV format should not specify CSV only options, we check it again if the
+// format is detected automatically.
+func (p *Plan) checkNonCSVFormatOptions() error {
+	for k := range csvOnlyOptions {
+		if _, ok := p.specifiedOptions[k]; ok {
+			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+		}
+	}
+	return nil
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.

@@ -919,6 +919,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -1087,6 +1088,8 @@ const (
 	ErrDeleteNotFoundColumn                = 8177
 	ErrKeyTooLarge                         = 8178
 	ErrTimeStampInDSTTransition            = 8179
+	_                                      = 8180 // reserved for ErrQueryExecStopped
+	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1149,6 +1152,8 @@ const (
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 
+	ErrInvalidAffinityOption = 8266
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1159,6 +1164,10 @@ const (
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
+
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

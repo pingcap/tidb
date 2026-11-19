@@ -712,8 +712,8 @@ func TestImportIntoBuildPlan(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("create table t1 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
+	tk.MustExec("create table t2 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
 		plannererrors.ErrWrongValueCountOnRow)
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),

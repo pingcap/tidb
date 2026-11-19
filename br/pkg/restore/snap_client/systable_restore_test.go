@@ -54,7 +54,9 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	var canLoadSysTablePhysical bool
-	// user table in cluster have more columns(success)
+	// user table in cluster have more columns: still compatible, but should fall
+	// back to non-physical loading because direct physical loading can fail
+	// checksum validation when the backup snapshot lacks the new columns.
 	mockedUserTI := userTI.Clone()
 	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: pmodel.NewCIStr("new-name")})
 	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
@@ -62,7 +64,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 		Info: mockedUserTI,
 	}}, false)
 	require.NoError(t, err)
-	require.True(t, canLoadSysTablePhysical)
+	require.False(t, canLoadSysTablePhysical)
 	userTI.Columns = userTI.Columns[:len(userTI.Columns)-1]
 
 	// user table in cluster have less columns(failed)
@@ -233,7 +235,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 	defer rc.Close()
 	err := rc.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
-	rc.SetCheckPrivilegeTableRowsCollateCompatiblity(true)
+	rc.SetCheckPrivilegeTableRowsCollateCompatibility(true)
 
 	se, err := g.CreateSession(cluster.Storage)
 	require.NoError(t, err)
@@ -380,6 +382,68 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
+
+	for _, cs := range []struct {
+		name      string
+		createSQL string
+		columns   string
+		values    string
+	}{
+		{"db", CreateDBSQL, "Host, DB, User", "('%','test','newroot'),('%','Test','newroot')"},
+		{"tables_priv", CreateTableSQL, "Host, DB, User, Table_name", "('%','test','newroot','ta1'),('%','Test','newroot','ta1')"},
+		{"columns_priv", CreateColumnSQL, "Host, DB, User, Table_name, Column_name", "('%','test','newroot','ta1','ca1'),('%','Test','newroot','ta1','ca1')"},
+	} {
+		t.Run(cs.name, func(t *testing.T) {
+			mse := &mustExecuteSession{ctx, se, t}
+			mse.MustExecute(cs.createSQL)
+			defer mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql." + cs.name)
+			upstream, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr("__TiDB_BR_Temporary_mysql"), pmodel.NewCIStr(cs.name))
+			require.NoError(t, err)
+			downstream := upstream.Clone()
+			// Column order may differ between the backup and the destination.
+			for i, j := 0, len(downstream.Columns)-1; i < j; i, j = i+1, j-1 {
+				downstream.Columns[i], downstream.Columns[j] = downstream.Columns[j], downstream.Columns[i]
+			}
+			mse.MustExecute(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.%s (%s) VALUES %s", cs.name, cs.columns, cs.values))
+			// These rows only collide when converting to general_ci; bin-to-bin must preserve them.
+			require.NoError(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, downstream))
+
+			missingUpstream := upstream.Clone()
+			missingDownstream := downstream.Clone()
+			for i, col := range missingUpstream.Columns {
+				if col.Name.L == "db" {
+					missingUpstream.Columns = append(missingUpstream.Columns[:i], missingUpstream.Columns[i+1:]...)
+					break
+				}
+			}
+			for i, col := range missingDownstream.Columns {
+				if col.Name.L == "db" {
+					missingDownstream.Columns = append(missingDownstream.Columns[:i], missingDownstream.Columns[i+1:]...)
+					break
+				}
+			}
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, missingUpstream, downstream))
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, missingDownstream))
+			unsupported := upstream.Clone()
+			for _, col := range unsupported.Columns {
+				if col.Name.L == "db" {
+					col.SetCollate("utf8mb4_unicode_ci")
+				}
+			}
+			require.Error(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, unsupported, unsupported.Clone()))
+
+			for _, col := range downstream.Columns {
+				if col.Name.L == "db" || col.Name.L == "table_name" || col.Name.L == "column_name" {
+					col.SetCollate("utf8mb4_general_ci")
+				}
+			}
+			require.ErrorContains(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, upstream, downstream), "duplicated rows")
+			require.ErrorContains(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, downstream, upstream), "collate is utf8mb4_bin but should be utf8mb4_general_ci")
+
+			mse.MustExecute("DELETE FROM __TiDB_BR_Temporary_mysql." + cs.name + " WHERE DB = 'Test'")
+			require.NoError(t, rc.CheckPrivilegeTableRowsCollateCompatibility(ctx, "mysql", cs.name, downstream, downstream.Clone()))
+		})
+	}
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
@@ -393,7 +457,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(223), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(233), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {
@@ -541,150 +605,6 @@ func TestGenerateMoveRenamedTableSQLPair(t *testing.T) {
 	require.Contains(t, renameSQL, "__TiDB_BR_Temporary_mysql.stats_buckets TO mysql.stats_buckets")
 	require.Contains(t, renameSQL, "mysql.stats_top_n TO __TiDB_BR_Temporary_mysql.stats_top_n_deleted_123")
 	require.Contains(t, renameSQL, "__TiDB_BR_Temporary_mysql.stats_top_n TO mysql.stats_top_n")
-}
-
-func TestUpdateStatsTableSchema(t *testing.T) {
-	ctx := context.Background()
-	expectedSQLs := []string{}
-	execution := func(_ context.Context, sql string) error {
-		require.Equal(t, expectedSQLs[0], sql)
-		expectedSQLs = expectedSQLs[1:]
-		return nil
-	}
-
-	// schema name is mismatch
-	err := snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"test": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   7,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"test": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 7,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-
-	// table name is mismatch
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta2": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   7,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta2": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 7,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-
-	// version range is mismatch
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   7,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 1,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   1,
-		DownstreamVersionMajor: 7,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   9,
-		UpstreamVersionMinor:   1,
-		DownstreamVersionMajor: 9,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   9,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 9,
-		DownstreamVersionMinor: 1,
-	}, execution)
-	require.NoError(t, err)
-
-	// match
-	expectedSQLs = []string{
-		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
-		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		"ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
-	}
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   7,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 1,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
-		"test":  {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   1,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
-		"test":  {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 7,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
-	err = snapclient.UpdateStatsTableSchema(ctx, map[string]map[string]struct{}{
-		"mysql": {"stats_meta": struct{}{}, "test": struct{}{}},
-		"test":  {"stats_meta": struct{}{}},
-	}, snapclient.SchemaVersionPairT{
-		UpstreamVersionMajor:   8,
-		UpstreamVersionMinor:   5,
-		DownstreamVersionMajor: 8,
-		DownstreamVersionMinor: 5,
-	}, execution)
-	require.NoError(t, err)
 }
 
 func TestNotifyUpdateAllUsersPrivilege(t *testing.T) {

@@ -11,12 +11,12 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	gcs "cloud.google.com/go/storage"
 	"github.com/docker/go-units"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -26,13 +26,16 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -165,9 +168,9 @@ func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	return securityOption
 }
 
-// Convert the TLS config to the PD security option.
-func (tls *TLSConfig) ToKVSecurity() config.Security {
-	return config.Security{
+// Convert the TLS config to the KV security option.
+func (tls *TLSConfig) ToKVSecurity() tikvcfg.Security {
+	return tikvcfg.Security{
 		ClusterSSLCA:   tls.CA,
 		ClusterSSLCert: tls.Cert,
 		ClusterSSLKey:  tls.Key,
@@ -230,6 +233,8 @@ type Config struct {
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
 	// LogProgress is true means the progress bar is printed to the log instead of stdout.
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
+	// OperationContext identifies this command for lock metadata.
+	OperationContext operation.Context `json:"-" toml:"-"`
 
 	// CaseSensitive should not be used.
 	//
@@ -287,6 +292,36 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+}
+
+// EnsureOperationContext initializes command-scoped operation metadata once.
+func (cfg *Config) EnsureOperationContext(command string) error {
+	if cfg.OperationContext.OperationID != "" {
+		if cfg.OperationContext.StartedAt.IsZero() {
+			return errors.New("operation started time is required")
+		}
+		return nil
+	}
+	if !cfg.OperationContext.StartedAt.IsZero() {
+		return errors.New("operation ID is required")
+	}
+
+	operationContext, err := operation.NewContext(command)
+	if err != nil {
+		return err
+	}
+	cfg.OperationContext = operationContext
+	return nil
+}
+
+const operationHintRestoreID = "restore_id"
+
+func setOperationContextRestoreID(operationContext *operation.Context, restoreID uint64) {
+	if restoreID == 0 {
+		operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -389,6 +424,31 @@ func DefaultConfig() Config {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
 	return cfg
+}
+
+// ApplyTiDBRuntimeConfig applies runtime PD/TLS settings from TiDB global config
+// to an in-process BR config without changing CLI flag defaults.
+func ApplyTiDBRuntimeConfig(cfg *Config) {
+	tidbCfg := tidbconfig.GetGlobalConfig()
+	if tidbCfg.Path != "" {
+		pds := make([]string, 0, 1)
+		for _, pdAddr := range strings.Split(tidbCfg.Path, ",") {
+			pdAddr = strings.TrimSpace(pdAddr)
+			if pdAddr != "" {
+				pds = append(pds, pdAddr)
+			}
+		}
+		if len(pds) > 0 {
+			cfg.PD = pds
+		}
+	}
+	if tidbCfg.Security.ClusterSSLCA != "" || tidbCfg.Security.ClusterSSLCert != "" || tidbCfg.Security.ClusterSSLKey != "" {
+		cfg.TLS = TLSConfig{
+			CA:   tidbCfg.Security.ClusterSSLCA,
+			Cert: tidbCfg.Security.ClusterSSLCert,
+			Key:  tidbCfg.Security.ClusterSSLKey,
+		}
+	}
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
@@ -779,7 +839,7 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	for _, keyString := range masterKeyStrings {
 		masterKey, err := validateAndParseMasterKeyString(strings.TrimSpace(keyString))
 		if err != nil {
-			return errors.Wrapf(err, "invalid master key configuration: %s", keyString)
+			return errors.Wrapf(err, "invalid master key configuration for --%s", flagMasterKeyConfig)
 		}
 		cfg.MasterKeyConfig.MasterKeys = append(cfg.MasterKeyConfig.MasterKeys, &masterKey)
 	}
@@ -827,28 +887,16 @@ func NewMgr(ctx context.Context,
 	)
 }
 
-// GetStorage gets the storage backend from the config.
-func GetStorage(
-	ctx context.Context,
-	storageName string,
-	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
-	if err != nil {
-		return nil, nil, errors.Annotate(err, "create storage failed")
-	}
-	return u, s, nil
-}
-
 func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
+}
+
+// GetStorage is a thin wrapper around task/common.GetStorage for task.Config callers.
+func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
+	return taskcommon.GetStorage(ctx, storageName, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 }
 
 // ReadBackupMeta reads the backupmeta file from the storage.
@@ -884,37 +932,45 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:metautil.CrypterIvLen]
-	}
-	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	decryptBackupMeta, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
 	if err != nil {
-		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
+		return nil, nil, nil, errors.Trace(err)
 	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err,
-			"parse backupmeta failed because of wrong aes cipher")
+	backupMeta, err := taskcommon.DecodeBackupMeta(decryptBackupMeta, nil)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
 	}
 	return u, s, backupMeta, nil
+}
+
+func formatStorageURLForLog(rawURL string) string {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid URI>"
+	}
+	parsedURL.User = nil
+	parsedURL.RawQuery = ""
+	parsedURL.ForceQuery = false
+	parsedURL.Fragment = ""
+	parsedURL.RawFragment = ""
+	return parsedURL.String()
 }
 
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
-	case flagStorage, FlagStreamFullBackupStorage:
-		hiddenQuery, err := url.Parse(f.Value.String())
-		if err != nil {
-			return zap.String(f.Name, "<invalid URI>")
-		}
-		// hide all query here.
-		hiddenQuery.RawQuery = ""
-		return zap.Stringer(f.Name, hiddenQuery)
-	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+	case flagStorage, FlagStreamFullBackupStorage, flagCheckpointStorage,
+		"s3.endpoint", "gcs.endpoint", "azblob.endpoint", "upstream-storage", "downstream-storage":
+		return zap.String(f.Name, formatStorageURLForLog(f.Value.String()))
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token",
+		"s3.sse-kms-context":
 		return zap.String(f.Name, "<redacted>")
 	case flagMasterKeyConfig:
 		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.

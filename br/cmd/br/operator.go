@@ -6,6 +6,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
@@ -37,6 +38,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newMigrateToCommand())
 	cmd.AddCommand(newForceFlushCommand())
 	cmd.AddCommand(newChecksumCommand())
+	cmd.AddCommand(newTestStorageCommand())
 	return cmd
 }
 
@@ -133,6 +135,7 @@ func newChecksumCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
 	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
+	taskrepo.DefineSnapshotRepoReaderFlags(cmd.Flags())
 	return cmd
 }
 
@@ -151,5 +154,26 @@ func newForceFlushCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
+	return cmd
+}
+
+func newTestStorageCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "test-storage",
+		Short: "test all operations of an external storage",
+		Long: "Test all ExternalStorage operations including read, write, delete, " +
+			"rename, walk, and streaming operations. This helps verify storage " +
+			"configuration and permissions before using it for backup/restore.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.TestStorageConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunTestStorage(ctx, cfg)
+		},
+	}
+	operator.DefineFlagsForTestStorageConfig(cmd.Flags())
 	return cmd
 }

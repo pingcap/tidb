@@ -130,7 +130,7 @@ func TestTaskFailInManager(t *testing.T) {
 	defer schManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, "", nil)
+	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, "", 0, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -140,7 +140,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// scheduler init error
-	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, "", nil)
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, "", 0, nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -215,7 +215,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "background", nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "background", 0, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -225,7 +225,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, "background", nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, "background", 0, nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
@@ -460,7 +460,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		},
 	)
 	for i := 0; i < len(concurrencies); i++ {
-		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", []byte("{}"))
+		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", 0, []byte("{}"))
 		require.NoError(t, err)
 	}
 	getRunningTaskKeys := func() []string {
@@ -503,4 +503,30 @@ func TestManagerScheduleLoop(t *testing.T) {
 		taskKeys := getRunningTaskKeys()
 		return err == nil && len(taskKeys) == 0
 	}, time.Second*10, time.Millisecond*100)
+}
+
+func TestGetLiveExecIDsSkipsNonServingNodes(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	for _, tc := range []struct {
+		name       string
+		serverInfo string
+		execIDs    []string
+	}{
+		{"mixed nodes", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"tidb2":{"ip":"::1","listening_port":4001,"disable_rpc":false},"br":{"ip":"127.0.0.2","listening_port":4000,"disable_rpc":true}}`, []string{"127.0.0.1:4000", "[::1]:4001"}},
+		{"BR reuses serving address", `{"tidb":{"ip":"127.0.0.1","listening_port":4000},"br":{"ip":"127.0.0.1","listening_port":4000,"disable_rpc":true}}`, []string{"127.0.0.1:4000"}},
+		{"only BR", `{"br":{"ip":"127.0.0.1","listening_port":4000,"disable_rpc":true}}`, nil},
+		{"no nodes", `{}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", fmt.Sprintf("return(`%s`)", tc.serverInfo))
+			execIDs, err := scheduler.GetLiveExecIDs(ctx)
+			if len(tc.execIDs) == 0 {
+				require.ErrorContains(t, err, "not found instance")
+				require.Empty(t, execIDs)
+			} else {
+				require.NoError(t, err)
+				require.ElementsMatch(t, tc.execIDs, execIDs)
+			}
+		})
+	}
 }

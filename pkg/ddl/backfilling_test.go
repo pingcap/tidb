@@ -17,10 +17,12 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -35,10 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	tikverr "github.com/tikv/client-go/v2/error"
+	pderr "github.com/tikv/pd/client/errs"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -61,6 +66,88 @@ func TestDoneTaskKeeper(t *testing.T) {
 
 	n.updateNextKey(6, kv.Key("h"))
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
+}
+
+// TestBackfillRetryableErrors covers executor retryability and MODIFY COLUMN
+// retry limits, wrapped PD timeouts and deterministic conversion errors.
+func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("local-sort disk probe errors are retryable", func(t *testing.T) {
+		err := errors.New("mock local sort disk probe failed")
+		require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("confirmed insufficient local-sort disk is not retryable", func(t *testing.T) {
+		err := dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock insufficient local sort disk space")
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("PD TSO stream errors are retryable", func(t *testing.T) {
+		errs := []error{
+			pderr.ErrClientCreateTSOStream.FastGenByArgs(pderr.RetryTimeoutErr),
+			pderr.ErrClientTSOStreamClosed.GenWithStackByArgs(),
+		}
+		for _, err := range errs {
+			require.True(t, isRetryableError(err, false))
+			require.True(t, isRetryableError(errors.Annotate(err, "wrapped"), false))
+			require.True(t, (&backfillDistExecutor{}).IsRetryableError(err))
+
+			// The local ingest path checks for duplicate keys before classifying
+			// the reorg error. PD errors must retain their identity across it.
+			convertedErr := ingest.TryConvertToKeyExistsErr(err, &model.IndexInfo{}, &model.TableInfo{})
+			require.ErrorIs(t, convertedErr, err)
+			require.True(t, isRetryableJobError(convertedErr, 0))
+			require.False(t, isRetryableJobError(convertedErr, variable.GetDDLErrorCountLimit()-1))
+		}
+	})
+
+	t.Run("unrelated PD errors are not made retryable", func(t *testing.T) {
+		err := pderr.ErrClientProtoUnmarshal.FastGenByArgs("invalid response")
+		require.False(t, isRetryableError(err, false))
+	})
+
+	t.Run("modify column retries typed PD timeout", func(t *testing.T) {
+		pdTimeout := tikverr.NewErrPDServerTimeout("region cache is not ready")
+		for name, err := range map[string]error{
+			"direct":           pdTimeout,
+			"pingcap wrapper":  errors.Annotate(pdTimeout, "load ranges"),
+			"standard wrapper": fmt.Errorf("load ranges: %w", pdTimeout),
+		} {
+			t.Run(name, func(t *testing.T) {
+				require.True(t, isRetryableModifyColumnReorgJobError(err, 0))
+				require.False(t, isRetryableModifyColumnReorgJobError(err, variable.GetDDLErrorCountLimit()-1))
+				require.True(t, isRetryableError(err, true))
+			})
+		}
+	})
+
+	t.Run("modify column rejects conversion errors containing retry text", func(t *testing.T) {
+		for _, text := range dbterror.ReorgRetryableErrMsgs {
+			for name, conversionErr := range map[string]error{
+				"invalid integer":          types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", text),
+				"truncated column":         types.ErrTruncated.GenWithStackByArgs(text, 1),
+				"long data":                types.ErrDataTooLong.GenWithStackByArgs(text, 1),
+				"out of range":             types.ErrOverflow.GenWithStackByArgs(text, 1),
+				"invalid JSON":             types.ErrInvalidJSONText.GenWithStack("invalid JSON value: %s", text),
+				"null column":              table.ErrColumnCantNull.GenWithStackByArgs(text),
+				"invalid character string": table.ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", "0xFF", text),
+			} {
+				t.Run(name+"/"+text, func(t *testing.T) {
+					for _, err := range []error{conversionErr, errors.Annotate(conversionErr, "cast value"), fmt.Errorf("cast value: %w", conversionErr)} {
+						require.False(t, isRetryableModifyColumnReorgJobError(err, 0))
+					}
+				})
+			}
+		}
+	})
+
+	t.Run("modify column preserves other retry classifications", func(t *testing.T) {
+		for _, text := range dbterror.ReorgRetryableErrMsgs {
+			require.True(t, isRetryableModifyColumnReorgJobError(errors.New(text), 0))
+		}
+		require.True(t, isRetryableModifyColumnReorgJobError(kv.ErrTxnRetryable, 0))
+		require.False(t, isRetryableModifyColumnReorgJobError(errors.New("unknown reorg error"), 0))
+		require.True(t, isRetryableError(errors.New("unknown reorg error"), true))
+	})
 }
 
 func TestPickBackfillType(t *testing.T) {
@@ -362,51 +449,15 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 	require.Equal(t, errctx.NewContextWithLevels(expected.ErrCtx.LevelMap(), expected.WarnHandler), actual.ErrCtx)
 }
 
-// TestReorgExprContext is used in refactor stage to make sure the newDefaultReorgDistSQLCtx() is
-// compatible with newMockReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
-// After refactor, the TestReorgExprContext can be removed.
-func TestReorgDistSQLCtx(t *testing.T) {
-	store := &mockStorage{client: &mock.Client{}}
+func TestReorgDistSQLCtxNotFillCache(t *testing.T) {
+	// Reorg coprocessor scans are single-pass bulk reads and must not pollute the TiKV
+	// block cache, so NotFillCache is always set on the reorg DistSQLContext.
+	ctx := newDefaultReorgDistSQLCtx(&mock.Client{}, contextutil.NewStaticWarnHandler(0))
+	require.True(t, ctx.NotFillCache)
 
-	// test default dist sql context
-	expected := newMockReorgSessCtx(store).GetDistSQLCtx()
-	defaultCtx := newDefaultReorgDistSQLCtx(store.client, expected.WarnHandler)
-	assertDistSQLCtxEqual(t, expected, defaultCtx)
-
-	// test dist sql context from DDLReorgMeta
-	for _, reorg := range []model.DDLReorgMeta{
-		{
-			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeIngest,
-			ResourceGroupName: "rg1",
-		},
-		{
-			SQLMode: mysql.ModeAllowInvalidDates,
-			// should load location from system value when reorg.Location is nil
-			Location:          nil,
-			ReorgTp:           model.ReorgTypeTxnMerge,
-			ResourceGroupName: "rg2",
-		},
-	} {
-		sctx := newMockReorgSessCtx(store)
-		require.NoError(t, initSessCtx(sctx, &reorg))
-		expected = sctx.GetDistSQLCtx()
-		ctx, err := newReorgDistSQLCtxWithReorgMeta(store.client, &reorg, expected.WarnHandler)
-		require.NoError(t, err)
-		assertDistSQLCtxEqual(t, expected, ctx)
-		// Location should match DDLReorgMeta
-		if reorg.Location != nil {
-			require.Equal(t, reorg.Location.Name, ctx.Location.String())
-		} else {
-			loc := timeutil.SystemLocation()
-			require.Same(t, loc, ctx.Location)
-		}
-		// ResourceGroupName should match DDLReorgMeta
-		require.Equal(t, reorg.ResourceGroupName, ctx.ResourceGroupName)
-		// Some fields should be different from the default context to make the test robust.
-		require.NotEqual(t, defaultCtx.ErrCtx.LevelMap(), ctx.ErrCtx.LevelMap())
-	}
+	withMeta, err := newReorgDistSQLCtxWithReorgMeta(&mock.Client{}, &model.DDLReorgMeta{}, contextutil.NewStaticWarnHandler(0))
+	require.NoError(t, err)
+	require.True(t, withMeta.NotFillCache)
 }
 
 func TestValidateAndFillRanges(t *testing.T) {

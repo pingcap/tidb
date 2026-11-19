@@ -131,7 +131,6 @@ func (rc *SnapClient) updateTemporaryUserTable(ctx context.Context, renamedTable
 func (rc *SnapClient) replaceTables(
 	ctx context.Context,
 	createdTables []*restoreutils.CreatedTable,
-	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
 	loadStatsPhysical, loadSysTablePhysical bool,
 	kvClient kv.Client,
@@ -155,7 +154,7 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := updateStatsTableSchema(ctx, renamedTables, schemaVersionPair, rc.db.Session().Execute); err != nil {
+	if err := updateStatsTableSchema(ctx, renamedTables, rc.dom.InfoSchema(), rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -163,7 +162,7 @@ func (rc *SnapClient) replaceTables(
 		return 0, errors.Trace(err)
 	}
 
-	if err := notifyUpdateAllUsersPrivilege(renamedTables, rc.dom.NotifyUpdatePrivilege); err != nil {
+	if err := notifyUpdateAllUsersPrivilege(renamedTables, rc.dom.NotifyUpdateAllUsersPrivilege); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -182,7 +181,6 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
-	SchemaVersionPair   SchemaVersionPairT
 	RestoreTS           uint64
 
 	// pipeline item tool client
@@ -209,7 +207,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 	progressLen := int64(pipelineNum * len(createdTables))
 	if plCtx.LoadStatsPhysical || plCtx.LoadSysTablePhysical {
-		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.SchemaVersionPair, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
+		renamedTableCount, err := rc.replaceTables(ctx, createdTables, plCtx.RestoreTS, plCtx.LoadStatsPhysical, plCtx.LoadSysTablePhysical, plCtx.KvClient, plCtx.Checksum, plCtx.ChecksumConcurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -572,14 +570,17 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if oldTable.Stats != nil {
+			targetStats := *oldTable.Stats
+			targetStats.DatabaseName = tbl.TargetDBName().O
+			targetStats.TableName = tbl.Table.Name.O
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
+			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), &targetStats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", &targetStats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),

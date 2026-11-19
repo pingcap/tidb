@@ -135,10 +135,12 @@ func AppendRangeForLogRestore(
 
 type CheckpointMetadataForLogRestore struct {
 	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
+	RestoreStartTS    uint64 `json:"restore-start-ts"`
 	RestoredTS        uint64 `json:"restored-ts"`
 	StartTS           uint64 `json:"start-ts"`
 	RewriteTS         uint64 `json:"rewrite-ts"`
 	GcRatio           string `json:"gc-ratio"`
+	RouteFingerprint  string `json:"route-fingerprint,omitempty"`
 	// tiflash recorder items with snapshot restore records
 	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
 }

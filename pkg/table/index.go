@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // IndexIterator is the interface for iterator of index data on KV store.
@@ -87,11 +88,21 @@ type Index interface {
 	Meta() *model.IndexInfo
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
+	// MeetPartialCondition returns true if the row meets the partial index condition of the index.
+	MeetPartialCondition(row []types.Datum) (bool, error)
+	// MeetPartialConditionWithChunk returns true if the row meets the partial index condition of the index.
+	MeetPartialConditionWithChunk(row chunk.Row) (bool, error)
 	// Create supports insert into statement.
+	// The `Create` inserts the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Create` to avoid unnecessary index creation.
 	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOption) (kv.Handle, error)
 	// Delete supports delete from statement.
+	// The `Delete` deletes the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
+	// row meets the partial index condition before calling `Delete` to avoid unnecessary index deletion.
 	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
+	// `GenIndexKVIter` doesn't consider the partial index condition, the caller should call `MeetPartialCondition` to check. If the row doesn't meet
+	// the condition, it's suggested to use an empty kv generator instead.
 	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
 	// Exist supports check index exists or not.
 	Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
@@ -163,15 +174,23 @@ func NewPlainIndexKVGenerator(
 	}
 }
 
-// Next returns the next index key and value.
+// PeekIndexedValues returns the scalar indexed values for the next entry without advancing.
+// It must only be called while Valid returns true. After a successful Next,
+// it refers to the following entry. The returned slice is borrowed and must not be
+// modified by the caller. Key generation may normalize the values in place, but
+// advancing to subsequent entries does not reuse the slice.
+func (iter *IndexKVGenerator) PeekIndexedValues() []types.Datum {
+	if iter.isMultiValue {
+		return iter.allIdxVals[iter.i]
+	}
+	return iter.idxVals
+}
+
+// Next returns the next index key and value, advancing only on success.
+// It must only be called while Valid returns true.
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
-	var val []types.Datum
-	if iter.isMultiValue {
-		val = iter.allIdxVals[iter.i]
-	} else {
-		val = iter.idxVals
-	}
+	val := iter.PeekIndexedValues()
 	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
 	if err != nil {
 		return nil, nil, false, err

@@ -495,6 +495,68 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("insert into t values(18446744073709551615);")
 		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 't.PRIMARY'")
 	}
+
+	tk.MustExec("rollback")
+	// Local duplicate checks must escape binary values just like commit and locking errors.
+	for _, tc := range []struct {
+		columnType string
+		value      string
+		key        string
+	}{
+		{"binary(16)", "x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'", `1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x`},
+		{"varbinary(16)", "x'a1b2c3d400f6a7b8c9d0e1f2a3b4c5d6'", `1-\xA1\xB2\xC3\xD4\x00\xF6\xA7\xB8\xC9\xD0\xE1\xF2\xA3\xB4\xC5\x`},
+		{"bit(16)", "b'1000000100000000'", `1-\x81\x00-p`},
+		{"varbinary(4)", "x'41004200'", `1-A\x00B\x00-p`},
+		{"varbinary(1)", "x'7f'", `1-\x7F-p`},
+		{"varchar(16)", "'中文'", "1-中文-p"},
+	} {
+		for _, index := range []struct {
+			definition string
+			name       string
+		}{
+			{"unique key k (firm, cu, product)", "k"},
+			{"primary key (firm, cu, product) clustered", "PRIMARY"},
+		} {
+			for _, mode := range []string{"optimistic", "pessimistic"} {
+				t.Run(tc.columnType+"/"+index.name+"/"+mode, func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					defer tk.Session().Close()
+					tk.MustExec("use test")
+					tk.MustExec("drop table if exists t")
+					tk.MustExec(fmt.Sprintf("create table t (firm bigint not null, cu %s not null, product varchar(255) not null, %s)", tc.columnType, index.definition))
+					insert := fmt.Sprintf("insert into t values (1, %s, 'p')", tc.value)
+					expected := fmt.Sprintf("[kv:1062]Duplicate entry '%s' for key 't.%s'", tc.key, index.name)
+
+					tk.MustExec("begin " + mode)
+					tk.MustExec(insert)
+					tk.MustGetErrMsg(insert, expected)
+					tk.MustExec("commit")
+
+					// Check the same conflict against the committed row.
+					tk.MustExec("begin " + mode)
+					if mode == "optimistic" {
+						tk.MustExec(insert)
+						require.ErrorContains(t, tk.ExecToErr("commit"), expected)
+					} else {
+						tk.MustGetErrMsg(insert, expected)
+					}
+					tk.MustExec("rollback")
+
+					tk.MustExec(fmt.Sprintf("insert into t values (2, %s, 'p')", tc.value))
+					tk.MustExec("begin " + mode)
+					tk.MustGetErrMsg("update t set firm=1 where firm=2", expected)
+					tk.MustExec("rollback")
+					tk.MustQuery("select firm from t order by firm").Check(testkit.Rows("1", "2"))
+
+					tk.MustExec("delete from t")
+					tk.MustExec("begin " + mode)
+					tk.MustGetErrMsg(fmt.Sprintf("insert into t values (1, %s, 'p'), (1, %s, 'p')", tc.value, tc.value), expected)
+					tk.MustExec("rollback")
+					tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+				})
+			}
+		}
+	}
 }
 
 func TestGlobalTempTableParallel(t *testing.T) {
@@ -702,4 +764,40 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
+}
+
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+		CREATE TABLE tmv (
+  			J1 json,
+			J2 json GENERATED ALWAYS AS (j1) VIRTUAL,
+  			UNIQUE KEY i1 ((cast(j1 as signed array))),
+  			KEY i2 ((cast(j2 as signed array))))`)
+	tk.MustExec("insert into tmv set j1 = '[1]'")
+	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table tmv;")
+	}
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			t4 datetime GENERATED ALWAYS AS (date_sub(t2, interval 10 MINUTE)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			UNIQUE KEY i2 (t2),
+			UNIQUE KEY i3 (id, t3),
+			KEY i4 (t4))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table ttime;")
+	}
 }

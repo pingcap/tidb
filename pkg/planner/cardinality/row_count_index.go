@@ -23,7 +23,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -38,7 +40,11 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
+// idxCols is used to recognize virtual columns inside expBackoffEstimation.
+// It can be nil, in which case virtual-column fallback is skipped.
+// When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
+// This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -60,10 +66,28 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// Fast-path: a full-range scan over a non-MV index returns exactly RealtimeCount
+	// regardless of histogram availability, so we can short-circuit before
+	// IndexStatsIsInvalid — which would otherwise queue an unnecessary async
+	// histogram load whenever the index stats are not fully loaded.
+	if idx != nil && canSkipIndexEstimation(idx, indexRanges) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		return float64(realtimeCnt), nil
+	}
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
+		}
+		// The index has no statistics, but its columns may. Estimate from the column statistics so that
+		// the result agrees with the skyline pruning, which treats such an index as having statistics.
+		var ok bool
+		result, ok, err = getRowCountByColumnStatsForIndex(sctx, coll, indexRanges, idxCols, colsLen)
+		if err != nil || ok {
+			if err == nil && sc.EnableOptimizerCETrace && idx != nil {
+				ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Column Stats", uint64(result))
+			}
+			return result, errors.Trace(err)
 		}
 		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
 		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
@@ -82,7 +106,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, idxCols, realtimeCnt, modifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -117,7 +141,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
 			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
+			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, nil, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -181,7 +205,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 			} else {
 				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
@@ -215,7 +239,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, idxCols []*expression.Column, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -294,7 +318,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// If the first column's range is point.
 		if rangePosition := getOrdinalOfRangeCond(sc, indexRange); rangePosition > 0 && idx.StatsVer >= statistics.Version2 && coll != nil {
 			var expBackoffSel float64
-			expBackoffSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange)
+			expBackoffSel, expBackoffSuccess, err = expBackoffEstimation(sctx, idx, coll, indexRange, idxCols)
 			if err != nil {
 				return 0, err
 			}
@@ -336,8 +360,11 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		count *= increaseFactor
 
-		// handling the out-of-range part
-		if (outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := count >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
@@ -419,7 +446,7 @@ func estimateRowCountWithUniformDistribution(
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
 			topNMinCount := uint64(0)
-			if len(topN.TopN) > 0 {
+			if topN != nil && len(topN.TopN) > 0 {
 				topNMinCount = topN.TopN[0].Count
 				for _, item := range topN.TopN {
 					topNMinCount = min(topNMinCount, item.Count)
@@ -499,8 +526,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// A zero Repeat means no point frequency was recorded for this upper
+	// bound, not that the value has no rows. See equalRowCount in
+	// row_count_column.go.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt
 	}
@@ -512,8 +542,79 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
 }
 
+// getRowCountByColumnStatsForIndex estimates the row count of indexRanges from the column statistics of
+// idxCols, for an index that has no statistics of its own. Multi-column ranges use exponential backoff,
+// because multiplying single column selectivities can badly underestimate an index whose columns each
+// have a low NDV. ok is false, and the caller should fall back to pseudo estimation, when idxCols is
+// unavailable or some column covered by a range lacks valid statistics (e.g. a virtual column).
+// uniqueColsLen is the number of columns of a unique index, or -1 for a non-unique index: a point
+// range over all of its columns matches at most one row.
+func getRowCountByColumnStatsForIndex(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
+	idxCols []*expression.Column, uniqueColsLen int) (count float64, ok bool, err error) {
+	if coll == nil || coll.RealtimeCount <= 0 || len(idxCols) == 0 || len(indexRanges) == 0 {
+		return 0, false, nil
+	}
+	colsIDs := make([]int64, len(idxCols))
+	for i, col := range idxCols {
+		if col == nil {
+			return 0, false, nil
+		}
+		colsIDs[i] = col.UniqueID
+	}
+	for _, ran := range indexRanges {
+		if len(ran.LowVal) == 0 || len(ran.LowVal) > len(idxCols) {
+			return 0, false, nil
+		}
+		for _, colID := range colsIDs[:len(ran.LowVal)] {
+			if statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
+				return 0, false, nil
+			}
+		}
+	}
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
+	realtimeCount := float64(coll.RealtimeCount)
+	for _, ran := range indexRanges {
+		if uniqueColsLen > 0 && !ran.LowExclude && !ran.HighExclude {
+			eqLen, err := ran.PrefixEqualLen(tc)
+			if err != nil {
+				return 0, false, errors.Trace(err)
+			}
+			if eqLen == uniqueColsLen {
+				count++
+				continue
+			}
+		}
+		if len(ran.LowVal) == 1 {
+			cnt, err := GetRowCountByColumnRanges(sctx, coll, colsIDs[0], []*ranger.Range{ran})
+			if err != nil {
+				return 0, false, errors.Trace(err)
+			}
+			count += cnt
+			continue
+		}
+		sel, success, err := expBackoffEstimationByColIDs(sctx, coll, colsIDs, 0, len(idxCols), false, ran, idxCols)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+		if !success {
+			return 0, false, nil
+		}
+		count += sel * realtimeCount
+	}
+	return mathutil.Clamp(count, 1, realtimeCount), true, nil
+}
+
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, success bool, err error) {
+	idxHasStats := idx.Histogram.Len() > 0 || idx.TopN.Num() > 0
+	return expBackoffEstimationByColIDs(sctx, coll, coll.Idx2ColUniqueIDs[idx.Histogram.ID], idx.NDV, len(idx.Info.Columns), idxHasStats, indexRange, idxCols)
+}
+
+// expBackoffEstimationByColIDs is the core of expBackoffEstimation. It does not require index statistics:
+// colsIDs are the unique IDs of the index columns, idxNDV is the index NDV (0 if unknown), numIdxCols is the
+// number of index columns, and idxHasStats indicates whether the index itself has a histogram or TopN.
+func expBackoffEstimationByColIDs(sctx planctx.PlanContext, coll *statistics.HistColl, colsIDs []int64, idxNDV int64, numIdxCols int, idxHasStats bool,
+	indexRange *ranger.Range, idxCols []*expression.Column) (sel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -532,7 +633,6 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
@@ -569,7 +669,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
 				if err == nil {
 					break
 				}
@@ -578,6 +678,15 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 			}
 		}
 		if !foundStats {
+			// A virtual column never has column statistics, so skipping it would
+			// drop what may be the most selective column of the index. Fall back
+			// to the index-stats-based estimation instead, provided the index has
+			// statistics. See https://github.com/pingcap/tidb/issues/69134.
+			// Any other column lacking statistics keeps the existing behavior:
+			// skip it and estimate from the remaining columns.
+			if i < len(idxCols) && idxCols[i] != nil && idxCols[i].VirtualExpr != nil && idxHasStats {
+				return 0, false, nil
+			}
 			continue
 		}
 		if err != nil {
@@ -601,11 +710,12 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
 	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
 	histNDV := coll.RealtimeCount
-	if idx.NDV > 0 {
-		histNDV = idx.NDV
+	if idxNDV > 0 {
+		histNDV = idxNDV
 	}
 	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
-	if l < len(idx.Info.Columns) {
+	// Adjust idxLowBound upwards if we have not used all index columns.
+	if l < numIdxCols {
 		idxLowBound /= 0.9
 	}
 	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
@@ -667,4 +777,40 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// canSkipIndexEstimation checks whether expensive index row count estimation
+// (V1/V2) can be skipped because the ranges cover all rows. Returns true only when:
+//  1. The ranges include a truly full range including NULLs ([NULL, +inf)),
+//     not just [MinNotNull, +inf) which excludes NULLs and would overestimate.
+//  2. The index is not an MV index (which can have multiple entries per row).
+func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) bool {
+	if idx.Info.MVIndex {
+		return false
+	}
+	return slices.ContainsFunc(indexRanges, isFullRangeIncludingNulls)
+}
+
+// isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull) inclusive,
+// not KindMinNotNull and not an exclusive lower bound, so NULL rows are guaranteed to be
+// included in the count.
+func isFullRangeIncludingNulls(ran *ranger.Range) bool {
+	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	// An exclusive bound on NULL (low) or +inf (high) would drop those endpoints
+	// and shrink the range, so the fast path must not apply.
+	if ran.LowExclude || ran.HighExclude {
+		return false
+	}
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() != types.KindNull {
+			return false
+		}
+		if ran.HighVal[i].Kind() != types.KindMaxValue {
+			return false
+		}
+	}
+	return true
 }

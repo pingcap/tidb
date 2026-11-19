@@ -171,13 +171,14 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInsertValueAfterCheckNull"))
-	}()
+	// insert null value before modifying column
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("insert into test.tt values (NULL, NULL)")
+	})
 
 	tk.MustExec("drop table if exists tt;")
-	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
+	tk.MustExec(`create table tt (a bigint, b int);`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	err := tk.ExecToErr("alter table tt modify a int not null;")
 	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
@@ -257,7 +258,8 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 			return
 		}
 		once.Do(func() {
-			checkErr = tk2.ExecToErr("insert into t1 values ()")
+			// Insert null value to make modify column fail.
+			require.NoError(t, tk2.ExecToErr("insert into t1 values ()"))
 		})
 	})
 	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
@@ -282,7 +284,6 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
 	})
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
-	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
@@ -631,7 +632,6 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 }
 
 func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -649,7 +649,6 @@ func TestMultiSchemaModifyColumnWithSkipReorg(t *testing.T) {
 }
 
 func TestModifyColumnWithSkipReorg(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -696,7 +695,7 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column a char(5)")
 	tk.MustExec("admin check table t")
-	require.Equal(t, ddl.ModifyTypeReorg, gotTp)
+	require.Equal(t, model.ModifyTypeReorg, gotTp)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(10))")
@@ -708,11 +707,110 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	})
 	tk.MustExec("alter table t modify column a char(5)")
 	tk.MustExec("admin check table t")
-	require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, gotTp)
+	require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotTp)
+}
+
+// TestModifyColumnRollbackKeepsOriginalNotNull covers issue #70787:
+// a failed MODIFY COLUMN must not drop an original NOT NULL constraint on rollback.
+func TestModifyColumnRollbackKeepsOriginalNotNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session sql_mode = 'STRICT_TRANS_TABLES'")
+
+	assertNotNullPreserved := func(t *testing.T, colName string) {
+		t.Helper()
+		col := external.GetModifyColumn(t, tk, "test", "t", colName, false)
+		require.True(t, mysql.HasNotNullFlag(col.GetFlag()))
+		require.False(t, mysql.HasPreventNullInsertFlag(col.GetFlag()))
+		require.Nil(t, col.ChangingFieldType)
+		require.EqualError(t, tk.ExecToErr(fmt.Sprintf("insert into t (id, %s) values (100, null)", colName)),
+			fmt.Sprintf("[table:1048]Column '%s' cannot be null", colName))
+	}
+
+	t.Run("NoReorgWithCheck", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c int not null)")
+		tk.MustExec("insert into t values (1, 1000), (2, 2000)")
+		err := tk.ExecToErr("alter table t modify column c tinyint not null")
+		require.ErrorContains(t, err, "Data truncated for column 'c'")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeLong, col.GetType())
+		assertNotNullPreserved(t, "c")
+	})
+
+	t.Run("NullToNotNull", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c int)")
+		tk.MustExec("insert into t values (1, 1)")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDoModifyColumnSkipReorgCheck", func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("insert into test.t values (2, null)")
+		})
+		err := tk.ExecToErr("alter table t modify column c tinyint not null")
+		require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeLong, col.GetType())
+		require.False(t, mysql.HasNotNullFlag(col.GetFlag()))
+		require.False(t, mysql.HasPreventNullInsertFlag(col.GetFlag()))
+		require.Nil(t, col.ChangingFieldType)
+		tk.MustExec("insert into t values (3, null)")
+	})
+
+	t.Run("IndexReorg", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key, c char(20) collate utf8mb4_bin not null, index idx(c))")
+		tk.MustExec("insert into t values (1, 'abcdefghijklmnop')")
+		err := tk.ExecToErr("alter table t modify column c varchar(10) collate utf8mb4_bin not null")
+		require.ErrorContains(t, err, "Data truncated for column 'c'")
+		col := external.GetModifyColumn(t, tk, "test", "t", "c", false)
+		require.Equal(t, mysql.TypeString, col.GetType())
+		assertNotNullPreserved(t, "c")
+	})
+}
+
+func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, c char(20) collate utf8mb4_bin, index idx(c))")
+	tk.MustExec("insert into t values (1, 'a')")
+	tbl := external.GetTableByName(t, tk, "test", "t")
+
+	var gotTp byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+		gotTp = tp
+	})
+
+	var once sync.Once
+	var insertErr error
+	var preventNullInsert bool
+	var checked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.TableID != tbl.Meta().ID ||
+			job.Type != model.ActionModifyColumn ||
+			job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		once.Do(func() {
+			checked = true
+			tk2 := testkit.NewTestKit(t, store)
+			col := external.GetModifyColumn(t, tk2, "test", "t", "c", false)
+			preventNullInsert = mysql.HasPreventNullInsertFlag(col.GetFlag())
+			insertErr = tk2.ExecToErr("insert into test.t values (2, null)")
+		})
+	})
+
+	tk.MustExec("alter table t modify column c varchar(10) collate utf8mb4_bin")
+	require.Equal(t, model.ModifyTypeIndexReorg, gotTp)
+	require.True(t, checked)
+	require.False(t, preventNullInsert)
+	require.NoError(t, insertErr)
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 <nil>"))
+	tk.MustExec("admin check table t")
 }
 
 func TestGetModifyColumnType(t *testing.T) {
-	t.Skip("skip for hotfix")
 	type testCase struct {
 		beforeType string
 		afterType  string
@@ -729,154 +827,154 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "int",
 			afterType:  "bigint",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "int",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "int",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		// string
 		{
 			beforeType: "char(10)",
 			afterType:  "char(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_general_ci",
 			afterType:  "char(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(10)",
 			afterType:  "varchar(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "char(20) collate utf8mb4_general_ci",
 			afterType:  "varchar(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(10)",
 			afterType:  "varchar(20)",
-			tp:         ddl.ModifyTypeNoReorg,
+			tp:         model.ModifyTypeNoReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_general_ci",
 			afterType:  "varchar(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(10)",
 			afterType:  "char(20)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_general_ci",
 			afterType:  "char(10) collate utf8mb4_general_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeNoReorgWithCheck,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		// different collation
 		{
 			beforeType: "char(20) collate utf8mb4_bin",
 			afterType:  "varchar(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20) collate utf8_unicode_ci",
 			afterType:  "varchar(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8mb4_bin",
 			afterType:  "char(10) collate utf8_unicode_ci",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20) collate utf8_unicode_ci",
 			afterType:  "char(10) collate utf8mb4_bin",
 			index:      true,
-			tp:         ddl.ModifyTypeIndexReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 	}
 
@@ -908,27 +1006,27 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "bigint",
 			afterType:  "int",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "char(20)",
 			afterType:  "varchar(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 		{
 			beforeType: "varchar(20)",
 			afterType:  "char(10)",
-			tp:         ddl.ModifyTypeReorg,
+			tp:         model.ModifyTypeReorg,
 		},
 	}
 
@@ -1071,7 +1169,6 @@ func TestParallelAlterTable(t *testing.T) {
 //
 // > And for each combination, we test the values that are expected to fail and expected to succeed.
 func TestModifyIntegerColumn(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1100,18 +1197,18 @@ func TestModifyIntegerColumn(t *testing.T) {
 		for _, val := range insertVal {
 			tk.MustExec(fmt.Sprintf("insert into t values(%s)", val))
 			err := tk.ExecToErr(fmt.Sprintf("alter table t modify column a %s", newColTp))
-			require.Contains(t, err.Error(), "Data truncated for column 'a'")
+			require.True(t, strings.Contains(err.Error(), "Data truncated for column 'a'") || strings.Contains(err.Error(), "overflow"))
 			tk.MustExec("delete from t")
 		}
 	}
 
-	successValue := func(insertVal string, newColTp string) {
+	successValue := func(insertVal string, newColTp string, expectReorgTp byte) {
 		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
-		require.Equal(t, ddl.ModifyTypeNoReorgWithCheck, reorgType)
+		require.Equal(t, expectReorgTp, reorgType)
 	}
 
-	signed2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	signed2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		tk.MustExec("drop table if exists t")
@@ -1130,10 +1227,10 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}, newColTp)
 
 		// [maxValOfNewCol, minValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp)
+		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	unsigned2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte) {
 		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1146,10 +1243,10 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}, newColTp)
 
 		// [0, maxValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp)
+		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	signed2Unsigned := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte, oldColIdx, newColIdx int) {
+	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte, oldColIdx, newColIdx int) {
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1170,10 +1267,10 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}
 
 		// [0, min(maxValOfOldCol, maxValOfNewCol)] pass
-		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp)
+		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp, expectReorgTp)
 	}
 
-	unsigned2Signed := func(oldColTp, newColTp string, t *testing.T, expectReorgTp byte) {
+	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
 		maxValOfNewCol := maxMinSignedVal[newColTp][0]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1186,7 +1283,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}, newColTp)
 
 		// [0, maxValOfNewCol] pass
-		successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp)
+		successValue(fmt.Sprintf("(%d), (1), (0)", maxValOfNewCol), newColTp, expectReorgTp)
 	}
 
 	signedTp := []string{"bigint", "int", "mediumint", "smallint", "tinyint"}
@@ -1195,30 +1292,29 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 1. signed -> signed
 		// bigint -> int, mediumint, smallint, tinyint; int -> mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(signedTp); newColIdx++ {
-			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			signed2Signed(signedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeReorg, oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
 		// 3. unsigned -> unsigned
 		// bigint unsigned -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int unsigned -> mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := oldColIdx + 1; newColIdx < len(unsignedTp); newColIdx++ {
-			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Unsigned(unsignedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], t, ddl.ModifyTypeNoReorgWithCheck)
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeReorg)
 		}
 	}
 }
 
 func TestModifyStringColumn(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1277,7 +1373,7 @@ func TestModifyStringColumn(t *testing.T) {
 			newColTp:        "char(20)",
 			insertVal:       paddingStrLen5,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:  "varchar(10)",
@@ -1290,14 +1386,14 @@ func TestModifyStringColumn(t *testing.T) {
 			newColTp:        "char(10)",
 			insertVal:       paddingStrLen5,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:        "varchar(20)",
 			newColTp:        "char(10)",
 			insertVal:       paddingStrLen15,
 			pass:            true,
-			expectedReorgTp: ddl.ModifyTypeReorg,
+			expectedReorgTp: model.ModifyTypeReorg,
 		},
 		{
 			oldColTp:  "varchar(20)",
@@ -1320,8 +1416,8 @@ func TestModifyStringColumn(t *testing.T) {
 		if tc.pass {
 			require.Nil(t, err)
 			expectedReorgTp := tc.expectedReorgTp
-			if tc.expectedReorgTp == ddl.ModifyTypeNone {
-				expectedReorgTp = ddl.ModifyTypeNoReorgWithCheck
+			if tc.expectedReorgTp == model.ModifyTypeNone {
+				expectedReorgTp = model.ModifyTypeNoReorgWithCheck
 			}
 			require.Equal(t, expectedReorgTp, reorgType)
 		} else {
@@ -1331,7 +1427,6 @@ func TestModifyStringColumn(t *testing.T) {
 }
 
 func TestModifyColumnWithDifferentCollation(t *testing.T) {
-	t.Skip("skip for hotfix")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1393,5 +1488,161 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 				runSingleTest(t, oldColTp, newColTp)
 			})
 		}
+	}
+}
+
+func TestStatsAfterModifyColumn(t *testing.T) {
+	type query struct {
+		pred string
+		idx  string
+	}
+
+	type testCase struct {
+		caseName        string
+		createTableSQL  string
+		modifySQL       string
+		embeddedAnalyze bool
+		checkResult     bool
+		queries         []query
+	}
+
+	tcs := []testCase{
+		{
+			// Check stats correctness after modifying column without any reorg
+			// We don't add index on b, because these indexes need reorg due to NeedRestoreData changes.
+			caseName:        "no reorg without analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a))",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: false,
+			checkResult:     true,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", ""},
+				{"b > '10'", ""},
+				{"b >= '10'", ""},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", ""},
+			},
+		},
+		{
+			// Only indexes are rewritten.
+			// The row data remains the same, so the stats are still valid.
+			caseName:        "row and index reorg with analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
+			embeddedAnalyze: true,
+			checkResult:     true,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", "i2"},
+				{"b > '10'", ""},
+				{"b >= '10'", "i2"},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+		{
+			// Both row and index reorg happen, but with no embedded analyze.
+			// All the stats become invalid, so don't check the results.
+			caseName:        "row and index reorg without analyze",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
+			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
+			embeddedAnalyze: false,
+			checkResult:     false,
+			queries: []query{
+				{"a < 10", "i1"},
+				{"a <= 10", ""},
+				{"a > 10", "i1"},
+				{"a >= 10", ""},
+				{"a = 10", "i1"},
+				{"a = -1", ""},
+				{"b < '10'", ""},
+				{"b <= '10'", "i2"},
+				{"b > '10'", ""},
+				{"b >= '10'", "i2"},
+				{"b = '10'", ""},
+				{"b = 'non-exist'", "i2"},
+			},
+		},
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_stats_update_during_ddl = true;")
+
+	for _, tc := range tcs {
+		t.Run(tc.caseName, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec(tc.createTableSQL)
+			tk.MustExec(fmt.Sprintf("set @@tidb_stats_update_during_ddl = %t", tc.embeddedAnalyze))
+
+			for i := range 128 {
+				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+			}
+
+			tk.MustExec("analyze table t columns a, b")
+
+			oldRs := make([]string, 0, len(tc.queries))
+			for _, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				oldRs = append(oldRs, rs[0][1].(string))
+			}
+
+			tk.MustExec(tc.modifySQL)
+
+			for i, q := range tc.queries {
+				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+				if tc.checkResult {
+					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
+				} else {
+					// For index selectivity, the stats is missing here.
+					if q.idx != "" {
+						require.Contains(t, rs[len(rs)-1][len(rs[0])-1], "missing")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestModifyColumnLoadTableRangeError verifies transient range-loading retries
+// preserve converted values and table consistency in both persisted job formats.
+func TestModifyColumnLoadTableRangeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	originalVersion := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(originalVersion) })
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		t.Run(fmt.Sprintf("job_version_%d", version), func(t *testing.T) {
+			model.SetJobVerInUse(version)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("drop database if exists modifycol;")
+			tk.MustExec("create database modifycol;")
+			tk.MustExec("use modifycol;")
+
+			// Use a type conversion that definitely requires reorg.
+			tk.MustExec("create table t (a int primary key, b int, c int);")
+			batchInsert(tk, "t", 0, 100)
+
+			// A transient PD error must not roll back reorg in either persisted job format.
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDErr",
+				`1*return("All returned regions have no leaders, limit: 1")`)
+
+			tk.MustExec("alter table t change column b b varchar(16);")
+			tk.MustQuery("select b from t where a in (0, 99) order by a").Check(testkit.Rows("0", "99"))
+			tk.MustExec("admin check table t;")
+		})
 	}
 }

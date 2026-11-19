@@ -34,7 +34,7 @@ done
 
 if [ ! -e "$BIN/tiflash" ]; then
     echo "Downloading nightly Tiflash..."
-    curl -L -f -o "$BIN/tiflash.tar.gz" "https://download.pingcap.org/tiflash-nightly-linux-amd64.tar.gz"
+    curl -L -f -o "$BIN/tiflash.tar.gz" "https://download.pingcap.com/tiflash-nightly-linux-amd64.tar.gz"
     tar -xf "$BIN/tiflash.tar.gz" -C "$BIN/"
     rm "$BIN/tiflash.tar.gz"
     mkdir "$BIN"/flash_cluster_manager
@@ -46,7 +46,7 @@ fi
 
 if [ -n "$MISSING_TIDB_COMPONENTS" ]; then
     echo "Downloading latest TiDB bundle..."
-    curl -L -f -o "$BIN/tidb.tar.gz" "https://download.pingcap.org/tidb-nightly-linux-amd64.tar.gz"
+    curl -L -f -o "$BIN/tidb.tar.gz" "https://download.pingcap.com/tidb-nightly-linux-amd64.tar.gz"
     tar -x -f "$BIN/tidb.tar.gz" -C "$BIN/" $MISSING_TIDB_COMPONENTS
     rm "$BIN/tidb.tar.gz"
     mv "$BIN"/tidb-nightly-linux-amd64/bin/* "$BIN/"
@@ -80,7 +80,7 @@ fi
 
 if [ ! -e "$BIN/cdc" ]; then
     echo "Downloading cdc..."
-    curl -L -f -o "$BIN/cdc.tar.gz" "https://download.pingcap.org/ticdc-nightly-linux-amd64.tar.gz"
+    curl -L -f -o "$BIN/cdc.tar.gz" "https://download.pingcap.com/ticdc-nightly-linux-amd64.tar.gz"
     tar -x -f "$BIN/cdc.tar.gz" -C "$BIN/" ticdc-nightly-linux-amd64/bin/cdc
     mv "$BIN"/ticdc-nightly-linux-amd64/bin/cdc "$BIN/cdc"
 fi

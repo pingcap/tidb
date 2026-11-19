@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -219,7 +220,7 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
+	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}
@@ -268,7 +269,7 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if region == nil {
+	if region == nil || region.Meta == nil {
 		return nil, nil
 	}
 	return &RegionInfo{
@@ -402,8 +403,14 @@ func sendSplitRegionRequest(
 				if findLeaderErr != nil {
 					return false, nil, findLeaderErr
 				}
+				if newRegionInfo == nil || newRegionInfo.Region == nil {
+					return false, nil, berrors.ErrKVEpochNotMatch
+				}
 				if !CheckRegionEpoch(newRegionInfo, regionInfo) {
 					return false, nil, berrors.ErrKVEpochNotMatch
+				}
+				if newRegionInfo.Leader == nil {
+					return false, nil, berrors.ErrPDLeaderNotFound
 				}
 				log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
 				regionInfo = newRegionInfo

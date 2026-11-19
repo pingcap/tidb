@@ -722,6 +722,7 @@ const (
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
 //	| GLOBAL
+//	| PRE_SPLIT_REGIONS = AUTO
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 // with the addition of Global Index
@@ -735,6 +736,12 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
+	Condition    ExprNode     `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
+	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
+	// caller constructs both fields manually, SplitOpt takes precedence.
+	AutoPreSplit bool `json:"-"`
 }
 
 // IsEmpty is true if only default options are given
@@ -746,7 +753,10 @@ func (n *IndexOption) IsEmpty() bool {
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
-		n.Visibility != IndexVisibilityDefault {
+		n.Visibility != IndexVisibilityDefault ||
+		n.Condition != nil ||
+		n.SplitOpt != nil ||
+		n.AutoPreSplit {
 		return false
 	}
 	return true
@@ -819,7 +829,57 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
+		hasPrevOption = true
 	}
+
+	if n.SplitOpt != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPreSplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+				ctx.WritePlainf("%d", n.SplitOpt.Num)
+			} else {
+				ctx.WritePlain("(")
+				if err := n.SplitOpt.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+				}
+				ctx.WritePlain(")")
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		hasPrevOption = true
+	} else if n.AutoPreSplit {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPreSplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			ctx.WriteKeyWord("AUTO")
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		hasPrevOption = true
+	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
+	}
+
 	return nil
 }
 
@@ -830,6 +890,13 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
+	if n.SplitOpt != nil {
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitOpt = node.(*SplitOption)
+	}
 	return v.Leave(n)
 }
 
@@ -2509,6 +2576,9 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
+	/* Some options are not cherry-picked from master, reserve the options */
+
+	TableOptionAffinity        = 47
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2552,6 +2622,28 @@ const (
 	TableOptionCharsetWithoutConvertTo uint64 = 0
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
+
+const (
+	// TableAffinityLevelNone means no affinity.
+	TableAffinityLevelNone = "none"
+	// TableAffinityLevelTable means table-level affinity.
+	TableAffinityLevelTable = "table"
+	// TableAffinityLevelPartition means partition-level affinity.
+	TableAffinityLevelPartition = "partition"
+)
+
+// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
+func NormalizeTableAffinityLevel(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	switch lower {
+	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
+		return lower, true
+	case "":
+		return TableAffinityLevelNone, true
+	default:
+		return s, false
+	}
+}
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
@@ -2870,6 +2962,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionTTLJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 			return nil

@@ -103,6 +103,8 @@ var (
 	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 
+	mLegacyECDSASessionTokenDisabled = []byte("LegacyECDSASessionTokenDisabled")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -979,6 +981,19 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
+func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(r.Value, dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(dbInfo)
+	})
+	return errors.Trace(err)
+}
+
 // IterTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
@@ -1030,6 +1045,7 @@ func splitRangeInt64Max(n int64) [][]string {
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 // This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+// It calls fn from the worker goroutines, but never concurrently.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1102,26 +1118,55 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-var checkAttributesInOrder = []string{
-	`"fk_info":null`,
-	`"partition":null`,
-	`"Lock":null`,
-	`"tiflash_replica":null`,
-	`"temp_table_type":0`,
-	`"policy_ref_info":null`,
-	`"ttl_info":null`,
+// foreign key info contain null and [] two situations
+var checkForeignKeyAttributesNil = `"fk_info":null`
+var checkForeignKeyAttributesZero = `"fk_info":[]`
+
+// MustLoadFilterAttr defines filters for IsTableInfoMustLoad.
+// LoadIfMissing controls whether the absence or presence of the attribute
+// should trigger loading: when true, load if the attribute is missing;
+// when false, load if the attribute is present.
+type MustLoadFilterAttr struct {
+	Attr          string
+	LoadIfMissing bool
+}
+
+var checkAttributesInOrder = []MustLoadFilterAttr{
+	{Attr: `"partition":null`, LoadIfMissing: true},
+	{Attr: `"Lock":null`, LoadIfMissing: true},
+	{Attr: `"tiflash_replica":null`, LoadIfMissing: true},
+	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
+	{Attr: `"policy_ref_info":null`, LoadIfMissing: true},
+	{Attr: `"ttl_info":null`, LoadIfMissing: true},
+	{Attr: `"affinity":{`, LoadIfMissing: false},
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
-// If the byte representation contains all the given attributes,
-// then it does not need to be loaded and this function will return false.
-// Otherwise, it will return true, indicating that the table info should be loaded.
+// If the byte representation follows filterAttrs, it returns true.
+// Otherwise, it returns false meaning that table is not needed to load.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
-func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
+// isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...MustLoadFilterAttr) bool {
 	idx := 0
-	for _, substr := range filterAttrs {
-		idx = bytes.Index(json, hack.Slice(substr))
+	if isCheckForeignKeyAttrsInOrder {
+		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
 		if idx == -1 {
+			idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesZero))
+			if idx == -1 {
+				return true
+			}
+		}
+		json = json[idx:]
+	}
+	for _, filter := range filterAttrs {
+		idx = bytes.Index(json, hack.Slice(filter.Attr))
+		if idx == -1 {
+			if filter.LoadIfMissing {
+				return true
+			}
+			continue
+		}
+		if !filter.LoadIfMissing {
 			return true
 		}
 		json = json[idx:]
@@ -1132,7 +1177,7 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+	return isTableInfoMustLoad(json, true, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1177,7 +1222,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1193,8 +1238,13 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
-// The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+// filterAttrs is a list of MustLoadFilterAttr rules that decide which tables must be loaded:
+//   - Each rule describes an attribute marker to search for in the serialized table info.
+//   - If a rule has LoadIfMissing == true, the table is loaded when that marker is NOT present
+//     (e.g. when a default/null marker is missing and the table should be treated specially).
+//   - If a rule has LoadIfMissing == false, the table is loaded only when that marker IS present
+//     (e.g. when a special attribute flag is explicitly set on the table).
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadFilterAttr) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -1206,7 +1256,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, false, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1874,6 +1924,19 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
+// have been permanently disabled. A missing key preserves upgrade compatibility.
+func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
+	value, err := m.txn.GetInt64(mLegacyECDSASessionTokenDisabled)
+	return value == 1, errors.Trace(err)
+}
+
+// SetLegacyECDSASessionTokenDisabled permanently disables legacy ECDSA session
+// tokens. The transition is one-way and repeated writes are safe.
+func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
+	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
 }
 
 // ElementKeyType is a key type of the element.

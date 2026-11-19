@@ -79,11 +79,13 @@ type CheckpointManager struct {
 
 // taskCheckpoint is the checkpoint for a single task.
 type taskCheckpoint struct {
-	totalKeys     int
-	writtenKeys   int
-	checksum      int64
-	endKey        kv.Key
-	lastBatchRead bool
+	totalKeys      int
+	writtenKeys    int
+	checksum       int64
+	endKey         kv.Key
+	lastBatchRead  bool
+	chunksTotal    int
+	chunksFinished int
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -194,14 +196,24 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 	cp := s.checkpoints[taskID]
 	cp.totalKeys += delta
 	cp.lastBatchRead = last
+	cp.chunksTotal++
 }
 
 // UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
 func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 	s.mu.Lock()
-	cp := s.checkpoints[taskID]
+	cp, ok := s.checkpoints[taskID]
+	if !ok {
+		s.mu.Unlock()
+		s.logger.Warn("finish chunk for unknown task", zap.Int("taskID", taskID))
+		return
+	}
 	cp.writtenKeys += delta
+	cp.chunksFinished++
+	if cp.chunksFinished == cp.chunksTotal {
+		s.logger.Info("finish a index ingest task", zap.Int("id", taskID), zap.Int("totalKeys", cp.totalKeys), zap.Int("writtenKeys", cp.writtenKeys))
+	}
 	s.mu.Unlock()
 }
 
@@ -242,7 +254,7 @@ func (s *CheckpointManager) afterFlush() {
 	defer s.mu.Unlock()
 	for {
 		cp := s.checkpoints[s.minTaskIDFinished]
-		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
+		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys || cp.chunksFinished < cp.chunksTotal {
 			break
 		}
 		delete(s.checkpoints, s.minTaskIDFinished)

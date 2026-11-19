@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -151,14 +152,16 @@ type pitrCollector struct {
 	enabled bool
 	// restoreUUID is the identity of this restoration.
 	// This will be kept among restarting from checkpoints.
-	restoreUUID uuid.UUID
+	restoreUUID      uuid.UUID
+	operationContext operation.Context
 	// maxCopyConcurrency is the maximum number of concurrent copy operations.
 	maxCopyConcurrency int
 
 	// Mutable state.
 	ingestedSSTMeta     ingestedSSTsMeta
 	ingestedSSTMetaLock sync.Mutex
-	putMigOnce          sync.Once
+	prepareMigLock      sync.Mutex
+	migrationPrepared   bool // Protected by prepareMigLock.
 	writerRoutine       persisterHandle
 	concControl         *util.WorkerPool
 
@@ -413,8 +416,16 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	if !c.enabled {
 		return nil
 	}
+	c.doWithMetaLock(func() {
+		c.resetCommitting()
+	})
+	// Publish only durable metadata: a failed restore retry uses a new path and
+	// cannot repair a missing object referenced by an earlier migration.
+	if err := c.persistExtraBackupMeta(ctx); err != nil {
+		return err
+	}
 
-	est := stream.MigrationExtension(c.taskStorage)
+	est := stream.MigrationExtension(c.taskStorage).WithOperationContext(c.operationContext)
 
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
@@ -424,19 +435,21 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 
-	c.doWithMetaLock(func() {
-		c.resetCommitting()
-	})
-	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
-	// which leads to a leakage.
-	return c.persistExtraBackupMeta(ctx)
+	return nil
 }
 
-func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
-	c.putMigOnce.Do(func() {
-		err = c.prepareMig(ctx)
-	})
-	return
+func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) error {
+	c.prepareMigLock.Lock()
+	defer c.prepareMigLock.Unlock()
+	if c.migrationPrepared {
+		return nil
+	}
+	if err := c.prepareMig(ctx); err != nil {
+		return err
+	}
+	// A failed attempt must not allow later batches to skip publication.
+	c.migrationPrepared = true
+	return nil
 }
 
 func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
@@ -475,9 +488,10 @@ func (c *pitrCollector) resetCommitting() {
 
 // PiTRCollDep is the dependencies of a PiTR collector.
 type PiTRCollDep struct {
-	PDCli   pd.Client
-	EtcdCli *clientv3.Client
-	Storage *pb.StorageBackend
+	PDCli            pd.Client
+	EtcdCli          *clientv3.Client
+	Storage          *pb.StorageBackend
+	OperationContext operation.Context
 
 	maxCopyConcurrency int
 }
@@ -513,6 +527,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 
 	coll := &pitrCollector{
 		enabled:            true,
+		operationContext:   deps.OperationContext,
 		maxCopyConcurrency: deps.maxCopyConcurrency,
 	}
 

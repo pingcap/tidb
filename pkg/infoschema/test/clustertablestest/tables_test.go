@@ -140,11 +140,12 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "root",
+		Host:              "127.0.0.1",
+		Command:           mysql.ComQuery,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -207,6 +208,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:                2,
@@ -220,6 +222,7 @@ func TestSomeTables(t *testing.T) {
 		Info:              strings.Repeat("x", 101),
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:                3,
@@ -234,6 +237,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
@@ -281,6 +285,7 @@ func TestSomeTables(t *testing.T) {
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
@@ -460,6 +465,7 @@ func TestSlowQuery(t *testing.T) {
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
+			"null",
 			"select * from t_slim;",
 		},
 		{"2021-09-08 14:39:54.506967",
@@ -544,6 +550,7 @@ func TestSlowQuery(t *testing.T) {
 			"",
 			"",
 			"",
+			"null",
 			"INSERT INTO ...;",
 		},
 	}

@@ -23,7 +23,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
@@ -118,7 +118,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
@@ -137,7 +137,7 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 }
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.Ctx(), e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		return err
@@ -187,6 +187,10 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
 		return err
+	}
+	if e.HistoricalStatsTS > 0 {
+		// The dump runs other statements in this session and replaces its StmtCtx, so warn after it.
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP"))
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
@@ -365,40 +369,18 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 }
 
 func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
-	unLoadVars := make([]string, 0)
+	var unLoadVars []string
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerVariablesFile) == 0 {
-			varMap := make(map[string]string)
 			v, err := zipFile.Open()
 			if err != nil {
 				return errors.AddStack(err)
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			_, err = toml.NewDecoder(v).Decode(&varMap)
+			unLoadVars, err = config.LoadConfigForPlanReplayerLoad(ctx, v)
 			if err != nil {
 				return errors.AddStack(err)
-			}
-			vars := ctx.GetSessionVars()
-			for name, value := range varMap {
-				sysVar := variable.GetSysVar(name)
-				if sysVar == nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
-				err = vars.SetSystemVar(name, sVal)
-				if err != nil {
-					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
-					continue
-				}
 			}
 		}
 	}
@@ -463,7 +445,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	do := domain.GetDomain(ctx)
 	h := do.StatsHandle()
 	if h == nil {
-		return errors.New("plan replayer: hanlde is nil")
+		return errors.New("plan replayer: handle is nil")
 	}
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
