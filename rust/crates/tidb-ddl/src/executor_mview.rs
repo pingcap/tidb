@@ -112,6 +112,7 @@ pub(crate) fn create_materialized_view_log_job(
         &schema_name,
         &schema.charset,
         &schema.collate,
+        schema.placement_policy_ref.as_ref(),
         &base,
         stmt,
         context.enable_check_constraint(),
@@ -1117,6 +1118,7 @@ pub(crate) fn create_materialized_view_job(
         context.enable_check_constraint(),
     )
     .map_err(|error| error.to_mysql_error())?;
+    tidb_ddl_build::table_info_build::inherit_database_placement(&mut info, plan.schema.placement_policy_ref.as_ref());
     info.comment = plan.comment.clone();
     let expr_ctx = SessionExprContext(context);
     let (refresh_method, refresh_start_with, refresh_next) =
@@ -1558,61 +1560,79 @@ pub(crate) fn create_materialized_view_shadow_table_job(
     Ok(crate::JobWrapper { job, args: JobArgsValue::CreateTable(Some(GoShared::new(args))), id_allocated: false })
 }
 
-/// Go master `buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo`: the
-/// view, its base table, the shadow table and (when it feeds the view) the
-/// base table's log, all exclusive.
+/// Go master `buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo`: every
+/// table the cutover rewrites, exclusive -- the view, its sources, the shadow
+/// table, the source logs that list the view as a dependent, the view's own
+/// log and its dependent views.
 fn build_mview_refresh_out_of_place_cutover_involving_schema_info(
     catalog: &SessionExtendedInfoSchema,
     schema_name: &str,
     old_mview_id: i64,
     shadow_table_id: i64,
 ) -> Result<Vec<tidb_model::InvolvingSchemaInfo>, MysqlError> {
-    let invalid = |message: &str| {
-        MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[format!(
-            "refresh materialized view complete OUT OF PLACE cutover: {message}"
-        )
-        .into()]))
+    let invalid = |message: String| {
+        MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.into()]))
     };
-    let old = catalog
-        .table_info_by_id(old_mview_id)
-        .map(|table| table.read().clone())
-        .filter(|table| table.materialized_view.is_some())
-        .ok_or_else(|| invalid("old materialized view not found"))?;
-    let base_ids = old.materialized_view.as_ref().map(|info| info.read().base_table_ids.iter().copied().collect::<Vec<i64>>()).unwrap_or_default();
-    if base_ids.len() != 1 {
-        return Err(invalid("materialized view must reference exactly one base table in Stage-1"));
-    }
-    let base = catalog.table_info_by_id(base_ids[0]).map(|table| table.read().clone()).ok_or_else(|| invalid("base table not found"))?;
-    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
-    let mut mlog = catalog.table_info_by_id(mlog_id).map(|table| table.read().clone());
-    if mlog_id != 0 && mlog.is_none() {
-        return Err(invalid("materialized view log not found"));
-    }
-    if let Some(log) = &mlog {
-        let valid = log.materialized_view_log.as_ref().is_some_and(|info| info.read().base_table_id == base.id);
-        if !valid {
-            return Err(invalid("materialized view log metadata is invalid"));
+    let mut involving: Vec<tidb_model::InvolvingSchemaInfo> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut add_table = |id: i64, involving: &mut Vec<tidb_model::InvolvingSchemaInfo>| -> Result<tidb_model::TableInfo, MysqlError> {
+        let info = catalog.table_info_by_id(id).map(|table| table.read().clone()).ok_or_else(|| {
+            invalid(format!("refresh materialized view complete OUT OF PLACE cutover: table {id} not found"))
+        })?;
+        if seen.insert(id) {
+            let Some(db) = catalog.schema_name_by_table_id(id) else {
+                return Err(MysqlError::from_terror(
+                    &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                        .gen_with_stack_by_args(&[schema_name.to_owned().into()]),
+                ));
+            };
+            involving.push(tidb_model::InvolvingSchemaInfo {
+                database: tidb_hack::go_to_lower(&db).into(),
+                table: info.name.lowercase().to_owned().into(),
+                ..tidb_model::InvolvingSchemaInfo::default()
+            });
         }
+        Ok(info)
+    };
+    let old = add_table(old_mview_id, &mut involving)?;
+    let Some(old_mview) = old.materialized_view.as_ref().map(|info| info.read().clone()) else {
+        return Err(invalid(
+            "refresh materialized view complete OUT OF PLACE cutover: old materialized view metadata missing".to_owned(),
+        ));
+    };
+    let mut input_mlog_ids = Vec::new();
+    for &id in old_mview.base_table_ids.iter() {
+        let base = add_table(id, &mut involving)?;
+        let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+        if mlog_id != 0 {
+            input_mlog_ids.push(mlog_id);
+        }
+    }
+    add_table(shadow_table_id, &mut involving)?;
+    for id in input_mlog_ids {
+        let log = catalog.table_info_by_id(id).map(|table| table.read().clone()).ok_or_else(|| {
+            invalid(format!("refresh materialized view complete OUT OF PLACE cutover: table {id} not found"))
+        })?;
+        // "Cutover only rewrites source logs that list the old MV as a
+        // dependent."
         let feeds = log
             .materialized_view_log
             .as_ref()
-            .is_some_and(|info| info.read().dependent_mview_ids.iter().any(|&id| id == old_mview_id));
+            .is_some_and(|info| info.read().dependent_mview_ids.iter().any(|&mview| mview == old_mview_id));
         if !feeds {
-            mlog = None;
+            continue;
+        }
+        add_table(id, &mut involving)?;
+    }
+    if let Some(base) = old.materialized_view_base.as_ref().map(|info| info.read().clone()) {
+        if base.mlog_id != 0 {
+            add_table(base.mlog_id, &mut involving)?;
+        }
+        for &id in base.mview_ids.iter() {
+            add_table(id, &mut involving)?;
         }
     }
-    let shadow = catalog.table_info_by_id(shadow_table_id).map(|table| table.read().clone()).ok_or_else(|| invalid("shadow table not found"))?;
-    let schema_l = tidb_hack::go_to_lower(schema_name);
-    let involving = |table: &str| tidb_model::InvolvingSchemaInfo {
-        database: schema_l.clone().into(),
-        table: table.to_owned().into(),
-        ..tidb_model::InvolvingSchemaInfo::default()
-    };
-    let mut infos = vec![involving(old.name.lowercase()), involving(base.name.lowercase()), involving(shadow.name.lowercase())];
-    if let Some(log) = mlog {
-        infos.push(involving(log.name.lowercase()));
-    }
-    Ok(infos)
+    Ok(involving)
 }
 
 /// Go master `executor.RefreshMaterializedViewCompleteOutOfPlaceCutover` up
@@ -1628,6 +1648,13 @@ pub(crate) fn refresh_materialized_view_complete_out_of_place_cutover_job(
 ) -> Result<crate::JobWrapper, MysqlError> {
     let involving =
         build_mview_refresh_out_of_place_cutover_involving_schema_info(catalog, schema_name, args.old_mview_id, args.shadow_table_id)?;
+    // Go: the view's own log, which the cutover replaces (its new ID is
+    // allocated at submit, `assignGIDsForJobs`).
+    let mut args = args;
+    args.old_mlog_id = catalog
+        .table_info_by_id(args.old_mview_id)
+        .and_then(|table| table.read().materialized_view_base.as_ref().map(|base| base.read().mlog_id))
+        .unwrap_or(0);
     let mut job = crate::cluster_ddl::session_job(context, ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER);
     job.schema_id = schema_id;
     job.table_id = args.old_mview_id;

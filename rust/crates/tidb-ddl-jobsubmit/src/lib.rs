@@ -190,6 +190,13 @@ fn create_materialized_view_args(spec: &JobSpec) -> GoShared<tidb_model::CreateM
 }
 
 /// The table a materialized view or MV log job creates.
+fn cutover_args(spec: &JobSpec) -> GoShared<tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs> {
+    match &spec.args {
+        JobArgsValue::RefreshMaterializedViewCompleteOutOfPlaceCutover(Some(args)) => args.clone(),
+        _ => panic!("job args are not *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs"),
+    }
+}
+
 fn materialized_table(spec: &JobSpec) -> GoShared<TableInfo> {
     if spec.job.type_ == ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG {
         create_materialized_view_log_args(spec).read().table_info.clone()
@@ -214,6 +221,11 @@ pub fn get_required_gid_count(specs: &[JobSpec]) -> usize {
             continue;
         }
         match spec.job.type_ {
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+                if cutover_args(spec).read().old_mlog_id != 0 {
+                    count += 1;
+                }
+            }
             ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG | ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
                 count += table_id_count(&materialized_table(spec).read());
             }
@@ -320,6 +332,12 @@ pub fn assign_g_ids_for_jobs(specs: &mut [JobSpec], ids: &[i64]) {
     let mut allocator = GlobalIdAssigner { ids, next: 0 };
     for spec in specs {
         match spec.job.type_ {
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+                let args = cutover_args(spec);
+                if !spec.id_allocated && args.read().old_mlog_id != 0 {
+                    args.write().new_mlog_id = allocator.next();
+                }
+            }
             ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG | ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
                 let table = materialized_table(spec);
                 if !spec.id_allocated {
@@ -709,6 +727,20 @@ pub fn job_2_table_ids(spec: &JobSpec) -> String {
             if !args.read().mlog_table_ids.is_empty() =>
         {
             string_for_ids(std::iter::once(spec.job.table_id).chain(args.read().mlog_table_ids.iter().copied()))
+        }
+        (
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER,
+            JobArgsValue::RefreshMaterializedViewCompleteOutOfPlaceCutover(Some(args)),
+        ) => {
+            // "MDL only waits on the physical objects replaced by cutover. The
+            // broader InvolvingSchemaInfo set serializes changes to upstream
+            // refs and children."
+            let args = args.read();
+            let mut ids = vec![spec.job.table_id, args.shadow_table_id];
+            if args.old_mlog_id != 0 {
+                ids.extend([args.old_mlog_id, args.new_mlog_id]);
+            }
+            string_for_ids(ids)
         }
         (ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG, JobArgsValue::CreateMaterializedViewLog(Some(args))) => {
             let base_table_id = args

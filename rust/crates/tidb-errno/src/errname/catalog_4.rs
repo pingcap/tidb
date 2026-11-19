@@ -1033,4 +1033,14 @@ pub(super) const CATALOG_4: &[CatalogEntry] = &[
         code: errcode::ErrUserPrefixMismatch,
         message: ErrUserPrefixMismatch,
     },
+    CatalogEntry {
+        name: "ErrMVAdvisoryLockConflict",
+        code: errcode::ErrMVAdvisoryLockConflict,
+        message: ErrMVAdvisoryLockConflict,
+    },
+    CatalogEntry {
+        name: "ErrMVRefreshLogBaselineChanged",
+        code: errcode::ErrMVRefreshLogBaselineChanged,
+        message: ErrMVRefreshLogBaselineChanged,
+    },
 ];

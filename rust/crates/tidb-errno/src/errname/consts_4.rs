@@ -1050,3 +1050,13 @@ pub const ErrUserPrefixMismatch: ErrMessage = ErrMessage {
     raw: "User name prefix does not match the assigned keyspace.",
     redact_arg_pos: &[],
 };
+/// Message metadata for `ErrMVAdvisoryLockConflict` (Go master).
+pub const ErrMVAdvisoryLockConflict: ErrMessage = ErrMessage {
+    raw: "materialized view advisory lock conflict: %s",
+    redact_arg_pos: &[],
+};
+/// Message metadata for `ErrMVRefreshLogBaselineChanged` (Go master).
+pub const ErrMVRefreshLogBaselineChanged: ErrMessage = ErrMessage {
+    raw: "refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it",
+    redact_arg_pos: &[],
+};

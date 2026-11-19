@@ -1034,9 +1034,36 @@ impl Session {
         // transaction.
         let mut purge = self.open_refresh_system_session()?;
         let restore_purge = apply_mlog_purge_maintenance_session_vars(&mut purge, &mem_quota, &engines)?;
+        // Go master: the purge advisory lock a cutover retiring this log
+        // also takes. "Do not retry acquisition: this statement may hold MDL
+        // needed by cutover. The later transaction cleanup runs before this
+        // advisory lock is released."
+        let advisory_lock_name = tidb_mviewutil::purge_advisory_lock_name(target.mlog_id);
+        let locked = match sys_sql(&mut purge, "SELECT GET_LOCK(%?, 1)", &[SqlArg::String(advisory_lock_name.as_bytes())]) {
+            Ok(rows) => rows.first().and_then(|row| row.first()).and_then(crate::mview_refresh::datum_i64) == Some(1),
+            Err(error) => {
+                restore_vars(&mut purge, &restore_purge);
+                return Err(error);
+            }
+        };
+        if !locked {
+            restore_vars(&mut purge, &restore_purge);
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
+                    "another purge or materialized view cutover is running for materialized view log on {}.{}, please retry later",
+                    target.schema,
+                    target.base_table.name.original()
+                )
+                .into()]),
+            )));
+        }
+        let release_advisory_lock = |purge: &mut Session| {
+            let _ = sys_sql(purge, "SELECT RELEASE_LOCK(%?)", &[SqlArg::String(advisory_lock_name.as_bytes())]);
+        };
         let mut delete = match self.open_refresh_system_session() {
             Ok(delete) => delete,
             Err(error) => {
+                release_advisory_lock(&mut purge);
                 restore_vars(&mut purge, &restore_purge);
                 return Err(error);
             }
@@ -1044,6 +1071,7 @@ impl Session {
         let restore_delete = match apply_mlog_purge_maintenance_session_vars(&mut delete, &mem_quota, &engines) {
             Ok(restore) => restore,
             Err(error) => {
+                release_advisory_lock(&mut purge);
                 restore_vars(&mut purge, &restore_purge);
                 return Err(error);
             }
@@ -1084,6 +1112,7 @@ impl Session {
         });
         purge_handle.reset();
         delete_handle.reset();
+        release_advisory_lock(&mut purge);
         restore_vars(&mut delete, &restore_delete_threads);
         restore_vars(&mut delete, &restore_delete);
         restore_vars(&mut purge, &restore_purge);

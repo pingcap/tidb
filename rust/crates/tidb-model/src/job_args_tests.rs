@@ -2036,6 +2036,8 @@ fn materialized_view_job_args_are_go_masters_bytes() {
         // Go `RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs`: every
         // field set, then the nil pointers and nil sources.
         let full = RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+            old_mlog_id: 501,
+            new_mlog_id: 502,
             old_mview_id: 88,
             shadow_table_id: 103,
             build_read_tso: 4242,
@@ -2063,6 +2065,7 @@ fn materialized_view_job_args_are_go_masters_bytes() {
             let decoded = decoded.read();
             assert_eq!(
                 (
+                    (decoded.old_mlog_id, decoded.new_mlog_id),
                     decoded.old_mview_id,
                     decoded.shadow_table_id,
                     decoded.build_read_tso,
@@ -2074,6 +2077,7 @@ fn materialized_view_job_args_are_go_masters_bytes() {
                     decoded.should_update_next_refresh_unix_seconds,
                 ),
                 (
+                    (args.old_mlog_id, args.new_mlog_id),
                     args.old_mview_id,
                     args.shadow_table_id,
                     args.build_read_tso,

@@ -1009,10 +1009,11 @@ pub(super) fn on_create_materialized_view_log(
                 // cutover DDL.
                 return Err(cancel_ddl_job(
                     active,
-                    DdlPlanError::plain_refusal(format!(
+                    DdlPlanError::from(tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
                         "cannot create materialized view log on {schema_name}.{}: materialized view refresh is running, please retry later",
                         base.name.original()
-                    )),
+                    )
+                    .into()])),
                 ));
             }
             Err(error) => return Err(DdlPlanError::plain_refusal(error.to_string())),
@@ -2416,6 +2417,7 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
+    worker: Option<&DdlStepWorker>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -2457,18 +2459,6 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
             ])),
         ));
     };
-    // Go `validateMaterializedViewCompleteOutOfPlaceTarget`.
-    if old.materialized_view_base.as_ref().is_some_and(|info| {
-        let info = info.read();
-        info.mlog_id != 0 || !info.mview_ids.is_empty()
-    }) {
-        let message = format!(
-            "refresh materialized view complete OUT OF PLACE is not supported for materialized view {}.{} with a materialized view log or dependent materialized view",
-            active.job.schema_name,
-            old.name.original()
-        );
-        return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal(message)));
-    }
     let base_ids: Vec<i64> = old_mview.base_table_ids.iter().copied().collect();
     if base_ids.len() != 1 {
         let message = format!(
@@ -2518,56 +2508,106 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
             format!("refresh materialized view complete OUT OF PLACE cutover: shadow table is not in public, but {}", shadow.state),
         ));
     }
-    let mut base = match get_table_info(txn, base_ids[0], schema_id) {
-        Ok(base) => base,
-        Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
-        Err(error) => return Err(error),
+    if args.old_mlog_id != 0 {
+        // "Drain old purges before taking the shared schema-version mutex.
+        // The advisory lock also excludes new purges until this job
+        // finishes."
+        let worker = worker.ok_or_else(|| {
+            DdlPlanError::plain_refusal("refresh materialized view complete OUT OF PLACE cutover: the DDL step has no worker session")
+        })?;
+        if let Err(error) = acquire_mlog_purge_advisory_lock_for_cutover(worker, active, args.old_mlog_id) {
+            if error.equal(&tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT) {
+                // "Retrying this job would reset the total purge-lock wait
+                // budget."
+                return Err(cancel_ddl_job(active, error));
+            }
+            return Err(error);
+        }
+    }
+
+    // Go `getMViewOutOfPlaceCutoverTable` (`getTableInfoAndCancelNonExistJob`).
+    let cutover_table = |txn: &mut JobTxn<'_>,
+                         active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+                         id: i64|
+     -> Result<TableInfo, DdlPlanError> {
+        match get_table_info(txn, id, schema_id) {
+            Ok(table) => Ok(table),
+            Err(error) if is_not_exists(&error) => Err(cancel_ddl_job(active, error)),
+            Err(error) => Err(error),
+        }
     };
-    let mut mlog = None;
-    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
-    if mlog_id != 0 {
-        let mut log = match get_table_info(txn, mlog_id, schema_id) {
-            Ok(log) => log,
-            Err(error) if is_not_exists(&error) => return Err(cancel_ddl_job(active, error)),
-            Err(error) => return Err(error),
-        };
-        let Some(log_info) = log.materialized_view_log.clone().filter(|info| info.read().base_table_id == base.id) else {
+    let mut infos: Vec<TableInfo> = Vec::new();
+    for &id in &base_ids {
+        let mut base = cutover_table(txn, active, id)?;
+        if let Err(error) = rewrite_materialized_view_base_for_out_of_place_cutover(&mut base, args.old_mview_id, args.shadow_table_id) {
+            return Err(cancel_ddl_job(active, error));
+        }
+        let log_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+        infos.push(base);
+        if log_id != 0 {
+            let mut mlog = cutover_table(txn, active, log_id)?;
+            let Some(log_info) = mlog.materialized_view_log.clone().filter(|info| info.read().base_table_id == id) else {
+                return Err(cancel_ddl_job(
+                    active,
+                    DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
+                        "refresh materialized view complete OUT OF PLACE cutover: materialized view log metadata is invalid".into(),
+                    ])),
+                ));
+            };
+            let dependents: Vec<i64> = log_info.read().dependent_mview_ids.iter().copied().collect();
+            let (ids, replaced) = replace_materialized_view_id(&dependents, args.old_mview_id, args.shadow_table_id);
+            if replaced {
+                let mut info = log_info.read().clone();
+                info.dependent_mview_ids = ids.into();
+                mlog.materialized_view_log = Some(GoShared::new(info));
+                infos.push(mlog);
+            }
+        }
+    }
+
+    let mut old_mlog: Option<TableInfo> = None;
+    let mut new_mlog: Option<TableInfo> = None;
+    if let Some(base) = old.materialized_view_base.as_ref().map(|info| info.read().clone()) {
+        if base.mlog_id != args.old_mlog_id {
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
-                    "refresh materialized view complete OUT OF PLACE cutover: materialized view log metadata is invalid".into(),
+                    "refresh materialized view complete OUT OF PLACE cutover: output log changed; retry refresh".into(),
                 ])),
             ));
-        };
-        let dependents: Vec<i64> = log_info.read().dependent_mview_ids.iter().copied().collect();
-        let (updated, replaced) = replace_materialized_view_id(&dependents, args.old_mview_id, args.shadow_table_id);
-        if replaced {
-            let mut info = log_info.read().clone();
-            info.dependent_mview_ids = updated.into();
-            log.materialized_view_log = Some(GoShared::new(info));
-            mlog = Some(log);
+        }
+        if args.old_mlog_id != 0 {
+            let old_log = cutover_table(txn, active, args.old_mlog_id)?;
+            let mut replacement = old_log.clone_like_go();
+            replacement.id = args.new_mlog_id;
+            replacement.revision = 0;
+            replacement.update_ts = start_ts;
+            if let Some(log) = &replacement.materialized_view_log {
+                let mut log = log.read().clone();
+                log.base_table_id = args.shadow_table_id;
+                replacement.materialized_view_log = Some(GoShared::new(log));
+            }
+            if let Some(replica) = &replacement.tiflash_replica {
+                let mut replica = replica.read().clone();
+                replica.available = false;
+                replica.available_partition_ids = Default::default();
+                replacement.tiflash_replica = Some(GoShared::new(replica));
+            }
+            old_mlog = Some(old_log);
+            new_mlog = Some(replacement);
+        }
+        for &id in base.mview_ids.iter() {
+            let mut child = cutover_table(txn, active, id)?;
+            if let Some(info) = &child.materialized_view {
+                let mut info = info.read().clone();
+                let ids: Vec<i64> = info.base_table_ids.iter().copied().collect();
+                info.base_table_ids = replace_materialized_view_id(&ids, args.old_mview_id, args.shadow_table_id).0.into();
+                child.materialized_view = Some(GoShared::new(info));
+            }
+            infos.push(child);
         }
     }
-    // Go `rewriteMaterializedViewBaseForOutOfPlaceCutover`.
-    let base_mviews: Vec<i64> =
-        base.materialized_view_base.as_ref().map(|info| info.read().mview_ids.iter().copied().collect()).unwrap_or_default();
-    let (updated, found) = replace_materialized_view_id(&base_mviews, args.old_mview_id, args.shadow_table_id);
-    if base_mviews.is_empty() || !found {
-        let message = if base_mviews.is_empty() {
-            "refresh materialized view complete OUT OF PLACE cutover: base table materialized view metadata missing"
-        } else {
-            "refresh materialized view complete OUT OF PLACE cutover: old materialized view id is missing in base table metadata"
-        };
-        return Err(cancel_ddl_job(
-            active,
-            DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.into()])),
-        ));
-    }
-    if let Some(info) = &base.materialized_view_base {
-        let mut info_value = info.read().clone();
-        info_value.mview_ids = updated.into();
-        base.materialized_view_base = Some(GoShared::new(info_value));
-    }
+
     if let Err(error) = migrate_mview_refresh_info_for_out_of_place_cutover(txn, &args) {
         return Err(cancel_ddl_job(active, error));
     }
@@ -2578,6 +2618,47 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         args.build_sources.as_deref().unwrap_or_default(),
     ) {
         return Err(cancel_ddl_job(active, error));
+    }
+    let mut placement_bundles = Vec::new();
+    if let Some(replacement) = &mut new_mlog {
+        // "Retire the runtime row atomically with the metadata switch, so
+        // delayed tasks resolved to the old log fail before issuing any
+        // DELETE."
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ddl/mViewOutOfPlaceBeforeRetireMLog",
+            &mut args.old_mlog_id.clone(),
+        );
+        delete_materialized_view_log_purge_info(txn, args.old_mlog_id)?;
+        upsert_create_materialized_view_log_purge_info(txn, replacement)?;
+        {
+            let meta = txn.meta();
+            meta.drop_table_or_view(schema_id, args.old_mlog_id)
+                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+            meta.auto_ids(schema_id, args.old_mlog_id)
+                .delete()
+                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        }
+        // Go `createTableOrViewWithCheck`.
+        if let Err(error) = check_table_info_valid(replacement) {
+            return Err(cancel_ddl_job(active, error));
+        }
+        {
+            let meta = txn.meta();
+            meta.create_table_or_view(schema_id, replacement)
+                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        }
+        if let Some((count, labels)) = crate::cluster_ddl::tiflash_replica_spec(replacement) {
+            crate::cluster_ddl::configure_tiflash_pd_for_table(replacement.id, count, &labels)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+        }
+        // "Publish the inherited placement policy for the replacement log's
+        // new key range."
+        if replacement.placement_policy_ref.is_some() {
+            let policies = load_policies(txn).map_err(|error| cancel_ddl_job(active, error))?;
+            placement_bundles = tidb_placement::new_full_table_bundles(&policies, replacement).map_err(|error| {
+                cancel_ddl_job(active, DdlPlanError::Admission(DdlAdmissionError::plain(error.to_string())))
+            })?;
+        }
     }
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError").is_some() {
         return Err(DdlPlanError::plain_refusal(
@@ -2596,14 +2677,26 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     new_mview.name = old.name.clone();
     new_mview.comment = old.comment.clone();
     new_mview.materialized_view = Some(GoShared::new(old_mview.clone()));
+    new_mview.materialized_view_base = old.materialized_view_base.as_ref().map(|info| {
+        let mut info = info.read().clone();
+        if let Some(replacement) = &new_mlog {
+            info.mlog_id = replacement.id;
+        }
+        GoShared::new(info)
+    });
     new_mview.materialized_view_shadow = None;
     // Go `repairTableOrViewWithCheck`.
-    for table in std::iter::once(&mut new_mview).chain(std::iter::once(&mut base)).chain(mlog.iter_mut()) {
+    for table in std::iter::once(&mut new_mview).chain(infos.iter_mut()) {
         if let Err(error) = check_table_info_valid(table) {
             return Err(cancel_ddl_job(active, error));
         }
         update_table(txn, schema_id, table, start_ts)?;
     }
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMetadataError").is_some() {
+        return Err(DdlPlanError::plain_refusal("mock materialized view cutover error after metadata changes"));
+    }
+    // Go `SetSchemaDiffForMViewRefreshOutOfPlaceCutover`, then
+    // `SetSchemaDiffForMultiInfos`.
     let mut diff = SchemaDiff {
         action_type: active.job.type_,
         schema_id,
@@ -2611,18 +2704,32 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         old_table_id: args.old_mview_id,
         ..SchemaDiff::default()
     };
-    let mut infos = vec![(schema_id, base.id)];
-    if let Some(log) = &mlog {
-        infos.push((schema_id, log.id));
+    if args.old_mlog_id != 0 {
+        diff.affected_options = vec![AffectedOption {
+            schema_id,
+            old_schema_id: schema_id,
+            table_id: args.new_mlog_id,
+            old_table_id: args.old_mlog_id,
+        }]
+        .into();
     }
-    set_schema_diff_for_multi_infos(&mut diff, &infos);
+    let info_ids: Vec<(i64, i64)> = infos.iter().map(|table| (schema_id, table.id)).collect();
+    set_schema_diff_for_multi_infos(&mut diff, &info_ids);
     let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
     let mut mutations = Vec::new();
     append_schema_change_mutations(
         txn,
         catalog,
         active.job.id,
-        &[(-1, SchemaChangeEvent::mview_refresh_out_of_place_cutover(new_mview.clone_like_go(), old.clone_like_go()))],
+        &[(
+            -1,
+            SchemaChangeEvent::mview_refresh_out_of_place_cutover(
+                new_mview.clone_like_go(),
+                old.clone_like_go(),
+                new_mlog.as_ref().map(TableInfo::clone_like_go),
+                old_mlog.as_ref().map(TableInfo::clone_like_go),
+            ),
+        )],
         &mut mutations,
         row_ids,
     )?;
@@ -2630,8 +2737,105 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     let mut write = job_only_write(active.job.id, mutations);
     write.schema_version = schema_version;
     write.diff = diff;
+    write.placement_bundles = placement_bundles;
     Ok(PersistedDdlActionStep { write, update_raw_args: true, run_error: None, reorg: None })
 }
+
+/// Go master `rewriteMaterializedViewBaseForOutOfPlaceCutover`: the source
+/// lists the shadow table in the old view's place.
+fn rewrite_materialized_view_base_for_out_of_place_cutover(
+    base: &mut TableInfo,
+    old_mview_id: i64,
+    shadow_table_id: i64,
+) -> Result<(), DdlPlanError> {
+    let invalid = |message: &str| {
+        DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[message.to_owned().into()]))
+    };
+    let Some(info) = base.materialized_view_base.as_ref().map(|info| info.read().clone()) else {
+        return Err(invalid("refresh materialized view complete OUT OF PLACE cutover: base table materialized view metadata missing"));
+    };
+    let ids: Vec<i64> = info.mview_ids.iter().copied().collect();
+    let (updated, found) = replace_materialized_view_id(&ids, old_mview_id, shadow_table_id);
+    if !found {
+        return Err(invalid(
+            "refresh materialized view complete OUT OF PLACE cutover: old materialized view id is missing in base table metadata",
+        ));
+    }
+    let mut info = info;
+    info.mview_ids = updated.into();
+    base.materialized_view_base = Some(GoShared::new(info));
+    Ok(())
+}
+
+/// Go master `(*worker).acquireMLogPurgeAdvisoryLockForCutover`: cancels the
+/// log's running purge (committed on its own session so the purge monitor
+/// sees it) and takes the purge advisory lock, retrying within a one-minute
+/// budget.
+fn acquire_mlog_purge_advisory_lock_for_cutover(
+    worker: &DdlStepWorker,
+    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    mlog_id: i64,
+) -> Result<(), DdlPlanError> {
+    let mut timeout = MVIEW_CUTOVER_PURGE_LOCK_TIMEOUT;
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewOutOfPlacePurgeAdvisoryLockTimeout") {
+        timeout = std::time::Duration::from_millis(u64::try_from(value.int()).unwrap_or(0));
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    let timed_out = || {
+        DdlPlanError::from(tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
+            "refresh materialized view complete OUT OF PLACE cutover for {}.{}: timed out waiting for materialized view log purge; retry refresh",
+            active.job.schema_name, active.job.table_name
+        )
+        .into()]))
+    };
+    let request = worker.sess_pool.get().map_err(DdlPlanError::from_mysql_error)?;
+    let kctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_DDL,
+    );
+    let lock_name = tidb_mviewutil::purge_advisory_lock_name(mlog_id);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(timed_out());
+        }
+        request
+            .get_restricted_sql_executor()
+            .exec_restricted_sql(
+                &kctx,
+                &[std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session)],
+                "UPDATE mysql.tidb_mlog_purge_hist
+SET CANCEL_REQUEST_TIME = NOW(6),
+	CANCEL_REQUESTED_BY = 'materialized view cutover'
+WHERE MLOG_ID = %?
+	AND PURGE_STATUS = 'running'
+	AND CANCEL_REQUEST_TIME IS NULL",
+                &[tidb_sqlescape::SqlArg::Signed(mlog_id)],
+            )
+            .map_err(|error| DdlPlanError::plain_refusal(error.to_string()))?;
+        match worker.get_advisory_lock(&lock_name, MVIEW_CUTOVER_PURGE_LOCK_WAIT_TIMEOUT_SEC) {
+            // "The scheduler releases job-scoped advisory locks after schema
+            // sync, including on cancellation or failure. Retain this lock
+            // across retries." Go's deferred check reports a spent budget even
+            // when the acquisition succeeds.
+            Ok(()) if std::time::Instant::now() >= deadline => return Err(timed_out()),
+            Ok(()) => return Ok(()),
+            Err(tidb_sessionctx::advisory_lock_state::AdvisoryLockError::Timeout) => {}
+            Err(error) => return Err(DdlPlanError::plain_refusal(error.to_string())),
+        }
+        // "A purge can acquire its lock before publishing running history, or
+        // a new purge can start between cancellation and acquisition. Cancel
+        // again."
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ddl/mViewOutOfPlacePurgeAdvisoryLockRetry",
+            &mut mlog_id.clone(),
+        );
+    }
+}
+
+/// Go master `mviewCutoverPurgeLockWaitTimeoutSec`.
+const MVIEW_CUTOVER_PURGE_LOCK_WAIT_TIMEOUT_SEC: u64 = 5;
+/// Go master `mviewCutoverPurgeLockTimeout`.
+const MVIEW_CUTOVER_PURGE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Go master `(*worker).cleanupMViewOutOfPlaceCutoverAfterCommit`, as a
 /// done cutover job finishes: best effort, each failure only logged -- the
@@ -2681,5 +2885,13 @@ pub(super) fn cleanup_mview_out_of_place_cutover_after_commit(
             ],
         );
     }
-    tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&TableInfo { id: old, ..TableInfo::default() });
+    // "Stage-1 MVs and MLogs are non-partitioned. Retain their progress
+    // until cutover commits, then remove the entries for both retired
+    // physical IDs."
+    for id in [old, args.old_mlog_id] {
+        if id == 0 {
+            continue;
+        }
+        tidb_domain_infosync::tiflash_manager::delete_tiflash_table_sync_progress(&TableInfo { id, ..TableInfo::default() });
+    }
 }

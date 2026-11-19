@@ -555,6 +555,10 @@ pub const ErrKeyTooLarge: u16 = 8178;
 pub const ErrTimeStampInDSTTransition: u16 = 8179;
 /// `ErrQueryExecStopped` (8180).
 pub const ErrQueryExecStopped: u16 = 8180;
+/// `ErrMVAdvisoryLockConflict` (8182, Go master).
+pub const ErrMVAdvisoryLockConflict: u16 = 8182;
+/// `ErrMVRefreshLogBaselineChanged` (8183, Go master).
+pub const ErrMVRefreshLogBaselineChanged: u16 = 8183;
 /// `ErrUnsupportedDDLOperation` (8200).
 pub const ErrUnsupportedDDLOperation: u16 = 8200;
 /// `ErrNotOwner` (8201).

@@ -40,6 +40,23 @@ pub struct Subscriber<'a> {
 }
 
 impl Subscriber<'_> {
+    /// Go `subscriber.handleTruncateLikeEvent`.
+    fn handle_truncate_like_event<C: StatsSessionContext + ?Sized>(
+        &self,
+        sctx: &C,
+        new_table_info: &TableInfo,
+        dropped_table_info: &TableInfo,
+    ) -> Result<(), SqlExecError> {
+        for id in get_physical_ids(sctx, new_table_info)? {
+            self.insert_stats_4_physical_id(sctx, new_table_info, id)?;
+        }
+        // Remove the old table stats.
+        for id in get_physical_ids(sctx, dropped_table_info)? {
+            self.delayed_delete_stats_4_physical_id(sctx, id)?;
+        }
+        Ok(())
+    }
+
     /// Go `subscriber.handle`.
     pub fn handle<C: StatsSessionContext + ?Sized>(
         &self,
@@ -55,12 +72,16 @@ impl Subscriber<'_> {
             }
             ActionType::ACTION_TRUNCATE_TABLE => {
                 let (new_table_info, dropped_table_info) = change.get_truncate_table_info();
-                for id in get_physical_ids(sctx, new_table_info)? {
-                    self.insert_stats_4_physical_id(sctx, new_table_info, id)?;
-                }
-                // Remove the old table stats.
-                for id in get_physical_ids(sctx, dropped_table_info)? {
-                    self.delayed_delete_stats_4_physical_id(sctx, id)?;
+                self.handle_truncate_like_event(sctx, new_table_info, dropped_table_info)?;
+            }
+            // Go master: an out-of-place refresh's cutover replaces the view,
+            // and its own log, like a truncate.
+            ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+                let (new_table_info, dropped_table_info) = change.get_mview_refresh_out_of_place_cutover_info();
+                self.handle_truncate_like_event(sctx, new_table_info, dropped_table_info)?;
+                if let (Some(new_mlog), old_mlog) = change.get_mview_refresh_out_of_place_cutover_mlog_info() {
+                    let old_mlog = old_mlog.expect("a replacement log retires the old one");
+                    self.handle_truncate_like_event(sctx, new_mlog, old_mlog)?;
                 }
             }
             ActionType::ACTION_DROP_TABLE => {

@@ -26,6 +26,13 @@ pub fn refresh_advisory_lock_name(schema_id: i64, mview_id: i64) -> String {
     format!("mv_refresh_{schema_id}_{mview_id}")
 }
 
+/// Go master `PurgeAdvisoryLockName`: "identifies the lock shared by a log
+/// purge and DDL retiring that physical log".
+#[must_use]
+pub fn purge_advisory_lock_name(mlog_id: i64) -> String {
+    format!("mlog_purge_{mlog_id}")
+}
+
 fn unsupported(message: &str) -> MysqlError {
     MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack(message))
 }

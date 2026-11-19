@@ -2011,12 +2011,43 @@ pub(crate) fn do_gc_placement_rules(
     let decode_error = |error: serde_json::Error| GcError::new(error.to_string());
     let missing = || GcError::new("finished job carries no arguments");
     let mut physical_table_ids: Vec<i64> = match history_job.type_ {
-        ActionType::ACTION_DROP_TABLE => {
+        ActionType::ACTION_DROP_TABLE
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
+        | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
             let args = tidb_model::get_finished_drop_table_args(&mut history_job)
                 .map_err(decode_error)?
                 .ok_or_else(missing)?;
             let mut ids = args.read().old_partition_ids.clone();
             ids.push(history_job.table_id);
+            ids
+        }
+        // Go master: a rolled-back CREATE MATERIALIZED VIEW's table.
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+            if history_job.is_rollback_done() && history_job.table_id != 0 {
+                vec![history_job.table_id]
+            } else {
+                Vec::new()
+            }
+        }
+        // Go master: the cutover's retired view and log, or a cancelled
+        // cutover's unused replacement log.
+        ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
+            let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut history_job)
+                .map_err(decode_error)?
+                .ok_or_else(missing)?;
+            let args = args.read();
+            let mut ids = Vec::new();
+            if history_job.is_cancelled() {
+                if args.new_mlog_id != 0 {
+                    ids.push(args.new_mlog_id);
+                }
+            } else {
+                ids.push(args.old_mview_id);
+                if args.old_mlog_id != 0 {
+                    ids.push(args.old_mlog_id);
+                }
+            }
             ids
         }
         ActionType::ACTION_TRUNCATE_TABLE | ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {

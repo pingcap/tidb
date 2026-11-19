@@ -299,6 +299,12 @@ pub struct MViewRefreshSource {
 /// cutover needs to replace a view with its freshly built shadow table.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+    /// Go master `OldMLogID`: the view's own log, retired by the cutover.
+    #[serde(rename = "old_mlog_id", default, skip_serializing_if = "is_zero_i64")]
+    pub old_mlog_id: i64,
+    /// Go master `NewMLogID`: the replacement log's ID, allocated at submit.
+    #[serde(rename = "new_mlog_id", default, skip_serializing_if = "is_zero_i64")]
+    pub new_mlog_id: i64,
     /// Go `OldMViewID`.
     #[serde(rename = "old_mview_id", default, skip_serializing_if = "is_zero_i64")]
     pub old_mview_id: i64,
@@ -351,6 +357,8 @@ impl JobArgs for RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
             ColumnDefaultValue::Bool(value.should_update_next_refresh_unix_seconds).into(),
             typed_pointer_any(builtin_type("uint64", GoTypeKind::Uint64), value.expected_old_mview_revision.map(GoShared::new)),
             typed_value_any(mview_refresh_sources_type(), value.build_sources.clone()),
+            ColumnDefaultValue::Int(value.old_mlog_id).into(),
+            ColumnDefaultValue::Int(value.new_mlog_id).into(),
         ])
     }
 
@@ -361,6 +369,7 @@ impl JobArgs for RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
         let next = GoField::<Option<i64>>::default();
         let revision = GoField::<Option<u64>>::default();
         let sources = GoField::<Option<Vec<MViewRefreshSource>>>::default();
+        let (old_mlog, new_mlog) = (GoField::<i64>::default(), GoField::<i64>::default());
         let mut decoder = V1Decoder::new(job)?;
         decoder.decode(&old, builtin_type("int64", GoTypeKind::Int64))?;
         decoder.decode(&shadow, builtin_type("int64", GoTypeKind::Int64))?;
@@ -371,8 +380,12 @@ impl JobArgs for RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
         decoder.decode(&should_update, builtin_type("bool", GoTypeKind::Bool))?;
         decoder.decode(&revision, builtin_type("*uint64", GoTypeKind::Pointer))?;
         decoder.decode(&sources, mview_refresh_sources_type())?;
+        decoder.decode(&old_mlog, builtin_type("int64", GoTypeKind::Int64))?;
+        decoder.decode(&new_mlog, builtin_type("int64", GoTypeKind::Int64))?;
         decoder.finish(job);
         Ok(Some(GoShared::new(Self {
+            old_mlog_id: old_mlog.get(),
+            new_mlog_id: new_mlog.get(),
             old_mview_id: old.get(),
             shadow_table_id: shadow.get(),
             build_read_tso: build_read_tso.get(),

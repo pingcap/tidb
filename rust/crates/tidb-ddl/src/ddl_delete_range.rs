@@ -90,6 +90,17 @@ impl ElementIdAlloc {
 /// Go `JobNeedGC`: whether a finished job left keys to delete.
 pub fn job_need_gc(job: &Job) -> bool {
     if job.is_cancelled() {
+        // Go master: "Placement and TiFlash PD rules can survive rollback of
+        // the replacement log's metadata. Return true to queue a
+        // delete-range record for NewMLogID: processing that record also
+        // removes those rules, even if the log contains no data."
+        if job.type_ == ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER {
+            let mut job = job.clone();
+            return tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut job)
+                .ok()
+                .flatten()
+                .is_some_and(|args| args.read().new_mlog_id != 0);
+        }
         return false;
     }
     if let Some(warning) = &job.warning {
@@ -221,8 +232,17 @@ fn insert_job_into_delete_range_table(
             let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut job)
                 .map_err(args_error)?
                 .ok_or_else(|| missing_args(&job))?;
-            let old = args.read().old_mview_id;
-            batch_delete_tables_range(wrapper, job_id, &[old], alloc)?;
+            let args = args.read();
+            // Go master: the retired view and its retired log; a cancelled
+            // cutover retires only the unused replacement log.
+            let table_ids = if job.is_cancelled() {
+                vec![args.new_mlog_id]
+            } else if args.old_mlog_id != 0 {
+                vec![args.old_mview_id, args.old_mlog_id]
+            } else {
+                vec![args.old_mview_id]
+            };
+            batch_delete_tables_range(wrapper, job_id, &table_ids, alloc)?;
         }
         ActionType::ACTION_TRUNCATE_TABLE => {
             let args = tidb_model::get_finished_truncate_table_args(&mut job)

@@ -263,6 +263,19 @@ pub fn build_table_info_from_ast(
     Ok(tb_info)
 }
 
+/// Go `BuildTableInfoWithStmt`'s last step: a non-temporary table without its
+/// own placement takes the database's (`placementPolicyRef`).
+pub fn inherit_database_placement(
+    info: &mut TableInfo,
+    placement_policy_ref: Option<&tidb_model::GoShared<tidb_model::PolicyRefInfo>>,
+) {
+    if info.temp_table_type == tidb_model::TempTableType::NONE && info.placement_policy_ref.is_none() {
+        if let Some(reference) = placement_policy_ref {
+            info.placement_policy_ref = Some(tidb_model::GoShared::new(reference.read().clone()));
+        }
+    }
+}
+
 /// Go `BuildTableInfoWithStmt` (`create_table.go:793`): the statement's
 /// `TableInfo`, without the validity checks Go runs after it
 /// ([`check_table_info_valid_with_stmt`], [`check_table_info_valid_extra`]).

@@ -30,6 +30,12 @@ pub struct SchemaChangeEvent {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct JsonSchemaChangeEvent {
+    /// Go master `MLogTableInfo`.
+    #[serde(rename = "mlog_table_info", default, skip_serializing_if = "Option::is_none")]
+    mlog_table_info: Option<Box<TableInfo>>,
+    /// Go master `OldMLogTableInfo`.
+    #[serde(rename = "old_mlog_table_info", default, skip_serializing_if = "Option::is_none")]
+    old_mlog_table_info: Option<Box<TableInfo>>,
     #[serde(
         rename = "mini_db_info",
         default,
@@ -190,9 +196,26 @@ impl SchemaChangeEvent {
         self.table_info()
     }
 
-    /// Go master `NewMViewRefreshOutOfPlaceCutoverEvent`.
-    pub fn mview_refresh_out_of_place_cutover(table: TableInfo, old_table: TableInfo) -> Self {
-        Self::with_table_and_old(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER, table, old_table)
+    /// Go master `NewMViewRefreshOutOfPlaceCutoverEvent`: the new and old
+    /// view, and the replacement and retired output logs (`None` for a view
+    /// without its own log).
+    pub fn mview_refresh_out_of_place_cutover(
+        table: TableInfo,
+        old_table: TableInfo,
+        mlog: Option<TableInfo>,
+        old_mlog: Option<TableInfo>,
+    ) -> Self {
+        let mut event = Self::with_table_and_old(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER, table, old_table);
+        event.inner.mlog_table_info = mlog.map(Box::new);
+        event.inner.old_mlog_table_info = old_mlog.map(Box::new);
+        event
+    }
+
+    /// Go master `GetMViewRefreshOutOfPlaceCutoverMLogInfo`: "the replacement
+    /// output logs, or nil for a target without its own MLog".
+    pub fn get_mview_refresh_out_of_place_cutover_mlog_info(&self) -> (Option<&TableInfo>, Option<&TableInfo>) {
+        self.assert_type(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER);
+        (self.inner.mlog_table_info.as_deref(), self.inner.old_mlog_table_info.as_deref())
     }
 
     /// Go master `GetMViewRefreshOutOfPlaceCutoverInfo`: the new and old

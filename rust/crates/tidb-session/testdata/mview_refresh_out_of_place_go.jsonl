@@ -31,7 +31,7 @@
 ["select row_count()", "RS:[[\"0\"]]"]
 ["drop materialized view mv2", "ERR 1146 Table 'e29.mv2' doesn't exist"]
 ["create materialized view log on mv (c)", "OK 0"]
-["refresh materialized view mv complete out of place", "ERR 1105 refresh materialized view complete OUT OF PLACE is not supported for materialized view e29.mv with a materialized view log or dependent materialized view"]
+["refresh materialized view mv complete out of place", "OK 3 Rows inserted: 3  Updated: 0  Deleted: 0"]
 ["select row_count()", "RS:[[\"0\"]]"]
 ["select count(*) from mysql.tidb_mview_refresh_hist", "RS:[[\"4\"]]"]
 ["create table lk like mv", "OK 0"]

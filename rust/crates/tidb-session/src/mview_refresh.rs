@@ -763,12 +763,12 @@ impl Session {
                 &[SqlArg::String(lock_name.as_bytes()), SqlArg::Signed(MV_REFRESH_ADVISORY_LOCK_TIMEOUT_SEC)],
             )?;
             if got.first().and_then(|row| row.first()).and_then(datum_i64) != Some(1) {
-                return Err(annotate(
-                    &plain("materialized view refresh advisory lock conflict"),
-                    &format!(
+                return Err(DriverError::Mysql(MysqlError::from_terror(
+                    &tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT.fast_gen_by_args(&[format!(
                         "another refresh or materialized view log creation is running for materialized view {schema}.{name}, please retry later"
-                    ),
-                ));
+                    )
+                    .into()]),
+                )));
             }
             let locked = self.recheck_refresh_target_under_lock(schema, &name, mview_id, mode).and_then(|()| {
                 // Go: CREATE publishes the input logs; a missing
@@ -911,7 +911,7 @@ impl Session {
             }
             let latest = self.refresh_latest_info_schema();
             if fast {
-                check_mv_refresh_log_baseline(&resolve_refresh_sources(&latest, mview_id)?, &registered_logs)?;
+                check_mv_refresh_log_baseline(&latest, mview_id, &resolve_refresh_sources(&latest, mview_id)?, &registered_logs)?;
             }
             let bounded_fast = fast && target_tso > 0 && target_tso > locked.last_success_read_tso;
             // Go `checkFastRefreshMLogIntegrity`, on the history session so it
@@ -1288,21 +1288,6 @@ impl Session {
         }
         // Go: the build session runs under the task's cancelable context.
         let _build_watch = controller.watch_guard(&build);
-        let current = build.refresh_latest_info_schema().table_info_by_id(info.id).map(|table| table.read().clone());
-        let Some(current) = current else {
-            return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                    .gen_with_stack_by_args(&[schema.to_owned().into(), name.clone().into()]),
-            )));
-        };
-        if current.materialized_view_base.as_ref().is_some_and(|base| {
-            let base = base.read();
-            base.mlog_id != 0 || !base.mview_ids.is_empty()
-        }) {
-            return Err(plain(format!(
-                "refresh materialized view complete OUT OF PLACE is not supported for materialized view {schema}.{name} with a materialized view log or dependent materialized view"
-            )));
-        }
         let ddl = self
             .domain_services()
             .map(|services| std::sync::Arc::clone(&services.ddl))
@@ -1389,7 +1374,11 @@ impl Session {
             // A manual refresh keeps the view's schedule
             // (`deriveRuntimeMaterializedScheduleNextUnixSeconds` is for an
             // internal one).
+            // The DDL executor fills the output log's IDs (Go
+            // `RefreshMaterializedViewCompleteOutOfPlaceCutover`, submit).
             let args = tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+                old_mlog_id: 0,
+                new_mlog_id: 0,
                 old_mview_id: info.id,
                 shadow_table_id,
                 build_read_tso,
@@ -1455,13 +1444,20 @@ impl Session {
         mview_id: i64,
         read_tso: u64,
     ) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {
+        resolve_refresh_sources(&self.computation_snapshot_info_schema(read_tso)?, mview_id)
+    }
+
+    /// The schema at a refresh computation's read TSO (Go `snapshotIS`).
+    fn computation_snapshot_info_schema(
+        &self,
+        read_tso: u64,
+    ) -> Result<tidb_infoschema::SessionExtendedInfoSchema, DriverError> {
         let domain = self
             .domain_services()
             .and_then(|services| services.domain.upgrade())
             .ok_or_else(|| DriverError::unsupported("the session has no domain to read a snapshot schema from"))?;
-        let catalog = crate::domain::cluster_session_node::get_snapshot_info_schema(&domain, read_tso)
-            .map_err(|error| annotate(&error, "refresh materialized view: cannot load computation snapshot schema"))?;
-        resolve_refresh_sources(&catalog, mview_id)
+        crate::domain::cluster_session_node::get_snapshot_info_schema(&domain, read_tso)
+            .map_err(|error| annotate(&error, "refresh materialized view: cannot load computation snapshot schema"))
     }
 }
 
@@ -1545,8 +1541,9 @@ impl Session {
         })?;
         // Go `validateMVFastRefreshInput` at the statement's for-update TS.
         let read_tso = u64::try_from(self.current_for_update_ts().value()).unwrap_or_default();
-        let sources = self.resolve_mv_complete_refresh_sources(build.mv_table_id, read_tso)?;
-        check_mv_refresh_log_baseline(&sources, &merge.registered_mlog_ids)?;
+        let snapshot_is = self.computation_snapshot_info_schema(read_tso)?;
+        let sources = resolve_refresh_sources(&snapshot_is, build.mv_table_id)?;
+        check_mv_refresh_log_baseline(&snapshot_is, build.mv_table_id, &sources, &merge.registered_mlog_ids)?;
         if !sources.iter().any(|source| source.table_id == build.base_table_id && source.mlog_id == build.mlog_table_id) {
             return Err(plain(
                 "refresh materialized view: planned source/log binding differs from the computation snapshot; retry refresh",
@@ -1574,15 +1571,30 @@ impl Session {
     }
 }
 
-/// Go master `checkMVRefreshLogBaseline`.
-fn check_mv_refresh_log_baseline(sources: &[tidb_model::MViewRefreshSource], registered: &[i64]) -> Result<(), DriverError> {
+/// Go master `checkMVRefreshLogBaseline`. "Keep diagnostic name lookups on
+/// error paths: every FAST refresh runs this check."
+fn check_mv_refresh_log_baseline(
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+    mview_id: i64,
+    sources: &[tidb_model::MViewRefreshSource],
+    registered: &[i64],
+) -> Result<(), DriverError> {
+    // Go `is.TableItemByID(mviewID)`, whose names are empty when missing.
+    let names = || -> [tidb_mysql::errors::FormatArg; 2] {
+        let db = is.schema_name_by_table_id(mview_id).unwrap_or_default();
+        let table = is.table_info_by_id(mview_id).map(|table| table.read().name.original().to_owned()).unwrap_or_default();
+        [db.into(), table.into()]
+    };
     if sources.iter().any(|source| source.mlog_id == 0) {
-        return Err(plain(
-            "refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline",
-        ));
+        return Err(DriverError::Mysql(MysqlError::from_terror(&tidb_exeerrors::ERR_MV_REFRESH_LOG_BASELINE_CHANGED.fast_gen(
+            "refresh materialized view %s.%s fast: source has no materialized view log; cannot perform FAST refresh",
+            &names(),
+        ))));
     }
     if refresh_source_log_ids(sources) != registered {
-        return Err(plain("refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it"));
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_exeerrors::ERR_MV_REFRESH_LOG_BASELINE_CHANGED.fast_gen_by_args(&names()),
+        )));
     }
     Ok(())
 }

@@ -395,6 +395,7 @@ pub fn build_materialized_view_log_table_info(
     schema_name: &str,
     schema_charset: &str,
     schema_collate: &str,
+    placement_policy_ref: Option<&tidb_model::GoShared<tidb_model::PolicyRefInfo>>,
     base: &TableInfo,
     stmt: &CreateMaterializedViewLogStmt,
     enable_check_constraint: bool,
@@ -466,6 +467,7 @@ pub fn build_materialized_view_log_table_info(
         context,
         enable_check_constraint,
     )?;
+    crate::table_info_build::inherit_database_placement(&mut info, placement_policy_ref);
 
     let log_accumulation_alert_rows = build_mlog_accumulation_alert_rows(stmt.accumulation_alert.as_ref())
         .map_err(DdlAdmissionError::from_mysql_error)?;
@@ -717,7 +719,7 @@ mod tests {
             let stmt = create_log(sql);
             let context = tidb_metabuild::Context::new([]);
             let mut built = build_materialized_view_log_table_info(
-                &context, &NoColumns, "e29", "utf8mb4", "utf8mb4_bin", &base, &stmt, false,
+                &context, &NoColumns, "e29", "utf8mb4", "utf8mb4_bin", None, &base, &stmt, false,
             )
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
             // What the job stamps.
@@ -746,7 +748,7 @@ mod tests {
             ("create materialized view log on t (a) alert rows -1", 1105, "invalid ALERT ROWS value: -1 (must be non-negative)"),
         ] {
             let error = build_materialized_view_log_table_info(
-                &context, &NoColumns, "e29", "utf8mb4", "utf8mb4_bin", &base, &create_log(sql), false,
+                &context, &NoColumns, "e29", "utf8mb4", "utf8mb4_bin", None, &base, &create_log(sql), false,
             )
             .expect_err(sql)
             .to_mysql_error();

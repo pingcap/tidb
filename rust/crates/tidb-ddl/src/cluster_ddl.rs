@@ -2801,7 +2801,7 @@ fn dispatch_persisted_action(
             txn, catalog, active, start_ts, row_ids,
         ),
         ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
-            materialized_view::on_refresh_materialized_view_complete_out_of_place_cutover(txn, catalog, active, start_ts, row_ids)
+            materialized_view::on_refresh_materialized_view_complete_out_of_place_cutover(txn, catalog, active, start_ts, row_ids, sessions)
         }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
             materialized_view::on_create_materialized_view_shadow(txn, catalog, active, start_ts)

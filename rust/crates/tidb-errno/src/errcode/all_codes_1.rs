@@ -1715,6 +1715,8 @@ pub(super) const ALL_CODES_1: &[(&str, u16)] = &[
     ("ErrKeyTooLarge", ErrKeyTooLarge),
     ("ErrTimeStampInDSTTransition", ErrTimeStampInDSTTransition),
     ("ErrQueryExecStopped", ErrQueryExecStopped),
+    ("ErrMVAdvisoryLockConflict", ErrMVAdvisoryLockConflict),
+    ("ErrMVRefreshLogBaselineChanged", ErrMVRefreshLogBaselineChanged),
     ("ErrUnsupportedDDLOperation", ErrUnsupportedDDLOperation),
     ("ErrNotOwner", ErrNotOwner),
     ("ErrCantDecodeRecord", ErrCantDecodeRecord),

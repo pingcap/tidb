@@ -288,6 +288,12 @@ pub static ERR_LOAD_DATA_LOCAL_UNSUPPORTED_OPTION: LazyLock<TerrorError> =
 /// Source `exeerrors.ErrLoadDataPreCheckFailed`.
 pub static ERR_LOAD_DATA_PRE_CHECK_FAILED: LazyLock<TerrorError> =
     LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrLoadDataPreCheckFailed));
+/// Go master `exeerrors.ErrMVAdvisoryLockConflict`.
+pub static ERR_MV_ADVISORY_LOCK_CONFLICT: LazyLock<TerrorError> =
+    LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrMVAdvisoryLockConflict));
+/// Go master `exeerrors.ErrMVRefreshLogBaselineChanged`.
+pub static ERR_MV_REFRESH_LOG_BASELINE_CHANGED: LazyLock<TerrorError> =
+    LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrMVRefreshLogBaselineChanged));
 /// Source `exeerrors.ErrMaxKeysReadExceeded`.
 pub static ERR_MAX_KEYS_READ_EXCEEDED: LazyLock<TerrorError> =
     LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrMaxKeysReadExceeded));

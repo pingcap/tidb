@@ -2352,3 +2352,59 @@ fn test_named_gc_requests() {
         assert_eq!(context.keyspace, Some(kvrpcpb::context::Keyspace::KeyspaceId(7)));
     }
 }
+
+/// Go master's `mockHistoryJobForGC` `mview-cutover:<old>:<shadow>[:<oldMLog>[:<newMLog>]]`
+/// job: a fourth value marks it cancelled.
+fn mock_mview_cutover_job(job_id: i64, old_mlog_id: i64, new_mlog_id: i64) -> tidb_model::Job {
+    let mut job = tidb_model::Job::default();
+    job.version = tidb_model::job_enums::get_job_ver_in_use();
+    job.id = job_id;
+    job.type_ = tidb_model::ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER;
+    job.table_id = 20;
+    if new_mlog_id != 0 {
+        job.state = tidb_model::JobState::CANCELLED;
+    }
+    job.fill_args(Some(tidb_model::GoShared::new(tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
+        old_mview_id: 20,
+        shadow_table_id: 30,
+        old_mlog_id,
+        new_mlog_id,
+        build_read_tso: 1,
+        ..Default::default()
+    })));
+    let bytes = job.encode(true).unwrap();
+    let mut decoded = tidb_model::Job::default();
+    decoded.decode(&bytes).unwrap();
+    decoded
+}
+
+/// Go master `TestGCPlacementRulesForMaterializedViewOutOfPlaceCutover`.
+#[test]
+fn test_gc_placement_rules_for_materialized_view_out_of_place_cutover() {
+    let cases: [(&str, fn(i64) -> tidb_model::Job, Vec<i64>, Vec<i64>); 3] = [
+        ("without log", |job_id| mock_mview_cutover_job(job_id, 0, 0), vec![20], vec![30, 50]),
+        ("with log", |job_id| mock_mview_cutover_job(job_id, 40, 0), vec![20, 40], vec![30, 50]),
+        ("cancelled", |job_id| mock_mview_cutover_job(job_id, 40, 50), vec![50], vec![20, 30, 40]),
+    ];
+    for (name, history_job, retired, preserved) in cases {
+        let s = create_gc_worker_suite();
+        s.sessions.state.lock().unwrap().history_job = Some(history_job);
+        let cache = Mutex::new(std::collections::HashSet::new());
+        let range = DelRangeTask { job_id: 1, element_id: retired[0], start_key: Vec::new(), end_key: Vec::new() };
+        let mut session = s.sessions.create_session();
+        do_gc_placement_rules(session.as_mut(), s.rules.as_ref(), 1, &range, &cache).unwrap();
+        let cache = cache.lock().unwrap();
+        let put: Vec<String> = s.rules.put_bundles.lock().unwrap().concat();
+        let tiflash: Vec<i64> = s.rules.deleted_tiflash_rules.lock().unwrap().concat();
+        for id in &retired {
+            assert!(cache.contains(id), "{name}: {id}");
+            assert!(put.contains(&format!("TiDB_DDL_{id}")), "{name}: {id}");
+            assert!(tiflash.contains(id), "{name}: {id}");
+        }
+        for id in &preserved {
+            assert!(!cache.contains(id), "{name}: {id}");
+            assert!(!put.contains(&format!("TiDB_DDL_{id}")), "{name}: {id}");
+            assert!(!tiflash.contains(id), "{name}: {id}");
+        }
+    }
+}

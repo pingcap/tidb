@@ -851,8 +851,9 @@ fn purge_materialized_view_log_answers_as_go_master() {
 /// purge-info row, PURGE fails with the CAUSE on the wire (Go
 /// `errors.Cause(errors.Annotatef(errMLogPurgeLockConflict, ...))`) and the
 /// whole annotated text in its failed history row; while another session
-/// holds the view's refresh advisory lock, both COMPLETE refreshes do the
-/// same with `errMVRefreshAdvisoryLockConflict`.
+/// holds the view's refresh advisory lock, both COMPLETE refreshes fail with
+/// Go master's `ErrMVAdvisoryLockConflict` (8182, `0a914c5b134`), whose
+/// `Error()` text the history row keeps.
 #[test]
 fn purge_and_refresh_lock_conflicts_answer_as_go_master() {
     let (stack, mut session) = replay_go_master(include_str!("../../../../../testdata/mlog_purge_conflict_setup_go.jsonl"));
@@ -882,15 +883,15 @@ fn purge_and_refresh_lock_conflicts_answer_as_go_master() {
     assert_eq!(answer(&mut session, &format!("select get_lock('{lock}', 10)")), r#"RS:[["1"]]"#);
     assert_eq!(
         answer(&mut holder, "refresh materialized view mv complete in place"),
-        "ERR 1105 materialized view refresh advisory lock conflict"
+        "ERR 8182 materialized view advisory lock conflict: another refresh or materialized view log creation is running for materialized view e29.mv, please retry later"
     );
     assert_eq!(answer(&mut holder, "select row_count()"), r#"RS:[["0"]]"#);
     assert_eq!(
         answer(&mut holder, "refresh materialized view mv complete out of place"),
-        "ERR 1105 materialized view refresh advisory lock conflict"
+        "ERR 8182 materialized view advisory lock conflict: another refresh or materialized view log creation is running for materialized view e29.mv, please retry later"
     );
     assert_eq!(answer(&mut session, &format!("select release_lock('{lock}')")), r#"RS:[["1"]]"#);
-    let reason = "another refresh or materialized view log creation is running for materialized view e29.mv, please retry later: materialized view refresh advisory lock conflict";
+    let reason = "[executor:8182]materialized view advisory lock conflict: another refresh or materialized view log creation is running for materialized view e29.mv, please retry later";
     assert_eq!(
         answer(&mut session, "select REFRESH_METHOD, REFRESH_STATUS, REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID"),
         format!(r#"RS:[["complete in place manual","failed","{reason}"],["complete out of place manual","failed","{reason}"]]"#)
@@ -2182,10 +2183,8 @@ fn materialized_view_service_mlog_analyze() {
 fn test_materialized_view_refresh_schema_version() {
     for scenario in [
         "current", "empty_versions", "unrelated", "unrelated_fast", "unrelated_empty_versions",
-        "mlog", "mlog_then_unrelated", "reload_failure", "input_mlog_columns", "output_mlog_columns", "schema_change",
+        "mlog", "mlog_then_unrelated", "reload_failure", "input_mlog_columns", "output_mlog_columns", "source_oop", "schema_change",
         "schema_cache_miss", "schema_load_failure", "mlog_then_add_column", "related_empty_versions",
-        // Go's "source_oop" refreshes OUT OF PLACE a view that has a log and a
-        // dependent view: Go master 36b2c7f57ec, not yet ported (register E29).
     ] {
         refresh_schema_version_scenario(scenario);
     }
@@ -2514,4 +2513,219 @@ fn test_create_materialized_view_on_materialized_view_requires_tracked_columns()
         "create materialized view mv_child_missing_log_col (a, parent_cnt, child_cnt) as select a, sum(cnt), count(1) from mv_parent_missing_log_col group by a",
         "materialized view log does not contain column cnt",
     );
+}
+
+fn query_rows(session: &mut Session, sql: &str) -> String {
+    let answer = answer(session, sql);
+    assert!(answer.starts_with("RS:"), "{sql}: {answer}");
+    answer
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlaceReplacesMLog`
+/// (`pkg/executor/test/mviewnested/nested_oop_test.go`).
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_replaces_m_log() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "create placement policy mv_oop_policy followers=2",
+        "alter database test placement policy=mv_oop_policy",
+        "use test",
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (2, 20)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast as select a, sum(b), count(1) from t group by a",
+        "create materialized view log on mv (a, s, cnt) purge next date_add(now(), interval 1 hour)",
+    ]);
+    let check_log_placement = |log: &tidb_model::TableInfo| {
+        let policy = log.placement_policy_ref.as_ref().expect("the log inherits the database's policy");
+        assert_eq!(policy.read().name.lowercase(), "mv_oop_policy");
+        let latest = stack.factory.catalog.get_latest();
+        let bundle = latest.placement_bundle_by_physical_table_id(log.id).expect("the log's bundle").clone();
+        let pd_bundle = tidb_domain_infosync::placement_manager::get_rule_bundle(&bundle.id).unwrap();
+        assert_eq!(bundle, pd_bundle);
+    };
+    let (mut old_mv, mut old_log) = (latest_table(&stack, "mv"), latest_table(&stack, "$mlog$mv"));
+    check_log_placement(&old_log);
+    must_exec_all(&mut tk, &[&format!("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = 1 where MLOG_ID = {}", old_log.id)]);
+    for _ in 0..2 {
+        must_exec_all(&mut tk, &["refresh materialized view mv complete out of place"]);
+        let (new_mv, new_log) = (latest_table(&stack, "mv"), latest_table(&stack, "$mlog$mv"));
+        assert_ne!(old_mv.id, new_mv.id);
+        assert_ne!(old_log.id, new_log.id);
+        assert_eq!(mlog_id(&new_mv), new_log.id);
+        let mut expected_log = old_log.materialized_view_log.as_ref().unwrap().read().clone();
+        expected_log.base_table_id = new_mv.id;
+        assert_eq!(format!("{:?}", *new_log.materialized_view_log.as_ref().unwrap().read()), format!("{expected_log:?}"));
+        let names = |table: &tidb_model::TableInfo| -> Vec<String> {
+            table.columns.iter_deref().map(|column| column.read().name.original().to_owned()).collect()
+        };
+        assert_eq!(names(&old_log), names(&new_log));
+        let indexes = |table: &tidb_model::TableInfo| -> Vec<String> {
+            let mut names: Vec<String> = table.indices.iter_deref().map(|index| index.read().name.original().to_owned()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(indexes(&old_log), indexes(&new_log));
+        check_log_placement(&new_log);
+        assert_eq!(answer(&mut tk, "select count(*) from `$mlog$mv`"), r#"RS:[["0"]]"#);
+        assert_eq!(
+            answer(&mut tk, &format!("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = {}", old_log.id)),
+            r#"RS:[["0"]]"#
+        );
+        assert_eq!(
+            answer(
+                &mut tk,
+                &format!(
+                    "select NEXT_PURGE_UNIX_SECONDS is not null, LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID = {}",
+                    new_log.id
+                )
+            ),
+            r#"RS:[["1","1"]]"#
+        );
+        assert!(stack.factory.catalog.get_latest().table_info_by_id(old_log.id).is_none());
+        (old_mv, old_log) = (new_mv, new_log);
+    }
+    must_exec_all(&mut tk, &["insert into t values (3, 30)", "refresh materialized view mv fast"]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), r#"RS:[["1","10","1"],["2","20","1"],["3","30","1"]]"#);
+    assert_eq!(answer(&mut tk, "select count(*) > 0 from `$mlog$mv`"), r#"RS:[["1"]]"#);
+    assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlaceRebindsDependentMaterializedViews`.
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_rebinds_dependent_materialized_views() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_oop (a int not null, b int not null)",
+        "insert into t_oop values (1, 10), (2, 20)",
+        "create materialized view log on t_oop (a, b)",
+        "create materialized view mv_oop (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_oop group by a",
+        "create materialized view log on mv_oop (a, s, cnt)",
+    ]);
+    for name in ["child1", "child2"] {
+        must_exec_all(&mut tk, &[&format!(
+            "create materialized view {name} (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from mv_oop group by a"
+        )]);
+    }
+    let (old_mv, old_log) = (latest_table(&stack, "mv_oop"), latest_table(&stack, "$mlog$mv_oop"));
+    let (child1, child2) = (latest_table(&stack, "child1"), latest_table(&stack, "child2"));
+    let child_ids = format!("{},{}", child1.id, child2.id);
+    let child_info_sql = format!("select * from mysql.tidb_mview_refresh_info where MVIEW_ID in ({child_ids}) order by MVIEW_ID");
+    let child_sources_sql =
+        format!("select * from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID in ({child_ids}) order by MVIEW_ID, MLOG_ID");
+    let (before_info, before_sources) = (query_rows(&mut tk, &child_info_sql), query_rows(&mut tk, &child_sources_sql));
+    must_exec_all(&mut tk, &["insert into t_oop values (3, 30)", "refresh materialized view mv_oop complete out of place"]);
+    let (new_mv, new_log) = (latest_table(&stack, "mv_oop"), latest_table(&stack, "$mlog$mv_oop"));
+    assert_ne!(old_mv.id, new_mv.id);
+    assert_ne!(old_log.id, new_log.id);
+    let sorted = |mut ids: Vec<i64>| {
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(sorted(mview_ids(&new_mv)), sorted(vec![child1.id, child2.id]));
+    assert_eq!(sorted(dependent_mview_ids(&new_log)), sorted(vec![child1.id, child2.id]));
+    for name in ["child1", "child2"] {
+        let child = latest_table(&stack, name);
+        let base_ids: Vec<i64> = child.materialized_view.as_ref().unwrap().read().base_table_ids.iter().copied().collect();
+        assert_eq!(base_ids, vec![new_mv.id]);
+        let err = answer(&mut tk, &format!("refresh materialized view {name} fast"));
+        assert!(err.starts_with("ERR 8183 "), "{name}: {err}");
+        assert_eq!(answer(&mut tk, &format!("select * from {name} order by a")), r#"RS:[["1","10","1","1"],["2","20","1","1"]]"#);
+    }
+    assert_eq!(query_rows(&mut tk, &child_info_sql), before_info);
+    assert_eq!(query_rows(&mut tk, &child_sources_sql), before_sources);
+    assert_eq!(answer(&mut tk, "select count(*) from `$mlog$mv_oop`"), r#"RS:[["0"]]"#);
+
+    // "Old physical objects can be collected without deleting child
+    // registrations."
+    let jobs = answer(&mut tk, "admin show ddl jobs where JOB_TYPE='refresh materialized view complete out-of-place cutover'");
+    let jobs: Vec<Vec<Option<String>>> = serde_json::from_str(jobs.strip_prefix("RS:").expect("ddl jobs")).unwrap();
+    let job_id = jobs[0][0].clone().unwrap();
+    assert_eq!(
+        answer(
+            &mut tk,
+            &format!(
+                "select count(*) from (select element_id from mysql.gc_delete_range where job_id={job_id} union all select element_id from mysql.gc_delete_range_done where job_id={job_id}) g"
+            )
+        ),
+        r#"RS:[["2"]]"#
+    );
+
+    // "A child with an output log can recover its input with DELTA APPLY
+    // while preserving the log consumed by the next level."
+    must_exec_all(&mut tk, &[
+        "create materialized view log on child1 (a, s, cnt, cnt_s)",
+        "create materialized view grandchild (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from child1 group by a",
+    ]);
+    let child_log_id = latest_table(&stack, "$mlog$child1").id;
+    must_exec_all(&mut tk, &["refresh materialized view child1 complete delta apply"]);
+    assert_eq!(latest_table(&stack, "$mlog$child1").id, child_log_id);
+    must_exec_all(&mut tk, &["refresh materialized view grandchild fast"]);
+    assert_eq!(
+        answer(&mut tk, "select * from grandchild order by a"),
+        r#"RS:[["1","10","1","1"],["2","20","1","1"],["3","30","1","1"]]"#
+    );
+    assert_eq!(
+        answer(&mut tk, &format!("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID={}", child2.id)),
+        format!(r#"RS:[["{}"]]"#, old_log.id)
+    );
+
+    // "Purge must protect the new log using child2's watermark even though
+    // its input registration still names the retired output log."
+    must_exec_all(&mut tk, &[
+        "insert into t_oop values (1, 5), (4, 40)",
+        "update t_oop set b=25 where a=2",
+        "delete from t_oop where a=3",
+        "refresh materialized view mv_oop fast",
+    ]);
+    let delta = query_rows(&mut tk, "select * from `$mlog$mv_oop` order by _tidb_rowid");
+    assert_ne!(delta, "RS:[]");
+    must_exec_all(&mut tk, &["purge materialized view log on mv_oop"]);
+    assert_eq!(query_rows(&mut tk, "select * from `$mlog$mv_oop` order by _tidb_rowid"), delta);
+    let before_peer = query_rows(
+        &mut tk,
+        &format!("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID={}", child2.id),
+    );
+    assert_eq!(
+        query_rows(&mut tk, &format!("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID={}", new_log.id)),
+        before_peer
+    );
+    must_exec_all(&mut tk, &["refresh materialized view child1 fast", "refresh materialized view child2 complete in place"]);
+    for name in ["child1", "child2"] {
+        assert_eq!(
+            answer(&mut tk, &format!("select * from {name} order by a")),
+            r#"RS:[["1","15","1","1"],["2","25","1","1"],["4","40","1","1"]]"#
+        );
+        let child = latest_table(&stack, name);
+        assert_eq!(
+            answer(&mut tk, &format!("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID={}", child.id)),
+            format!(r#"RS:[["{}"]]"#, new_log.id)
+        );
+    }
+
+    // "OOP of the intermediate view replaces its own output log,
+    // invalidating only the next level. The sibling's recovered input
+    // remains valid."
+    must_exec_all(&mut tk, &["refresh materialized view child1 complete out of place"]);
+    assert_ne!(latest_table(&stack, "$mlog$child1").id, child_log_id);
+    let err = answer(&mut tk, "refresh materialized view grandchild fast");
+    assert!(err.starts_with("ERR 8183 "), "{err}");
+    must_exec_all(&mut tk, &["refresh materialized view grandchild complete delta apply", "insert into t_oop values (5, 50)"]);
+    for name in ["mv_oop", "child1", "child2", "grandchild"] {
+        must_exec_all(&mut tk, &[&format!("refresh materialized view {name} fast")]);
+    }
+    assert_eq!(
+        answer(&mut tk, "select * from grandchild order by a"),
+        r#"RS:[["1","15","1","1"],["2","25","1","1"],["4","40","1","1"],["5","50","1","1"]]"#
+    );
+    must_exec_all(&mut tk, &["drop materialized view grandchild", "drop materialized view log on child1"]);
+    for name in ["child1", "child2", "mv_oop"] {
+        if name == "mv_oop" {
+            must_exec_all(&mut tk, &["drop materialized view log on mv_oop"]);
+        }
+        must_exec_all(&mut tk, &[&format!("drop materialized view {name}")]);
+    }
 }
