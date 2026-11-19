@@ -313,13 +313,61 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
+<<<<<<< HEAD
 	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
 	hash = append(hash, hack.Slice(userName)...)
 	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+=======
+	// precalculate the length of the hash buffer, note each time add an element to the buffer, need
+	// to update hashLen accordingly
+	// basic informations
+	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
+	// schemaVersion + relateVersion + pruneMode
+	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	if stmt.snapshotVersion != nil {
+		// Number of snapshot tables and their IDs and revisions.
+		hashLen += 8 + len(stmt.snapshotVersion)*16
+	}
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	if len(stmt.limits) > 0 {
+		// '|' + each limit count/offset takes 8 bytes + '|'
+		hashLen += 2 + len(stmt.limits)*2*8
+	}
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
+		hashLen += 8
+	}
+	// dirty tables
+	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
+	// txn status
+	hashLen += 6
+
+	hash := make([]byte, 0, hashLen)
+	// hashInitCap is not used, just for test purposes
+	hashInitCap := cap(hash)
+	hash = append(hash, userName...)
+	hash = append(hash, hostName...)
+	hash = append(hash, stmtDB...)
+	hash = append(hash, stmt.StmtText...)
+	if stmt.snapshotVersion != nil {
+		// Zero distinguishes this key from keys that use a global schema version.
+		hash = codec.EncodeInt(hash, 0)
+	} else {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	}
+>>>>>>> 40c5806c3f6 (planner: reuse plan cache after unrelated schema changes under RR isolation (#72856))
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if stmt.snapshotVersion != nil {
+		hash = codec.EncodeInt(hash, int64(len(stmt.snapshotVersion)))
+		hash = hashInt64Uint64Map(hash, stmt.snapshotVersion)
+	}
 	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -566,6 +614,9 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// snapshotVersion contains table revisions before MDL overrides, or nil when
+	// the cache key must retain the global schema version.
+	snapshotVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
