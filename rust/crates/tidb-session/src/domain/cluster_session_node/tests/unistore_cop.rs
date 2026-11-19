@@ -27677,6 +27677,7 @@ fn a_step_sessions_statements_all_commit_with_the_step_as_go() {
             buffer: buffer.clone(),
             sql: Default::default(),
             start_mode: tidb_ddl::StartMode::Normal,
+            must_rollback_txn_on_error: Default::default(),
         };
         for a in [1, 2, 3] {
             step.execute(

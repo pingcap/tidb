@@ -2743,6 +2743,7 @@ fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSe
         buffer: worker.step_buffer.clone(),
         sql: std::sync::Arc::clone(&worker.step_sql),
         start_mode: worker.start_mode,
+        must_rollback_txn_on_error: std::sync::Arc::clone(&worker.must_rollback_txn_on_error),
     })
 }
 
@@ -3289,6 +3290,19 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     }
     // Go `transitOneJobStep`, after `runOneJobStep`.
     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", &mut active.job);
+    // Go `transitOneJobStep`: an errored or cancelled step whose handler set
+    // `mustRollbackTxnOnError` discards all its mutations, its session's
+    // statements and a rollback's included.
+    if (step.run_error.is_some() || active.job.state == JobState::CANCELLED)
+        && schema_state.worker.must_rollback_txn_on_error.load(std::sync::atomic::Ordering::Acquire)
+    {
+        step.write = job_only_write(ddl_job_id, Vec::new());
+        schema_state.worker.step_buffer.reset();
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError",
+            &mut active.job,
+        );
+    }
     // Go resets the action's transaction before handleJobDone on cancellation.
     // This also covers rollback handlers that cancel without a fresh error.
     if active.job.state == JobState::CANCELLED {
@@ -4217,6 +4231,19 @@ fn plan_persisted_drop_schema_job_step(
                     tidb_log::Field::new("dbName", tidb_log::Value::Str(schema_name)),
                 ],
             );
+        }
+        // Go master `onDropSchema`: "Refresh and purge records drive MView
+        // and MLog maintenance, so their cleanup must roll back DROP DATABASE
+        // on failure. Refresh alerts are advisory state, so retaining stale
+        // alerts is preferable to blocking DDL."
+        for table in tables.iter().filter(|table| table.materialized_view.is_some()) {
+            materialized_view::delete_create_materialized_view_refresh_info(txn, table.id)?;
+        }
+        for table in tables.iter().filter(|table| table.materialized_view.is_some()) {
+            materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id);
+        }
+        for table in tables.iter().filter(|table| table.materialized_view_log.is_some()) {
+            materialized_view::delete_materialized_view_log_purge_info(txn, table.id)?;
         }
         // Go splits the drop-schema events, 100 tables each (500 past
         // 100,000 tables), under sub-job ids 0, 1, ...

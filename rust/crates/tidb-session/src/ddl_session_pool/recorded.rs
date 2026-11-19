@@ -107,6 +107,7 @@ impl RecordedDdlSession {
                 region_store: None,
                 auto_ids: None,
                 start_mode: tidb_ddl::StartMode::Normal,
+                must_rollback_txn_on_error: Default::default(),
                 advisory_locks: Default::default(),
             },
         ))

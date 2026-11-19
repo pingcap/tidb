@@ -74,6 +74,9 @@ fn run_emulator<S>(
     S: StoreClient,
 {
     while woken.recv().is_ok() {
+        if !tidb_ddl_util::is_emulator_gc_enable() {
+            continue;
+        }
         // Go `terror.Log(errors.Trace(err))`.
         if let Err(error) = do_del_range_work(opener, timeout, sess_pool) {
             tidb_log::error(

@@ -2939,3 +2939,676 @@ fn test_materialized_view_refresh_fast_as_of_timestamp_min_max_target_snapshot()
         );
     }
 }
+
+/// Go master `newMViewRefreshSourceFixture`
+/// (`pkg/executor/test/mviewnested/nested_refresh_source_test.go`): the
+/// stack, a session on it, and the view's ID.
+fn new_mview_refresh_source_fixture() -> (UnistoreClusterStack, Session, i64) {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &[
+        "set tidb_mview_enable = on",
+        "use test",
+        "create table t_source_init (a int not null, b int not null)",
+        "insert into t_source_init values (1, 10), (2, 20)",
+        "create materialized view log on t_source_init (a, b)",
+        "create materialized view mv_source_init (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_init group by a",
+    ]);
+    let mview_id = latest_table(&stack, "mv_source_init").id;
+    (stack, tk, mview_id)
+}
+
+/// Go master `TestMaterializedViewRefreshCompleteOutOfPlaceOutputMLogRollbackAndRetry`
+/// (`nested_oop_test.go`): a cutover failing after it changed metadata
+/// rolls back to the state before the refresh, and an internal retry reuses
+/// the persisted job's replacement log ID.
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_output_m_log_rollback_and_retry() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    for point in [
+        "mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError",
+        "mockMViewRefreshOutOfPlaceCutoverAfterMetadataError",
+    ] {
+        let (_stack, mut tk, old_id) = new_mview_refresh_source_fixture();
+        must_exec_all(&mut tk, &[
+            "create materialized view log on mv_source_init (a, s, cnt)",
+            "create materialized view mv_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(*), count(s) from mv_source_init group by a",
+        ]);
+        let snapshot_sqls = [
+            "select * from mysql.tidb_mview_refresh_info order by MVIEW_ID",
+            "select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID",
+            "select * from mysql.tidb_mlog_purge_info order by MLOG_ID",
+            "select TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' order by TABLE_NAME",
+        ];
+        let before: Vec<String> = snapshot_sqls.iter().map(|sql| answer(&mut tk, sql)).collect();
+        must_exec_all(&mut tk, &["insert into t_source_init values (3, 30)"]);
+        let failpoint = format!("github.com/pingcap/tidb/pkg/ddl/{point}");
+        {
+            let _fail = tidb_failpoint::enable_for_test(&failpoint, "1*return()");
+            let _cancel = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", move |job| {
+                let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                if job.type_ == tidb_model::ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
+                    && job.table_id == old_id
+                    && job.error.is_some()
+                {
+                    job.state = tidb_model::JobState::CANCELLED;
+                }
+            });
+            let refused = answer(&mut tk, "refresh materialized view mv_source_init complete out of place");
+            assert!(refused.starts_with("ERR"), "{point}: {refused}");
+        }
+        let after: Vec<String> = snapshot_sqls.iter().map(|sql| answer(&mut tk, sql)).collect();
+        assert_eq!(after, before, "{point}");
+        assert_eq!(answer(&mut tk, "select * from mv_source_init order by a"), r#"RS:[["1","10","1"],["2","20","1"]]"#, "{point}");
+        must_exec_all(&mut tk, &["refresh materialized view mv_child fast"]);
+
+        // "An internal retry must reuse the log ID allocated in the persisted
+        // job."
+        let allocated = Arc::new(AtomicI64::new(0));
+        let attempts = Arc::new(AtomicI64::new(0));
+        let _fail = tidb_failpoint::enable_for_test(&failpoint, "1*return()");
+        let _observe = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", {
+            let (allocated, attempts) = (Arc::clone(&allocated), Arc::clone(&attempts));
+            move |job| {
+                let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                if job.type_ != tidb_model::ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER
+                    || job.table_id != old_id
+                    || job.is_done()
+                {
+                    return;
+                }
+                let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(job)
+                    .unwrap()
+                    .unwrap();
+                let new_mlog_id = args.read().new_mlog_id;
+                assert!(new_mlog_id > 0);
+                let _ = allocated.compare_exchange(0, new_mlog_id, Ordering::AcqRel, Ordering::Acquire);
+                assert_eq!(allocated.load(Ordering::Acquire), new_mlog_id);
+                attempts.fetch_add(1, Ordering::AcqRel);
+            }
+        });
+        must_exec_all(&mut tk, &["refresh materialized view mv_source_init complete out of place"]);
+        assert!(attempts.load(Ordering::Acquire) >= 2, "{point}: attempts {}", attempts.load(Ordering::Acquire));
+        assert_eq!(
+            answer(
+                &mut tk,
+                "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='test' and TABLE_NAME='$mlog$mv_source_init'"
+            ),
+            format!(r#"RS:[["{}"]]"#, allocated.load(Ordering::Acquire)),
+            "{point}"
+        );
+        assert_eq!(
+            answer(&mut tk, "select * from mv_source_init order by a"),
+            r#"RS:[["1","10","1"],["2","20","1"],["3","30","1"]]"#,
+            "{point}"
+        );
+    }
+}
+
+/// Go `ddl.MockGC` / `recovertest.mockGC`: the delete-range emulator
+/// stopped, so a dropped table keeps its rows, and the GC safe point 48
+/// hours back. (Go's `resetGC` restores the emulator; each test here runs
+/// in its own process.)
+fn mock_gc(session: &mut Session) {
+    tidb_ddl_util::emulator_gc_disable();
+    let time_before_drop = (chrono::Local::now() - chrono::Duration::hours(48)).format("%Y%m%d-%H:%M:%S %z").to_string();
+    must_exec_all(session, &[
+        "delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )",
+        &format!(
+            "INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '{time_before_drop}', '') ON DUPLICATE KEY UPDATE variable_value = '{time_before_drop}'"
+        ),
+    ]);
+}
+
+/// Go `store.GetOracle().GetTimestamp`.
+fn oracle_timestamp(session: &mut Session) -> u64 {
+    must_exec_all(session, &["begin"]);
+    let ts = answer(session, "select @@tidb_current_ts");
+    must_exec_all(session, &["rollback"]);
+    ts.trim_start_matches("RS:[[\"").trim_end_matches("\"]]").parse().unwrap()
+}
+
+/// Go master `TestFlashbackClusterWithMaterializedViews`
+/// (`pkg/ddl/cluster_test.go`): a materialized view or log in the current
+/// state or at the target refuses FLASHBACK CLUSTER before it prepares any
+/// region.
+#[test]
+fn test_flashback_cluster_with_materialized_views() {
+    const CREATE_LOG: &str = "create materialized view log on mv_guard.base (a)";
+    const CREATE_MV: &str = "create materialized view mv_guard.mv (a, cnt) as select a, count(*) from mv_guard.base group by a";
+    const DROP_LOG: &str = "drop materialized view log on mv_guard.base";
+    const DROP_MV: &str = "drop materialized view mv_guard.mv";
+    let cases: [(&str, &[&str], &[&str], &str); 7] = [
+        (
+            "neither snapshot has materialized objects",
+            &["create view mv_guard.mv as select a from mv_guard.base", "create table mv_guard.`$mlog$ordinary` (a int)"],
+            &[],
+            "",
+        ),
+        ("current materialized view log without dependents", &[], &[CREATE_LOG], "current state"),
+        (
+            "current materialized views sharing a log",
+            &[],
+            &[CREATE_LOG, CREATE_MV, "create materialized view mv_guard.mv2 (a, cnt) as select a, count(*) from mv_guard.base group by a"],
+            "current state",
+        ),
+        ("target materialized view log dropped now", &[CREATE_LOG], &[DROP_LOG], "target snapshot"),
+        ("target materialized view and log dropped now", &[CREATE_LOG, CREATE_MV], &[DROP_MV, DROP_LOG], "target snapshot"),
+        ("target schema dropped now", &[CREATE_LOG, CREATE_MV], &["drop database mv_guard"], "target snapshot"),
+        ("materialized objects only between snapshots", &[], &[CREATE_LOG, CREATE_MV, DROP_MV, DROP_LOG], ""),
+    ];
+    for (name, before, after, snapshot) in cases {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &[
+            "set tidb_mview_enable=on",
+            "create database mv_guard",
+            "create table mv_guard.base (a int)",
+            "create table test.flashback_guard (a int)",
+            "insert into test.flashback_guard values (1)",
+        ]);
+        must_exec_all(&mut tk, before);
+        mock_gc(&mut tk);
+        // "Historical DDL-job checks use the physical time of the target TSO."
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let ts = oracle_timestamp(&mut tk);
+        must_exec_all(&mut tk, after);
+        must_exec_all(&mut tk, &["insert into test.flashback_guard values (2)"]);
+
+        let _mock = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", "return(true)");
+        let safe_ts = u64::try_from((chrono::Utc::now() + chrono::Duration::seconds(10)).timestamp_millis()).unwrap() << 18;
+        let _safe = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/injectSafeTS", &format!("return({safe_ts})"));
+        let refused = !snapshot.is_empty();
+        let _before = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |job| {
+            let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ == tidb_model::ActionType::ACTION_FLASHBACK_CLUSTER && refused {
+                assert_ne!(job.schema_state, tidb_model::SchemaState::WRITE_ONLY, "must reject before preparing flashback regions");
+                assert_ne!(job.schema_state, tidb_model::SchemaState::WRITE_REORGANIZATION, "must reject before restoring data");
+            }
+        });
+        let sql = format!("flashback cluster to tso {ts}");
+        if !refused {
+            assert_eq!(answer(&mut tk, &sql), "OK", "{name}");
+            continue;
+        }
+        let err = answer(&mut tk, &sql);
+        for want in ["materialized view", "(ID: ", snapshot] {
+            assert!(err.starts_with("ERR") && err.contains(want), "{name}: {err}");
+        }
+        if snapshot == "target snapshot" {
+            assert!(err.contains(&format!("TSO {ts}")), "{name}: {err}");
+        }
+        assert_eq!(answer(&mut tk, "select * from test.flashback_guard order by a"), r#"RS:[["1"],["2"]]"#, "{name}");
+        must_exec_all(&mut tk, &["insert into test.flashback_guard values (3)"]);
+    }
+}
+
+/// Go master `TestFlashbackTableMaterializedViews` (`pkg/ddl/cluster_test.go`):
+/// FLASHBACK TABLE refuses a materialized view, its log and its shadow,
+/// current or dropped, and a newer ordinary table of the name still wins.
+#[test]
+fn test_flashback_table_materialized_views() {
+    let (stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &["set tidb_mview_enable=on", "use test"]);
+    mock_gc(&mut tk);
+    must_exec_all(&mut tk, &["create table base (a int not null)", "insert into base values (1)"]);
+    // "Older ordinary tables must not be recovered past a newer MV/MLog drop."
+    for name in ["mv", "$mlog$base"] {
+        must_exec_all(&mut tk, &[
+            &format!("create table `{name}` (a int)"),
+            &format!("insert into `{name}` values (10)"),
+            &format!("drop table `{name}`"),
+        ]);
+    }
+    must_exec_all(&mut tk, &[
+        "create materialized view log on base (a)",
+        "create materialized view mv (a, cnt) as select a, count(*) from base group by a",
+    ]);
+    let check_unsupported = |tk: &mut Session, name: &str, object_type: &str| {
+        for suffix in ["", " to restored"] {
+            assert_eq!(
+                answer(tk, &format!("flashback table `{name}`{suffix}")),
+                format!("ERR 8200 Unsupported FLASHBACK TABLE on {object_type}"),
+                "{name}{suffix}"
+            );
+        }
+    };
+    check_unsupported(&mut tk, "mv", "materialized view table");
+    check_unsupported(&mut tk, "$mlog$base", "materialized view log table");
+
+    let mv = latest_table(&stack, "mv");
+    let mut shadow = mv.clone();
+    shadow.id = 0;
+    shadow.name = tidb_ast::CiString::new("mv_shadow");
+    shadow.materialized_view = None;
+    shadow.materialized_view_base = None;
+    shadow.materialized_view_shadow = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewShadowInfo {
+        source_mview_id: mv.id,
+        ..Default::default()
+    }));
+    let schema_id = stack.factory.catalog.get_latest().schema_by_name("test").unwrap().read().id;
+    let ddl = std::sync::Arc::clone(&tk.domain_services().unwrap().ddl);
+    let context = tk.ddl_statement_context();
+    ddl.create_materialized_view_shadow_table(schema_id, "test", shadow, &context).unwrap();
+    check_unsupported(&mut tk, "mv_shadow", "materialized view shadow table");
+    ddl.drop_materialized_view_shadow_table("test", "mv_shadow", &context).unwrap();
+    check_unsupported(&mut tk, "mv_shadow", "materialized view shadow table");
+
+    must_exec_all(&mut tk, &["drop materialized view mv"]);
+    check_unsupported(&mut tk, "mv", "materialized view table");
+    must_exec_all(&mut tk, &["drop materialized view log on base"]);
+    check_unsupported(&mut tk, "$mlog$base", "materialized view log table");
+    assert_eq!(answer(&mut tk, "show tables"), r#"RS:[["base"]]"#);
+
+    // "A newer ordinary table must still take precedence over older MV
+    // history."
+    for name in ["mv", "$mlog$base", "mv_shadow"] {
+        must_exec_all(&mut tk, &[
+            &format!("create table `{name}` (a int)"),
+            &format!("insert into `{name}` values (20)"),
+            &format!("drop table `{name}`"),
+            &format!("flashback table `{name}` to restored"),
+        ]);
+        assert_eq!(answer(&mut tk, "select * from restored"), r#"RS:[["20"]]"#, "{name}");
+        must_exec_all(&mut tk, &["drop table restored"]);
+    }
+}
+
+const MV_RECOVER_STATE_QUERIES: [&str; 3] = [
+    "select * from mysql.tidb_mview_refresh_info order by mview_id",
+    "select * from mysql.tidb_mlog_purge_info order by mlog_id",
+    "select * from mysql.tidb_mview_fast_refresh_source_info order by mview_id, mlog_id",
+];
+
+fn mv_recover_state(session: &mut Session) -> Vec<String> {
+    MV_RECOVER_STATE_QUERIES.iter().map(|sql| answer(session, sql)).collect()
+}
+
+/// Go master `TestFlashbackSchemaViews` (`recovertest`): a recovered
+/// database's views name it, renamed or not, and keep their other
+/// metadata.
+#[test]
+fn test_flashback_schema_views() {
+    for rename in [false, true] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+        mock_gc(&mut tk);
+        must_exec_all(&mut tk, &[
+            "create database view_recover",
+            "create table view_recover.t (a int not null)",
+            "insert into view_recover.t values (1), (2)",
+            "create database view_recover_external",
+            "create table view_recover_external.t (a int not null)",
+            "insert into view_recover_external.t values (10)",
+            "set sql_mode = 'ANSI_QUOTES'",
+            r#"create algorithm=merge sql security invoker view view_recover.v (a, literal, encoded) as
+				select "view_recover"."t"."a", 'view_recover.t', _latin1'view_recover.t' from "view_recover"."t""#,
+            "set sql_mode = default",
+            "create view view_recover.v_nested as select a from view_recover.v where exists (select 1 from view_recover.t where t.a = v.a)",
+            "create view view_recover.v_external as select t.a, e.a as external_a from view_recover.t as t cross join view_recover_external.t as e",
+            "create view view_recover.v_star as select view_recover.t.* from view_recover.t",
+            "create view view_recover.v_cte as with view_recover as (select a from view_recover.t) select view_recover.a from view_recover union all select a from view_recover_external.t",
+        ]);
+        let view_of = |db: &str| {
+            stack.factory.catalog.get_latest().table_info_by_name(db, "v").unwrap().1.read().view.clone().unwrap().read().clone()
+        };
+        let original_view_info = view_of("view_recover");
+        let check_views = |tk: &mut Session, db: &str, extra_row: bool| {
+            let mut rows = vec![r#"["1","view_recover.t","view_recover.t","latin1"]"#, r#"["2","view_recover.t","view_recover.t","latin1"]"#];
+            let mut values = vec![r#"["1"]"#, r#"["2"]"#];
+            let mut external_rows = vec![r#"["1","10"]"#, r#"["2","10"]"#];
+            if extra_row {
+                rows.push(r#"["3","view_recover.t","view_recover.t","latin1"]"#);
+                values.push(r#"["3"]"#);
+                external_rows.push(r#"["3","10"]"#);
+            }
+            let rs = |rows: &[&str]| format!("RS:[{}]", rows.join(","));
+            assert_eq!(answer(tk, &format!("select a, literal, encoded, charset(encoded) from {db}.v order by a")), rs(&rows), "{db}");
+            for name in ["v_nested", "v_star"] {
+                assert_eq!(answer(tk, &format!("select * from {db}.{name} order by a")), rs(&values), "{db}.{name}");
+            }
+            assert_eq!(answer(tk, &format!("select * from {db}.v_external order by a")), rs(&external_rows), "{db}");
+            let mut cte = values.clone();
+            cte.push(r#"["10"]"#);
+            assert_eq!(answer(tk, &format!("select * from {db}.v_cte order by a")), rs(&cte), "{db}");
+        };
+        check_views(&mut tk, "view_recover", false);
+        must_exec_all(&mut tk, &["drop database view_recover"]);
+        let (db_name, recover_sql) = if rename {
+            ("view_recovered", "flashback database view_recover to view_recovered")
+        } else {
+            ("view_recover", "flashback database view_recover")
+        };
+        must_exec_all(&mut tk, &[recover_sql]);
+        check_views(&mut tk, db_name, false);
+        let mut recovered_view_info = view_of(db_name);
+        recovered_view_info.select_stmt = original_view_info.select_stmt.clone();
+        assert_eq!(serde_json::to_value(&recovered_view_info).unwrap(), serde_json::to_value(&original_view_info).unwrap());
+        if rename {
+            // "Reusing the old name must not silently redirect recovered
+            // views."
+            must_exec_all(&mut tk, &[
+                "create database view_recover",
+                "create table view_recover.t (a int not null)",
+                "insert into view_recover.t values (99)",
+            ]);
+            check_views(&mut tk, db_name, false);
+        }
+        must_exec_all(&mut tk, &[&format!("insert into {db_name}.t values (3)")]);
+        check_views(&mut tk, db_name, true);
+        if rename {
+            must_exec_all(&mut tk, &[
+                &format!("drop database {db_name}"),
+                &format!("flashback database {db_name} to view_recovered_again"),
+            ]);
+            check_views(&mut tk, "view_recovered_again", true);
+        }
+    }
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViews` (`recovertest`): the
+/// maintenance rows come back as they stood right before the drop
+/// committed, not at its submission, and the views keep refreshing.
+#[test]
+fn test_flashback_schema_materialized_views() {
+    for rename in [false, true] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+        mock_gc(&mut tk);
+        must_exec_all(&mut tk, &[
+            "create database mv_recover",
+            "use mv_recover",
+            "create table t (a int not null)",
+            "insert into t values (1), (1), (2)",
+            "create materialized view log on t (a)",
+            "create materialized view mv1 (a, cnt) as select mv_recover.t.a, count(*) from mv_recover.t group by mv_recover.t.a",
+            "create materialized view log on mv1 (a)",
+            "create materialized view mv2 (a, cnt) as select a, count(*) from mv1 group by a",
+            // "An unrelated database's maintenance state must remain
+            // untouched."
+            "create database mv_unrelated",
+            "create table mv_unrelated.t (a int not null)",
+            "create materialized view log on mv_unrelated.t (a)",
+            "create materialized view mv_unrelated.mv (a, cnt) as select a, count(*) from mv_unrelated.t group by a",
+        ]);
+        let old_refresh_state = answer(&mut tk, MV_RECOVER_STATE_QUERIES[0]);
+        let db_id = stack.factory.catalog.get_latest().schema_by_name("mv_recover").unwrap().read().id;
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel::<()>();
+        let pause = std::sync::Mutex::new(Some((started_tx, resume_rx)));
+        let pause_drop = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", move |arg| {
+            let job_w = arg.downcast_mut::<tidb_model::JobW>().unwrap();
+            let (type_, schema_id) = {
+                let job = job_w.job.as_ref().unwrap().read();
+                (job.type_, job.schema_id)
+            };
+            if type_ == tidb_model::ActionType::ACTION_DROP_SCHEMA && schema_id == db_id {
+                if let Some((started, resume)) = pause.lock().unwrap().take() {
+                    started.send(()).unwrap();
+                    resume.recv().unwrap();
+                }
+            }
+        });
+        let mut drop_tk = stack_session(&stack);
+        let dropping = std::thread::spawn(move || answer(&mut drop_tk, "drop database mv_recover"));
+        started_rx.recv_timeout(std::time::Duration::from_secs(10)).expect("DROP DATABASE did not reach its first worker step");
+        // "Advance both baselines after the DROP job's StartTS, but before it
+        // starts removing the schema. Recovering the submission snapshot is
+        // stale."
+        must_exec_all(&mut tk, &[
+            "insert into t values (2), (3)",
+            "refresh materialized view mv1 fast",
+            "refresh materialized view mv2 fast",
+            "purge materialized view log on t",
+            "purge materialized view log on mv1",
+            "update mysql.tidb_mview_refresh_info set NEXT_REFRESH_UNIX_SECONDS = 2100000000",
+            "update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = 2100000000",
+        ]);
+        assert_ne!(answer(&mut tk, MV_RECOVER_STATE_QUERIES[0]), old_refresh_state);
+        let before = mv_recover_state(&mut tk);
+        resume_tx.send(()).unwrap();
+        assert_eq!(dropping.join().unwrap(), "OK");
+        drop(pause_drop);
+        let (db_name, recover_sql) = if rename {
+            ("mv_recovered", "flashback database mv_recover to mv_recovered")
+        } else {
+            ("mv_recover", "flashback database mv_recover")
+        };
+        must_exec_all(&mut tk, &[recover_sql]);
+        assert_eq!(mv_recover_state(&mut tk), before, "rename={rename}");
+        must_exec_all(&mut tk, &[&format!("use {db_name}")]);
+        assert_eq!(answer(&mut tk, "select * from mv1 order by a"), r#"RS:[["1","2"],["2","2"],["3","1"]]"#);
+        assert_eq!(answer(&mut tk, "select * from mv2 order by a"), r#"RS:[["1","1"],["2","1"],["3","1"]]"#);
+        must_exec_all(&mut tk, &[
+            "insert into t values (1), (4)",
+            "refresh materialized view mv1 fast",
+            "refresh materialized view mv2 fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv1 order by a"), r#"RS:[["1","3"],["2","2"],["3","1"],["4","1"]]"#);
+        assert_eq!(answer(&mut tk, "select * from mv2 order by a"), r#"RS:[["1","1"],["2","1"],["3","1"],["4","1"]]"#);
+        must_exec_all(&mut tk, &["refresh materialized view mv2 complete in place"]);
+        assert_eq!(answer(&mut tk, "select * from mv2 order by a"), r#"RS:[["1","1"],["2","1"],["3","1"],["4","1"]]"#);
+        must_exec_all(&mut tk, &["purge materialized view log on t", "purge materialized view log on mv1"]);
+    }
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViewEscapedDefinition`
+/// (`recovertest`): the rewritten definition keeps its literal under the
+/// view's SQL mode.
+#[test]
+fn test_flashback_schema_materialized_view_escaped_definition() {
+    for (name, sql_mode, literal) in [
+        ("default", "", r"'x\\y'"),
+        ("no_backslash_escapes_and_ansi_quotes", "NO_BACKSLASH_ESCAPES,ANSI_QUOTES", r"'x\y'"),
+    ] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+        mock_gc(&mut tk);
+        must_exec_all(&mut tk, &[
+            "create database mv_recover_escaped",
+            "use mv_recover_escaped",
+            "create table t (a int not null, s varchar(20) not null)",
+            "create materialized view log on t (a, s)",
+            &format!("set sql_mode = '{sql_mode}'"),
+        ]);
+        must_exec_all(&mut tk, &[
+            &format!("create materialized view mv (a, cnt) as select a, count(*) from mv_recover_escaped.t where s = {literal} group by a"),
+            &format!("create view v as select a from mv_recover_escaped.t where s = {literal}"),
+            "set sql_mode = default",
+            // "Include a row matching the incorrectly doubled literal as
+            // well."
+            "insert into t values (1, x'785c79'), (2, x'785c5c79')",
+            "refresh materialized view mv fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv"), r#"RS:[["1","1"]]"#, "{name}");
+        // Go `definitionSQLMode`: the session's mode the view was created
+        // under, which the view keeps.
+        let created_mode = stack.factory.catalog.get_latest().table_info_by_name("mv_recover_escaped", "mv").unwrap().1.read()
+            .materialized_view.as_ref().unwrap().read().definition_sql_mode;
+        let mut db_name = "mv_recover_escaped".to_owned();
+        for (i, new_name) in ["mv_recovered_escaped", "mv_recovered_escaped_again"].into_iter().enumerate() {
+            must_exec_all(&mut tk, &[
+                &format!("drop database {db_name}"),
+                &format!("flashback database {db_name} to {new_name}"),
+            ]);
+            db_name = new_name.to_owned();
+            must_exec_all(&mut tk, &[&format!("use {db_name}")]);
+            let mv = stack.factory.catalog.get_latest().table_info_by_name(&db_name, "mv").unwrap().1.read().clone();
+            assert_eq!(mv.materialized_view.as_ref().unwrap().read().definition_sql_mode, created_mode, "{name}");
+            assert_eq!(answer(&mut tk, "select * from mv"), format!(r#"RS:[["1","{}"]]"#, i + 1), "{name}");
+            must_exec_all(&mut tk, &[
+                "insert into t values (1, x'785c79'), (2, x'785c5c79')",
+                "refresh materialized view mv fast",
+            ]);
+            let rows = format!(r#"RS:[["1","{}"]]"#, i + 2);
+            assert_eq!(answer(&mut tk, "select * from mv"), rows, "{name}");
+            assert_eq!(answer(&mut tk, "select a, count(*) from v group by a"), rows, "{name}");
+        }
+    }
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViewLog` (`recovertest`).
+#[test]
+fn test_flashback_schema_materialized_view_log() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+    mock_gc(&mut tk);
+    must_exec_all(&mut tk, &[
+        "create database mlog_recover",
+        "use mlog_recover",
+        "create table t (a int)",
+        "create materialized view log on t (a)",
+        "insert into t values (1)",
+        "purge materialized view log on t",
+        "insert into t values (2)",
+    ]);
+    const STATE_SQL: &str = "select * from mysql.tidb_mlog_purge_info order by mlog_id";
+    let before = answer(&mut tk, STATE_SQL);
+    must_exec_all(&mut tk, &["drop database mlog_recover", "flashback database mlog_recover"]);
+    assert_eq!(answer(&mut tk, STATE_SQL), before);
+    must_exec_all(&mut tk, &["use mlog_recover", "insert into t values (3)"]);
+    assert_eq!(answer(&mut tk, "select a from `$mlog$t` order by a"), r#"RS:[["2"],["3"]]"#);
+    must_exec_all(&mut tk, &["purge materialized view log on t"]);
+    assert_eq!(answer(&mut tk, "select count(*) from `$mlog$t`"), r#"RS:[["0"]]"#);
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViewAtomicity` (`recovertest`):
+/// a recover step failing after it restored the maintenance rows leaves
+/// none of them, and its retry restores them once.
+#[test]
+fn test_flashback_schema_materialized_view_atomicity() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for job_update_error in [false, true] {
+        let (stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+        mock_gc(&mut tk);
+        must_exec_all(&mut tk, &[
+            "create database mv_recover_atomic",
+            "use mv_recover_atomic",
+            "create table t (a int not null)",
+            "insert into t values (1)",
+            "create materialized view log on t (a)",
+            "create materialized view mv (a, cnt) as select a, count(*) from t group by a",
+        ]);
+        let before = mv_recover_state(&mut tk);
+        must_exec_all(&mut tk, &["drop database mv_recover_atomic"]);
+        let injected = Arc::new(AtomicBool::new(false));
+        let _guards: Vec<tidb_failpoint::Guard> = if job_update_error {
+            let injected = Arc::clone(&injected);
+            vec![tidb_failpoint::enable_call_ref_for_test::<tidb_ddl::cluster_ddl::AfterUpdateJobToTable>(
+                "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable",
+                Arc::new(move |job, err| {
+                    if job.type_ == tidb_model::ActionType::ACTION_RECOVER_SCHEMA && job.is_done() && !injected.swap(true, Ordering::AcqRel) {
+                        *err = Some(tidb_ddl_build::plan_error::DdlPlanError::Unsupported(
+                            "injected recover schema job update error".to_owned(),
+                        ));
+                    }
+                }),
+            )]
+        } else {
+            let observer = std::sync::Mutex::new(stack_session(&stack));
+            let injected = Arc::clone(&injected);
+            vec![
+                tidb_failpoint::enable_for_test(
+                    "github.com/pingcap/tidb/pkg/ddl/mockRecoverSchemaMaterializedViewInfoError",
+                    r#"1*return("injected recover schema maintenance error")"#,
+                ),
+                tidb_failpoint::enable_call_for_test(
+                    "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError",
+                    move |job| {
+                        let job = job.downcast_mut::<tidb_model::Job>().unwrap();
+                        if job.type_ == tidb_model::ActionType::ACTION_RECOVER_SCHEMA {
+                            injected.store(true, Ordering::Release);
+                            let mut observer = observer.lock().unwrap();
+                            for sql in MV_RECOVER_STATE_QUERIES {
+                                assert_eq!(answer(&mut observer, sql), "RS:[]", "{sql}");
+                            }
+                            assert_eq!(answer(&mut observer, "show databases like 'mv_recover_atomic'"), "RS:[]");
+                        }
+                    },
+                ),
+            ]
+        };
+        must_exec_all(&mut tk, &["flashback database mv_recover_atomic"]);
+        assert!(injected.load(Ordering::Acquire), "job_update_error={job_update_error}");
+        assert_eq!(mv_recover_state(&mut tk), before, "job_update_error={job_update_error}");
+        must_exec_all(&mut tk, &[
+            "use mv_recover_atomic",
+            "insert into t values (2)",
+            "refresh materialized view mv fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv order by a"), r#"RS:[["1","1"],["2","1"]]"#);
+    }
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViewLogBaseline`
+/// (`recovertest`): a child's baseline on a replaced log survives recovery,
+/// so FAST still refuses it until a COMPLETE refresh.
+#[test]
+fn test_flashback_schema_materialized_view_log_baseline() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+    mock_gc(&mut tk);
+    must_exec_all(&mut tk, &[
+        "create database mv_recover_baseline",
+        "use mv_recover_baseline",
+        "create table t (a int not null)",
+        "insert into t values (1)",
+        "create materialized view log on t (a)",
+        "create materialized view mv1 (a, cnt) as select a, count(*) from t group by a",
+        "create materialized view log on mv1 (a)",
+        "create materialized view mv2 (a, cnt) as select a, count(*) from mv1 group by a",
+        // "Cutover replaces the parent's log. The child's old baseline must
+        // survive recovery so FAST still rejects it until a COMPLETE refresh
+        // establishes a new one."
+        "refresh materialized view mv1 complete out of place",
+    ]);
+    const SOURCES_SQL: &str = "select * from mysql.tidb_mview_fast_refresh_source_info order by mview_id, mlog_id";
+    let before = answer(&mut tk, SOURCES_SQL);
+    assert!(answer(&mut tk, "refresh materialized view mv2 fast").starts_with("ERR 8183 "));
+    must_exec_all(&mut tk, &["drop database mv_recover_baseline", "flashback database mv_recover_baseline"]);
+    assert_eq!(answer(&mut tk, SOURCES_SQL), before);
+    must_exec_all(&mut tk, &["use mv_recover_baseline"]);
+    assert!(answer(&mut tk, "refresh materialized view mv2 fast").starts_with("ERR 8183 "));
+    must_exec_all(&mut tk, &[
+        "refresh materialized view mv2 complete in place",
+        "insert into t values (2)",
+        "refresh materialized view mv1 fast",
+        "refresh materialized view mv2 fast",
+    ]);
+    assert_eq!(answer(&mut tk, "select * from mv2 order by a"), r#"RS:[["1","1"],["2","1"]]"#);
+}
+
+/// Go master `TestFlashbackSchemaMaterializedViewMissingMaintenance`
+/// (`recovertest`): a missing maintenance row cancels the recovery, which
+/// leaves no database and no rows.
+#[test]
+fn test_flashback_schema_materialized_view_missing_maintenance() {
+    let tables = ["tidb_mview_refresh_info", "tidb_mlog_purge_info", "tidb_mview_fast_refresh_source_info"];
+    for table in tables {
+        let (_stack, _users, mut tk) = go_master_mview_stack();
+        must_exec_all(&mut tk, &["set tidb_mview_enable=on"]);
+        mock_gc(&mut tk);
+        must_exec_all(&mut tk, &[
+            "create database mv_recover_missing",
+            "use mv_recover_missing",
+            "create table t (a int not null)",
+            "create materialized view log on t (a)",
+            "create materialized view mv (a, cnt) as select a, count(*) from t group by a",
+            &format!("delete from mysql.{table}"),
+            "drop database mv_recover_missing",
+        ]);
+        exec_err_contains(
+            &mut tk,
+            "flashback database mv_recover_missing",
+            &format!("maintenance records missing from mysql.{table}"),
+        );
+        assert_eq!(answer(&mut tk, "show databases like 'mv_recover_missing'"), "RS:[]", "{table}");
+        for state_table in tables {
+            assert_eq!(answer(&mut tk, &format!("select count(*) from mysql.{state_table}")), r#"RS:[["0"]]"#, "{table}");
+        }
+    }
+}
+
+/// Another session on `stack` (Go `testkit.NewTestKit(t, store)`).
+fn stack_session(stack: &UnistoreClusterStack) -> Session {
+    stack.factory.open_session(session_context(2140)).unwrap()
+}

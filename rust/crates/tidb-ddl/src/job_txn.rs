@@ -112,6 +112,14 @@ impl<'a> JobTxn<'a> {
         Some(session.execute(self.start_ts, sql, args))
     }
 
+    /// Go `jobCtx.mustRollbackTxnOnError = true`: an errored or cancelled
+    /// step discards all its mutations, its session's statements included.
+    pub fn set_must_rollback_txn_on_error(&self) {
+        if let Some(session) = &self.session {
+            session.must_rollback_txn_on_error.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
     /// [`Self::execute`] in materialized view maintenance.
     pub fn execute_in_mview_maintenance(
         &self,
@@ -196,7 +204,13 @@ pub struct StepSession {
     pub sql: StepSqlSlot,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
+    /// Go `jobCtx.mustRollbackTxnOnError`.
+    pub must_rollback_txn_on_error: MustRollbackTxnOnError,
 }
+
+/// Go `jobCtx.mustRollbackTxnOnError`, shared by a step's worker and its
+/// session.
+pub type MustRollbackTxnOnError = std::sync::Arc<std::sync::atomic::AtomicBool>;
 
 /// The slot of a step's one session (see [`StepSession::sql`]).
 pub type StepSqlSlot = std::sync::Arc<

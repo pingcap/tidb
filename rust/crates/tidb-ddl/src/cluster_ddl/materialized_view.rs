@@ -928,12 +928,14 @@ fn upsert_create_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog: &Table
     )
     .map_err(DdlPlanError::from_mysql_error)?;
     let sql = create_materialized_view_log_purge_info_upsert_sql(mlog.id, next, should_update);
+    txn.set_must_rollback_txn_on_error();
     execute_job_sql(txn, &sql).map_err(convert_purge_info_table_not_exists)
 }
 
 /// Go `deleteMaterializedViewLogPurgeInfos`: a missing table deletes nothing.
 pub(crate) fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Result<(), DdlPlanError> {
     let sql = format!("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ({mlog_id})");
+    txn.set_must_rollback_txn_on_error();
     match execute_job_sql(txn, &sql) {
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
         other => other.map_err(DdlPlanError::from_mysql_error),
@@ -1903,6 +1905,7 @@ fn prewrite_create_materialized_view_refresh_info(
 /// Go master `mviewutil.InsertRefreshSourceIDs` on the step's session: the
 /// view's whole input log set.
 fn insert_mview_refresh_source_info(txn: &JobTxn<'_>, mview_id: i64, mlog_ids: &[i64]) -> Result<(), DdlPlanError> {
+    txn.set_must_rollback_txn_on_error();
     if mlog_ids.is_empty() {
         return Ok(());
     }
@@ -1922,6 +1925,7 @@ pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mvi
         "DELETE FROM mysql.{} WHERE MVIEW_ID IN ({mview_id})",
         tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
     );
+    txn.set_must_rollback_txn_on_error();
     execute_job_sql(txn, &source).map_err(DdlPlanError::from_mysql_error)?;
     match execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})")) {
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
@@ -1931,6 +1935,7 @@ pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mvi
 
 /// Go master `deleteCreateMaterializedViewRefreshAlerts`: best effort.
 pub(crate) fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) {
+    txn.set_must_rollback_txn_on_error();
     let _ = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"));
 }
 
@@ -1958,6 +1963,7 @@ fn upsert_create_materialized_view_refresh_info(
     .map_err(DdlPlanError::from_mysql_error)?;
     let last_success = chrono::Utc::now().timestamp();
     let sql = create_materialized_view_refresh_info_upsert_sql(mview.id, read_ts, Some(last_success), next, should_update);
+    txn.set_must_rollback_txn_on_error();
     execute_job_sql(txn, &sql).map_err(convert_refresh_info_table_not_exists)
 }
 
@@ -2429,6 +2435,7 @@ fn migrate_mview_refresh_info_for_out_of_place_cutover(
         )
         .into()]))
     };
+    txn.set_must_rollback_txn_on_error();
     let rows = job_sql_rows(
         txn,
         "SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
@@ -2489,6 +2496,9 @@ fn migrate_mview_refresh_source_info(
 ) -> Result<(), DdlPlanError> {
     use tidb_sqlescape::SqlArg;
     let table = tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME;
+    // "Keep this migration within the DDL step's full-transaction error
+    // handling."
+    txn.set_must_rollback_txn_on_error();
     let read = |mview_id: i64| -> Result<Vec<i64>, DdlPlanError> {
         let rows = job_sql_rows(
             txn,

@@ -186,6 +186,7 @@ impl FlashReplicaDeprecated {
                 gc_safe_point,
                 &get_table,
                 &mut handle_job_and_table_info,
+                &[],
             ) {
                 Ok(true) => break,
                 Ok(false) => {}

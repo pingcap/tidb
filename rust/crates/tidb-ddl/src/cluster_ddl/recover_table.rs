@@ -45,6 +45,10 @@ pub struct DdlStepWorker {
     pub auto_ids: Option<Arc<dyn tidb_autoid::service_rpc::AutoIdServiceRpc>>,
     /// Go `jobCtx.oldDDLCtx.startMode`.
     pub start_mode: crate::StartMode,
+    /// Go `jobCtx.mustRollbackTxnOnError`: the step's handler asked that an
+    /// errored or cancelled step discard all its mutations, its session's
+    /// statements included. Fresh (false) for each step.
+    pub must_rollback_txn_on_error: crate::job_txn::MustRollbackTxnOnError,
     /// The advisory locks `w.sess` holds for this delivery (Go
     /// `GetAdvisoryLock`); dropping the worker at the end of the delivery
     /// releases them (Go `deliveryJob`'s `ReleaseAllAdvisoryLocks`).
@@ -440,6 +444,18 @@ pub(super) fn on_recover_schema(
                 }
             }
 
+            let new_schema_name = schema_info.read().name.clone();
+            if new_schema_name.lowercase() != old_schema_name {
+                let old_name = recover_schema_info.read().old_schema_name.clone();
+                for recover_info in &recover_tables {
+                    let Some(table) = recover_info.read().table_info.clone() else {
+                        continue;
+                    };
+                    rewrite_recovered_view_schema(&mut *table.write(), &old_name, &new_schema_name)
+                        .map_err(|error| cancel_ddl_job(active, error))?;
+                }
+            }
+
             let mut db_info = schema_info.read().clone();
             db_info.state = SchemaState::PUBLIC;
             let meta = txn.meta();
@@ -467,6 +483,12 @@ pub(super) fn on_recover_schema(
                     &mut label_rules,
                     start_ts,
                 )?;
+            }
+            if let Err(error) = recover_schema_materialized_view_infos(txn, sessions, &recover_tables, snapshot_ts) {
+                if error.equal(&tidb_dbterror::ERR_INVALID_DDL_JOB) {
+                    return Err(cancel_ddl_job(active, error));
+                }
+                return Err(error);
             }
             schema_info.write().state = SchemaState::PUBLIC;
             // Use to update the InfoSchema.
@@ -521,6 +543,211 @@ pub(super) fn on_recover_schema(
         }
         // We can't enter here.
         state => Err(unknown(format!("invalid db state {state}"))),
+    }
+}
+
+/// Go master `materializedViewInfoDeleteBatchSize`.
+const MATERIALIZED_VIEW_INFO_DELETE_BATCH_SIZE: usize = 1000;
+
+/// A maintenance row's value as Go's `row.GetDatum(i, ...).GetValue()`
+/// hands it to `sqlescape`: these tables hold only integers.
+fn maintenance_datum_arg(datum: &tidb_datatype::Datum) -> Result<tidb_sqlescape::SqlArg<'static>, DdlPlanError> {
+    match datum {
+        tidb_datatype::Datum::Null => Ok(tidb_sqlescape::SqlArg::Null),
+        tidb_datatype::Datum::Int(value) => Ok(tidb_sqlescape::SqlArg::Signed(*value)),
+        tidb_datatype::Datum::UInt(value) => Ok(tidb_sqlescape::SqlArg::Unsigned(*value)),
+        other => Err(unknown(format!("unexpected materialized view maintenance value {other:?}"))),
+    }
+}
+
+/// Go master `recoverSchemaMaterializedViewInfos`: restores the persisted
+/// maintenance baselines in the same transaction that makes the recovered
+/// database public.
+fn recover_schema_materialized_view_infos(
+    txn: &JobTxn<'_>,
+    sessions: &DdlStepWorker,
+    tables: &[GoShared<tidb_model::RecoverTableInfo>],
+    snapshot_ts: u64,
+) -> Result<(), DdlPlanError> {
+    let mut mview_ids = Vec::new();
+    let mut mlog_ids = Vec::new();
+    for info in tables {
+        let Some(table) = info.read().table_info.clone() else {
+            continue;
+        };
+        let table = table.read();
+        if table.materialized_view.is_some() {
+            mview_ids.push(table.id);
+        }
+        if table.materialized_view_log.is_some() {
+            mlog_ids.push(table.id);
+        }
+    }
+    if mview_ids.is_empty() && mlog_ids.is_empty() {
+        return Ok(());
+    }
+    txn.set_must_rollback_txn_on_error();
+    let read_ctx = sessions.sess_pool.restricted_sql_executor();
+    let ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_DDL,
+    );
+    let read_opts = [tidb_sqlexec::exec_option_with_snapshot(snapshot_ts)];
+    for (table_name, id_column, columns, ids) in [
+        (
+            "tidb_mview_refresh_info",
+            "MVIEW_ID",
+            &["MVIEW_ID", "LAST_SUCCESS_READ_TSO", "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS", "NEXT_REFRESH_UNIX_SECONDS"][..],
+            &mview_ids,
+        ),
+        ("tidb_mlog_purge_info", "MLOG_ID", &["MLOG_ID", "NEXT_PURGE_UNIX_SECONDS", "LAST_PURGED_TSO"][..], &mlog_ids),
+        ("tidb_mview_fast_refresh_source_info", "MVIEW_ID", &["MVIEW_ID", "MLOG_ID"][..], &mview_ids),
+    ] {
+        for batch in ids.chunks(MATERIALIZED_VIEW_INFO_DELETE_BATCH_SIZE) {
+            let mut read_args = Vec::with_capacity(batch.len() + 3);
+            read_args.push(tidb_sqlescape::SqlArg::String(table_name.as_bytes()));
+            read_args.push(tidb_sqlescape::SqlArg::String(id_column.as_bytes()));
+            read_args.extend(batch.iter().map(|id| tidb_sqlescape::SqlArg::Signed(*id)));
+            read_args.push(tidb_sqlescape::SqlArg::String(id_column.as_bytes()));
+            let query = format!(
+                "SELECT {} FROM mysql.%n WHERE %n IN ({}%?) ORDER BY %n",
+                columns.join(", "),
+                "%?,".repeat(batch.len() - 1)
+            );
+            let rows = read_ctx
+                .exec_restricted_sql(&ctx, &read_opts, &query, &read_args)
+                .map(|(rows, _)| rows)
+                .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+                .map_err(|error| {
+                    unknown(format!("flashback database: read mysql.{table_name} at TSO {snapshot_ts}: {error}"))
+                })?;
+            let mut seen = std::collections::HashSet::with_capacity(batch.len());
+            let mut write_args = Vec::with_capacity(rows.len() * columns.len() + 1);
+            write_args.push(tidb_sqlescape::SqlArg::String(table_name.as_bytes()));
+            for row in &rows {
+                seen.insert(row.first().map_or(0, tidb_datatype::Datum::get_int64));
+                for datum in row {
+                    write_args.push(maintenance_datum_arg(datum)?);
+                }
+            }
+            if seen.len() != batch.len() {
+                return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.generate(format!(
+                    "flashback database: maintenance records missing from mysql.{table_name} at TSO {snapshot_ts}"
+                ))));
+            }
+            let values = format!("({}%?)", "%?,".repeat(columns.len() - 1));
+            let insert_sql = format!(
+                "INSERT INTO mysql.%n ({}) VALUES {}{values}",
+                columns.join(", "),
+                format!("{values},").repeat(rows.len() - 1)
+            );
+            let mut result = match txn.execute(&insert_sql, &write_args) {
+                Some(result) => result.map(|_| ()),
+                None => Err(tidb_terror::MysqlError::unknown("a recover schema job step needs the DDL session".to_owned())),
+            };
+            if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockRecoverSchemaMaterializedViewInfoError") {
+                result = Err(tidb_terror::MysqlError::unknown(value.string()));
+            }
+            result.map_err(|error| unknown(format!("flashback database: restore mysql.{table_name}: {error}")))?;
+        }
+    }
+    Ok(())
+}
+
+/// Go master `rewriteRecoveredViewSchema`: a view's or materialized view's
+/// definition naming the dropped schema names the recovered one.
+fn rewrite_recovered_view_schema(
+    info: &mut TableInfo,
+    old_name: &tidb_ast::CiString,
+    new_name: &tidb_ast::CiString,
+) -> Result<(), DdlPlanError> {
+    let (definition, sql_mode, restore_flags) = if let Some(mview) = &info.materialized_view {
+        let mview = mview.read();
+        (
+            mview.sql_content.clone(),
+            // "Canonical SQL escapes backslashes regardless of the creation
+            // SQL mode."
+            tidb_mysql::SqlMode(mview.definition_sql_mode & !tidb_mysql::ModeNoBackslashEscapes.0),
+            // "Match the canonical form used when materialized views are
+            // created."
+            tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::STRING_WITHOUT_CHARSET,
+        )
+    } else if let Some(view) = &info.view {
+        // "Ordinary views preserve charset introducers, as BuildViewInfo
+        // does."
+        (view.read().select_stmt.clone(), tidb_mysql::ModeNone, tidb_parser_format::RestoreFlags::DEFAULT)
+    } else {
+        return Ok(());
+    };
+    let mut stmt = tidb_parser::parse_with_sql_mode_and_connection(
+        &definition,
+        tidb_sessionctx::scanner_sql_mode(sql_mode),
+        &info.charset,
+        &info.collate,
+    )
+    .map_err(|error| {
+        unknown(format!(
+            "flashback database: parse definition of view {}: {}",
+            info.name.original(),
+            error.compatibility_message(&definition)
+        ))
+    })?;
+    tidb_ast::Visitable::accept(
+        &mut stmt,
+        &mut RecoveredViewSchemaRewriter { old_name: old_name.lowercase().to_owned(), new_name: new_name.original().to_owned() },
+    );
+    let restored = stmt.restore_with_flags(restore_flags);
+    if let Some(mview) = &info.materialized_view {
+        mview.write().sql_content = restored;
+    } else if let Some(view) = &info.view {
+        view.write().select_stmt = restored;
+    }
+    Ok(())
+}
+
+/// Go master `recoveredViewSchemaRewriter`.
+struct RecoveredViewSchemaRewriter {
+    old_name: String,
+    new_name: String,
+}
+
+impl RecoveredViewSchemaRewriter {
+    /// A `schema.name` path's schema, when it names the old schema.
+    fn rewrite_qualified(&self, path: &mut [String], qualified_len: usize) {
+        if path.len() == qualified_len && path[0].go_to_lower() == self.old_name {
+            path[0] = self.new_name.clone();
+        }
+    }
+}
+
+impl tidb_ast::Visitor for RecoveredViewSchemaRewriter {
+    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if let Some(table) = node.downcast_mut::<tidb_ast::TableRef>() {
+            // Go `*ast.TableName`.
+            self.rewrite_qualified(&mut table.name, 2);
+        } else if let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() {
+            // Go `*ast.ColumnName`.
+            match expr {
+                tidb_ast::Expr::Column(path) | tidb_ast::Expr::Default(Some(path)) => self.rewrite_qualified(path, 3),
+                tidb_ast::Expr::MatchAgainst { columns, .. } => {
+                    columns.iter_mut().for_each(|path| self.rewrite_qualified(path, 3));
+                }
+                _ => {}
+            }
+        } else if let Some(tidb_ast::SelectField::Wildcard(path)) = node.downcast_mut::<tidb_ast::SelectField>() {
+            // Go `*ast.SelectField`'s wildcard.
+            self.rewrite_qualified(path, 2);
+        } else if let Some(table) = node.downcast_mut::<tidb_ast::HintTable>() {
+            // Go `*ast.TableOptimizerHint`'s tables.
+            if table.db_name.as_deref().is_some_and(|db| db.go_to_lower() == self.old_name) {
+                table.db_name = Some(self.new_name.clone());
+            }
+        }
+        false
+    }
+
+    fn leave(&mut self, _: &mut dyn std::any::Any) -> bool {
+        true
     }
 }
 
@@ -643,6 +870,10 @@ pub trait SnapshotMetaAt {
     fn tables_at(&self, ts: u64, schema_id: i64) -> Result<Vec<TableInfo>, DdlPlanError>;
     /// Go `snapMeta.GetSchemaVersion()`.
     fn schema_version_at(&self, ts: u64) -> Result<i64, DdlPlanError>;
+    /// Go master `meta.GetSchemaDiffCommitTS(m, store, version, startTS)`:
+    /// the commit timestamp of an existing schema diff, read through the
+    /// store's MVCC info as of `start_ts`.
+    fn schema_diff_commit_ts(&self, version: i64, start_ts: u64) -> Result<u64, DdlPlanError>;
     /// Go `snapMeta.ListDatabases()`.
     fn databases_at(&self, ts: u64) -> Result<Vec<tidb_model::db::DBInfo>, DdlPlanError>;
 }
@@ -665,7 +896,7 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
 ) -> Result<tidb_ddl_jobsubmit::JobSpec, DdlPlanError> {
     let (job, mut table_info) = match by_name {
         Some((schema, table)) => {
-            recover_table_by_name(snapshot, catalog, schema, table, gc_safe_point, at)?
+            recover_table_by_name(snapshot, catalog, schema, table, gc_safe_point, at, *flashback)?
         }
         None => {
             // Go `getRecoverTableByJobID`.
@@ -820,18 +1051,21 @@ pub fn get_recover_snapshot_ts(job: &Job) -> u64 {
 /// Go `GetDropOrTruncateTableInfoFromJobsByStore`: each drop or truncate
 /// of `jobs`, inside the GC safe point, with its table read at the job's
 /// snapshot, handed to `f` until it finishes. A snapshot older than the
-/// safe point fails with `ErrSnapshotTooOld`.
+/// safe point fails with `ErrSnapshotTooOld`. `extra_job_types` lets
+/// callers inspect additional candidates to explicitly reject unsupported
+/// objects.
 pub fn get_drop_or_truncate_table_info_from_jobs_by_store(
     jobs: &[Job],
     gc_safe_point: u64,
     get_table: &dyn Fn(u64, i64, i64) -> Result<Option<TableInfo>, DdlPlanError>,
     f: &mut dyn FnMut(&Job, TableInfo) -> Result<bool, DdlPlanError>,
+    extra_job_types: &[ActionType],
 ) -> Result<bool, DdlPlanError> {
     for job in jobs {
-        if !matches!(
-            job.type_,
-            ActionType::ACTION_DROP_TABLE | ActionType::ACTION_TRUNCATE_TABLE
-        ) {
+        if job.type_ != ActionType::ACTION_DROP_TABLE
+            && job.type_ != ActionType::ACTION_TRUNCATE_TABLE
+            && !extra_job_types.contains(&job.type_)
+        {
             continue;
         }
 
@@ -861,8 +1095,26 @@ pub fn get_drop_or_truncate_table_info_from_jobs_by_store(
     Ok(false)
 }
 
+/// Go master `checkFlashbackTableMaterializedView`.
+fn check_flashback_table_materialized_view(tbl_info: &TableInfo) -> Result<(), DdlPlanError> {
+    let object_type = if tbl_info.materialized_view.is_some() {
+        "materialized view table"
+    } else if tbl_info.materialized_view_log.is_some() {
+        "materialized view log table"
+    } else if tbl_info.materialized_view_shadow.is_some() {
+        "materialized view shadow table"
+    } else {
+        return Ok(());
+    };
+    Err(DdlPlanError::from(
+        tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+            .gen_with_stack_by_args(&[format!("FLASHBACK TABLE on {object_type}").into()]),
+    ))
+}
+
 /// Go `getRecoverTableByTableName` over `IterHistoryDDLJobs` and
-/// `GetDropOrTruncateTableInfoFromJobs`.
+/// `GetDropOrTruncateTableInfoFromJobs`; `for_flashback` refuses a
+/// materialized view, its log or its shadow (Go master).
 fn recover_table_by_name<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &SessionExtendedInfoSchema,
@@ -870,9 +1122,15 @@ fn recover_table_by_name<S: MetaSnapshot>(
     table: &str,
     gc_safe_point: u64,
     at: &dyn SnapshotMetaAt,
+    for_flashback: bool,
 ) -> Result<(Job, TableInfo), DdlPlanError> {
     let schema_name = schema.go_to_lower();
     let table_name = table.go_to_lower();
+    if for_flashback {
+        if let Some((_, current_table)) = catalog.table_info_by_name(schema, table) {
+            check_flashback_table_materialized_view(&current_table.read())?;
+        }
+    }
     let mut found = None;
     let mut handle_job_and_table_info = |job: &Job, tbl_info: TableInfo| {
         if tbl_info.name.lowercase() != table_name {
@@ -882,10 +1140,25 @@ fn recover_table_by_name<S: MetaSnapshot>(
             return Ok(false);
         };
         if job_schema.read().name.lowercase() == schema_name {
+            if for_flashback {
+                check_flashback_table_materialized_view(&tbl_info)?;
+            }
             found = Some((job.clone(), tbl_info));
             return Ok(true);
         }
         Ok(false)
+    };
+    // "Inspect MV drops in history order so they cannot be skipped in favor
+    // of an older ordinary table with the same name. The callback rejects
+    // them."
+    let extra_job_types: &[ActionType] = if for_flashback {
+        &[
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG,
+            ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW,
+        ]
+    } else {
+        &[]
     };
     let get_table = |ts: u64, schema_id: i64, table_id: i64| at.table_at(ts, schema_id, table_id);
     if let Err(error) = get_drop_or_truncate_table_info_from_jobs_by_store(
@@ -893,6 +1166,7 @@ fn recover_table_by_name<S: MetaSnapshot>(
         gc_safe_point,
         &get_table,
         &mut handle_job_and_table_info,
+        extra_job_types,
     ) {
         if error.equal(&tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD) {
             return Err(unknown(format!(
@@ -1017,6 +1291,37 @@ fn recover_schema_by_name<S: MetaSnapshot>(
         if schema_info.name.lowercase() != lower {
             continue;
         }
+        // Go master: the job's submission snapshot can precede the last
+        // refresh/purge. Recover both metadata and maintenance state
+        // immediately before the transaction that removed the database and
+        // its maintenance records.
+        let schema_version = job.binlog_info.as_ref().map_or(0, |info| info.read().schema_version);
+        if schema_version <= 0 {
+            return Err(unknown("flashback database: dropped database has no final schema version".to_owned()));
+        }
+        let start_ts = snapshot.start_ts();
+        let diff = tidb_infoschema::cluster_catalog::with_meta_reader(snapshot, |reader| reader.schema_diff(schema_version))
+            .map_err(DdlPlanError::Meta)?;
+        if !diff.as_ref().is_some_and(|diff| {
+            diff.version == schema_version
+                && diff.action_type == ActionType::ACTION_DROP_SCHEMA
+                && diff.schema_id == job.schema_id
+        }) {
+            return Err(unknown("flashback database: final drop schema diff is missing or inconsistent".to_owned()));
+        }
+        let commit_ts = at.schema_diff_commit_ts(schema_version, start_ts).map_err(|error| {
+            unknown(format!("flashback database: cannot determine drop commit timestamp: {error}"))
+        })?;
+        if commit_ts <= job.start_ts {
+            return Err(unknown("flashback database: invalid drop commit timestamp".to_owned()));
+        }
+        let snapshot_ts = commit_ts - 1;
+        let Some(schema_info) = at
+            .database_at(snapshot_ts, job.schema_id)?
+            .filter(|schema_info| schema_info.name.lowercase() == lower)
+        else {
+            return Err(unknown("flashback database: schema metadata missing before drop commit".to_owned()));
+        };
         return Ok(tidb_model::RecoverSchemaInfo {
             db_info: Some(GoShared::new(schema_info)),
             recover_table_infos: None,

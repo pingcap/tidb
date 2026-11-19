@@ -612,7 +612,15 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// [`crate::StmtContext`], which every executor entry already
     /// takes, rather than on ~30 separate parameters.
     fn scanner_sql_mode(&self) -> tidb_lexer::SqlMode {
-        crate::scanner_sql_mode(self.session_vars().sql_mode())
+        let vars = self.session_vars();
+        let mut sql_mode = vars.sql_mode();
+        // Go `session.ParseSQL`: an internal session (`isInternal`, Go
+        // `InRestrictedSQL`) parses without NO_BACKSLASH_ESCAPES
+        // (`mysql.DelSQLMode`).
+        if vars.restricted_sql {
+            sql_mode = tidb_mysql::SqlMode(sql_mode.0 & !tidb_mysql::ModeNoBackslashEscapes.0);
+        }
+        crate::scanner_sql_mode(sql_mode)
     }
 
     /// Parses one statement of THIS session, under the `sql_mode` in force

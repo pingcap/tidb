@@ -1011,6 +1011,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
         region_store: backfiller.region_store(),
         auto_ids: backfiller.auto_id_client(),
         start_mode: backfiller.start_mode(),
+        must_rollback_txn_on_error: Default::default(),
         advisory_locks: Default::default(),
     };
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(
@@ -1476,6 +1477,13 @@ impl<S: StoreClient> crate::cluster_ddl::SnapshotMetaAt for StoreSnapshotMeta<S>
         tidb_infoschema::cluster_catalog::with_meta_reader(&mut meta, |reader| reader.databases())
             .map_err(DdlPlanError::Meta)
     }
+
+    fn schema_diff_commit_ts(&self, version: i64, start_ts: u64) -> Result<u64, DdlPlanError> {
+        use tidb_txnkv::kv_storage::Storage as _;
+        self.opener
+            .mvcc_commit_ts(&tidb_meta::key::schema_diff_kv_key(version), start_ts)
+            .map_err(|error| DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(error)))
+    }
 }
 
 /// Go `JobSubmitter.SubmitBatch`'s admission:
@@ -1596,6 +1604,8 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
     let mut step_sql: crate::job_txn::StepSqlSlot = Default::default();
     schema_state.worker.step_buffer = buffer.clone();
     schema_state.worker.step_sql = Arc::clone(&step_sql);
+    // Go `transitOneJobStep`: `jobCtx.mustRollbackTxnOnError = false`.
+    schema_state.worker.must_rollback_txn_on_error = Default::default();
     let sess_pool = Arc::clone(&schema_state.worker.sess_pool);
     let plan = {
         let mut snapshot = SnapshotMetaSnapshot::new(
@@ -1698,6 +1708,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
                 buffer: buffer.clone(),
                 sql: Arc::clone(&step_sql),
                 start_mode: backfiller.start_mode(),
+                must_rollback_txn_on_error: Default::default(),
             };
             let checkpoint = plan_persisted_ddl_job_failure(
                 ddl_job_id, start_ts, failure, &job,
@@ -1779,6 +1790,7 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             &crate::job_txn::StepSession {
                 pool: Arc::clone(&sess_pool), buffer: buffer.clone(),
                 sql: Arc::clone(&step_sql), start_mode: backfiller.start_mode(),
+                must_rollback_txn_on_error: Default::default(),
             }, start_ts, write.ddl_job_id, write.schema_version, owner_id,
         );
         if let Err(error) = registered {

@@ -279,6 +279,12 @@ pub fn parse_with_sql_mode(sql: &str, sql_mode: SqlMode) -> PResult<Stmt> {
     parse_with_configuration(sql, false, sql_mode)
 }
 
+/// Go `parser.New()`, `SetSQLMode(sql_mode)`, then `ParseOneStmt(sql,
+/// charset, collation)`.
+pub fn parse_with_sql_mode_and_connection(sql: &str, sql_mode: SqlMode, charset: &str, collation: &str) -> PResult<Stmt> {
+    parse_with_full_configuration(sql, false, sql_mode, charset, collation)
+}
+
 /// Parses one statement with Go's connection charset/collation metadata.
 pub fn parse_with_connection(sql: &str, charset: &str, collation: &str) -> PResult<Stmt> {
     parse_with_full_configuration(sql, false, SqlMode::default(), charset, collation)

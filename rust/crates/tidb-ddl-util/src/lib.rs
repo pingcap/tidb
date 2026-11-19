@@ -34,3 +34,24 @@ pub const ADDING_DDL_JOB_NOTIFY_KEY: &str = "/tidb/ddl/add_ddl_job_general";
 pub const SERVER_GLOBAL_STATE: &str = "/tidb/server/global_state";
 /// Go `SessionTTL`: the etcd session's TTL in seconds.
 pub const SESSION_TTL: i64 = 90;
+
+/// Go `emulatorGCEnable`: whether the delete-range emulator works off the
+/// recorded ranges. The default is enabled; some unit tests stop it.
+static EMULATOR_GC_ENABLE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1);
+
+/// Go `EmulatorGCEnable`: enables emulator GC. It exports for testing.
+pub fn emulator_gc_enable() {
+    EMULATOR_GC_ENABLE.store(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Go `EmulatorGCDisable`: disables emulator GC. It exports for testing.
+pub fn emulator_gc_disable() {
+    EMULATOR_GC_ENABLE.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Go `IsEmulatorGCEnable`: whether emulator GC is enabled. It exports for
+/// testing.
+#[must_use]
+pub fn is_emulator_gc_enable() -> bool {
+    EMULATOR_GC_ENABLE.load(std::sync::atomic::Ordering::SeqCst) == 1
+}

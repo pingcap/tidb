@@ -323,6 +323,61 @@ fn check_and_set_flashback_cluster_info(
             "have other ddl jobs(jobID: {other_job}) in queue, can't do flashback"
         )));
     }
+    // MV maintenance tables are not flashed back. Check both endpoints because
+    // objects dropped after flashbackTS can reappear without their maintenance state.
+    check_flashback_materialized_views(pool, 0)?;
+    check_flashback_materialized_views(pool, flashback_ts)
+}
+
+/// Go master `checkFlashbackMaterializedViews`: a materialized view or log
+/// in the current state (`snapshot_ts` 0) or at the target refuses the
+/// flashback. This branch's bootstrap does not create Go master's
+/// maintenance tables, and none of these objects exists without them, so a
+/// missing table holds none.
+fn check_flashback_materialized_views(pool: &dyn DdlSessionPool, snapshot_ts: u64) -> Result<(), DdlPlanError> {
+    let snapshot = if snapshot_ts == 0 {
+        "current state".to_owned()
+    } else {
+        format!("target snapshot at TSO {snapshot_ts}")
+    };
+    let ctx = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_DDL,
+    );
+    let opts = [tidb_sqlexec::exec_option_with_snapshot(snapshot_ts)];
+    for (table_name, id_column, object_type) in [
+        ("tidb_mview_refresh_info", "MVIEW_ID", "materialized view"),
+        ("tidb_mlog_purge_info", "MLOG_ID", "materialized view log"),
+    ] {
+        let rows = match pool
+            .restricted_sql_executor()
+            .exec_restricted_sql(
+                &ctx,
+                &opts,
+                "SELECT %n FROM mysql.%n LIMIT 1",
+                &[
+                    tidb_sqlescape::SqlArg::String(id_column.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(table_name.as_bytes()),
+                ],
+            )
+            .map(|(rows, _)| rows)
+            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+        {
+            Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => continue,
+            Err(error) => {
+                return Err(unknown(format!(
+                    "check {object_type} in {snapshot} failed, can't do flashback: {error}"
+                )))
+            }
+            Ok(rows) => rows,
+        };
+        if let Some(row) = rows.first() {
+            let id = row.first().map_or(0, tidb_datatype::Datum::get_int64);
+            return Err(unknown(format!(
+                "Detected {object_type} (ID: {id}) in {snapshot}, can't do flashback"
+            )));
+        }
+    }
     Ok(())
 }
 

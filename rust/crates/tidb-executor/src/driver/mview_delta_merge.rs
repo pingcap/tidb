@@ -151,7 +151,13 @@ pub fn build_merge_source(
     };
     let mv = mv.read().clone_like_go();
     let table_by_id = |id: i64| catalog.table_info_by_id(id).map(|table| table.read().clone_like_go());
-    let parse = |sql: &str| ctx.parse(sql).map_err(|error| error.to_string());
+    // Go master `parseSelectFromSQL`: a new parser (its own `ModeNone` SQL
+    // mode) with the session's parser configuration and connection charset.
+    let (charset, collation) = ctx.connection_charset_info();
+    let parse = |sql: &str| {
+        tidb_parser::parse_with_config_and_connection(sql, ctx.parser_config(), charset, collation)
+            .map_err(|error| error.compatibility_message(sql))
+    };
     tidb_planner::mview::build(&mv, &plan.database, &table_by_id, plan.options, &parse).map_err(plain)
 }
 
@@ -370,7 +376,13 @@ pub fn plan_mview_delta_merge(
                 ));
             }
             let sql = tidb_planner::mview::set_full_update_lookup_index_hint(template, &indexes);
-            let select = match ctx.parse(&sql).map_err(|error| plain(error.to_string()))? {
+            // Go keeps this template as the AST `parseSelectFromSQL` built
+            // (a new parser's `ModeNone`); its restored text re-parses the
+            // same way.
+            let (charset, collation) = ctx.connection_charset_info();
+            let parsed = tidb_parser::parse_with_config_and_connection(&sql, ctx.parser_config(), charset, collation)
+                .map_err(|error| plain(error.compatibility_message(&sql)))?;
+            let select = match parsed {
                 tidb_ast::Stmt::Query(query) => match &*query {
                     tidb_ast::QueryStmt::Select(select) => (**select).clone(),
                     _ => return Err(plain("mview full-update lookup template is not a select")),
