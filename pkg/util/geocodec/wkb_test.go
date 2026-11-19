@@ -184,6 +184,41 @@ type wkbGen struct {
 	empty float64
 	// big is the chance that a geometry below the root is big-endian.
 	big float64
+
+	// What the generator knows about the last root geometry, for BareToStored:
+	// canon is its canonical form (little-endian, POINT EMPTY as quietNaN), env bounds
+	// its positions, and short says it has a linestring of 1 point or a ring of 1 to 3.
+	canon []byte
+	env   Envelope
+	short bool
+}
+
+// position widens env to the position (x, y).
+func (g *wkbGen) position(x, y float64) {
+	if !g.env.NotEmpty {
+		g.env = Envelope{MinX: x, MinY: y, MaxX: x, MaxY: y, NotEmpty: true}
+		return
+	}
+	g.env.MinX, g.env.MinY = min(g.env.MinX, x), min(g.env.MinY, y)
+	g.env.MaxX, g.env.MaxY = max(g.env.MaxX, x), max(g.env.MaxY, y)
+}
+
+// float64s appends n random positions to b in order and to canon.
+func (g *wkbGen) float64s(b []byte, order binary.AppendByteOrder, n int) []byte {
+	dim := g.d.size() / 8
+	var x float64
+	for i := range n * dim {
+		f := g.float()
+		switch i % dim {
+		case 0:
+			x = f
+		case 1:
+			g.position(x, f)
+		}
+		b = order.AppendUint64(b, math.Float64bits(f))
+		g.canon = binary.LittleEndian.AppendUint64(g.canon, math.Float64bits(f))
+	}
+	return b
 }
 
 // genMaxDepth bounds how deep generated collections nest.
@@ -218,43 +253,53 @@ func (g *wkbGen) float() float64 {
 // geometry returns random WKB of type typ, little-endian at the root, and whether MySQL's
 // format cannot hold it.
 func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
+	if depth == 1 {
+		g.canon, g.env, g.short = nil, Envelope{}, false
+	}
 	var order binary.AppendByteOrder = binary.LittleEndian
 	orderByte := byteOrderLittle
 	if depth > 1 && g.rnd.Float64() < g.big {
 		order, orderByte = binary.BigEndian, byteOrderBig
 	}
-	b = order.AppendUint32(append(b, orderByte), uint32(typ)|flagsOf(g.d))
+	uint32s := func(v uint32) {
+		b = order.AppendUint32(b, v)
+		g.canon = binary.LittleEndian.AppendUint32(g.canon, v)
+	}
+	b = append(b, orderByte)
+	g.canon = append(g.canon, byteOrderLittle)
+	uint32s(uint32(typ) | flagsOf(g.d))
 	notMySQL = g.d != dimsXY
 	isEmpty := typ != TypeGeometryCollection && g.rnd.Float64() < g.empty
-	positions := func(n int) {
-		b = order.AppendUint32(b, uint32(n))
-		for range n * g.d.size() / 8 {
-			b = order.AppendUint64(b, math.Float64bits(g.float()))
-		}
+	// positions writes n positions, of which a linestring or ring needs least.
+	positions := func(n, least int) {
+		uint32s(uint32(n))
+		b = g.float64s(b, order, n)
+		g.short = g.short || n > 0 && n < least
 	}
 	switch typ {
 	case TypePoint:
-		for range g.d.size() / 8 {
-			if isEmpty {
+		if isEmpty {
+			for range g.d.size() / 8 {
 				b = order.AppendUint64(b, nanBits[g.rnd.IntN(len(nanBits))])
-			} else {
-				b = order.AppendUint64(b, math.Float64bits(g.float()))
+				g.canon = binary.LittleEndian.AppendUint64(g.canon, quietNaN)
 			}
+		} else {
+			b = g.float64s(b, order, 1)
 		}
 	case TypeLineString:
 		if isEmpty {
-			positions(0)
+			positions(0, 2)
 		} else {
-			positions(1 + g.rnd.IntN(5))
+			positions(1+g.rnd.IntN(5), 2)
 		}
 	case TypePolygon:
 		if isEmpty {
-			b = order.AppendUint32(b, 0)
+			uint32s(0)
 		} else {
 			rings := 1 + g.rnd.IntN(3)
-			b = order.AppendUint32(b, uint32(rings))
+			uint32s(uint32(rings))
 			for range rings {
-				positions(1 + g.rnd.IntN(5))
+				positions(1+g.rnd.IntN(5), 4)
 			}
 		}
 	default:
@@ -265,7 +310,7 @@ func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
 		} else if !isEmpty {
 			n = 1 + g.rnd.IntN(3)
 		}
-		b = order.AppendUint32(b, uint32(n))
+		uint32s(uint32(n))
 		for range n {
 			member := memberTypeOf(typ)
 			if member == anyType {

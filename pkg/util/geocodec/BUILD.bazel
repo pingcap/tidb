@@ -11,6 +11,7 @@ go_test(
     name = "geocodec_test",
     timeout = "short",
     srcs = [
+        "bare_test.go",
         "geocodec_test.go",
         "main_test.go",
         "wkb_test.go",

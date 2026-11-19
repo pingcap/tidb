@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 const (
@@ -77,6 +78,9 @@ const (
 
 	// nonFinite is the exponent of a NaN or an infinity, which has every bit set.
 	nonFinite uint64 = 0x7FF0000000000000
+	// emptyPointNaN is the quiet NaN PostGIS and GEOS write for each coordinate of POINT
+	// EMPTY, the canonical form; Go's math.NaN() has another bit pattern.
+	emptyPointNaN uint64 = 0x7FF8000000000000
 )
 
 // Type is a geometry type, numbered by its WKB type code, as the parser numbers a geometry
@@ -127,6 +131,21 @@ const (
 	dialectMySQL
 )
 
+// Envelope bounds the X and Y of every position of a geometry, interior rings included.
+type Envelope struct {
+	MinX, MinY, MaxX, MaxY float64
+	// NotEmpty is false for a geometry without positions, which has no bounds.
+	NotEmpty bool
+}
+
+// Summary is what BareToStored learns about a value while checking it.
+type Summary struct {
+	// Type is the geometry type of the root.
+	Type Type
+	// Envelope bounds the value's positions.
+	Envelope Envelope
+}
+
 // MySQLToStored converts MySQL's binary format into the stored format. It checks the WKB
 // framing, not MySQL's structure rules such as a linestring's minimum of two points.
 func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
@@ -136,14 +155,57 @@ func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if _, err := validate(b[4:], dialectMySQL); err != nil {
 		return nil, 0, err
 	}
-	// validate has checked the root header: the little-endian byte order and a type code
-	// without flags.
+	stored, srid = storedFromValidMySQL(b)
+	return stored, srid, nil
+}
+
+// storedFromValidMySQL rewrites the header of b, MySQL's binary format that validate has
+// accepted, so with a little-endian root and a type code without flags.
+func storedFromValidMySQL(b []byte) (stored []byte, srid uint32) {
 	srid = binary.LittleEndian.Uint32(b)
 	stored = make([]byte, 0, len(b)+1)
 	stored = append(stored, Version1, byteOrderLittle)
 	stored = binary.LittleEndian.AppendUint32(stored, binary.LittleEndian.Uint32(b[5:])|ewkbSRID)
 	stored = binary.LittleEndian.AppendUint32(stored, srid)
-	return append(stored, b[9:]...), srid, nil
+	return append(stored, b[9:]...), srid
+}
+
+// IsStored reports whether b is in the stored format rather than MySQL's: its sixth byte
+// has the EWKB SRID flag 0x20, which a MySQL WKB type byte (0 to 7) never has.
+func IsStored(b []byte) bool {
+	return len(b) > 5 && b[5]&byte(ewkbSRID>>24) != 0
+}
+
+// BareToStored converts a value given for a geometry column, in MySQL's format or the
+// stored format, into the canonical stored format, with MySQL's structure checks.
+func BareToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
+	if !IsStored(b) {
+		if len(b) < 4 {
+			return nil, 0, Summary{}, ErrInvalid
+		}
+		v := validator{c: cursor{buf: b[4:]}, dialect: dialectMySQL, bare: true}
+		if err := v.run(); err != nil {
+			return nil, 0, Summary{}, err
+		}
+		stored, srid = storedFromValidMySQL(b)
+		return stored, srid, v.sum, nil
+	}
+	payload, err := payloadOf(b)
+	if err != nil {
+		return nil, 0, Summary{}, err
+	}
+	v := validator{c: cursor{buf: payload}, dialect: dialectEWKB, bare: true}
+	if err := v.run(); err != nil {
+		return nil, 0, Summary{}, err
+	}
+	stored = append(make([]byte, 0, len(b)), b...)
+	if v.rewrite {
+		fix := validator{c: cursor{buf: payload}, dialect: dialectEWKB, fix: stored[1:]}
+		if err := fix.run(); err != nil {
+			return nil, 0, Summary{}, err
+		}
+	}
+	return stored, v.srid, v.sum, nil
 }
 
 // StoredToMySQL converts a stored value into MySQL's binary format, rewriting only the
@@ -310,11 +372,8 @@ func memberTypeOf(typ Type) Type {
 // hold the value.
 func validate(b []byte, d dialect) (notMySQL bool, err error) {
 	v := validator{c: cursor{buf: b}, dialect: d}
-	if err := v.geometry(1, anyType, dimsXY); err != nil {
+	if err := v.run(); err != nil {
 		return false, err
-	}
-	if v.c.pos != len(b) {
-		return false, ErrInvalid
 	}
 	return v.notMySQL, nil
 }
@@ -322,9 +381,41 @@ func validate(b []byte, d dialect) (notMySQL bool, err error) {
 type validator struct {
 	c       cursor
 	dialect dialect
+	// bare adds the bare path's rules, at least 2 points per linestring and 4 per ring, and
+	// fills sum.
+	bare bool
+	// fix, if set, is a copy of c.buf to make canonical in place: little-endian, and POINT
+	// EMPTY as emptyPointNaN.
+	fix []byte
+
 	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
 	// value is known to be well-formed.
 	notMySQL bool
+	// broken marks a structure bare rejects, reported once the whole value is read.
+	broken bool
+	// rewrite marks a value not in canonical form.
+	rewrite bool
+	// srid is the root's SRID, if it has one.
+	srid uint32
+	sum  Summary
+}
+
+// run checks the whole input: one geometry, and nothing after it.
+func (v *validator) run() error {
+	if err := v.geometry(1, anyType, dimsXY); err != nil {
+		return err
+	}
+	if v.c.pos != len(v.c.buf) || v.broken {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// little makes the n-byte field just read little-endian in fix.
+func (v *validator) little(order byte, n int) {
+	if v.fix != nil && order == byteOrderBig {
+		slices.Reverse(v.fix[v.c.pos-n : v.c.pos])
+	}
 }
 
 // geometry checks one geometry. A member of a collection passes the type its parent
@@ -338,13 +429,20 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	if err != nil {
 		return err
 	}
-	if order == byteOrderBig && v.dialect == dialectMySQL {
-		return ErrInvalid
+	if order == byteOrderBig {
+		if v.dialect == dialectMySQL {
+			return ErrInvalid
+		}
+		v.rewrite = true
+		if v.fix != nil {
+			v.fix[v.c.pos-1] = byteOrderLittle
+		}
 	}
 	word, err := v.c.uint32(order)
 	if err != nil {
 		return err
 	}
+	v.little(order, 4)
 	typ, d, hasSRID, ok := splitType(word)
 	if !ok || hasSRID && !root || v.dialect == dialectMySQL && word&ewkbFlags != 0 {
 		return ErrInvalid
@@ -355,10 +453,14 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	if d != dimsXY {
 		v.notMySQL = true
 	}
+	if root {
+		v.sum.Type = typ
+	}
 	if hasSRID {
-		if _, err := v.c.next(4); err != nil {
+		if v.srid, err = v.c.uint32(order); err != nil {
 			return err
 		}
+		v.little(order, 4)
 	}
 	size := d.size()
 	switch typ {
@@ -366,10 +468,16 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 		return v.point(order, size)
 	case TypeLineString:
 		n, err := v.sequence(order, size)
-		if err != nil || n > 0 {
+		if err != nil {
 			return err
 		}
-		return v.empty()
+		if n == 0 {
+			return v.empty()
+		}
+		if n == 1 && v.bare {
+			v.broken = true
+		}
+		return nil
 	case TypePolygon:
 		return v.polygon(order, size)
 	}
@@ -377,6 +485,7 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	if err != nil {
 		return err
 	}
+	v.little(order, 4)
 	if n == 0 && typ != TypeGeometryCollection {
 		if err := v.empty(); err != nil {
 			return err
@@ -409,14 +518,46 @@ func (v *validator) point(order byte, size int) error {
 		return err
 	}
 	if finite(coords, order) {
+		v.positions(coords, order, size)
 		return nil
 	}
 	for i := 0; i < len(coords); i += 8 {
-		if !math.IsNaN(math.Float64frombits(bitsAt(coords[i:], order))) {
+		bits := bitsAt(coords[i:], order)
+		if !math.IsNaN(math.Float64frombits(bits)) {
 			return ErrInvalid
+		}
+		v.rewrite = v.rewrite || bits != emptyPointNaN
+	}
+	if v.fix != nil {
+		for i := v.c.pos - size; i < v.c.pos; i += 8 {
+			binary.LittleEndian.PutUint64(v.fix[i:], emptyPointNaN)
 		}
 	}
 	return v.empty()
+}
+
+// positions takes in finite positions of size bytes just read: bare widens the envelope
+// to them, and fix gets them little-endian.
+func (v *validator) positions(coords []byte, order byte, size int) {
+	if v.bare {
+		env := v.sum.Envelope
+		for i := 0; i < len(coords); i += size {
+			x := math.Float64frombits(bitsAt(coords[i:], order))
+			y := math.Float64frombits(bitsAt(coords[i+8:], order))
+			if !env.NotEmpty {
+				env = Envelope{MinX: x, MinY: y, MaxX: x, MaxY: y, NotEmpty: true}
+				continue
+			}
+			env.MinX, env.MinY = min(env.MinX, x), min(env.MinY, y)
+			env.MaxX, env.MaxY = max(env.MaxX, x), max(env.MaxY, y)
+		}
+		v.sum.Envelope = env
+	}
+	if v.fix != nil && order == byteOrderBig {
+		for i := v.c.pos - len(coords); i < v.c.pos; i += 8 {
+			slices.Reverse(v.fix[i : i+8])
+		}
+	}
 }
 
 // sequence checks a count of positions of size bytes and their coordinates, which must be
@@ -426,6 +567,7 @@ func (v *validator) sequence(order byte, size int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	v.little(order, 4)
 	coords, err := v.c.next(n * size)
 	if err != nil {
 		return 0, err
@@ -433,6 +575,7 @@ func (v *validator) sequence(order byte, size int) (int, error) {
 	if !finite(coords, order) {
 		return 0, ErrInvalid
 	}
+	v.positions(coords, order, size)
 	return n, nil
 }
 
@@ -442,6 +585,7 @@ func (v *validator) polygon(order byte, size int) error {
 	if err != nil {
 		return err
 	}
+	v.little(order, 4)
 	if n == 0 {
 		return v.empty()
 	}
@@ -452,6 +596,9 @@ func (v *validator) polygon(order byte, size int) error {
 		}
 		if points == 0 {
 			return ErrInvalid
+		}
+		if points < 4 && v.bare {
+			v.broken = true
 		}
 	}
 	return nil
