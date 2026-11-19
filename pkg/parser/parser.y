@@ -326,6 +326,7 @@ import (
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
+	auto                  "AUTO"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -3414,6 +3415,22 @@ AnalyzeOption:
 |	NumLiteral "SAMPLERATE"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	"DEFAULT" "BUCKETS"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets}
+	}
+|	"DEFAULT" "TOPN"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN}
+	}
+|	"DEFAULT" "SAMPLES"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples}
+	}
+|	"DEFAULT" "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
 	}
 
 /*******************************************************************************************/
@@ -6644,6 +6661,15 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.Condition != nil {
 				opt1.Condition = opt2.Condition
+			} else if opt2.SplitOpt != nil {
+				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPreSplit = false
+			} else if opt2.AutoPreSplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPreSplit = true
+				}
 			}
 			$$ = opt1
 		}
@@ -6698,6 +6724,26 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Global: false,
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
+			},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
+	{
+		$$ = &ast.IndexOption{
+			AutoPreSplit: true,
 		}
 	}
 |	"WHERE" Expression
@@ -6807,6 +6853,7 @@ UnReservedKeyword:
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
 |	"STATS_COL_LIST"
+|	"AUTO"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFFINITY"

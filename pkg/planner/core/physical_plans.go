@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -972,6 +973,9 @@ type PhysicalTableScan struct {
 	// that are pushed down to table scan from selection by late materialization.
 	// TODO: remove this field after we support pushing down selection to coprocessor.
 	LateMaterializationFilterCondition []expression.Expression
+	lateMaterializationSelectivity     float64
+	// ForcedLateMaterializationFilterColumnIDs records the columns specified by TIFLASH_LM_FILTER hints.
+	ForcedLateMaterializationFilterColumnIDs []int64
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
@@ -1059,6 +1063,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
+	clonedScan.ForcedLateMaterializationFilterColumnIDs = slices.Clone(ts.ForcedLateMaterializationFilterColumnIDs)
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
@@ -1216,6 +1221,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, cond := range ts.LateMaterializationFilterCondition {
 		sum += cond.MemoryUsage()
 	}
+	sum += int64(cap(ts.ForcedLateMaterializationFilterColumnIDs)) * size.SizeOfInt64
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}
@@ -1347,6 +1353,11 @@ type PhysicalApply struct {
 
 	CanUseCache bool
 	Concurrency int
+	// KeepOrder indicates that parallel apply must emit results in the same
+	// order as the outer child produces rows.  When true the executor uses a
+	// reorder buffer so that inner workers can run concurrently while the
+	// consumer still sees rows in outer-order.
+	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
 }
 
@@ -1367,6 +1378,7 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = la.CanUseCache
 	cloned.Concurrency = la.Concurrency
+	cloned.KeepOrder = la.KeepOrder
 	for _, col := range la.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
@@ -1725,6 +1737,9 @@ type PhysicalIndexJoin struct {
 	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
 	// Apply outer/inner order after decorrelation.
 	FromDecorrelatedApply bool
+	// OuterOrderRequired records the outer child's ordering requirement when
+	// the plan is built. Cloning can omit nil child requirements.
+	OuterOrderRequired bool
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1749,6 +1764,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
+	cloned.OuterOrderRequired = p.OuterOrderRequired
 	return cloned, nil
 }
 

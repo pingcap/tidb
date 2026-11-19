@@ -188,6 +188,10 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if e.HistoricalStatsTS > 0 {
+		// The dump runs other statements in this session and replaces its StmtCtx, so warn after it.
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP"))
+	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil
 }

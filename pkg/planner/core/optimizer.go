@@ -424,7 +424,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
 }
@@ -443,26 +442,6 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	rfGenerator.GenerateRuntimeFilter(plan)
 	logutil.BgLogger().Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
-}
-
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
-// @brief: push down some filter conditions to the table scan operator
-// @param: sctx: session context
-// @param: plan: the physical plan to be pruned
-// @note: this optimization is only applied when the TiFlash is used.
-// @note: the following conditions should be satisfied:
-//   - Only the filter conditions with high selectivity should be pushed down.
-//   - The filter conditions which contain heavy cost functions should not be pushed down.
-//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
-	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
-		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
-	}
 }
 
 /*
@@ -978,27 +957,30 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
-	// the parallel apply has three limitation:
-	// 1. the parallel implementation now cannot keep order;
-	// 2. the inner child has to support clone;
-	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
+	// The parallel apply has two limitations:
+	// 1. The inner child has to support clone.
+	// 2. If one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
+	// Note: ordering is now preserved via a reorder buffer (KeepOrder=true)
+	// when the outer side requires sorted output, so order is no longer a limitation.
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
+		hasOrder := apply.GetChildReqProps(outerIdx).NeedKeepOrder()
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
-		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
+		supportClone := err == nil // limitation 1
+		if supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			// When the outer side requires ordering, use a reorder buffer
+			// in the executor to preserve row order while still running
+			// inner workers in parallel.
+			if hasOrder {
+				apply.KeepOrder = true
 			}
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
 		}
-		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// Because of limitation 2, we cannot parallelize Apply operators in this Apply's inner side,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
 		return apply

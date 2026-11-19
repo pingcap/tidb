@@ -29,6 +29,7 @@ func (o BackendOptions) Redacted() BackendOptions {
 	o.S3.AccessKey = maskIfSet(o.S3.AccessKey)
 	o.S3.SecretAccessKey = maskIfSet(o.S3.SecretAccessKey)
 	o.S3.SessionToken = maskIfSet(o.S3.SessionToken)
+	o.S3.SseKmsContext = maskIfSet(o.S3.SseKmsContext)
 	o.Azblob.AccountKey = maskIfSet(o.Azblob.AccountKey)
 	o.Azblob.SASToken = maskIfSet(o.Azblob.SASToken)
 	o.Azblob.EncryptionKey = maskIfSet(o.Azblob.EncryptionKey)
@@ -145,11 +146,11 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if err := ExtractQueryParameters(u, &s3Options); err != nil {
 			return nil, errors.Trace(err)
 		}
+		if u.Scheme == "ks3" {
+			s3Options.Provider = ks3SDKProvider
+		}
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
-		}
-		if u.Scheme == "ks3" {
-			s3.Provider = ks3SDKProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
@@ -201,7 +202,8 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // serialization.
 //
 // All of the URL's query parameters will be removed after a successful call.
-// If the query cannot be decoded, the URL and options are left unchanged.
+// If the query cannot be decoded or a recognized option is specified more than once,
+// the URL and options are left unchanged.
 func ExtractQueryParameters(u *url.URL, options any) error {
 	// URL.Query silently drops undecodable parameters. Reject the entire query
 	// instead, without retaining decoder errors that may expose query contents.
@@ -226,14 +228,25 @@ func ExtractQueryParameters(u *url.URL, options any) error {
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
 	}
 
-	// Then, read content from the URL into the options.
+	// Validate every spelling and repetition before mutating the options. URL
+	// aliases must not overwrite one another according to map iteration order.
+	parameters := make(map[string]string, len(values))
 	for key, params := range values {
-		if len(params) == 0 {
+		normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+		if _, ok := tagToField[normalizedKey]; !ok {
 			continue
 		}
-		param := params[0]
-		normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
-		if f, ok := tagToField[normalizedKey]; ok {
+		if _, ok := parameters[normalizedKey]; ok || len(params) > 1 {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "duplicate storage URL option")
+		}
+		if len(params) != 0 {
+			parameters[normalizedKey] = params[0]
+		}
+	}
+
+	// Then, read the validated content into the options.
+	for key, param := range parameters {
+		if f, ok := tagToField[key]; ok {
 			field := o.Field(f.index)
 			switch f.kind {
 			case reflect.Bool:

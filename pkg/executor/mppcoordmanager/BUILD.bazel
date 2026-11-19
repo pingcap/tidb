@@ -26,6 +26,7 @@ go_test(
     deps = [
         "//pkg/kv",
         "//pkg/store/copr",
+        "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_stretchr_testify//require",
     ],
 )

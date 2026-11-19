@@ -35,6 +35,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -495,20 +496,30 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 	}
 }
 
-func TestDetectAndUpdateJobVersion(t *testing.T) {
-	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
+func TestDetectAndUpdateClassicCompatibility(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
 
+	originalDisabled := vardef.IsLegacyECDSASessionTokenDisabled()
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
 	}
-	t.Cleanup(reset)
+	t.Cleanup(func() {
+		reset()
+		vardef.SetLegacyECDSASessionTokenDisabled(originalDisabled)
+	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		if testargsv1.ForceV1 {
 			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 		} else {
@@ -535,21 +546,21 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
 			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibilityOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
 
-	t.Run("v1 first, later all support v2", func(t *testing.T) {
+	t.Run("v1 first, later all support v2 and modern ECDSA", func(t *testing.T) {
 		reset()
-		intervalBak := detectJobVerInterval
+		intervalBak := detectClassicCompatibilityInterval
 		t.Cleanup(func() {
-			detectJobVerInterval = intervalBak
+			detectClassicCompatibilityInterval = intervalBak
 		})
-		detectJobVerInterval = time.Millisecond
+		detectClassicCompatibilityInterval = time.Millisecond
 		// unknown version
 		mockGetAllServerInfo(t, "unknown")
 		iterateCnt := 0
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateJobVersionOnce", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateClassicCompatibilityOnce", func() {
 			iterateCnt++
 			if iterateCnt == 1 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -571,13 +582,81 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 				// upgrade done
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
+			} else if iterateCnt == 6 {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 			}
 		})
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 		d.wg.Wait()
-		require.EqualValues(t, 6, iterateCnt)
+		require.EqualValues(t, 7, iterateCnt)
+	})
+
+	t.Run("legacy ECDSA upgrade gate", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			versions []string
+			disabled bool
+		}{
+			{name: "empty registry"},
+			{name: "unknown version", versions: []string{"unknown"}},
+			{name: "invalid version", versions: []string{"8.0.11-TiDB-invalid"}},
+			{name: "mixed versions", versions: []string{"8.0.11-TiDB-v8.5.8", "8.0.11-TiDB-v8.5.9"}},
+			{name: "prerelease", versions: []string{"8.0.11-TiDB-v8.5.9-alpha"}, disabled: true},
+			{name: "minimum version", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9"}, disabled: true},
+			{name: "newer versions", versions: []string{"8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v9.0.0-alpha"}, disabled: true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset()
+				store, err := mockstore.NewMockStore()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, store.Close()) })
+				d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+				mockGetAllServerInfo(t, tc.versions...)
+				require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+				require.Equal(t, tc.disabled, vardef.IsLegacyECDSASessionTokenDisabled())
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				disabled, err := meta.NewReader(txn).GetLegacyECDSASessionTokenDisabled()
+				require.NoError(t, err)
+				require.Equal(t, tc.disabled, disabled)
+				require.NoError(t, txn.Rollback())
+			})
+		}
+	})
+
+	t.Run("persist before disabling and never re-enable", func(t *testing.T) {
+		reset()
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+		d := &ddl{ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.9")
+		const commitFailpoint = "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"
+		testfailpoint.Enable(t, commitFailpoint, `return("no_retry")`)
+		require.ErrorContains(t, d.detectAndUpdateClassicCompatibilityOnce(), "mock commit error")
+		require.False(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		testfailpoint.Disable(t, commitFailpoint)
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		// A restarted node must observe the persisted switch, even with old or
+		// unknown server versions. A completed transition cannot be reversed.
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		mockGetAllServerInfo(t, "unknown")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.8")
+		require.NoError(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
+		vardef.SetLegacyECDSASessionTokenDisabled(false)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", `return("invalid JSON")`)
+		require.Error(t, d.detectAndUpdateClassicCompatibilityOnce())
+		require.True(t, vardef.IsLegacyECDSASessionTokenDisabled())
 	})
 }
 

@@ -22,6 +22,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
@@ -60,7 +61,7 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-    shard_count = 30,
+    shard_count = 32,
     deps = [
         ":storage",
         "//pkg/domain",

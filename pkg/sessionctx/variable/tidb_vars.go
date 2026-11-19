@@ -962,7 +962,7 @@ const (
 	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency is the number of concurrent workers to save statistics to the system tables.
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
-	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
+	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merging analyze version 1 partition stats into global stats
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
@@ -1927,3 +1927,9 @@ func mustParseTime(layout string, str string) time.Time {
 
 	return time
 }
+
+// TiDBEnableAdaptiveLimitScan enables statement-local admission control for ordered LIMIT scans.
+const TiDBEnableAdaptiveLimitScan = "tidb_enable_adaptive_limit_scan"
+
+// DefTiDBEnableAdaptiveLimitScan is OFF for existing clusters; fresh bootstrap enables it.
+const DefTiDBEnableAdaptiveLimitScan = false
