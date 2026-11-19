@@ -427,6 +427,11 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 }
 
 func TestIssue20417(t *testing.T) {
+	// Capture explicitly below; background refresh can race with clearing the bindings.
+	originalLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	t.Cleanup(func() { bindinfo.Lease = originalLease })
+
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
