@@ -126,7 +126,15 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result float64, err error) {
+func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (float64, error) {
+	return equalRowCountOnColumnImpl(sctx, c, val, encodedVal, realtimeRowCount, modifyCount, false)
+}
+
+// equalRowCountOnColumnImpl is equalRowCountOnColumn. rangeBound is set for
+// the bound adjustments of an interval in GetColumnRowCount: there, a bucket
+// upper whose Repeat is zero keeps its zero, because betweenRowCountOnColumn
+// already counts that upper's rows inside the bucket.
+func equalRowCountOnColumnImpl(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64, rangeBound bool) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
@@ -170,8 +178,14 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	// A bucket's upper bound is a value observed in the data, so a zero
+	// Repeat is not a count of zero rows: it means no point frequency was
+	// recorded for it. Merged global histograms produce such buckets when
+	// an upper falls on a merge cut, and the sampled builder produces them
+	// when the estimated NDV exceeds the histogram's row count. Fall
+	// through to the uniform estimate rather than report an exact zero.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && (histCnt > 0 || rangeBound) && !IsLastBucketEndValueUnderrepresented(sctx,
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
@@ -273,7 +287,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+			lowCnt, err := equalRowCountOnColumnImpl(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount, true)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -284,7 +298,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+			highCnt, err := equalRowCountOnColumnImpl(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount, true)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
