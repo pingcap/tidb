@@ -2,9 +2,9 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 16,
-    "open": 12,
-    "partial": 4
+    "unresolved": 13,
+    "open": 8,
+    "partial": 5
   },
   "findings": [
     {
@@ -73,19 +73,11 @@
     },
     {
       "id": "E33",
-      "status": "open",
+      "status": "partial",
       "group": "Executor, DML and expressions",
-      "finding": "Statements Go executes reach the session's fallback and answer 1105 `this statement kind (...) is not supported yet`: `BINLOG '...'` (Go: OK), `REFRESH STATS` (Go: `SimpleExec`), `ALTER RANGE global PLACEMENT POLICY = ...` (Go: `executeAlterRange`), `ADMIN SHOW t NEXT_ROW_ID` (the ADMIN spelling; `SHOW TABLE t NEXT_ROW_ID` works), `SET CONFIG` (Go: `SetConfigExec`, which posts to the TiKV / PD / TiFlash HTTP config API and answers TiDB's own case with its error), and `SHOW DISTRIBUTION JOB[S]` / `CANCEL DISTRIBUTION JOB` (Go: through PD's HTTP client). For the statements Go itself refuses (`CREATE STATISTICS`, `DROP STATISTICS`, `GRANT PROXY`) Go answers 8108 `Unsupported type *ast.XxxStmt`; this port answers the 1105 fallback, although it already maps CALL to 8108. [2026-11-18 probes](structural-audit-2026-11-18.md)",
+      "finding": "Statements Go executes that still reach the session's fallback (1105 `this statement kind (...) is not supported yet`): `REFRESH STATS` (Go `SimpleExec.executeRefreshStats`: `Handle.InitStats(Lite)` for the named tables on this instance, or a `BroadcastQuery` coprocessor request to every TiDB for `CLUSTER`; this port has neither the per-table republish nor the TiDB-to-TiDB broadcast), `ALTER RANGE global PLACEMENT POLICY = ...` (Go `executeAlterRange`: `PutRuleBundlesWithDefaultRetry`), `SET CONFIG` (Go `SetConfigExec`, which posts to the TiKV / PD / TiFlash HTTP config API and answers TiDB's own case with its error), and `SHOW DISTRIBUTION JOB[S]` / `CANCEL DISTRIBUTION JOB` (Go: through PD's HTTP client). Fixed 2026-11-19: `BINLOG '...'` answers OK (Go ignores it), `ADMIN SHOW t NEXT_ROW_ID` runs the `SHOW TABLE t NEXT_ROW_ID` executor with the table qualified as Go's preprocessor does, and `CREATE STATISTICS` / `DROP STATISTICS` / `GRANT PROXY` answer Go's 8108 `Unsupported type *ast.XxxStmt`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
       "rust_evidence": "`rust/crates/tidb-session/src/dispatch.rs` (the `ADMIN {}` / `{}` fallbacks), `rust/crates/tidb-executor/src/admin.rs` (`admin_next`), `rust/crates/tidb-planner/src/plan_builder/stmt_build.rs`",
       "go_owner": "`pkg/executor/builder.go` (`build`), `pkg/executor/simple.go`, `pkg/executor/set_config.go`, `pkg/executor/distribute.go`, `pkg/executor/simple.go` (`executeAlterRange`, REFRESH STATS)"
-    },
-    {
-      "id": "E35",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "`EXPLAIN '<plan digest>'` is refused (`EXPLAIN of a plan digest is not supported yet`). Go's `buildExplain` resolves the digest through `getHintedStmtThroughPlanDigest` (statement summary) and explains the hinted statement, answering `can't find any plans for '...'` when none matches. Separately, `EXPLAIN FORMAT='cost_trace'` prints an empty `costFormula` for a Point_Get where Go prints `N/A`. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-executor/src/compiler/explain.rs`, `rust/crates/tidb-executor/src/explain.rs`",
-      "go_owner": "`pkg/planner/core/planbuilder.go` (`buildExplain`, `getHintedStmtThroughPlanDigest`), `pkg/planner/core/common_plans.go` (`N/A` cost formula)"
     },
     {
       "id": "N07",
@@ -104,22 +96,6 @@
       "go_owner": "`pkg/standby`, `pkg/tidbmanager`, `pkg/extworkload`, `pkg/metaservice`, `pkg/dxf/framework/handle` (`SendRowAndSizeMeterData`), `cmd/tidb-server/main.go`"
     },
     {
-      "id": "N09",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "Internal HTTP clients use the operating system's proxy settings. hyper-util's `client-proxy-system` is enabled through feature unification (aws-smithy), so a `reqwest` client built without `.no_proxy()` reads the macOS / Windows system proxy. Go's `util.InternalHTTPClient` uses `http.DefaultTransport` (environment variables only) or, with cluster TLS, a bare `http.Transport` with no proxy. Observed on macOS with a system proxy at 127.0.0.1:7897: `SHOW CONFIG WHERE name = 'log.level'` is empty with warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway`, where Go returns the row. `tidb-br` `conn.rs`, `import_store.rs` and the JSON report client opt out with `.no_proxy()`; `cluster_config.rs`, `metrics_reader.rs`, `tiflash_replica_manager.rs`, `cluster_http.rs` and `node_status.rs` do not. The opt-outs disagree because there is no counterpart of Go's one `util.InternalHTTPClient`: about a dozen call sites each build their own `reqwest` client, and the PD HTTP calls (`/pd/api/v1/...` in `tidb-ddl`, `tidb-domain`, `tidb-domain-infosync`, `tidb-executor`, `tidb-server`) are made ad hoc instead of through one client as Go's `pdhttp.Client` does. [2026-11-18 probes](structural-audit-2026-11-18.md)",
-      "rust_evidence": "`rust/crates/tidb-executor/src/cluster_config.rs`, `metrics_reader.rs`, `rust/crates/tidb-ddl/src/tiflash_replica_manager.rs`, `rust/crates/tidb-store-driver-txn/src/cluster_http.rs`, `rust/crates/tidb-server/src/node_status.rs`, `rust/Cargo.lock` (`system-configuration` under `hyper-util`)",
-      "go_owner": "`pkg/util/misc.go` (`InternalHTTPClient`, `initInternalClient`), `pkg/executor/memtable_reader.go` (`fetchClusterConfig`)"
-    },
-    {
-      "id": "N10",
-      "status": "open",
-      "group": "Domain and process services",
-      "finding": "`tidb-logutil` keeps logger globals of its own (`GLOBALS` with `global` / `slow_query` / `general` / `err_verbose` loggers over its own `Logger` type), separate from `tidb-log`'s (pingcap/log) globals. Go's `logutil.BgLogger()` is `log.L().With()` and `InitLogger` installs through `log.ReplaceGlobals`, so a test's `log.ReplaceGlobals(zap.New(hookCore), props)` (Go `oomtest`'s `registerHook`) sees every background log entry; in Rust `tidb_log::replace_globals` does not reach `bg_logger()`, and the memory actions log `memory exceeds quota` through `tracing` instead of the background logger.",
-      "rust_evidence": "`rust/crates/tidb-logutil/src/lib.rs` (`GLOBALS`, `bg_logger`), `rust/crates/tidb-memory/src/action.rs`",
-      "go_owner": "`pkg/util/logutil/log.go` (`BgLogger`, `InitLogger`), `pkg/util/memory/action.go` (`LogOnExceed`)"
-    },
-    {
       "id": "E37",
       "status": "open",
       "group": "Executor and SQL surface",
@@ -136,7 +112,7 @@
       "go_owner": "`pkg/planner/core/logical_plan_builder.go` (`buildWindowFunctionFrameBound`, `evalAstExprWithPlanCtx`), `pkg/planner/core/expression_rewriter.go` (`rewriteAstExprWithPlanCtx`)"
     }
   ],
-  "unresolved": 16,
-  "open": 12,
-  "partial": 4
+  "unresolved": 13,
+  "open": 8,
+  "partial": 5
 }

@@ -46,8 +46,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, FixedOffset, Local};
-use tidb_log::{Entry, Field, Level, LoggerOptions, TextEncoder, WriteSyncer};
+use chrono::{DateTime, FixedOffset};
+use tidb_log::{Entry, Field, Level, LoggerOptions, WriteSyncer};
 
 use tidb_hack::go_to_lower;
 use file_sink::{RotatingFile, SharedSink, Sink};
@@ -138,29 +138,6 @@ pub fn format_slow_log_time(t: &DateTime<FixedOffset>) -> String {
     formatted
 }
 
-/// A settable level shared between loggers (zap `AtomicLevel`). After
-/// [`init_logger`] it is the very level of the `pingcap/log` global logger
-/// (Go `log.ReplaceGlobals(gl, props)` publishes `props.Level`), so
-/// [`set_level`] and `log.SetLevel` move one threshold.
-#[derive(Clone)]
-pub struct AtomicLevel(tidb_log::AtomicLevel);
-
-impl AtomicLevel {
-    fn new(l: Level) -> AtomicLevel {
-        AtomicLevel(tidb_log::AtomicLevel::new(l))
-    }
-    fn enabled(&self, l: Level) -> bool {
-        l >= self.0.get()
-    }
-    fn set(&self, l: Level) {
-        self.0.set(l);
-    }
-    /// The current level, for tests/introspection.
-    pub fn get(&self) -> Level {
-        self.0.get()
-    }
-}
-
 /// Parses a zap level string, case-insensitively.
 pub fn parse_level(s: &str) -> Result<Level, String> {
     match go_to_lower(s).as_str() {
@@ -175,199 +152,114 @@ pub fn parse_level(s: &str) -> Result<Level, String> {
     }
 }
 
-#[derive(Clone)]
-enum Encoding {
-    Unified,
-    /// Slow-log format: `# Time: <RFC3339Nano>\n<message>\n`.
-    SlowLog,
-}
+/// The logger type (Go `*zap.Logger`): `pingcap/log`'s, so the background
+/// logger is the global one (`log.L()`) and a test that replaces the global
+/// logger (`log.ReplaceGlobals`) sees every background entry.
+pub use tidb_log::Logger;
 
-struct LoggerInner {
-    encoder: TextEncoder,
-    encoding: Encoding,
-    sink: SharedSink,
-    // The zap write syncer over `sink`: buffering (`is-buffered`) and the
-    // write timeout (`timeout`) wrap it exactly as `pingcap/log` wraps
-    // lumberjack.
+/// Go `slowLogEncoder` in a `log.NewTextCore`: an entry is `# Time:
+/// <RFC3339Nano>` and its message, each on its own line; context fields are
+/// not written.
+#[derive(Clone)]
+struct SlowLogCore {
     output: Arc<dyn WriteSyncer>,
-    level: AtomicLevel,
-    /// zap's `observer` core: entries kept in memory instead of written.
-    observer: Option<Arc<observer::ObservedLogs>>,
+    level: tidb_log::AtomicLevel,
 }
 
-/// A logger handle (the zap `*zap.Logger` stand-in).
-#[derive(Clone)]
-pub struct Logger {
-    inner: Arc<LoggerInner>,
-}
-
-impl Logger {
-    fn new(
-        encoder: TextEncoder,
-        encoding: Encoding,
-        sink: SharedSink,
-        output: Arc<dyn WriteSyncer>,
-        level: AtomicLevel,
-    ) -> Logger {
-        Logger {
-            inner: Arc::new(LoggerInner {
-                encoder,
-                encoding,
-                sink,
-                output,
-                level,
-                observer: None,
-            }),
+impl tidb_log::Core for SlowLogCore {
+    fn enabled(&self, level: Level) -> bool {
+        level >= self.level.get()
+    }
+    fn with(&self, _fields: &[Field]) -> Arc<dyn tidb_log::Core> {
+        Arc::new(self.clone())
+    }
+    fn write(&self, entry: &Entry, _fields: &[Field]) -> Result<(), String> {
+        let encoded = format!("# Time: {}\n{}\n", format_slow_log_time(&entry.time), entry.message);
+        self.output.write(encoded.as_bytes()).map_err(|error| error.to_string())?;
+        if entry.level > Level::Error {
+            let _ = self.output.sync();
         }
+        Ok(())
     }
-
-    /// A no-op-ish default logger writing to stdout at info level.
-    pub fn stdout() -> Logger {
-        let sink: SharedSink = Arc::new(Mutex::new(Sink::Stdout));
-        Logger::new(
-            TextEncoder::default(),
-            Encoding::Unified,
-            Arc::clone(&sink),
-            sink_syncer(&sink),
-            AtomicLevel::new(Level::Info),
-        )
+    fn sync(&self) -> io::Result<()> {
+        self.output.sync()
     }
-
-    /// Returns a logger with additional context fields (zap `With`).
-    pub fn with_fields(&self, fields: &[Field]) -> Logger {
-        Logger {
-            inner: Arc::new(LoggerInner {
-                encoder: self.inner.encoder.with_fields(fields),
-                encoding: self.inner.encoding.clone(),
-                sink: Arc::clone(&self.inner.sink),
-                output: Arc::clone(&self.inner.output),
-                level: self.inner.level.clone(),
-                observer: self.inner.observer.clone(),
-            }),
-        }
-    }
-
-    /// The logger's level (test surface).
-    pub fn level(&self) -> Level {
-        self.inner.level.get()
-    }
-
-    /// Whether the two loggers share one write syncer (test surface for
-    /// the Go syncer-identity assertions).
-    pub fn same_sink(&self, other: &Logger) -> bool {
-        Arc::ptr_eq(&self.inner.sink, &other.inner.sink)
-    }
-
-    /// Whether an entry at `level` passes this logger's level gate (zap
-    /// `Core.Enabled`).
-    pub fn enabled(&self, level: Level) -> bool {
-        self.inner.level.enabled(level)
-    }
-
-    #[track_caller]
-    fn emit(&self, level: Level, msg: &str, fields: &[Field]) {
-        let loc = std::panic::Location::caller();
-        self.emit_at(level, loc.file(), loc.line(), msg, fields);
-    }
-
-    /// Writes one entry whose caller is `file:line` (the zap caller of an
-    /// entry that did not come from a `#[track_caller]` call site).
-    pub fn emit_at(&self, level: Level, file: &str, line: u32, msg: &str, fields: &[Field]) {
-        if !self.enabled(level) {
-            return;
-        }
-        if let Some(observer) = &self.inner.observer {
-            observer.add(level, msg);
-            return;
-        }
-        let now: DateTime<FixedOffset> = Local::now().fixed_offset();
-        let encoded = match self.inner.encoding {
-            Encoding::Unified => {
-                let ent = Entry {
-                    time: now,
-                    level,
-                    logger_name: String::new(),
-                    caller: Some((file.to_string(), line)),
-                    message: msg.to_string(),
-                    stack: String::new(),
-                };
-                self.inner.encoder.encode_entry(&ent, fields)
-            }
-            Encoding::SlowLog => {
-                format!("# Time: {}\n{}\n", format_slow_log_time(&now), msg)
-            }
-        };
-        let _ = self.inner.output.write(encoded.as_bytes());
-        // zap's ioCore syncs after entries above ErrorLevel.
-        if level > Level::Error {
-            let _ = self.inner.output.sync();
-        }
-    }
-
-    /// Debug-level log.
-    #[track_caller]
-    pub fn debug(&self, msg: &str, fields: &[Field]) {
-        self.emit(Level::Debug, msg, fields);
-    }
-    /// Info-level log.
-    #[track_caller]
-    pub fn info(&self, msg: &str, fields: &[Field]) {
-        self.emit(Level::Info, msg, fields);
-    }
-    /// Warn-level log.
-    #[track_caller]
-    pub fn warn(&self, msg: &str, fields: &[Field]) {
-        self.emit(Level::Warn, msg, fields);
-    }
-    /// Error-level log.
-    #[track_caller]
-    pub fn error(&self, msg: &str, fields: &[Field]) {
-        self.emit(Level::Error, msg, fields);
+    fn level(&self) -> tidb_log::AtomicLevel {
+        self.level.clone()
     }
 }
 
+/// Go `newSlowQueryLogger`'s core swap: `logger` writing through the slow
+/// log encoder to `output` at `level`.
+fn slow_log_logger(logger: &Logger, props: &tidb_log::ZapProperties) -> Logger {
+    let core = SlowLogCore {
+        output: Arc::clone(&props.syncer),
+        level: props.level.clone(),
+    };
+    logger.wrap_core(|_| Arc::new(core))
+}
+
+/// Go `SlowQueryLogger`, `GeneralLogger` and `errVerboseLogger`: package
+/// loggers beside the global one, with the sink each writes (which the Go
+/// tests compare by syncer identity).
 struct Globals {
-    global: Logger,
     slow_query: Logger,
     general: Logger,
     err_verbose: Logger,
-    level: AtomicLevel,
+    sinks: Sinks,
+}
+
+#[derive(Clone)]
+#[cfg_attr(not(test), allow(dead_code, reason = "read by the syncer-identity tests"))]
+struct Sinks {
+    global: SharedSink,
+    slow_query: SharedSink,
+    general: SharedSink,
+    err_verbose: SharedSink,
 }
 
 static GLOBALS: RwLock<Option<Globals>> = RwLock::new(None);
 
+/// The package loggers, which are the global one until [`init_logger`]
+/// (Go's package variables start as `log.L()`).
 fn read_globals<R>(f: impl FnOnce(&Globals) -> R) -> R {
-    {
-        let g = GLOBALS.read().unwrap();
-        if let Some(g) = g.as_ref() {
-            return f(g);
-        }
+    if let Some(globals) = GLOBALS.read().unwrap().as_ref() {
+        return f(globals);
     }
-    let mut w = GLOBALS.write().unwrap();
-    if w.is_none() {
-        let level = AtomicLevel::new(Level::Info);
-        let sink: SharedSink = Arc::new(Mutex::new(Sink::Stdout));
-        let l = Logger::new(
-            TextEncoder::default(),
-            Encoding::Unified,
-            Arc::clone(&sink),
-            sink_syncer(&sink),
-            level.clone(),
-        );
-        *w = Some(Globals {
-            global: l.clone(),
-            slow_query: l.clone(),
-            general: l.clone(),
-            err_verbose: l,
-            level,
-        });
-    }
-    f(w.as_ref().unwrap())
+    let global = tidb_log::l();
+    let sink: SharedSink = Arc::new(Mutex::new(Sink::Stdout));
+    f(&Globals {
+        slow_query: global.clone(),
+        general: global.clone(),
+        err_verbose: global,
+        sinks: Sinks {
+            global: Arc::clone(&sink),
+            slow_query: Arc::clone(&sink),
+            general: Arc::clone(&sink),
+            err_verbose: sink,
+        },
+    })
 }
 
-/// The background logger (Go `BgLogger`).
+/// Whether two package loggers (`bg`, `slow_query`, `general`,
+/// `err_verbose`) write one sink (the Go tests' syncer-identity checks).
+#[cfg(test)]
+fn shares_sink(a: &str, b: &str) -> bool {
+    read_globals(|g| {
+        let sink = |name: &str| match name {
+            "bg" => Arc::clone(&g.sinks.global),
+            "slow_query" => Arc::clone(&g.sinks.slow_query),
+            "general" => Arc::clone(&g.sinks.general),
+            "err_verbose" => Arc::clone(&g.sinks.err_verbose),
+            other => panic!("no package logger {other}"),
+        };
+        Arc::ptr_eq(&sink(a), &sink(b))
+    })
+}
+
+/// The background logger (Go `BgLogger`: `log.L().With()`).
 pub fn bg_logger() -> Logger {
-    read_globals(|g| g.global.clone())
+    tidb_log::l()
 }
 
 /// The slow query logger (Go `SlowQueryLogger`).
@@ -385,10 +277,9 @@ pub fn err_verbose_logger() -> Logger {
     read_globals(|g| g.err_verbose.clone())
 }
 
-/// Sets the global log level (Go `SetLevel`).
+/// Sets the global log level (Go `SetLevel`: `log.SetLevel`).
 pub fn set_level(level: &str) -> Result<(), String> {
-    let l = parse_level(level)?;
-    read_globals(|g| g.level.set(l));
+    tidb_log::set_level(parse_level(level)?);
     tracing_bridge::level_changed();
     log_bridge::level_changed();
     Ok(())
@@ -396,12 +287,12 @@ pub fn set_level(level: &str) -> Result<(), String> {
 
 /// The current global level (Go `log.GetLevel`, test surface).
 pub fn get_level() -> Level {
-    read_globals(|g| g.level.get())
+    tidb_log::get_level()
 }
 
 /// Flushes the global loggers' buffered output (Go `log.Sync`).
 pub fn sync() -> io::Result<()> {
-    read_globals(|g| g.global.inner.output.sync())
+    tidb_log::sync()
 }
 
 // zap `WriteSyncer` over a shared sink.
@@ -461,32 +352,16 @@ fn build_output(file: &FileLogConfig, sink: &SharedSink) -> Arc<dyn WriteSyncer>
     }
 }
 
-// `pingcap/log.InitLogger` for a dedicated logger whose entries this crate
-// encodes itself: the sink, its write syncer with the configured write
-// timeout (`InitLoggerWithWriteSyncer`), and a fresh level from `level`.
+// `pingcap/log.InitLogger` for a dedicated logger: its sink, and
+// `log.InitLoggerWithWriteSyncer` over that sink's write syncer.
 fn init_dedicated(
     config: &tidb_log::Config,
-) -> Result<(SharedSink, Arc<dyn WriteSyncer>, AtomicLevel), String> {
+) -> Result<(SharedSink, Logger, tidb_log::ZapProperties), String> {
     let sink = build_sink(&config.file)?;
-    let level = AtomicLevel::new(parse_level(&config.level)?);
-    let mut output = build_output(&config.file, &sink);
-    if config.timeout > 0 {
-        output = tidb_log::lock_with_timeout(Arc::new(DynSyncer(output)), config.timeout as u64);
-    }
-    Ok((sink, output, level))
-}
-
-// Adapts a shared trait object to `lock_with_timeout`'s sized parameter.
-struct DynSyncer(Arc<dyn WriteSyncer>);
-
-impl WriteSyncer for DynSyncer {
-    fn write(&self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.write(bytes)
-    }
-
-    fn sync(&self) -> io::Result<()> {
-        self.0.sync()
-    }
+    let output = build_output(&config.file, &sink);
+    let (logger, props) =
+        tidb_log::init_logger_with_write_syncer(config, Arc::clone(&output), output)?;
+    Ok((sink, logger, props))
 }
 
 // Go `newSlowQueryLogConfig`/`newGeneralLogConfig`: the global config with
@@ -503,13 +378,12 @@ fn sub_log_config(cfg: &LogConfig, filename: &str) -> tidb_log::Config {
 
 // Go `log.InitLogger(&cfg.Config, opts...)` with logutil's
 // `zap.AddStacktrace(zapcore.FatalLevel)` option and the wrapped core's
-// fields, followed by `log.ReplaceGlobals(gl, props)`: the `pingcap/log`
-// global (`tidb_log::info` and friends) writes through the same sink, the
-// same timeout-wrapped syncer and the same level as [`bg_logger`].
+// fields, followed by `log.ReplaceGlobals(gl, props)`: the global logger is
+// the background logger.
 fn init_global(
     cfg: &LogConfig,
     core_fields: &[Field],
-) -> Result<(SharedSink, tidb_log::ZapProperties), String> {
+) -> Result<(SharedSink, Logger, tidb_log::ZapProperties), String> {
     let sink = build_sink(&cfg.config.file)?;
     let output = build_output(&cfg.config.file, &sink);
     let (gl, props) =
@@ -517,8 +391,8 @@ fn init_global(
     let gl = gl
         .with_options(LoggerOptions::default().with_stacktrace_level(Level::Fatal))
         .with_fields(core_fields);
-    let _ = tidb_log::replace_globals(gl);
-    Ok((sink, props))
+    let _ = tidb_log::replace_globals(gl.clone());
+    Ok((sink, gl, props))
 }
 
 /// Initializes global, slow-query, and general loggers (Go `InitLogger`).
@@ -530,83 +404,56 @@ pub fn init_logger(cfg: &LogConfig) -> Result<(), String> {
 /// logger after attaching fields to its core, so every emitted entry carries
 /// them even when the call site supplies no context fields.
 pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> Result<(), String> {
-    let (global_sink, props) = init_global(cfg, core_fields)?;
-    let level = AtomicLevel(props.level.clone());
-    let encoder = TextEncoder::new(&cfg.config)?.with_fields(core_fields);
-    let global = Logger::new(
-        encoder,
-        Encoding::Unified,
-        Arc::clone(&global_sink),
-        Arc::clone(&props.syncer),
-        level.clone(),
-    );
+    let (global_sink, global, props) = init_global(cfg, core_fields)?;
 
-    // Error-verbose logger: same sink, never suppresses verbose errors. Go
-    // builds it with `InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer,
-    // props.ErrSyncer)`, which parses its own level from the config: it
-    // does not follow later `SetLevel` calls.
+    // Error-verbose logger: same syncers, never suppresses verbose errors.
+    // Go builds it with `InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer,
+    // props.ErrSyncer)`, which parses its own level from the config: it does
+    // not follow later `SetLevel` calls.
     let err_verbose = if cfg.config.format == "json" || !cfg.config.disable_error_verbose {
         global.clone()
     } else {
         let mut c = cfg.config.clone();
         c.disable_error_verbose = false;
-        let mut output = Arc::clone(&props.syncer);
-        if c.timeout > 0 {
-            output = tidb_log::lock_with_timeout(Arc::new(DynSyncer(output)), c.timeout as u64);
-        }
-        Logger::new(
-            TextEncoder::new(&c)?.with_fields(core_fields),
-            Encoding::Unified,
-            Arc::clone(&global_sink),
-            output,
-            AtomicLevel::new(parse_level(&c.level)?),
-        )
+        let (logger, _) = tidb_log::init_logger_with_write_syncer(
+            &c,
+            Arc::clone(&props.syncer),
+            Arc::clone(&props.error_syncer),
+        )?;
+        logger
+            .with_options(LoggerOptions::default().with_stacktrace_level(Level::Fatal))
+            .with_fields(core_fields)
     };
 
-    // Slow/general loggers reuse the global level and sink when their
+    // Slow/general loggers reuse the global level and syncer when their
     // configured filename is empty or names the global file. Dedicated
     // loggers are initialized independently at the default info level.
-    let slow_query =
+    let (slow_sink, slow_query) =
         if cfg.slow_query_file.is_empty() || cfg.slow_query_file == cfg.config.file.filename {
-            Logger::new(
-                TextEncoder::default(),
-                Encoding::SlowLog,
-                Arc::clone(&global_sink),
-                Arc::clone(&props.syncer),
-                level.clone(),
-            )
+            (Arc::clone(&global_sink), slow_log_logger(&global, &props))
         } else {
-            let (sink, output, level) = init_dedicated(&sub_log_config(cfg, &cfg.slow_query_file))?;
-            Logger::new(
-                TextEncoder::default(),
-                Encoding::SlowLog,
-                sink,
-                output,
-                level,
-            )
+            let (sink, logger, props) = init_dedicated(&sub_log_config(cfg, &cfg.slow_query_file))?;
+            (sink, slow_log_logger(&logger, &props))
         };
-
-    let general = if cfg.general_log_file.is_empty()
+    let (general_sink, general) = if cfg.general_log_file.is_empty()
         || cfg.general_log_file == cfg.config.file.filename
     {
-        global.clone()
+        (Arc::clone(&global_sink), global)
     } else {
-        let (sink, output, level) = init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
-        Logger::new(
-            TextEncoder::new(&cfg.config)?,
-            Encoding::Unified,
-            sink,
-            output,
-            level,
-        )
+        let (sink, logger, _) = init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
+        (sink, logger)
     };
 
     *GLOBALS.write().unwrap() = Some(Globals {
-        global,
         slow_query,
         general,
         err_verbose,
-        level,
+        sinks: Sinks {
+            global: Arc::clone(&global_sink),
+            slow_query: slow_sink,
+            general: general_sink,
+            err_verbose: global_sink,
+        },
     });
     tracing_bridge::install();
     log_bridge::install();
@@ -615,47 +462,29 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
 
 /// Replaces the global loggers (Go `ReplaceLogger`).
 pub fn replace_logger(cfg: &LogConfig) -> Result<(), String> {
-    let (global_sink, props) = init_global(cfg, &[])?;
-    let level = AtomicLevel(props.level.clone());
-    let global = Logger::new(
-        TextEncoder::new(&cfg.config)?,
-        Encoding::Unified,
-        global_sink,
-        Arc::clone(&props.syncer),
-        level.clone(),
-    );
+    let (global_sink, _, _) = init_global(cfg, &[])?;
 
     // Go ReplaceLogger calls both dedicated constructors unconditionally.
     // Each constructor initializes its own write syncer, even when an empty
     // sub-logger filename resolves to the same path as the global logger.
-    let (slow_sink, slow_output, slow_level) =
+    let (slow_sink, slow_logger, slow_props) =
         init_dedicated(&sub_log_config(cfg, &cfg.slow_query_file))?;
-    let slow_query = Logger::new(
-        TextEncoder::default(),
-        Encoding::SlowLog,
-        slow_sink,
-        slow_output,
-        slow_level,
-    );
-
-    let (general_sink, general_output, general_level) =
-        init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
-    let general = Logger::new(
-        TextEncoder::new(&cfg.config)?,
-        Encoding::Unified,
-        general_sink,
-        general_output,
-        general_level,
-    );
+    let slow_query = slow_log_logger(&slow_logger, &slow_props);
+    let (general_sink, general, _) = init_dedicated(&sub_log_config(cfg, &cfg.general_log_file))?;
 
     // Go ReplaceLogger does not update errVerboseLogger.
-    let err_verbose = err_verbose_logger();
+    let (err_verbose, err_verbose_sink) =
+        read_globals(|g| (g.err_verbose.clone(), Arc::clone(&g.sinks.err_verbose)));
     *GLOBALS.write().unwrap() = Some(Globals {
-        global,
         slow_query,
         general,
         err_verbose,
-        level,
+        sinks: Sinks {
+            global: global_sink,
+            slow_query: slow_sink,
+            general: general_sink,
+            err_verbose: err_verbose_sink,
+        },
     });
     tracing_bridge::install();
     log_bridge::install();
@@ -1156,7 +985,7 @@ mod tests {
         // Same effective filename reuses the global level and write syncer.
         assert_eq!(slow_query_logger().level(), tidb_log::Level::Error);
         assert_eq!(general_logger().level(), tidb_log::Level::Error);
-        assert!(slow_query_logger().same_sink(&general_logger()));
+        assert!(shares_sink("slow_query", "general"));
 
         let conf = new_log_config(
             "info",
@@ -1200,8 +1029,8 @@ mod tests {
         init_logger(&conf).unwrap();
         assert_eq!(slow_query_logger().level(), tidb_log::Level::Info);
         assert_eq!(general_logger().level(), tidb_log::Level::Info);
-        assert!(!slow_query_logger().same_sink(&bg_logger()));
-        assert!(!general_logger().same_sink(&bg_logger()));
+        assert!(!shares_sink("slow_query", "bg"));
+        assert!(!shares_sink("general", "bg"));
         let _ = std::fs::remove_file(&filename);
         let _ = std::fs::remove_file(&slow_file);
         let _ = std::fs::remove_file(&general_file);
@@ -1220,7 +1049,7 @@ mod tests {
             false,
         );
         init_logger(&conf).unwrap();
-        assert!(!slow_query_logger().same_sink(&general_logger()));
+        assert!(!shares_sink("slow_query", "general"));
         let _ = std::fs::remove_file(&filename);
         let _ = std::fs::remove_file(&shared_dedicated_file);
     }
@@ -1258,8 +1087,8 @@ mod tests {
             false,
         );
         init_logger(&conf).unwrap();
-        assert!(bg_logger().same_sink(&slow_query_logger()));
-        assert!(bg_logger().same_sink(&general_logger()));
+        assert!(shares_sink("bg", "slow_query"));
+        assert!(shares_sink("bg", "general"));
     }
 
     // Go TestCompressedLog.
@@ -1359,10 +1188,10 @@ mod tests {
         // configured filenames are empty and resolve to the global file.
         assert_eq!(slow_query_logger().level(), tidb_log::Level::Info);
         assert_eq!(general_logger().level(), tidb_log::Level::Info);
-        assert!(!slow_query_logger().same_sink(&bg_logger()));
-        assert!(!general_logger().same_sink(&bg_logger()));
-        assert!(!slow_query_logger().same_sink(&general_logger()));
-        assert!(!err_verbose_logger().same_sink(&bg_logger()));
+        assert!(!shares_sink("slow_query", "bg"));
+        assert!(!shares_sink("general", "bg"));
+        assert!(!shares_sink("slow_query", "general"));
+        assert!(!shares_sink("err_verbose", "bg"));
         let _ = std::fs::remove_file(&filename);
     }
 

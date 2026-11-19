@@ -17,9 +17,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use tidb_log::Level;
+use tidb_log::{Entry, Field, Level};
 
-use crate::{file_sink::Sink, sink_syncer, AtomicLevel, Encoding, Logger, LoggerInner, TextEncoder};
+use crate::Logger;
 
 /// zap `observer.LoggedEntry`: one observed entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,22 +55,41 @@ impl ObservedLogs {
     }
 }
 
+/// zap `observer.New(level)`'s core: entries at or above `level` kept in
+/// memory.
+struct ObserverCore {
+    level: tidb_log::AtomicLevel,
+    logs: Arc<ObservedLogs>,
+}
+
+impl tidb_log::Core for ObserverCore {
+    fn enabled(&self, level: Level) -> bool {
+        level >= self.level.get()
+    }
+    fn with(&self, _fields: &[Field]) -> Arc<dyn tidb_log::Core> {
+        Arc::new(ObserverCore {
+            level: self.level.clone(),
+            logs: Arc::clone(&self.logs),
+        })
+    }
+    fn write(&self, entry: &Entry, _fields: &[Field]) -> Result<(), String> {
+        self.logs.add(entry.level, &entry.message);
+        Ok(())
+    }
+    fn level(&self) -> tidb_log::AtomicLevel {
+        self.level.clone()
+    }
+}
+
 /// zap `observer.New(level)` wrapped in `zap.New`: a logger at `level`
 /// whose entries go to the returned logs.
 pub fn new(level: Level) -> (Logger, Arc<ObservedLogs>) {
     let logs = Arc::new(ObservedLogs::default());
-    let sink = Arc::new(Mutex::new(Sink::Stdout));
-    let logger = Logger {
-        inner: Arc::new(LoggerInner {
-            encoder: TextEncoder::default(),
-            encoding: Encoding::Unified,
-            output: sink_syncer(&sink),
-            sink,
-            level: AtomicLevel::new(level),
-            observer: Some(Arc::clone(&logs)),
-        }),
+    let core = ObserverCore {
+        level: tidb_log::AtomicLevel::new(level),
+        logs: Arc::clone(&logs),
     };
-    (logger, logs)
+    (Logger::new(Arc::new(core)), logs)
 }
 
 #[cfg(test)]

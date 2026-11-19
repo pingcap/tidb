@@ -794,8 +794,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::AdminChecksum(checksum) => Plan::ChecksumTable(checksum.clone()),
             AdminStmt::ShowNextRowId(show) => {
                 let (schema, names) = build_show_next_row_id();
+                // Go's preprocessor (`handleTableName`) gives the table the
+                // current database before `ShowNextRowIDExec` resolves it.
+                let table_name = match show.table.as_slice() {
+                    [table] => vec![self.source.current_database().to_owned(), table.clone()],
+                    _ => show.table.clone(),
+                };
                 Plan::ShowNextRowID(ShowNextRowID {
-                    table_name: show.table.clone(),
+                    table_name,
                     schema,
                     names,
                 })

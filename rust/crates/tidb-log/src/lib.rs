@@ -44,4 +44,4 @@ pub use text_encoder::{
     get_caller_string, default_time_encoder, format_time, short_caller_encoder, Entry, Field, Level,
     TextEncoder, Value,
 };
-pub use zap_text_core::{AtomicLevel, TextIoCore, WriteSyncer};
+pub use zap_text_core::{AtomicLevel, Core, TextIoCore, WriteSyncer};

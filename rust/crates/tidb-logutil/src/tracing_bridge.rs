@@ -93,7 +93,7 @@ impl Subscriber for UnifiedLogSubscriber {
         let metadata = event.metadata();
         let mut visitor = EntryVisitor::default();
         event.record(&mut visitor);
-        super::bg_logger().emit_at(
+        super::bg_logger().log_at_caller(
             level_of(metadata),
             metadata.file().unwrap_or_default(),
             metadata.line().unwrap_or_default(),

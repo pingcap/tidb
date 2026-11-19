@@ -8054,11 +8054,12 @@ dependencies = [
  "tidb-errno",
  "tidb-fastrand",
  "tidb-intest",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-mysql",
  "tidb-sqlkiller",
  "tidb-sysutil",
  "tidb-terror",
- "tracing",
 ]
 
 [[package]]

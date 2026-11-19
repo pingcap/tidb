@@ -572,9 +572,8 @@ impl Session {
                 }
                 Ok(Some(StmtOutput::Done(true)))
             }
-            Plan::Logical(_) | Plan::Physical(_) | Plan::ShowNextRowID(_) | Plan::Set(_) => {
-                Ok(None)
-            }
+            Plan::ShowNextRowID(plan) => self.show_next_row_id_exec(plan).map(Some),
+            Plan::Logical(_) | Plan::Physical(_) | Plan::Set(_) => Ok(None),
             _ => match stmt {
                 Stmt::Admin(admin) => tidb_executor::admin::AdminExec::admin_next(self, admin),
                 _ => Ok(None),

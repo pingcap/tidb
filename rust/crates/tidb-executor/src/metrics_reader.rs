@@ -274,7 +274,12 @@ fn query_range(
         ("start", format_time(start)),
         ("step", go_strconv::format_float(step as f64, b'f', -1, 64)),
     ];
-    let client = reqwest::blocking::Client::builder().build().map_err(other)?;
+    // Go's Prometheus `api.Client` sends over `api.DefaultRoundTripper`,
+    // `http.DefaultTransport`'s proxy and dialer.
+    let client = tidb_store_driver_txn::cluster_http::default_transport_client_builder()
+        .map_err(QueryError::Other)?
+        .build()
+        .map_err(other)?;
     let remaining = || deadline.saturating_duration_since(Instant::now());
     // Go `DoGetFallback`: the request as a POST, and on a 405 or 501 a GET.
     let encoded = args

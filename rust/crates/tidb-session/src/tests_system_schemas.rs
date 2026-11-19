@@ -2134,6 +2134,9 @@ fn admin_statement_answers_follow_go() {
     for (sql, code, message) in [
         ("RESTART", 8108, "Unsupported type *ast.RestartStmt"),
         ("HELP 'x'", 8108, "Unsupported type *ast.HelpStmt"),
+        ("CREATE STATISTICS s1 (cardinality) ON aq0(a,b)", 8108, "Unsupported type *ast.CreateStatisticsStmt"),
+        ("DROP STATISTICS s1", 8108, "Unsupported type *ast.DropStatisticsStmt"),
+        ("GRANT PROXY ON 'a'@'%' TO 'b'@'%'", 8108, "Unsupported type *ast.GrantProxyStmt"),
         (
             "ADMIN RELOAD STATS_EXTENDED",
             1105,
@@ -2152,7 +2155,19 @@ fn admin_statement_answers_follow_go() {
             "{sql}"
         );
     }
+    // Go `SimpleExec` ignores a BINLOG statement.
+    session.run("BINLOG 'AAAA'").unwrap();
     session.run("CREATE TABLE aq1 (a INT)").unwrap();
+    // Both spellings build Go's one `ShowNextRowID` plan:
+    // `test|aq1|_tidb_rowid|1|_TIDB_ROWID`.
+    assert_eq!(
+        row_text(session.run("ADMIN SHOW aq1 NEXT_ROW_ID")),
+        vec![vec!["test", "aq1", "_tidb_rowid", "1", "_TIDB_ROWID"]]
+    );
+    assert_eq!(
+        row_text(session.run("ADMIN SHOW aq1 NEXT_ROW_ID")),
+        row_text(session.run("SHOW TABLE aq1 NEXT_ROW_ID"))
+    );
     let checksum = session.run("ADMIN CHECKSUM TABLE aq1").unwrap();
     match checksum {
         StmtResult::Rows(rows) => assert_eq!(rows.len(), 1),

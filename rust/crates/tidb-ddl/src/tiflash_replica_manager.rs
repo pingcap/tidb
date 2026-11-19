@@ -261,9 +261,9 @@ impl TiFlashReplicaManager {
     ) -> Result<Self, String> {
         // Reuse framing and connections for the TiFlash status requests,
         // which carry TiDB util.InternalHTTPClient's deadline.
-        let http = reqwest::blocking::Client::builder()
-            .build()
-            .map_err(|error| error.to_string())?;
+        let http = tidb_store_driver_txn::cluster_http::internal_http_client(
+            &tidb_pd_client::ClusterSecurity::default(),
+        )?;
         Ok(Self {
             catalog,
             stores: Box::new(stores),

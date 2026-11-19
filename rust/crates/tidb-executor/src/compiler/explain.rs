@@ -98,10 +98,17 @@ pub trait ExplainCompile: super::CompilerSession {
                 "explain format 'plan_tree' with analyze is not supported now",
             ));
         }
-        let Some(target) = explain.statement() else {
-            return Err(DriverError::unsupported(
-                "EXPLAIN of a plan digest is not supported yet",
-            ));
+        // Go `buildExplain`: `explain [analyze] '<plan digest>'` explains the
+        // statement summary's hinted statement for that digest.
+        let hinted;
+        let target = match &explain.target {
+            tidb_ast::ExplainTarget::PlanDigest(digest) => {
+                hinted = self.hinted_stmt_through_plan_digest(digest)?;
+                &hinted
+            }
+            _ => explain
+                .statement()
+                .ok_or_else(|| DriverError::unsupported("EXPLAIN without a statement"))?,
         };
         // Go matches a binding against the statement INSIDE the EXPLAIN
         // (`NormalizeStmtForBinding` unwraps `*ast.ExplainStmt` before

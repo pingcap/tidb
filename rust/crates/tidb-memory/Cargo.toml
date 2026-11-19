@@ -28,7 +28,8 @@ tidb-sysutil = { path = "../tidb-sysutil" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-allocator-stats = { path = "../tidb-allocator-stats" }
-tracing = "0.1"
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "=0.14.11"

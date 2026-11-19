@@ -176,9 +176,9 @@ impl ActionOnExceed for LogOnExceed {
         if !state.acted {
             state.acted = true;
             match &state.log_hook {
-                None => tracing::warn!(
-                    error = %mem_exceed_error(t),
-                    "memory exceeds quota"
+                None => tidb_logutil::bg_logger().warn(
+                    "memory exceeds quota",
+                    &[tidb_logutil::zap_error(mem_exceed_error(t))],
                 ),
                 Some(hook) => hook(self.conn_id),
             }
@@ -235,10 +235,12 @@ impl ActionOnExceed for PanicOnExceed {
         let mut state = lock_unpoison(&self.state);
         if !state.acted {
             match &state.log_hook {
-                None => tracing::warn!(
-                    conn = t.session_id(),
-                    error = %mem_exceed_error(t),
-                    "memory exceeds quota"
+                None => tidb_logutil::bg_logger().warn(
+                    "memory exceeds quota",
+                    &[
+                        tidb_log::Field::new("conn", tidb_log::Value::U64(t.session_id())),
+                        tidb_logutil::zap_error(mem_exceed_error(t)),
+                    ],
                 ),
                 Some(hook) => hook(self.conn_id),
             }
@@ -297,6 +299,22 @@ mod tests {
             ERR_MEM_EXCEED_THRESHOLD.to_sql_error().code,
             errcode::ErrMemExceedThreshold
         );
+    }
+
+    /// Go `LogOnExceed.Action` logs through `logutil.BgLogger()`, which is
+    /// `log.L()`: a test that replaces the global logger (`oomtest`'s
+    /// `registerHook`: `log.ReplaceGlobals(zap.New(hookCore), props)`) sees
+    /// the entry, once.
+    #[test]
+    fn log_action_logs_through_the_global_logger() {
+        let (observer, logs) = tidb_logutil::observer::new(tidb_log::Level::Warn);
+        let restore = tidb_log::replace_globals(observer);
+        let action = LogOnExceed::default();
+        let tracker = Tracker::new(1, 1);
+        action.action(&tracker);
+        action.action(&tracker);
+        restore.restore();
+        assert_eq!(logs.filter_message("memory exceeds quota").len(), 1);
     }
 
     /// Source: `pkg/util/memory/action.go::LogOnExceed.Action` marks `acted`

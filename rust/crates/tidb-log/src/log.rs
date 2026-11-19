@@ -23,7 +23,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 use crate::config::SamplingConfig;
-use crate::zap_text_core::{AtomicLevel, TextIoCore, WriteSyncer};
+use crate::zap_text_core::{AtomicLevel, Core, TextIoCore, WriteSyncer};
 use crate::{Config, Entry, Field, Level, TextEncoder};
 
 type CallerFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
@@ -122,7 +122,7 @@ impl Sampler {
 /// A clonable structured logger.
 #[derive(Clone)]
 pub struct Logger {
-    core: TextIoCore,
+    core: Arc<dyn Core>,
     error_output: Arc<dyn WriteSyncer>,
     name: String,
     caller_filter: Option<CallerFilter>,
@@ -224,6 +224,40 @@ impl fmt::Debug for Logger {
 }
 
 impl Logger {
+    /// zap `New(core)`: a logger over `core` with zap's defaults -- no
+    /// caller, no stack traces, internal errors to stderr.
+    pub fn new(core: Arc<dyn Core>) -> Logger {
+        Logger {
+            core,
+            error_output: Arc::new(StderrSink),
+            name: String::new(),
+            caller_filter: None,
+            caller_enabled: false,
+            caller_skip: 0,
+            stacktrace_level: None,
+            development: false,
+            sampler: None,
+        }
+    }
+
+    /// The logger's core (zap `Core()`).
+    pub fn core(&self) -> Arc<dyn Core> {
+        Arc::clone(&self.core)
+    }
+
+    /// zap `WithOptions(zap.WrapCore(f))`: the logger over the core `f`
+    /// makes of this one's.
+    pub fn wrap_core(&self, f: impl FnOnce(Arc<dyn Core>) -> Arc<dyn Core>) -> Logger {
+        let mut clone = self.clone();
+        clone.core = f(Arc::clone(&self.core));
+        clone
+    }
+
+    /// zap `Level()`: the minimum enabled level.
+    pub fn level(&self) -> Level {
+        self.core.level().get()
+    }
+
     /// Returns a convenience wrapper for unstructured and `*w` logging.
     pub fn sugar(&self) -> SugaredLogger {
         SugaredLogger(self.clone())
@@ -325,14 +359,20 @@ impl Logger {
     /// Logs at an explicitly selected level.
     #[track_caller]
     pub fn log_at(&self, level: Level, message: &str, fields: &[Field]) {
+        let location = std::panic::Location::caller();
+        self.log_at_caller(level, location.file(), location.line(), message, fields);
+    }
+
+    /// [`Self::log_at`] for an entry whose caller is `file:line` (one
+    /// forwarded from another logging facade, which knows its own caller).
+    pub fn log_at_caller(&self, level: Level, file: &str, line: u32, message: &str, fields: &[Field]) {
         if !self.core.enabled(level) {
             return;
         }
-        let location = std::panic::Location::caller();
         if self
             .caller_filter
             .as_ref()
-            .is_some_and(|filter| !filter(location.file()))
+            .is_some_and(|filter| !filter(file))
         {
             return;
         }
@@ -342,7 +382,7 @@ impl Logger {
             }
         }
         let caller = if self.caller_enabled && self.caller_skip == 0 {
-            Some((location.file().to_owned(), location.line()))
+            Some((file.to_owned(), line))
         } else {
             None
         };
@@ -423,7 +463,7 @@ pub fn init_logger_with_write_syncer(
         Some(Level::Error)
     };
     let logger = Logger {
-        core,
+        core: Arc::new(core.clone()),
         error_output: error_output.clone(),
         name: String::new(),
         caller_filter: None,
@@ -437,7 +477,7 @@ pub fn init_logger_with_write_syncer(
             .map(|sampling| Arc::new(Sampler::new(sampling))),
     };
     let properties = ZapProperties {
-        core: logger.core.clone(),
+        core,
         level: atomic_level,
         syncer: output,
         error_syncer: error_output,

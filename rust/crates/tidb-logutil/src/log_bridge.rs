@@ -92,7 +92,7 @@ impl ::log::Log for UnifiedLogLogger {
         let file = record.file().or(record.module_path()).unwrap_or_default();
         let message = record.args().to_string();
         let fields = zap_fields(record.key_values());
-        logger.emit_at(
+        logger.log_at_caller(
             level,
             file,
             record.line().unwrap_or_default(),

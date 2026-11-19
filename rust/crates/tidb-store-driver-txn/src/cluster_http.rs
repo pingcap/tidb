@@ -47,12 +47,64 @@ pub fn internal_http_client(
     Ok(client)
 }
 
-/// Go `initInternalClient`.
+/// A client over Go's `http.DefaultTransport`, whose `Proxy` is
+/// `ProxyFromEnvironment`: `HTTP_PROXY` / `HTTPS_PROXY` (upper case first)
+/// minus `NO_PROXY`, never for a loopback host -- and never the operating
+/// system's proxy settings, which reqwest's `system-proxy` feature (enabled
+/// in this build through other crates) would otherwise read.
+pub fn default_transport_client_builder() -> Result<reqwest::blocking::ClientBuilder, String> {
+    proxy_from_environment(|key| std::env::var(key).ok())
+}
+
+/// [`default_transport_client_builder`] over the environment `getenv` reads.
+fn proxy_from_environment(
+    getenv: impl Fn(&str) -> Option<String>,
+) -> Result<reqwest::blocking::ClientBuilder, String> {
+    let env = |upper: &str, lower: &str| {
+        getenv(upper)
+            .filter(|value| !value.is_empty())
+            .or_else(|| getenv(lower).filter(|value| !value.is_empty()))
+    };
+    let no_proxy = env("NO_PROXY", "no_proxy").unwrap_or_default();
+    let mut builder = reqwest::blocking::Client::builder().no_proxy();
+    for (scheme, proxy) in [
+        ("http", env("HTTP_PROXY", "http_proxy")),
+        ("https", env("HTTPS_PROXY", "https_proxy")),
+    ] {
+        let Some(proxy) = proxy else { continue };
+        let proxy = reqwest::Url::parse(&proxy)
+            .or_else(|_| reqwest::Url::parse(&format!("http://{proxy}")))
+            .map_err(|_| "invalid proxy URL".to_owned())?;
+        let custom = reqwest::Proxy::custom(move |url| {
+            let loopback = match url.host_str() {
+                None => true,
+                Some(host) => {
+                    host.eq_ignore_ascii_case("localhost")
+                        || host
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                }
+            };
+            (url.scheme() == scheme && !loopback).then(|| proxy.clone())
+        });
+        builder = builder.proxy(custom.no_proxy(reqwest::NoProxy::from_string(&no_proxy)));
+    }
+    Ok(builder)
+}
+
+/// Go `initInternalClient`: `http.DefaultTransport` without cluster TLS, a
+/// bare `http.Transport` (no proxy at all) with it.
 fn init_internal_client(
     security: &tidb_pd_client::ClusterSecurity,
 ) -> Result<reqwest::blocking::Client, String> {
-    let mut builder =
-        reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(5 * 60));
+    let builder = if security.is_tls_enabled() {
+        reqwest::blocking::Client::builder().no_proxy()
+    } else {
+        default_transport_client_builder()?
+    };
+    let mut builder = builder.timeout(std::time::Duration::from_secs(5 * 60));
     if security.is_tls_enabled() {
         let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
         let roots =
@@ -84,4 +136,39 @@ where
 {
     tidb_txnkv::driver::tikv_store::block_on_store_runtime(request)?
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Go `ProxyFromEnvironment` never proxies a loopback host, and a
+    /// non-loopback request goes to `HTTP_PROXY` (here a listener answering
+    /// as the proxy), not to the operating system's proxy.
+    #[test]
+    fn the_internal_client_proxies_from_the_environment_only() {
+        use std::io::{Read, Write};
+        let serve = |answer: &'static str| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let read = stream.read(&mut request).unwrap();
+                let first = String::from_utf8_lossy(&request[..read]).lines().next().unwrap().to_owned();
+                let body = format!("{answer} {first}");
+                write!(stream, "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            port
+        };
+        let proxy = serve("proxy");
+        let target = serve("direct");
+        let proxy_url = format!("http://127.0.0.1:{proxy}");
+        let client = super::proxy_from_environment(|key| (key == "HTTP_PROXY").then(|| proxy_url.clone()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let direct = client.get(format!("http://127.0.0.1:{target}/status")).send().unwrap().text().unwrap();
+        assert_eq!(direct, "direct GET /status HTTP/1.1");
+        let proxied = client.get("http://10.255.255.1:20180/config").send().unwrap().text().unwrap();
+        assert_eq!(proxied, "proxy GET http://10.255.255.1:20180/config HTTP/1.1");
+    }
 }

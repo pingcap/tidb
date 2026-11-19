@@ -1189,6 +1189,14 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             // success immediately, and a 1-second-delayed task SIGTERMs this
             // very process, whose installed handler performs the graceful
             // stop. `RESTART`/`HELP` keep their unsupported report.
+            // Go `SimpleExec.Next`: `case *ast.BinlogStmt: // We just
+            // ignore it.`
+            tidb_ast::AdminStmt::Binlog(_) => Ok(Some(StmtOutput::Affected(0))),
+            // Go `PlanBuilder.Build` has no case for these, so its default
+            // names the AST node (`Unsupported type %T`, 8108).
+            tidb_ast::AdminStmt::CreateStatistics(_) => Err(unsupported_type("*ast.CreateStatisticsStmt")),
+            tidb_ast::AdminStmt::DropStatistics(_) => Err(unsupported_type("*ast.DropStatisticsStmt")),
+            tidb_ast::AdminStmt::GrantProxy(_) => Err(unsupported_type("*ast.GrantProxyStmt")),
             tidb_ast::AdminStmt::ServerControl(control) => match &**control {
                 tidb_ast::ServerControlStmt::Shutdown => {
                     std::thread::spawn(|| {
@@ -1200,14 +1208,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 // Go's executor builder names the AST node of the statements
                 // it has no executor for (`Unsupported type *ast.HelpStmt`,
                 // 8108).
-                tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
-                    (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .gen_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
-                )),
-                tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
-                    (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
-                        .gen_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
-                )),
+                tidb_ast::ServerControlStmt::Restart => Err(unsupported_type("*ast.RestartStmt")),
+                tidb_ast::ServerControlStmt::Help(_) => Err(unsupported_type("*ast.HelpStmt")),
             },
             _ => Ok(None),
         }
@@ -1702,4 +1704,12 @@ impl<E: AdminExec + ?Sized> crate::check_table_index::CheckTableSession for Admi
                 .map_err(admin_check_error)
         })
     }
+}
+
+/// Go `PlanBuilder.Build`'s default: `ErrUnsupportedType.GenWithStack(
+/// "Unsupported type %T", node)` for the Go type `go_type`.
+fn unsupported_type(go_type: &str) -> DriverError {
+    DriverError::from(
+        (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE).gen_with_stack(format!("Unsupported type {go_type}")),
+    )
 }

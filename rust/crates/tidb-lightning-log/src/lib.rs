@@ -205,7 +205,7 @@ impl Logger {
             Backend::Zap(logger) => logger.log_at(level, message, &all_fields),
             Backend::LogUtil(logger) => {
                 let caller = std::panic::Location::caller();
-                logger.emit_at(level, caller.file(), caller.line(), message, &all_fields);
+                logger.log_at_caller(level, caller.file(), caller.line(), message, &all_fields);
             }
             Backend::Test { encoder, buffer } => {
                 Self::write_test(encoder, buffer, level, message, &all_fields)

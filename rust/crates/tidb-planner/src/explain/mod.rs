@@ -518,7 +518,9 @@ fn render_operator(
         ));
     }
     if format == ExplainFormat::CostTrace {
-        row.push(operator.cost_formula.clone().unwrap_or_default());
+        // Go `getOperatorInfo`: `costFormula = "N/A"` unless the cost
+        // carries a trace (a fast-path Point_Get's `ZeroCostVer2` has none).
+        row.push(operator.cost_formula.clone().unwrap_or_else(|| "N/A".to_owned()));
     }
     if runtime {
         row.push(

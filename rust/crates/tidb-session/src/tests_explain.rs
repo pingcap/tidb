@@ -7306,6 +7306,19 @@ fn keyless_correlated_lateral_apply_divides_by_the_outer_ndv() {
     assert_eq!(rows[0][1], "6.25");
 }
 
+/// Go `getOperatorInfo` prints `costFormula` `N/A` for a cost without a
+/// trace: a fast-path Point_Get costs `ZeroCostVer2`, which has none.
+/// Captured with `./gorun`.
+#[test]
+fn explain_cost_trace_point_get_formula_is_na_like_go() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY, b INT)").unwrap();
+    assert_eq!(
+        row_text(session.run("EXPLAIN FORMAT = 'cost_trace' SELECT * FROM t WHERE a = 1")),
+        vec![vec!["Point_Get_1", "1.00", "0.00", "N/A", "root", "table:t", "handle:1"]]
+    );
+}
+
 /// Go's preprocessor admits every name in `types.ExplainFormats`; captured
 /// from the oracle: `traditional` is `row`, `ru` fails in `prepareSchema`,
 /// `tidb_json` is one indented JSON array cell, `binary` one encoded cell.

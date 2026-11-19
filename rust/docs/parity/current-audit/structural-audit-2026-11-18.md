@@ -53,9 +53,6 @@ mysql -h127.0.0.1 -P<port> -uroot -vvv --force --table < probes.sql
 | E33 | `SHOW DISTRIBUTION JOBS` | 1105 `get leader failed, pd http cli is nil` (no PD) | 1105 `... (ADMIN Show) ...` |
 | E33 | `CANCEL DISTRIBUTION JOB 1` | 1105 `get leader failed, balance-range-scheduler` | 1105 `... (ADMIN CancelDistributionJob) ...` |
 | E33 | `CREATE STATISTICS s1 (correlation) ON t3(a, b)`, `DROP STATISTICS s1`, `GRANT PROXY ...` | 8108 `Unsupported type *ast.CreateStatisticsStmt` (and so on) | 1105 `... is not supported yet` |
-| E35 | `EXPLAIN 'abcdef'` | 1105 `can't find any plans for 'abcdef'` | 1105 `EXPLAIN of a plan digest is not supported yet` |
-| E35 | `EXPLAIN FORMAT = 'cost_trace' SELECT * FROM t WHERE a = 1` | `costFormula` `N/A` | `costFormula` empty |
-| N09 | `SHOW CONFIG WHERE name = 'log.level'` (macOS, system proxy 127.0.0.1:7897) | 1 row | empty, warning `request http://10.0.0.8:20200/config failed: 502 Bad Gateway` |
 
 Probed with equal answers (not findings): `CAST ... AS UNSIGNED ARRAY`
 outside an index, expression indexes, generated and non-literal column
@@ -88,7 +85,6 @@ scripts.
 | X09 | system tables through SQL on an internal session | restricted SQL, and `tidb-syssession`'s `SystemTableView` / `system_row_write` key/value reader-writer; `ddl_reorg_table.rs` and `ddl_delete_range.rs` use both |
 | X11 | one `kv.Transaction` path, tests on `mockstore` | `ClusterTableStorage` in production, and `MemTableStorage` + `LocalTableAutoIds` + `run_create_table_on` under 50 `tidb-executor` test files |
 | X13 | each `SysVar`'s closures | `SysVarDef.validation` + about 30 name branches in `set_hooks.rs` + session hooks + `StaticSessionVars` |
-| N09 | `util.InternalHTTPClient`, `pdhttp.Client` | about a dozen separately built `reqwest` clients and ad hoc `/pd/api/v1/...` calls in five crates |
 
 Checked and not kept: `tidb-format` reuses `tidb-parser-format`;
 `tidb_expr::rewriter` is shared by the planner's `expression_rewriter.rs`

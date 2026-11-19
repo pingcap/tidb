@@ -19282,6 +19282,45 @@ fn insert_select_warnings_keep_the_order_they_were_raised_in() {
     );
 }
 
+/// Go `buildExplain`: `EXPLAIN '<plan digest>'` explains the statement
+/// summary's sample of that digest with its plan's hints
+/// (`getHintedStmtThroughPlanDigest`), and a digest it has no record of is
+/// `can't find any plans for '<digest>'` (captured with `./gorun`).
+#[test]
+fn explain_plan_digest_explains_the_hinted_summary_statement() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1112)).unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
+    session
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_enable_stmt_summary = 1")
+        .unwrap();
+    session
+        .node_conn()
+        .execute_write("CREATE TABLE b(id INT PRIMARY KEY, y INT, z INT, KEY(y))")
+        .unwrap();
+    let operators = |rows: Vec<Vec<String>>| -> Vec<String> {
+        rows.into_iter().map(|row| row[0].clone()).collect()
+    };
+    let plain = operators(displayed(rows(&mut session, "explain select * from b where y = 3")));
+    rows(&mut session, "select * from b where y = 3");
+    let digest = displayed(rows(
+        &mut session,
+        "SELECT plan_digest FROM information_schema.statements_summary \
+         WHERE digest_text = 'select * from `b` where `y` = ?'",
+    ));
+    let digest = &digest[0][0];
+    assert_eq!(
+        operators(displayed(rows(&mut session, &format!("explain '{digest}'")))),
+        plain
+    );
+    let error = match session.node_conn().execute("explain 'ffff'") {
+        Ok(_) => panic!("an unrecorded digest has no plan"),
+        Err(error) => error,
+    };
+    assert_eq!(error.message, "can't find any plans for 'ffff'");
+}
+
 /// Go keys a statement-summary row by the plan digest: the sha256 of the
 /// normalized select plan (`NormalizeFlatPlan`). The expected digests below
 /// are what Go 1.27 on this branch records for the same statements, so the

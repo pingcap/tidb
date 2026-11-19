@@ -15,6 +15,26 @@ use std::sync::{Arc, RwLock};
 use crate::{Entry, Field, Level, TextEncoder};
 
 /// A thread-safe log destination equivalent to zap's `WriteSyncer`.
+/// zap `zapcore.Core`: where a logger's entries go. A [`crate::Logger`] is
+/// a core plus its options (`zap.New(core, opts...)`); a test swaps the
+/// global logger's core to observe entries (`zap.New(hookCore)`).
+pub trait Core: Send + Sync + 'static {
+    /// zap `Enabled`: whether an entry at `level` is written.
+    fn enabled(&self, level: Level) -> bool;
+    /// zap `With`: a core carrying `fields` as context.
+    fn with(&self, fields: &[Field]) -> Arc<dyn Core>;
+    /// zap `Write`: writes one entry (already checked by [`Core::enabled`]).
+    fn write(&self, entry: &Entry, fields: &[Field]) -> Result<(), String>;
+    /// zap `Sync`.
+    fn sync(&self) -> io::Result<()> {
+        Ok(())
+    }
+    /// The core's level controller (zap's `AtomicLevel` as its
+    /// `LevelEnabler`); a core with a fixed level answers a fresh one.
+    fn level(&self) -> AtomicLevel;
+}
+
+/// zap `zapcore.WriteSyncer`: an output entries are written to.
 pub trait WriteSyncer: Send + Sync + 'static {
     /// Writes one encoded log entry.
     fn write(&self, bytes: &[u8]) -> io::Result<usize>;
@@ -102,5 +122,23 @@ impl TextIoCore {
     /// Returns the shared level controller.
     pub fn level(&self) -> AtomicLevel {
         self.level.clone()
+    }
+}
+
+impl Core for TextIoCore {
+    fn enabled(&self, level: Level) -> bool {
+        TextIoCore::enabled(self, level)
+    }
+    fn with(&self, fields: &[Field]) -> Arc<dyn Core> {
+        Arc::new(TextIoCore::with(self, fields))
+    }
+    fn write(&self, entry: &Entry, fields: &[Field]) -> Result<(), String> {
+        TextIoCore::write(self, entry, fields)
+    }
+    fn sync(&self) -> io::Result<()> {
+        TextIoCore::sync(self)
+    }
+    fn level(&self) -> AtomicLevel {
+        TextIoCore::level(self)
     }
 }

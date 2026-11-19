@@ -331,6 +331,21 @@ pub trait SqlBindExec:
         Ok(None)
     }
 
+    /// Go `getHintedStmtThroughPlanDigest`: the statement summary's sample of
+    /// `plan_digest` with its plan's hints (`GenerateBindingSQL`), which
+    /// `EXPLAIN '<plan digest>'` explains.
+    fn hinted_stmt_through_plan_digest(&mut self, plan_digest: &str) -> Result<Stmt, DriverError> {
+        let (schema, query, plan_hint) = match self.fetch_record_from_statement_summary(plan_digest)? {
+            Some((schema, query, plan_hint, _, _)) if !query.is_empty() => (schema, query, plan_hint),
+            _ => return Err(plain_error(&format!("can't find any plans for '{plan_digest}'"))),
+        };
+        let origin = tidb_parser::parse(&query)
+            .map_err(|_| plain_error(&format!("failed to parse SQL for Plan Digest: {plan_digest}")))?;
+        let hinted_sql = tidb_bindinfo::binding_utils::generate_binding_sql(&origin, &plan_hint, &schema);
+        tidb_parser::parse(&hinted_sql)
+            .map_err(|error| plain_error(&error.compatibility_message(&hinted_sql)))
+    }
+
     /// Go `constructSQLBindOPFromPlanDigest` and the binding `SQLBindExec`
     /// builds from it; `None` when another plan digest already covered this
     /// statement.
