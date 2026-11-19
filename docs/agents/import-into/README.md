@@ -74,21 +74,27 @@ when only reading one package at a time.
 - Table mode in Classic and NextGen:
   - Distributed task submission sets import mode before physical ingestion. Database
     read-only transitions reject tables in that mode.
-  - Completion and cleanup switch the mode back to normal. NextGen uses the
-    task keyspace's runtime and session pool, including cross-keyspace cleanup.
+  - New submissions persist the import job ID as the table-mode owner. The DDL
+    worker checks ownership in the same metadata transaction as a mode change.
+    Another job cannot claim an owned table; stale completion or cleanup skips
+    an owner mismatch. Legacy task cleanup uses owner zero and cannot release a
+    new owned import. NextGen passes the owner through cross-keyspace cleanup.
   - Ignores `infoschema.ErrTableNotExists` during cleanup.
 - Classic `IMPORT FROM SELECT` uses its outer statement transaction to register
   the target for read-only draining until ingestion and post-processing finish.
   Its precheck session is insufficient because precheck SQL commits separately.
-- NextGen submission checks the SYSTEM server registry for read-only/import-mode
-  lifecycle support before changing the user table's mode. User-keyspace upgrade
-  completion alone does not establish SYSTEM/DXF compatibility.
+- Submission checks the target keyspace's server registry before using import
+  ownership, because an older DDL owner cannot enforce it. NextGen additionally
+  checks the SYSTEM registry for completion and cleanup support before changing
+  the user table's mode. Both the user and SYSTEM keyspaces must finish upgrading;
+  neither keyspace's upgrade state establishes the other's compatibility.
 - An allocated DXF task ID is not evidence of commit. Definite submission
   failures check active/history tasks before cancelling an unregistered user job
   and releasing its table mode. Indeterminate outcomes retain protection;
   `CANCEL IMPORT JOB` cancels the pending job before checking SYSTEM again and
-  releases mode only when no task is visible. A completed cancellation is not
-  repeated against the same table, whose mode may belong to a later import.
+  releases mode only when no task is visible. A cancelled job can retry its cleanup
+  after a transient failure. Registry errors retain protection, and conditional
+  owner checks prevent a retry from releasing a later import's mode.
 - Enabling database read-only also checks unfinished import job rows for existing
   target tables. This covers jobs submitted before NextGen used import mode;
   upgrading every node does not remove those jobs.

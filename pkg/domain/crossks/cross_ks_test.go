@@ -690,6 +690,15 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
 	require.Equal(t, model.TableModeNormal, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
 
+	req.TargetMode, req.ImportJobID = model.TableModeImport, 101
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/owned-import", targetKS, req))
+	req.TargetMode, req.ImportJobID = model.TableModeNormal, 102
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/stale-release", targetKS, req))
+	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+	req.ImportJobID = 101
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/owned-release", targetKS, req))
+	require.Equal(t, model.TableModeNormal, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+
 	_, upgradeTbl := getAlterTableModeTargetByName(t, targetDom.InfoSchema(), "t_mode_upgrade")
 	crossKSMgr := sysKSDom.GetCrossKSMgr()
 	sessMgr, ok := crossKSMgr.Get(targetKS)

@@ -86,6 +86,13 @@ func TestBuildAlterTableModeJobNoopAndInvalidMode(t *testing.T) {
 	require.Nil(t, job)
 	require.Nil(t, args)
 
+	target.ImportJobID = 101
+	job, args, noop, err = jobsubmit.BuildAlterTableModeJob(sctx, target)
+	require.NoError(t, err)
+	require.False(t, noop, "owned requests must compare current ownership in the worker")
+	require.NotNil(t, job)
+	require.EqualValues(t, 101, args.ImportJobID)
+
 	target.TargetMode = model.TableModeRestore
 	job, args, noop, err = jobsubmit.BuildAlterTableModeJob(sctx, target)
 	require.ErrorIs(t, err, infoschema.ErrInvalidTableModeSet)

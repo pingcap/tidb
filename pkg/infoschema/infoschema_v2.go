@@ -1820,7 +1820,10 @@ func (b *Builder) applyModifySchemaReadOnlyV2(m meta.Reader, diff *model.SchemaD
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	oldDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok || oldDBInfo == nil {
+		return ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+	}
 	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.ReadOnly = di.ReadOnly
 	b.infoschemaV2.deleteDB(di, diff.Version)

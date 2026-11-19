@@ -915,6 +915,9 @@ func (b *Builder) applyModifySchemaReadOnly(m meta.Reader, diff *model.SchemaDif
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
+	if _, ok := b.infoSchema.SchemaByID(diff.SchemaID); !ok {
+		return ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+	}
 	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.ReadOnly = di.ReadOnly
 	return nil

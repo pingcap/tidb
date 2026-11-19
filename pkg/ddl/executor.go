@@ -6787,6 +6787,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		SchemaName:  schema.Name,
 		TableID:     args.TableID,
 		TableName:   table.Meta().Name,
+		ImportJobID: args.ImportJobID,
 		CurrentMode: table.Meta().Mode,
 		TargetMode:  args.TableMode,
 	})
@@ -8146,6 +8147,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	// preprocessing. Persist the submitter's bypass decision for the owner.
 	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
 		job.Type != model.ActionCreateSchema && job.Type != model.ActionUpdateTiFlashReplicaStatus &&
+		job.Type != model.ActionUnlockTable &&
 		!privilege.HasExplicitReplicaWriterAdmin(ctx)
 	if job.CheckSchemaReadOnly {
 		job.CheckSchemaReadOnly = false

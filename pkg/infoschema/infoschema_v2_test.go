@@ -299,38 +299,67 @@ func TestMisc(t *testing.T) {
 
 func testRefreshSchemaReadOnly(t *testing.T) {
 	for _, useV2 := range []bool{false, true} {
-		r := internal.CreateAutoIDRequirement(t)
-		t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
-		db := internal.MockDBInfo(t, r.Store(), "refresh_read_only")
-		internal.AddDB(t, r.Store(), db)
-		data := NewData()
-		builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
-		require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
-		is := builder.Build(math.MaxUint64)
-		for i, readOnly := range []bool{true, false, true} {
-			previous, ok := is.SchemaByID(db.ID)
-			require.True(t, ok)
-			db = previous.Clone()
-			db.ReadOnly = readOnly
-			if i == 2 {
-				db.Charset, db.Collate = "utf8mb4", "utf8mb4_bin"
+		for _, action := range []model.ActionType{model.ActionRefreshMeta, model.ActionModifySchemaReadOnly} {
+			r := internal.CreateAutoIDRequirement(t)
+			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+			db := internal.MockDBInfo(t, r.Store(), "refresh_read_only")
+			internal.AddDB(t, r.Store(), db)
+			tbl := internal.MockTableInfo(t, r.Store(), "kept_table")
+			internal.AddTable(t, r.Store(), db.ID, tbl)
+			db.Deprecated.Tables = []*model.TableInfo{tbl}
+			data := NewData()
+			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+			is := builder.Build(math.MaxUint64)
+			for i, readOnly := range []bool{true, false, true} {
+				oldIS := is
+				previous, ok := oldIS.SchemaByID(db.ID)
+				require.True(t, ok)
+				db = previous.Clone()
+				db.ReadOnly = readOnly
+				if i == 2 && action == model.ActionRefreshMeta {
+					db.Charset, db.Collate = "utf8mb4", "utf8mb4_bin"
+				}
+				txn, err := r.Store().Begin()
+				require.NoError(t, err)
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.UpdateDatabase(db))
+				builder = NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+				require.NoError(t, builder.InitWithOldInfoSchema(is))
+				_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: action, SchemaID: db.ID, Version: int64(i + 2), IsRefreshMeta: action == model.ActionRefreshMeta})
+				require.NoError(t, err)
+				is = builder.Build(math.MaxUint64)
+				updated, ok := is.SchemaByID(db.ID)
+				require.True(t, ok)
+				require.Equal(t, readOnly, updated.ReadOnly)
+				oldDB, ok := oldIS.SchemaByID(db.ID)
+				require.True(t, ok)
+				require.Equal(t, previous.ReadOnly, oldDB.ReadOnly)
+				require.NotEqual(t, updated.ReadOnly, oldDB.ReadOnly, "older schema snapshots must stay immutable")
+				require.Equal(t, db.Charset, updated.Charset)
+				for _, snapshot := range []InfoSchema{oldIS, is} {
+					got, err := snapshot.TableByName(context.Background(), db.Name, tbl.Name)
+					require.NoError(t, err)
+					require.Equal(t, tbl.ID, got.Meta().ID)
+				}
+				require.NoError(t, txn.Rollback())
 			}
+		}
+		t.Run("missing cached schema", func(t *testing.T) {
+			r := internal.CreateAutoIDRequirement(t)
+			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+			db := internal.MockDBInfo(t, r.Store(), "missing_cached")
+			internal.AddDB(t, r.Store(), db)
+			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, NewData(), useV2)
+			require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 1))
 			txn, err := r.Store().Begin()
 			require.NoError(t, err)
-			m := meta.NewMutator(txn)
-			require.NoError(t, m.UpdateDatabase(db))
-			builder = NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
-			require.NoError(t, builder.InitWithOldInfoSchema(is))
-			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionRefreshMeta, SchemaID: db.ID, Version: int64(i + 2), IsRefreshMeta: true})
-			require.NoError(t, err)
-			is = builder.Build(math.MaxUint64)
-			updated, ok := is.SchemaByID(db.ID)
-			require.True(t, ok)
-			require.Equal(t, readOnly, updated.ReadOnly)
-			require.NotEqual(t, updated.ReadOnly, previous.ReadOnly, "older schema snapshots must stay immutable")
-			require.Equal(t, db.Charset, updated.Charset)
-			require.NoError(t, txn.Rollback())
-		}
+			defer func() { require.NoError(t, txn.Rollback()) }()
+			require.NotPanics(t, func() {
+				_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionModifySchemaReadOnly, SchemaID: db.ID, Version: 2})
+			})
+			require.ErrorIs(t, err, ErrDatabaseNotExists)
+		})
 	}
 }
 

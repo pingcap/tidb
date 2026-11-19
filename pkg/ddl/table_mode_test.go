@@ -16,6 +16,8 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -368,4 +370,51 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 		}
 	}
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
+}
+
+func TestImportTableModeOwnership(t *testing.T) {
+	for _, scenario := range []string{"conflicting claim", "stale cleanup"} {
+		t.Run(scenario, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create table test.owned(a int)")
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			tbl := getClonedTableInfoFromDomain(t, "test", "owned", dom)
+			alter := func(mode model.TableMode, owner int64) error {
+				args := &model.AlterTableModeArgs{}
+				require.NoError(t, json.Unmarshal(fmt.Appendf(nil,
+					`{"schema_id":%d,"table_id":%d,"table_mode":%d,"import_job_id":%d}`, db.ID, tbl.ID, mode, owner), args))
+				return dom.DDLExecutor().AlterTableMode(tk.Session(), args)
+			}
+			require.NoError(t, alter(model.TableModeImport, 101))
+			if scenario == "conflicting claim" {
+				require.Error(t, alter(model.TableModeImport, 202))
+				return
+			}
+			require.NoError(t, alter(model.TableModeNormal, 101))
+			require.NoError(t, alter(model.TableModeImport, 202))
+			require.NoError(t, alter(model.TableModeNormal, 101))
+			require.Equal(t, model.TableModeImport, getClonedTableInfoFromDomain(t, "test", "owned", dom).Mode)
+			require.NoError(t, alter(model.TableModeNormal, 0), "legacy cleanup cannot release an owned import")
+			require.Equal(t, model.TableModeImport, getClonedTableInfoFromDomain(t, "test", "owned", dom).Mode)
+			require.NoError(t, alter(model.TableModeImport, 202))
+			require.NoError(t, alter(model.TableModeNormal, 202))
+			require.Equal(t, model.TableModeNormal, getClonedTableInfoFromDomain(t, "test", "owned", dom).Mode)
+			// Backup metadata can retain an old import ID when BR changes its mode.
+			restored := getClonedTableInfoFromDomain(t, "test", "owned", dom)
+			restored.Name = ast.NewCIStr("restored")
+			restored.Mode, restored.ImportJobID = model.TableModeRestore, 202
+			require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(tk.Session(), db.Name, restored, nil))
+			restored = getClonedTableInfoFromDomain(t, "test", "restored", dom)
+			require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
+				SchemaID: db.ID, TableID: restored.ID, TableMode: model.TableModeNormal, ImportJobID: 202,
+			}))
+			require.Equal(t, model.TableModeRestore, getClonedTableInfoFromDomain(t, "test", "restored", dom).Mode)
+			require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), tk.Session(), model.TableModeNormal, db.ID, restored.ID))
+			restored = getClonedTableInfoFromDomain(t, "test", "restored", dom)
+			require.Equal(t, model.TableModeNormal, restored.Mode)
+			require.Zero(t, restored.ImportJobID)
+		})
+	}
 }

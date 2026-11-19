@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -922,6 +924,33 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 }
 
 func TestSchemaReadOnlyReviewFixes(t *testing.T) {
+	for _, release := range []string{"unlock", "disconnect", "cleanup"} {
+		t.Run("ReleaseTableLock/"+release, func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			admin := testkit.NewTestKit(t, store)
+			writer := testkit.NewTestKit(t, store)
+			admin.MustExec("create database ro")
+			admin.MustExec("create table ro.t(a int)")
+			admin.MustExec("create user locker")
+			admin.MustExec("grant all on ro.* to locker")
+			admin.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to locker")
+			require.NoError(t, writer.Session().Auth(&auth.UserIdentity{Username: "locker", Hostname: "%"}, nil, nil, nil))
+			admin.MustExec("alter database ro read only = 1")
+			writer.MustExec("lock tables ro.t write")
+			admin.MustExec("revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from locker")
+			switch release {
+			case "unlock":
+				writer.MustExec("unlock tables")
+			case "disconnect":
+				writer.Session().Close()
+			case "cleanup":
+				admin.MustExec("admin cleanup table lock ro.t")
+			}
+			checkTableLock(t, admin, "ro", "t", ast.TableLockNone)
+			admin.MustQuery("select * from ro.t").Check(testkit.Rows())
+		})
+	}
 	t.Run("BatchDeleteTransaction", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
@@ -986,9 +1015,9 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("create database ro")
+		tk.MustExec("create database Ro")
 		tk.MustExec("create database other")
-		tk.MustExec("create table ro.t(a int)")
+		tk.MustExec("create table Ro.t(a int)")
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tk.MustExec("insert into mysql.tidb_import_jobs(table_schema,table_name,table_id,created_by,parameters,source_file_size,status,step) values ('ro','t',?,'root','{}',1,'pending','')", tbl.Meta().ID)
@@ -1084,7 +1113,12 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			defer writer.MustExec("rollback")
 			writer.MustQuery("select * from test.anchor").Check(testkit.Rows())
 			alter.MustExec("alter database ro read only = 1")
+			writer.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+				Build: func(string) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("2\n")), nil },
+				Wg:    &sync.WaitGroup{},
+			})
 			for _, sql := range []string{
+				"load data local infile 'temporary.csv' into table ro.tmp",
 				"insert into ro.tmp values (2)",
 				"replace into ro.tmp values (2)",
 				"insert into ro.tmp select a from test.anchor",

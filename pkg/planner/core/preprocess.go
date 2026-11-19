@@ -498,6 +498,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 	case *ast.DropIndexStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.LoadDataStmt:
+		p.checkLocalTemporaryTableReadOnly(p.resolveCtx.GetTableName(node.Table))
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.CreateSequenceStmt:
 		dbNames = append(dbNames, node.Name.Schema)

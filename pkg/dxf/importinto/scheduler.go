@@ -598,12 +598,14 @@ func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, task
 		err = sch.TaskRuntime.AlterTableMode(ctx, model.AlterTableModeTarget{
 			SchemaID: taskMeta.Plan.DBID, SchemaName: ast.NewCIStr(taskMeta.Plan.DBName),
 			TableID: taskMeta.Plan.TableInfo.ID, TableName: taskMeta.Plan.TableInfo.Name,
-			TargetMode: model.TableModeNormal,
+			TargetMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
 		})
 	} else {
 		err = sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se,
-				model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+			return domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+				SchemaID: taskMeta.Plan.DBID, TableID: taskMeta.Plan.TableInfo.ID,
+				TableMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
+			})
 		})
 	}
 	if err != nil {

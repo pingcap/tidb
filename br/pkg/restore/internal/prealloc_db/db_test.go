@@ -614,10 +614,46 @@ func TestDB_ExecDDL2(t *testing.T) {
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
 	require.NoError(t, err)
 
-	for _, ddlJob := range ddlJobs {
+	defer db.Close()
+	for i, ddlJob := range ddlJobs {
+		if i == 2 {
+			sctx := db.Session().GetSessionCtx()
+			dom := domain.GetDomain(sctx)
+			info, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test_db"))
+			require.True(t, ok)
+			txn, err := s.Mock.Storage.Begin()
+			require.NoError(t, err)
+			info = info.Clone()
+			info.ReadOnly = true
+			require.NoError(t, meta.NewMutator(txn).UpdateDatabase(info))
+			require.NoError(t, txn.Commit(ctx))
+			require.NoError(t, dom.Reload())
+		}
+
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
+	require.ErrorContains(t, db.Session().Execute(ctx, "alter table test_db.t1 add column forbidden int"), "read only mode")
+	require.NoError(t, db.Session().Execute(ctx, "create database other"))
+	dom := domain.GetDomain(db.Session().GetSessionCtx())
+	other, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("other"))
+	require.True(t, ok)
+	other = other.Clone()
+	other.ReadOnly = true
+	txn, err := s.Mock.Storage.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).UpdateDatabase(other))
+	require.NoError(t, txn.Commit(ctx))
+	require.NoError(t, db.ExecDDL(ctx, &model.Job{
+		Type: model.ActionRenameTables, SchemaName: "test_db", Query: "rename table test_db.t1 to other.t1",
+		BinlogInfo:          &model.HistoryInfo{TableInfo: &model.TableInfo{}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "test_db", Table: "t1"}, {Database: "other", Table: "t1"}},
+	}))
+	require.Error(t, db.ExecDDL(ctx, &model.Job{
+		Type: model.ActionAddColumn, SchemaName: "other", Query: "alter table other.t1 add column id int",
+		BinlogInfo: &model.HistoryInfo{TableInfo: &model.TableInfo{}},
+	}))
+	require.ErrorContains(t, db.Session().Execute(ctx, "alter table other.t1 add column forbidden int"), "read only mode")
 }
 
 func TestCreateTableConsistent(t *testing.T) {

@@ -31,14 +31,15 @@ func BuildAlterTableModeJob(
 		return nil, nil, false, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(
 			target.CurrentMode, target.TargetMode, target.TableName.O)
 	}
-	if target.CurrentMode == target.TargetMode {
+	if target.ImportJobID == 0 && target.CurrentMode == target.TargetMode {
 		return nil, nil, true, nil
 	}
 
 	args := &model.AlterTableModeArgs{
-		TableMode: target.TargetMode,
-		SchemaID:  target.SchemaID,
-		TableID:   target.TableID,
+		ImportJobID: target.ImportJobID,
+		TableMode:   target.TargetMode,
+		SchemaID:    target.SchemaID,
+		TableID:     target.TableID,
 	}
 	job := &model.Job{
 		Version:    model.JobVersion2,

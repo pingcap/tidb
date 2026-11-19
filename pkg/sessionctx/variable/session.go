@@ -3771,12 +3771,15 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
 // drain transactions before a database read-only transition finishes.
 func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
-	if s.TxnCtx.relatedTableForReadOnly == nil {
-		s.TxnCtx.relatedTableForReadOnly = new(sync.Map)
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForReadOnly == nil {
+		txnCtx.relatedTableForReadOnly = new(sync.Map)
 	}
-	return s.TxnCtx.relatedTableForReadOnly
+	return txnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.

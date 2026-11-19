@@ -117,6 +117,15 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 			return errors.Trace(err)
 		}
 	}
+	if sctx := db.se.GetSessionCtx(); sctx != nil {
+		databases := make([]string, 0, len(ddlJob.GetInvolvingSchemaInfo()))
+		for _, target := range ddlJob.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone && target.Database != model.InvolvingAll {
+				databases = append(databases, ast.NewCIStr(target.Database).L)
+			}
+		}
+		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, databases...)()
+	}
 	err = db.se.Execute(ctx, ddlJob.Query)
 	if err != nil {
 		log.Error("execute ddl query failed",

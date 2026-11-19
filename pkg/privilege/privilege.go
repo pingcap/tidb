@@ -134,12 +134,12 @@ type schemaReadOnlyBypassKey struct{}
 func (schemaReadOnlyBypassKey) String() string { return "schema-read-only-bypass" }
 
 // WithInternalSchemaReadOnlyBypass authorizes a trusted internal operation for
-// one database. The caller must authorize the parent operation and restore the
-// previous value before returning a pooled session.
-func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, database string) func() {
+// the specified databases. The caller must authorize the parent operation and
+// restore the previous value before returning a pooled session.
+func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, databases ...string) func() {
 	key := schemaReadOnlyBypassKey{}
 	previous := ctx.Value(key)
-	ctx.SetValue(key, database)
+	ctx.SetValue(key, databases)
 	return func() { ctx.SetValue(key, previous) }
 }
 
@@ -152,7 +152,16 @@ func CanWriteReadOnlySchema(ctx interface {
 	Value(fmt.Stringer) any
 	GetSessionVars() *variable.SessionVars
 }, database string) bool {
-	return HasExplicitReplicaWriterAdmin(ctx) || ctx.Value(schemaReadOnlyBypassKey{}) == database
+	if HasExplicitReplicaWriterAdmin(ctx) {
+		return true
+	}
+	databases, _ := ctx.Value(schemaReadOnlyBypassKey{}).([]string)
+	for _, target := range databases {
+		if target == database {
+			return true
+		}
+	}
+	return false
 }
 
 // HasExplicitReplicaWriterAdmin reports whether an authenticated session may

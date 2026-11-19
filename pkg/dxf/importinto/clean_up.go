@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -193,11 +192,14 @@ func cleanTableMode(ctx context.Context, task *proto.Task, taskMeta *taskinfo.Ta
 		err = runtime.AlterTableMode(ctx, model.AlterTableModeTarget{
 			SchemaID: taskMeta.Plan.DBID, SchemaName: ast.NewCIStr(taskMeta.Plan.DBName),
 			TableID: taskMeta.Plan.TableInfo.ID, TableName: taskMeta.Plan.TableInfo.Name,
-			TargetMode: model.TableModeNormal,
+			TargetMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
 		})
 	} else {
 		err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+			return domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+				SchemaID: taskMeta.Plan.DBID, TableID: taskMeta.Plan.TableInfo.ID,
+				TableMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
+			})
 		})
 	}
 	if err != nil {

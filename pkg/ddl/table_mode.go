@@ -35,6 +35,18 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		return ver, err
 	}
 
+	// Compare ownership in the same transaction that publishes the mode. A
+	// cached precheck cannot protect against a later import claiming the table.
+	if args.TableMode == model.TableModeNormal &&
+		((tbInfo.Mode == model.TableModeImport && tbInfo.ImportJobID != args.ImportJobID) ||
+			(tbInfo.Mode != model.TableModeImport && args.ImportJobID != 0)) {
+		job.State = model.JobStateDone
+		return ver, nil
+	}
+	if args.TableMode == model.TableModeImport && tbInfo.Mode == model.TableModeImport && tbInfo.ImportJobID != args.ImportJobID {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
+	}
 	switch tbInfo.Mode {
 	case model.TableModeNormal, model.TableModeImport, model.TableModeRestore:
 		if tbInfo.Mode == args.TableMode {
@@ -72,6 +84,10 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 	}
 
 	tbInfo.Mode = args.TableMode
+	tbInfo.ImportJobID = 0
+	if args.TableMode == model.TableModeImport {
+		tbInfo.ImportJobID = args.ImportJobID
+	}
 	return nil
 }
 

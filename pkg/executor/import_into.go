@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -311,25 +310,14 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if err != nil {
 			return 0, nil, err
 		}
-		// The user keyspace's upgrade state does not describe the SYSTEM nodes
-		// that will finish and clean up this task's persistent table mode.
-		if err := dxfTaskMgr.WithNewSession(func(se sessionctx.Context) error {
-			servers, err := getImportLifecycleServers(ctx, se)
-			if err != nil {
-				return err
-			}
-			if len(servers) == 0 {
-				return errors.New("cannot determine SYSTEM/DXF import table-mode support")
-			}
-			for _, server := range servers {
-				if server == nil || !server.SchemaReadOnly {
-					return errors.New("finish upgrading all SYSTEM/DXF nodes before submitting an import with table-mode protection")
-				}
-			}
-			return nil
-		}); err != nil {
+		// SYSTEM/DXF owns completion and cleanup, independently of the user nodes.
+		if err := checkImportTableModeOwnership(ctx, dxfTaskMgr, "SYSTEM/DXF"); err != nil {
 			return 0, nil, err
 		}
+	}
+	// The target keyspace's DDL owner must understand the ownership argument.
+	if err := checkImportTableModeOwnership(ctx, taskManager, "TiDB"); err != nil {
+		return 0, nil, err
 	}
 
 	taskMeta := &taskinfo.TaskMeta{
@@ -356,9 +344,9 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		jobID, taskID int64
 	)
 	var runningOnUserKS bool
-	var tableModeSet, taskSubmitted, userJobCommitted bool
+	var tableModeClaimed, taskSubmitted, userJobCommitted bool
 	defer func() {
-		if !tableModeSet || taskSubmitted {
+		if !tableModeClaimed || taskSubmitted {
 			return
 		}
 		cleanupCtx := context.WithoutCancel(ctx)
@@ -382,7 +370,10 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			return
 		}
 		cleanupErr := taskManager.WithNewTxn(cleanupCtx, func(se sessionctx.Context) error {
-			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, plan.DBID, plan.TableInfo.ID)
+			return domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+				SchemaID: plan.DBID, TableID: plan.TableInfo.ID,
+				TableMode: model.TableModeNormal, ImportJobID: jobID,
+			})
 		})
 		if cleanupErr != nil {
 			resultErr = errors.Annotatef(resultErr, "release import table mode failed: %v", cleanupErr)
@@ -400,11 +391,16 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		if plan.SchemaReadOnlyBypass {
 			defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
 		}
-		err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+		// Conditional cleanup is safe even if this DDL returns an uncertain outcome.
+		tableModeClaimed = true
+		err2 = domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+			SchemaID: plan.DBID, TableID: plan.TableInfo.ID,
+			TableMode: model.TableModeImport, ImportJobID: jobID,
+		})
 		if err2 != nil {
 			return err2
 		}
-		tableModeSet = plan.TableInfo.Mode == model.TableModeNormal
+		taskMeta.TableModeOwner = jobID
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
 		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
@@ -468,6 +464,25 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
+}
+
+func checkImportTableModeOwnership(ctx context.Context, manager *dxfstorage.TaskManager, component string) error {
+	return manager.WithNewSession(func(se sessionctx.Context) error {
+		servers, err := getImportLifecycleServers(ctx, se)
+		if err != nil {
+			return err
+		}
+		failpoint.InjectCall("afterGetImportLifecycleServers", component, servers)
+		if len(servers) == 0 {
+			return errors.Errorf("cannot determine %s import table-mode ownership support", component)
+		}
+		for _, server := range servers {
+			if server == nil || !server.SchemaReadOnly {
+				return errors.Errorf("finish upgrading all %s nodes before submitting an import with table-mode ownership", component)
+			}
+		}
+		return nil
+	})
 }
 
 func getImportLifecycleServers(ctx context.Context, sctx sessionctx.Context) (map[string]*serverinfo.ServerInfo, error) {
@@ -648,7 +663,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	}); err != nil {
 		return err
 	}
-	if !info.CanCancel() {
+	if !info.CanCancel() && !info.IsCancelled() {
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
 	}
 	return nil
@@ -659,6 +674,25 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
+	}
+	// A previous attempt can have committed cancellation before cleanup failed.
+	// Retry only its cleanup; do not turn a terminal task into a new cancellation.
+	jobManager, err := dxfstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	var cancelled bool
+	if err := jobManager.WithNewSession(func(se sessionctx.Context) error {
+		job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
+		if err == nil {
+			cancelled = job.IsCancelled()
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	if cancelled {
+		return cleanCancelledImportJob(ctx, jobID)
 	}
 	taskKey := taskkey.ForJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
@@ -709,6 +743,20 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 	}); err != nil {
 		return err
 	}
+	return cleanCancelledImportJob(ctx, jobID)
+}
+
+// cleanCancelledImportJob can be retried after cancellation is durable. Unknown
+// DXF state retains protection; only a confirmed missing task permits release.
+func cleanCancelledImportJob(ctx context.Context, jobID int64) error {
+	manager, err := dxfstorage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	failpoint.InjectCall("beforeImportCancelCleanup", &err)
+	if err != nil {
+		return err
+	}
 	// Cancel the durable pending job before rechecking SYSTEM. A task that is
 	// committed later will see cancellation before it can start ingestion. A
 	// task already visible here retains protection until its normal cleanup.
@@ -733,7 +781,14 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 		if !ok {
 			return nil
 		}
-		err = ddl.AlterTableMode(dom.DDLExecutor(), se, model.TableModeNormal, db.ID, job.TableID)
+		failpoint.InjectCall("beforeImportCancelModeRelease", &err)
+		if err != nil {
+			return err
+		}
+		err = dom.DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+			SchemaID: db.ID, TableID: job.TableID,
+			TableMode: model.TableModeNormal, ImportJobID: jobID,
+		})
 		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
 			return nil
 		}
