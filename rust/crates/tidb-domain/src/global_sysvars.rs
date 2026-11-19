@@ -155,6 +155,74 @@ fn tso_rpc_concurrency(value: &str) -> isize {
     }
 }
 
+/// Go `initDomainSysVars`'s `variable.SetPDClientDynamicOption` and
+/// `variable.SetLowResolutionTSOUpdateInterval`: the PD client options'
+/// `SetGlobal` reach this node's PD client through them (Go
+/// `Domain.setPDClientDynamicOption`, which stores `vardef`'s value once the
+/// client took it).
+fn install_pd_client_dynamic_option(policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>) {
+    use std::sync::atomic::Ordering::SeqCst;
+    use tidb_vardef::tidb_vars::*;
+    // Go `updatePDClient`: a store without a PD client takes no option.
+    #[derive(Debug)]
+    struct NoPdClient;
+    impl PdRegionPolicy for NoPdClient {
+        fn set_follower_handle(&self, _enabled: bool) {}
+    }
+    let current = move || -> Arc<dyn PdRegionPolicy> {
+        policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| Arc::new(NoPdClient))
+    };
+    let pd_for = current.clone();
+    tidb_variable::domain_slots::set_pd_client_dynamic_option(Arc::new(move |name: &str, value: &str| {
+        let pd = pd_for();
+        let on = tidb_vardef::option_values::tidb_opt_on(value);
+        match name {
+            TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME => {
+                let millis = value.parse::<f64>().map_err(|error| VarError::unknown(error.to_string()))?;
+                pd.set_tso_batch_wait(tso_batch_wait(value));
+                tidb_vardef::MAX_TSO_BATCH_WAIT_INTERVAL.store(millis.to_bits(), SeqCst);
+            }
+            TIDB_ENABLE_TSO_FOLLOWER_PROXY => {
+                pd.set_tso_follower_proxy(on);
+                tidb_vardef::ENABLE_TSO_FOLLOWER_PROXY.store(on, SeqCst);
+            }
+            // Note: EnableFollowerHandle is only used for region API now.
+            PD_ENABLE_FOLLOWER_HANDLE_REGION => {
+                pd.set_follower_handle(on);
+                tidb_vardef::ENABLE_PD_FOLLOWER_HANDLE_REGION.store(on, SeqCst);
+            }
+            TIDB_TSO_CLIENT_RPC_MODE => {
+                let concurrency = match value {
+                    "DEFAULT" => 1,
+                    "PARALLEL" => 2,
+                    "PARALLEL-FAST" => 4,
+                    _ => {
+                        return Err(tidb_terror::MysqlError::from_terror(
+                            &tidb_variable::variable_errors::ERR_WRONG_VALUE_FOR_VAR
+                                .gen_with_stack_by_args(&[name.into(), value.into()]),
+                        ))
+                    }
+                };
+                pd.set_tso_rpc_concurrency(concurrency);
+            }
+            TIDB_ENABLE_BATCH_QUERY_REGION => {
+                pd.set_enable_router_client(on);
+                tidb_vardef::ENABLE_BATCH_QUERY_REGION.store(on, SeqCst);
+            }
+            _ => {}
+        }
+        Ok(())
+    }));
+    tidb_variable::domain_slots::set_low_resolution_tso_update_interval_func(Arc::new(move |interval| {
+        current().set_low_resolution_tso_update_interval(interval);
+        Ok(())
+    }));
+}
+
 /// Go `SysVar.SetGlobal` registered by a package outside the variable
 /// registry (`variable.RegisterSysVar`): run with the stored GLOBAL value.
 pub type SetGlobalHook = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
@@ -595,6 +663,10 @@ impl GlobalSysvars {
     /// `rebuildSysVarCache`: the domain takes the sysvar cache over, and every
     /// variable's SetGlobal hook runs with the value the startup left it.
     pub fn arm_domain_hooks(&self) {
+        // Go `initDomainSysVars`: the domain fills `variable`'s slots.
+        if self.publishes_runtime_settings {
+            install_pd_client_dynamic_option(Arc::clone(&self.pd_region_policy));
+        }
         if self
             .domain_hooks
             .swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -700,6 +772,7 @@ impl GlobalSysvars {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(policy.clone());
         if self.publishes_runtime_settings {
+            install_pd_client_dynamic_option(Arc::clone(&self.pd_region_policy));
             policy.set_follower_handle(enabled(
                 tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION,
             ));
@@ -1231,7 +1304,6 @@ impl GlobalSysvars {
         if let Some(set_global) = get_sys_var(name).and_then(|def| def.set_global) {
             let _ = set_global(&mut tidb_variable::vars::SessionVars::new(), value);
         }
-        use std::sync::atomic::Ordering::SeqCst;
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
@@ -1244,35 +1316,6 @@ impl GlobalSysvars {
             // blocks until the node is gone. Following the value the cluster
             // holds is not a switch, so the running-job guard does not apply.
             TIDB_ENABLE_MDL => tidb_vardef::set_enable_mdl(on),
-            PD_ENABLE_FOLLOWER_HANDLE_REGION
-            | TIDB_ENABLE_TSO_FOLLOWER_PROXY
-            | TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME
-            | TIDB_TSO_CLIENT_RPC_MODE
-            | TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL
-            | TIDB_ENABLE_BATCH_QUERY_REGION => {
-                // Go `setPDClientDynamicOption`: the store's PD client takes
-                // the new option in place.
-                let policy = self
-                    .pd_region_policy
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                if let Some(policy) = policy {
-                    match name {
-                        PD_ENABLE_FOLLOWER_HANDLE_REGION => policy.set_follower_handle(on),
-                        TIDB_ENABLE_TSO_FOLLOWER_PROXY => policy.set_tso_follower_proxy(on),
-                        TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME => {
-                            policy.set_tso_batch_wait(tso_batch_wait(value))
-                        }
-                        TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL => policy
-                            .set_low_resolution_tso_update_interval(low_resolution_tso_update_interval(
-                                value,
-                            )),
-                        TIDB_ENABLE_BATCH_QUERY_REGION => policy.set_enable_router_client(on),
-                        _ => policy.set_tso_rpc_concurrency(tso_rpc_concurrency(value)),
-                    }
-                }
-            }
             _ if is_stmt_summary_setting(name) => self.publish_stmt_summary_setting(name, value),
             _ if Self::is_memory_arbitration_setting(name) => {
                 let _ = tidb_memory::apply_process_memory_setting(name, value);

@@ -18,6 +18,7 @@
 //! package does.
 
 pub mod connection_info;
+pub mod domain_slots;
 mod error;
 pub mod cloud_storage;
 pub mod mem_quota;

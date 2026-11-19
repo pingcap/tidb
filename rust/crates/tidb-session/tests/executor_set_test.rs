@@ -273,3 +273,27 @@ fn variables_carry_their_own_process_state_hooks() {
         tk.must_exec(&format!("set global {name} = default"));
     }
 }
+
+/// Go `initDomainSysVars`' `SetPDClientDynamicOption`: the PD client
+/// options' `SetGlobal` reach the domain, which stores `vardef`'s value that
+/// their `GetGlobal` reads back; an unset slot is Go's noop.
+#[test]
+fn pd_client_options_store_and_read_their_process_state() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _serial = serial();
+    let mut tk = TestKit::new();
+    tk.must_exec("set global tidb_enable_tso_follower_proxy = ON");
+    tk.must_query("select @@global.tidb_enable_tso_follower_proxy").check(["1"]);
+    tk.must_exec("set global tidb_tso_client_batch_max_wait_time = 1.5");
+    assert_eq!(f64::from_bits(tidb_vardef::MAX_TSO_BATCH_WAIT_INTERVAL.load(SeqCst)), 1.5);
+    tk.must_query("select @@global.tidb_tso_client_batch_max_wait_time").check(["1.5"]);
+    tk.must_exec("set global tidb_low_resolution_tso_update_interval = 100");
+    assert_eq!(tidb_vardef::LOW_RESOLUTION_TSO_UPDATE_INTERVAL.load(SeqCst), 100);
+    for name in [
+        "tidb_enable_tso_follower_proxy",
+        "tidb_tso_client_batch_max_wait_time",
+        "tidb_low_resolution_tso_update_interval",
+    ] {
+        tk.must_exec(&format!("set global {name} = default"));
+    }
+}

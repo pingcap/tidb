@@ -29,7 +29,7 @@
 //! lives in [`global_sysvar_initial`]. The complete Go `vardef` and `variable`
 //! package obligations remain tracked in the structural parity audit.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 // Go's `vardef.DefTiDBEnableMDL` defaults to true.  Keep the process flag at
 // that effective value from the first instruction: startup may begin the
@@ -314,6 +314,27 @@ pub static TXN_ENTRY_SIZE_LIMIT: AtomicU64 =
 /// infoschema cache after a GLOBAL/INSTANCE update.
 pub static SCHEMA_CACHE_SIZE: AtomicU64 =
     AtomicU64::new(defaults::DEF_TIDB_SCHEMA_CACHE_SIZE as u64);
+
+/// Go `vardef.EnableTSOFollowerProxy`, stored by the domain's
+/// `setPDClientDynamicOption`.
+pub static ENABLE_TSO_FOLLOWER_PROXY: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_TSO_FOLLOWER_PROXY);
+
+/// Go `vardef.EnablePDFollowerHandleRegion`.
+pub static ENABLE_PD_FOLLOWER_HANDLE_REGION: AtomicBool =
+    AtomicBool::new(defaults::DEF_PD_ENABLE_FOLLOWER_HANDLE_REGION);
+
+/// Go `vardef.EnableBatchQueryRegion`.
+pub static ENABLE_BATCH_QUERY_REGION: AtomicBool =
+    AtomicBool::new(defaults::DEF_TIDB_ENABLE_BATCH_QUERY_REGION);
+
+/// Go `vardef.MaxTSOBatchWaitInterval` (milliseconds), as `f64` bits.
+pub static MAX_TSO_BATCH_WAIT_INTERVAL: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME.to_bits());
+
+/// Go `vardef.LowResolutionTSOUpdateInterval` (milliseconds).
+pub static LOW_RESOLUTION_TSO_UPDATE_INTERVAL: AtomicU32 =
+    AtomicU32::new(defaults::DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL as u32);
 
 /// Go `vardef.SchemaCacheSizeOriginText`: the value text `tidb_schema_cache_size`
 /// was set with, which its `GetGlobal` reads back.

@@ -403,3 +403,48 @@ get_global! {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
 }
+
+/// Go's `SetGlobal` for the PD client options:
+/// `(*SetPDClientDynamicOption.Load())(name, val)`, the domain's
+/// `setPDClientDynamicOption`.
+macro_rules! pd_client_dynamic_option {
+    ($($fn_name:ident => $var:path;)*) => {
+        $(
+            pub(super) fn $fn_name(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+                crate::domain_slots::pd_client_dynamic_option($var, value)
+            }
+        )*
+    };
+}
+
+pd_client_dynamic_option! {
+    set_tidb_tso_client_batch_max_wait_time => tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_BATCH_MAX_WAIT_TIME;
+    set_tidb_enable_tso_follower_proxy => tidb_vardef::tidb_vars::TIDB_ENABLE_TSO_FOLLOWER_PROXY;
+    set_pd_enable_follower_handle_region => tidb_vardef::tidb_vars::PD_ENABLE_FOLLOWER_HANDLE_REGION;
+    set_tidb_enable_batch_query_region => tidb_vardef::tidb_vars::TIDB_ENABLE_BATCH_QUERY_REGION;
+    set_tidb_tso_client_rpc_mode => tidb_vardef::tidb_vars::TIDB_TSO_CLIENT_RPC_MODE;
+}
+
+/// Go `TiDBLowResolutionTSOUpdateInterval`'s `SetGlobal`: store the interval,
+/// then `SetLowResolutionTSOUpdateInterval(interval)` when the domain set it.
+pub(super) fn set_tidb_low_resolution_tso_update_interval(
+    _vars: &mut SessionVars,
+    value: &str,
+) -> Result<(), VarError> {
+    tidb_vardef::LOW_RESOLUTION_TSO_UPDATE_INTERVAL.store(
+        crate::varsutil::tidb_opt_int64(value, tidb_vardef::defaults::DEF_TIDB_LOW_RESOLUTION_TSO_UPDATE_INTERVAL) as u32,
+        SeqCst,
+    );
+    crate::domain_slots::low_resolution_tso_update_interval(std::time::Duration::from_millis(u64::from(
+        tidb_vardef::LOW_RESOLUTION_TSO_UPDATE_INTERVAL.load(SeqCst),
+    )))
+}
+
+get_global! {
+    // Go `strconv.FormatFloat(vardef.MaxTSOBatchWaitInterval.Load(), 'f', -1, 64)`.
+    get_tidb_tso_client_batch_max_wait_time =>
+        f64::from_bits(tidb_vardef::MAX_TSO_BATCH_WAIT_INTERVAL.load(SeqCst)).to_string();
+    get_tidb_enable_tso_follower_proxy => on_off(tidb_vardef::ENABLE_TSO_FOLLOWER_PROXY.load(SeqCst));
+    get_pd_enable_follower_handle_region => on_off(tidb_vardef::ENABLE_PD_FOLLOWER_HANDLE_REGION.load(SeqCst));
+    get_tidb_enable_batch_query_region => on_off(tidb_vardef::ENABLE_BATCH_QUERY_REGION.load(SeqCst));
+}

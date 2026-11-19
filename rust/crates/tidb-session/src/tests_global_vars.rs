@@ -3107,7 +3107,11 @@ fn ts_validation_global_hook_updates_the_client_switch() {
 
 /// Go `tidb_low_resolution_tso_update_interval`'s `SetGlobal` calls the
 /// domain's `setLowResolutionTSOUpdateInterval` (the store oracle) with the
-/// millisecond value; installing the store applies the current one.
+/// millisecond value; installing the store applies the current one. A `SET
+/// GLOBAL` runs it twice, as Go's does: `SetGlobalFromHook` before the
+/// store, then the local sysvar cache rebuild
+/// (`replaceGlobalVariablesTableValue(..., updateLocal=true)`) that runs
+/// every variable's `SetGlobal`.
 #[test]
 fn low_resolution_tso_update_interval_reaches_the_store_oracle() {
     use std::sync::Mutex;
@@ -3129,6 +3133,7 @@ fn low_resolution_tso_update_interval_reaches_the_store_oracle() {
         *policy.0.lock().unwrap(),
         [
             std::time::Duration::from_millis(2000),
+            std::time::Duration::from_millis(500),
             std::time::Duration::from_millis(500)
         ]
     );

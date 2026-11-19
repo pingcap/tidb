@@ -38,9 +38,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_pd_enable_follower_handle_region),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_pd_enable_follower_handle_region),
     },
     SysVarDef {
         name: "tidb_adaptive_closest_read_threshold",
@@ -326,9 +326,9 @@ pub(super) static ENTRIES: [SysVarDef; 51] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_batch_query_region),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_batch_query_region),
     },
     SysVarDef {
         name: "tidb_enable_chunk_rpc",
