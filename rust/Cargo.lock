@@ -6865,6 +6865,7 @@ dependencies = [
  "tidb-stats-handle-globalstats",
  "tidb-stats-handle-history",
  "tidb-stats-handle-lockstats",
+ "tidb-stats-handle-logutil",
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-syncload",

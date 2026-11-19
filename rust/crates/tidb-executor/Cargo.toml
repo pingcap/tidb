@@ -171,6 +171,7 @@ tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-log = { path = "../tidb-log" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-sysutil = { path = "../tidb-sysutil" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }

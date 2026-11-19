@@ -32,6 +32,8 @@ use tidb_hack::go_to_lower;
 
 /// Go `AnalyzeExec` for the tables this session's catalog holds.
 pub trait AnalyzeExec: crate::show::exec::ShowExec {
+    /// Go `broadcast` over the session's `kv.TiDB` client.
+    fn broadcast(&mut self, sql: &str) -> Result<(), DriverError>;
     /// Go `pdhelper.GlobalPDHelper`.
     fn approximate_table_counts(
         &self,
@@ -103,10 +105,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .filter(|statement| service.builds_column_task(statement))
             .cloned()
             .collect::<Vec<_>>();
-        let target_ids = self.analyze_stats_delta_target_ids(&column_task_tables);
-        if !target_ids.is_empty() {
-            service.flush_stats_delta(&target_ids)?;
-        }
+        self.flush_stats_delta_for_analyze(&column_task_tables, service)?;
         let memory_quota = self.analyze_memory_quota();
         self.begin_routed_statement_warnings();
         let mut successful_table_ids = BTreeSet::new();
@@ -149,6 +148,112 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// Go `collectStatsDeltaFlushObjectsForAnalyze`: one table-scope object
     /// per table with a column task, whatever partitions it names, resolved
     /// as `FLUSH STATS_DELTA` resolves it (the table and every partition).
+    /// Go `flushStatsDeltaForAnalyze`: flushes pending stats deltas for the
+    /// tables whose column-analyze tasks will capture base count /
+    /// modify_count from `mysql.stats_meta`. Without this, a stale
+    /// pre-analyze delta can be applied later and double count rows or
+    /// modifications.
+    fn flush_stats_delta_for_analyze(
+        &mut self,
+        column_task_tables: &[AnalyzeStatement],
+        service: &dyn AnalyzeService,
+    ) -> Result<(), DriverError> {
+        let flush_objects = collect_stats_delta_flush_objects_for_analyze(
+            column_task_tables
+                .iter()
+                .map(|task| (task.schema.as_str(), task.table.as_str())),
+        );
+        if flush_objects.is_empty() {
+            return Ok(());
+        }
+        // HACK: test binaries have no real RPC peer to broadcast to; dump
+        // locally instead.
+        if tidb_intest::IN_TEST
+            && self.flush_analyze_stats_delta_for_test(column_task_tables, service)?
+        {
+            return Ok(());
+        }
+        let stmt = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::Flush(
+            Box::new(tidb_ast::FlushStmt {
+                no_write_to_binlog: false,
+                target: tidb_ast::FlushStmtType::StatsDelta {
+                    objects: flush_objects,
+                    cluster: true,
+                },
+            }),
+        )));
+        self.try_broadcast(&stmt.restore())
+    }
+
+    /// Go `tryBroadcast`: runs `FLUSH STATS_DELTA ... CLUSTER` to flush
+    /// every TiDB's pending deltas before analyze. A peer on an older release
+    /// that cannot decode the BroadcastQuery executor rejects it with "this
+    /// exec type <n> doesn't support yet"; the pre-flush is best-effort, so
+    /// that is a warning and the analyze proceeds. Other errors propagate.
+    fn try_broadcast(&mut self, sql: &str) -> Result<(), DriverError> {
+        let Err(error) = self.broadcast(sql) else {
+            return Ok(());
+        };
+        if !is_unsupported_broadcast_query_err(&error) {
+            return Err(error);
+        }
+        tidb_stats_handle_logutil::stats_logger().warn(
+            "FLUSH STATS_DELTA CLUSTER broadcast rejected by a peer TiDB during analyze; \
+             proceeding without the cluster-wide pre-analyze flush",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+        );
+        Ok(())
+    }
+
+    /// Go `flushAnalyzeStatsDeltaForTest`: when every registered TiDB has a
+    /// reachable RPC endpoint the normal broadcast path runs, so RPC-backed
+    /// tests still exercise the production behavior; otherwise this
+    /// instance dumps the tables' deltas itself.
+    fn flush_analyze_stats_delta_for_test(
+        &mut self,
+        column_task_tables: &[AnalyzeStatement],
+        service: &dyn AnalyzeService,
+    ) -> Result<bool, DriverError> {
+        if self.can_broadcast_analyze_stats_delta_for_test() {
+            return Ok(false);
+        }
+        let target_ids = self.analyze_stats_delta_target_ids(column_task_tables);
+        if target_ids.is_empty() {
+            return Ok(false);
+        }
+        service.flush_stats_delta(&target_ids)?;
+        Ok(true)
+    }
+
+    /// Go `canBroadcastAnalyzeStatsDeltaForTest`: every listed TiDB but a
+    /// placeholder must answer a TCP dial at its status address.
+    fn can_broadcast_analyze_stats_delta_for_test(&self) -> bool {
+        let Some(syncer) = self.viewer_state().server_info_syncer else {
+            return false;
+        };
+        let Ok(servers) = syncer.get_all_server_info() else {
+            return false;
+        };
+        let rpc_addrs: Vec<String> = servers
+            .values()
+            // Go `config.UnavailableIP`, which `buildTiDBMemCopTasks` skips too.
+            .filter(|server| server.static_info.ip != "<nil>")
+            .map(|server| {
+                // In-process test domains can register server info without
+                // starting a TiDB RPC listener.
+                if server.static_info.ip.is_empty() {
+                    String::new()
+                } else {
+                    tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
+                        &server.static_info.ip,
+                        server.static_info.status_port,
+                    )
+                }
+            })
+            .collect();
+        can_broadcast_to_tidb_rpc_for_test(&rpc_addrs)
+    }
+
     fn analyze_stats_delta_target_ids(&self, tables: &[AnalyzeStatement]) -> Vec<i64> {
         let catalog = self.catalog_ignoring_poison();
         let mut seen = BTreeSet::new();
@@ -318,6 +423,56 @@ pub trait AnalyzeService {
     fn dump_historical_stats(&self, table_id: i64);
 }
 
+/// Go `collectStatsDeltaFlushObjectsForAnalyze`: the database-qualified
+/// tables whose stats deltas must be flushed before building column analyze
+/// tasks, each once. A column task is its `(DBName, TableName)`.
+fn collect_stats_delta_flush_objects_for_analyze<'a>(
+    col_tasks: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Vec<tidb_ast::StatsObject> {
+    let mut seen_objects = BTreeSet::new();
+    let mut flush_objects = Vec::new();
+    for (db_name, table_name) in col_tasks {
+        // Go: "analyze column task must have database-qualified table name".
+        if db_name.is_empty() || table_name.is_empty() {
+            continue;
+        }
+        if !seen_objects.insert((db_name, table_name)) {
+            continue;
+        }
+        flush_objects.push(tidb_ast::StatsObject::Table {
+            database: Some(db_name.to_owned()),
+            table: table_name.to_owned(),
+        });
+    }
+    flush_objects
+}
+
+/// Go `isUnsupportedBroadcastQueryErr`: a peer rejecting the BroadcastQuery
+/// coprocessor executor with "this exec type <n> doesn't support yet".
+fn is_unsupported_broadcast_query_err(error: &DriverError) -> bool {
+    let msg = error.to_string();
+    msg.contains("exec type") && msg.contains("doesn't support yet")
+}
+
+/// Go `canBroadcastToTiDBRPCForTest`.
+fn can_broadcast_to_tidb_rpc_for_test(rpc_addrs: &[String]) -> bool {
+    !rpc_addrs.is_empty() && rpc_addrs.iter().all(|addr| is_tidb_rpc_reachable_for_test(addr))
+}
+
+/// Go `isTiDBRPCReachableForTest`: a 50 ms TCP dial.
+fn is_tidb_rpc_reachable_for_test(addr: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    if addr.is_empty() {
+        return false;
+    }
+    let Ok(addrs) = addr.to_socket_addrs() else {
+        return false;
+    };
+    addrs.into_iter().any(|addr| {
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(50)).is_ok()
+    })
+}
+
 /// The scan-concurrency variable an analyze reads: an auto-analyze uses the
 /// system-process one.
 #[must_use]
@@ -326,5 +481,63 @@ pub fn analyze_scan_concurrency_variable(auto_analyze: bool) -> &'static str {
         tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
     } else {
         tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
+    }
+}
+
+/// Go `pkg/executor/analyze_utils_test.go`.
+#[cfg(test)]
+mod analyze_utils_test {
+    use super::*;
+
+    /// Go `TestIsUnsupportedBroadcastQueryErr`.
+    #[test]
+    fn test_is_unsupported_broadcast_query_err() {
+        let err = |message: &str| DriverError::Mysql(crate::MysqlError::unknown(message));
+        // An old peer rejects the BroadcastQuery executor during a rolling
+        // upgrade; the message is produced by PBPlanBuilder.pbToPhysicalPlan.
+        assert!(is_unsupported_broadcast_query_err(&err(
+            "other error: this exec type 17 doesn't support yet"
+        )));
+        assert!(is_unsupported_broadcast_query_err(&err(
+            "this exec type 17 doesn't support yet"
+        )));
+
+        // Unrelated errors must still propagate and fail analyze.
+        assert!(!is_unsupported_broadcast_query_err(&err("context canceled")));
+        assert!(!is_unsupported_broadcast_query_err(&err("region unavailable")));
+    }
+
+    /// Go `TestCollectStatsDeltaFlushObjectsForAnalyzeDottedNames`.
+    #[test]
+    fn test_collect_stats_delta_flush_objects_for_analyze_dotted_names() {
+        let flush_objects = collect_stats_delta_flush_objects_for_analyze([
+            // Quoted identifiers may contain dots. These first two targets
+            // both stringify to "a.b.c" if db and table names are joined
+            // with ".".
+            ("a.b", "c"),
+            ("a", "b.c"),
+            // Keep the duplicate target deduped.
+            ("a", "b.c"),
+        ]);
+        let targets: Vec<(String, String)> = flush_objects
+            .into_iter()
+            .map(|object| match object {
+                tidb_ast::StatsObject::Table { database, table } => (database.unwrap(), table),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            [("a.b".to_owned(), "c".to_owned()), ("a".to_owned(), "b.c".to_owned())]
+        );
+    }
+
+    /// Go `TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints`.
+    #[test]
+    fn test_can_broadcast_to_tidb_rpc_for_test_rejects_invalid_endpoints() {
+        // In-process domains can register multiple server infos with an
+        // empty IP but no TiDB RPC listener. Such targets must not take the
+        // broadcast path.
+        assert!(!can_broadcast_to_tidb_rpc_for_test(&[String::new(), String::new()]));
     }
 }

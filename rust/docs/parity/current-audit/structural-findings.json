@@ -2,8 +2,8 @@
   "date": "2026-11-18",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 11,
-    "open": 6,
+    "unresolved": 10,
+    "open": 5,
     "partial": 5
   },
   "findings": [
@@ -86,17 +86,9 @@
       "finding": "A statement's memory crosses `tidb_mem_quota_query` at a different point than Go's, so a different OOM action handles it. Go `TestMemTracker4DeleteExec` (`disableFixedRowCountHint`, `EnabledRateLimitAction`, quota 500) expects the copr `rateLimitAction` to delegate (`memory exceeds quota, rateLimitAction delegate to fallback action`): the multi-table DELETE's readers are open when the quota is crossed. Here each reader installs its `RateLimitAction` (one token, enabled) on the session tracker, but the statement reaches its 2112 B peak only after they finished, and the session chain then holds a finished spill action and the log action; the rate limiter is never invoked. The executor tracks the rows it holds rather than Go's chunk capacity (`tidb-variable` `mem_quota.rs`), which moves where the peak happens. Port: `tidb-session/tests/executor_test_oomtest_oom_test.rs` (`test_mem_tracker4_delete_exec`, last assertion omitted).",
       "rust_evidence": "`rust/crates/tidb-copr/src/cop_paging/cop_iterator.rs` (`RateLimitAction`), the executors' memory tracking (`tidb-executor`), `rust/crates/tidb-session/tests/executor_test_oomtest_oom_test.rs`",
       "go_owner": "`pkg/store/copr/coprocessor.go` (`rateLimitAction`), `pkg/executor/test/oomtest/oom_test.go` (`TestMemTracker4DeleteExec`), `pkg/util/chunk` memory accounting"
-    },
-    {
-      "id": "E43",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "ANALYZE flushes the pending statistics deltas of this instance only. Go `flushStatsDeltaForAnalyze` restores `FLUSH STATS_DELTA <objects> CLUSTER` and broadcasts it to every TiDB (`tryBroadcast`, tolerating a peer that answers `this exec type ... doesn't support yet`); only a Go test binary whose servers have no reachable RPC endpoint dumps locally (`runningUnderGoTest`, `flushAnalyzeStatsDeltaForTest`). Here `AnalyzeExec` calls `AnalyzeService::flush_stats_delta` on this node, so a peer's buffered deltas can be applied after the analyze captured `mysql.stats_meta` and count twice. The broadcast itself is ported (`tidb-executor` `simple::broadcast`, used by `REFRESH STATS` / `FLUSH STATS_DELTA ... CLUSTER` and `ADMIN RELOAD CLUSTER BINDINGS`); what is missing is the analyze caller and Go's test-binary fallback rule.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/analyze/exec.rs` (`AnalyzeService::flush_stats_delta`), `rust/crates/tidb-session/src/domain/cluster_session_node/statistics.rs` (`ClusterAnalyzeService`)",
-      "go_owner": "`pkg/executor/analyze.go` (`flushStatsDeltaForAnalyze`, `tryBroadcast`, `flushAnalyzeStatsDeltaForTest`)"
     }
   ],
-  "unresolved": 11,
-  "open": 6,
+  "unresolved": 10,
+  "open": 5,
   "partial": 5
 }

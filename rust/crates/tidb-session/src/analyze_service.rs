@@ -17,6 +17,11 @@
 
 
 impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
+    fn broadcast(&mut self, sql: &str) -> Result<(), tidb_driver_error::DriverError> {
+        // The inherent `Session::broadcast`.
+        crate::Session::broadcast(self, sql)
+    }
+
     fn approximate_table_counts(
         &self,
     ) -> std::sync::Arc<dyn tidb_pdhelper::ApproximateTableCountProvider> {
