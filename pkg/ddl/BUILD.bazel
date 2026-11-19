@@ -357,6 +357,7 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
