@@ -233,8 +233,12 @@ func restoreMaskingPoliciesAfterLogReplay(ctx context.Context, dom *domain.Domai
 			if err != nil {
 				return errors.Trace(err)
 			}
-			statements = append(statements, snapclient.BuildCreateMaskingPolicySQL(row.GetString(0), db.Name.O, target.Name.O,
-				col.Name.O, expr, row.GetString(4), row.GetString(5)))
+			statement, err := snapclient.BuildCreateMaskingPolicySQL(row.GetString(0), db.Name.O, target.Name.O,
+				col.Name.O, expr, row.GetString(4), row.GetString(5))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			statements = append(statements, statement)
 		}
 	}
 	// Replace the entire policy set of selected tables, so drops and retries

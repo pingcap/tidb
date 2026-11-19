@@ -240,6 +240,43 @@ func TestBuildBackupRangeAndSchemaForceMaskingPolicyForDBBackup(t *testing.T) {
 		}
 		require.True(t, foundUserTable)
 		require.True(t, foundMaskingPolicyTable)
+
+		// When the schema pattern selects mysql but no table pattern does, the
+		// attached policy table is the database's only record: an additional
+		// empty-database record would have no table info for restore to read.
+		tableFilter, err := filter.Parse([]string{"*.t_force_mask"})
+		require.NoError(t, err)
+		_, tableSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
+			m.Storage, tableFilter, math.MaxUint64, full, true)
+		require.NoError(t, err)
+		require.NotNil(t, tableSchemas)
+		tableStorage := GetRandomStorage(t)
+		tableMetaWriter := metautil.NewMetaWriter(tableStorage, metautil.MetaFileSize, false, "", &cipher)
+		require.NoError(t, tableSchemas.BackupSchemas(
+			ctx, tableMetaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, nil))
+		require.NoError(t, tableMetaWriter.FlushBackupMeta(ctx))
+		written := GetSchemasFromMeta(t, tableStorage)
+		require.Equal(t, tableSchemas.Len(), len(written))
+		policyRecords := 0
+		for _, s := range written {
+			if s.DB.Name.L != utils.TemporaryDBName("mysql").L {
+				continue
+			}
+			require.NotNil(t, s.Info, "mysql must not get an empty-database record")
+			require.Equal(t, "tidb_masking_policy", s.Info.Name.L)
+			policyRecords++
+		}
+		require.Equal(t, 1, policyRecords)
+
+		// A filter that selects nothing must still report an empty backup:
+		// attaching the policy table would hide a mistyped database name.
+		missingFilter, err := filter.Parse([]string{"db_not_exist.*"})
+		require.NoError(t, err)
+		ranges, missingSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
+			m.Storage, missingFilter, math.MaxUint64, full, true)
+		require.NoError(t, err)
+		require.Empty(t, ranges)
+		require.Nil(t, missingSchemas)
 	}
 }
 

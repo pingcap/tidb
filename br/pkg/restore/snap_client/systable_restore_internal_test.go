@@ -16,6 +16,7 @@ package snapclient
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -60,6 +61,33 @@ func TestRestoreMaskingPoliciesRequiresTargetSupport(t *testing.T) {
 		if tc.supported && len(tc.rows) > 0 {
 			require.Equal(t, 1, calls)
 		}
+	}
+}
+
+func TestRestoreMaskingPoliciesRejectsUnknownStatus(t *testing.T) {
+	tableFilter, err := filter.Parse([]string{"test.*"})
+	require.NoError(t, err)
+	backedUp := map[filter.Table]struct{}{{Schema: "test", Name: "t"}: {}}
+	restore := func(status string) ([]string, error) {
+		row := chunk.MutRowFromValues("p", "test", "t", "c", "mask_full(c)", status, "NONE").ToRow()
+		var executed []string
+		err := restoreMaskingPoliciesFromTemporaryTable(context.Background(), maskingPolicyRestoreExecutor{rows: []chunk.Row{row}},
+			"tmp_mysql", true, tableFilter, true, backedUp,
+			func(_ context.Context, sql string) error { executed = append(executed, sql); return nil })
+		return executed, err
+	}
+	for status, want := range map[string]string{"ENABLED": "ENABLE;", " enable ": "ENABLE;", "DISABLED": "DISABLE;", "disable": "DISABLE;"} {
+		executed, err := restore(status)
+		require.NoError(t, err, status)
+		require.Len(t, executed, 1, status)
+		require.True(t, strings.HasSuffix(executed[0], want), executed[0])
+	}
+	// A status TiDB itself refuses to load must stop the restore instead of
+	// silently creating a disabled policy, which would leave the column unmasked.
+	for _, status := range []string{"", "PAUSED", "ENABLE_V2"} {
+		executed, err := restore(status)
+		require.ErrorContains(t, err, "unknown status", status)
+		require.Empty(t, executed, status)
 	}
 }
 

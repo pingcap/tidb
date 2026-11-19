@@ -359,9 +359,11 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 }
 
 // BuildCreateMaskingPolicySQL reconstructs a policy using target object names.
+// It rejects a status it cannot interpret, as TiDB does when loading the same
+// metadata: restoring such a policy as disabled would expose the column.
 func BuildCreateMaskingPolicySQL(
 	policyName, dbName, tableName, columnName, expression, status, restrictOn string,
-) string {
+) (string, error) {
 	sql := fmt.Sprintf(
 		"CREATE OR REPLACE MASKING POLICY %s ON %s(%s) AS %s",
 		utils.EncloseName(policyName),
@@ -375,16 +377,17 @@ func BuildCreateMaskingPolicySQL(
 		sql = fmt.Sprintf("%s RESTRICT ON (%s)", sql, normalizedRestrictOn)
 	}
 
-	normalizedStatus := strings.ToUpper(strings.TrimSpace(status))
-	if normalizedStatus == "ENABLED" {
+	var normalizedStatus string
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "ENABLE", "ENABLED":
 		normalizedStatus = "ENABLE"
-	} else if normalizedStatus == "DISABLED" {
+	case "DISABLE", "DISABLED":
 		normalizedStatus = "DISABLE"
+	default:
+		return "", errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"masking policy %s on %s.%s has unknown status %q", policyName, dbName, tableName, status)
 	}
-	if normalizedStatus != "ENABLE" {
-		normalizedStatus = "DISABLE"
-	}
-	return fmt.Sprintf("%s %s;", sql, normalizedStatus)
+	return fmt.Sprintf("%s %s;", sql, normalizedStatus), nil
 }
 
 func restoreMaskingPoliciesFromTemporaryTable(
@@ -433,7 +436,7 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		if !targetSupportsMasking {
 			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks mysql.tidb_masking_policy for selected masking policies")
 		}
-		ddl := BuildCreateMaskingPolicySQL(
+		ddl, err := BuildCreateMaskingPolicySQL(
 			row.GetString(0),
 			dbName,
 			tableName,
@@ -442,6 +445,9 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 			row.GetString(5),
 			row.GetString(6),
 		)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if err := execSQL(internalCtx, ddl); err != nil {
 			return errors.Trace(err)
 		}
@@ -530,6 +536,10 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
+		if table.Info == nil {
+			// An empty-database record carries no table to restore.
+			continue
+		}
 		tableName := table.Info.Name
 		if rc.deferMaskingPolicyRestore && tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB {
 			retainPolicyStage = true

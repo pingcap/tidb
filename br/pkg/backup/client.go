@@ -862,6 +862,11 @@ func BuildBackupRangeAndInitSchema(
 
 	ranges := make([]rtree.KeyRange, 0)
 	schemasNum := 0
+	// The masking policy table is attached to a backup rather than selected by
+	// the user. Keep it apart until the filter is known to select something, so
+	// a filter that matches nothing still reports an empty backup.
+	forcedRanges := make([]rtree.KeyRange, 0)
+	forcedSchemasNum := 0
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -872,7 +877,8 @@ func BuildBackupRangeAndInitSchema(
 		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
-		if !tableFilter.MatchSchema(dbInfo.Name.O) &&
+		matchSchema := tableFilter.MatchSchema(dbInfo.Name.O)
+		if !matchSchema &&
 			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
 			continue
 		}
@@ -893,9 +899,11 @@ func BuildBackupRangeAndInitSchema(
 				// Skip tables other than the given table.
 				return nil
 			}
+			// Defer the policy table only when its database was not selected.
+			// In a selected database it is written like any other table, so the
+			// database gets no additional "empty database" record.
+			forced := !matchSchema
 
-			schemasNum += 1
-			hasTable = true
 			tableRanges, err := distsql.BuildTableRanges(tableInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -903,10 +911,21 @@ func BuildBackupRangeAndInitSchema(
 			for _, r := range tableRanges {
 				// Add keyspace prefix to BackupRequest
 				startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
-				ranges = append(ranges, rtree.KeyRange{
+				keyRange := rtree.KeyRange{
 					StartKey: startKey,
 					EndKey:   endKey,
-				})
+				}
+				if forced {
+					forcedRanges = append(forcedRanges, keyRange)
+				} else {
+					ranges = append(ranges, keyRange)
+				}
+			}
+			if forced {
+				forcedSchemasNum += 1
+			} else {
+				schemasNum += 1
+				hasTable = true
 			}
 
 			return nil
@@ -916,7 +935,8 @@ func BuildBackupRangeAndInitSchema(
 			return nil, nil, nil, errors.Trace(err)
 		}
 
-		if !hasTable {
+		// A database visited only to attach the policy table was not selected.
+		if !hasTable && matchSchema {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			schemasNum += 1
 		}
@@ -926,6 +946,8 @@ func BuildBackupRangeAndInitSchema(
 		log.Info("nothing to backup")
 		return nil, nil, nil, nil
 	}
+	ranges = append(ranges, forcedRanges...)
+	schemasNum += forcedSchemasNum
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
 		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable, fn)
 	}, schemasNum), policies, nil
@@ -952,7 +974,8 @@ func BuildBackupSchemas(
 		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
-		if !tableFilter.MatchSchema(dbInfo.Name.O) &&
+		matchSchema := tableFilter.MatchSchema(dbInfo.Name.O)
+		if !matchSchema &&
 			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
 			continue
 		}
@@ -1052,7 +1075,9 @@ func BuildBackupSchemas(
 			return errors.Trace(err)
 		}
 
-		if !hasTable {
+		// A database visited only to attach the policy table was not selected,
+		// so it gets no empty-database record; see BuildBackupRangeAndInitSchema.
+		if !hasTable && matchSchema {
 			fn(dbInfo, nil)
 		}
 	}
