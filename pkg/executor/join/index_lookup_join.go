@@ -87,6 +87,13 @@ type IndexLookUpJoin struct {
 	stats    *indexLookUpJoinRuntimeStats
 	Finished *atomic.Value
 	prepared bool
+
+	// AdaptiveLimitEligible indicates that the outer physical property must keep
+	// order. The executor builder uses it only as an adaptive LIMIT eligibility gate.
+	AdaptiveLimitEligible bool
+	// AdaptiveLimitController bounds outer tasks and, for a double read, is
+	// shared with the outer IndexLookUp. LimitExec controls its lifecycle.
+	AdaptiveLimitController *exec.AdaptiveLimitController
 }
 
 // OuterCtx is the outer ctx used in index lookup join
@@ -147,6 +154,11 @@ type outerWorker struct {
 
 	maxBatchSize int
 	batchSize    int
+
+	// A single-read reader can return more than RequiredRows. Keep the tail
+	// here until a later task has reserved space for it.
+	pendingOuterChunk *chunk.Chunk
+	pendingOuterRow   int
 
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
@@ -283,13 +295,35 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	req.Reset()
 	e.JoinResult.Reset()
+	adaptiveController := e.AdaptiveLimitController
+	// One outer row can produce output across several Next calls. Count output
+	// immediately toward LIMIT progress, but report a yield sample only after the
+	// corresponding outer row is fully consumed.
+	pendingConsumedRows, pendingOutputRows := 0, 0
+	flushAdaptiveProgress := func() {
+		if pendingConsumedRows == 0 && pendingOutputRows == 0 {
+			return
+		}
+		adaptiveController.ObserveJoinProgress(pendingConsumedRows, pendingOutputRows)
+		pendingConsumedRows, pendingOutputRows = 0, 0
+	}
+	if adaptiveController != nil {
+		defer flushAdaptiveProgress()
+	}
 	for {
+		if adaptiveController != nil && e.task != nil && int(e.task.cursor.ChkIdx) >= e.task.outerResult.NumChunks() {
+			flushAdaptiveProgress()
+		}
 		task, err := e.getFinishedTask(ctx)
 		if err != nil {
 			return err
 		}
 		if task == nil {
 			return nil
+		}
+		outputRowsBeforeProbe := 0
+		if adaptiveController != nil {
+			outputRowsBeforeProbe = req.NumRows()
 		}
 		startTime := time.Now()
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
@@ -315,6 +349,9 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 				e.Joiner.OnMissMatch(task.hasNull, outerRow, req)
 			}
 			task.cursor.RowIdx++
+			if adaptiveController != nil {
+				pendingConsumedRows++
+			}
 			if int(task.cursor.RowIdx) == task.outerResult.GetChunk(int(task.cursor.ChkIdx)).NumRows() {
 				task.cursor.ChkIdx++
 				task.cursor.RowIdx = 0
@@ -325,7 +362,13 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.probe, int64(time.Since(startTime)))
 		}
+		if adaptiveController != nil {
+			pendingOutputRows += req.NumRows() - outputRowsBeforeProbe
+		}
 		if req.IsFull() {
+			if adaptiveController != nil {
+				flushAdaptiveProgress()
+			}
 			return nil
 		}
 	}
@@ -390,6 +433,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		close(ow.innerCh)
 		wg.Done()
 	}()
+	defer ow.releasePendingOuterChunk()
 	for {
 		failpoint.Inject("TestIssue30211", nil)
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -430,33 +474,70 @@ func newList(e exec.Executor) *chunk.List {
 // buildTask builds a lookUpJoinTask and read Outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	task := &lookUpJoinTask{
-		doneCh:      make(chan error, 1),
-		outerResult: newList(ow.executor),
-		lookupMap:   mvmap.NewMVMap(),
+	requiredRows := 0
+	reservedRows := 0
+	if ow.lookup.AdaptiveLimitController != nil {
+		var (
+			ok  bool
+			err error
+		)
+		reservedRows, ok, err = ow.lookup.AdaptiveLimitController.ReserveOuter(ctx, ow.maxBatchSize)
+		if err != nil {
+			return &lookUpJoinTask{doneCh: make(chan error, 1)}, err
+		}
+		if !ok {
+			return nil, nil
+		}
+		requiredRows = reservedRows
+	} else {
+		ow.increaseBatchSize()
+		requiredRows = ow.batchSize
 	}
-	task.memTracker = memory.NewTracker(-1, -1)
-	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
-	task.memTracker.AttachTo(ow.parentMemTracker)
-	failpoint.Inject("ConsumeRandomPanic", nil)
-
-	ow.increaseBatchSize()
-	requiredRows := ow.batchSize
 	if ow.lookup.IsOuterJoin {
 		// If it is outerJoin, push the requiredRows down.
 		// Note: buildTask is triggered when `Open` is called, but
 		// ow.lookup.requiredRows is set when `Next` is called. Thus we check
 		// whether it's 0 here.
 		if parentRequired := int(atomic.LoadInt64(&ow.lookup.requiredRows)); parentRequired != 0 {
-			requiredRows = parentRequired
+			if ow.lookup.AdaptiveLimitController != nil {
+				requiredRows = min(requiredRows, parentRequired)
+			} else {
+				requiredRows = parentRequired
+			}
 		}
 	}
+
+	task := &lookUpJoinTask{
+		doneCh:      make(chan error, 1),
+		outerResult: newList(ow.executor),
+		lookupMap:   mvmap.NewMVMap(),
+	}
+	if ow.lookup.AdaptiveLimitController != nil {
+		// Commit converts the reservation to the actual fetched row count on every
+		// exit path, releasing unused capacity after EOF or an error.
+		defer func() {
+			ow.lookup.AdaptiveLimitController.CommitOuter(reservedRows, task.outerResult.Len())
+		}()
+	}
+	task.memTracker = memory.NewTracker(-1, -1)
+	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
+	task.memTracker.AttachTo(ow.parentMemTracker)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
+	controller := ow.lookup.AdaptiveLimitController
+	strictOuterWindow := controller != nil
 	if nextChunkCap <= 0 {
 		nextChunkCap = chunk.InitialCapacity
 	}
 	for remainingRows := requiredRows - task.outerResult.Len(); remainingRows > 0; remainingRows = requiredRows - task.outerResult.Len() {
 		fetchRequiredRows := min(remainingRows, maxChunkSize)
+		if ow.pendingOuterChunk != nil {
+			if err := ctx.Err(); err != nil {
+				return task, err
+			}
+			ow.appendPendingOuterRows(task.outerResult, fetchRequiredRows)
+			continue
+		}
 		chkCap := min(nextChunkCap, fetchRequiredRows)
 		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, chkCap, maxChunkSize)
 		chk = chk.SetRequiredRows(fetchRequiredRows, maxChunkSize)
@@ -469,7 +550,13 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			break
 		}
 
-		task.outerResult.Add(chk)
+		if strictOuterWindow && rows > fetchRequiredRows {
+			ow.pendingOuterChunk = chk
+			ow.parentMemTracker.Consume(chk.MemoryUsage())
+			ow.appendPendingOuterRows(task.outerResult, fetchRequiredRows)
+		} else {
+			task.outerResult.Add(chk)
+		}
 		if rows >= chkCap && nextChunkCap < maxChunkSize {
 			nextChunkCap = min(max(nextChunkCap*2, rows), maxChunkSize)
 		}
@@ -501,6 +588,28 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		)
 	}
 	return task, nil
+}
+
+func (ow *outerWorker) appendPendingOuterRows(result *chunk.List, maxRows int) {
+	pending := ow.pendingOuterChunk
+	end := min(ow.pendingOuterRow+maxRows, pending.NumRows())
+	part := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, end-ow.pendingOuterRow, ow.executor.MaxChunkSize())
+	for row := ow.pendingOuterRow; row < end; row++ {
+		part.AppendRow(pending.GetRow(row))
+	}
+	result.Add(part)
+	ow.pendingOuterRow = end
+	if end == pending.NumRows() {
+		ow.releasePendingOuterChunk()
+	}
+}
+
+func (ow *outerWorker) releasePendingOuterChunk() {
+	if ow.pendingOuterChunk != nil {
+		ow.parentMemTracker.Consume(-ow.pendingOuterChunk.MemoryUsage())
+		ow.pendingOuterChunk = nil
+		ow.pendingOuterRow = 0
+	}
 }
 
 func (ow *outerWorker) increaseBatchSize() {
@@ -827,7 +936,13 @@ func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
 	if e.stats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			if e.AdaptiveLimitController != nil {
+				snapshot := e.AdaptiveLimitController.Snapshot()
+				e.stats.adaptiveLimitSnapshot = &snapshot
+			}
+			e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		}()
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
@@ -844,6 +959,9 @@ type indexLookUpJoinRuntimeStats struct {
 	concurrency int
 	probe       int64
 	innerWorker innerWorkerRuntimeStats
+	// adaptiveLimitSnapshot is the close-time diagnostic snapshot rendered by
+	// EXPLAIN ANALYZE. Runtime-stat merges retain one copy instead of adding it.
+	adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
 }
 
 type innerWorkerRuntimeStats struct {
@@ -881,17 +999,56 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
-		buf.WriteString(", probe:")
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
+	}
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := e.adaptiveLimitSnapshot
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("adaptive:{outer:")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterFetched, 10))
+		buf.WriteString("/")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterConsumed, 10))
+		if snapshot.HasLookupStage {
+			buf.WriteString(", lookup:")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupHandles, 10))
+			buf.WriteString("/")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupRows, 10))
+		}
+		buf.WriteString(", outstanding:")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterOutstandingAtStop, 10))
+		if snapshot.HasLookupStage {
+			buf.WriteString("/")
+			buf.WriteString(strconv.FormatUint(snapshot.LookupOutstandingAtStop, 10))
+			buf.WriteString(", blocked:outer=")
+			buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
+			buf.WriteString(",lookup=")
+			buf.WriteString(execdetails.FormatDuration(snapshot.LookupAdmissionBlocked))
+		} else {
+			buf.WriteString(", blocked:")
+			buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
+		}
+		buf.WriteString("}")
 	}
 	return buf.String()
 }
 
 func (e *indexLookUpJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	var adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := *e.adaptiveLimitSnapshot
+		adaptiveLimitSnapshot = &snapshot
+	}
 	return &indexLookUpJoinRuntimeStats{
-		concurrency: e.concurrency,
-		probe:       e.probe,
-		innerWorker: e.innerWorker,
+		concurrency:           e.concurrency,
+		probe:                 e.probe,
+		innerWorker:           e.innerWorker,
+		adaptiveLimitSnapshot: adaptiveLimitSnapshot,
 	}
 }
 
@@ -907,6 +1064,12 @@ func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.innerWorker.fetch += tmp.innerWorker.fetch
 	e.innerWorker.build += tmp.innerWorker.build
 	e.innerWorker.join += tmp.innerWorker.join
+	// The snapshot describes one executor lifecycle, so retain the first copy
+	// instead of accumulating the same statement-local counters during merges.
+	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
+		snapshot := *tmp.adaptiveLimitSnapshot
+		e.adaptiveLimitSnapshot = &snapshot
+	}
 }
 
 // Tp implements the RuntimeStats interface.

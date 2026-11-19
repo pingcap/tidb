@@ -136,8 +136,8 @@ func TestBackoffCtxAware(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Less(t, time.Since(start), 150*time.Millisecond, "Backoff should return quickly on canceled ctx")
 
-	// With a valid ctx that gets canceled during sleep, Backoff should return early.
-	bo.Reset()
+	// Use a capped delay so cancellation remains observable with fast retries.
+	bo.Duration = backoffMax
 	ctx, cancel = context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(5 * time.Millisecond)
@@ -147,6 +147,6 @@ func TestBackoffCtxAware(t *testing.T) {
 	start = time.Now()
 	err = bo.Backoff(ctx)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Less(t, time.Since(start), backoffMin, "Backoff should return early when ctx is canceled during sleep")
+	require.Less(t, time.Since(start), backoffMax, "Backoff should return early when ctx is canceled during sleep")
 	_ = err
 }

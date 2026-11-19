@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 var testDataMap = make(testdata.BookKeeper)
 
 func TestMain(m *testing.M) {
+	tikv.EnableFailpoints()
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()

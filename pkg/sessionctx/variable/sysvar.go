@@ -2215,6 +2215,10 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAdaptiveLimitScan, Value: BoolToOnOff(DefTiDBEnableAdaptiveLimitScan), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAdaptiveLimitScan = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupSize, Value: strconv.Itoa(DefIndexLookupSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 		return nil
@@ -2975,18 +2979,11 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-<<<<<<< HEAD
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAsyncMergeGlobalStats, Value: BoolToOnOff(DefTiDBEnableAsyncMergeGlobalStats), Type: TypeBool,
-=======
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
-		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
-		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
-		Type:  vardef.TypeBool,
-		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			vars.StmtCtx.AppendWarning(errors.NewNoStackError("The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."))
 			return normalizedValue, nil
 		},
->>>>>>> f272a258f94 (variable: mark tidb_enable_async_merge_global_stats as deprecated soon (#63911))
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableAsyncMergeGlobalStats = TiDBOptOn(val)
 			return nil
@@ -3832,6 +3829,8 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	case TiDBEnableMutationChecker:
 		varVal = On
 	case TiDBPessimisticTransactionFairLocking:
+		varVal = On
+	case TiDBEnableAdaptiveLimitScan:
 		varVal = On
 	}
 	return varVal

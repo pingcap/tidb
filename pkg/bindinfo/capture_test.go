@@ -427,6 +427,11 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 }
 
 func TestIssue20417(t *testing.T) {
+	// Capture explicitly below; background refresh can race with clearing the bindings.
+	originalLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	t.Cleanup(func() { bindinfo.Lease = originalLease })
+
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
@@ -571,11 +576,9 @@ func TestCaptureUserFilter(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
+	// Leave automatic capture disabled: each case captures explicitly after its
+	// filters are ready, and background capture would race with cleanup.
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
-	defer func() {
-		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")

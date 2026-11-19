@@ -99,7 +99,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20261026071505-70b5775c3362
+	github.com/pingcap/kvproto v0.0.0-20261104094450-1bf153fd02d4
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -124,7 +124,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
-	github.com/tikv/client-go/v2 v2.0.8-0.20261027104816-348a939fb4b6
+	github.com/tikv/client-go/v2 v2.0.8-0.20261029152027-3f9d5b43e9e5
 	github.com/tikv/pd/client v0.0.0-20261028135905-3150b0b95aa1
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/twmb/murmur3 v1.1.6

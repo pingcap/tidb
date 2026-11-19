@@ -2119,7 +2119,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
-		if len(regionTableList) == 0 {
+		// Unmapped regions have NULL TABLE_ID and cannot match an extracted table-ID predicate.
+		if len(regionTableList) == 0 && len(extractorTableIDs) == 0 {
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j, regionTable := range regionTableList {
