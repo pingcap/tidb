@@ -1541,18 +1541,29 @@ func (tm *TableMappingManager) RebindTableRouteTargetDatabaseID(
 }
 
 func (tm *TableMappingManager) ReuseExistingDatabaseIDs(infoschema infoschema.InfoSchema) {
+	// Databases created by restore still replay their metadata, including DROP.
+	// A later database with the same name must get its own ID and replay CREATE,
+	// rather than being marked as a pre-existing database whose metadata is skipped.
+	restoredDBIDs := make(map[DownstreamID]struct{})
+	for _, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.DbID > 0 && !dbReplace.Reused && dbReplace.RestoresDatabaseMetadata() {
+			restoredDBIDs[dbReplace.DbID] = struct{}{}
+		}
+	}
 	for dbID, dbReplace := range tm.DBReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 		if dbReplace.DbID <= 0 {
 			if dbInfo, exists := infoschema.SchemaByName(ast.NewCIStr(dbReplace.Name)); exists {
-				dbReplace.DbID = dbInfo.ID
-				dbReplace.Reused = true
-				log.Info("reuse existing database id",
-					zap.String("db-name", dbReplace.Name),
-					zap.Int64("upstream-db-id", dbID),
-					zap.Int64("downstream-db-id", dbReplace.DbID))
+				if _, restored := restoredDBIDs[dbInfo.ID]; !restored {
+					dbReplace.DbID = dbInfo.ID
+					dbReplace.Reused = true
+					log.Info("reuse existing database id",
+						zap.String("db-name", dbReplace.Name),
+						zap.Int64("upstream-db-id", dbID),
+						zap.Int64("downstream-db-id", dbReplace.DbID))
+				}
 			}
 		}
 

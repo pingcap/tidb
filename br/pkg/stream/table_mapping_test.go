@@ -2819,6 +2819,97 @@ func (m *mockInfoSchemaWrapper) SchemaByName(schema ast.CIStr) (val *model.DBInf
 }
 
 func TestReuseExistingDatabaseIDs(t *testing.T) {
+	t.Run("recreated database must replay creation metadata", func(t *testing.T) {
+		for _, reused := range []bool{false, true} {
+			name := "database created by restore"
+			if reused {
+				name = "database existed before restore"
+			}
+			t.Run(name, func(t *testing.T) {
+				const baseTS uint64 = 400036290571534337
+				// The base backup has db.tb (IDs 1/11). The log drops db and
+				// creates db.tb again with new IDs 2/22.
+				dropDB := &kv.Entry{
+					Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(1), baseTS+200),
+					Value: (&RawWriteCFValue{
+						t: WriteTypeDelete, startTs: baseTS + 199,
+					}).EncodeTo(),
+				}
+				dbValue, err := produceDBInfoValue("db", 2)
+				require.NoError(t, err)
+				createDB := &kv.Entry{
+					Key: utils.EncodeTxnMetaKey([]byte("DBs"), meta.DBkey(2), baseTS+300),
+					Value: (&RawWriteCFValue{
+						t: WriteTypePut, startTs: baseTS + 299, shortValue: dbValue,
+					}).EncodeTo(),
+				}
+				tableValue, err := produceTableInfoValue("tb", 22)
+				require.NoError(t, err)
+				createTableDefault := &kv.Entry{
+					Key:   utils.EncodeTxnMetaKey(meta.DBkey(2), meta.TableKey(22), baseTS+399),
+					Value: tableValue,
+				}
+				createTable := &kv.Entry{
+					Key: utils.EncodeTxnMetaKey(meta.DBkey(2), meta.TableKey(22), baseTS+400),
+					Value: (&RawWriteCFValue{
+						t: WriteTypePut, startTs: baseTS + 399,
+					}).EncodeTo(),
+				}
+				tm := NewTableMappingManager()
+				history := NewTableHistoryManager()
+				require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(createTableDefault, consts.DefaultCF, baseTS+399, history))
+				for _, entry := range []*kv.Entry{dropDB, createDB, createTable} {
+					key, err := ParseTxnMetaKeyFrom(entry.Key)
+					require.NoError(t, err)
+					require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(entry, consts.WriteCF, key.Ts, history))
+				}
+				baseDB := NewDBReplace("db", 100)
+				baseDB.Reused = reused
+				baseDB.TableMap[11] = NewTableReplace("tb", 111)
+				tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{1: baseDB})
+
+				// Both lifetimes match db.*. Selection alone must not prevent
+				// replay of the new database's creation.
+				tracker := utils.NewPiTRIdTracker()
+				tracker.TrackTableId(1, 11)
+				tracker.TrackTableId(2, 22)
+				tm.ApplyFilterToDBReplaceMap(tracker)
+				require.False(t, tm.DBReplaceMap[2].FilteredOut)
+				tm.ReuseExistingDatabaseIDs(createMockInfoSchemaWithDBs(map[string]int64{"db": 100}))
+				require.NoError(t, tm.ReplaceTemporaryIDs(context.Background(), func(_ context.Context, n int) ([]int64, error) {
+					ids := make([]int64, n)
+					for i := range ids {
+						ids[i] = int64(200 + i)
+					}
+					return ids, nil
+				}))
+
+				// Replay uses the persisted mapping, just as a resumed log restore does.
+				sr := MockEmptySchemasReplace(nil, FromDBMapProto(tm.ToProto()))
+				created, err := sr.RewriteMetaKvEntry(createDB, consts.WriteCF)
+				require.NoError(t, err)
+				dropped, err := sr.RewriteMetaKvEntry(dropDB, consts.WriteCF)
+				require.NoError(t, err)
+				if reused {
+					// A database that predates restore must retain its own metadata.
+					require.Nil(t, created)
+					require.Nil(t, dropped)
+					require.Equal(t, int64(100), tm.DBReplaceMap[2].DbID)
+				} else {
+					require.NotNil(t, created, "the recreated database's creation metadata must not be skipped")
+					require.NotNil(t, dropped)
+					require.NotEqual(t, tm.DBReplaceMap[1].DbID, tm.DBReplaceMap[2].DbID)
+				}
+				rewrittenTable, err := sr.RewriteMetaKvEntry(createTable, consts.WriteCF)
+				require.NoError(t, err)
+				require.NotNil(t, rewrittenTable)
+				tableKey, err := ParseTxnMetaKeyFrom(rewrittenTable.Key)
+				require.NoError(t, err)
+				require.Equal(t, meta.DBkey(tm.DBReplaceMap[2].DbID), tableKey.Key)
+			})
+		}
+	})
+
 	t.Run("reuse table-level target database independently", func(t *testing.T) {
 		dbReplace := NewDBReplace("db1", 100)
 		tableReplace := NewTableReplace("t1", -2)
