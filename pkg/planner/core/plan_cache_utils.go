@@ -361,7 +361,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
 	if stmt.snapshotVersion != nil {
-		// The snapshot version map is prefixed with its entry count.
+		// Number of snapshot tables and their IDs and revisions.
 		hashLen += 8 + len(stmt.snapshotVersion)*16
 	}
 	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
@@ -730,15 +730,16 @@ func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stm
 // DBName returns the dbName field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) DBName() []model.CIStr { return s.dbName }
 
-// TblName returns the original table names used to resolve tables during Execute.
-func (s *PlanCacheStmt) TblName() []model.CIStr { return s.tblName }
-
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 
-// SetDBNameAndTbls clones the original database and table names and resolved tables.
-// Each statement owns its backing arrays because planCachePreprocess replaces
-// tbls[i] during Execute; sharing them would modify the cached template.
+// TableNames returns the table names used to resolve the statement's tables.
+func (s *PlanCacheStmt) TableNames() []model.CIStr { return s.tblName }
+
+// SetDBNameAndTbls sets the table names and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
 func (s *PlanCacheStmt) SetDBNameAndTbls(dbName, tblName []model.CIStr, tbls []table.Table) {
 	s.dbName = slices.Clone(dbName)
 	s.tblName = slices.Clone(tblName)
