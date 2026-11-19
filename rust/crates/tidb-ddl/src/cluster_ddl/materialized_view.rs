@@ -1378,10 +1378,58 @@ pub fn format_sql_mode(mode: i64) -> String {
     names.join(",")
 }
 
+/// Go master `buildCreateMaterializedViewImportSQL`.
+pub(crate) fn build_create_materialized_view_import_sql(
+    schema_name: &str,
+    mview: &TableInfo,
+    thread_cnt: i64,
+    disk_quota: &str,
+) -> Result<String, tidb_terror::MysqlError> {
+    let sql_content = mview_sql_content(mview)?;
+    let prefix = tidb_sqlescape::escape_sql_text(
+        "IMPORT INTO %n.%n FROM ",
+        &[
+            tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
+            tidb_sqlescape::SqlArg::String(mview.name.original().as_bytes()),
+        ],
+    )
+    .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+    let options = tidb_ddl_build::materialized_view::build_mview_import_into_options(thread_cnt, disk_quota)?;
+    Ok(format!("{prefix}({sql_content}) WITH {}", options.join(", ")))
+}
+
+/// Go master `buildCreateMaterializedViewInsertSQL`.
+pub(crate) fn build_create_materialized_view_insert_sql(
+    schema_name: &str,
+    mview: &TableInfo,
+) -> Result<String, tidb_terror::MysqlError> {
+    let sql_content = mview_sql_content(mview)?;
+    let prefix = tidb_sqlescape::escape_sql_text(
+        "REPLACE INTO %n.%n ",
+        &[
+            tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
+            tidb_sqlescape::SqlArg::String(mview.name.original().as_bytes()),
+        ],
+    )
+    .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+    Ok(format!("{prefix}{sql_content}"))
+}
+
+fn mview_sql_content(mview: &TableInfo) -> Result<String, tidb_terror::MysqlError> {
+    mview
+        .materialized_view
+        .as_ref()
+        .map(|info| info.read().sql_content.clone())
+        .filter(|content| !content.is_empty())
+        .ok_or_else(|| invalid_ddl_job("create materialized view: invalid select sql"))
+}
+
 /// What a CREATE MATERIALIZED VIEW job's initial build needs (Go master
 /// `buildCreateMaterializedViewData`'s arguments).
 #[derive(Clone, Debug)]
 pub struct MViewBuild {
+    /// The job's ID, which the build logs.
+    pub job_id: i64,
     /// The job's schema name.
     pub schema_name: String,
     /// The view, as the job created it.
@@ -1515,17 +1563,41 @@ pub fn build_create_materialized_view_data(
         // maintenance.
         let original_maintenance = session.swap_in_mview_maintenance(true);
         let built = (|| {
-            // Go `sqlescape.MustEscapeSQL("REPLACE INTO %n.%n ", ...)` then
-            // the definition, which carries no placeholders.
-            let prefix = tidb_sqlescape::escape_sql_text(
-                "REPLACE INTO %n.%n ",
+            // Go master `buildCreateMaterializedViewData`: a TiKV store builds
+            // by IMPORT INTO (`buildCreateMaterializedViewImportSQL`, with the
+            // build session's import options), any other by REPLACE INTO
+            // (`buildCreateMaterializedViewInsertSQL`).
+            let store_name = sess_pool.store_name();
+            let method = if store_name == "TiKV" { "import-into" } else { "insert-into" };
+            tidb_ddl_logutil::ddl_logger().info(
+                "create materialized view: choose init build method",
                 &[
-                    tidb_sqlescape::SqlArg::String(build.schema_name.as_bytes()),
-                    tidb_sqlescape::SqlArg::String(build.mview.name.original().as_bytes()),
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(build.job_id)),
+                    tidb_log::Field::new("schema", tidb_log::Value::Str(build.schema_name.clone())),
+                    tidb_log::Field::new("mview", tidb_log::Value::Str(build.mview.name.original().to_owned())),
+                    tidb_log::Field::new("storeName", tidb_log::Value::Str(store_name.to_owned())),
+                    tidb_log::Field::new("method", tidb_log::Value::Str(method.to_owned())),
                 ],
-            )
-            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
-            ddl_session_sql(&*session, &format!("{prefix}{}", info.sql_content), &[])?;
+            );
+            let build_sql = if store_name == "TiKV" {
+                let options = ddl_session_sql(
+                    &*session,
+                    "SELECT @@SESSION.tidb_mview_maintain_import_threads, @@SESSION.tidb_mview_maintain_import_disk_quota",
+                    &[],
+                )?;
+                let option = |index: usize| {
+                    options.first().and_then(|row| row.get(index)).map(datum_as_text).unwrap_or_default()
+                };
+                build_create_materialized_view_import_sql(
+                    &build.schema_name,
+                    &build.mview,
+                    option(0).parse::<i64>().unwrap_or(0),
+                    &option(1),
+                )?
+            } else {
+                build_create_materialized_view_insert_sql(&build.schema_name, &build.mview)?
+            };
+            ddl_session_sql(&*session, &build_sql, &[])?;
             // Go `getCreateMaterializedViewBuildReadTS`.
             let rows = ddl_session_sql(
                 &*session,
@@ -2025,6 +2097,7 @@ pub(super) fn on_create_materialized_view(
                     _ => {}
                 }
                 let build = MViewBuild {
+                    job_id: active.job.id,
                     schema_name: schema_name.clone(),
                     mview: Box::new(mview.clone_like_go()),
                     job_session_vars: active
@@ -2976,5 +3049,26 @@ mod shadow_expiration_tests {
         ] {
             assert_eq!(super::is_materialized_view_shadow_table_expired(&table, now), expired, "{table}");
         }
+    }
+}
+
+#[cfg(test)]
+mod build_sql_tests {
+    /// Go master `TestBuildCreateMaterializedViewImportSQL` (`ddl_test.go`).
+    #[test]
+    fn test_build_create_materialized_view_import_sql() {
+        let mut mview = super::TableInfo { name: tidb_ast::CiString::new("mv"), ..Default::default() };
+        mview.materialized_view = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewInfo {
+            sql_content: "select a, count(1) from t group by a".to_owned(),
+            ..Default::default()
+        }));
+        let sql = super::build_create_materialized_view_import_sql("test", &mview, 0, "").unwrap();
+        assert!(sql.contains("IMPORT INTO `test`.`mv` FROM ("), "{sql}");
+        assert!(sql.contains("WITH disable_precheck"), "{sql}");
+        assert!(!sql.to_uppercase().contains("AS OF TIMESTAMP"), "{sql}");
+        let sql = super::build_create_materialized_view_import_sql("test", &mview, 0, "100gib").unwrap();
+        assert!(sql.contains("WITH disable_precheck, disk_quota='100gib'"), "{sql}");
+        let sql = super::build_create_materialized_view_import_sql("test", &mview, 12, "64gib").unwrap();
+        assert!(sql.contains("WITH disable_precheck, thread=12, disk_quota='64gib'"), "{sql}");
     }
 }

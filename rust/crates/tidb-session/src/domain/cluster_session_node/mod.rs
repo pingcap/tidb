@@ -3539,6 +3539,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
             .map_err(sql_query_error_to_driver)
     }
 
+    fn store_name(&self) -> &'static str {
+        self.ddl.store_name()
+    }
+
     fn create_materialized_view_shadow_table(
         &self,
         schema_id: i64,

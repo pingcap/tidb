@@ -87,6 +87,11 @@ pub trait DdlService {
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`.
     fn tiflash_store_count(&self) -> Result<u64, String>;
 
+    /// Go `store.Name()`: `TiKV`, or `mock-storage` for the embedded store.
+    fn store_name(&self) -> &'static str {
+        "TiKV"
+    }
+
     /// Go master `executor.CreateMaterializedViewShadowTable`.
     fn create_materialized_view_shadow_table(
         &self,

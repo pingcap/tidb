@@ -605,6 +605,12 @@ pub trait ClusterDdl: Send + Sync {
         Ok(())
     }
 
+    /// Go `store.Name()` of the store the DDL runs on: `TiKV`, or
+    /// `mock-storage` for the embedded store.
+    fn store_name(&self) -> &'static str {
+        "TiKV"
+    }
+
     /// Go `infoschema.GetTiFlashStoreCount(ctx.GetStore())`: the TiFlash
     /// stores PD lists, which `checkTiFlashReplicaCount` bounds a replica
     /// count by.
@@ -4115,6 +4121,10 @@ where
 
     fn reload_schema(&self) -> Result<(), String> {
         crate::ddl_job_scheduler::SchemaLoader::reload(self.schema_sync.as_ref())
+    }
+
+    fn store_name(&self) -> &'static str {
+        self.scheduler.session_pool.store_name()
     }
 
     fn tiflash_store_count(&self) -> Result<u64, SqlQueryError> {

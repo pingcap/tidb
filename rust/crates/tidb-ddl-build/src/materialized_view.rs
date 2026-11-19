@@ -380,6 +380,29 @@ pub fn parse_mview_attributes(attrs: &str) -> Result<(i64, i64, bool), MysqlErro
     Ok((warning, overdue, refresh_failed))
 }
 
+/// Go master `BuildMViewImportIntoOptions`: the WITH options of a
+/// materialized view's IMPORT INTO build.
+///
+/// # Errors
+///
+/// The disk quota cannot be escaped.
+pub fn build_mview_import_into_options(
+    import_threads: i64,
+    import_disk_quota: &str,
+) -> Result<Vec<String>, tidb_terror::MysqlError> {
+    let mut options = vec!["disable_precheck".to_owned()];
+    if import_threads > 0 {
+        options.push(format!("thread={import_threads}"));
+    }
+    if !import_disk_quota.is_empty() {
+        options.push(
+            tidb_sqlescape::escape_sql_text("disk_quota=%?", &[tidb_sqlescape::SqlArg::String(import_disk_quota.as_bytes())])
+                .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?,
+        );
+    }
+    Ok(options)
+}
+
 /// Go `BuildMaterializedViewLogTableInfo`: the log table of `base` for
 /// `stmt`, its tracked columns followed by the DML-type and old/new columns,
 /// with its `MaterializedViewLogInfo`.

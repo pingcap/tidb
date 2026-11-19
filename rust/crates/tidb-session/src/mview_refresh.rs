@@ -43,6 +43,8 @@ const REFRESH_HIST_STATUS_FAILED: &str = "failed";
 
 /// Go master `mvRefreshShadowTablePrefix`.
 const MV_REFRESH_SHADOW_TABLE_PREFIX: &str = tidb_mviewutil::SHADOW_TABLE_PREFIX;
+/// Go master `mvRefreshImportIntoStoreName`.
+const MV_REFRESH_IMPORT_INTO_STORE_NAME: &str = "TiKV";
 
 pub(crate) fn plain(message: impl Into<String>) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message.into()))
@@ -1332,18 +1334,57 @@ impl Session {
                 ddl.create_materialized_view_shadow_table(info.db_id, schema, shadow, &refresh.ddl_statement_context())
             })?;
             shadow_needs_cleanup = true;
-            // Go `buildMVRefreshOutOfPlaceBuildSQL` (the INSERT path).
+            // Go `buildMVRefreshOutOfPlaceBuildSQL`: a TiKV store loads the
+            // shadow by IMPORT INTO with the refresh's import options, any
+            // other by INSERT INTO.
             if mview.sql_content.is_empty() {
                 return Err(plain("refresh materialized view: invalid select sql"));
             }
-            let prefix = tidb_sqlescape::escape_sql_text(
-                "INSERT INTO %n.%n ",
-                &[SqlArg::String(schema.as_bytes()), SqlArg::String(shadow_name.as_bytes())],
-            )
-            .map_err(|error| plain(error.to_string()))?;
-            self.observe_mv_refresh_step("OUT_OF_PLACE_LOAD_SHADOW", || {
-                sys_sql(&mut build, &format!("{prefix}{}", mview.sql_content), &[])
-            })?;
+            let store_name = ddl.store_name();
+            let import_into = store_name == MV_REFRESH_IMPORT_INTO_STORE_NAME;
+            tidb_logutil::bg_logger().info(
+                "refresh materialized view complete out-of-place: choose shadow build method",
+                &[
+                    tidb_log::Field::new("schema", tidb_log::Value::Str(schema.to_owned())),
+                    tidb_log::Field::new("mview", tidb_log::Value::Str(name.clone())),
+                    tidb_log::Field::new("storeName", tidb_log::Value::Str(store_name.to_owned())),
+                    tidb_log::Field::new(
+                        "expectedStoreName",
+                        tidb_log::Value::Str(MV_REFRESH_IMPORT_INTO_STORE_NAME.to_owned()),
+                    ),
+                    tidb_log::Field::new("caseSensitiveEqual", tidb_log::Value::Bool(import_into)),
+                    tidb_log::Field::new(
+                        "caseInsensitiveEqual",
+                        tidb_log::Value::Bool(store_name.eq_ignore_ascii_case(MV_REFRESH_IMPORT_INTO_STORE_NAME)),
+                    ),
+                    tidb_log::Field::new(
+                        "method",
+                        tidb_log::Value::Str(if import_into { "import-into" } else { "insert-into" }.to_owned()),
+                    ),
+                ],
+            );
+            let (threads, disk_quota) = if import_into {
+                let threads = self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS)
+                    .ok()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MVIEW_MAINTAIN_IMPORT_THREADS);
+                let disk_quota =
+                    self.vars.get_system(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA).unwrap_or_default();
+                (threads, disk_quota)
+            } else {
+                (0, String::new())
+            };
+            let build_sql = build_mv_refresh_out_of_place_build_sql(
+                schema,
+                &shadow_name,
+                &mview.sql_content,
+                store_name,
+                threads,
+                &disk_quota,
+            )?;
+            self.observe_mv_refresh_step("OUT_OF_PLACE_LOAD_SHADOW", || sys_sql(&mut build, &build_sql, &[]))?;
             // Go `buildSessVars.StmtCtx.AffectedRows()` of the load.
             let inserted = i64::try_from(build.affected_rows()).unwrap_or(i64::MAX);
             self.emit_mv_refresh_step_plan_rows("OUT_OF_PLACE_LOAD_SHADOW", &mut build);
@@ -1622,6 +1663,48 @@ impl Session {
             )));
         }
         Ok(())
+    }
+}
+
+/// Go master `buildMVRefreshOutOfPlaceBuildSQL`: IMPORT INTO the shadow on a
+/// TiKV store (`shouldUseImportIntoForMVRefreshOutOfPlace`), INSERT INTO
+/// otherwise.
+fn build_mv_refresh_out_of_place_build_sql(
+    schema_name: &str,
+    shadow_table_name: &str,
+    select_sql: &str,
+    store_name: &str,
+    import_threads: i64,
+    import_disk_quota: &str,
+) -> Result<String, DriverError> {
+    if select_sql.is_empty() {
+        return Err(plain("refresh materialized view: invalid select sql"));
+    }
+    let target = [SqlArg::String(schema_name.as_bytes()), SqlArg::String(shadow_table_name.as_bytes())];
+    if store_name == MV_REFRESH_IMPORT_INTO_STORE_NAME {
+        let prefix =
+            tidb_sqlescape::escape_sql_text("IMPORT INTO %n.%n FROM ", &target).map_err(|error| plain(error.to_string()))?;
+        let options = tidb_ddl_build::materialized_view::build_mview_import_into_options(import_threads, import_disk_quota)
+            .map_err(DriverError::Mysql)?;
+        return Ok(format!("{prefix}({select_sql}) WITH {}", options.join(", ")));
+    }
+    let prefix = tidb_sqlescape::escape_sql_text("INSERT INTO %n.%n ", &target).map_err(|error| plain(error.to_string()))?;
+    Ok(format!("{prefix}{select_sql}"))
+}
+
+#[cfg(test)]
+mod out_of_place_build_sql_tests {
+    /// Go master `materialized_view_refresh_internal_test.go`'s
+    /// `buildMVRefreshOutOfPlaceBuildSQL` cases.
+    #[test]
+    fn test_build_mv_refresh_out_of_place_build_sql() {
+        let select = "select a, count(1) from t group by a";
+        let sql = super::build_mv_refresh_out_of_place_build_sql("test", "__mv_shadow_1", select, "TiKV", 12, "64gib").unwrap();
+        assert!(sql.contains("IMPORT INTO `test`.`__mv_shadow_1` FROM ("), "{sql}");
+        let options = tidb_ddl_build::materialized_view::build_mview_import_into_options(12, "64gib").unwrap();
+        assert!(sql.contains(&format!("WITH {}", options.join(", "))), "{sql}");
+        let sql = super::build_mv_refresh_out_of_place_build_sql("test", "__mv_shadow_1", select, "TiDB", 12, "64gib").unwrap();
+        assert_eq!(sql, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a");
     }
 }
 
