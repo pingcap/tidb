@@ -15,7 +15,7 @@ runs:
   using: composite
   steps:
     - name: Set up bazelisk
-      uses: bazel-contrib/setup-bazel@0.16.0
+      uses: bazel-contrib/setup-bazel@8310a45e30297e76bc8fbae427fb6068efa01eb8 # 0.16.0
       with:
         bazelisk-cache: true
         repository-cache: true
