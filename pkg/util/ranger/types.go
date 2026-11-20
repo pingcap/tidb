@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
@@ -74,6 +75,56 @@ func (rs Ranges) MemUsage() (sum int64) {
 		sum += ran.MemUsage()
 	}
 	return
+}
+
+// IsSubsetOf reports whether every encoded key in rs is covered by superRanges.
+// Both lists must be sorted by encoded lower bound; overlapping ranges are allowed.
+// The ranges must describe the same key space: column types and widths must match,
+// and strings must already be converted to collation sort keys, as in BuildColumnRange.
+// Unlike Subset, an empty list denotes the empty set, and containment uses boundary
+// ordering rather than matching datum prefixes. Neither input is modified.
+func (rs Ranges) IsSubsetOf(sctx *rangerctx.RangerContext, superRanges Ranges) (bool, error) {
+	var low, high, superLow, superHigh, covered []byte
+	var err error
+	j := 0
+	for _, ran := range rs {
+		low, high, err = ran.Encode(sctx.ErrCtx, sctx.TypeCtx.Location(), low, high)
+		if err != nil {
+			return false, err
+		}
+		// Earlier query intervals may already have proved coverage of this prefix.
+		if bytes.Compare(low, covered) < 0 {
+			low = append(low[:0], covered...)
+		}
+		// Empty encoded intervals do not need coverage.
+		for bytes.Compare(low, high) < 0 {
+			// Retain the current covering interval for the next query interval.
+			if bytes.Compare(superHigh, low) <= 0 {
+				if j == len(superRanges) {
+					return false, nil
+				}
+				superLow, superHigh, err = superRanges[j].Encode(sctx.ErrCtx, sctx.TypeCtx.Location(), superLow, superHigh)
+				if err != nil {
+					return false, err
+				}
+				j++
+				continue
+			}
+			if bytes.Compare(superLow, low) > 0 {
+				return false, nil
+			}
+			if bytes.Compare(superHigh, high) >= 0 {
+				break
+			}
+			// Continue covering this interval with the next parent. Copy the key
+			// because encoding that parent reuses the superHigh buffer.
+			low = append(low[:0], superHigh...)
+		}
+		if bytes.Compare(high, covered) > 0 {
+			covered = append(covered[:0], high...)
+		}
+	}
+	return true, nil
 }
 
 // Range represents a range generated in physical plan building phase.

@@ -111,22 +111,10 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 	if len(rangesFromFilters) == 0 || err != nil {
 		return false
 	}
-	unionedBuff := make([]*ranger.Range, len(rangesFromFilters)+len(ranges))
-	copy(unionedBuff, rangesFromFilters)
-	copy(unionedBuff[len(rangesFromFilters):], ranges)
-	unionedRange, err := ranger.UnionRanges(rangerctx, unionedBuff, false)
-	if err != nil {
-		return false
-	}
-	if len(unionedRange) != len(ranges) {
-		return false
-	}
-	for i, ran := range unionedRange {
-		if !ran.Equal(ranges[i]) {
-			return false
-		}
-	}
-	return true
+	// BuildColumnRange returns sorted, non-overlapping ranges in the same
+	// column's encoded key space. Check coverage without modifying either proof.
+	contained, err := rangesFromFilters.IsSubsetOf(rangerctx, ranges)
+	return err == nil && contained
 }
 
 func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Column, filters []expression.Expression) bool {
