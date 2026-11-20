@@ -692,6 +692,11 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 
 	req.TargetMode, req.ImportJobID = model.TableModeImport, 101
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/owned-import", targetKS, req))
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/owned-import-retry", targetKS, req))
+	req.ImportJobID = 102
+	err = alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/conflicting-import", targetKS, req)
+	require.ErrorIs(t, err, infoschema.ErrInvalidTableModeSet)
+	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
 	req.TargetMode, req.ImportJobID = model.TableModeNormal, 102
 	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/stale-release", targetKS, req))
 	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))

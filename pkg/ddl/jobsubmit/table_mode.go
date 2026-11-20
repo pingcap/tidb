@@ -31,7 +31,9 @@ func BuildAlterTableModeJob(
 		return nil, nil, false, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(
 			target.CurrentMode, target.TargetMode, target.TableName.O)
 	}
-	if target.ImportJobID == 0 && target.CurrentMode == target.TargetMode {
+	// An already-completed reset must not depend on a live DDL owner. Owned
+	// Import claims still need the worker's transactional ownership check.
+	if target.CurrentMode == target.TargetMode && (target.TargetMode == model.TableModeNormal || target.ImportJobID == 0) {
 		return nil, nil, true, nil
 	}
 

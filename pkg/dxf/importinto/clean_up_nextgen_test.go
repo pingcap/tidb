@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
@@ -57,23 +58,32 @@ func TestImportCleanerNextgen(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
-	defer cluster.Terminate(t)
+	const clientCount = 4
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: clientCount})
+	t.Cleanup(func() { cluster.Terminate(t) })
 	keyspaceIDs := map[string]uint32{
 		keyspace.System: 1,
 		"ks":            2,
+		"peer-ks":       3,
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {
 			id, ok := keyspaceIDs[ks]
 			require.True(t, ok)
-			// one client per ks
-			*cliP = cluster.Client(int(id - 1))
-			// we will close the client.
-			cluster.TakeClient(int(id - 1))
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id}, Name: ks})
-			require.NoError(t, err)
-			etcd.SetEtcdCliByNamespace(*cliP, keyspace.MakeKeyspaceEtcdNamespace(codec))
+			// Each runtime owns a client; both user domains also acquire SYSTEM.
+			for i := range clientCount {
+				cli := cluster.Client(i)
+				if cli == nil {
+					continue
+				}
+				cluster.TakeClient(i)
+				codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id}, Name: ks})
+				require.NoError(t, err)
+				etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
+				*cliP = cli
+				return
+			}
+			require.FailNow(t, "no etcd client available for keyspace %s", ks)
 		},
 	)
 	sysKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
@@ -89,6 +99,9 @@ func TestImportCleanerNextgen(t *testing.T) {
 				return storeMap[ks], nil
 			}
 		},
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/skipCloseStore",
+		func(shouldCloseStore *bool) { *shouldCloseStore = false },
 	)
 	userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, "ks")
 	storeMap["ks"] = userKSStore
@@ -256,5 +269,74 @@ func TestImportCleanerNextgen(t *testing.T) {
 		require.ErrorIs(t, (&importinto.ImportCleaner{}).Clean(ctx, &proto.Task{
 			TaskBase: proto.TaskBase{ID: 42, Keyspace: "ks"}, Meta: metadata,
 		}), cleanupErr)
+	})
+
+	t.Run("completed import without owner does not block another keyspace", func(t *testing.T) {
+		peerStore, peerDom := testkit.CreateMockStoreAndDomainForKS(t, "peer-ks")
+		storeMap["peer-ks"] = peerStore
+		peerTK := testkit.NewTestKit(t, peerStore)
+		userDom := domain.GetDomain(userKSTK.Session())
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = keyspace.System })
+		sysTaskMgr := manuallyInitFn(t, sysKSStore, sysKSStore)
+		cloudStorageURI := "local://" + t.TempDir()
+		sortStore, err := importer.GetSortStore(ctx, cloudStorageURI)
+		require.NoError(t, err)
+		defer sortStore.Close()
+
+		createTask := func(tk *testkit.TestKit, dom *domain.Domain, ks string, owner int64, reset bool) int64 {
+			tk.MustExec("create table test.completed_import(a int)")
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("completed_import"))
+			require.NoError(t, err)
+			args := &model.AlterTableModeArgs{
+				SchemaID: db.ID, TableID: tbl.Meta().ID,
+				TableMode: model.TableModeImport, ImportJobID: owner,
+			}
+			require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), args))
+			if reset {
+				// OnDone restores Normal before the archival cleaner runs, while
+				// the persisted task keeps its original table-mode ownership.
+				args.TableMode = model.TableModeNormal
+				require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), args))
+			}
+			metadata, err := json.Marshal(taskinfo.TaskMeta{
+				TableModeOwner: owner,
+				Plan: importer.Plan{
+					DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), CloudStorageURI: cloudStorageURI,
+				},
+			})
+			require.NoError(t, err)
+			id, err := sysTaskMgr.CreateTask(ctx, "completed-import-"+ks, proto.ImportInto, ks,
+				1, "dxf_service", 1, proto.ExtraParams{}, metadata)
+			require.NoError(t, err)
+			sysKSTK.MustExec("update mysql.tidb_global_task set state = 'succeed' where id = ?", id)
+			require.NoError(t, sortStore.WriteFile(ctx, fmt.Sprintf("%d/data", id), []byte("data")))
+			return id
+		}
+		completedID := createTask(userKSTK, userDom, "ks", 101, true)
+		peerID := createTask(peerTK, peerDom, "peer-ks", 102, false)
+		require.NoError(t, userDom.DDL().Stop())
+		require.False(t, userDom.DDL().OwnerManager().IsOwner())
+		userKSTK.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
+
+		cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		manager := scheduler.NewManager(cleanupCtx, sysKSStore, sysTaskMgr, "tidb", proto.NodeResourceForTest)
+		manager.Start()
+		defer manager.Stop()
+		require.Eventually(t, func() bool {
+			return sysKSTK.MustQuery("select count(*) from mysql.tidb_global_task_history where id in (?, ?)", completedID, peerID).Rows()[0][0] == "2"
+		}, 10*time.Second, 50*time.Millisecond)
+		sysKSTK.MustQuery("select count(*) from mysql.tidb_global_task where id in (?, ?)", completedID, peerID).Check(testkit.Rows("0"))
+		userKSTK.MustQuery("select count(*) from mysql.tidb_ddl_job").Check(testkit.Rows("0"))
+		peerTable, err := peerDom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("completed_import"))
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, peerTable.Meta().Mode)
+		for _, id := range []int64{completedID, peerID} {
+			exists, err := sortStore.FileExists(ctx, fmt.Sprintf("%d/data", id))
+			require.NoError(t, err)
+			require.False(t, exists)
+		}
 	})
 }
