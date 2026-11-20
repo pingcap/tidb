@@ -26,6 +26,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
         "//pkg/planner/planctx",
+        "//pkg/resourcegroup",
         "//pkg/session/cursor",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
