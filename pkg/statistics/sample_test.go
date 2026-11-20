@@ -440,13 +440,13 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 
 func SubTestSortSampleItems(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	// The first compare fails and the later compares succeed. The sort keeps
-	// only the error of the last compare, so the error is lost.
+	// The first compare fails and the later compares succeed. The error must
+	// not be lost, because the order is not valid after a failed compare.
 	items := []*SampleItem{
 		{Value: types.NewStringDatum("abc"), Ordinal: 0},
 		{Value: types.NewDecimalDatum(types.NewDecFromInt(1)), Ordinal: 1},
 		{Value: types.NewDecimalDatum(types.NewDecFromInt(2)), Ordinal: 2},
 		{Value: types.NewDecimalDatum(types.NewDecFromInt(3)), Ordinal: 3},
 	}
-	require.NoError(t, sortSampleItems(sc, items))
+	require.Error(t, sortSampleItems(sc, items))
 }
