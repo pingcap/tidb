@@ -1794,45 +1794,6 @@ func setSkipScanRows(plan base.PhysicalPlan, rows float64) {
 	plan.SetStats(&stats)
 }
 
-type streamAggScanKey struct {
-	tableID, physicalID, indexID int64
-	projections                  int
-	tableScan, desc              bool
-}
-
-// streamAggScan identifies a predicate-free, ordered single read below a
-// StreamAgg or one of its projections. It excludes different reader shapes.
-func streamAggScan(task base.Task) (streamAggScanKey, bool) {
-	cop, ok := task.(*physicalop.CopTask)
-	if !ok || !cop.KeepOrder || cop.Invalid() || cop.IndexJoinInfo != nil ||
-		len(cop.RootTaskConds)+len(cop.IdxMergePartPlans) != 0 ||
-		(cop.IndexPlan != nil && cop.TablePlan != nil) {
-		return streamAggScanKey{}, false
-	}
-	p := cop.Plan()
-	key := streamAggScanKey{}
-	for {
-		if _, ok := p.(*physicalop.PhysicalProjection); !ok || len(p.Children()) != 1 {
-			break
-		}
-		key.projections++
-		p = p.Children()[0]
-	}
-	switch scan := p.(type) {
-	case *physicalop.PhysicalIndexScan:
-		if scan.Table != nil && scan.Index != nil && len(scan.AccessCondition) == 0 && scan.IsFullScan() {
-			key.tableID, key.physicalID, key.indexID, key.desc = scan.Table.ID, scan.PhysicalTableID, scan.Index.ID, scan.Desc
-			return key, scan.SkipScan
-		}
-	case *physicalop.PhysicalTableScan:
-		if scan.Table != nil && scan.StoreType == kv.TiKV && len(scan.AccessCondition)+len(scan.FilterCondition) == 0 && scan.IsFullScan() {
-			key.tableID, key.physicalID, key.tableScan, key.desc = scan.Table.ID, scan.PhysicalTableID, true, scan.Desc
-			return key, scan.SkipScan
-		}
-	}
-	return streamAggScanKey{}, false
-}
-
 func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppTask) base.Task {
 	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 	// only push down the original agg
