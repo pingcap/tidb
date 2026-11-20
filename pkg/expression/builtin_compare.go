@@ -514,7 +514,7 @@ func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFunc4Extremum(ctx, c.funcName, args, resTp, argTps)
 	if err != nil {
 		return nil, err
 	}
@@ -563,6 +563,49 @@ func (c *greatestFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	sig.getRetTp().SetDecimalUnderLimit(decimal)
 
 	return sig, nil
+}
+
+// newBaseBuiltinFunc4Extremum casts decimal arguments to the scale of the result,
+// so the returned value has the scale of the result type whichever argument it comes from.
+func newBaseBuiltinFunc4Extremum(ctx BuildContext, funcName string, args []Expression, resTp types.EvalType, argTps []types.EvalType) (baseBuiltinFunc, error) {
+	if resTp == types.ETDecimal {
+		if argFieldTps := decimalArgTypes4Extremum(ctx.GetEvalCtx(), args); argFieldTps != nil {
+			return newBaseBuiltinFuncWithFieldTypes(ctx, funcName, args, resTp, argFieldTps...)
+		}
+	}
+	return newBaseBuiltinFuncWithTp(ctx, funcName, args, resTp, argTps...)
+}
+
+// decimalArgTypes4Extremum returns the argument types that carry the scale of the result,
+// or nil when no argument needs a cast or one would not fit the result precision.
+func decimalArgTypes4Extremum(ctx EvalContext, args []Expression) []*types.FieldType {
+	argFieldTps := make([]*types.FieldType, len(args))
+	for i := range args {
+		argFieldTps[i] = args[i].GetType(ctx)
+	}
+	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
+	setDecimalFromArgs(types.ETDecimal, decimalTp, argFieldTps...)
+	if decimalTp.GetDecimal() == types.UnspecifiedLength {
+		return nil
+	}
+	setFlenFromArgs(types.ETDecimal, decimalTp, argFieldTps...)
+	intDigits := decimalTp.GetFlen() - decimalTp.GetDecimal()
+	needCast := false
+	for i, argFieldTp := range argFieldTps {
+		if argFieldTp.GetDecimal() == decimalTp.GetDecimal() {
+			continue
+		}
+		// The cast would overflow when the result precision is capped at the decimal limit.
+		if argFieldTp.GetFlen() < 0 || argFieldTp.GetFlen()-argFieldTp.GetDecimal() > intDigits {
+			return nil
+		}
+		argFieldTps[i] = decimalTp.Clone()
+		needCast = true
+	}
+	if !needCast {
+		return nil
+	}
+	return argFieldTps
 }
 
 func fixFlenAndDecimalForGreatestAndLeast(ctx EvalContext, args []Expression) (flen, decimal int) {
@@ -873,7 +916,7 @@ func (c *leastFunctionClass) getFunction(ctx BuildContext, args []Expression) (s
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
+	bf, err := newBaseBuiltinFunc4Extremum(ctx, c.funcName, args, resTp, argTps)
 	if err != nil {
 		return nil, err
 	}
