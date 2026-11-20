@@ -118,6 +118,9 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	codec := jobCtx.store.GetCodec()
 
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
@@ -149,6 +152,9 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	codec := jobCtx.store.GetCodec()
 
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
