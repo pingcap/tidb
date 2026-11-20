@@ -1240,6 +1240,10 @@ func newBatchPointGetPlan(
 			for index, inner := range x.Values {
 				// permutations is used to match column and value.
 				permIndex := permutations[index]
+				// A later tuple may use a parameter where the first tuple has a literal.
+				if initTypes {
+					indexTypes[permIndex] = &colInfos[index].FieldType
+				}
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
 					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
@@ -1262,9 +1266,6 @@ func newBatchPointGetPlan(
 					}
 					values[permIndex] = *dval
 					valuesParams[permIndex] = con
-					if initTypes {
-						indexTypes[permIndex] = &colInfos[index].FieldType
-					}
 				default:
 					return nil
 				}
