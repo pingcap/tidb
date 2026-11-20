@@ -115,7 +115,7 @@ Finish / schema diff:
 
 ## Index-only reorg (rebuild affected indexes)
 
-This path is used when row data can stay as-is, but **index keys/values must be rewritten** (e.g. unsigned/signed integer toggles, collation encoding changes).
+This path is used when row data can stay as-is, but **index keys/values must be rewritten**, such as changing an indexed `CHAR` column to `VARCHAR` under `utf8mb4_bin`, which changes restored index-value data. `getModifyColumnType` currently routes signed/unsigned integer changes and incompatible collation changes through full row reorganization to preserve statistics correctness; those cases do not exercise the index-only path.
 
 - Entry: `pkg/ddl/modify_column.go:doModifyColumnIndexReorg`
 - Temporary “changing indexes” creation: `pkg/ddl/modify_column.go:initializeChangingIndexes`
@@ -152,6 +152,16 @@ Row rewrite (reorg/backfill) is implemented via the shared reorg engine:
 Index recreation reuses the add-index reorg path:
 
 - `pkg/ddl/index.go:doReorgWorkForCreateIndex`
+
+## Multiple column changes in one ALTER TABLE
+
+For multi-schema changes, `pkg/ddl/executor.go:multiSchemaChange` calls `mergeModifyColumn` in `pkg/ddl/multi_schema_change.go`. When there is more than one modify-column subjob, it combines them into one modify-column subjob with `model.ModifyColumnsArgs`; each column retains its own arguments, schema state, snapshot, analyze state, and reorg stage. A single modify-column subjob keeps the original argument format.
+
+`pkg/ddl/modify_column.go:onModifyColumnsMerged` prepares the child column changes, then finalizes them after the parent multi-schema job coordinates the required row and index reorganization. `reorgAndAnalyzeForMultiSchemaChange` runs the shared row phase before the shared index phase when both are needed. The row worker in `pkg/ddl/column.go` updates all changing-column pairs while processing a row. Finalization collects and deduplicates the index and partition IDs used by cleanup.
+
+Temporary child jobs propagate RU and a selected cloud-storage mode back through `updateParentJobFromProxy`; the shared row-reorganization phase accounts its pending RU before advancing the parent stage. These paths preserve the same accounting and storage-mode propagation used by other multi-schema proxy jobs.
+
+Relevant coverage is `TestMultiSchemaChangeReorgOnlyOnce`, `TestMultiSchemaChangeModifyColumnsCancelled`, and `TestMultiSchemaChangePreservesCloudStorageMode` in `pkg/ddl/multi_schema_change_test.go`, plus `TestMergedModifyColumnsArgs` in `pkg/meta/model/job_args_test.go`.
 
 ## Persistence (where progress and “mid-flight” state live)
 

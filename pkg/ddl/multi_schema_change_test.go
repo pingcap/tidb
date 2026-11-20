@@ -561,8 +561,8 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 3)
-		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hook.OnJobUpdated)
 	sql := "alter table t modify column a tinyint, modify column b bigint, modify column c char(20);"
@@ -783,21 +783,41 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"'2020-01-01 10:00:00', 'wer', '10:00:00', 2.1, 12, 'qwer', 12, 'asdf');")
 
 	var checkErr error
+	var updated bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if checkErr != nil {
+		if checkErr != nil || updated {
 			return
 		}
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		// Wait for "drop column c_drop_2" entering delete-only state.
-		if job.MultiSchemaInfo.SubJobs[8].SchemaState == model.StateDeleteOnly {
+		dropColumnReady := false
+		for i, subJob := range job.MultiSchemaInfo.SubJobs {
+			if subJob.Type != model.ActionDropColumn || subJob.SchemaState != model.StateDeleteOnly {
+				continue
+			}
+			proxyJob := subJob.ToProxyJob(job, i)
+			args, err := model.GetTableColumnArgs(&proxyJob)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if args.Col != nil && args.Col.Name.L == "c_drop_2" {
+				dropColumnReady = true
+				break
+			}
+		}
+		if dropColumnReady {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test;")
-			_, checkErr = tk2.Exec("update t set c_4 = '2020-01-01 10:00:00', c_5 = 'c_5_update', c_1 = 102, " +
+			// The merged modify job can still expose the old TIME column here.
+			// Use a value valid under both schemas while checking concurrent DML.
+			_, checkErr = tk2.Exec("update t set c_4 = '2020-01-01 10:00:00', c_5 = '11:11:11', c_1 = 102, " +
 				"c_2 = '1', c_pos_1 = 102, c_idx_visible = 102, c_3 = 3.1, c_drop_idx = 'er', c_6 = 2, c_pos_2 = 'dddd', " +
 				"c_add_idx_1 = 102, c_add_idx_2 = 'zxc', c_add_2 = 10001, c_add_1 = 10001 where c_drop_idx = 'wer';")
 			if checkErr != nil {
 				return
 			}
+			updated = true
 		}
 	})
 	tk.MustExec("alter table t " +
@@ -816,6 +836,9 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, " +
 		"modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
+	require.True(t, updated, "the concurrent update must run at the target drop-column state")
+	tk.MustQuery("select c_1, c_5, c_add_1, c_add_2 from t").Check(testkit.Rows("102 11:11:11 10001 10001"))
+	tk.MustExec("admin check table t")
 }
 
 func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
@@ -1109,4 +1132,77 @@ func putTheSameDDLJobTwice(t *testing.T, fn func()) {
 func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 	assert.NotNil(t, job.MultiSchemaInfo, job)
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
+}
+
+func TestMultiSchemaChangeReorgOnlyOnce(t *testing.T) {
+	type testCase struct {
+		createSQL          string
+		alterSQL           string
+		expectedIndexReorg int
+		expectedRowReorg   int
+	}
+
+	var (
+		indexReorgCount int
+		rowReorgCount   int
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(_ *model.Job) {
+		indexReorgCount++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdatePhysicalTableRow", func(job *model.Job) {
+		if job.Type == model.ActionMultiSchemaChange {
+			rowReorgCount++
+		}
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	for _, tc := range []testCase{
+		{
+			// Current master keeps signedness changes on the full reorg path
+			// until statistics encoding is compatible with the index-only path.
+			alterSQL:           "alter table t add index i1(a), add index i2(b), modify column c int unsigned",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
+		},
+		{
+			alterSQL:           "alter table t modify column a int unsigned, modify column c int unsigned",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
+		},
+		{
+			createSQL: "create table t (a char(20) collate utf8mb4_bin, b int, c char(20) collate utf8mb4_bin, " +
+				"index idx_a(a), index idx_b(b), index idx_c(c))",
+			alterSQL: "alter table t modify column a varchar(10) collate utf8mb4_bin, " +
+				"modify column c varchar(10) collate utf8mb4_bin",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   0,
+		},
+		{
+			alterSQL:           "alter table t modify column a int, modify column c int, drop index idx_b",
+			expectedIndexReorg: 0,
+			expectedRowReorg:   0,
+		},
+		{
+			alterSQL:           "alter table t modify column a varchar(20), modify column c varchar(20)",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
+		},
+	} {
+		indexReorgCount = 0
+		rowReorgCount = 0
+		tk.MustExec("drop table if exists t")
+		createSQL := tc.createSQL
+		if createSQL == "" {
+			createSQL = "create table t (a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))"
+		}
+		tk.MustExec(createSQL)
+		tk.MustExec("insert into t values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
+		tk.MustExec(tc.alterSQL)
+		require.EqualValues(t, tc.expectedIndexReorg, indexReorgCount, tc.alterSQL)
+		require.EqualValues(t, tc.expectedRowReorg, rowReorgCount, tc.alterSQL)
+		tk.MustExec("admin check table t")
+	}
 }
