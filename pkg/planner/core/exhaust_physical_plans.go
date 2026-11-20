@@ -515,11 +515,16 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	) {
 		return nil
 	}
+	var outerKeyFilters []expression.Expression
+	if ge == nil {
+		outerKeyFilters = collectIndexJoinOuterKeyFilters(p.SCtx().GetExprCtx().GetEvalCtx(), p.Children()[outerIdx], outerJoinKeys)
+	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
 		OtherConditions: p.OtherConditions,
 		InnerJoinKeys:   innerJoinKeys,
 		OuterJoinKeys:   outerJoinKeys,
+		OuterKeyFilters: outerKeyFilters,
 		AvgInnerRowCnt:  avgInnerRowCnt,
 		TableRangeScan:  true,
 	}
@@ -528,6 +533,7 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		OtherConditions: p.OtherConditions,
 		InnerJoinKeys:   innerJoinKeys,
 		OuterJoinKeys:   outerJoinKeys,
+		OuterKeyFilters: outerKeyFilters,
 		AvgInnerRowCnt:  avgInnerRowCnt,
 		TableRangeScan:  false,
 	}
@@ -719,6 +725,8 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	if indexJoinResult == nil {
 		return base.InvalidTask
 	}
+	indexJoinResult.chosenRemained = removeInnerFiltersImpliedByOuter(ds.SCtx().GetExprCtx(),
+		indexJoinResult.chosenRemained, prop.IndexJoinProp, indexJoinPathBoundKeys(indexJoinResult))
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
 	var innerTask base.Task
@@ -772,6 +780,8 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if indexJoinResult == nil {
 			return base.InvalidTask
 		}
+		indexJoinResult.chosenRemained = removeInnerFiltersImpliedByOuter(ds.SCtx().GetExprCtx(),
+			indexJoinResult.chosenRemained, prop.IndexJoinProp, indexJoinPathBoundKeys(indexJoinResult))
 		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
 		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		accessRowsFloor := indexJoinProbeAccessRowsFloor(ds, prop.IndexJoinProp, indexJoinResult)
@@ -795,6 +805,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if !ok {
 			return base.InvalidTask
 		}
+		// The int handle probe binds every join key on the handle column.
+		pushedDownConds := removeInnerFiltersImpliedByOuter(ds.SCtx().GetExprCtx(), ds.PushedDownConds, prop.IndexJoinProp,
+			func(keyOff int) bool { return keyOff2IdxOff[keyOff] == 0 })
 		// For IntHandle (integer primary key), it's always a unique match.
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
@@ -805,9 +818,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if matchResult == property.PropMatched {
 			// The int handle is a single-column unique key, so the join key fully decides the range
 			// and no rows-after-access floor applies.
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, pushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, pushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, 0, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.

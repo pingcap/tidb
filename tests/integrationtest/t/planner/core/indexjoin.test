@@ -308,3 +308,36 @@ explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
 from t_outer_pk o 
 join t_inner_pk i on o.a = i.a and i.b > 50
 where o.val = 100;
+
+# TestIndexJoinInnerFilterImpliedByOuter
+drop table if exists t1, t2, t3, tc1, tc2;
+create table t1 (a int, b int, primary key (a, b) clustered);
+create table t2 (a int, b int, c int, primary key (a, b, c) clustered);
+create table t3 (a int, b int, c int, key k(b));
+create table tc1 (a int, s varchar(10) collate utf8mb4_general_ci);
+create table tc2 (a int, s varchar(10) collate utf8mb4_general_ci, key k(s));
+insert into t1 values (1, 10), (1, 20), (1, 30), (2, 10);
+insert into t2 values (1, 10, 1), (1, 10, 2), (1, 20, 1), (1, 30, 1), (2, 10, 1);
+insert into t3 values (1, 10, 1), (2, 20, 2), (3, 30, 3);
+insert into tc1 values (1, 'a'), (2, 'b');
+insert into tc2 values (1, 'a'), (2, 'A'), (3, 'a '), (4, 'b');
+explain format='plan_tree' select /*+ inl_join(t2) */ * from (select * from t1 where b in (10, 20)) x left join t2 on t2.a = x.a and t2.b = x.b; -- the derived t2.b IN is not evaluated again on the probe side;
+explain format='plan_tree' select /*+ inl_join(t2) */ * from (select * from t1 where b > 10) x left join t2 on t2.a = x.a and t2.b = x.b; -- the derived t2.b > 10 is not evaluated again on the probe side;
+explain format='plan_tree' select /*+ inl_join(t2) */ * from t1 join t2 on t2.a = t1.a and t2.b = t1.b where t1.b in (10, 20); -- inner join;
+explain format='plan_tree' select /*+ inl_join(t3) */ * from (select * from t1 where b in (10, 20)) x left join t3 on t3.b = x.b; -- IndexLookUp probe side;
+explain format='plan_tree' select /*+ hash_join(t2) */ * from (select * from t1 where b in (10, 20)) x left join t2 on t2.a = x.a and t2.b = x.b; -- hash join keeps the derived IN to narrow its scan;
+explain format='plan_tree' select /*+ inl_join(tc2) */ * from tc1 join tc2 on tc1.s = tc2.s where tc1.s in ('a', 'b'); -- a comparison with the column's collation is dropped;
+explain format='plan_tree' select /*+ inl_join(tc2) */ * from tc1 join tc2 on tc1.s = tc2.s where length(tc1.s) = 1 and length(tc2.s) = 1; -- kept, equal keys under the collation can differ in length;
+select * from (select * from t1 where b in (10, 20)) x left join t2 on t2.a = x.a and t2.b = x.b order by x.a, x.b, t2.c;
+select * from (select * from t1 where b > 10) x left join t2 on t2.a = x.a and t2.b = x.b order by x.a, x.b, t2.c;
+select /*+ inl_join(t3) */ * from (select * from t1 where b in (10, 20)) x left join t3 on t3.b = x.b order by x.a, x.b;
+select /*+ inl_join(tc2) */ * from tc1 join tc2 on tc1.s = tc2.s where tc1.s in ('a', 'b') order by tc1.a, tc2.a;
+select /*+ inl_join(tc2) */ * from tc1 join tc2 on tc1.s = tc2.s where length(tc1.s) = 1 and length(tc2.s) = 1 order by tc1.a, tc2.a;
+drop table if exists o, i;
+create table o (s varchar(10) collate utf8mb4_general_ci);
+create table i (s varchar(10) collate utf8mb4_general_ci, key k(s));
+insert into o values ('A'), ('a'), ('b');
+insert into i values ('A'), ('a'), ('b');
+explain format='plan_tree' select /*+ inl_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin; -- kept, the outer filter compares under a different collation than the key;
+select /*+ inl_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin order by o.s, i.s;
+select /*+ hash_join(i) */ o.s, i.s from o left join i on o.s = i.s and i.s <> _utf8mb4'a' collate utf8mb4_general_ci where o.s <> _utf8mb4'a' collate utf8mb4_bin order by o.s, i.s;

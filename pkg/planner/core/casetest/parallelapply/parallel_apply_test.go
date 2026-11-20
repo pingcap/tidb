@@ -133,8 +133,7 @@ func TestParallelApplyWarnning(t *testing.T) {
 				"        ├─IndexReader(Build) root  index:IndexFullScan",
 				"        │ └─IndexFullScan cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",
 				"        └─IndexLookUp(Probe) root  ",
-				"          ├─Selection(Build) cop[tikv]  not(isnull(test.t.a))",
-				"          │ └─IndexRangeScan cop[tikv] table:t1, index:idx(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
+				"          ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
 				"          └─Selection(Probe) cop[tikv]  gt(test.t.b, test.t.b)",
 				"            └─TableRowIDScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		testKit.MustQuery("show warnings;").Check(testkit.Rows())

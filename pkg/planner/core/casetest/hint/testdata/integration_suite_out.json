@@ -1006,8 +1006,7 @@
           "    │ └─Selection cop[tikv]  not(isnull(test.t3.b))",
           "    │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
           "    └─IndexLookUp(Probe) root  ",
-          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.b))",
-          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
           "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.a))",
           "        └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
@@ -1323,8 +1322,7 @@
           "  ├─IndexReader(Build) root  index:IndexFullScan",
           "  │ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) root  ",
-          "    ├─Selection(Build) cop[tikv]  not(isnull(test.t1.b))",
-          "    │ └─IndexRangeScan cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1371,8 +1369,7 @@
           "  ├─IndexReader(Build) root  index:IndexFullScan",
           "  │ └─IndexFullScan cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) root  ",
-          "    ├─Selection(Build) cop[tikv]  not(isnull(test.t1.b))",
-          "    │ └─IndexRangeScan cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx_b(b) range: decided by [eq(test.t1.b, test.t2.b)], keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1415,8 +1412,7 @@
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t3, index:idx_b(b) keep order:false, stats:pseudo",
           "    └─IndexLookUp(Probe) root  ",
-          "      ├─Selection(Build) cop[tikv]  not(isnull(test.t2.b))",
-          "      │ └─IndexRangeScan cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:t2, index:idx_b(b) range: decided by [eq(test.t2.b, test.t3.b)], keep order:false, stats:pseudo",
           "      └─Selection(Probe) cop[tikv]  not(isnull(test.t2.a))",
           "        └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
