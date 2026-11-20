@@ -30,12 +30,12 @@ const MV_TABLE_ALIAS: &str = "mv";
 const DELTA_CNT_STAR_NAME: &str = "__mview_delta_cnt_star";
 
 /// Go `mviewTestContext` with the parser it plans under.
-fn parse(sql: &str) -> Result<Stmt, String> {
+pub(super) fn parse(sql: &str) -> Result<Stmt, String> {
     tidb_parser::parse(sql).map_err(|error| error.compatibility_message(sql))
 }
 
 /// Go `infoschema.MockInfoSchema(tables)`: the tables, public, in `test`.
-fn mock_info_schema(tables: &[&TableInfo]) -> SessionExtendedInfoSchema {
+pub(super) fn mock_info_schema(tables: &[&TableInfo]) -> SessionExtendedInfoSchema {
     let mut db = tidb_model::db::DBInfo {
         id: 1,
         name: tidb_ast::CiString::new("test"),
@@ -66,7 +66,7 @@ fn optimize_for_test(is: &SessionExtendedInfoSchema, sel: &SelectStmt) -> (Physi
 }
 
 /// Go `mviewTestContext`: materialized views on.
-fn mview_test_context() -> crate::StmtContext {
+pub(super) fn mview_test_context() -> crate::StmtContext {
     crate::StmtContext::for_query().with_enable_mview(true)
 }
 
@@ -93,7 +93,7 @@ fn optimize_for_test_in(
 }
 
 /// Go `mkCol`.
-fn mk_col(id: i64, name: &str, offset: i64, tp: FieldTypeCode) -> ColumnInfo {
+pub(super) fn mk_col(id: i64, name: &str, offset: i64, tp: FieldTypeCode) -> ColumnInfo {
     ColumnInfo {
         id,
         name: tidb_ast::CiString::new(name),
@@ -104,7 +104,7 @@ fn mk_col(id: i64, name: &str, offset: i64, tp: FieldTypeCode) -> ColumnInfo {
     }
 }
 
-fn table(id: i64, name: &str, columns: Vec<ColumnInfo>) -> TableInfo {
+pub(super) fn table(id: i64, name: &str, columns: Vec<ColumnInfo>) -> TableInfo {
     TableInfo {
         id,
         name: tidb_ast::CiString::new(name),
@@ -115,7 +115,7 @@ fn table(id: i64, name: &str, columns: Vec<ColumnInfo>) -> TableInfo {
 }
 
 /// The base table `t(a, b)` with its log, the shape most Go cases share.
-fn base_and_mlog(base_id: i64, mlog_id: i64) -> (TableInfo, TableInfo) {
+pub(super) fn base_and_mlog(base_id: i64, mlog_id: i64) -> (TableInfo, TableInfo) {
     let mut base = table(
         base_id,
         "t",
@@ -140,7 +140,7 @@ fn base_and_mlog(base_id: i64, mlog_id: i64) -> (TableInfo, TableInfo) {
     (base, mlog)
 }
 
-fn mview_table(id: i64, name: &str, columns: Vec<ColumnInfo>, base_ids: Vec<i64>, sql: &str) -> TableInfo {
+pub(super) fn mview_table(id: i64, name: &str, columns: Vec<ColumnInfo>, base_ids: Vec<i64>, sql: &str) -> TableInfo {
     let mut mv = table(id, name, columns);
     mv.materialized_view = Some(GoShared::new(MaterializedViewInfo {
         base_table_ids: base_ids.into(),
@@ -561,11 +561,11 @@ fn collect_payload_comparison_ops(expr: &Expr) -> std::collections::HashMap<Stri
 }
 
 /// Go `t.Columns[i]`.
-fn col_at(t: &TableInfo, i: usize) -> GoShared<ColumnInfo> {
+pub(super) fn col_at(t: &TableInfo, i: usize) -> GoShared<ColumnInfo> {
     t.columns.iter_deref().nth(i).unwrap()
 }
 
-fn index(id: i64, name: &str, columns: &[(&str, i64)], invisible: bool) -> tidb_model::IndexInfo {
+pub(super) fn index(id: i64, name: &str, columns: &[(&str, i64)], invisible: bool) -> tidb_model::IndexInfo {
     tidb_model::IndexInfo {
         id,
         name: tidb_ast::CiString::new(name),

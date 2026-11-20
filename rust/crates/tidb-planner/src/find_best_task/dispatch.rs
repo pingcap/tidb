@@ -4726,7 +4726,16 @@ fn find_best_task_4_logical_data_source_paths(
                     // if this candidate's single/double-read task is refused.
                     ctx.forced_partial_order_paths.insert(path_key);
                 }
-                let keep_order = ordered || partial_order_match.is_some();
+                // Go `buildDataSource2IndexScanByIndexJoinProp`: an index-join
+                // probe keeps order only when `matchProperty` matches; an
+                // unmatched order still builds the probe, without order.
+                let probe_order_match = (prop.index_join_prop.is_some() && ordered).then(|| {
+                    index_path_matches_order(ds, source_index, prop, index_join_probe.is_none().then_some(&ranges))
+                });
+                let keep_order = match &probe_order_match {
+                    Some(order_match) => order_match.matched(),
+                    None => ordered || partial_order_match.is_some(),
+                };
                 // Go `constructDS2IndexScanTask`: a partitioned inner reader
                 // cannot keep order for an index join.
                 if keep_order
@@ -4740,7 +4749,9 @@ fn find_best_task_4_logical_data_source_paths(
                 {
                     continue 'paths;
                 }
-                let order_match = if ordered {
+                let order_match = if let Some(order_match) = probe_order_match {
+                    if order_match.matched() { order_match } else { OrderMatch::NOT_MATCHED }
+                } else if ordered {
                     let order_match = index_path_matches_order(
                         ds,
                         source_index,

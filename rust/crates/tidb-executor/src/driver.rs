@@ -50,6 +50,8 @@ mod catalog_planner_view_tests;
 #[cfg(test)]
 mod planner_mview_tests;
 #[cfg(test)]
+mod casetest_mview_tests;
+#[cfg(test)]
 mod catalog_statistics_tests;
 mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
