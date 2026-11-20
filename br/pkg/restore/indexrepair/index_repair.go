@@ -40,15 +40,17 @@ import (
 // at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
 const defaultRepairIndexSessionCount uint = 10
 
-func colsToStr(cols []ast.CIStr) string {
+func colsToStr(cols []ast.CIStr) (string, []any) {
 	var str strings.Builder
+	args := make([]any, 0, len(cols))
 	for i, col := range cols {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(col.O)
+		str.WriteString("%n")
+		args = append(args, col.O)
 	}
-	return str.String()
+	return str.String(), args
 }
 
 const (
@@ -97,12 +99,15 @@ func generateRepairIngestIndexSQLs(
 			addSQL  strings.Builder
 			addArgs []any = make([]any, 0, 7+len(fkRecord.Cols)+len(fkRecord.RefCols))
 		)
-		childCols := colsToStr(fkRecord.Cols)
-		parentCols := colsToStr(fkRecord.RefCols)
+		childCols, childColArgs := colsToStr(fkRecord.Cols)
+		parentCols, parentColArgs := colsToStr(fkRecord.RefCols)
 		fmt.Fprintf(&addSQL, alterTableAddForeignKeyFormat, childCols, parentCols)
 		addArgs = append(addArgs,
-			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
+			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O,
 		)
+		addArgs = append(addArgs, childColArgs...)
+		addArgs = append(addArgs, fkRecord.RefSchema.O, fkRecord.RefTable.O)
+		addArgs = append(addArgs, parentColArgs...)
 		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
 			fmt.Fprintf(&addSQL, " ON DELETE %s", onDelete.String())
 		}

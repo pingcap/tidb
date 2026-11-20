@@ -16,6 +16,9 @@ package indexrepair_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -153,6 +156,92 @@ func TestRepairGlobalIndexes(t *testing.T) {
 			// A second invocation must resume persisted SQLs without dropping rebuilt indexes.
 			require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
 			tk.MustExec("ADMIN CHECK TABLE test.t")
+		})
+	}
+}
+
+func TestRepairForeignKeyQuotedColumns(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		childCol  string
+		parentCol string
+	}{
+		{name: "plain", childCol: "pid", parentCol: "id"},
+		{name: "reserved_word", childCol: "order", parentCol: "id"},
+		{name: "parent_reserved_word", childCol: "pid", parentCol: "order"},
+		{name: "space", childCol: "parent id", parentCol: "parent id"},
+		{name: "backtick", childCol: "parent`id", parentCol: "parent`id"},
+		{name: "percent", childCol: "parent%n", parentCol: "parent%n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := utiltest.CreateRestoreSchemaSuite(t)
+			tk := testkit.NewTestKit(t, s.Mock.Storage)
+			childCol := strings.ReplaceAll(tc.childCol, "`", "``")
+			parentCol := strings.ReplaceAll(tc.parentCol, "`", "``")
+			tk.MustExec(fmt.Sprintf("CREATE TABLE test.parent (`%s` int, INDEX i2 (`%s`))", parentCol, parentCol))
+			tk.MustExec(fmt.Sprintf("CREATE TABLE test.child (id int, `%s` int, INDEX i1 (`%s`), CONSTRAINT fk FOREIGN KEY (`%s`) REFERENCES test.parent (`%s`) ON DELETE CASCADE ON UPDATE CASCADE)", childCol, childCol, childCol, parentCol))
+
+			ctx := context.Background()
+			g := gluetidb.New()
+			meta, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 73534)
+			require.NoError(t, err)
+			defer meta.Close()
+			require.NoError(t, meta.SaveCheckpointMetadata(ctx, nil))
+
+			fakeJob := func(schemaName, tableName string, tableID, indexID int64, indexName, columnName string) *model.Job {
+				return &model.Job{
+					Version:    model.JobVersion1,
+					SchemaName: schemaName,
+					TableName:  tableName,
+					TableID:    tableID,
+					Type:       model.ActionAddIndex,
+					State:      model.JobStateSynced,
+					RowCount:   1,
+					RawArgs:    json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexID)),
+					ReorgMeta:  &model.DDLReorgMeta{ReorgTp: model.ReorgTypeIngest},
+					BinlogInfo: &model.HistoryInfo{TableInfo: &model.TableInfo{Indices: []*model.IndexInfo{{
+						ID: indexID, Name: ast.NewCIStr(indexName), Columns: []*model.IndexColumn{{Name: ast.NewCIStr(columnName)}},
+					}}}},
+				}
+			}
+
+			infoSchema := s.Mock.InfoSchema()
+			child, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+			require.NoError(t, err)
+			parent, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+			require.NoError(t, err)
+			recorder := ingestrec.New()
+			require.NoError(t, recorder.TryAddJob(fakeJob("test", "child", child.ID, child.Indices[0].ID, "i1", tc.childCol), false))
+			require.NoError(t, recorder.TryAddJob(fakeJob("test", "parent", parent.ID, parent.Indices[0].ID, "i2", tc.parentCol), false))
+
+			originalFK := child.ForeignKeys[0]
+			var repairedFKID int64
+			for attempt := range 3 {
+				t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+					require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, recorder, meta, g, nil))
+					child, err := s.Mock.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+					require.NoError(t, err)
+					require.Len(t, child.ForeignKeys, 1)
+					fk := child.ForeignKeys[0]
+					require.NotEqual(t, originalFK.ID, fk.ID)
+					require.Equal(t, originalFK.Cols, fk.Cols)
+					require.Equal(t, originalFK.RefCols, fk.RefCols)
+					require.Equal(t, originalFK.OnDelete, fk.OnDelete)
+					require.Equal(t, originalFK.OnUpdate, fk.OnUpdate)
+					require.ErrorContains(t, tk.ExecToErr("INSERT INTO test.child VALUES (1, 42)"), "foreign key constraint fails")
+					switch attempt {
+					case 0:
+						// Resume from a checkpoint with rebuilt indexes but a missing FK.
+						tk.MustExec("ALTER TABLE test.child DROP FOREIGN KEY fk")
+					case 1:
+						repairedFKID = fk.ID
+					case 2:
+						// A completed retry must preserve the rebuilt FK.
+						require.Equal(t, repairedFKID, fk.ID)
+					}
+				})
+				recorder = nil
+			}
 		})
 	}
 }
