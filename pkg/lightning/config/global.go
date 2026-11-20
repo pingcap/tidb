@@ -54,10 +54,11 @@ type GlobalTiDB struct {
 
 // GlobalMydumper is the global configuration of mydumper.
 type GlobalMydumper struct {
-	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
-	// Deprecated
-	NoSchema      bool             `toml:"no-schema" json:"no-schema"`
-	Filter        []string         `toml:"filter" json:"filter"`
+	SourceDir      string           `toml:"data-source-dir" json:"data-source-dir"`
+	IgnoreDataCols AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	NoSchema       bool             `toml:"no-schema" json:"no-schema"`
+	Filter         []string         `toml:"filter" json:"filter"`
+	// Deprecated: use IgnoreDataCols instead.
 	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
 }
 

@@ -497,6 +497,118 @@ func (s *precheckImplSuite) TestSchemaCheckBasic() {
 	s.Require().False(result.Passed)
 }
 
+// TestSchemaCheckColumnConstantSatisfiesDefault verifies that a column-constant
+// entry causes the schema pre-check to accept a table where a NOT NULL column
+// has no DDL DEFAULT and is absent from the source CSV.
+func (s *precheckImplSuite) TestSchemaCheckColumnConstantSatisfiesDefault() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.cfg.Mydumper.CSV.Header = true
+
+	// tenant is NOT NULL with no DDL default and is absent from the source CSV.
+	const csvData = `ival,sval
+111,"aaa"
+`
+	testMockSrcData := s.generateMockData(1, 1, 1,
+		func(dbName string, tblName string) string {
+			return fmt.Sprintf("CREATE TABLE %s.%s ( id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER NOT NULL, sval VARCHAR(64) NOT NULL, tenant VARCHAR(32) NOT NULL );", dbName, tblName)
+		},
+		func(dbID int, tblID int, fileID int) ([]byte, int, string) {
+			return []byte(csvData), 100, "csv"
+		},
+	)
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+
+	// Without column-constants: schema check must fail because tenant has no default.
+	ci := NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
+	result, err := ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed, "expected schema check to fail without column-constants")
+
+	// With a valid column-constant: schema check must pass.
+	s.cfg.Mydumper.ColumnConstants = config.AllColumnConstants{
+		{DB: "db1", Table: "tbl1", Values: map[string]string{"tenant": "acme"}},
+	}
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+	ci = NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().True(result.Passed, "expected schema check to pass with valid column-constant")
+}
+
+// TestSchemaCheckColumnConstantTypeMismatch verifies that a column-constant with
+// a value that cannot be cast to the target column type causes the schema pre-check
+// to fail with a clear message — catching the misconfiguration before any data is read.
+func (s *precheckImplSuite) TestSchemaCheckColumnConstantTypeMismatch() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.cfg.Mydumper.CSV.Header = true
+
+	const csvData = `sval
+"aaa"
+`
+	testMockSrcData := s.generateMockData(1, 1, 1,
+		func(dbName string, tblName string) string {
+			return fmt.Sprintf("CREATE TABLE %s.%s ( id INTEGER PRIMARY KEY AUTO_INCREMENT, sval VARCHAR(64) NOT NULL, count INTEGER NOT NULL );", dbName, tblName)
+		},
+		func(dbID int, tblID int, fileID int) ([]byte, int, string) {
+			return []byte(csvData), 100, "csv"
+		},
+	)
+
+	// "" cast to INTEGER is a type mismatch under strict mode — must fail precheck.
+	s.cfg.Mydumper.ColumnConstants = config.AllColumnConstants{
+		{DB: "db1", Table: "tbl1", Values: map[string]string{"count": ""}},
+	}
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+	ci := NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
+	result, err := ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed, "expected schema check to fail for empty string constant on INT column")
+	s.Require().Contains(result.Message, "cannot be cast to column type")
+
+	// "not_a_number" cast to INTEGER — must also fail precheck.
+	s.cfg.Mydumper.ColumnConstants = config.AllColumnConstants{
+		{DB: "db1", Table: "tbl1", Values: map[string]string{"count": "not_a_number"}},
+	}
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+	ci = NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
+	result, err = ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed, "expected schema check to fail for non-numeric constant on INT column")
+	s.Require().Contains(result.Message, "cannot be cast to column type")
+}
+
+// TestSchemaCheckColumnConstantUnknownColumn verifies that a column-constant
+// referencing a column that does not exist in the table schema causes the schema
+// pre-check to fail with a clear message.
+func (s *precheckImplSuite) TestSchemaCheckColumnConstantUnknownColumn() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.cfg.Mydumper.CSV.Header = true
+
+	const csvData = `ival
+111
+`
+	testMockSrcData := s.generateMockData(1, 1, 1,
+		func(dbName string, tblName string) string {
+			return fmt.Sprintf("CREATE TABLE %s.%s ( id INTEGER PRIMARY KEY AUTO_INCREMENT, ival INTEGER NOT NULL );", dbName, tblName)
+		},
+		func(dbID int, tblID int, fileID int) ([]byte, int, string) {
+			return []byte(csvData), 100, "csv"
+		},
+	)
+	s.cfg.Mydumper.ColumnConstants = config.AllColumnConstants{
+		{DB: "db1", Table: "tbl1", Values: map[string]string{"nonexistent_col": "value"}},
+	}
+	s.Require().NoError(s.setMockImportData(testMockSrcData))
+	ci := NewSchemaCheckItem(s.cfg, s.preInfoGetter, s.mockSrc.GetAllDBFileMetas(), nil)
+	result, err := ci.Check(ctx)
+	s.Require().NoError(err)
+	s.Require().False(result.Passed, "expected schema check to fail for constant on unknown column")
+	s.Require().Contains(result.Message, "unknown column")
+}
+
 func (s *precheckImplSuite) TestCSVHeaderCheckBasic() {
 	var (
 		err    error
