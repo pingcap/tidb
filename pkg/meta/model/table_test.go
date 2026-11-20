@@ -324,18 +324,21 @@ func TestPartitionIDsInDDLToIgnore(t *testing.T) {
 		ActionRemovePartitioning,
 		ActionAlterTablePartitioning,
 	} {
-		// Before visibility switch (e.g. StateWriteReorganization), DroppingDefinitions are still live.
+		// Before visibility switch (StateDeleteOnly/WriteOnly/WriteReorganization), DroppingDefinitions are still live.
 		pi := &PartitionInfo{
 			DDLAction:           action,
-			DDLState:            StateWriteReorganization,
+			DDLState:            StateDeleteOnly,
 			DroppingDefinitions: []PartitionDefinition{{ID: 101}, {ID: 102}},
 		}
 		require.Nil(t, pi.IDsInDDLToIgnore())
 
-		pi.DDLState = StateDeleteOnly
-		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
+		pi.DDLState = StateWriteReorganization
+		require.Nil(t, pi.IDsInDDLToIgnore())
 
 		pi.DDLState = StateDeleteReorganization
+		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
+
+		pi.DDLState = StatePublic
 		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
 	}
 }

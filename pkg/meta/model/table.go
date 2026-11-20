@@ -1367,9 +1367,10 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			return ids
 		}
 	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
-		// Reorganize-family DDLs populate DroppingDefinitions before the backfill
-		// switches Definitions; only ignore them after entering delete-only/reorg.
-		if (pi.DDLState == StateDeleteOnly || pi.DDLState == StateDeleteReorganization) && len(pi.DroppingDefinitions) > 0 {
+		// Reorganize-family DDLs populate DroppingDefinitions before backfill;
+		// Definitions still includes them during StateDeleteOnly/WriteOnly/WriteReorganization.
+		// Only ignore them once backfill swaps Definitions (StateDeleteReorganization/StatePublic).
+		if (pi.DDLState == StateDeleteReorganization || pi.DDLState == StatePublic) && len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ids = append(ids, def.ID)
