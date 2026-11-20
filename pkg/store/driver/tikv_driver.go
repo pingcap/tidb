@@ -296,28 +296,22 @@ func newSafePointKV(
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 	tsoBatchWaitInterval := time.Duration(float64(time.Millisecond) * vardef.DefTiDBTSOClientBatchMaxWaitTime)
-	maxWaitErr := opt.NewOption().SetMaxTSOBatchWaitInterval(tsoBatchWaitInterval)
 	tsoRPCConcurrency := vardef.TSOClientRPCModeToConcurrency(vardef.DefTiDBTSOClientRPCMode)
 	if tsoRPCConcurrency == 0 {
 		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO RPC mode; using PD client default",
 			zap.String("variable", vardef.TiDBTSOClientRPCMode),
 			zap.String("value", vardef.DefTiDBTSOClientRPCMode))
 	}
-	if maxWaitErr != nil {
-		logutil.BgLogger().Warn("invalid TiDB default for PD client TSO batch wait interval; using PD client default",
-			zap.String("variable", vardef.TiDBTSOClientBatchMaxWaitTime),
-			zap.Float64("value_ms", vardef.DefTiDBTSOClientBatchMaxWaitTime),
-			zap.Error(maxWaitErr))
-	}
 	opts := make([]opt.ClientOption, 0, 9)
-	if maxWaitErr == nil {
-		opts = append(opts, opt.ClientOption(func(o *opt.Option) {
-			if err := o.SetMaxTSOBatchWaitInterval(tsoBatchWaitInterval); err != nil {
-				logutil.BgLogger().Warn("failed to set PD client TSO batch wait interval; using PD client default", zap.Error(err))
-			}
-		}))
-	}
 	opts = append(opts,
+		opt.ClientOption(func(o *opt.Option) {
+			if err := o.SetMaxTSOBatchWaitInterval(tsoBatchWaitInterval); err != nil {
+				logutil.BgLogger().Warn("invalid TiDB default for PD client TSO batch wait interval; using PD client default",
+					zap.String("variable", vardef.TiDBTSOClientBatchMaxWaitTime),
+					zap.Float64("value_ms", vardef.DefTiDBTSOClientBatchMaxWaitTime),
+					zap.Error(err))
+			}
+		}),
 		opt.ClientOption(func(o *opt.Option) {
 			o.SetEnableTSOFollowerProxy(vardef.DefTiDBEnableTSOFollowerProxy)
 		}),
