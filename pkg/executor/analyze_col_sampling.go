@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -137,13 +137,22 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	for _, col := range e.schemaForVirtualColEval.Columns {
 		totFts = append(totFts, col.RetType)
 	}
-	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
+	isVirtualColumn := make([]bool, len(totFts))
+	for _, colOffset := range virtualColIdx {
+		isVirtualColumn[colOffset] = true
+	}
+	utcChunk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
+	utcDecoder := codec.NewDecoder(utcChunk, time.UTC)
+	evaluationChunk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
+	sessionLocation := e.ctx.GetSessionVars().Location()
+	evaluationDecoder := codec.NewDecoder(evaluationChunk, sessionLocation)
 	for _, sample := range collector.Base().Samples {
 		for i, columns := range sample.Columns {
 			// Virtual columns will be decoded as null first.
-			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
-			if err != nil {
+			if _, err := utcDecoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType); err != nil {
+				return err
+			}
+			if _, err := evaluationDecoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType); err != nil {
 				return err
 			}
 		}
@@ -151,20 +160,39 @@ func (e *AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	intest.AssertFunc(func() bool {
 		// Ensure all columns in the chunk have the same number of rows.
 		// Checking for virtual columns.
-		for i := 1; i < chk.NumCols(); i++ {
-			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+		for i := 1; i < evaluationChunk.NumCols(); i++ {
+			if evaluationChunk.Column(i).Rows() != evaluationChunk.Column(0).Rows() {
 				return false
 			}
 		}
 		return true
 	}, "all columns in chunk should have the same number of rows")
-	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
-	if err != nil {
+	if err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), evaluationChunk); err != nil {
 		return err
 	}
-	iter := chunk.NewIterator4Chunk(chk)
-	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
-		datums := row.GetDatumRow(totFts)
+	// A local-time round trip is lossy during a repeated DST hour. Keep UTC
+	// samples for storage and evaluate virtual columns on the local copy only.
+	utcIter := chunk.NewIterator4Chunk(utcChunk)
+	evaluationIter := chunk.NewIterator4Chunk(evaluationChunk)
+	for utcRow, evaluationRow, i := utcIter.Begin(), evaluationIter.Begin(), 0; utcRow != utcIter.End(); utcRow, evaluationRow, i = utcIter.Next(), evaluationIter.Next(), i+1 {
+		utcDatums := utcRow.GetDatumRow(totFts)
+		evaluationDatums := evaluationRow.GetDatumRow(totFts)
+		datums := make([]types.Datum, len(totFts))
+		for columnIndex := range datums {
+			if isVirtualColumn[columnIndex] {
+				datum := evaluationDatums[columnIndex]
+				if datum.Kind() == types.KindMysqlTime && totFts[columnIndex].GetType() == mysql.TypeTimestamp {
+					timestamp := datum.GetMysqlTime()
+					if err := timestamp.ConvertTimeZone(sessionLocation, time.UTC); err != nil {
+						return err
+					}
+					datum = types.NewTimeDatum(timestamp)
+				}
+				datums[columnIndex] = datum
+			} else {
+				datums[columnIndex] = utcDatums[columnIndex]
+			}
+		}
 		collector.Base().Samples[i].Columns = datums
 	}
 	return nil
@@ -220,8 +248,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
-
-	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
@@ -318,7 +344,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		// If there's no virtual column, normal decode way is enough.
 		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
-				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, time.UTC)
 				if err != nil {
 					return 0, nil, nil, nil, err
 				}
@@ -327,8 +353,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// Calculate handle from the row data for each row. It will be used to sort the samples.
+	// The samples were decoded in UTC, so the handle has to be encoded in UTC as well, otherwise a
+	// TIMESTAMP in a clustered handle would be shifted twice.
+	utcStmtCtx := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	for _, sample := range rootRowCollector.Base().Samples {
-		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
+		sample.Handle, err = e.handleCols.BuildHandleByDatums(utcStmtCtx, sample.Columns)
 		if err != nil {
 			return 0, nil, nil, nil, err
 		}
@@ -531,9 +560,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh ch
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
 func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context, indexInfos []*model.IndexInfo) []*analyzeTask {
-	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
-	sc := e.ctx.GetSessionVars().StmtCtx
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(ctx, e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
@@ -541,12 +568,10 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context
 			planID:      e.planID,
 			tableID:     e.TableID,
 			concurrency: concurrency,
-			analyzePB: &tipb.AnalyzeReq{
-				Tp:             tipb.AnalyzeType_TypeIndex,
-				Flags:          sc.PushDownFlags(),
-				TimeZoneOffset: offset,
-			},
-			snapshot: e.snapshot,
+			// ANALYZE deliberately carries no session state: TiKV builds an EvalConfig::default()
+			// for analyze and reads neither Flags nor TimeZoneOffset. See issue #52429.
+			analyzePB: &tipb.AnalyzeReq{Tp: tipb.AnalyzeType_TypeIndex},
+			snapshot:  e.snapshot,
 		}
 		idxExec := &AnalyzeIndexExec{
 			baseAnalyzeExec: base,
@@ -826,7 +851,7 @@ workLoop:
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
+							b, err = codec.EncodeKey(time.UTC, b, tmpDatum)
 							err = errCtx.HandleError(err)
 							if err != nil {
 								resultCh <- err
@@ -834,7 +859,7 @@ workLoop:
 							}
 							continue
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						b, err = codec.EncodeKey(time.UTC, b, row.Columns[col.Offset])
 						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err
