@@ -8233,10 +8233,13 @@ name = "tidb-mviewutil"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-datatype",
  "tidb-dbterror",
  "tidb-hack",
+ "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
+ "tidb-sqlescape",
  "tidb-terror",
 ]
 
