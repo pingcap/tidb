@@ -1037,3 +1037,62 @@ fn test_reject_min_max_for_stage1() {
     );
     assert!(got.contains("requires MinMaxRecompute metadata"), "{got}");
 }
+
+/// Appends rows of int64 cells (`None` = NULL) to a new chunk of `fts`.
+fn int_chunk(fts: &[FieldType], rows: &[&[Option<i64>]]) -> Chunk {
+    let mut chk = Chunk::new_chunk_with_capacity(fts, rows.len());
+    for row in rows {
+        for (col, cell) in row.iter().enumerate() {
+            match cell {
+                Some(v) => chk.append_int64(col, *v),
+                None => chk.append_null(col),
+            }
+        }
+    }
+    chk
+}
+
+#[test]
+fn test_max_fast_path_and_single_row_recompute() {
+    // Schema:
+    // [0] delta_count(*), [1] delta_max_added(v), [2] delta_max_added_cnt(v),
+    // [3] delta_max_removed(v), [4] delta_max_removed_cnt(v), [5] group_key,
+    // [6] mv_count(*), [7] mv_max(v).
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let fts = vec![ft_int.clone(); 8];
+    let chk = int_chunk(
+        &fts,
+        &[
+            // row0: fast update max 10 -> 12
+            &[Some(0), Some(12), Some(1), None, Some(0), Some(1), Some(3), Some(10)],
+            // row1: fallback (remove old max 10), single-row recompute returns 9
+            &[Some(0), None, Some(0), Some(10), Some(1), Some(2), Some(3), Some(10)],
+            // row2: no change
+            &[Some(0), None, Some(0), None, Some(0), Some(3), Some(3), Some(5)],
+        ],
+    );
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut exec = Exec::new(new_mock_source(&fts, vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[6], &[0]),
+        Mapping {
+            min_max_recompute: Some(MinMaxRecomputeSpec {
+                strategy: MinMaxRecomputeStrategy::SingleRow,
+                single_row: Some(MinMaxRecomputeSingleRowExec { workers: vec![single_row_worker(&[(2, vec![9])], &calls)] }),
+                ..MinMaxRecomputeSpec::default()
+            }),
+            ..mapping(agg_desc(names::MAX, vec![not_null_int_arg(1)]), &[7], &[1, 2, 3, 4])
+        },
+    ];
+    exec.delta_agg_col_count = 6;
+    exec.worker_cnt = 1;
+    exec.min_max_recompute =
+        Some(MinMaxRecomputeExec { key_input_col_ids: vec![5], key_result_col_idxes: vec![0], batch_builder: None });
+    let results = run(exec).unwrap();
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Update; 3], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    let max_col = res.computed_cols[7].as_ref().unwrap();
+    assert_eq!([12, 9, 5], [0, 1, 2].map(|row| max_col.get_int64(row)));
+    assert_eq!(1, calls.load(std::sync::atomic::Ordering::SeqCst));
+}
