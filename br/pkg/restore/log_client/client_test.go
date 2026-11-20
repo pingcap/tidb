@@ -2321,7 +2321,7 @@ func TestLogRestoreCheckpointRouteFingerprint(t *testing.T) {
 	})
 }
 
-func TestSaveRewriteTSToCheckpoint(t *testing.T) {
+func TestSaveRewriteTSAfterTableClose(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	g := gluetidb.New()
@@ -2341,15 +2341,21 @@ func TestSaveRewriteTSToCheckpoint(t *testing.T) {
 		UpstreamClusterID: 123, StartTS: 1, RestoredTS: 2, RewriteTS: 100, GcRatio: "1.1",
 	}))
 
-	// Only the rewrite ts changes; saving the same value again is a no-op.
-	for _, rewriteTS := range []uint64{200, 200, 300} {
-		require.NoError(t, client.SaveRewriteTSToCheckpoint(ctx, manager, rewriteTS))
-		meta, err := manager.LoadCheckpointMetadata(ctx)
-		require.NoError(t, err)
-		require.Equal(t, rewriteTS, meta.RewriteTS)
-		require.Equal(t, uint64(123), meta.UpstreamClusterID)
-		require.Equal(t, "1.1", meta.GcRatio)
-	}
+	// A rewrite ts saved when the metadata is created was taken before the
+	// protected tables were closed.
+	taken, err := client.RewriteTSTakenAfterTableClose(ctx, manager)
+	require.NoError(t, err)
+	require.False(t, taken)
+	// Replacing it marks the new one; the other fields are kept.
+	require.NoError(t, client.SaveRewriteTSAfterTableClose(ctx, manager, 200))
+	meta, err := manager.LoadCheckpointMetadata(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint64(200), meta.RewriteTS)
+	require.Equal(t, uint64(123), meta.UpstreamClusterID)
+	require.Equal(t, "1.1", meta.GcRatio)
+	taken, err = client.RewriteTSTakenAfterTableClose(ctx, manager)
+	require.NoError(t, err)
+	require.True(t, taken)
 }
 
 func TestRepairIngestIndexFromCheckpoint(t *testing.T) {

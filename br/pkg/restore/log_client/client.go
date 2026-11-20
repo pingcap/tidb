@@ -467,9 +467,24 @@ func (rc *LogClient) CurrentTS() uint64 {
 	return rc.currentTS
 }
 
-// SaveRewriteTSToCheckpoint makes the checkpoint metadata carry the given
-// rewrite timestamp, in place of the one saved when the metadata was created.
-func (*LogClient) SaveRewriteTSToCheckpoint(
+// RewriteTSTakenAfterTableClose reports whether the rewrite ts saved in the
+// checkpoint metadata was taken after the tables protected for masking policy
+// restore had been closed.
+func (*LogClient) RewriteTSTakenAfterTableClose(
+	ctx context.Context,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) (bool, error) {
+	meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return meta.RewriteTSAfterTableClose, nil
+}
+
+// SaveRewriteTSAfterTableClose replaces the rewrite ts in the checkpoint
+// metadata with one taken after the protected tables had been closed, and
+// marks it so: every later run of the restore reuses it.
+func (*LogClient) SaveRewriteTSAfterTableClose(
 	ctx context.Context,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rewriteTS uint64,
@@ -478,12 +493,10 @@ func (*LogClient) SaveRewriteTSToCheckpoint(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if meta.RewriteTS == rewriteTS {
-		return nil
-	}
 	log.Info("update the rewrite ts in checkpoint metadata",
 		zap.Uint64("old-rewrite-ts", meta.RewriteTS), zap.Uint64("rewrite-ts", rewriteTS))
 	meta.RewriteTS = rewriteTS
+	meta.RewriteTSAfterTableClose = true
 	return errors.Trace(logCheckpointMetaManager.UpdateCheckpointMetadata(ctx, meta))
 }
 

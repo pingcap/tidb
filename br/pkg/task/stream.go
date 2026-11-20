@@ -1686,30 +1686,12 @@ func restoreStream(
 		}
 	}
 	if len(maskingTableIDs) > 0 {
-		// Switching a table that already exists to Restore mode is a DDL job:
-		// it writes a table definition newer than the rewrite ts taken above.
-		// The metadata replay below writes at the rewrite ts, so everything it
-		// replays for that table would stay hidden behind the definition the
-		// job wrote, and the schema changes in the log would be lost.
-		//
-		// Replay at a rewrite ts taken after the tables are closed instead.
-		// This is done by every run, whether or not it had a table to close:
-		// a rewrite ts saved in the checkpoint may be older than a job of an
-		// earlier run that was interrupted, or of an earlier version of BR.
-		// The metadata replay is redone in full by every run, so it is always
-		// consistent under the timestamp of the run that completes it.
-		if currentTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient()); err != nil {
+		if currentTS, err = rewriteTSAfterTableClose(ctx, mgr, client, cfg, currentTS); err != nil {
 			return errors.Trace(err)
 		}
-		log.Info("take the rewrite ts after closing tables for masking policy restore", zap.Uint64("rewrite-ts", currentTS))
 		cfg.RewriteTS = currentTS
 		if err := client.SetCurrentTS(currentTS); err != nil {
 			return errors.Trace(err)
-		}
-		if cfg.UseCheckpoint {
-			if err := client.SaveRewriteTSToCheckpoint(ctx, cfg.logCheckpointMetaManager, currentTS); err != nil {
-				return errors.Trace(err)
-			}
 		}
 	}
 
@@ -2495,6 +2477,61 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	// Renaming is safe only after checkpoint progress prevents another snapshot
 	// replay from recreating the original temporary table under a different ID.
 	return prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, false, true)
+}
+
+// rewriteTSAfterTableClose returns the timestamp at which the log restore
+// replays table metadata when it protects tables for masking policy restore.
+//
+// Switching a table that already exists to Restore mode is a DDL job: it
+// writes a table definition newer than a rewrite ts taken before it. Metadata
+// replayed at that rewrite ts stays hidden behind the definition the job
+// wrote, and the schema changes of the table in the log are lost. The replay
+// therefore needs a rewrite ts taken after the tables are closed.
+//
+// The timestamp must not move again afterwards. Later steps of the restore run
+// DDL jobs of their own, such as rebuilding ingested indexes, and a retry
+// replays the metadata in full: only at the same, older timestamp does that
+// replay leave their results in place. So the timestamp is taken once, marked
+// in the checkpoint, and reused by every later run.
+func rewriteTSAfterTableClose(
+	ctx context.Context, mgr *conn.Mgr, client *logclient.LogClient, cfg *LogRestoreConfig, currentTS uint64,
+) (uint64, error) {
+	if cfg.UseCheckpoint {
+		taken, err := client.RewriteTSTakenAfterTableClose(ctx, cfg.logCheckpointMetaManager)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if taken {
+			return currentTS, nil
+		}
+		// The saved rewrite ts was taken before the tables were closed: by
+		// this run a moment ago, by a run that was interrupted before it
+		// could replace it, or by a BR without this fix. Whatever was replayed
+		// at it is hidden and has to be replayed again at a new one. That
+		// is no longer possible once the restore has gone on to rebuild
+		// indexes on top of the hidden definitions.
+		repairing, err := cfg.logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if repairing {
+			return 0, errors.Annotatef(berrors.ErrRestoreCheckpointMismatch,
+				"the checkpoint was written by a BR that replays table metadata at a timestamp older than its own "+
+					"table mode changes, which can lose schema changes of the restored tables, and it has already "+
+					"started to rebuild indexes; clean the restored tables and the checkpoint, then restore again")
+		}
+	}
+	newTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	log.Info("take the rewrite ts after closing tables for masking policy restore", zap.Uint64("rewrite-ts", newTS))
+	if cfg.UseCheckpoint {
+		if err := client.SaveRewriteTSAfterTableClose(ctx, cfg.logCheckpointMetaManager, newTS); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return newTS, nil
 }
 
 func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *LogRestoreConfig) (uint64, error) {
