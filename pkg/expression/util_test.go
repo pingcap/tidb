@@ -328,6 +328,17 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, leFunc))
+
+	// NOT NOT NOT (a = 1) should simplify to (a != 1).
+	// This extends the existing double-negation coverage on
+	// lines 289-294; odd-count NOT wrapping must produce
+	// the negated comparison.
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	neFunc = newFunctionWithMockCtx(ast.NE, col, NewOne())
+	require.True(t, ret.Equal(ctx, neFunc))
 }
 
 func TestFilter(t *testing.T) {
