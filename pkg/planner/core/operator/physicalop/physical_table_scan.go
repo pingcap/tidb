@@ -142,6 +142,9 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
+	// SkipScan reads a representative row from each leading handle prefix.
+	SkipScan                  bool
+	SkipScanPrefixColumnCount int
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
@@ -518,6 +521,10 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.SkipScan {
+		buffer.WriteString(", skip scan:true, prefix column count:")
+		buffer.WriteString(strconv.Itoa(p.SkipScanPrefixColumnCount))
 	}
 	if !normalized {
 		if p.UsedStatsInfo != nil {

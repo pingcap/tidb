@@ -324,6 +324,10 @@ type PhysicalProperty struct {
 	// index: (a, b(10) )
 	PartialOrderInfo *PartialOrderInfo
 
+	// SkipScanInfo requires an ordered, predicate-free TiKV skip scan. The
+	// consumer creates a separate property without this requirement for fallback.
+	SkipScanInfo *SkipScanInfo
+
 	// AdvisorySortItems contains sort items that are preferred but not required.
 	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
 	// generate paths that satisfy these sort items, enabling Limit pushdown to
@@ -338,6 +342,11 @@ type PhysicalProperty struct {
 type PartialOrderInfo struct {
 	// SortItems are the ORDER BY columns from TopN
 	SortItems []*SortItem
+}
+
+// SkipScanInfo is immutable after the property is constructed.
+type SkipScanInfo struct {
+	GroupByCols []*expression.Column
 }
 
 // AllSameOrder checks if all the items have same order.
@@ -700,6 +709,15 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	if skip := p.SkipScanInfo; skip != nil {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(len(skip.GroupByCols)))
+		for _, col := range skip.GroupByCols {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 
@@ -721,6 +739,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
+		SkipScanInfo:          p.SkipScanInfo,
 		AdvisorySortItems:     p.AdvisorySortItems,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
@@ -764,6 +783,12 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 	}
 	if p.PartialOrderInfo != nil {
 		sum += p.PartialOrderInfo.MemoryUsage()
+	}
+	if skip := p.SkipScanInfo; skip != nil {
+		sum += int64(unsafe.Sizeof(*skip)) + int64(cap(skip.GroupByCols))*size.SizeOfPointer
+		for _, col := range skip.GroupByCols {
+			sum += col.MemoryUsage()
+		}
 	}
 	return
 }
