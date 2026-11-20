@@ -29,6 +29,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRawStatsContractStrings(t *testing.T) {
+	require.Equal(t, jobstats.StatusPending, string(proto.TaskStatePending))
+	require.Equal(t, jobstats.StatusRunning, importer.JobStatusRunning)
+	require.Equal(t, jobstats.StatusFinished, importer.JobStatusFinished)
+	require.Equal(t, jobstats.StatusAwaitingResolution, string(proto.TaskStateAwaitingResolution))
+	for _, tt := range []struct {
+		step proto.Step
+		name string
+	}{
+		{proto.StepInit, jobstats.StepInit},
+		{proto.ImportStepPostProcess, jobstats.StepPostProcess},
+		{proto.ImportStepCollectConflicts, jobstats.StepCollectConflicts},
+		{proto.ImportStepConflictResolution, jobstats.StepConflictResolution},
+	} {
+		require.Equal(t, tt.name, proto.Step2Str(proto.ImportInto, tt.step))
+	}
+}
+
 func TestBuildRawStats(t *testing.T) {
 	loc := time.UTC
 	t2024 := types.NewTime(types.FromGoTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)

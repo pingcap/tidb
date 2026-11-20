@@ -15,6 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//lightning/pkg/precheck",
+        "//pkg/importinto/jobstats",
         "//pkg/importsdk",
         "//pkg/lightning/common",
         "//pkg/lightning/config",

@@ -2678,7 +2678,7 @@ func getJobRuntime(
 	location *time.Location,
 	info *importer.JobInfo,
 ) (*taskinfo.RuntimeInfo, error) {
-	if info.Status != importer.JobStatusRunning {
+	if info.Status != jobstats.StatusRunning {
 		return nil, nil
 	}
 
@@ -2694,7 +2694,7 @@ func applyJobRuntime(info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) {
 	if runInfo == nil {
 		return
 	}
-	if runInfo.Status == proto.TaskStateAwaitingResolution {
+	if string(runInfo.Status) == jobstats.StatusAwaitingResolution {
 		info.Status = string(runInfo.Status)
 		info.ErrorMessage = runInfo.ErrorMsg
 	}
@@ -2703,7 +2703,7 @@ func applyJobRuntime(info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) {
 func runningJobIDs(infos []*importer.JobInfo) []int64 {
 	jobIDs := make([]int64, 0, len(infos))
 	for _, info := range infos {
-		if info.Status == importer.JobStatusRunning {
+		if info.Status == jobstats.StatusRunning {
 			jobIDs = append(jobIDs, info.ID)
 		}
 	}
@@ -2711,16 +2711,16 @@ func runningJobIDs(infos []*importer.JobInfo) []int64 {
 }
 
 func isImportConflictStep(step proto.Step) bool {
-	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
+	return jobstats.IsConflictStep(proto.Step2Str(proto.ImportInto, step))
 }
 
 func buildRawJobError(status, message string) *jobstats.RawError {
 	switch status {
-	case "failed", "cancelled":
+	case jobstats.StatusFailed, jobstats.StatusCancelled:
 		return &jobstats.RawError{
 			Message: message,
 		}
-	case string(proto.TaskStateAwaitingResolution):
+	case jobstats.StatusAwaitingResolution:
 		return &jobstats.RawError{
 			Message:            message,
 			UserActionRequired: true,
@@ -2760,8 +2760,8 @@ func buildRawJobSummary(summary *importer.Summary) *jobstats.RawSummary {
 	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepEncodeAndSort), summary.EncodeSummary, false)
 	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepMergeSort), summary.MergeSummary, false)
 	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepWriteAndIngest), summary.IngestSummary, false)
-	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepCollectConflicts), summary.CollectConflictsSummary, true)
-	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepConflictResolution), summary.ResolveConflictsSummary, true)
+	appendStep(jobstats.StepCollectConflicts, summary.CollectConflictsSummary, true)
+	appendStep(jobstats.StepConflictResolution, summary.ResolveConflictsSummary, true)
 	return raw
 }
 
@@ -3140,6 +3140,8 @@ func (e *ShowExec) fetchRawImportJobs(ctx context.Context) error {
 		if err2 != nil {
 			return err2
 		}
+		// CreateBinaryJSON does not accept Go structs. Marshal the contract first
+		// to preserve its JSON tags, omitted fields, and integer precision.
 		statsBytes, err2 := gjson.Marshal(stats)
 		if err2 != nil {
 			return errors.Trace(err2)

@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -99,13 +100,13 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 		return []jobProgressPhase{
 			{phase: "global-sorting", steps: []string{"encode", "merge-sort"}},
 			{phase: "importing", steps: []string{"ingest"}},
-			{phase: "resolving-conflicts", steps: []string{"collect-conflicts", "conflict-resolution"}},
-			{phase: "validating", steps: []string{"post-process"}},
+			{phase: "resolving-conflicts", steps: []string{jobstats.StepCollectConflicts, jobstats.StepConflictResolution}},
+			{phase: "validating", steps: []string{jobstats.StepPostProcess}},
 		}
 	}
 	return []jobProgressPhase{
 		{phase: "importing", steps: []string{"import"}},
-		{phase: "validating", steps: []string{"post-process"}},
+		{phase: "validating", steps: []string{jobstats.StepPostProcess}},
 	}
 }
 

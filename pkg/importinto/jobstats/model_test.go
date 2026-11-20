@@ -41,3 +41,12 @@ func TestClassifyStatus(t *testing.T) {
 	// string classification in each consumer.
 	require.True(t, (&RawStats{Status: "future-terminal", StatusCategory: StatusCategoryTerminal}).IsCompleted())
 }
+
+func TestIsConflictStep(t *testing.T) {
+	for _, name := range []string{"collect-conflicts", "conflict-resolution"} {
+		require.True(t, IsConflictStep(name))
+	}
+	for _, name := range []string{"init", "import", "post-process", "future-step", ""} {
+		require.False(t, IsConflictStep(name))
+	}
+}

@@ -128,7 +128,7 @@ func (m *jobManager) GetGroupSummary(ctx context.Context, groupKey string) (*Gro
 	if groupKey == "" {
 		return nil, ErrInvalidOptions
 	}
-	query := fmt.Sprintf("SHOW IMPORT GROUP '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	query := fmt.Sprintf("SHOW IMPORT GROUP '%s'", escapeString(groupKey))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -157,7 +157,7 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	if m.rawUnsupported.Load() {
 		return m.getLegacyGroupJobs(ctx, groupKey)
 	}
-	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", escapeString(groupKey))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		if isRawUnsupportedErr(err) {
@@ -184,7 +184,7 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 }
 
 func (m *jobManager) getLegacyGroupJobs(ctx context.Context, groupKey string) ([]*JobStatus, error) {
-	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
+	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", escapeString(groupKey))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -208,6 +208,8 @@ func (m *jobManager) getLegacyGroupJobs(ctx context.Context, groupKey string) ([
 func isRawUnsupportedErr(err error) bool {
 	// 1064 is returned by old servers that cannot parse SHOW RAW, while 1235
 	// is returned by the classic kernel where SHOW RAW is intentionally disabled.
+	// This classification is only valid for the fixed SHOW RAW templates above,
+	// not arbitrary caller-provided SQL that could contain a genuine syntax error.
 	var code int
 	switch err := errors.Cause(err).(type) {
 	case *drivermysql.MySQLError:
@@ -281,13 +283,13 @@ func statusFromRaw(stats *jobstats.RawStats) *JobStatus {
 	}
 	if stats.SourceFileSizeBytes > 0 {
 		status.SourceFileSize = units.BytesSize(float64(stats.SourceFileSizeBytes))
-	} else if stats.Status == "pending" || (stats.Status == importer.JobStatusRunning && stats.Phase == importer.JobStepPreparing) {
+	} else if stats.Status == jobstats.StatusPending || (stats.Status == jobstats.StatusRunning && stats.Phase == importer.JobStepPreparing) {
 		status.SourceFileSize = "N/A"
 	} else {
 		status.SourceFileSize = units.BytesSize(0)
 	}
 	status.ResultMessage = legacyResult(stats)
-	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
+	if status.ResultMessage == "" && stats.Status != jobstats.StatusFinished {
 		status.ResultMessage = status.ErrorMessage
 	}
 	status.CreateTime = unixTime(stats.CreateTimeUnix)
@@ -302,7 +304,7 @@ func statusFromRaw(stats *jobstats.RawStats) *JobStatus {
 
 func fillLegacyProgress(status *JobStatus, step *jobstats.RawStepStats) {
 	status.Step = step.Name
-	conflictStep := step.Name == "collect-conflicts" || step.Name == "conflict-resolution"
+	conflictStep := jobstats.IsConflictStep(step.Name)
 	var processed, total int64
 	if conflictStep {
 		processed, total = step.ProcessedConflicts, step.TotalConflicts
@@ -315,7 +317,7 @@ func fillLegacyProgress(status *JobStatus, step *jobstats.RawStepStats) {
 		status.TotalSize = units.BytesSize(float64(total))
 		status.Speed = fmt.Sprintf("%s/s", units.BytesSize(float64(step.SpeedBytesPerSec)))
 	}
-	if step.Name == "post-process" || step.Name == "init" {
+	if step.Name == jobstats.StepPostProcess || step.Name == jobstats.StepInit {
 		status.Percent = "N/A"
 	} else {
 		percent := int64(0)
@@ -331,7 +333,7 @@ func fillLegacyProgress(status *JobStatus, step *jobstats.RawStepStats) {
 }
 
 func legacyResult(stats *jobstats.RawStats) string {
-	if stats.Status != importer.JobStatusFinished {
+	if stats.Status != jobstats.StatusFinished {
 		if stats.Error != nil {
 			return stats.Error.Message
 		}

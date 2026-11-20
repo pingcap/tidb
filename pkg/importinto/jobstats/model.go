@@ -20,6 +20,32 @@ package jobstats
 // ContractVersion is the supported Raw_Stats JSON contract version.
 const ContractVersion = 1
 
+// Job statuses in the public contract. Keep these values in sync with
+// executor/importer job statuses and the DXF awaiting-resolution task state.
+// The contract package must not depend on either implementation package.
+const (
+	StatusPending            = "pending"
+	StatusRunning            = "running"
+	StatusFinished           = "finished"
+	StatusFailed             = "failed"
+	StatusCancelled          = "cancelled"
+	StatusAwaitingResolution = "awaiting-resolution"
+)
+
+// Runtime step names used by contract consumers. Keep these values in sync
+// with dxf/framework/proto.Step2Str for import tasks.
+const (
+	StepInit               = "init"
+	StepPostProcess        = "post-process"
+	StepCollectConflicts   = "collect-conflicts"
+	StepConflictResolution = "conflict-resolution"
+)
+
+// IsConflictStep reports whether progress is measured in conflicts, not bytes.
+func IsConflictStep(name string) bool {
+	return name == StepCollectConflicts || name == StepConflictResolution
+}
+
 // Stable status categories for machine consumers.
 const (
 	StatusCategoryPending         = "pending"
@@ -32,13 +58,13 @@ const (
 // ClassifyStatus derives the stable status category.
 func ClassifyStatus(status string) string {
 	switch status {
-	case "pending":
+	case StatusPending:
 		return StatusCategoryPending
-	case "running":
+	case StatusRunning:
 		return StatusCategoryRunning
-	case "finished", "failed", "cancelled":
+	case StatusFinished, StatusFailed, StatusCancelled:
 		return StatusCategoryTerminal
-	case "awaiting-resolution":
+	case StatusAwaitingResolution:
 		return StatusCategoryAttentionNeeded
 	default:
 		return StatusCategoryUnknown
@@ -119,13 +145,13 @@ type RawStepStats struct {
 }
 
 // IsFinished reports successful completion.
-func (s *RawStats) IsFinished() bool { return s.Status == "finished" }
+func (s *RawStats) IsFinished() bool { return s.Status == StatusFinished }
 
 // IsFailed reports failed completion.
-func (s *RawStats) IsFailed() bool { return s.Status == "failed" }
+func (s *RawStats) IsFailed() bool { return s.Status == StatusFailed }
 
 // IsCancelled reports cancelled completion.
-func (s *RawStats) IsCancelled() bool { return s.Status == "cancelled" }
+func (s *RawStats) IsCancelled() bool { return s.Status == StatusCancelled }
 
 // IsCompleted consumes the contract's normalized status category.
 func (s *RawStats) IsCompleted() bool { return s.StatusCategory == StatusCategoryTerminal }

@@ -24,6 +24,8 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/importinto/jobstats"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -412,4 +414,56 @@ func TestGetJobsByGroupLegacyCompatibility(t *testing.T) {
 		require.Len(t, jobs, 1)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
+}
+
+func TestGroupKeyEscaping(t *testing.T) {
+	for _, groupKey := range []string{
+		"test_group", "group'key", `group\key`, `group\`,
+		`group\'; SELECT 1; -- `, "group\x00\nkey", "分组\\'key",
+	} {
+		for _, kind := range []string{"summary", "raw", "legacy", "fallback"} {
+			t.Run(kind+"/"+groupKey, func(t *testing.T) {
+				// Parse the actual SQL rather than checking a hand-escaped expected
+				// string: the key must remain one literal in exactly one statement.
+				matcher := sqlmock.QueryMatcherFunc(func(expected, actual string) error {
+					stmts, _, err := parser.New().ParseSQL(actual)
+					if err != nil {
+						return err
+					}
+					require.Len(t, stmts, 1)
+					show := stmts[0].(*ast.ShowStmt)
+					if expected == "summary" {
+						require.EqualValues(t, ast.ShowImportGroups, show.Tp)
+						require.Equal(t, groupKey, show.ShowGroupKey)
+					} else {
+						require.EqualValues(t, ast.ShowImportJobs, show.Tp)
+						require.Equal(t, expected == "raw", show.RawImportJob)
+						where := show.Where.(*ast.BinaryOperationExpr)
+						require.Equal(t, groupKey, where.R.(ast.ValueExpr).GetValue())
+					}
+					return nil
+				})
+				db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+				require.NoError(t, err)
+				defer db.Close()
+				manager := &jobManager{db: db}
+				manager.rawUnsupported.Store(kind == "legacy")
+				if kind == "fallback" {
+					mock.ExpectQuery("raw").WillReturnError(&drivermysql.MySQLError{Number: 1064})
+					mock.ExpectQuery("legacy").WillReturnRows(sqlmock.NewRows([]string{"Job_ID"}))
+				} else {
+					mock.ExpectQuery(kind).WillReturnRows(sqlmock.NewRows([]string{"Job_ID"}))
+				}
+				if kind == "summary" {
+					_, err = manager.GetGroupSummary(context.Background(), groupKey)
+					require.ErrorIs(t, err, ErrJobNotFound)
+				} else {
+					jobs, err := manager.GetJobsByGroup(context.Background(), groupKey)
+					require.NoError(t, err)
+					require.Empty(t, jobs)
+				}
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+		}
+	}
 }

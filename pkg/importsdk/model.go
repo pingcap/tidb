@@ -136,17 +136,17 @@ type JobStatus struct {
 
 // IsFinished returns true if the job is finished successfully.
 func (s *JobStatus) IsFinished() bool {
-	return s.Status == "finished"
+	return s.Status == jobstats.StatusFinished
 }
 
 // IsFailed returns true if the job failed.
 func (s *JobStatus) IsFailed() bool {
-	return s.Status == "failed"
+	return s.Status == jobstats.StatusFailed
 }
 
 // IsCancelled returns true if the job was cancelled.
 func (s *JobStatus) IsCancelled() bool {
-	return s.Status == "cancelled"
+	return s.Status == jobstats.StatusCancelled
 }
 
 // IsCompleted returns true if the job is in a terminal state.

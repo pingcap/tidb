@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -184,7 +185,7 @@ func (m *DefaultJobMonitor) processJobStatuses(
 			stats.failedCnt++
 		case status.IsCancelled():
 			stats.cancelledCnt++
-		case status.Status == "running":
+		case status.Status == jobstats.StatusRunning:
 			stats.runningCnt++
 		default:
 			stats.pendingCnt++
