@@ -1259,7 +1259,7 @@ func TestMaskingPolicyRollupNestedExpressionWithoutPolicy(t *testing.T) {
 			"from rollup_plain group by a, b with rollup",
 		"select x, n from (select " + nested + " as x, count(*) as n from rollup_plain group by a, b with rollup) z",
 	}
-	var ordinary [][][]any
+	ordinary := make([][][]any, 0, len(queries))
 	for _, query := range queries {
 		ordinary = append(ordinary, tk.MustQuery(query).Sort().Rows())
 	}
