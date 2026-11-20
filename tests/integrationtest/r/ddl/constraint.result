@@ -606,7 +606,6 @@ set @@global.tidb_enable_check_constraint = 0;
 alter table t drop constraint t_chk_1;
 show warnings;
 Level	Code	Message
-Warning	1105	tidb_enable_check_constraint is off
 alter table t alter constraint t_chk_1 not enforced;
 show warnings;
 Level	Code	Message
@@ -614,8 +613,7 @@ Warning	1105	tidb_enable_check_constraint is off
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
-  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_check_constraint = 1;
 drop table if exists t;
@@ -840,3 +838,51 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 0;
+<<<<<<< HEAD
+=======
+set @@global.tidb_enable_check_constraint = 1;
+use test;
+drop table if exists t1;
+create table t1(a timestamp, constraint check((a = FROM_UNIXTIME(1))));
+insert into t1 values(FROM_UNIXTIME(1));
+set @@global.tidb_enable_check_constraint = 0;
+drop table if exists t1;
+set @@global.tidb_enable_check_constraint = 1;
+create table t1 (CHECK (c1 <> c2), c1 INT CHECK (c1 > 10), c2 INT CONSTRAINT c2_positive_for_t1 CHECK (c2 > 0));
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c1` int DEFAULT NULL,
+  `c2` int DEFAULT NULL,
+  CONSTRAINT `t1_chk_1` CHECK ((`c1` != `c2`)),
+  CONSTRAINT `t1_chk_2` CHECK ((`c1` > 10)),
+  CONSTRAINT `c2_positive_for_t1` CHECK ((`c2` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 0;
+alter table t1 drop check c2_positive_for_t1;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c1` int DEFAULT NULL,
+  `c2` int DEFAULT NULL,
+  CONSTRAINT `t1_chk_1` CHECK ((`c1` != `c2`)),
+  CONSTRAINT `t1_chk_2` CHECK ((`c1` > 10))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 drop check t1_chk_1;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c1` int DEFAULT NULL,
+  `c2` int DEFAULT NULL,
+  CONSTRAINT `t1_chk_2` CHECK ((`c1` > 10))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t1 drop check t1_chk_2;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c1` int DEFAULT NULL,
+  `c2` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t1;
+>>>>>>> cb5f8621607 (ddl: allow dropping CHECK constraints when tidb_enable_check_constraint is OFF (#65243))
