@@ -211,11 +211,20 @@ func (e *InfoSchemaBaseExtractor) Extract(
 	e.LikePatterns = make(map[string][]string, len(e.colNames))
 	e.colsRegexp = make(map[string][]*regexp.Regexp, len(e.colNames))
 	remained = predicates
+	var namePredicates []expression.Expression
 	for _, colName := range e.colNames {
+		beforeExtraction := remained
 		var resultSet set.StringSet
 		remained, e.SkipRequest, resultSet = e.extractCol(ctx, schema, names, remained, colName, true)
 		if e.SkipRequest {
 			break
+		}
+		if colName != e.extractableColumns.tableID && colName != e.extractableColumns.partitionID {
+			for _, predicate := range beforeExtraction {
+				if !slices.Contains(remained, predicate) {
+					namePredicates = append(namePredicates, predicate)
+				}
+			}
 		}
 		if len(resultSet) == 0 {
 			continue
@@ -247,6 +256,16 @@ func (e *InfoSchemaBaseExtractor) Extract(
 			remained = newRemained
 			e.LikePatterns[colName] = oldLikePatterns
 			e.colsRegexp[colName] = regs
+		}
+	}
+	if !e.SkipRequest {
+		// Case-insensitive name lookup only selects candidates. Restore its predicates
+		// after pattern extraction so they retain their original SQL collation semantics.
+		// Numeric ID predicates are already enforced exactly by the extractor.
+		for _, predicate := range predicates {
+			if slices.Contains(namePredicates, predicate) {
+				remained = append(remained, predicate)
+			}
 		}
 	}
 	return remained
