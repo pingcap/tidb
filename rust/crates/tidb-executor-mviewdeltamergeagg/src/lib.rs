@@ -20,6 +20,7 @@ mod merge;
 mod merge_count;
 mod merge_minmax;
 mod merge_sum;
+mod recompute;
 mod writer;
 
 #[cfg(test)]
@@ -30,3 +31,7 @@ pub use exec::{
     RowOpType,
 };
 pub use writer::{TargetColumn, TargetTable};
+pub use recompute::{
+    MinMaxBatchBuildRequest, MinMaxBatchExecBuilder, MinMaxBatchLookupContent, MinMaxRecomputeExec,
+    MinMaxRecomputeSingleRowExec, MinMaxRecomputeSingleRowWorker, MinMaxRecomputeSpec, MinMaxRecomputeStrategy,
+};

@@ -7099,6 +7099,7 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
  "tidb-chunk",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-driver-error",
  "tidb-execdetails",

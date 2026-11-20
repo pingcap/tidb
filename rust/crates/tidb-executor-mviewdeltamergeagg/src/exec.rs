@@ -28,7 +28,7 @@ use tidb_expression_aggregation::{names, AggFuncDesc};
 use crate::merge::{err, AggMerger};
 
 /// Go `Mapping`: one aggregate merge rule.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct Mapping {
     /// Go `AggFunc`; must be set.
     pub agg_func: Option<AggFuncDesc>,
@@ -37,6 +37,9 @@ pub struct Mapping {
     /// Go `DependencyColID`: a delta-agg column (< `DeltaAggColCount`) or a
     /// previously computed output column.
     pub dependency_col_id: Vec<i64>,
+    /// Go `MinMaxRecompute`: per-mapping MIN/MAX recompute metadata; unset
+    /// for non-MIN/MAX mappings.
+    pub min_max_recompute: Option<crate::recompute::MinMaxRecomputeSpec>,
 }
 
 /// Go `RowOpType`: the row write operation on the MView table.
@@ -239,6 +242,8 @@ pub struct Exec {
     pub agg_mappings: Vec<Mapping>,
     /// Go `DeltaAggColCount`.
     pub delta_agg_col_count: i64,
+    /// Go `MinMaxRecompute`: MIN/MAX recompute metadata.
+    pub min_max_recompute: Option<crate::recompute::MinMaxRecomputeExec>,
     /// Go `WorkerCnt`; `<= 0` takes the session's executor concurrency.
     pub worker_cnt: i64,
     /// Go `Writer`; when unset, `Open` writes through `target_table`, or
@@ -299,6 +304,7 @@ impl Exec {
             mlog_empty: false,
             agg_mappings: Vec::new(),
             delta_agg_col_count: 0,
+            min_max_recompute: None,
             worker_cnt: 0,
             writer: None,
             target_table: None,
@@ -410,8 +416,14 @@ impl Exec {
                 child_types.len()
             )));
         }
+        let key_types = crate::recompute::validate_min_max_recompute(
+            self.min_max_recompute.as_ref(),
+            &self.agg_mappings,
+            self.worker_cnt,
+            &child_types,
+        )?;
         let mut col_id_to_computed_idx: HashMap<i64, usize> = HashMap::with_capacity(self.agg_mappings.len());
-        let mut core = MergeCore { child_types: child_types.clone(), ..MergeCore::default() };
+        let mut core = MergeCore { child_types: child_types.clone(), key_types, ..MergeCore::default() };
 
         let Some(first_agg) = &self.agg_mappings[0].agg_func else {
             return Err(err("MViewDeltaMergeAgg mapping requires AggFunc"));
@@ -459,6 +471,9 @@ impl Exec {
                 names::COUNT => self.build_count_merger(mapping, &col_id_to_computed_idx, &child_types)?,
                 names::SUM => self.build_sum_merger(mapping, &col_id_to_computed_idx, &child_types)?,
                 names::MIN | names::MAX => {
+                    if self.min_max_recompute.is_none() {
+                        return Err(err(format!("{agg_name} merge requires MinMaxRecompute metadata")));
+                    }
                     self.build_min_max_merger(mapping_idx, mapping, &col_id_to_computed_idx, &child_types)?
                 }
                 other => return Err(err(format!("unsupported agg function in Exec: {other}"))),
@@ -500,7 +515,16 @@ impl Exec {
 
     /// Go `mergeOneChunk`.
     pub(crate) fn merge_one_chunk(&self, chk: Chunk, worker_data: &mut MergeWorkerData) -> Result<ChunkResult, ExecError> {
-        self.core.merge_one_chunk(chk, worker_data)
+        self.core.merge_one_chunk(chk, worker_data, 0, &self.recompute_ctx())
+    }
+
+    fn recompute_ctx(&self) -> crate::recompute::RecomputeCtx<'_> {
+        crate::recompute::RecomputeCtx {
+            agg_mappings: &self.agg_mappings,
+            meta: self.min_max_recompute.as_ref(),
+            key_types: &self.core.key_types,
+            child_types: &self.core.child_types,
+        }
     }
 }
 
@@ -514,12 +538,20 @@ pub(crate) struct MergeCore {
     child_types: Vec<FieldType>,
     /// Go `len(AggMappings)`.
     mapping_cnt: usize,
+    /// Go `keyTypes`: the MIN/MAX recompute key types.
+    key_types: Vec<FieldType>,
 }
 
 impl MergeCore {
 
     /// Go `mergeOneChunk`.
-    pub(crate) fn merge_one_chunk(&self, chk: Chunk, worker_data: &mut MergeWorkerData) -> Result<ChunkResult, ExecError> {
+    pub(crate) fn merge_one_chunk(
+        &self,
+        chk: Chunk,
+        worker_data: &mut MergeWorkerData,
+        worker_idx: usize,
+        recompute: &crate::recompute::RecomputeCtx<'_>,
+    ) -> Result<ChunkResult, ExecError> {
         worker_data.prepare_min_max_recompute(self.mapping_cnt);
         let mut computed_by_order: Vec<Column> = Vec::with_capacity(self.compiled_output_col_cnt);
         let mut computed_by_col_id: Vec<Option<Column>> = (0..chk.num_cols()).map(|_| None).collect();
@@ -554,6 +586,7 @@ impl MergeCore {
                 computed_by_order.len()
             )));
         }
+        recompute.recompute_min_max_rows(&chk, &mut computed_by_col_id, &worker_data.min_max_mapping_idx_to_rows, worker_idx)?;
         let (row_ops, update_touched_bitmap, update_touched_stride, update_touched_bit_cnt) =
             self.build_row_ops(&chk, &computed_by_col_id, worker_data)?;
         Ok(ChunkResult {
@@ -672,6 +705,13 @@ impl Exec {
         }
         let failed = AtomicBool::new(false);
         let mut writer = self.writer.take().unwrap_or_else(|| Box::new(NoopWriter));
+        let recompute = crate::recompute::RecomputeCtx {
+            agg_mappings: &self.agg_mappings,
+            meta: self.min_max_recompute.as_ref(),
+            key_types: &self.core.key_types,
+            child_types: &self.core.child_types,
+        };
+        let recompute = &recompute;
         let child = &mut self.child;
         let core = &self.core;
         let writer_stats = &mut stats.writer_detail;
@@ -697,7 +737,7 @@ impl Exec {
                 Ok(total)
             });
             let workers: Vec<_> = (0..worker_cnt)
-                .map(|_| {
+                .map(|worker_idx| {
                     let input_rx = input_rx.clone();
                     let result_tx = result_tx.clone();
                     scope.spawn(move || -> Result<Duration, ExecError> {
@@ -708,7 +748,7 @@ impl Exec {
                                 break;
                             }
                             let start = Instant::now();
-                            let result = match core.merge_one_chunk(chk, &mut worker_data) {
+                            let result = match core.merge_one_chunk(chk, &mut worker_data, worker_idx, recompute) {
                                 Ok(result) => result,
                                 Err(error) => {
                                     failed.store(true, Ordering::SeqCst);

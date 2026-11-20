@@ -25,3 +25,4 @@ tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
+tidb-codec = { path = "../tidb-codec" }

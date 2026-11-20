@@ -140,7 +140,7 @@ fn col_arg(index: i64, tp: FieldType) -> Expression {
 }
 
 fn mapping(agg: AggFuncDesc, col_id: &[i64], dependency_col_id: &[i64]) -> Mapping {
-    Mapping { agg_func: Some(agg), col_id: col_id.to_vec(), dependency_col_id: dependency_col_id.to_vec() }
+    Mapping { agg_func: Some(agg), col_id: col_id.to_vec(), dependency_col_id: dependency_col_id.to_vec(), ..Mapping::default() }
 }
 
 /// Go `Open`, `Next` x2, `Close` with `ExecutorConcurrency = 2`; the collected
@@ -498,7 +498,7 @@ fn test_reject_nil_agg_func() {
     let ft_int = ft(FieldTypeCode::LongLong);
     let got = open_err_with(
         vec![ft_int.clone(), ft_int],
-        vec![Mapping { agg_func: None, col_id: vec![1], dependency_col_id: vec![0] }],
+        vec![Mapping { agg_func: None, col_id: vec![1], dependency_col_id: vec![0], ..Mapping::default() }],
         0,
     );
     assert!(got.contains("requires AggFunc"), "{got}");
