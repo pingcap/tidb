@@ -29,15 +29,19 @@ func (testHintWarningRecorder) SetHintWarning(string) {}
 func (testHintWarningRecorder) SetHintWarningFromError(error) {}
 
 func TestParseSkipScanHints(t *testing.T) {
-	hints, errs := parser.ParseHint("/*+ SKIP_SCAN(employee_salary, idx_dept_salary) NO_SKIP_SCAN(employee_salary, idx_dept_salary) */", mysql.ModeNone, parser.Pos{Line: 1})
+	hints, errs := parser.ParseHint("/*+ USE_INDEX(employee_salary, idx_use) IGNORE_INDEX(employee_salary, idx_ignore) SKIP_SCAN(employee_salary, idx_dept_salary) NO_SKIP_SCAN(employee_salary, idx_dept_salary) */", mysql.ModeNone, parser.Pos{Line: 1})
 	require.Empty(t, errs)
 
 	planHints, _, err := ParsePlanHints(hints, 0, "test", NewQBHintHandler(nil), false, false, false, false, testHintWarningRecorder{})
 	require.NoError(t, err)
 	require.Len(t, planHints.SkipScan, 1)
-	require.Equal(t, HintSkipScan, planHints.SkipScan[0].HintTypeString())
 	require.Equal(t, "employee_salary", planHints.SkipScan[0].TblName.L)
 	require.Equal(t, "idx_dept_salary", planHints.SkipScan[0].IndexHint.IndexNames[0].L)
 	require.Len(t, planHints.NoSkipScan, 1)
-	require.Equal(t, HintNoSkipScan, planHints.NoSkipScan[0].HintTypeString())
+	require.Equal(t, []string{
+		"use_index(test.employee_salary, idx_use) is inapplicable, check whether the table(test.employee_salary) exists",
+		"ignore_index(test.employee_salary, idx_ignore) is inapplicable, check whether the table(test.employee_salary) exists",
+		"skip_scan(test.employee_salary, idx_dept_salary) is inapplicable, check whether the table(test.employee_salary) exists",
+		"no_skip_scan(test.employee_salary, idx_dept_salary) is inapplicable, check whether the table(test.employee_salary) exists",
+	}, CollectUnmatchedHintWarnings(planHints))
 }

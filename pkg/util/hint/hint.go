@@ -664,7 +664,6 @@ type HintedIndex struct {
 	TblName        ast.CIStr      // the table name
 	Partitions     []ast.CIStr    // partition information
 	IndexHint      *ast.IndexHint // the original parser index hint structure
-	HintName       string         // optional optimizer hint name for non-standard index hints
 	PushDownLookUp bool           // whether to push down the index lookup
 	// Matched indicates whether this index hint
 	// has been successfully applied to a DataSource.
@@ -717,9 +716,6 @@ func (hint *HintedIndex) ShouldPushDownIndexLookUp() bool {
 
 // HintTypeString returns the string representation of the hint type.
 func (hint *HintedIndex) HintTypeString() string {
-	if hint.HintName != "" {
-		return hint.HintName
-	}
 	switch hint.IndexHint.HintType {
 	case ast.HintUse:
 		if hint.PushDownLookUp {
@@ -1063,7 +1059,6 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				DBName:     dbName,
 				TblName:    hint.Tables[0].TableName,
 				Partitions: hint.Tables[0].PartitionList,
-				HintName:   hint.HintName.L,
 				IndexHint: &ast.IndexHint{
 					IndexNames: hint.Indexes,
 					HintType:   ast.HintUse,
@@ -1296,10 +1291,10 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 
 // CollectUnmatchedHintWarnings collects warnings for unmatched hints from this TableHintInfo.
 func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.SkipScan, false)...)
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.NoSkipScan, false)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, "")...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, HintIndexMerge)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.SkipScan, HintSkipScan)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.NoSkipScan, HintNoSkipScan)...)
 	warnings = append(warnings, collectUnmatchedColumnHintWarning(HintTiFlashLMFilter, hintInfo.TiFlashLMFilters)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexJoin.INLHJTables)...)
@@ -1337,13 +1332,11 @@ func getHintTableQBName(hint *ast.TableOptimizerHint) ast.CIStr {
 	return hint.QBName
 }
 
-func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []string) {
+func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, hintType string) (warnings []string) {
 	for _, hint := range indexHints {
 		if !hint.Matched {
-			var hintTypeString string
-			if usedForIndexMerge {
-				hintTypeString = HintIndexMerge
-			} else {
+			hintTypeString := hintType
+			if hintTypeString == "" {
 				hintTypeString = hint.HintTypeString()
 			}
 			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
