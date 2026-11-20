@@ -73,12 +73,13 @@ go_test(
     ],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
+        "//pkg/domain/affinity",
         "//pkg/domain/serverinfo",
         "//pkg/keyspace",
         "//pkg/meta/model",
@@ -89,6 +90,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//servicediscovery",
         "@org_uber_go_goleak//:goleak",
     ],
 )
