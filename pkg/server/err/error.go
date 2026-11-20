@@ -50,4 +50,6 @@ var (
 	ErrMustChangePassword = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
 	// ErrServerShutdown is returned when the server is shutting down.
 	ErrServerShutdown = dbterror.ClassServer.NewStd(errno.ErrServerShutdown)
+	// ErrServerOfflineMode is returned to non-admin connections when the server is in offline mode.
+	ErrServerOfflineMode = dbterror.ClassServer.NewStd(errno.ErrServerOfflineMode)
 )
