@@ -45,7 +45,8 @@ type Session interface {
 	AffectedRows() uint64 // Affected rows by latest executed stmt.
 	// Execute is deprecated, and only used by plugins. Use ExecuteStmt() instead.
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
-	// ExecuteStmt executes a parsed statement.
+	// ExecuteStmt executes a parsed statement. On error it closes any result set and
+	// returns nil for the result. The caller closes any result set returned on success.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)

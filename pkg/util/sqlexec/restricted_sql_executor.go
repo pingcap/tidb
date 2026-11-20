@@ -161,6 +161,8 @@ type SQLExecutor interface {
 	// ExecuteInternal executes internal SQL. On error it closes any result set and
 	// returns nil for the result. The caller closes any result set returned on success.
 	ExecuteInternal(ctx context.Context, sql string, args ...any) (RecordSet, error)
+	// ExecuteStmt executes a parsed statement. On error it closes any result set and
+	// returns nil for the result. The caller closes any result set returned on success.
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
 }
 
