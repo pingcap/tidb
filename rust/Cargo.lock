@@ -6775,6 +6775,7 @@ dependencies = [
  "tidb-executor-join",
  "tidb-executor-join-joinversion",
  "tidb-executor-lockstats",
+ "tidb-executor-mviewdeltamergeagg",
  "tidb-executor-sortexec",
  "tidb-executor-windows",
  "tidb-exeerrors",

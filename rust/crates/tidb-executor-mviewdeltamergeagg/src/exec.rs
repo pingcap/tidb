@@ -773,9 +773,10 @@ impl Exec<'_> {
                         return Err(error);
                     }
                     total += start.elapsed();
-                    if free_tx.send(result.input).is_err() {
-                        break;
-                    }
+                    // Go `freeInputCh <- result.Input`: a buffered list nobody
+                    // closes. The reader drops its end once the input is
+                    // drained, and the results still queued must be written.
+                    let _ = free_tx.send(result.input);
                 }
                 Ok(total)
             })();
@@ -794,5 +795,33 @@ impl Exec<'_> {
             stats.merge_worker_time[idx] = result?;
         }
         Ok(stats)
+    }
+}
+
+impl tidb_execdetails::RuntimeStats for MergeRuntimeStats {
+    /// Go `String`.
+    fn string(&self) -> String {
+        self.to_string()
+    }
+
+    /// Go `Merge`.
+    fn merge(&mut self, other: &dyn tidb_execdetails::RuntimeStats) {
+        if let Some(other) = other.as_any().downcast_ref::<Self>() {
+            MergeRuntimeStats::merge(self, other);
+        }
+    }
+
+    /// Go `Clone`.
+    fn clone_box(&self) -> Box<dyn tidb_execdetails::RuntimeStats> {
+        Box::new(self.clone())
+    }
+
+    /// Go `Tp`.
+    fn tp(&self) -> i32 {
+        tidb_execdetails::TP_MVIEW_DELTA_MERGE_AGG_RUNTIME_STATS
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

@@ -19,6 +19,7 @@ test-util = [
 ]
 
 [dependencies]
+tidb-executor-mviewdeltamergeagg = { path = "../tidb-executor-mviewdeltamergeagg" }
 tidb-objstore = { path = "../tidb-objstore" }
 tidb-br = { path = "../tidb-br" }
 tidb-sem = { path = "../tidb-sem" }

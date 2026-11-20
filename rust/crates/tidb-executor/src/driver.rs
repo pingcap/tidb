@@ -60,6 +60,7 @@ pub(crate) use tidb_planner::from_scope as from;
 mod multi_dml;
 pub mod mview_delta_apply;
 pub mod mview_delta_merge;
+pub(crate) mod mview_delta_merge_agg_builder;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
 pub use dml::dml_visit_info;
