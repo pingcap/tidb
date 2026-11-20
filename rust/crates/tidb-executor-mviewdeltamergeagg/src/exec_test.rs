@@ -953,8 +953,8 @@ struct MockBatchRecomputeBuilder {
     null_keys: std::collections::HashSet<i64>,
     reverse_output: bool,
     extra_rows: Vec<[i64; 2]>,
-    /// Go `retTp`'s column count beyond the key and value (default 2).
-    col_cnt: usize,
+    /// Go `retTp`: the result column types (default two BIGINTs).
+    ret_tp: Vec<FieldType>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -974,7 +974,12 @@ impl MinMaxBatchExecBuilder for MockBatchRecomputeBuilder {
         if self.reverse_output {
             rows.reverse();
         }
-        Ok(Box::new(rows_exec(self.col_cnt.max(2), rows)))
+        let mut exec = rows_exec(2, rows);
+        if !self.ret_tp.is_empty() {
+            let cols = self.ret_tp.iter().enumerate().map(|(i, tp)| tidb_expr::column::Column::new(i as i64 + 1, tp.clone())).collect();
+            exec.meta = ExecutorMeta::new(Schema::new(cols), 0, 32, 1024);
+        }
+        Ok(Box::new(exec))
     }
 }
 
@@ -1095,4 +1100,143 @@ fn test_max_fast_path_and_single_row_recompute() {
     let max_col = res.computed_cols[7].as_ref().unwrap();
     assert_eq!([12, 9, 5], [0, 1, 2].map(|row| max_col.get_int64(row)));
     assert_eq!(1, calls.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+/// Go's two-row MAX fallback input of the batch tests: rows of
+/// `[delta_count, added, added_cnt, removed, removed_cnt, key, mv_count, mv_max]`.
+fn max_schema() -> Vec<FieldType> {
+    vec![ft(FieldTypeCode::LongLong); 8]
+}
+
+/// The `count(*)` + batch `MAX` exec over `chk`.
+fn max_batch_exec(chk: Chunk, builder: MockBatchRecomputeBuilder) -> Exec {
+    let mut exec = Exec::new(new_mock_source(&max_schema(), vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[6], &[0]),
+        Mapping {
+            min_max_recompute: Some(MinMaxRecomputeSpec {
+                strategy: MinMaxRecomputeStrategy::Batch,
+                batch_result_col_idxes: vec![1],
+                ..MinMaxRecomputeSpec::default()
+            }),
+            ..mapping(agg_desc(names::MAX, vec![not_null_int_arg(1)]), &[7], &[1, 2, 3, 4])
+        },
+    ];
+    exec.delta_agg_col_count = 6;
+    exec.worker_cnt = 1;
+    exec.min_max_recompute = Some(MinMaxRecomputeExec {
+        key_input_col_ids: vec![5],
+        key_result_col_idxes: vec![0],
+        batch_builder: Some(Box::new(builder)),
+    });
+    exec
+}
+
+/// Go: `Open` succeeds, `Next` fails, `Close` succeeds; the failure's text.
+fn next_err(mut exec: Exec) -> String {
+    exec.open(1).unwrap();
+    let error = exec.next(false).expect_err("Next fails");
+    exec.close().unwrap();
+    error_text(&error)
+}
+
+/// One fallback row removing the old max `10` for key 1.
+const FALLBACK_KEY1: [Option<i64>; 8] = [Some(0), None, Some(0), Some(10), Some(1), Some(1), Some(3), Some(10)];
+
+#[test]
+fn test_max_batch_recompute() {
+    let chk = int_chunk(
+        &max_schema(),
+        &[
+            // row0: fallback, batch recompute returns 8
+            &FALLBACK_KEY1,
+            // row1: fast update max 10 -> 12
+            &[Some(0), Some(12), Some(1), None, Some(0), Some(2), Some(3), Some(10)],
+        ],
+    );
+    let builder = MockBatchRecomputeBuilder { values: [(1, 8), (2, 12)].into(), ..MockBatchRecomputeBuilder::default() };
+    let results = run(max_batch_exec(chk, builder)).unwrap();
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Update; 2], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    let max_col = res.computed_cols[7].as_ref().unwrap();
+    assert_eq!([8, 12], [0, 1].map(|row| max_col.get_int64(row)));
+}
+
+#[test]
+fn test_max_batch_recompute_with_out_of_order_result_rows() {
+    let chk = int_chunk(
+        &max_schema(),
+        &[&FALLBACK_KEY1, &[Some(0), None, Some(0), Some(20), Some(1), Some(2), Some(4), Some(20)]],
+    );
+    let builder = MockBatchRecomputeBuilder {
+        reverse_output: true,
+        values: [(1, 8), (2, 15)].into(),
+        ..MockBatchRecomputeBuilder::default()
+    };
+    let results = run(max_batch_exec(chk, builder)).unwrap();
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Update; 2], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    let max_col = res.computed_cols[7].as_ref().unwrap();
+    assert_eq!([8, 15], [0, 1].map(|row| max_col.get_int64(row)));
+}
+
+#[test]
+fn test_reject_max_batch_recompute_unexpected_key() {
+    let chk = int_chunk(&max_schema(), &[&FALLBACK_KEY1]);
+    let builder = MockBatchRecomputeBuilder {
+        values: [(1, 8)].into(),
+        extra_rows: vec![[999, 1]],
+        ..MockBatchRecomputeBuilder::default()
+    };
+    let got = next_err(max_batch_exec(chk, builder));
+    assert!(got.contains("returns a key outside lookup set"), "{got}");
+}
+
+#[test]
+fn test_reject_max_batch_recompute_key_type_mismatch() {
+    let chk = int_chunk(&max_schema(), &[&FALLBACK_KEY1]);
+    let builder = MockBatchRecomputeBuilder {
+        ret_tp: vec![ft(FieldTypeCode::Double), ft(FieldTypeCode::LongLong)],
+        values: [(1, 8)].into(),
+        ..MockBatchRecomputeBuilder::default()
+    };
+    let got = next_err(max_batch_exec(chk, builder));
+    assert!(got.contains("min/max batch key type mismatch"), "{got}");
+}
+
+#[test]
+fn test_reject_max_batch_recompute_result_type_mismatch() {
+    let chk = int_chunk(&max_schema(), &[&FALLBACK_KEY1]);
+    let builder = MockBatchRecomputeBuilder {
+        ret_tp: vec![ft(FieldTypeCode::LongLong), ft(FieldTypeCode::Double)],
+        values: [(1, 8)].into(),
+        ..MockBatchRecomputeBuilder::default()
+    };
+    let got = next_err(max_batch_exec(chk, builder));
+    assert!(got.contains("min/max batch result type mismatch"), "{got}");
+}
+
+#[test]
+fn test_reject_max_single_row_recompute_multiple_rows() {
+    let chk = int_chunk(&max_schema(), &[&FALLBACK_KEY1]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut exec = Exec::new(new_mock_source(&max_schema(), vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[6], &[0]),
+        Mapping {
+            min_max_recompute: Some(MinMaxRecomputeSpec {
+                strategy: MinMaxRecomputeStrategy::SingleRow,
+                single_row: Some(MinMaxRecomputeSingleRowExec { workers: vec![single_row_worker(&[(1, vec![8, 9])], &calls)] }),
+                ..MinMaxRecomputeSpec::default()
+            }),
+            ..mapping(agg_desc(names::MAX, vec![not_null_int_arg(1)]), &[7], &[1, 2, 3, 4])
+        },
+    ];
+    exec.delta_agg_col_count = 6;
+    exec.worker_cnt = 1;
+    exec.min_max_recompute =
+        Some(MinMaxRecomputeExec { key_input_col_ids: vec![5], key_result_col_idxes: vec![0], batch_builder: None });
+    let got = next_err(exec);
+    assert!(got.contains("returns more than one row"), "{got}");
 }
