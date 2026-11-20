@@ -1534,15 +1534,18 @@ pub(crate) fn alter_materialized_view_steps(
         ])));
     }
     let expr_ctx = SessionExprContext(context);
+    // Go's `validateCommentLength(..., &action.Comment, ...)` truncates a
+    // too-long comment in place outside strict mode.
+    let mut validated_comments = Vec::new();
     for action in &stmt.actions {
         match action {
             tidb_ast::AlterMaterializedViewAction::Comment(comment) => {
-                tidb_ddl_build::validate_comment_length(
+                validated_comments.push(tidb_ddl_build::validate_comment_length(
                     comment,
                     &tidb_hack::go_to_lower(&view),
                     tidb_ddl_build::CommentOwner::Table,
                     &context.metabuild_context(),
-                )?;
+                )?);
             }
             tidb_ast::AlterMaterializedViewAction::Refresh(refresh) => {
                 tidb_ddl_build::materialized_view::build_mview_refresh_meta(&expr_ctx, Some(refresh))?;
@@ -1561,15 +1564,17 @@ pub(crate) fn alter_materialized_view_steps(
         job
     };
     let mut steps = Vec::new();
+    let mut validated_comments = validated_comments.into_iter();
     for action in &stmt.actions {
         match action {
-            // Go hands the comment as written to `alterTable`, which checks
-            // its length again.
-            tidb_ast::AlterMaterializedViewAction::Comment(comment) => {
+            // Go hands the checked (possibly truncated) comment to
+            // `alterTable`, which checks its length again.
+            tidb_ast::AlterMaterializedViewAction::Comment(_) => {
+                let comment = validated_comments.next().expect("one checked comment per COMMENT action");
                 steps.push(AlterMaterializedViewStep::Comment(tidb_ast::AlterTableStmt {
                     name: vec![schema_name.clone(), view.clone()],
                     actions: vec![tidb_ast::AlterTableAction::SetTableOptions {
-                        options: vec![tidb_ast::TableOption::Comment(comment.clone())],
+                        options: vec![tidb_ast::TableOption::Comment(comment)],
                     }],
                 }));
             }

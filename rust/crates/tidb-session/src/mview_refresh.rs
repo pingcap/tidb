@@ -1561,7 +1561,7 @@ impl Session {
 
 /// Go master `mviewutil.ResolveRefreshSources`: the view's sources and their
 /// logs in `catalog`, sorted by table ID.
-fn resolve_refresh_sources(
+pub(crate) fn resolve_refresh_sources(
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     mview_id: i64,
 ) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {

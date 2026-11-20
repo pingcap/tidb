@@ -203,7 +203,8 @@ impl<'a> UpdateRecords<'a> {
         // Go `mlogTable`: the base write's MV log rows. A changed handle is
         // Go `updateRecord`'s RemoveRecord(old) and AddRecord(new, IsUpdate),
         // which always log; otherwise `UpdateRecord` logs when a tracked
-        // column is among the assigned ones (`touched`).
+        // column is `touched` -- Go's `modified`, the columns whose value
+        // changed, generated columns included (`checkColumnFunc`).
         if let Some(mlog) = self.mlogs.and_then(|mlogs| mlogs.get(database, name)) {
             let handle_changed = matches!(
                 catalog.get_in(database, name),
@@ -215,7 +216,7 @@ impl<'a> UpdateRecords<'a> {
                 mlog.remove_record(&mut *store, old, ctx)
                     .and_then(|()| mlog.add_record(&mut *store, new, true, false, ctx))
             } else {
-                mlog.update_record(&mut *store, old, new, &|offset| assigned.contains(&offset), false, ctx)
+                mlog.update_record(&mut *store, old, new, &|offset| old.get(offset) != new.get(offset), false, ctx)
             };
             logged.map_err(kv_write_error)?;
         }

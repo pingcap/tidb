@@ -735,7 +735,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             })
         };
         // Go `ddlutil.GetTimeZone`: a loadable zone name with offset 0, else
-        // "UTC" with the zone's current offset.
+        // no name with the zone's current offset (Go's fixed zones are
+        // `time.FixedZone("", offset)`).
         let (time_zone_name, time_zone_offset) = match context.session_zone() {
             tidb_datatype::SessionTimeZone::Named(zone) => (zone.name().to_owned(), 0),
             tidb_datatype::SessionTimeZone::Local => ("Local".to_owned(), 0),
@@ -743,7 +744,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 if name.parse::<chrono_tz::Tz>().is_ok() {
                     (name, 0)
                 } else {
-                    ("UTC".to_owned(), i64::from(offset_secs))
+                    (String::new(), i64::from(offset_secs))
                 }
             }
         };

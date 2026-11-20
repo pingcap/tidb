@@ -17,8 +17,14 @@
 use super::*;
 
 mod alter;
+mod basic;
 mod create;
 mod drop;
+mod log_alter;
+mod log_basic;
+mod log_create;
+mod log_drop;
+mod log_output;
 
 /// One statement's answer as the capture script prints it: `OK`, `RS:` and
 /// the rows as JSON strings (`null` for NULL), or `ERR code message`.
@@ -73,6 +79,13 @@ fn replay_go_master(capture: &str) -> (UnistoreClusterStack, Session) {
 /// session on it.
 fn go_master_mview_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>, Session) {
     let (stack, users) = cop_backed_stack();
+    let session = go_master_mview_tables(&stack);
+    (stack, users, session)
+}
+
+/// Go master's materialized view system tables on `stack`, and the root
+/// session that created them.
+fn go_master_mview_tables(stack: &UnistoreClusterStack) -> Session {
     let mut session = stack.factory.open_session(session_context(2131)).unwrap();
     for table in tidb_metadef::BOOTSTRAP_TABLES.iter().filter(|table| {
         matches!(
@@ -87,7 +100,7 @@ fn go_master_mview_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>, S
         answer(&mut session, tidb_metadef::system_tables_def::CREATE_TI_DBMVIEW_FAST_REFRESH_SOURCE_INFO_TABLE),
         "OK"
     );
-    (stack, users, session)
+    session
 }
 
 fn replay_on(stack: UnistoreClusterStack, session: Session, capture: &str) -> (UnistoreClusterStack, Session) {
