@@ -1109,7 +1109,7 @@ fn max_schema() -> Vec<FieldType> {
 }
 
 /// The `count(*)` + batch `MAX` exec over `chk`.
-fn max_batch_exec(chk: Chunk, builder: MockBatchRecomputeBuilder) -> Exec {
+fn max_batch_exec(chk: Chunk, builder: MockBatchRecomputeBuilder) -> Exec<'static> {
     let mut exec = Exec::new(new_mock_source(&max_schema(), vec![chk]));
     exec.agg_mappings = vec![
         mapping(count_star(), &[6], &[0]),

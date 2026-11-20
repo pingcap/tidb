@@ -170,7 +170,7 @@ fn is_min_max_arg_nullable(mapping: &Mapping) -> Result<bool, ExecError> {
     Ok(!tidb_mysql::types::has_not_null_flag(arg_tp.flags() as usize))
 }
 
-impl Exec {
+impl Exec<'_> {
     /// Go `buildMinMaxMerger`.
     pub(crate) fn build_min_max_merger(
         &self,

@@ -99,7 +99,7 @@ struct SumMerger {
     ret_tp: FieldType,
 }
 
-impl Exec {
+impl Exec<'_> {
     /// Go `buildSumMerger`.
     pub(crate) fn build_sum_merger(
         &self,

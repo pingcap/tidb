@@ -80,8 +80,9 @@ pub struct ChunkResult {
     pub update_touched_bit_cnt: usize,
 }
 
-/// Go `ResultWriter`: consumes merged chunk results.
-pub trait ResultWriter: Send {
+/// Go `ResultWriter`: consumes merged chunk results. It runs on the thread
+/// that drives the merge, so it may borrow the session's table state.
+pub trait ResultWriter {
     /// Go `WriteChunk`.
     ///
     /// # Errors
@@ -241,8 +242,9 @@ impl std::fmt::Display for MergeRuntimeStats {
     }
 }
 
-/// Go `Exec`: the sink executor for incremental MView merge.
-pub struct Exec {
+/// Go `Exec`: the sink executor for incremental MView merge. `'a` is what
+/// its writer and target table borrow from the session.
+pub struct Exec<'a> {
     /// Go `Children(0)`: the joined delta/view input.
     pub child: Box<dyn Executor>,
     /// Go `MLogEmpty`: set only when planning proved that the mlog input is
@@ -258,9 +260,9 @@ pub struct Exec {
     pub worker_cnt: i64,
     /// Go `Writer`; when unset, `Open` writes through `target_table`, or
     /// nowhere (Go's `noopWriter`) without one.
-    pub writer: Option<Box<dyn ResultWriter>>,
+    pub writer: Option<Box<dyn ResultWriter + 'a>>,
     /// Go `TargetTable` (with the session it writes through).
-    pub target_table: Option<Box<dyn crate::writer::TargetTable>>,
+    pub target_table: Option<Box<dyn crate::writer::TargetTable + 'a>>,
     /// Go `TargetHandleCols`: builds row handles for update/delete from child
     /// input rows.
     pub target_handle_cols: Option<tidb_planner_util::handle_cols::HandleCols>,
@@ -305,7 +307,7 @@ pub(crate) fn is_min_max_agg(agg_name: &str) -> bool {
     agg_name == names::MIN || agg_name == names::MAX
 }
 
-impl Exec {
+impl<'a> Exec<'a> {
     /// An unopened `Exec` over `child`.
     #[must_use]
     pub fn new(child: Box<dyn Executor>) -> Self {
@@ -678,7 +680,7 @@ impl MergeCore {
 
 }
 
-impl Exec {
+impl Exec<'_> {
     /// Go `runMergePipeline`: a reader feeding chunks to merge workers whose
     /// results one writer applies, the input chunks recycled through a free
     /// list. Every stage owns its channel ends, so the first failure ends the
@@ -757,7 +759,9 @@ impl Exec {
                 .collect();
             drop(input_rx);
             drop(result_tx);
-            let writer_handle = scope.spawn(move || -> Result<(Duration, Box<dyn ResultWriter>), ExecError> {
+            // The writer stage runs here, on the calling thread: it writes
+            // through the session (Go's writer goroutine shares it freely).
+            let writer_result = (|| -> Result<Duration, ExecError> {
                 let mut total = Duration::ZERO;
                 while let Ok(result) = result_rx.recv() {
                     if failed.load(Ordering::SeqCst) {
@@ -773,17 +777,18 @@ impl Exec {
                         break;
                     }
                 }
-                Ok((total, writer))
-            });
+                Ok(total)
+            })();
+            // Unblock the reader and workers whatever the writer's outcome.
+            drop(result_rx);
+            drop(free_tx);
             let reader_result = reader.join().expect("the reader does not panic");
             let worker_results: Vec<_> =
                 workers.into_iter().map(|worker| worker.join().expect("a merge worker does not panic")).collect();
-            let writer_result = writer_handle.join().expect("the writer does not panic");
             (reader_result, worker_results, writer_result)
         });
-        let (writer_time, writer) = writer_result?;
         self.writer = Some(writer);
-        stats.writer_time = writer_time;
+        stats.writer_time = writer_result?;
         stats.reader_time = reader_result?;
         for (idx, result) in worker_results.into_iter().enumerate() {
             stats.merge_worker_time[idx] = result?;

@@ -28,7 +28,7 @@ use crate::merge::{
     validate_signed_int_type, AggMerger, DepRef, DepRefSource,
 };
 
-impl Exec {
+impl Exec<'_> {
     /// Go `buildCountMerger`.
     pub(crate) fn build_count_merger(
         &self,

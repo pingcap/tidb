@@ -35,7 +35,7 @@ pub struct TargetColumn {
 
 /// Go `table.Table` with the session's transaction and table context, as
 /// `tableResultWriter` writes through them.
-pub trait TargetTable: Send {
+pub trait TargetTable {
     /// Go `WritableCols()`.
     fn writable_cols(&self) -> Vec<TargetColumn>;
     /// Go `len(Cols())`: the public columns.
@@ -68,8 +68,8 @@ pub trait TargetTable: Send {
 }
 
 /// Go `tableResultWriter`.
-pub(crate) struct TableResultWriter {
-    table: Box<dyn TargetTable>,
+pub(crate) struct TableResultWriter<'a> {
+    table: Box<dyn TargetTable + 'a>,
     handle_cols: HandleCols,
     writable_col_ids: Vec<usize>,
     writable_field_types: Vec<FieldType>,
@@ -81,13 +81,13 @@ pub(crate) struct TableResultWriter {
 }
 
 /// Go `buildTableResultWriter`.
-pub(crate) fn build_table_result_writer(
-    table: Box<dyn TargetTable>,
+pub(crate) fn build_table_result_writer<'a>(
+    table: Box<dyn TargetTable + 'a>,
     handle_cols: HandleCols,
     child_types: &[FieldType],
     delta_agg_col_count: i64,
     agg_output_col_ids: &[i64],
-) -> Result<TableResultWriter, ExecError> {
+) -> Result<TableResultWriter<'a>, ExecError> {
     let writable_cols = table.writable_cols();
     if writable_cols.is_empty() {
         return Err(err("target table has no writable columns"));
@@ -169,7 +169,7 @@ pub(crate) fn build_table_result_writer(
     })
 }
 
-impl ResultWriter for TableResultWriter {
+impl ResultWriter for TableResultWriter<'_> {
     /// Go `WriteChunk`.
     fn write_chunk(&mut self, result: &ChunkResult, stats: &mut MergeWriterStats) -> Result<(), ExecError> {
         stats.chunks += 1;
@@ -231,7 +231,7 @@ impl ResultWriter for TableResultWriter {
     }
 }
 
-impl TableResultWriter {
+impl TableResultWriter<'_> {
     /// Go's test literal `&tableResultWriter{aggWritableIDs: ids, touched: ...}`.
     #[cfg(test)]
     pub(crate) fn for_touched_test(agg_writable_ids: Vec<usize>) -> Self {
