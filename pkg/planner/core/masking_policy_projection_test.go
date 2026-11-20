@@ -1191,3 +1191,24 @@ func TestMaskingPolicyDDLPlanCache(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskingPolicyScalarSubqueryAsRelationalKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_key(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_key values (1,'b'),(2,'a'),(3,'a')")
+	tk.MustExec("create masking policy p on t_key(c) as mask_full(c)")
+	sub := "(select i.c from t_key i where i.id = o.id)"
+	// Grouping, ordering and window keys work on the original values: 'a' and
+	// 'b' mask to the same value, and must still be two groups.
+	tk.MustQuery("select count(*) from t_key o group by " + sub).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select o.id from t_key o order by " + sub + ", o.id").Check(testkit.Rows("2", "3", "1"))
+	tk.MustQuery("select o.id, row_number() over (partition by " + sub + " order by o.id) from t_key o order by o.id").
+		Check(testkit.Rows("1 1", "2 1", "3 2"))
+	tk.MustQuery("select o.id, rank() over (order by " + sub + ") from t_key o order by o.id").
+		Check(testkit.Rows("1 3", "2 1", "3 1"))
+	// A predicate still compares with the masked value.
+	tk.MustQuery("select count(*) from t_key o where " + sub + " = 'a'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t_key o having max(" + sub + ") = 'X'").Check(testkit.Rows("3"))
+}

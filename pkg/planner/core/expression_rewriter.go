@@ -1452,12 +1452,26 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	// value. buildSubquery resets the context, so subqueries nested in it keep
 	// the ordinary rules.
 	storedValue := planCtx.builder.maskScalarSubqueryValue > 0
-	predicateValue := !storedValue && !resultField
+	// Grouping, ordering and window keys are relational operations: like any
+	// other expression below the final projection they work on the original
+	// values. Masking the key first would merge the groups whose keys mask to
+	// the same value, and no final projection could tell them apart again.
+	windowKey := planCtx.builder.rewritingWindowKey
+	relationalKey := windowKey
+	switch planCtx.curClause {
+	case groupByClause, orderByClause, globalOrderByClause:
+		relationalKey = true
+	}
+	relationalKey = relationalKey && !storedValue
+	predicateValue := !storedValue && !resultField && !relationalKey
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	savedClause := planCtx.builder.curClause
+	// The subquery is a query block of its own, not a key of the window.
+	planCtx.builder.rewritingWindowKey = false
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
 	planCtx.builder.curClause = savedClause
+	planCtx.builder.rewritingWindowKey = windowKey
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1479,7 +1493,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 			er.err = err
 			return v, true
 		}
-	} else if maskingEnabled {
+	} else if maskingEnabled && !relationalKey {
 		// Scalar preprocessing may turn the raw result into a constant, losing
 		// its policy identity before the outer final projection can inspect it.
 		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}

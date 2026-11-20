@@ -311,7 +311,10 @@ type PlanBuilder struct {
 	// SET, DO, UPDATE assignments and INSERT values. Scalar subqueries in these
 	// expressions apply masking to their own results.
 	maskScalarSubqueryValue int
-	maskingOuterPlans       []base.LogicalPlan
+	// rewritingWindowKey is set while the PARTITION BY and ORDER BY items of
+	// a window are rewritten. They have no clause of their own in curClause.
+	rewritingWindowKey bool
+	maskingOuterPlans  []base.LogicalPlan
 	// Retain raw result dependencies for RESTRICT ON checks after masking has
 	// replaced an output expression with a constant.
 	maskingSourcePlans map[int]base.LogicalPlan
