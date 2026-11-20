@@ -32,6 +32,30 @@ const (
 	sysUserTableName = "user"
 )
 
+// upgradedNullableUserColumns are the mysql.user columns that the upgrade from
+// an old TiDB version adds as nullable, while a newly bootstrapped cluster
+// defines them as NOT NULL.
+var upgradedNullableUserColumns = map[string]struct{}{
+	"create_role_priv":       {},
+	"drop_role_priv":         {},
+	"account_locked":         {},
+	"shutdown_priv":          {},
+	"reload_priv":            {},
+	"file_priv":              {},
+	"config_priv":            {},
+	"create_tablespace_priv": {},
+}
+
+func isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, columnNameL string, backupCol, clusterCol *model.ColumnInfo) bool {
+	if dbNameL != mysql.SystemDB || tableNameL != sysUserTableName {
+		return false
+	}
+	if _, ok := upgradedNullableUserColumns[columnNameL]; !ok {
+		return false
+	}
+	return !mysql.HasNotNullFlag(backupCol.GetFlag()) && mysql.HasNotNullFlag(clusterCol.GetFlag())
+}
+
 var planPeplayerTables = map[string]map[string]struct{}{
 	"mysql": {
 		"plan_replayer_status": {},
@@ -549,6 +573,9 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 				return err
 			}
 		}
+		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+			return err
+		}
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
 		for _, col := range ti.Columns {
@@ -641,7 +668,18 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			backupFieldType := backupCol.FieldType
+			if isUpgradedNullableSystemTableColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L, backupCol, col) {
+				// The logical restore refuses a NULL in such a column before it
+				// copies the rows.
+				log.Warn("nullable column in backup data is NOT NULL in cluster",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				backupFieldType = *backupFieldType.Clone()
+				backupFieldType.AddFlag(mysql.NotNullFlag)
+				canLoadSysTablePhysical = false
+			}
+			typeEq, collateEq := utils.IsTypeCompatible(backupFieldType, col.FieldType)
 			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
 			collateCompatible := collateEq
 			if typeEq && (!collateEq && collationCheck) {
@@ -700,6 +738,46 @@ func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, u
 	}
 	_, exists = collateCompatibilityColumnMap.columns[columnNameL]
 	return exists
+}
+
+// checkNoNullInUpgradedNullableColumns fails when the backup holds a NULL in a
+// column that only an upgrade made nullable. The restore session has an empty
+// sql_mode, so REPLACE INTO ... SELECT would store the implicit default instead.
+func (rc *SnapClient) checkNoNullInUpgradedNullableColumns(
+	ctx context.Context,
+	temporaryDBNameL, dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	columns := make([]string, 0)
+	conditions := make([]string, 0)
+	for _, backupCol := range upstreamTable.Columns {
+		clusterCol := model.FindColumnInfo(downstreamTable.Columns, backupCol.Name.L)
+		if clusterCol == nil ||
+			!isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, backupCol.Name.L, backupCol, clusterCol) {
+			continue
+		}
+		columns = append(columns, backupCol.Name.O)
+		conditions = append(conditions, utils.EncloseName(backupCol.Name.L)+" IS NULL")
+	}
+	if len(conditions) == 0 {
+		return nil
+	}
+	sql := fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE %s",
+		utils.EncloseDBAndTable(temporaryDBNameL, tableNameL), strings.Join(conditions, " OR "))
+	ectx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, sql)
+	if err != nil {
+		return errors.Annotatef(err, "failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if nullRows := rows[0].GetInt64(0); nullRows > 0 {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"%d rows of %s.%s in backup data have NULL in %s, which is NOT NULL in cluster",
+			nullRows, dbNameL, tableNameL, strings.Join(columns, ", "))
+	}
+	return nil
 }
 
 func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
