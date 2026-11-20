@@ -178,7 +178,25 @@ fn finish_stats_handler(
     Ok(())
 }
 
+/// Go `notifier.NewDDLNotifier` with its subscribers. Go's statistics handle
+/// registers its DDL handler only outside tests (`statistics/handle.NewHandle`:
+/// `if !intest.InTest`); a test delivers the events to it itself
+/// ([`build_notifier_for_test`]).
 pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNotifier> {
+    build_notifier_with(factory, stats_lease, !tidb_intest::IN_TEST)
+}
+
+/// The notifier a test runs until the statistics handle has handled every
+/// pending event (Go `statstestutil.HandleNextDDLEventWithTxn`).
+pub fn build_notifier_for_test(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNotifier> {
+    build_notifier_with(factory, stats_lease, true)
+}
+
+fn build_notifier_with(
+    factory: &Arc<Domain>,
+    stats_lease: Duration,
+    register_stats_handler: bool,
+) -> Arc<DdlNotifier> {
     let notifier = Arc::new(DdlNotifier::new(
         Arc::new(ClusterNotifierSessionPool::new(
             factory.advanced_sys_session_pool(),
@@ -194,7 +212,9 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
             finish_stats_handler(event, result).map_err(|error| error.to_string())
         })
     });
-    notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
+    if register_stats_handler {
+        notifier.register_handler(STATS_META_HANDLER_ID, stats_handler);
+    }
 
     let queue = factory.auto_analyze_priority_queue(stats_lease);
     let global_vars = factory.global_vars.clone();

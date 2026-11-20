@@ -661,8 +661,7 @@ fn get_region_split_size_keys<S: StoreClient>(
 struct BackfillCleaner;
 
 impl tidb_dxf_scheduler::Cleaner for BackfillCleaner {
-    /// Go `BackfillCleaner.Clean`. A next-gen kernel also sends the metering
-    /// data of succeeded tasks here; metering is not ported.
+    /// Go `BackfillCleaner.Clean`.
     fn clean(&self, ctx: &Context, task: &mut Task) -> Result<(), Error> {
         let mut task_meta: BackfillTaskMeta = serde_json::from_slice(&task.meta).map_err(|e| Arc::new(e) as Error)?;
         // No cleanup is needed when the task does not use cloud storage.
@@ -692,9 +691,45 @@ impl tidb_dxf_scheduler::Cleaner for BackfillCleaner {
         if task_meta.version < crate::backfilling_dist_executor::BACKFILL_TASK_META_VERSION_1 {
             clean(&task_meta.job.id.to_string())?;
         }
+        // send metering data for nextgen kernel, only for succeed backfill
+        // tasks, we don't meter merge temp index tasks
+        if tidb_config_kerneltype::is_next_gen()
+            && task.base.state == tidb_dxf::TASK_STATE_SUCCEED
+            && !task_meta.merge_temp_index
+        {
+            if let Err(error) = send_meter_on_clean(ctx, task) {
+                logger.warn(
+                    "failed to send metering data on cleanup",
+                    &[task_id.clone(), tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+                );
+                return Err(error);
+            }
+        }
         redact_cloud_storage_uri(task, &mut task_meta);
         Ok(())
     }
+}
+
+/// Go `sendMeterOnClean`: the rows and index KV bytes the task's read-index
+/// subtasks reported.
+fn send_meter_on_clean(ctx: &Context, task: &Task) -> Result<(), Error> {
+    let task_manager = tidb_dxf_storage::get_task_manager().map_err(|e| Arc::new(e) as Error)?;
+    let subtasks = task_manager
+        .get_all_subtasks_by_step_and_state(
+            ctx,
+            task.base.id,
+            tidb_dxf::BACKFILL_STEP_READ_INDEX,
+            &tidb_dxf::SUBTASK_STATE_SUCCEED,
+        )
+        .map_err(|e| Arc::new(e) as Error)?;
+    let (mut row_count, mut index_kv_size) = (0_i64, 0_i64);
+    for st in &subtasks {
+        let summary: tidb_dxf_execute::SubtaskSummary =
+            serde_json::from_str(&st.summary).map_err(|e| Arc::new(e) as Error)?;
+        row_count += summary.row_cnt.load(std::sync::atomic::Ordering::SeqCst);
+        index_kv_size += summary.processed.load(std::sync::atomic::Ordering::SeqCst);
+    }
+    tidb_dxf_handle::send_row_and_size_meter_data(ctx, task, row_count, 0, index_kv_size).map_err(plain)
 }
 
 /// Go `redactCloudStorageURI`.

@@ -321,6 +321,15 @@ impl DdlSessionPool for NodeDdlSessionPool {
         self.sess_pool.get().cloned()
     }
 
+    fn ddl_event_ch(
+        &self,
+    ) -> Option<crossbeam_channel::Sender<tidb_ddl_notifier::SchemaChangeEvent>> {
+        self.domain
+            .get()
+            .and_then(Weak::upgrade)
+            .map(|domain| domain.ddl_event_sender())
+    }
+
     /// Go `session.GetAdvisoryLock`: each lock is an internal session of
     /// the node's domain, as a user session's are.
     fn advisory_lock_service(

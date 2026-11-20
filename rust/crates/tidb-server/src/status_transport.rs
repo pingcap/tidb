@@ -124,6 +124,14 @@ pub(crate) fn incoming(
 pub(crate) fn tls_acceptor(
     security: &tidb_pd_client::ClusterSecurity,
 ) -> io::Result<Option<tokio_rustls::TlsAcceptor>> {
+    Ok(server_tls_config(security)?.map(tokio_rustls::TlsAcceptor::from))
+}
+
+/// Go `Security.ToTLSConfig` as a server reads it: `None` without a cluster
+/// CA.
+pub(crate) fn server_tls_config(
+    security: &tidb_pd_client::ClusterSecurity,
+) -> io::Result<Option<Arc<rustls::ServerConfig>>> {
     if !security.is_tls_enabled() {
         return Ok(None);
     }
@@ -169,7 +177,7 @@ pub(crate) fn tls_acceptor(
         .with_single_cert(certs(security.cert_path())?, key)
         .map_err(io::Error::other)?;
     config.alpn_protocols = vec![b"http/1.1".to_vec(), b"h2".to_vec()];
-    Ok(Some(tokio_rustls::TlsAcceptor::from(Arc::new(config))))
+    Ok(Some(Arc::new(config)))
 }
 
 #[derive(Debug)]

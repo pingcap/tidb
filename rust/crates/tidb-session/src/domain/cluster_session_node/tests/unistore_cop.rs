@@ -2402,10 +2402,26 @@ fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) 
 }
 
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
-// statistics. This fixture does not campaign the background statistics owner.
+// statistics: the domain's own notifier does not deliver to the statistics
+// handle in a test build.
 fn drain_stats_ddl_events(factory: &Arc<Domain>, session: &mut Session) {
-    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(factory, Duration::ZERO);
-    drain_stats_ddl_events_with_notifier(session, notifier);
+    // Go `statstestutil.HandleNextDDLEventWithTxn`, for every event the DDL
+    // sent to the statistics handle's channel.
+    while let Ok(event) = factory.ddl_event_ch().try_recv() {
+        handle_stats_schema_change(session, &event);
+    }
+}
+
+/// Stops the domain's own DDL notifier for good. The statistics owner's
+/// campaign ends first, so its `OnBecomeOwner` cannot start the notifier
+/// again after the stop.
+fn stop_domain_ddl_notifier(factory: &Arc<Domain>) {
+    if let Some(owner) = factory.stats_owner.as_ref() {
+        owner.campaign_cancel();
+    }
+    if let Some(domain_notifier) = factory.ddl_notifier_for_test() {
+        domain_notifier.stop();
+    }
 }
 
 fn drain_stats_ddl_events_with_notifier(
@@ -2454,10 +2470,8 @@ fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
         .read().id;
     // Go has one notifier per domain: the domain's own (the statistics owner
     // campaign's) would finish the event without the unready subscriber.
-    if let Some(domain_notifier) = stack.factory.ddl_notifier_for_test() {
-        domain_notifier.stop();
-    }
-    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(&stack.factory, Duration::ZERO);
+    stop_domain_ddl_notifier(&stack.factory);
+    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier_for_test(&stack.factory, Duration::ZERO);
     // Deterministically model the uninitialized priority queue's retry result
     // without modifying process-global auto-analyze settings in parallel tests.
     notifier.register_handler(
@@ -2828,6 +2842,9 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
+    // Go has one notifier per domain: the domain's own would finish the
+    // event below without the statistics subscriber under test.
+    stop_domain_ddl_notifier(&factory);
     let mut client = factory
         .open_session(session_context(85))
         .expect("client session opens");
@@ -2878,7 +2895,7 @@ fn stats_notifier_uses_a_real_internal_transaction_like_go() {
     .expect("flashback event publishes");
     pool.put(publisher);
 
-    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(&factory, Duration::ZERO);
+    let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier_for_test(&factory, Duration::ZERO);
     tidb_owner::Listener::on_become_owner(notifier.as_ref());
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let version_after = loop {
@@ -3506,6 +3523,8 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
     rows(&mut session, "CREATE TABLE queue_analyze (a INT, b INT)");
     rows(&mut session, "CREATE TABLE queue_drop (a INT)");
     rows(&mut session, "CREATE TABLE queue_locked (a INT)");
+    // Go's priority queue tests `HandleNextDDLEventWithTxn` after a DDL.
+    drain_stats_ddl_events(&factory, &mut session);
     let values = (0..1_000)
         .map(|_| "(1)".to_owned())
         .collect::<Vec<_>>()
@@ -3678,6 +3697,8 @@ fn auto_analyze_skips_configured_column_types_like_go() {
         &mut session,
         "CREATE TABLE queue_skip_types (a INT, c JSON, d VARCHAR(32), INDEX idx_d(d))",
     );
+    // Go's priority queue tests `HandleNextDDLEventWithTxn` after a DDL.
+    drain_stats_ddl_events(&factory, &mut session);
     let values = (0..1_000)
         .map(|_| "(1,NULL,'value')".to_owned())
         .collect::<Vec<_>>()
@@ -6375,6 +6396,9 @@ fn global_statistics_skip_missing_partition_like_go() {
 fn modify_column_ddl_events_follow_go() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    // The test counts `mysql.tidb_ddl_notifier` rows, which the domain's own
+    // notifier deletes once its subscribers have handled them.
+    stop_domain_ddl_notifier(&stack.factory);
     let mut session = stack
         .factory
         .open_session(session_context(74))

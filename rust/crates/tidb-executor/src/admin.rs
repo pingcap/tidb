@@ -1233,7 +1233,12 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             {
                 // Go executes this local expression before numeric ID/config gates.
                 if let Some(registry) = registry {
-                    registry.kill(self.session_vars().connection_id.unwrap_or(0), kill.query);
+                    kill_by_sql_stmt(
+                        &registry,
+                        self.session_vars().connection_id.unwrap_or(0),
+                        kill.query,
+                        false,
+                    );
                 }
                 return Ok(Some(StmtOutput::Affected(0)));
             }
@@ -1246,7 +1251,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
         if !config.enable_global_kill {
             if kill.tidb_extension || config.compatible_kill_query {
                 if let Some(registry) = registry {
-                    registry.kill(target, kill.query);
+                    kill_by_sql_stmt(&registry, target, kill.query, false);
                 }
             } else {
                 self.append_sql_warning(tidb_context::SqlWarn::with_code(
@@ -1273,7 +1278,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             }
             Ok((id, false)) => {
                 if id.server_id == self.server_id() {
-                    registry.kill(target, kill.query);
+                    kill_by_sql_stmt(&registry, target, kill.query, false);
                 } else if let Err(error) = self.kill_remote_connection(id, kill.query) {
                     self.append_sql_warning(tidb_context::SqlWarn::with_code(
                         tidb_context::WarningLevel::Warning,
@@ -1763,4 +1768,22 @@ pub fn execute_alter_range(
         }
     };
     tidb_domain_infosync::placement_manager::put_rule_bundles_with_default_retry(&[bundle]).map_err(unknown)
+}
+
+/// Go `killBySQLStmt`: a SQL `KILL` of a connection (not `KILL QUERY`) marks
+/// it as normally closed.
+pub fn kill_by_sql_stmt(
+    registry: &tidb_sessmgr::ProcessRegistry,
+    connection_id: u64,
+    query: bool,
+    from_remote: bool,
+) {
+    let normal_close_msg = if query {
+        ""
+    } else if from_remote {
+        tidb_sessmgr::NORMAL_CLOSE_MSG_KILL_STMT_FROM_REMOTE
+    } else {
+        tidb_sessmgr::NORMAL_CLOSE_MSG_KILL_STMT
+    };
+    registry.kill_with_normal_close_msg(connection_id, query, false, false, normal_close_msg);
 }

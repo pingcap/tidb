@@ -761,6 +761,13 @@ pub struct Domain {
     /// Pinned Go Domain's durable DDL notifier, registered before the stats
     /// owner campaigns and driven by that owner's lifecycle.
     ddl_notifier: std::sync::OnceLock<Arc<tidb_ddl_notifier::DdlNotifier>>,
+    /// Go `ddlHandlerImpl.ddlEventCh`: the statistics handle's DDL event
+    /// channel, which a test build's DDL sends its events to and a test
+    /// handles them from (`statstestutil.HandleNextDDLEventWithTxn`).
+    ddl_event_ch: (
+        crossbeam_channel::Sender<tidb_ddl_notifier::SchemaChangeEvent>,
+        crossbeam_channel::Receiver<tidb_ddl_notifier::SchemaChangeEvent>,
+    ),
     /// Go `analyzeJobsCleanupWorker`, installed after stable `Arc` ownership.
     pub analyze_jobs_cleanup_worker: std::sync::OnceLock<AnalyzeJobsCleanupWorker>,
     /// Go `Domain.requestUnitsWriterLoop`.
@@ -1140,6 +1147,7 @@ impl Domain {
             dxf_session_pool: std::sync::OnceLock::new(),
             sys_session_connection_ids: Arc::new(std::sync::atomic::AtomicU64::new(1_u64 << 61)),
             ddl_notifier: std::sync::OnceLock::new(),
+            ddl_event_ch: crossbeam_channel::bounded(1000),
             analyze_jobs_cleanup_worker: std::sync::OnceLock::new(),
             ru_stats_writer: std::sync::OnceLock::new(),
             workload_learning_worker: std::sync::OnceLock::new(),
@@ -3051,8 +3059,20 @@ impl Domain {
         self.ddl_notifier.get().cloned()
     }
 
+    /// Go `ddl.RegisterStatsHandle`: `d.ddlEventCh = h.DDLEventCh()`.
+    #[must_use]
+    pub fn ddl_event_sender(&self) -> crossbeam_channel::Sender<tidb_ddl_notifier::SchemaChangeEvent> {
+        self.ddl_event_ch.0.clone()
+    }
+
+    /// Go `Handle.DDLEventCh()`: the events a test build's DDL sent.
+    #[must_use]
+    pub fn ddl_event_ch(&self) -> crossbeam_channel::Receiver<tidb_ddl_notifier::SchemaChangeEvent> {
+        self.ddl_event_ch.1.clone()
+    }
+
     pub fn owned_ddl_notifier_for_test(self: &Arc<Self>) -> Arc<tidb_ddl_notifier::DdlNotifier> {
-        let notifier = ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
+        let notifier = ddl_notifier::build_notifier_for_test(self, std::time::Duration::ZERO);
         tidb_owner::Listener::on_become_owner(notifier.as_ref());
         notifier
     }

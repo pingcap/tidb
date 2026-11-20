@@ -127,8 +127,13 @@ impl PeerService {
             tidb_executor::coprocessor::PbPlanNode::Kill(kill) => {
                 let config = tidb_config::config_tree::config::get_global_config();
                 if config.enable_global_kill || config.compatible_kill_query {
-                    self.processes
-                        .kill(kill.conn_id.unwrap_or(0), kill.query.unwrap_or(false));
+                    // Go `executeKillStmt`'s `e.IsFromRemote` arm.
+                    tidb_executor::admin::kill_by_sql_stmt(
+                        &self.processes,
+                        kill.conn_id.unwrap_or(0),
+                        kill.query.unwrap_or(false),
+                        true,
+                    );
                 }
                 tidb_executor::coprocessor::build_unary_response(&dag, &[], &[], &zone)?
             }

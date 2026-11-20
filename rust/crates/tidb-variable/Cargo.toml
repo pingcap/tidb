@@ -34,6 +34,7 @@ tidb-context = { path = "../tidb-context" }
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-memory = { path = "../tidb-memory" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }

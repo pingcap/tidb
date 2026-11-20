@@ -1191,6 +1191,11 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     // any connection it serves.
     crate::stat::register_compression_statistics();
     let mut lease = tracker.begin();
+    // Go `Server.onConn`.
+    let standby_controller = crate::standby_node::server_standby_controller();
+    if let Some(controller) = &standby_controller {
+        controller.on_conn_active();
+    }
     // Go `server.go:303` + `conn.go:435-439`: the connection gauge enters
     // under the default label and leaves under the session's last group.
     crate::query_metrics::note_connection_start();
@@ -1747,8 +1752,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // reaching a connection that is idle between commands wakes it up rather
     // than leaving the row in the process list until the client happens to
     // send something.
-    let close = ConnectionClose::with_wake(move || {
+    // Go `conn.attrs[tidbGatewayAttrsConnKey]`.
+    let gateway_conn_id = response
+        .attrs
+        .iter()
+        .find(|(key, _)| key.to_string_lossy() == crate::standby_node::TIDB_GATEWAY_ATTRS_CONN_KEY)
+        .map(|(_, value)| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let close = ConnectionClose::with_wake(move |normal_close_msg| {
         let _ = stream_for_close.shutdown(std::net::Shutdown::Both);
+        crate::standby_node::record_killed_conn_normal_close(&gateway_conn_id, normal_close_msg);
     });
     // With mysql --compression-algorithms=zlib,zstd both flags are set, the
     // result is Zlib.
@@ -2381,6 +2394,29 @@ fn run_connection_commands<S: QuerySession>(
                     commands: *commands,
                     exit: ConnectionExit::PeerClosed,
                 });
+            }
+            Err(PacketError::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // Go `clientConn.Run`: a connection that sat idle past
+                // `wait_timeout` counts as normally closed.
+                let gateway_conn_id = events
+                    .info
+                    .connection_info
+                    .attributes
+                    .iter()
+                    .find(|(key, _)| key.as_str() == crate::standby_node::TIDB_GATEWAY_ATTRS_CONN_KEY)
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_default();
+                crate::standby_node::set_normal_closed_conn(
+                    &tidb_keyspace::get_keyspace_name_by_settings(),
+                    &gateway_conn_id,
+                    "read packet timeout",
+                );
+                return Err(PacketError::Io(error).into());
             }
             Err(error) => return Err(error.into()),
         };
@@ -3732,6 +3768,10 @@ fn run_connection_commands<S: QuerySession>(
             );
         }
         last_active = std::time::Instant::now();
+        // Go `clientConn.dispatch`'s deferred `OnConnActive`.
+        if let Some(controller) = crate::standby_node::server_standby_controller() {
+            controller.on_conn_active();
+        }
         if let Some(report) = dispatch_result? {
             return Ok(report);
         }

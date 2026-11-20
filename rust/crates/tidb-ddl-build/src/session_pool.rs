@@ -124,6 +124,16 @@ pub trait DdlSessionPool: Send + Sync {
         None
     }
 
+    /// Go `jobCtx.oldDDLCtx.ddlEventCh` (`ddl.RegisterStatsHandle`): the
+    /// statistics handle's DDL event channel, which a test build's
+    /// `asyncNotifyEvent` also sends every event to. `None` where no node is
+    /// bound.
+    fn ddl_event_ch(
+        &self,
+    ) -> Option<crossbeam_channel::Sender<tidb_ddl_notifier::SchemaChangeEvent>> {
+        None
+    }
+
     /// A system session's DDL context, for a job no user session submits
     /// (Go's domain takes one from its system session pool).
     fn system_session(&self) -> Box<dyn crate::session_context::DdlSessionContext>;

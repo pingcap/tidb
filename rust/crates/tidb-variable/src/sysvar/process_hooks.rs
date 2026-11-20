@@ -674,3 +674,43 @@ set_global! {
         tidb_config::config_tree::config::update_global(|c| c.log.file.max_days = max_age as _);
     };
 }
+
+/// Go `tidb_ddl_reorg_max_write_speed`'s `SetGlobal`.
+pub(super) fn set_tidb_ddl_reorg_max_write_speed(_vars: &mut SessionVars, val: &str) -> Result<(), VarError> {
+    /// Go `units.PiB`.
+    const PIB: i64 = 1 << 50;
+    // Go `units.RAMInBytes`' error.
+    let size = crate::varsutil::ram_in_bytes(val)
+        .ok_or_else(|| VarError::unknown(format!("invalid size: '{val}'")))?;
+    if !(0..=PIB).contains(&size) {
+        // Here we limit the max value to 1 PiB instead of math.MaxInt64, since:
+        // 1. it is large enough
+        // 2. units.RAMInBytes would first cast the size to a float, and may
+        //    lose precision when the size is too large
+        return Err(VarError::unknown(format!(
+            "invalid value for '{size}', it should be within [0, {PIB}]"
+        )));
+    }
+    tidb_vardef::DDL_REORG_MAX_WRITE_SPEED.store(size, SeqCst);
+    Ok(())
+}
+
+/// Go `tidb_top_sql_max_time_series_count`'s `SetGlobal`.
+pub(super) fn set_tidb_top_sql_max_time_series_count(_vars: &mut SessionVars, s: &str) -> Result<(), VarError> {
+    let val = s.parse::<i64>().map_err(|error| VarError::unknown(error.to_string()))?;
+    tidb_topsql_state::GLOBAL_STATE.max_statement_count.store(val, SeqCst);
+    Ok(())
+}
+
+/// Go `tidb_top_sql_max_meta_count`'s `SetGlobal`.
+pub(super) fn set_tidb_top_sql_max_meta_count(_vars: &mut SessionVars, s: &str) -> Result<(), VarError> {
+    let val = s.parse::<i64>().map_err(|error| VarError::unknown(error.to_string()))?;
+    tidb_topsql_state::GLOBAL_STATE.max_collect.store(val, SeqCst);
+    Ok(())
+}
+
+get_global! {
+    get_tidb_ddl_reorg_max_write_speed => tidb_vardef::DDL_REORG_MAX_WRITE_SPEED.load(SeqCst).to_string();
+    get_tidb_top_sql_max_time_series_count => tidb_topsql_state::GLOBAL_STATE.max_statement_count.load(SeqCst).to_string();
+    get_tidb_top_sql_max_meta_count => tidb_topsql_state::GLOBAL_STATE.max_collect.load(SeqCst).to_string();
+}

@@ -40,6 +40,13 @@ use processinfo::{OOMAlarmVariablesInfo, ProcessInfo, SessionManager};
 
 const MAX_TRANSACTION_STMT_HISTORY: usize = 50;
 
+/// Go `sessmgr.NormalCloseMsgKillStmt`: marks a connection closed by a SQL
+/// KILL statement.
+pub const NORMAL_CLOSE_MSG_KILL_STMT: &str = "kill stmt";
+/// Go `sessmgr.NormalCloseMsgKillStmtFromRemote`: marks a connection closed
+/// by a SQL KILL statement redirected from another TiDB node.
+pub const NORMAL_CLOSE_MSG_KILL_STMT_FROM_REMOTE: &str = "kill stmt from remote";
+
 /// One live connection's kill mechanism, owned by the server front end.
 ///
 /// Go's `KillWithNormalCloseMsg` splits exactly this way: `KILL QUERY` only
@@ -53,6 +60,14 @@ pub trait ProcessKillTarget: Send + Sync {
     /// Cancels the running statement and ends the connection (Go `KILL` /
     /// `KILL CONNECTION`).
     fn kill_connection(&self);
+
+    /// [`Self::kill_connection`] with the reason the connection counts as
+    /// normally closed (Go `Server.kill`'s `normalCloseMsg`, which the server
+    /// records under the connection's gateway id).
+    fn kill_connection_with_normal_close_msg(&self, normal_close_msg: &str) {
+        let _ = normal_close_msg;
+        self.kill_connection();
+    }
 
     /// Cancels the running statement with a watchdog's own signal (Go server
     /// `killQuery`), so it fails as `max_execution_time` or a runaway rule
@@ -232,6 +247,8 @@ struct ProcessEntry {
     /// returned. Go clears `ProcessInfo` only when the server command ends,
     /// after `writeResultSet` has drained the executor.
     statement_holds: usize,
+    /// Go `clientConn.capability`.
+    client_capability: u32,
 }
 
 type SharedProcessEntry = Arc<Mutex<ProcessEntry>>;
@@ -583,6 +600,7 @@ impl ProcessRegistry {
             cursor_tracker: None,
             restricted: false,
             statement_holds: 0,
+            client_capability: 0,
         }));
         self.lock().insert(id, Arc::clone(&entry));
         ProcessGuard {
@@ -854,7 +872,32 @@ impl ProcessRegistry {
             id,
             query,
             tidb_sqlkiller::KillSignal::QueryInterrupted,
+            "",
         )
+    }
+
+    /// Go `Server.KillWithNormalCloseMsg`: [`SessionManager::kill`] that
+    /// also hands a killed connection the reason it counts as normally
+    /// closed.
+    pub fn kill_with_normal_close_msg(
+        &self,
+        connection_id: u64,
+        query: bool,
+        max_execution_time: bool,
+        runaway: bool,
+        normal_close_msg: &str,
+    ) -> bool {
+        self.kill_with_signal(
+            connection_id,
+            query,
+            kill_signal(max_execution_time, runaway),
+            normal_close_msg,
+        )
+    }
+
+    /// Go `clientConn.capability` of connection `id`, once it has a session.
+    pub fn set_client_capability(&self, id: u64, capability: u32) {
+        self.with_entry(id, |entry| entry.client_capability = capability);
     }
 
     /// [`Self::kill`] with the signal the statement observes (Go server
@@ -864,6 +907,7 @@ impl ProcessRegistry {
         id: u64,
         query: bool,
         signal: tidb_sqlkiller::KillSignal,
+        normal_close_msg: &str,
     ) -> bool {
         let client = self.lock().get(&id).cloned();
         let Some(client) = client else {
@@ -889,8 +933,10 @@ impl ProcessRegistry {
         };
         if query {
             target.cancel_query_with(signal);
-        } else {
+        } else if normal_close_msg.is_empty() {
             target.kill_connection();
+        } else {
+            target.kill_connection_with_normal_close_msg(normal_close_msg);
         }
         true
     }
@@ -1063,15 +1109,33 @@ impl SessionManager for ProcessRegistry {
     /// interrupts the statement with its own signal; any other kill is
     /// `QueryInterrupted`.
     fn kill(&self, connection_id: u64, query: bool, max_execution_time: bool, runaway: bool) {
-        use tidb_sqlkiller::KillSignal;
-        let signal = if runaway {
-            KillSignal::RunawayQueryExceeded
-        } else if max_execution_time {
-            KillSignal::MaxExecTimeExceeded
-        } else {
-            KillSignal::QueryInterrupted
-        };
-        self.kill_with_signal(connection_id, query, signal);
+        self.kill_with_signal(connection_id, query, kill_signal(max_execution_time, runaway), "");
+    }
+
+    fn get_client_capability_list(&self) -> Vec<u32> {
+        self.entry_snapshot()
+            .into_iter()
+            .map(|(_, entry)| {
+                entry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .client_capability
+            })
+            .collect()
+    }
+}
+
+/// Go server `killQuery`'s signal: a runaway rule or `max_execution_time`
+/// interrupts the statement with its own; any other kill is
+/// `QueryInterrupted`.
+const fn kill_signal(max_execution_time: bool, runaway: bool) -> tidb_sqlkiller::KillSignal {
+    use tidb_sqlkiller::KillSignal;
+    if runaway {
+        KillSignal::RunawayQueryExceeded
+    } else if max_execution_time {
+        KillSignal::MaxExecTimeExceeded
+    } else {
+        KillSignal::QueryInterrupted
     }
 }
 

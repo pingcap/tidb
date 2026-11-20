@@ -77,6 +77,9 @@ impl AcceptWaker {
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
 pub struct ShutdownHandle {
+    /// Go `Server.startShutdown` ran.
+    started: Arc<AtomicBool>,
+    /// Go `Server.inShutdownMode`.
     requested: Arc<AtomicBool>,
     waker: AcceptWaker,
 }
@@ -84,9 +87,31 @@ pub struct ShutdownHandle {
 impl ShutdownHandle {
     /// Requests shutdown. Repeated requests are idempotent.
     pub fn shutdown(&self) {
-        // Go `Server.startShutdown`: "setting tidb-server to report
-        // unhealthy (shutting-down)".
+        if self.started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // Go `Server.startShutdown`.
+        let logger = tidb_logutil::bg_logger();
+        logger.info("setting tidb-server to report unhealthy (shutting-down)", &[]);
         crate::standby_node::SERVER_HEALTH.store(false, Ordering::Release);
+        // give the load balancer a chance to receive a few unhealthy health
+        // reports before blocking connections.
+        let wait_time = Duration::from_secs(
+            u64::try_from(
+                tidb_config::config_tree::config::get_global_config().graceful_wait_before_shutdown,
+            )
+            .unwrap_or(0),
+        );
+        if !wait_time.is_zero() {
+            logger.info(
+                "waiting for stray connections before starting shutdown process",
+                &[tidb_log::Field::new(
+                    "waitTime",
+                    tidb_log::Value::Duration(i64::try_from(wait_time.as_nanos()).unwrap_or(i64::MAX)),
+                )],
+            );
+            std::thread::sleep(wait_time);
+        }
         self.requested.store(true, Ordering::Release);
         self.waker.wake();
     }
@@ -535,6 +560,11 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     worker_count: usize,
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
+    /// Go `Server.autoIDService`, which a starter node's standby shutdown
+    /// closes before it waits for its connections.
+    auto_id: Option<Arc<tidb_autoid_service::Service>>,
+    /// Go `Server` as a session manager, for the standby controller.
+    session_manager: Option<Arc<dyn tidb_sessmgr::processinfo::SessionManager>>,
     _server_memory_limit: Option<ServerMemoryLimitRunner>,
     _memory_usage_alarm: Option<MemoryUsageAlarmRunner>,
 }
@@ -657,6 +687,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         if let (Some(handle), Some(manager)) = (factory.expensive_query_handle(), &session_manager) {
             run_expensive_query_handle(handle, Arc::clone(manager));
         }
+        let standby_session_manager = session_manager.clone();
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         let shutdown = ShutdownHandle::default();
         shutdown.waker.bind_to(&listener);
@@ -674,6 +705,14 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             factory.server_identity(),
             factory.connection_ids(),
         ));
+        // Go `main`: `svr.StandbyController.OnServerCreated(svr)`.
+        if let Some(controller) = crate::standby_node::server_standby_controller() {
+            controller.on_server_created(Arc::new(crate::standby_node::NodeStandbyServer {
+                tracker: Arc::clone(&tracker),
+                session_manager: standby_session_manager.clone(),
+                auto_id: None,
+            }));
+        }
         Ok(Self {
             listener,
             server_port: config.port,
@@ -688,6 +727,8 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             worker_count: config.max_connections,
             shutdown,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            auto_id: None,
+            session_manager: standby_session_manager,
             _server_memory_limit: server_memory_limit,
             _memory_usage_alarm: memory_usage_alarm,
         })
@@ -723,6 +764,17 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         self
     }
 
+    /// Go `Server.autoIDService`: the service this node's standby shutdown
+    /// closes.
+    #[must_use]
+    pub fn with_auto_id_service(
+        mut self,
+        auto_id: Option<Arc<tidb_autoid_service::Service>>,
+    ) -> Self {
+        self.auto_id = auto_id;
+        self
+    }
+
     /// Runs the production accept loop indefinitely.
     pub fn run(self) -> Result<(), SqlNodeError> {
         self.run_accept_loop(None)
@@ -748,6 +800,10 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     where
         P: FnMut(&ClientSocket) -> Result<(), SqlNodeError>,
     {
+        // Go `Server.Run`: `s.health.Store(true)`.
+        if !self.shutdown.is_shutdown_requested() {
+            crate::standby_node::SERVER_HEALTH.store(true, Ordering::Release);
+        }
         let active_sockets = Arc::new(ActiveSockets::default());
         // Includes sockets still in authentication, before ProcessRegistry has
         // a SQL session. A lost lease must retire those IDs as well.
@@ -946,11 +1002,26 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         })();
 
         acceptors.stop(&self.shutdown.waker);
+        // Go `Server.startShutdown`: a starter node hands its shutdown to the
+        // standby controller before its listener closes.
+        crate::standby_node::on_server_shutdown(Arc::new(crate::standby_node::NodeStandbyServer {
+            tracker: Arc::clone(&self.tracker),
+            session_manager: self.session_manager.clone(),
+            auto_id: self.auto_id.clone(),
+        }));
         drop(worker_senders);
         drop(available_sender);
         drop(terminal_sender);
         workers.append(&mut dedicated_workers);
-        let drain_result = drain_workers(workers, &active_sockets, self.shutdown_grace);
+        // Go `cleanup`: a forced starter shutdown waits for no client.
+        let drain_client_wait = if tidb_config_deploymode::is_starter()
+            && crate::standby_node::get_force_shutdown()
+        {
+            Duration::ZERO
+        } else {
+            self.shutdown_grace
+        };
+        let drain_result = drain_workers(workers, &active_sockets, drain_client_wait);
         combine_node_results(accept_result, drain_result)
     }
 }
@@ -1945,6 +2016,83 @@ mod tests {
             &failures[1],
             SqlNodeError::WorkersPanicked { indexes } if indexes == &[1, 4]
         ));
+    }
+
+    /// Go `TestSeverHealth`: a server is healthy while it runs.
+    #[test]
+    fn test_sever_health() {
+        use crate::standby_node::SERVER_HEALTH;
+        let users = ConfiguredUserStore::parse(
+            "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        let node =
+            ConcurrentSqlNode::bind(&test_config(), Arc::new(UnusedFactory), Arc::new(users))
+                .unwrap();
+        assert!(!SERVER_HEALTH.load(Ordering::Acquire), "server should not be healthy");
+        let shutdown = node.shutdown_handle();
+        let server = std::thread::spawn(move || node.run());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !SERVER_HEALTH.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "server should be healthy");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        shutdown.shutdown();
+        server.join().unwrap().unwrap();
+        assert!(!SERVER_HEALTH.load(Ordering::Acquire));
+    }
+
+    /// Go `TestStartShutdownMarksUnhealthyBeforeStarterCallback`.
+    #[test]
+    fn test_start_shutdown_marks_unhealthy_before_starter_callback() {
+        use crate::standby_node::{set_server_standby_controller, StandbyController, SERVER_HEALTH};
+        if tidb_config_kerneltype::is_classic() {
+            // only for nextgen kernel
+            return;
+        }
+        struct MockStandbyController {
+            shutdown: ShutdownHandle,
+            /// `(serverHealth, serverInShutdownMode)` when the callback ran.
+            called: Mutex<Option<(bool, bool)>>,
+        }
+        impl StandbyController for MockStandbyController {
+            fn on_conn_active(&self) {}
+            fn on_server_created(&self, _: Arc<dyn tidb_standby::IdleServer>) {}
+            fn on_server_shutdown(&self, _: &Arc<dyn tidb_standby::StandbyShutdownServer>) {
+                *self.called.lock().unwrap() = Some((
+                    SERVER_HEALTH.load(Ordering::Acquire),
+                    self.shutdown.is_shutdown_requested(),
+                ));
+            }
+        }
+
+        let original_mode = tidb_config_deploymode::get();
+        tidb_config_deploymode::set(tidb_config_deploymode::Mode::Starter).unwrap();
+        let users = ConfiguredUserStore::parse(
+            "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        let node =
+            ConcurrentSqlNode::bind(&test_config(), Arc::new(UnusedFactory), Arc::new(users))
+                .unwrap();
+        SERVER_HEALTH.store(true, Ordering::Release);
+        let shutdown = node.shutdown_handle();
+        let controller = Arc::new(MockStandbyController {
+            shutdown: shutdown.clone(),
+            called: Mutex::new(None),
+        });
+        set_server_standby_controller(Some(Arc::clone(&controller) as Arc<dyn StandbyController>));
+
+        shutdown.shutdown();
+        node.serve_connections(0).unwrap();
+
+        assert_eq!(
+            *controller.called.lock().unwrap(),
+            Some((false, true)),
+            "starter shutdown callback was not called"
+        );
+        set_server_standby_controller(None);
+        tidb_config_deploymode::set(original_mode).unwrap();
     }
 
     #[test]

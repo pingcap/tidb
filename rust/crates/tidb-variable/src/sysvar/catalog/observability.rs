@@ -416,9 +416,9 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_top_sql_max_meta_count),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_top_sql_max_meta_count),
     },
     SysVarDef {
         name: "tidb_top_sql_max_time_series_count",
@@ -434,9 +434,9 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_top_sql_max_time_series_count),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_top_sql_max_time_series_count),
     },
     SysVarDef {
         name: "tidb_workload_repository_active_sampling_interval",

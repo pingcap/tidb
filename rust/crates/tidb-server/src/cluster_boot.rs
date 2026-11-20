@@ -225,7 +225,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 tidb_session::domain::real_tikv_node::emit_connections_startup_failure(&error);
                 RunConfiguredNodeError::Node(Box::new(error))
-            })?;
+            })?
+            .with_auto_id_service(auto_id.clone());
         let _status_server = start_cluster_status(
             &config,
             node.tracker(),
@@ -274,9 +275,15 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stack.stats_receipt.pseudo,
         );
         let outcome = node.run().map_err(|error| RunConfiguredNodeError::Node(Box::new(error)));
-        // Go `Server.Close`: `s.autoIDService.Close()`.
-        if let Some(service) = &auto_id {
-            service.close();
+        // Go `Server.closeListener`: `if !deploymode.IsStarter() ||
+        // s.StandbyController == nil { s.AutoIDServiceClose() }` -- the
+        // standby shutdown closed it already.
+        if !tidb_config_deploymode::is_starter()
+            || crate::standby_node::server_standby_controller().is_none()
+        {
+            if let Some(service) = &auto_id {
+                service.close();
+            }
         }
         workload_repository.stop();
         // The reload threads hold their own transaction openers; joining

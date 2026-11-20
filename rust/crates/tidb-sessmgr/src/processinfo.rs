@@ -172,4 +172,10 @@ pub trait SessionManager: Send + Sync {
     /// when `query`; `max_execution_time` and `runaway` name the watchdog that
     /// asked, which picks the statement's kill signal.
     fn kill(&self, connection_id: u64, query: bool, max_execution_time: bool, runaway: bool);
+
+    /// Go `Server.GetClientCapabilityList`: the client capability of every
+    /// connection that has a session.
+    fn get_client_capability_list(&self) -> Vec<u32> {
+        Vec::new()
+    }
 }

@@ -336,39 +336,24 @@ impl NodeConn {
     fn mock_store(&self) -> &Arc<MockStoreDomain> {
         self.store.as_ref().expect("a session on a mock store")
     }
-    /// event (its bit in `mysql.tidb_ddl_notifier.processed_by_flag`).
+    /// Go `statstestutil.HandleNextDDLEventWithTxn` for the pending events.
     pub(crate) fn handle_ddl_events(&self) -> Result<(), String> {
-        let notifier = self
-            .mock_store()
-            .stack
-            .factory
-            .owned_ddl_notifier_for_test();
-        let stats_bit = 1_u64 << tidb_ddl_notifier::STATS_META_HANDLER_ID.0;
-        let pending_sql = format!(
-            "SELECT count(*) FROM mysql.tidb_ddl_notifier WHERE processed_by_flag & {stats_bit} = 0"
-        );
-        let mut probe = self.mock_store().new_session()?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let result = loop {
-            let pending = match probe.run(&pending_sql) {
-                Ok(crate::StmtResult::Rows(rows)) => {
-                    rows.first().and_then(|row| row.first()).cloned()
-                }
-                Ok(other) => break Err(format!("pending events read {other:?}")),
-                Err(error) => break Err(format!("pending events read: {error:?}")),
-            };
-            if pending == Some(tidb_datatype::Datum::Int(0)) {
-                break Ok(());
-            }
-            if std::time::Instant::now() >= deadline {
-                break Err(format!(
-                    "DDL notifier left statistics events pending: {pending:?}"
-                ));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        };
-        notifier.stop();
-        result
+        // Go `statstestutil.HandleNextDDLEventWithTxn`, for every event the
+        // DDL sent to the statistics handle's channel.
+        let factory = &self.mock_store().stack.factory;
+        let pool = factory.advanced_sys_session_pool();
+        while let Ok(event) = factory.ddl_event_ch().try_recv() {
+            tidb_stats_handle_util::call_with_sctx(
+                pool.as_ref(),
+                |sctx| {
+                    sctx.handle_stats_ddl_event(&event)
+                        .map_err(tidb_domain_core::sys_session::stats_session_error)
+                },
+                &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+            )
+            .map_err(|error| format!("stats subscriber handles the event: {error}"))?;
+        }
+        Ok(())
     }
 
     /// columns its sessions recorded into `mysql.column_stats_usage`.

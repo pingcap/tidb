@@ -617,5 +617,10 @@ pub static ADVANCER_CHECK_POINT_LAG_LIMIT: AtomicI64 =
 /// Go `vardef.EnableLocalTxn`.
 pub static ENABLE_LOCAL_TXN: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_LOCAL_TXN);
 
+/// Go `vardef.DDLReorgMaxWriteSpeed` (`tidb_ddl_reorg_max_write_speed`), in
+/// bytes per second; zero is unlimited.
+pub static DDL_REORG_MAX_WRITE_SPEED: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(defaults::DEF_TIDB_DDL_REORG_MAX_WRITE_SPEED);
+
 /// Go `vardef.DDLSlowOprThreshold` (`ddl_slow_threshold`), in milliseconds.
 pub static DDL_SLOW_OPR_THRESHOLD: AtomicU32 = AtomicU32::new(300);

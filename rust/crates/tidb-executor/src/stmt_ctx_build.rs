@@ -754,7 +754,10 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 defaults.worker_count,
             ),
             batch_size: int_var(tidb_vars::TIDB_DDL_REORG_BATCH_SIZE, defaults.batch_size),
-            max_write_speed: int_var(tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED, 0),
+            // Go `initJobReorgMetaFromVariables`:
+            // `vardef.DDLReorgMaxWriteSpeed.Load()`.
+            max_write_speed: tidb_vardef::DDL_REORG_MAX_WRITE_SPEED
+                .load(std::sync::atomic::Ordering::SeqCst),
             max_dist_task_nodes: int_var(
                 tidb_vars::TIDB_MAX_DIST_TASK_NODES,
                 defaults.max_dist_task_nodes,

@@ -13,11 +13,6 @@
 // limitations under the License.
 
 //! Go `pkg/ttl/ttlworker/job_manager.go`.
-//!
-//! `// boundary:` Go's `extworkload` option (`WithExternalWorkloadManager`)
-//! also makes an external TTL task worker campaign its own owner
-//! (`ttlJobManagerLeaderPath`) outside tests; that campaign has no
-//! counterpart here, so such a worker keeps the caller's `leader_func`.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -285,8 +280,21 @@ pub struct JobManagerState {
     pub task_manager: TaskManager,
     last_report_delay_metrics_time: Option<Instant>,
     leader_func: Box<dyn Fn() -> bool + Send + Sync>,
+    /// Go `ownerManager`: an external TTL task worker's own owner campaign.
+    owner_manager: Option<Arc<dyn tidb_owner::Manager>>,
     /// Go `extWorkload`.
     ext_workload: Option<Arc<dyn tidb_extworkload::Manager>>,
+}
+
+/// Go `ttlOwnerListener`.
+struct TtlOwnerListener;
+
+impl tidb_owner::Listener for TtlOwnerListener {
+    fn on_retire_owner(&self) {}
+
+    fn on_become_owner(&self) {
+        bg_logger().info("leader change of TTL job manager service, this node become owner", &[]);
+    }
 }
 
 impl JobManager {
@@ -334,6 +342,31 @@ impl JobManager {
             id,
             store.clone(),
         );
+        // Go `NewJobManager`: an external TTL task worker campaigns for the
+        // job manager's own owner key and leads by it.
+        let mut leader_func = leader_func;
+        let mut owner_manager: Option<Arc<dyn tidb_owner::Manager>> = None;
+        if tidb_extworkload::is_ttl_task_worker(ext_workload.as_deref()) && !tidb_intest::IN_TEST {
+            if let Some(etcd_cli) = &etcd_cli {
+                let manager: Arc<dyn tidb_owner::Manager> = Arc::new(tidb_owner::OwnerManager::new(
+                    tidb_owner::Context::background(),
+                    Arc::clone(etcd_cli) as Arc<dyn tidb_owner::OwnerStore>,
+                    TTL_JOB_MANAGER_PROMPT,
+                    id,
+                    TTL_JOB_MANAGER_LEADER_PATH,
+                ));
+                manager.set_listener(Arc::new(TtlOwnerListener));
+                if let Err(error) = manager.campaign_owner(&[5]) {
+                    bg_logger().error(
+                        "failed to campaign ttl job manager owner",
+                        &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+                    );
+                }
+                let leading = Arc::clone(&manager);
+                leader_func = Box::new(move || leading.is_owner());
+                owner_manager = Some(manager);
+            }
+        }
         let timer_pool = Arc::clone(&sess_pool);
         let state = JobManagerState {
             ctx: base.ctx.clone(),
@@ -358,6 +391,7 @@ impl JobManager {
             task_manager,
             last_report_delay_metrics_time: None,
             leader_func,
+            owner_manager,
             ext_workload,
         };
         let state = Mutex::new(Some(state));
@@ -421,6 +455,9 @@ impl JobManagerState {
     fn job_loop(&mut self) -> Result<()> {
         let pool = Arc::clone(&self.sess_pool);
         let result = with_session(pool.as_ref(), &mut |se| self.job_loop_with_session(se));
+        if let Some(owner_manager) = &self.owner_manager {
+            owner_manager.close();
+        }
         self.logger.info("ttlJobManager loop exited.", &[]);
         result
     }

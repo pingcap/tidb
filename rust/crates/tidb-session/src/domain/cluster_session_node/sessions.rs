@@ -209,6 +209,10 @@ impl DomainSessions for Domain {
                 ))),
             )
         };
+        // Go `Server.GetClientCapabilityList` reads `clientConn.capability`
+        // of every client with a session.
+        self.processes
+            .set_client_capability(context.connection_id, context.client_capability);
         self.attach_connection(session, context.connection_id, guard);
         Ok(opened)
     }

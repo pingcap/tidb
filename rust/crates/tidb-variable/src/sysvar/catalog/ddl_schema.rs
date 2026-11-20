@@ -236,9 +236,9 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_ddl_reorg_max_write_speed),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_ddl_reorg_max_write_speed),
     },
     SysVarDef {
         name: "tidb_ddl_reorg_priority",

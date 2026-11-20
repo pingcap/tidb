@@ -114,6 +114,7 @@ tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-intest = { path = "../tidb-intest" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }

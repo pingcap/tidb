@@ -163,7 +163,7 @@ impl ConnectionCancellation {
 #[derive(Clone, Default)]
 pub struct ConnectionClose {
     closed: Arc<AtomicBool>,
-    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    wake: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for ConnectionClose {
@@ -177,8 +177,9 @@ impl std::fmt::Debug for ConnectionClose {
 
 impl ConnectionClose {
     /// Binds the handle to the server's wake for the connection: Go's
-    /// `killConn` closing `cc.bufReadConn`.
-    pub fn with_wake(wake: impl Fn() + Send + Sync + 'static) -> Self {
+    /// `killConn` closing `cc.bufReadConn`. The wake receives Go
+    /// `Server.kill`'s `normalCloseMsg`, empty when the kill carries none.
+    pub fn with_wake(wake: impl Fn(&str) + Send + Sync + 'static) -> Self {
         Self {
             closed: Arc::new(AtomicBool::new(false)),
             wake: Some(Arc::new(wake)),
@@ -188,9 +189,15 @@ impl ConnectionClose {
     /// Marks the connection closed and wakes it if it is waiting for its next
     /// command. The current command still finishes; the loop exits after it.
     pub fn request(&self) {
+        self.request_with_normal_close_msg("");
+    }
+
+    /// [`Self::request`] carrying the reason the connection counts as
+    /// normally closed (Go `Server.KillWithNormalCloseMsg`).
+    pub fn request_with_normal_close_msg(&self, normal_close_msg: &str) {
         self.closed.store(true, Ordering::Release);
         if let Some(wake) = &self.wake {
-            wake();
+            wake(normal_close_msg);
         }
     }
 
@@ -232,6 +239,11 @@ impl ProcessKillTarget for ConnectionKillTarget {
     fn kill_connection(&self) {
         self.cancellation.cancel();
         self.close.request();
+    }
+
+    fn kill_connection_with_normal_close_msg(&self, normal_close_msg: &str) {
+        self.cancellation.cancel();
+        self.close.request_with_normal_close_msg(normal_close_msg);
     }
 }
 

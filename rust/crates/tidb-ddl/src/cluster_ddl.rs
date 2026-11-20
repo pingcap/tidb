@@ -6584,6 +6584,33 @@ fn append_schema_change_mutations(
     if events.is_empty() {
         return Ok(());
     }
+    // Go `asyncNotifyEvent`: "In test environments, we use a channel-based
+    // approach to handle DDL events. This maintains compatibility with
+    // existing test cases that expect events to be delivered through
+    // channels. In production, DDL events are handled by the notifier system
+    // instead."
+    if tidb_intest::IN_TEST {
+        if let Some(ch) = txn.session().and_then(|session| session.pool.ddl_event_ch()) {
+            for (_, event) in events {
+                // Try sending the event to the channel with a backoff strategy
+                // to avoid blocking indefinitely. Since most unit tests don't
+                // consume events, we make a few attempts and then give up
+                // rather than blocking the DDL job forever on a full channel.
+                for _ in 0..3 {
+                    if ch.try_send(event.clone()).is_ok() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(2));
+                }
+                // Go logs this after its loop whether or not the send
+                // succeeded.
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "fail to notify DDL event",
+                    &[tidb_log::Field::new("event", tidb_log::Value::Str(event.to_string()))],
+                );
+            }
+        }
+    }
     // Go `asyncNotifyEvent`'s failpoint, after its system-database skip
     // (this function's callers skip those).
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError").is_some() {

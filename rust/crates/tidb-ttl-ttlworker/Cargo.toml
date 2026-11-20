@@ -38,6 +38,7 @@ tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-extworkload = { path = "../tidb-extworkload" }
+tidb-owner = { path = "../tidb-owner" }
 
 [dev-dependencies]
 chrono-tz = { workspace = true }
