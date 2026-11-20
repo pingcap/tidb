@@ -16,6 +16,8 @@
 
 use super::*;
 
+mod create;
+
 /// One statement's answer as the capture script prints it: `OK`, `RS:` and
 /// the rows as JSON strings (`null` for NULL), or `ERR code message`.
 fn answer(session: &mut Session, sql: &str) -> String {
@@ -484,10 +486,6 @@ fn create_materialized_view_answers_as_go_master() {
     assert_eq!(log.dependent_mview_ids.iter().copied().collect::<Vec<_>>(), mview_ids);
 }
 
-/// Go master `rollbackCreateMaterializedView` after a failed initial build
-/// (`mockCreateMaterializedViewBuildErr`): the statement fails with the
-/// build's error, and the view, its refresh rows and its entries in the base
-/// table and the log are gone.
 /// Go master `TestCreateMaterializedViewRefreshInfoRunningAndSuccess`:
 /// while the initial build runs, the refresh-info row already holds the
 /// build's read TSO, ANALYZE (`buildAnalyzeTable`'s `CheckMViewReadable`)
@@ -495,7 +493,7 @@ fn create_materialized_view_answers_as_go_master() {
 /// registered; once the build finishes, the view reads, its source is
 /// registered, ANALYZE runs and the refresh-info TSO moved forward.
 #[test]
-fn create_materialized_view_refresh_info_running_and_success() {
+fn test_create_materialized_view_refresh_info_running_and_success() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -554,6 +552,10 @@ fn create_materialized_view_refresh_info_running_and_success() {
     assert!(final_ts > init_ts, "{final_ts} > {init_ts}");
 }
 
+/// Go master `rollbackCreateMaterializedView` after a failed initial build
+/// (`mockCreateMaterializedViewBuildErr`): the statement fails with the
+/// build's error, and the view, its refresh rows and its entries in the base
+/// table and the log are gone.
 #[test]
 fn create_materialized_view_rolls_back_a_failed_build() {
     let (stack, mut session) = replay_go_master(

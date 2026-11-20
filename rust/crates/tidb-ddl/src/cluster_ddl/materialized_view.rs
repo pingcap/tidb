@@ -1140,7 +1140,7 @@ fn create_materialized_view_log_purge_info_upsert_sql(mlog_id: i64, next: Option
 fn convert_purge_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlPlanError {
     if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) {
         return DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
-            "create materialized view log: mysql.tidb_mlog_purge_info does not exist".into(),
+            "create materialized view log: required system table mysql.tidb_mlog_purge_info does not exist".into(),
         ]));
     }
     DdlPlanError::from_mysql_error(error)
@@ -1173,14 +1173,27 @@ fn upsert_create_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog: &Table
     .map_err(DdlPlanError::from_mysql_error)?;
     let sql = create_materialized_view_log_purge_info_upsert_sql(mlog.id, next, should_update);
     txn.set_must_rollback_txn_on_error();
-    execute_job_sql(txn, &sql).map_err(convert_purge_info_table_not_exists)
+    let mut result = execute_job_sql(txn, &sql);
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockInsertMLogPurgeTableNotExists").is_some_and(|value| value.bool()) {
+        result = Err(system_table_not_exists("tidb_mlog_purge_info"));
+    }
+    result.map_err(convert_purge_info_table_not_exists)
 }
 
 /// Go `deleteMaterializedViewLogPurgeInfos`: a missing table deletes nothing.
 pub(crate) fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Result<(), DdlPlanError> {
     let sql = format!("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ({mlog_id})");
     txn.set_must_rollback_txn_on_error();
-    match execute_job_sql(txn, &sql) {
+    let mut result = execute_job_sql(txn, &sql);
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteMaterializedViewLogPurgeInfoTableNotExists")
+        .is_some_and(|value| value.bool())
+    {
+        result = Err(system_table_not_exists("tidb_mlog_purge_info"));
+    }
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteMaterializedViewLogPurgeInfoErr") {
+        result = Err(tidb_terror::MysqlError::unknown(value.string()));
+    }
+    match result {
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
         other => other.map_err(DdlPlanError::from_mysql_error),
     }
@@ -1769,7 +1782,11 @@ pub fn build_create_materialized_view_data(
     build: &MViewBuild,
 ) -> Result<u64, tidb_terror::MysqlError> {
     tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild", |_| {});
-    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr").is_some() {
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr") {
+        // Go returns `context.Canceled` for "context-canceled".
+        if value.as_string() == Some("context-canceled") {
+            return Err(tidb_terror::MysqlError::unknown("context canceled"));
+        }
         return Err(tidb_terror::MysqlError::unknown("mock create materialized view build error"));
     }
     let info = build
@@ -2127,12 +2144,11 @@ fn prewrite_create_materialized_view_refresh_info(
                 .ok_or_else(|| {
                     DdlPlanError::from_mysql_error(invalid_ddl_job("create materialized view: invalid init refresh tso"))
                 })?;
-            ddl_session_sql(
+            refresh_info_upsert_result(ddl_session_sql(
                 &*session_ctx,
                 &create_materialized_view_refresh_info_upsert_sql(mview_id, start_ts, None, None, false),
                 &[],
-            )
-            .map_err(convert_refresh_info_table_not_exists)?;
+            ))?;
             session.commit(&context).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
             committed = true;
             Ok(())
@@ -2171,16 +2187,61 @@ pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mvi
     );
     txn.set_must_rollback_txn_on_error();
     execute_job_sql(txn, &source).map_err(DdlPlanError::from_mysql_error)?;
-    match execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})")) {
+    txn.set_must_rollback_txn_on_error();
+    let mut result = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})"))
+        .map(|_| ());
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoTableNotExists")
+        .is_some_and(|value| value.bool())
+    {
+        result = Err(system_table_not_exists("tidb_mview_refresh_info"));
+    }
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoErr") {
+        result = Err(tidb_terror::MysqlError::unknown(value.string()));
+    }
+    match result {
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
         other => other.map_err(DdlPlanError::from_mysql_error),
     }
 }
 
-/// Go master `deleteCreateMaterializedViewRefreshAlerts`: best effort.
-pub(crate) fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) {
-    txn.set_must_rollback_txn_on_error();
-    let _ = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"));
+/// Go `infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", table)`,
+/// the maintenance-table failpoints' error.
+fn system_table_not_exists(table: &str) -> tidb_terror::MysqlError {
+    tidb_terror::MysqlError::from_terror(
+        &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+            .gen_with_stack_by_args(&["mysql".to_owned().into(), table.to_owned().into()]),
+    )
+}
+
+/// Go master `deleteCreateMaterializedViewRefreshAlerts`: a missing alert
+/// table deletes nothing; the callers log any other error.
+pub(crate) fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mview_id: i64) -> Result<(), tidb_terror::MysqlError> {
+    let mut result = Ok(());
+    if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshAlertErr") {
+        result = Err(tidb_terror::MysqlError::unknown(value.string()));
+    }
+    if result.is_ok() {
+        txn.set_must_rollback_txn_on_error();
+        result = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"))
+            .map(|_| ());
+    }
+    match result {
+        Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
+        other => other,
+    }
+}
+
+/// Go master `execCreateMaterializedViewRefreshInfoUpsert`'s
+/// `mockUpsertCreateMaterializedViewRefreshInfoTableNotExists`, then
+/// `convertCreateMaterializedViewRefreshInfoTableNotExistsErr`.
+fn refresh_info_upsert_result<T>(result: Result<T, tidb_terror::MysqlError>) -> Result<(), DdlPlanError> {
+    let mut result = result.map(|_| ());
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockUpsertCreateMaterializedViewRefreshInfoTableNotExists")
+        .is_some_and(|value| value.bool())
+    {
+        result = Err(system_table_not_exists("tidb_mview_refresh_info"));
+    }
+    result.map_err(convert_refresh_info_table_not_exists)
 }
 
 /// Go master `upsertCreateMaterializedViewRefreshInfo`: the refresh row with
@@ -2208,7 +2269,7 @@ fn upsert_create_materialized_view_refresh_info(
     let last_success = chrono::Utc::now().timestamp();
     let sql = create_materialized_view_refresh_info_upsert_sql(mview.id, read_ts, Some(last_success), next, should_update);
     txn.set_must_rollback_txn_on_error();
-    execute_job_sql(txn, &sql).map_err(convert_refresh_info_table_not_exists)
+    refresh_info_upsert_result(execute_job_sql(txn, &sql))
 }
 
 /// Go master `(*worker).onCreateMaterializedView`.
@@ -2401,6 +2462,11 @@ pub(super) fn on_create_materialized_view(
                 }
             };
             active.job.snapshot_version = read_ts;
+            if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildRetryableErr")
+                .is_some_and(|value| value.bool())
+            {
+                return Err(wait_reorg_timeout());
+            }
             if active.job.snapshot_version == 0 {
                 active.job.state = JobState::ROLLINGBACK;
                 return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
@@ -2427,6 +2493,17 @@ pub(super) fn on_create_materialized_view(
             if let Err(error) = insert_mview_refresh_source_info(txn, mview.id, &source_mlogs) {
                 active.job.state = JobState::ROLLINGBACK;
                 return Err(error);
+            }
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/ddl/afterCreateMaterializedViewSuccessRefreshInfoUpsert",
+                &mut (),
+            );
+            if tidb_failpoint::eval(
+                "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewPostBuildAfterRefreshInfoUpsertRetryableErr",
+            )
+            .is_some_and(|value| value.bool())
+            {
+                return Err(wait_reorg_timeout());
             }
             if let Some(info) = &mview.materialized_view {
                 info.write().init_build_state = tidb_model::table::MViewInitBuildState::READY;
@@ -2466,6 +2543,36 @@ pub(super) fn on_create_materialized_view(
     }
 }
 
+/// Go master `rollingbackCreateMaterializedView`: before the view exists the
+/// job is cancelled; during its build it rolls back.
+pub(super) fn rollingback_create_materialized_view(
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+) -> Result<PersistedDdlActionStep, DdlPlanError> {
+    if let Err(error) = tidb_model::get_create_materialized_view_args(&mut active.job) {
+        return Err(cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())));
+    }
+    match active.job.schema_state {
+        SchemaState::NONE => Err(super::cancelled_ddl_job(active)),
+        SchemaState::WRITE_REORGANIZATION => {
+            active.job.state = JobState::ROLLINGBACK;
+            Ok(PersistedDdlActionStep {
+                write: job_only_write(active.job.id, Vec::new()),
+                update_raw_args: true,
+                run_error: Some(DdlPlanError::from(
+                    tidb_dbterror::ERR_CANCELLED_DDL_JOB.generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
+                )),
+                reorg: None,
+            })
+        }
+        _ => Err(DdlPlanError::from(tidb_dbterror::ERR_CANNOT_CANCEL_DDL_JOB.gen_with_stack_by_args(&[active.job.id.into()]))),
+    }
+}
+
+/// Go `dbterror.ErrWaitReorgTimeout`: the job runs this state again.
+fn wait_reorg_timeout() -> DdlPlanError {
+    DdlPlanError::from(tidb_dbterror::ERR_WAIT_REORG_TIMEOUT.gen_with_stack_by_args(&[]))
+}
+
 /// Go master `(*worker).rollbackCreateMaterializedView`.
 fn rollback_create_materialized_view(
     txn: &mut JobTxn<'_>,
@@ -2492,7 +2599,17 @@ fn rollback_create_materialized_view(
         meta.auto_ids(schema_id, table_id).delete().map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
     }
     delete_create_materialized_view_refresh_info(txn, table_id)?;
-    delete_create_materialized_view_refresh_alert(txn, table_id);
+    if let Err(error) = delete_create_materialized_view_refresh_alert(txn, table_id) {
+        tidb_ddl_logutil::ddl_logger().warn(
+            "create materialized view rollback: failed to delete refresh alert",
+            &[
+                tidb_log::Field::new("schemaName", tidb_log::Value::Str(active.job.schema_name.to_string())),
+                tidb_log::Field::new("tableName", tidb_log::Value::Str(mview.name.original().to_owned())),
+                tidb_log::Field::new("mviewID", tidb_log::Value::I64(table_id)),
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+            ],
+        );
+    }
     let (prev_state, prev_schema_state) = (active.job.state, active.job.schema_state);
     active.job.state = JobState::ROLLBACK_DONE;
     active.job.schema_state = SchemaState::NONE;

@@ -3868,6 +3868,13 @@ pub(super) fn update_schema_version(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut diff: SchemaDiff,
 ) -> Result<(i64, SchemaDiff), DdlPlanError> {
+    // Go `failpoint.InjectCall("beforeUpdateSchemaVersion", job, &err)`:
+    // the callback reads the job and may set the error.
+    let mut call = (active.job.clone(), None::<String>);
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", &mut call);
+    if let Some(error) = call.1 {
+        return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(error)));
+    }
     let meta_error = |error| DdlPlanError::Meta(job_meta_error(meta, error));
     let schema_version = meta.gen_schema_version().map_err(meta_error)?;
     diff.version = schema_version;
@@ -4240,7 +4247,15 @@ fn plan_persisted_drop_schema_job_step(
             materialized_view::delete_create_materialized_view_refresh_info(txn, table.id)?;
         }
         for table in tables.iter().filter(|table| table.materialized_view.is_some()) {
-            materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id);
+            if let Err(error) = materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id) {
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "drop schema: failed to delete materialized view refresh alerts",
+                    &[
+                        tidb_log::Field::new("schemaName", tidb_log::Value::Str(active.job.schema_name.to_string())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }
         }
         for table in tables.iter().filter(|table| table.materialized_view_log.is_some()) {
             materialized_view::delete_materialized_view_log_purge_info(txn, table.id)?;
@@ -4455,7 +4470,17 @@ fn plan_persisted_drop_table_job_step(
         // alert) go with it.
         if table.materialized_view.is_some() {
             materialized_view::delete_create_materialized_view_refresh_info(txn, table.id)?;
-            materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id);
+            if let Err(error) = materialized_view::delete_create_materialized_view_refresh_alert(txn, table.id) {
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "drop table/view: failed to delete materialized view refresh alert",
+                    &[
+                        tidb_log::Field::new("schemaName", tidb_log::Value::Str(active.job.schema_name.to_string())),
+                        tidb_log::Field::new("tableName", tidb_log::Value::Str(table.name.original().to_owned())),
+                        tidb_log::Field::new("mviewID", tidb_log::Value::I64(table.id)),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }
         }
         // Go `onDropTableOrView`'s `dropMaskingPoliciesOnTable`.
         masking_policy::drop_masking_policies_on_table(txn, table.id)?;
@@ -4820,6 +4845,11 @@ fn plan_cancel_persisted_ddl_job(
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             return alter_table::convert_job_2_rollback_job(txn, active);
         }
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW => {
+            return materialized_view::rollingback_create_materialized_view(active);
+        }
+        // Go `cancelOnlyNotHandledJob(job, model.StateNone)`.
+        ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => active.job.schema_state == SchemaState::NONE,
         // Go `rollingbackTruncateTable`: `cancelOnlyNotHandledJob` at
         // `StateNone`, after `GetTableInfoAndCancelFaultJob`.
         ActionType::ACTION_TRUNCATE_TABLE => {

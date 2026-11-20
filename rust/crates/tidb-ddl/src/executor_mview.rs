@@ -227,6 +227,8 @@ pub(crate) fn drop_materialized_view_log_target(
             table
         )));
     }
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterCheckDropMaterializedViewLog", &mut ());
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/pauseDropMaterializedViewLogAfterCheck", |_| {});
     Ok(Ok((schema, mlog_name)))
 }
 
