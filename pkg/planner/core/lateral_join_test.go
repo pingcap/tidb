@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -846,6 +847,59 @@ func TestLateralJoinMySQLCompatibility(t *testing.T) {
 			} else {
 				require.NoError(t, err, "Unexpected error for: %s\nError: %v", tc.sql, err)
 			}
+		})
+	}
+}
+
+// TestContainsLateralTableSourceNested checks that containsLateralTableSource sees a
+// LATERAL nested inside a derived table or a set-op operand, not just one that is the
+// immediate right operand of the join. buildJoin uses this to decide whether to push the
+// left schema onto outerSchemas and to suppress join reordering, so a false negative
+// silently skips both for the nested shapes below.
+func TestContainsLateralTableSourceNested(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+
+	testCases := []struct {
+		name     string
+		sql      string
+		expected bool
+	}{
+		{
+			name:     "LATERAL as the immediate right operand",
+			sql:      "SELECT * FROM t, LATERAL (SELECT t.a) AS dt",
+			expected: true,
+		},
+		{
+			name:     "LATERAL nested inside a derived table",
+			sql:      "SELECT * FROM t JOIN (SELECT * FROM t t2, LATERAL (SELECT t2.a) AS d) AS s ON true",
+			expected: true,
+		},
+		{
+			name:     "LATERAL nested inside a set-op operand",
+			sql:      "SELECT * FROM t JOIN (SELECT 1 UNION ALL SELECT t2.a FROM t t2, LATERAL (SELECT t2.a) AS d) AS s ON true",
+			expected: true,
+		},
+		{
+			name:     "no LATERAL anywhere in the right subtree",
+			sql:      "SELECT * FROM t JOIN (SELECT * FROM t t2) AS s ON true",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			stmt, err := s.GetParser().ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err, "Failed to parse SQL: %s", tc.sql)
+
+			sel, ok := stmt.(*ast.SelectStmt)
+			require.True(t, ok)
+			require.NotNil(t, sel.From)
+			join := sel.From.TableRefs
+			require.NotNil(t, join.Right, "test case must be a two-operand join")
+
+			require.Equal(t, tc.expected, containsLateralTableSource(join.Right),
+				"containsLateralTableSource mismatch for: %s", tc.sql)
 		})
 	}
 }
