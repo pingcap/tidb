@@ -612,7 +612,12 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 			continue
 		}
 		if rc.deferMaskingPolicyRestore && tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB {
-			retainPolicyStage = true
+			// The log phase installs the policies from the stage. Only a stage
+			// inside the temporary database needs that database kept; a
+			// task-owned one lives in the system database, and keeping the
+			// temporary database then leaves the replaced system tables in
+			// it for the next restore to stumble on.
+			retainPolicyStage = rc.maskingPolicySnapshotTable == ""
 			continue
 		}
 		if !f.MatchTable(sysDB, tableName.O) && !shouldForceMaskingPolicyRestore(sysDB, tableName.L) {

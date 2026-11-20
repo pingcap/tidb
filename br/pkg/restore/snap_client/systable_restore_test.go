@@ -1061,3 +1061,53 @@ func TestRestoreSystemSchemasKeepsUnrestoredTemporaryDatabase(t *testing.T) {
 	require.NoError(t, client.RestoreSystemSchemas(ctx, userFilter, false))
 	require.Equal(t, tempDBs[1:], existing())
 }
+
+func TestDeferredPolicyRestoreCleansTemporaryDatabase(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	tempDBName := utils.TemporaryDBName(mysql.SystemDB)
+	const ownStage, otherStage = "tidb_pitr_masking_policy_snapshot_7", "tidb_pitr_masking_policy_snapshot_8"
+	exists := func(db, table string) bool {
+		return len(tk.MustQuery("select 1 from information_schema.tables where table_schema = ? and table_name = ?", db, table).Rows()) > 0
+	}
+	defer func() {
+		tk.MustExec("drop database if exists " + tempDBName.O)
+		tk.MustExec("drop table if exists mysql." + ownStage + ", mysql." + otherStage)
+	}()
+	allFilter, err := filter.Parse([]string{"*.*"})
+	require.NoError(t, err)
+
+	for _, privateStage := range []bool{true, false} {
+		// The snapshot phase of PiTR leaves the policies for the log phase.
+		// The tables it replaced in the system database stay in the temporary one.
+		tk.MustExec("drop database if exists " + tempDBName.O)
+		tk.MustExec("create database " + tempDBName.O)
+		tk.MustExec("create table " + tempDBName.O + ".user_deleted_1(id int)")
+		tk.MustExec("create table " + tempDBName.O + ".tidb_masking_policy like mysql.tidb_masking_policy")
+		tk.MustExec("create table if not exists mysql." + ownStage + " like mysql.tidb_masking_policy")
+		tk.MustExec("create table if not exists mysql." + otherStage + " like mysql.tidb_masking_policy")
+		tempDB, ok := cluster.Domain.InfoSchema().SchemaByName(tempDBName)
+		require.True(t, ok)
+		policyTable, err := restore.GetTableSchema(cluster.Domain, tempDBName, pmodel.NewCIStr("tidb_masking_policy"))
+		require.NoError(t, err)
+		client := snapclient.MockClient(map[string]*metautil.Database{
+			tempDBName.O: {Info: tempDB, Tables: []*metautil.Table{{DB: tempDB, Info: policyTable}}},
+		})
+		require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+		client.SetWithSysTable(true)
+		client.SetDeferMaskingPolicyRestore(true)
+		if privateStage {
+			client.SetMaskingPolicySnapshotTable(ownStage, false)
+		}
+		require.NoError(t, client.RestoreSystemSchemas(ctx, allFilter, false))
+		// With a task-owned stage nothing in the temporary database is needed
+		// any more. A stage inside it is still kept for the log phase.
+		require.Equal(t, !privateStage, exists(tempDBName.O, "user_deleted_1"))
+		// The stages in the system database, this task's and another's, stay.
+		require.True(t, exists("mysql", ownStage))
+		require.True(t, exists("mysql", otherStage))
+		client.Close()
+	}
+}
