@@ -383,3 +383,13 @@ fn last_insert_id_function_and_wire_value_are_one_publication() {
         "77"
     );
 }
+
+/// Go `getLastStmtInConn`'s pprof label normalizes a query with
+/// `errors.RedactLogEnable`, pingcap/errors' constant `"ON"`: the literals
+/// are replaced whatever `tidb_redact_log` says.
+#[test]
+fn pprof_label_sql_always_redacts_literals() {
+    let session = Session::new();
+    assert_eq!(session.pprof_label_sql("select a from t where b = 'secret'", false), "select `a` from `t` where `b` = ?");
+    assert_eq!(session.pprof_label_sql("select a from t where b = 'secret'", true), "select a from t where b = 'secret'");
+}

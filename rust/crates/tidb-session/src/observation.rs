@@ -1135,7 +1135,8 @@ impl Session {
 
     /// Go `getLastStmtInConn.PProfLabel`'s statement text: a query's
     /// `parser.Normalize(executor.FormatSQL(sql).String(),
-    /// errors.RedactLogEnable)` (the process redaction mode), a prepared
+    /// errors.RedactLogEnable)` -- `RedactLogEnable` is pingcap/errors'
+    /// constant `"ON"`, so the literals are always replaced -- a prepared
     /// statement's `executor.FormatSQL(text).String()`.
     #[must_use]
     pub fn pprof_label_sql(&self, sql: &str, prepared: bool) -> String {
@@ -1143,12 +1144,7 @@ impl Session {
         if prepared {
             return sql;
         }
-        let mode = match tidb_mysql::errors::redaction_mode() {
-            tidb_mysql::errors::RedactionMode::Disabled => tidb_parser::RedactMode::Disabled,
-            tidb_mysql::errors::RedactionMode::Enabled => tidb_parser::RedactMode::Enabled,
-            tidb_mysql::errors::RedactionMode::Marker => tidb_parser::RedactMode::Marker,
-        };
-        tidb_parser::normalize(&sql, mode)
+        tidb_parser::normalize(&sql, tidb_parser::RedactMode::Enabled)
     }
 
     /// Go `clientConn.preparedStmt2String` under `FormatSQL`: the prepared

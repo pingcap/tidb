@@ -113,6 +113,10 @@ struct PurgeTarget {
     mlog_name: String,
     mlog_id: i64,
     mlog_shard_row_id_bits: u64,
+    /// Go `mlogInfo`: the log's metadata as the schema holds it.
+    mlog_info: Option<tidb_model::GoShared<tidb_model::table::MaterializedViewLogInfo>>,
+    /// Go `isInternalSQL` (`vars.InRestrictedSQL`).
+    is_internal_sql: bool,
 }
 
 /// What a failed purge leaves for its failed-history fallback (Go's
@@ -142,11 +146,54 @@ fn purge_method(internal: bool) -> &'static str {
 }
 
 /// Go master `validatePurgeMaterializedViewLogStmt`.
-fn validate_purge_materialized_view_log_stmt(stmt: &PurgeMaterializedViewLogStmt) -> Result<&'static str, DriverError> {
+fn validate_purge_materialized_view_log_stmt(stmt: &PurgeMaterializedViewLogStmt, is_internal_sql: bool) -> Result<&'static str, DriverError> {
     if stmt.table.last().is_none_or(String::is_empty) {
         return Err(plain("purge materialized view log: missing table name"));
     }
-    Ok(purge_method(false))
+    Ok(purge_method(is_internal_sql))
+}
+
+/// Go master `deriveMLogPurgeNextUnixSeconds`: the log's NEXT evaluated now
+/// (UTC), and whether the stored value is replaced.
+fn derive_mlog_purge_next_unix_seconds(target: &PurgeTarget) -> Result<(Option<i64>, bool), DriverError> {
+    let info = target
+        .mlog_info
+        .as_ref()
+        .ok_or_else(|| plain("purge materialized view log: schedule evaluation metadata is unavailable"))?
+        .read()
+        .clone();
+    if info.purge_next.trim().is_empty() {
+        return Ok((None, true));
+    }
+    let (next, should_update) = tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+        "",
+        &info.purge_next,
+        info.purge_schedule_sql_mode,
+        chrono::Utc::now(),
+    )
+    .map_err(DriverError::Mysql)?;
+    if next.is_none() && should_update {
+        log_runtime_materialized_view_log_purge_next_unix_seconds_update_null(&target.schema, &target.mlog_name, &info.purge_next);
+    }
+    Ok((next, should_update))
+}
+
+/// Go master `logRuntimeMaterializedViewLogPurgeNextUnixSecondsUpdateNull`.
+fn log_runtime_materialized_view_log_purge_next_unix_seconds_update_null(schema: &str, mlog_name: &str, next_expr: &str) {
+    if next_expr.trim().is_empty() {
+        return;
+    }
+    // Go `parser.Normalize(nextExpr, errors.RedactLogEnable)`: pingcap/errors'
+    // constant `"ON"`, so the expression's literals never reach the log.
+    let redact = tidb_parser::RedactMode::Enabled;
+    tidb_logutil::bg_logger().error(
+        "purge materialized view log: automatic purge schedule disabled because NEXT expression evaluated to NULL, updating NEXT_PURGE_UNIX_SECONDS to NULL",
+        &[
+            tidb_log::Field::new("schemaName", tidb_log::Value::Str(schema.to_owned())),
+            tidb_log::Field::new("tableName", tidb_log::Value::Str(mlog_name.to_owned())),
+            tidb_log::Field::new("purgeNext", tidb_log::Value::Str(tidb_parser::normalize(next_expr, redact))),
+        ],
+    );
 }
 
 fn purge_hist_missing_table() -> DriverError {
@@ -173,13 +220,15 @@ fn inject_maintenance_vars_applied(session: &mut Session, mem_quota: &str, engin
     );
 }
 
-/// Go master `applyMLogPurgeMaintenanceSessionVars` for a manual purge (not
-/// best effort): materialized views enabled and the user's maintenance
-/// memory quota and read engines applied; the answer is what restores them.
+/// Go master `applyMLogPurgeMaintenanceSessionVars`: materialized views
+/// enabled and the user's maintenance memory quota and read engines applied
+/// -- best effort for an internal purge, whose failures keep the session's
+/// value; the answer is what restores them.
 fn apply_mlog_purge_maintenance_session_vars(
     session: &mut Session,
     target_mem_quota: &str,
     target_isolation_read_engines: &str,
+    best_effort: bool,
 ) -> Result<Vec<(&'static str, String)>, DriverError> {
     let original = read_vars(session, &["tidb_mview_enable", "tidb_mem_quota_query", "tidb_isolation_read_engines"])?;
     let (enable, mem_quota, engines) = (original[0].clone(), original[1].clone(), original[2].clone());
@@ -197,15 +246,27 @@ fn apply_mlog_purge_maintenance_session_vars(
             set_var(session, "tidb_mem_quota_query", target_mem_quota)
         };
         if let Err(error) = applied {
-            restore_enable(session);
-            return Err(annotate(&error, "mv maintenance: failed to apply maintenance memory quota"));
+            if !best_effort {
+                restore_enable(session);
+                return Err(annotate(&error, "mv maintenance: failed to apply maintenance memory quota"));
+            }
+            tidb_logutil::bg_logger().warn(
+                "mv maintenance: failed to apply maintenance memory quota, using current value",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error)))],
+            );
         }
     }
     if engines != target_isolation_read_engines {
         if let Err(error) = set_var(session, "tidb_isolation_read_engines", target_isolation_read_engines) {
-            let _ = set_var(session, "tidb_mem_quota_query", &mem_quota);
-            restore_enable(session);
-            return Err(annotate(&error, "mv maintenance: failed to apply isolation read engines"));
+            if !best_effort {
+                let _ = set_var(session, "tidb_mem_quota_query", &mem_quota);
+                restore_enable(session);
+                return Err(annotate(&error, "mv maintenance: failed to apply isolation read engines"));
+            }
+            tidb_logutil::bg_logger().warn(
+                "mv maintenance: failed to apply isolation read engines, using current value",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error)))],
+            );
         }
     }
     Ok(vec![
@@ -215,17 +276,32 @@ fn apply_mlog_purge_maintenance_session_vars(
     ])
 }
 
-/// Go master `applyMLogPurgeDeleteTiFlashThreads` for a manual purge.
+/// Go master `applyMLogPurgeDeleteTiFlashThreads`: the delete session's
+/// TiFlash concurrency -- best effort for an internal purge.
 fn apply_mlog_purge_delete_tiflash_threads(
     session: &mut Session,
     target_threads: i64,
+    best_effort: bool,
 ) -> Result<Vec<(&'static str, String)>, DriverError> {
     let original = read_vars(session, &["tidb_max_tiflash_threads"])?.remove(0);
     if target_threads <= 0 || original == target_threads.to_string() {
         return Ok(Vec::new());
     }
-    set_var(session, "tidb_max_tiflash_threads", &target_threads.to_string())
-        .map_err(|error| annotate(&error, "mv maintenance: failed to apply TiFlash thread limit"))?;
+    if let Err(error) = set_var(session, "tidb_max_tiflash_threads", &target_threads.to_string()) {
+        if !best_effort {
+            return Err(annotate(&error, "mv maintenance: failed to apply TiFlash thread limit"));
+        }
+        tidb_logutil::bg_logger().warn(
+            "mv maintenance: failed to apply TiFlash thread limit, using current value",
+            &[tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error)))],
+        );
+        return Ok(Vec::new());
+    }
+    let applied = read_vars(session, &["tidb_max_tiflash_threads"])?.remove(0).parse::<i64>().unwrap_or_default();
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession",
+        &mut (applied, target_threads),
+    );
     Ok(vec![("tidb_max_tiflash_threads", original)])
 }
 
@@ -470,6 +546,8 @@ fn read_mlog_purge_pending_row_stats_on_tiflash(
     if failpoint_on("mockMLogPurgeAdaptiveCountErr") {
         return Err(plain("mock adaptive purge count error"));
     }
+    let threads = read_vars(session, &["tidb_max_tiflash_threads"])?.remove(0).parse::<i64>().unwrap_or_default();
+    tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/mvMLogPurgeCountTiFlashThreadsUsed", &mut threads.clone());
     let original = read_vars(session, &["tidb_isolation_read_engines", "tidb_allow_fallback_to_tikv"])?;
     let restore: Vec<(&'static str, String)> = [("tidb_isolation_read_engines", "tiflash"), ("tidb_allow_fallback_to_tikv", "")]
         .into_iter()
@@ -880,30 +958,46 @@ fn update_materialized_view_log_purge_info_on_success(
     session: &mut Session,
     mlog_id: i64,
     last_purged_tso: Option<u64>,
+    next_unix_seconds: Option<i64>,
+    should_update_next: bool,
 ) -> Result<(), DriverError> {
-    let Some(last) = last_purged_tso else {
+    let missing = |error: DriverError| if is_table_not_exists(&error) { purge_info_missing_table() } else { error };
+    if let Some(last) = last_purged_tso {
+        sys_sql(
+            session,
+            "UPDATE mysql.tidb_mlog_purge_info\nSET LAST_PURGED_TSO = %?\nWHERE MLOG_ID = %? AND (LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?)",
+            &[SqlArg::Unsigned(last), SqlArg::Signed(mlog_id), SqlArg::Unsigned(last)],
+        )
+        .map_err(missing)?;
+    }
+    if !should_update_next {
         return Ok(());
-    };
+    }
+    let next = next_unix_seconds.map_or(SqlArg::Null, SqlArg::Signed);
     sys_sql(
         session,
-        "UPDATE mysql.tidb_mlog_purge_info\nSET LAST_PURGED_TSO = %?\nWHERE MLOG_ID = %? AND (LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?)",
-        &[SqlArg::Unsigned(last), SqlArg::Signed(mlog_id), SqlArg::Unsigned(last)],
+        "UPDATE mysql.tidb_mlog_purge_info\nSET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?",
+        &[next, SqlArg::Signed(mlog_id)],
     )
     .map(|_| ())
-    .map_err(|error| if is_table_not_exists(&error) { purge_info_missing_table() } else { error })
+    .map_err(missing)
 }
 
 impl Session {
     /// Go master `PurgeMaterializedViewLogExec.Next`.
     pub(crate) fn purge_materialized_view_log(&mut self, stmt: &PurgeMaterializedViewLogStmt) -> Result<StmtOutput, DriverError> {
         let purge_start = chrono::Local::now();
-        let method = validate_purge_materialized_view_log_stmt(stmt)?;
-        let target = self.resolve_purge_materialized_view_log_meta(stmt)?;
+        let is_internal_sql = self.vars.restricted_sql;
+        let method = validate_purge_materialized_view_log_stmt(stmt, is_internal_sql)?;
+        let mut target = self.resolve_purge_materialized_view_log_meta(stmt)?;
+        target.is_internal_sql = is_internal_sql;
         let mut progress = PurgeProgress::default();
         let controller = std::sync::Arc::new(MvTaskCancelController::default());
-        let result = self
-            .check_operate_view_on_mlog(&target.schema, &target.mlog_name)
-            .and_then(|()| self.execute_purge_materialized_view_log(&target, method, purge_start, &controller, &mut progress));
+        // Go's deferred `recover()`: a panic fails the purge with its value.
+        let result = crate::mview_refresh::recover_refresh_panic(|| {
+            self.check_operate_view_on_mlog(&target.schema, &target.mlog_name)
+                .and_then(|()| self.execute_purge_materialized_view_log(&target, method, purge_start, &controller, &mut progress))
+        });
         let Err(error) = result else {
             return result;
         };
@@ -1012,6 +1106,8 @@ impl Session {
             mlog_name: mlog_name.original().to_owned(),
             mlog_id: mlog.id,
             mlog_shard_row_id_bits: mlog.shard_row_id_bits,
+            mlog_info: mlog.materialized_view_log.clone(),
+            is_internal_sql: false,
             schema,
             base_table: base,
         })
@@ -1049,7 +1145,7 @@ impl Session {
         // The purge-info row lock and checkpoint are kept in this
         // transaction.
         let mut purge = self.open_refresh_system_session()?;
-        let restore_purge = apply_mlog_purge_maintenance_session_vars(&mut purge, &mem_quota, &engines)?;
+        let restore_purge = apply_mlog_purge_maintenance_session_vars(&mut purge, &mem_quota, &engines, target.is_internal_sql)?;
         inject_maintenance_vars_applied(&mut purge, &mem_quota, &engines, "PurgeSession");
         // Go master: the purge advisory lock a cutover retiring this log
         // also takes. "Do not retry acquisition: this statement may hold MDL
@@ -1085,7 +1181,7 @@ impl Session {
                 return Err(error);
             }
         };
-        let restore_delete = match apply_mlog_purge_maintenance_session_vars(&mut delete, &mem_quota, &engines) {
+        let restore_delete = match apply_mlog_purge_maintenance_session_vars(&mut delete, &mem_quota, &engines, target.is_internal_sql) {
             Ok(restore) => restore,
             Err(error) => {
                 release_advisory_lock(&mut purge);
@@ -1283,7 +1379,7 @@ fn purge_locked(
         );
         // Keep COUNT at the session's original TiFlash concurrency.
         if delete_plan.as_ref().is_none_or(|plan| plan.pending_rows > 0) {
-            *restore_delete_threads = try_purge!(apply_mlog_purge_delete_tiflash_threads(delete, delete_tiflash_threads));
+            *restore_delete_threads = try_purge!(apply_mlog_purge_delete_tiflash_threads(delete, delete_tiflash_threads, target.is_internal_sql));
         }
         match delete_plan {
             Some(plan) if !(plan.pending_rows > 0 && plan.row_id_ranges.is_empty()) => {
@@ -1350,8 +1446,10 @@ fn purge_locked(
         }
     }
 
+    let (next_unix_seconds, should_update_next) =
+        if target.is_internal_sql { try_purge!(derive_mlog_purge_next_unix_seconds(target)) } else { (None, false) };
     let checkpoint = (!skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint).then_some(safe_purge_tso);
-    try_purge!(update_materialized_view_log_purge_info_on_success(purge, mlog_id, checkpoint));
+    try_purge!(update_materialized_view_log_purge_info_on_success(purge, mlog_id, checkpoint, next_unix_seconds, should_update_next));
     try_purge!(sys_sql(purge, "COMMIT", &[]));
     *txn_finished = true;
 
@@ -1408,17 +1506,39 @@ fn try_build_mlog_purge_delete_plan_best_effort(
             return Some(plan);
         }
     };
-    // Go master `deriveMLogPurgeThrottleDeadline` for a manual purge.
-    if failpoint_on("mockMLogPurgeAdaptiveDeadlineErr") {
-        log_purge_warn("purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge", &target.schema, &target.mlog_name, None);
-        return Some(plan);
-    }
-    let mut deadline = chrono::Utc::now() + MLOG_PURGE_ADAPTIVE_MAX_BUDGET;
-    if let Some(next) = fallback_next_time.filter(|&next| next < deadline) {
-        deadline = next;
-    }
+    let deadline = match derive_mlog_purge_throttle_deadline(target, fallback_next_time) {
+        Ok(deadline) => deadline,
+        Err(error) => {
+            log_purge_warn("purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
+            return Some(plan);
+        }
+    };
     plan.throttle_plan = try_build_mlog_purge_throttle_plan(stats, deadline, config);
     Some(plan)
+}
+
+/// Go master `deriveMLogPurgeThrottleDeadline`: the adaptive budget's end,
+/// no later than an internal purge's next scheduled run (a manual one's
+/// stored next run).
+fn derive_mlog_purge_throttle_deadline(
+    target: &PurgeTarget,
+    fallback_next_time: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<chrono::DateTime<chrono::Utc>, DriverError> {
+    if failpoint_on("mockMLogPurgeAdaptiveDeadlineErr") {
+        return Err(plain("mock adaptive purge deadline error"));
+    }
+    let mut deadline = chrono::Utc::now() + MLOG_PURGE_ADAPTIVE_MAX_BUDGET;
+    if target.is_internal_sql {
+        let (next, should_update) = derive_mlog_purge_next_unix_seconds(target)?;
+        if let Some(next) = next.filter(|_| should_update).and_then(|next| chrono::DateTime::from_timestamp(next, 0)) {
+            if next < deadline {
+                deadline = next;
+            }
+        }
+    } else if let Some(next) = fallback_next_time.filter(|&next| next < deadline) {
+        deadline = next;
+    }
+    Ok(deadline)
 }
 
 #[cfg(test)]

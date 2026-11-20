@@ -25,6 +25,7 @@ mod log_basic;
 mod log_create;
 mod log_drop;
 mod log_output;
+mod log_purge;
 mod refresh;
 mod refresh_entry;
 mod refresh_operator;
@@ -1018,7 +1019,7 @@ fn last_purge_hist(root: &mut Session, mlog_id: i64) -> String {
 /// purge fails as canceled manually and its history row names who canceled
 /// it.
 #[test]
-fn cancel_materialized_view_log_purge_job_as_go_master() {
+fn test_cancel_materialized_view_log_purge_job() {
     let PausedPurge { stack, users, mut root, mlog_id, job_id, purge, _poll, _heartbeat } =
         paused_purge("t_purge_cancel_job", false);
     assert_eq!(answer(&mut root, "create user 'mv_purge_cancel_u'@'%' identified by 'abc'"), "OK");
@@ -1054,7 +1055,7 @@ fn cancel_materialized_view_log_purge_job_as_go_master() {
 /// the monitor reads the history row's request and its requester, whoever
 /// wrote it.
 #[test]
-fn purge_cancel_watcher_uses_the_hist_request_as_go_master() {
+fn test_purge_materialized_view_log_cancel_watcher_uses_hist_request() {
     let PausedPurge { mut root, mlog_id, purge, _poll, _heartbeat, .. } = paused_purge("t_purge_cancel_watch", false);
     let (requested, _watch) = wait_cancel_watcher_requested("mlog-purge-");
     let request = format!(
@@ -1082,7 +1083,7 @@ fn purge_cancel_watcher_uses_the_hist_request_as_go_master() {
 /// Go master's `TestPurgeMaterializedViewLogRunningHistHeartbeat`: the
 /// monitor moves the running row's heartbeat, and the purge then succeeds.
 #[test]
-fn purge_running_hist_heartbeat_as_go_master() {
+fn test_purge_materialized_view_log_running_hist_heartbeat() {
     let PausedPurge { mut root, mlog_id, purge, _poll, _heartbeat, .. } = paused_purge("t_purge_heartbeat", true);
     let heartbeat = format!(
         "select cast(LAST_HEARTBEAT_TIME as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1"

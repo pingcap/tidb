@@ -552,17 +552,27 @@ fn session_json_u64(session: &mut Session, variable: &str, key: &str) -> Option<
 use tidb_variable::mview_execution::MViewExecutionSessionVars;
 
 /// Go `recover()` with `util.GetRecoverError`: a panic in `f` becomes its
-/// error, the panic's value as text.
-fn recover_refresh_panic<T>(f: impl FnOnce() -> Result<T, DriverError>) -> Result<T, DriverError> {
+/// error -- the panicked error itself, else the value as text.
+pub(crate) fn recover_refresh_panic<T>(f: impl FnOnce() -> Result<T, DriverError>) -> Result<T, DriverError> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(result) => result,
-        Err(panic) => Err(plain(
-            panic
-                .downcast_ref::<&str>()
-                .map(|message| (*message).to_owned())
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "panic".to_owned()),
-        )),
+        Err(panic) => {
+            let panic = match panic.downcast::<DriverError>() {
+                Ok(error) => return Err(*error),
+                Err(panic) => panic,
+            };
+            let panic = match panic.downcast::<MysqlError>() {
+                Ok(error) => return Err(DriverError::Mysql(*error)),
+                Err(panic) => panic,
+            };
+            Err(plain(
+                panic
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "panic".to_owned()),
+            ))
+        }
     }
 }
 

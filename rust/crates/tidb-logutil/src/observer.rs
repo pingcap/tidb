@@ -28,6 +28,29 @@ pub struct LoggedEntry {
     pub level: Level,
     /// The entry's message.
     pub message: String,
+    /// zap `LoggedEntry.Context`: the entry's fields, the logger's `With`
+    /// fields first, each value rendered as text.
+    pub context: Vec<(String, String)>,
+}
+
+impl LoggedEntry {
+    /// zap `ContextMap`.
+    #[must_use]
+    pub fn context_map(&self) -> std::collections::BTreeMap<String, String> {
+        self.context.iter().cloned().collect()
+    }
+}
+
+/// A field's value as zap's `ContextMap` holds it, rendered as text.
+fn render_value(value: &tidb_log::Value) -> String {
+    match value {
+        tidb_log::Value::Str(text) => text.clone(),
+        tidb_log::Value::I64(number) => number.to_string(),
+        tidb_log::Value::U64(number) => number.to_string(),
+        tidb_log::Value::F64(number) => number.to_string(),
+        tidb_log::Value::Bool(flag) => flag.to_string(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// zap `observer.ObservedLogs`.
@@ -37,11 +60,11 @@ pub struct ObservedLogs {
 }
 
 impl ObservedLogs {
-    pub(crate) fn add(&self, level: Level, message: &str) {
+    pub(crate) fn add(&self, level: Level, message: &str, context: Vec<(String, String)>) {
         self.entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(LoggedEntry { level, message: message.to_owned() });
+            .push(LoggedEntry { level, message: message.to_owned(), context });
     }
 
     /// zap `All`.
@@ -60,20 +83,27 @@ impl ObservedLogs {
 struct ObserverCore {
     level: tidb_log::AtomicLevel,
     logs: Arc<ObservedLogs>,
+    /// zap `observer.contextObserver.context`: the `With` fields.
+    context: Vec<(String, String)>,
 }
 
 impl tidb_log::Core for ObserverCore {
     fn enabled(&self, level: Level) -> bool {
         level >= self.level.get()
     }
-    fn with(&self, _fields: &[Field]) -> Arc<dyn tidb_log::Core> {
+    fn with(&self, fields: &[Field]) -> Arc<dyn tidb_log::Core> {
+        let mut context = self.context.clone();
+        context.extend(fields.iter().map(|field| (field.key.clone(), render_value(&field.value))));
         Arc::new(ObserverCore {
             level: self.level.clone(),
             logs: Arc::clone(&self.logs),
+            context,
         })
     }
-    fn write(&self, entry: &Entry, _fields: &[Field]) -> Result<(), String> {
-        self.logs.add(entry.level, &entry.message);
+    fn write(&self, entry: &Entry, fields: &[Field]) -> Result<(), String> {
+        let mut context = self.context.clone();
+        context.extend(fields.iter().map(|field| (field.key.clone(), render_value(&field.value))));
+        self.logs.add(entry.level, &entry.message, context);
         Ok(())
     }
     fn level(&self) -> tidb_log::AtomicLevel {
@@ -88,6 +118,7 @@ pub fn new(level: Level) -> (Logger, Arc<ObservedLogs>) {
     let core = ObserverCore {
         level: tidb_log::AtomicLevel::new(level),
         logs: Arc::clone(&logs),
+        context: Vec::new(),
     };
     (Logger::new(Arc::new(core)), logs)
 }
@@ -106,8 +137,8 @@ mod tests {
         assert_eq!(
             logs.filter_message("kept"),
             vec![
-                LoggedEntry { level: Level::Info, message: "kept".to_owned() },
-                LoggedEntry { level: Level::Warn, message: "kept".to_owned() },
+                LoggedEntry { level: Level::Info, message: "kept".to_owned(), context: Vec::new() },
+                LoggedEntry { level: Level::Warn, message: "kept".to_owned(), context: Vec::new() },
             ]
         );
     }
