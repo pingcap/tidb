@@ -308,7 +308,9 @@ func TestIndexKVGeneratorErrors(t *testing.T) {
 }
 
 func TestGenIndexValueFromIndex(t *testing.T) {
-	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
+	tblInfo := buildTableInfo(t,
+		"create table a (a int primary key, b int not null, c varchar(60), "+
+			"unique key key_b(b), key key_c(c), key key_c_b(c, b));")
 	tblInfo.State = model.StatePublic
 	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
@@ -333,18 +335,20 @@ func TestGenIndexValueFromIndex(t *testing.T) {
 	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
-
-	indexKey := kvPairs.Pairs[1].Key
-	indexValue := kvPairs.Pairs[1].Val
-
-	_, idxID, _, err := tablecodec.DecodeIndexKey(indexKey)
-	require.NoError(t, err)
-
-	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-
-	valueStr, err := tables.GenIndexValueFromIndex(indexKey, indexValue, tbl.Meta(), idxInfo)
-	require.NoError(t, err)
-	require.Equal(t, []string{"23"}, valueStr)
+	require.Len(t, kvPairs.Pairs, 4)
+	expected := map[string][]string{
+		"key_b":   {"23"},
+		"key_c":   {"4.csv"},
+		"key_c_b": {"4.csv", "23"},
+	}
+	for _, pair := range kvPairs.Pairs[1:] {
+		_, idxID, _, err := tablecodec.DecodeIndexKey(pair.Key)
+		require.NoError(t, err)
+		idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+		valueStr, err := tables.GenIndexValueFromIndex(pair.Key, pair.Val, tbl.Meta(), idxInfo)
+		require.NoError(t, err)
+		require.Equal(t, expected[idxInfo.Name.O], valueStr)
+	}
 }
 
 func TestGenIndexValueWithLargePaddingSize(t *testing.T) {

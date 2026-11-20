@@ -151,7 +151,7 @@ func TestFileChunkProcess(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, chunkLogger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
+			chunkInfo, chunkLogger, diskQuotaLock, dataWriter, indexWriter, checksum, collector, nil,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
@@ -172,6 +172,36 @@ func TestFileChunkProcess(t *testing.T) {
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowReadSecondsHistogram).Histogram.SampleCount)
+		for _, operation := range []string{
+			metric.ChunkProcessOpSourceRead,
+			metric.ChunkProcessOpDecompress,
+			metric.ChunkProcessOpParse,
+			metric.ChunkProcessOpEncode,
+			metric.ChunkProcessOpKVGroup,
+			metric.ChunkProcessOpSend,
+			metric.ChunkProcessOpWriteData,
+			metric.ChunkProcessOpWriteIndex,
+			metric.ChunkProcessOpDeliver,
+		} {
+			histogram := metrics.ChunkProcessSecondsHistogram.WithLabelValues(operation).(prometheus.Histogram)
+			require.Equalf(t, uint64(2), *metric.ReadHistogram(histogram).Histogram.SampleCount,
+				"unexpected observation count for %s", operation)
+		}
+		totalHistogram := metrics.ChunkProcessSecondsHistogram.WithLabelValues(metric.ChunkProcessOpTotal).(prometheus.Histogram)
+		require.Equal(t, uint64(1), *metric.ReadHistogram(totalHistogram).Histogram.SampleCount)
+
+		completedLogs := observedLogs.FilterMessage("process chunk completed").All()
+		require.Len(t, completedLogs, 1)
+		for _, field := range []string{
+			"sourceReadDur",
+			"decompressDur",
+			"parseDur",
+			"encodeDur",
+			"kvGroupDur",
+			"sendDur",
+		} {
+			require.Contains(t, completedLogs[0].ContextMap(), field)
+		}
 	})
 
 	t.Run("encode error", func(t *testing.T) {
@@ -194,7 +224,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil, nil,
 		)
 		err2 := processor.Process(ctx)
 		require.ErrorIs(t, err2, common.ErrEncodeKV)
@@ -223,7 +253,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -248,7 +278,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "data write error")
 		require.True(t, ctrl.Satisfied())
@@ -274,7 +304,7 @@ func TestFileChunkProcess(t *testing.T) {
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil, nil, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())

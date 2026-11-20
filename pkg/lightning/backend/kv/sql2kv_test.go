@@ -126,6 +126,25 @@ func TestEncode(t *testing.T) {
 		},
 	}))
 
+	skipRowIDMode, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+		Logger:          logger,
+		SkipEncodeRowID: true,
+	}, nil)
+	require.NoError(t, err)
+	pairs, err = skipRowIDMode.Encode(rowsWithPk2, 2, []int{0, 1}, 1234)
+	require.NoError(t, err)
+	require.Equal(t, pairs, lkv.MakeRowFromKvPairs([]common.KvPair{
+		{
+			Key: []uint8{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+			Val: []uint8{0x8, 0x2, 0x8, 0x2},
+		},
+	}))
+
 	// Mock add record error
 	mockTbl := &mockTable{Table: tbl}
 	mockMode, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
