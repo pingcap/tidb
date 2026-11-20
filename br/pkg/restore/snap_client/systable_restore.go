@@ -553,7 +553,11 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		if rerr == nil && !retainPolicyStage {
 			onlyPrivatePolicy := sysDB == mysql.SystemDB && !f.MatchSchema(sysDB) &&
 				(rc.maskingPolicySnapshotTable != "" || rc.skipSnapshotMaskingPolicy)
-			if !onlyPrivatePolicy {
+			// RestoreSystemSchemas visits both system schemas whatever the
+			// backup and the filter select. A temporary database this restore
+			// never asked to create is another restore's.
+			_, created := rc.createdTemporaryDBs[temporaryDB.L]
+			if !onlyPrivatePolicy && (created || rc.createdTemporaryDBs == nil) {
 				rc.cleanTemporaryDatabase(ctx, sysDB)
 			}
 		}

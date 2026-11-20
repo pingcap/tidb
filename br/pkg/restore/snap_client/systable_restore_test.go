@@ -1013,3 +1013,51 @@ func TestPreserveMaskingPolicyPrivateSnapshot(t *testing.T) {
 		tk.MustQuery("select policy_id,table_id from mysql." + retainedName).Check(testkit.Rows("1 42"))
 	}
 }
+
+func TestRestoreSystemSchemasKeepsUnrestoredTemporaryDatabase(t *testing.T) {
+	// Not the shared `mc`: the temporary system databases are created here.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	tempDBs := []string{utils.TemporaryDBName(mysql.SystemDB).O, utils.TemporaryDBName(mysql.SysDB).O}
+	existing := func() []string {
+		names := make([]string, 0, len(tempDBs))
+		for _, name := range tempDBs {
+			if len(tk.MustQuery("SELECT 1 FROM information_schema.schemata WHERE schema_name = ?", name).Rows()) > 0 {
+				names = append(names, name)
+			}
+		}
+		return names
+	}
+	// Another restore is staging its system tables under the fixed names.
+	for _, name := range tempDBs {
+		tk.MustExec("CREATE DATABASE IF NOT EXISTS " + name)
+		tk.MustExec("CREATE TABLE IF NOT EXISTS " + name + ".staged(id INT)")
+	}
+	defer func() {
+		for _, name := range tempDBs {
+			tk.MustExec("DROP DATABASE IF EXISTS " + name)
+		}
+	}()
+	userFilter, err := filter.Parse([]string{"a.*"})
+	require.NoError(t, err)
+
+	// The backup of this restore has no system database at all, as one taken
+	// of a single user database by an older version: nothing is dropped.
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("a")}}}))
+	defer tk.MustExec("DROP DATABASE IF EXISTS a")
+	require.NoError(t, client.RestoreSystemSchemas(ctx, userFilter, false))
+	require.Equal(t, tempDBs, existing())
+
+	// Only the temporary database this restore asked to create is dropped.
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr(tempDBs[0])}}}))
+	require.NoError(t, client.RestoreSystemSchemas(ctx, userFilter, false))
+	require.Equal(t, tempDBs[1:], existing())
+}

@@ -163,6 +163,11 @@ type SnapClient struct {
 	deferMaskingPolicyRestore  bool
 	maskingPolicySnapshotTable string
 	skipSnapshotMaskingPolicy  bool
+	// createdTemporaryDBs holds the temporary system databases this restore
+	// asked to create. Any other one, whether or not the backup has it, may
+	// belong to a restore running at the same time and is not this restore's
+	// to drop. Nil until the databases are created.
+	createdTemporaryDBs map[string]struct{}
 
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
@@ -1115,6 +1120,15 @@ func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*rest
 			}
 		}
 		plans = staging
+	}
+
+	rc.createdTemporaryDBs = make(map[string]struct{}, 2)
+	for _, plan := range plans {
+		for _, sysDB := range []string{mysql.SystemDB, mysql.SysDB} {
+			if plan.Target.Name.L == utils.TemporaryDBName(sysDB).L {
+				rc.createdTemporaryDBs[plan.Target.Name.L] = struct{}{}
+			}
+		}
 	}
 
 	if len(rc.dbPool) == 0 {
