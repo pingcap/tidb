@@ -4503,6 +4503,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if err != nil {
 		return nil, err
 	}
+	if len(insertPlan.OnDuplicate) > 0 {
+		// The assignments are evaluated on the existing row.
+		if err = recordMaskingPolicyRowRead(ctx, b.ctx, b.is, tableInfo); err != nil {
+			return nil, err
+		}
+	}
 
 	// Calculate generated columns.
 	mockTablePlan.SetSchema(insertPlan.tableSchema)

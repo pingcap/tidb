@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -412,7 +413,135 @@ func CanReadUnmaskedColumn(ctx context.Context, sctx sessionctx.Context, is info
 	return canCurrentSessionReadUnmaskedColumn(sctx.GetExprCtx(), sctx.GetSessionVars(), is.SchemaMetaVersion(), policy, tblInfo, colInfo)
 }
 
+// recordMaskingPolicyRead records that the statement reads a column with an
+// enabled masking policy. If the policy masks the column for the current
+// session, the diagnostics of the statement are redacted: the statement
+// evaluates its predicates and other internal expressions on the original
+// values, which a warning or an error message would otherwise disclose.
+func recordMaskingPolicyRead(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, colInfo *model.ColumnInfo) error {
+	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
+	if err != nil || !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+		return err
+	}
+	sv := sctx.GetSessionVars()
+	check := stmtctx.MaskingPolicyCheck{PolicyID: policy.ID, TableID: tblInfo.ID, ColumnID: colInfo.ID}
+	if !slices.Contains(sv.StmtCtx.MaskingPolicyChecks, check) {
+		sv.StmtCtx.MaskingPolicyChecks = append(sv.StmtCtx.MaskingPolicyChecks, check)
+	}
+	if sv.StmtCtx.RedactDiagnostics {
+		return nil
+	}
+	allowed, err := canCurrentSessionReadUnmaskedColumn(sctx.GetExprCtx(), sv, is.SchemaMetaVersion(), policy, tblInfo, colInfo)
+	if err == nil && !allowed {
+		sv.StmtCtx.SetRedactDiagnostics()
+	}
+	return err
+}
+
+// recordMaskingPolicyReads records the columns that the scans of an optimized
+// logical plan read. Column pruning has removed the columns that no operator
+// of the statement uses. A CTE is optimized, and so recorded, on its own.
+func recordMaskingPolicyReads(ctx context.Context, sctx base.PlanContext, p base.LogicalPlan) error {
+	if sctx.GetSessionVars().InRestrictedSQL {
+		return nil
+	}
+	var sources []*logicalop.DataSource
+	var collect func(base.LogicalPlan)
+	collect = func(p base.LogicalPlan) {
+		if ds, ok := p.(*logicalop.DataSource); ok && ds.TableInfo != nil && ds.TableInfo.TempTableType == model.TempTableNone {
+			sources = append(sources, ds)
+		}
+		for _, child := range p.Children() {
+			collect(child)
+		}
+	}
+	collect(p)
+	if len(sources) == 0 {
+		return nil
+	}
+	is, ok := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return nil
+	}
+	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || !hasPolicies {
+		return err
+	}
+	for _, ds := range sources {
+		if err := recordMaskingPolicyColumnReads(ctx, sctx, is, ds.TableInfo, ds.Columns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordMaskingPolicyColumnReads records the given columns of a table. A
+// virtual generated column is evaluated from other columns of its row, so
+// reading one reads the whole row.
+func recordMaskingPolicyColumnReads(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, tblInfo *model.TableInfo, cols []*model.ColumnInfo) error {
+	if slices.ContainsFunc(cols, func(col *model.ColumnInfo) bool { return col.IsGenerated() && !col.GeneratedStored }) {
+		cols = tblInfo.Columns
+	}
+	for _, colInfo := range cols {
+		if err := recordMaskingPolicyRead(ctx, sctx, is, tblInfo, colInfo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// recordMaskingPolicyRowRead records every column of a table whose rows the
+// statement reads as a whole.
+func recordMaskingPolicyRowRead(ctx context.Context, sctx base.PlanContext, is infoschema.InfoSchema, tblInfo *model.TableInfo) error {
+	if sctx.GetSessionVars().InRestrictedSQL || tblInfo.TempTableType != model.TempTableNone {
+		return nil
+	}
+	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || !hasPolicies {
+		return err
+	}
+	return recordMaskingPolicyColumnReads(ctx, sctx, is, tblInfo, tblInfo.Columns)
+}
+
+// RecordFastPlanMaskingPolicyReads records the columns that a plan built by
+// TryFastPlan reads, as the optimizer does for the other plans. It returns
+// false if the plan cannot be used and normal planning is required.
+func RecordFastPlanMaskingPolicyReads(ctx context.Context, sctx base.PlanContext, p base.Plan) bool {
+	if sctx.GetSessionVars().InRestrictedSQL {
+		return true
+	}
+	switch x := p.(type) {
+	case *Update:
+		p = x.SelectPlan
+	case *Delete:
+		p = x.SelectPlan
+	}
+	var tblInfo *model.TableInfo
+	switch x := p.(type) {
+	case *PointGetPlan:
+		tblInfo = x.TblInfo
+	case *BatchPointGetPlan:
+		tblInfo = x.TblInfo
+	}
+	if tblInfo == nil || tblInfo.TempTableType != model.TempTableNone {
+		return true
+	}
+	is, ok := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok || !infoschema.MaskingPoliciesLoaded(is) {
+		return false
+	}
+	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || !hasPolicies {
+		return err == nil
+	}
+	cols := make([]*model.ColumnInfo, 0, p.Schema().Len())
+	for _, col := range p.Schema().Columns {
+		if colInfo := model.FindColumnInfoByID(tblInfo.Columns, col.ID); colInfo != nil {
+			cols = append(cols, colInfo)
+		}
+	}
+	return recordMaskingPolicyColumnReads(ctx, sctx, is, tblInfo, cols) == nil
+}
+
 func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, checks []stmtctx.MaskingPolicyCheck) error {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	for _, check := range checks {
 		policy, ok, err := is.MaskingPolicyByTableColumn(ctx, check.TableID, check.ColumnID)
 		if err != nil {
@@ -421,7 +550,12 @@ func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context
 		if !ok || policy.ID != check.PolicyID {
 			return plannererrors.ErrSchemaChanged.GenWithStack("masking policy binding changed")
 		}
-		if policy.Status != model.MaskingPolicyStatusEnable || policy.RestrictOps&check.Operation == 0 {
+		if policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		restricted := policy.RestrictOps&check.Operation != 0
+		// A column that is only read decides whether diagnostics are redacted.
+		if !restricted && (check.Operation != ast.MaskingPolicyRestrictOpNone || stmtCtx.RedactDiagnostics) {
 			continue
 		}
 		tbl, ok := is.TableByID(ctx, check.TableID)
@@ -436,9 +570,13 @@ func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context
 		if err != nil {
 			return err
 		}
-		if !allowed {
+		if allowed {
+			continue
+		}
+		if restricted {
 			return plannererrors.ErrAccessDeniedToMaskedColumn.GenWithStackByArgs(col.Name.O)
 		}
+		stmtCtx.SetRedactDiagnostics()
 	}
 	return nil
 }

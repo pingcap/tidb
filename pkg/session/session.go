@@ -2182,7 +2182,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return recordSet, sessVars.StmtCtx.RedactExecError(err)
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -2441,6 +2441,10 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		return nil, false, nil
 	}
 	if !plannercore.IsAutoCommitTxn(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+	// A detached record set leaves the statement that redacts its diagnostics.
+	if rs.se.GetSessionVars().StmtCtx.RedactDiagnostics {
 		return nil, false, nil
 	}
 

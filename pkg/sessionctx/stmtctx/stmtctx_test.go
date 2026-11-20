@@ -30,12 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/assert"
@@ -594,4 +597,84 @@ func BenchmarkErrCtx(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sc.ErrCtx()
 	}
+}
+
+func TestRedactMaskingDiagnostics(t *testing.T) {
+	message := func(err error) string {
+		te, ok := errors.Cause(err).(*terror.Error)
+		if !ok {
+			return "1105 " + err.Error()
+		}
+		return fmt.Sprintf("%d %s", te.Code(), te.GetMsg())
+	}
+	plain := errors.New("invalid text: secret")
+	cases := []struct {
+		err error
+		// warning and execErr are the redacted messages of err reported as a
+		// warning and as the error of the statement.
+		warning, execErr string
+	}{
+		// The arguments that errno marks for tidb_redact_log.
+		{types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", "secret"), "1292 Truncated incorrect INTEGER value: '?'", ""},
+		{types.ErrWrongValue.GenWithStackByArgs("datetime", "secret"), "1292 Incorrect datetime value: '?'", ""},
+		{kv.ErrKeyExists.FastGenByArgs("secret", "t.c"), "1062 Duplicate entry '?' for key 't.c'", ""},
+		{types.ErrInvalidJSONPath.GenWithStackByArgs(3), "3143 Invalid JSON path expression. The error is around character position ?.", ""},
+		// The arguments that only the masking rule treats as data values.
+		{types.ErrWrongValueForType.GenWithStackByArgs("string", "secret", "bin_to_uuid"), "1411 Incorrect string value: '?' for function bin_to_uuid", ""},
+		// A message that does not follow the template of its code.
+		{types.ErrTruncatedWrongVal.GenWithStack("bad %s: %s", "INTEGER", "secret"), "1292 Truncated incorrect ? value: '?'", ""},
+		// Plain text keeps what precedes its first data value.
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "Truncated incorrect INTEGER value: 'secret'"), "1292 Truncated incorrect INTEGER value: '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: 'secret'"), "1292 Incorrect datetime value: '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDupEntry, "Duplicate entry 'secret' for key 't.c'"), "1062 Duplicate entry '?' for key '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "secret"), "1292 Truncated incorrect ? value: '?'", ""},
+		// Errors without data values.
+		{types.ErrDivByZero.GenWithStackByArgs(), "1365 Division by 0", ""},
+		{types.ErrDataTooLong.GenWithStackByArgs("c", 1), "1406 Data too long for column 'c' at row 1", ""},
+		// Only an execution error without an error code of its own is hidden.
+		{plain, "1105 invalid text: secret",
+			"1105 the error message is hidden because the statement reads a column masked by a masking policy"},
+	}
+
+	sc := stmtctx.NewStmtCtx()
+	for _, tc := range cases {
+		require.Same(t, tc.err, sc.RedactExecError(tc.err))
+		sc.AppendWarning(tc.err)
+	}
+	for i, w := range sc.GetWarnings() {
+		require.Same(t, cases[i].err, w.Err)
+	}
+
+	sc.SetWarnings(nil)
+	sc.SetRedactDiagnostics()
+	require.NoError(t, sc.RedactExecError(nil))
+	for _, tc := range cases {
+		if tc.execErr == "" {
+			tc.execErr = tc.warning
+		}
+		original := message(tc.err)
+		redacted := sc.RedactExecError(tc.err)
+		require.Equal(t, tc.execErr, message(redacted))
+		// Redacting a redacted diagnostic changes nothing.
+		require.Equal(t, tc.execErr, message(sc.RedactExecError(redacted)))
+		require.Equal(t, original, message(tc.err))
+		require.True(t, terror.ErrorEqual(tc.err, redacted) || tc.err == plain)
+
+		sc.AppendWarning(tc.err)
+		sc.AppendNote(redacted)
+		sc.AppendWarnings([]contextutil.SQLWarn{{Level: contextutil.WarnLevelWarning, Err: tc.err}})
+		warnings := sc.GetWarnings()
+		require.Equal(t, tc.warning, message(warnings[len(warnings)-3].Err))
+		require.Equal(t, tc.execErr, message(warnings[len(warnings)-2].Err))
+		require.Equal(t, tc.warning, message(warnings[len(warnings)-1].Err))
+	}
+	sc.SetWarnings(sc.GetWarnings())
+	require.Len(t, sc.GetWarnings(), 3*len(cases))
+	require.Equal(t, cases[0].warning, message(sc.GetWarnings()[0].Err))
+
+	// The next statement starts without redaction.
+	require.True(t, sc.Reset())
+	require.False(t, sc.RedactDiagnostics)
+	sc.AppendWarning(cases[0].err)
+	require.Same(t, cases[0].err, sc.GetWarnings()[0].Err)
 }

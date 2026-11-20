@@ -66,7 +66,9 @@ func AllocateTaskID() uint64 {
 type SQLWarn = contextutil.SQLWarn
 
 // MaskingPolicyCheck records a source column whose restricted operation must be
-// authorized again when a physical plan is reused.
+// authorized again when a physical plan is reused. A check without an
+// operation records a column that the statement reads: reusing the plan only
+// decides again whether the diagnostics of the statement are redacted.
 type MaskingPolicyCheck struct {
 	PolicyID, TableID, ColumnID int64
 	Operation                   ast.MaskingPolicyRestrictOps
@@ -295,6 +297,8 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
+	// RedactDiagnostics is set by SetRedactDiagnostics.
+	RedactDiagnostics bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
