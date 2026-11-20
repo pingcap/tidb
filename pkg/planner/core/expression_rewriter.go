@@ -527,6 +527,10 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	savedValueCtx := b.maskScalarSubqueryValue
 	b.maskScalarSubqueryValue = 0
 	defer func() { b.maskScalarSubqueryValue = savedValueCtx }()
+	// Nor is it a key of the window whose items are being rewritten.
+	savedWindowKey := b.rewritingWindowKey
+	b.rewritingWindowKey = false
+	defer func() { b.rewritingWindowKey = savedWindowKey }()
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
@@ -1457,8 +1461,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	// other expression below the final projection they work on the original
 	// values. Masking the key first would merge the groups whose keys mask to
 	// the same value, and no final projection could tell them apart again.
-	windowKey := planCtx.builder.rewritingWindowKey
-	relationalKey := windowKey
+	relationalKey := planCtx.builder.rewritingWindowKey
 	switch planCtx.curClause {
 	case groupByClause, orderByClause, globalOrderByClause:
 		relationalKey = true
@@ -1468,11 +1471,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	savedClause := planCtx.builder.curClause
-	// The subquery is a query block of its own, not a key of the window.
-	planCtx.builder.rewritingWindowKey = false
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
 	planCtx.builder.curClause = savedClause
-	planCtx.builder.rewritingWindowKey = windowKey
 	if err != nil {
 		er.err = err
 		return v, true

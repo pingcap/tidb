@@ -7100,15 +7100,16 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 	var err error
 	// The keys are rewritten under the clause of the window function itself.
 	// Mark them, so a scalar subquery among them keeps its original value.
+	savedWindowKey := b.rewritingWindowKey
 	b.rewritingWindowKey = true
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, partitionItems, propertyItems, aggMap)
 	if err != nil {
-		b.rewritingWindowKey = false
+		b.rewritingWindowKey = savedWindowKey
 		return nil, nil, nil, nil, err
 	}
 	lenPartition := len(propertyItems)
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, orderItems, propertyItems, aggMap)
-	b.rewritingWindowKey = false
+	b.rewritingWindowKey = savedWindowKey
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

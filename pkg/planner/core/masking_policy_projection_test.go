@@ -1208,6 +1208,18 @@ func TestMaskingPolicyScalarSubqueryAsRelationalKey(t *testing.T) {
 		Check(testkit.Rows("1 1", "2 1", "3 2"))
 	tk.MustQuery("select o.id, rank() over (order by " + sub + ") from t_key o order by o.id").
 		Check(testkit.Rows("1 3", "2 1", "3 1"))
+	// A subquery inside a window key is a query block of its own: the scalar
+	// subquery in its predicate is compared as masked, whether the block is
+	// entered through EXISTS, IN or a quantified comparison.
+	inner := "(select i.c from t_key i where i.id = j.id) = 'a'"
+	for _, key := range []string{
+		"exists (select 1 from t_key j where j.id = o.id and " + inner + ")",
+		"o.id in (select j.id from t_key j where " + inner + ")",
+		"o.id = any (select j.id from t_key j where " + inner + ")",
+	} {
+		tk.MustQuery("select o.id, row_number() over (partition by " + key + " order by o.id) from t_key o order by o.id").
+			Check(testkit.Rows("1 1", "2 2", "3 3"))
+	}
 	// A predicate still compares with the masked value.
 	tk.MustQuery("select count(*) from t_key o where " + sub + " = 'a'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t_key o having max(" + sub + ") = 'X'").Check(testkit.Rows("3"))
