@@ -185,7 +185,8 @@ fn mview_log_rows_follow_go_master() {
     let ctx = crate::StmtContext::for_dml(false, false, false);
     let row = |a: i64, b: i64, c: i64| [Datum::Int(a), Datum::Int(b), Datum::Int(c)];
     let mut insert = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Insert).unwrap();
-    insert.add_record(&mut store, &row(1, 10, 100), false, false, &ctx).unwrap();
+    let marker = insert.take_removed_conflict();
+    insert.add_record(&mut store, &row(1, 10, 100), false, marker, false, &ctx).unwrap();
     let mut update = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Update).unwrap();
     // `b` (offset 1) assigned: logged; only `c` (offset 2): not.
     update.update_record(&mut store, &row(1, 10, 100), &row(1, 11, 100), &|offset| offset == 1, false, &ctx).unwrap();
@@ -194,8 +195,11 @@ fn mview_log_rows_follow_go_master() {
     delete.remove_record(&mut store, &row(1, 11, 101), &ctx).unwrap();
     let mut replace = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Replace).unwrap();
     replace.remove_record(&mut store, &row(2, 20, 200), &ctx).unwrap();
-    replace.add_record(&mut store, &row(2, 21, 200), false, false, &ctx).unwrap();
-    replace.add_record(&mut store, &row(3, 30, 300), false, false, &ctx).unwrap();
+    for new in [row(2, 21, 200), row(3, 30, 300)] {
+        // Go `mlogTable.AddRecord` takes the marker before the base add.
+        let marker = replace.take_removed_conflict();
+        replace.add_record(&mut store, &new, false, marker, false, &ctx).unwrap();
+    }
     // The log's rows, in row-id order: tracked columns, type, old/new.
     let mut rows = Vec::new();
     for handle in 1..=8 {

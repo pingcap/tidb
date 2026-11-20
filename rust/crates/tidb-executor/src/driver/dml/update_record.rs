@@ -213,8 +213,10 @@ impl<'a> UpdateRecords<'a> {
             let mut store = crate::statement_store(ctx);
             let mut mlog = mlog.borrow_mut();
             let logged = if handle_changed {
-                mlog.remove_record(&mut *store, old, ctx)
-                    .and_then(|()| mlog.add_record(&mut *store, new, true, false, ctx))
+                mlog.remove_record(&mut *store, old, ctx).and_then(|()| {
+                    let had_removed_conflict = mlog.take_removed_conflict();
+                    mlog.add_record(&mut *store, new, true, had_removed_conflict, false, ctx)
+                })
             } else {
                 mlog.update_record(&mut *store, old, new, &|offset| old.get(offset) != new.get(offset), false, ctx)
             };

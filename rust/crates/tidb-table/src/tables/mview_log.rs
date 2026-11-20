@@ -163,9 +163,17 @@ pub fn wrap_table_with_materialized_view_log(
 }
 
 impl MLogTable {
+    /// Go `mlogTable.AddRecord`'s first step, before the base `AddRecord`:
+    /// "Consume the marker before calling the base table so an error cannot
+    /// leak it to a later row."
+    pub fn take_removed_conflict(&mut self) -> bool {
+        std::mem::take(&mut self.removed_conflict)
+    }
+
     /// Go `mlogTable.AddRecord` after the base `AddRecord` succeeded:
     /// `is_update` is Go's `AddRecordOpt.IsUpdate`, the insert half of a
-    /// handle-changing update.
+    /// handle-changing update; `had_removed_conflict` is what
+    /// [`Self::take_removed_conflict`] took before the base add.
     ///
     /// # Errors
     ///
@@ -175,11 +183,10 @@ impl MLogTable {
         store: &mut dyn TableStorage,
         row: &[Datum],
         is_update: bool,
+        had_removed_conflict: bool,
         lazy_dup_check: bool,
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<(), KvTableError> {
-        // Consume the marker: a failed row must not leak it to a later one.
-        let had_removed_conflict = std::mem::take(&mut self.removed_conflict);
         let dml_type = match self.source_stmt {
             MLogSourceStmt::Refresh => MLogDMLType::Insert,
             MLogSourceStmt::Update => MLogDMLType::Update,

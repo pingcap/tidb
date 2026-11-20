@@ -240,6 +240,7 @@ impl Session {
         stmt: &tidb_ast::ImportIntoStmt,
     ) -> Result<StmtOutput, DriverError> {
         let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
+        self.build_import_into_checks(plan)?;
         let from_select = plan.select_plan.is_some();
         let table_info = plan
             .table
@@ -280,8 +281,8 @@ impl Session {
         if from_select {
             // Go `runsQueryOnWorker`: a next-gen kernel runs the SELECT on a
             // DXF worker, which `prepareQuery` only allows during
-            // materialized-view maintenance; this port has no materialized
-            // views, so it always refuses.
+            // materialized-view maintenance, which this port's IMPORT INTO
+            // never runs in (`ImportStepQuery` is not ported), so it refuses.
             if tidb_config_kerneltype::is_next_gen() {
                 return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
                     "IMPORT INTO FROM SELECT outside materialized view maintenance".into(),
@@ -293,6 +294,29 @@ impl Session {
         controller.close();
         let row = result?;
         Ok(StmtOutput::Rows { columns: plan_columns(&plan.names, &plan.schema), rows: row.into_iter().collect() })
+    }
+
+    /// Go `executorBuilder.buildImportInto`'s target checks on the latest
+    /// schema (see `planBuilder.buildImportInto` for why): the table exists,
+    /// is a base table, and has no materialized view log.
+    fn build_import_into_checks(&self, plan: &tidb_planner::common_plans::ImportInto) -> Result<(), DriverError> {
+        let table_id = plan.table.table_info.as_ref().map(|t| t.read().id).unwrap_or_default();
+        let table = self
+            .refresh_latest_info_schema()
+            .table_info_by_id(table_id)
+            .ok_or_else(|| other(format!("Can not get table {table_id}")))?;
+        let table = table.read();
+        if !table.is_base_table() {
+            return Err(DriverError::from(
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.gen_with_stack_by_args(&[table.name.original().to_owned().into(), "IMPORT".into()]),
+            ));
+        }
+        if table.materialized_view_base.as_ref().is_some_and(|base| base.read().mlog_id != 0) {
+            return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
+                "IMPORT INTO on tables with materialized view log".into(),
+            ])));
+        }
+        Ok(())
     }
 
     fn import_into_with_controller(

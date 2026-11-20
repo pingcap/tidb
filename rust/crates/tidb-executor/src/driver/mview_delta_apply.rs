@@ -339,7 +339,9 @@ pub fn run_mview_complete_delta_apply(
                         .map_err(super::dml::kv_write_error)?;
                         if let Some(mlog) = &mlog {
                             let mut store = crate::statement_store(ctx);
-                            mlog.borrow_mut().add_record(&mut *store, &new, false, true, ctx).map_err(super::dml::kv_write_error)?;
+                            let mut mlog = mlog.borrow_mut();
+                            let had_removed_conflict = mlog.take_removed_conflict();
+                            mlog.add_record(&mut *store, &new, false, had_removed_conflict, true, ctx).map_err(super::dml::kv_write_error)?;
                         }
                     }
                     DIFF_OP_DELETE => {

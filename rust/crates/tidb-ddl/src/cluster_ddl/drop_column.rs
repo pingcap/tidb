@@ -246,6 +246,8 @@ pub(super) fn on_drop_column(
             check_table_info_valid(&info)?;
         }
         SchemaState::WRITE_ONLY => {
+            // write only -> delete only
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/onDropColumnStateWriteOnly", &mut ());
             column.write().state = SchemaState::DELETE_ONLY;
             move_to_back(&mut info);
             if !indexes.is_empty() {

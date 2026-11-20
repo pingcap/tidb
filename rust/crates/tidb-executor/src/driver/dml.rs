@@ -2386,6 +2386,9 @@ fn run_insert_rows(
                     0
                 }
             };
+            // Go `mlogTable.AddRecord`: the REPLACE marker is consumed before
+            // the base add, so a failed add cannot leak it to a later row.
+            let had_removed_conflict = mlog.is_some_and(|mlog| mlog.borrow_mut().take_removed_conflict());
             let insert_result = if skip_primary_duplicate_check {
                 target(catalog, &database, &table_name)
                     .with_statement_store(ctx, |table, store| table.insert_row_with_row_id_checked_without_primary_duplicate_check(store, row,
@@ -2407,7 +2410,7 @@ fn run_insert_rows(
                 (Ok(handle), Some(mlog)) => {
                     let mut store = crate::statement_store(ctx);
                     mlog.borrow_mut()
-                        .add_record(&mut *store, row, false, lazy_dup_check, ctx)
+                        .add_record(&mut *store, row, false, had_removed_conflict, lazy_dup_check, ctx)
                         .map(|()| handle)
                 }
                 (result, _) => result,
@@ -2426,11 +2429,12 @@ fn run_insert_rows(
                 }
                 Err(error) => {
                     let rendered = kv_write_error(error);
-                    // Go's `batchCheckAndInsert` counts the row copied before
-                    // `addRecord` and, in LOAD DATA, skips a violated CHECK
-                    // without a warning.
+                    // Go's `batchCheckAndInsert` -- LOAD DATA's IGNORE and its
+                    // REPLACE (`replace=true`) alike -- counts the row copied
+                    // before `addRecord` and, in LOAD DATA, skips a violated
+                    // CHECK without a warning.
                     if load_restrictive.is_some()
-                        && insert.ignore
+                        && (insert.ignore || insert.replace)
                         && rendered.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                     {
                         copied += 1;
