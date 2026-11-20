@@ -643,30 +643,21 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	return currentJoin, true
 }
 
-// generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
-func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []base.LogicalPlan) ([]*jrNode, error) {
+// generateJoinOrderNode derives stats and estimates the cost of each join group input.
+func generateJoinOrderNode(joinNodePlans []base.LogicalPlan) ([]*jrNode, error) {
 	joinGroup := make([]*jrNode, 0, len(joinNodePlans))
 	for _, node := range joinNodePlans {
 		_, _, err := node.RecursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
+		cost := joinorder.LegacyLeafCost(node)
 		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,
 		})
 	}
 	return joinGroup, nil
-}
-
-// baseNodeCumCost calculate the cumulative cost of the node in the join group.
-func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalPlan) float64 {
-	cost := groupNode.StatsInfo().RowCount
-	for _, child := range groupNode.Children() {
-		cost += s.baseNodeCumCost(child)
-	}
-	return cost
 }
 
 // checkConnection used to check whether two nodes have equal conditions or not.

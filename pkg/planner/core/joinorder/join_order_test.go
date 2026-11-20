@@ -18,7 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 )
@@ -82,4 +84,37 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	cloned[0].p = logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
 	require.Nil(t, original[0].p)
 	require.NotNil(t, cloned[0].p)
+}
+
+func TestJoinTreeShape(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	input := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	input.SetStats(&property.StatsInfo{RowCount: 8_000_000})
+	agg := logicalop.LogicalAggregation{}.Init(ctx, 0)
+	agg.SetChildren(input)
+	agg.SetStats(&property.StatsInfo{RowCount: 10})
+	require.Equal(t, 8_000_010.0, LegacyLeafCost(agg))
+	require.Equal(t, 10.0, outputRowsLeafCost(agg))
+
+	a := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	b := logicalop.LogicalTableDual{}.Init(ctx, 0)
+	group := &joinGroup{vertexes: []base.LogicalPlan{a, b, agg}}
+	join := func(tp base.JoinType, left, right base.LogicalPlan) base.LogicalPlan {
+		j := logicalop.LogicalJoin{JoinType: tp}.Init(ctx, 0)
+		j.SetChildren(left, right)
+		return j
+	}
+	shape := func(p base.LogicalPlan) string { return joinTreeShape(group, p) }
+	abc := shape(join(base.InnerJoin, join(base.InnerJoin, a, b), agg))
+	require.Equal(t, "inner join(2,inner join(0,1))", abc)
+	// The physical optimizer tries both sides of an inner join.
+	require.Equal(t, abc, shape(join(base.InnerJoin, agg, join(base.InnerJoin, b, a))))
+	require.NotEqual(t, abc, shape(join(base.InnerJoin, join(base.InnerJoin, a, agg), b)))
+	require.NotEqual(t,
+		shape(join(base.LeftOuterJoin, join(base.InnerJoin, a, b), agg)),
+		shape(join(base.LeftOuterJoin, agg, join(base.InnerJoin, a, b))))
 }

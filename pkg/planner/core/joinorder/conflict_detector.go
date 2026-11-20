@@ -205,8 +205,7 @@ type Node struct {
 	// bitSet tracks which base relations (by index) are contained in this node.
 	bitSet intset.FastIntSet
 	p      base.LogicalPlan
-	// cumCost is the cumulative cost (sum of row counts) of this node and all
-	// its descendants. It is used by the enumerator for join ordering.
+	// cumCost combines the costs of join group leaves and estimated rows from intermediate joins.
 	cumCost float64
 	// usedEdges records which edges have already been consumed by joins that
 	// produced this node. An edge must not be applied twice.
@@ -237,10 +236,16 @@ func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	return p.StatsInfo().RowCount + cost1 + cost2
 }
 
-func calcCumCostByChildren(p base.LogicalPlan) float64 {
+// outputRowsLeafCost costs a join group input by its estimated output rows.
+func outputRowsLeafCost(p base.LogicalPlan) float64 {
+	return p.StatsInfo().RowCount
+}
+
+// LegacyLeafCost sums the estimated row counts of a leaf's whole subtree.
+func LegacyLeafCost(p base.LogicalPlan) float64 {
 	cost := p.StatsInfo().RowCount
 	for _, child := range p.Children() {
-		cost += calcCumCostByChildren(child)
+		cost += LegacyLeafCost(child)
 	}
 	return cost
 }
@@ -258,7 +263,7 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 
 // Build constructs the join graph (edges + conflict rules) from a joinGroup.
 // It returns the list of leaf Nodes (vertexes) of current join group, which will be merged to new join by the enumerator.
-func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
+func (d *ConflictDetector) Build(group *joinGroup, costLeaf func(base.LogicalPlan) float64) ([]*Node, error) {
 	d.groupRoot = group.root
 	d.allInnerJoin = group.allInnerJoin
 
@@ -270,7 +275,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCostByChildren(v),
+			cumCost: costLeaf(v),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err

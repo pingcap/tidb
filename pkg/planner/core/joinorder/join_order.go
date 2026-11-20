@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -364,7 +366,7 @@ func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	}
 
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(j.group)
+	nodes, err := detector.Build(j.group, LegacyLeafCost)
 	if err != nil {
 		return nil, err
 	}
@@ -558,9 +560,77 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 }
 
 func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
+	if j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows {
+		return j.optimizeByLeafCost(outputRowsLeafCost)
+	}
+	p, err := j.optimizeByLeafCost(LegacyLeafCost)
+	if err != nil {
+		return nil, err
+	}
+	j.armGreedyOutputRowsRound(p)
+	return p, nil
+}
+
+// armGreedyOutputRowsRound arms the greedy-output-rows alternative round when
+// costing this group's inputs by their output rows builds a join order other
+// than p. Only an input costed above its output rows, because LegacyLeafCost
+// also counts the rows below it, can change the order. With two inputs the
+// order only commutes, which the physical optimizer already covers.
+func (j *joinOrderGreedy) armGreedyOutputRowsRound(p base.LogicalPlan) {
+	group := j.group
+	if len(group.vertexes) < 3 ||
+		!slices.ContainsFunc(group.vertexes, func(v base.LogicalPlan) bool {
+			return LegacyLeafCost(v) > outputRowsLeafCost(v)
+		}) {
+		return
+	}
+	vars := j.ctx.GetSessionVars()
+	vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+	if !vars.EnableAlternativeLogicalPlans {
+		return
+	}
+	// The trial order is discarded, and so are the warnings its build raises.
+	warnings := slices.Clone(vars.StmtCtx.GetWarnings())
+	alternative, err := j.optimizeByLeafCost(outputRowsLeafCost)
+	vars.StmtCtx.SetWarnings(warnings)
+	if err == nil && joinTreeShape(group, alternative) != joinTreeShape(group, p) {
+		vars.StmtCtx.MarkAlternativeLogicalPlanGreedyReorderByOutputRows()
+	}
+}
+
+// joinTreeShape describes the join order of a reordered group by the indexes
+// of its inputs. Children of inner joins are sorted, as the physical optimizer
+// tries both sides of an inner join.
+func joinTreeShape(group *joinGroup, p base.LogicalPlan) string {
+	inputs := make(map[int]int, len(group.vertexes))
+	for i, v := range group.vertexes {
+		inputs[v.ID()] = i
+	}
+	var shape func(base.LogicalPlan) string
+	shape = func(p base.LogicalPlan) string {
+		if i, ok := inputs[p.ID()]; ok {
+			return strconv.Itoa(i)
+		}
+		children := make([]string, 0, len(p.Children()))
+		for _, child := range p.Children() {
+			children = append(children, shape(child))
+		}
+		name := p.TP()
+		if join, ok := p.(*logicalop.LogicalJoin); ok {
+			name = join.JoinType.String()
+			if join.JoinType == base.InnerJoin {
+				slices.Sort(children)
+			}
+		}
+		return name + "(" + strings.Join(children, ",") + ")"
+	}
+	return shape(p)
+}
+
+func (j *joinOrderGreedy) optimizeByLeafCost(costLeaf func(base.LogicalPlan) float64) (base.LogicalPlan, error) {
 	group := j.group
 	detector := newConflictDetector(j.ctx)
-	nodes, err := detector.Build(group)
+	nodes, err := detector.Build(group, costLeaf)
 	if err != nil {
 		return nil, err
 	}

@@ -498,6 +498,14 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
 	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
 	AlternativeLogicalPlanSemiJoinRewrite bool
+	// AlternativeLogicalPlanGreedyReorderByOutputRows indicates whether the current
+	// first round found a greedy join group whose join order changes when its
+	// inputs are costed by their output rows instead of their subtree rows.
+	AlternativeLogicalPlanGreedyReorderByOutputRows bool
+	// AlternativeLogicalPlanGreedyOutputRows is a mode flag set by the
+	// "greedy-output-rows" alternative round. When true, greedy join reorder
+	// costs each join group input by its estimated output rows only.
+	AlternativeLogicalPlanGreedyOutputRows bool
 	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
 	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
 	// false (the default, matching Alt-disabled behavior) the rewriter emits
@@ -717,6 +725,8 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.AlternativeLogicalPlanGreedyReorderByOutputRows = false
+	sc.AlternativeLogicalPlanGreedyOutputRows = false
 	sc.AlternativeLogicalPlanMixedStorageEngines = false
 	sc.AlternativeLogicalPlanMissingTiFlashPath = false
 	sc.AlternativeLogicalPlanHasStoreTypeHint = false
@@ -752,6 +762,13 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 // found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 	sc.AlternativeLogicalPlanSemiJoinRewrite = true
+}
+
+// MarkAlternativeLogicalPlanGreedyReorderByOutputRows records that the current
+// first round found a greedy join group that the greedy-output-rows round
+// orders differently.
+func (sc *StatementContext) MarkAlternativeLogicalPlanGreedyReorderByOutputRows() {
+	sc.AlternativeLogicalPlanGreedyReorderByOutputRows = true
 }
 
 // MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
