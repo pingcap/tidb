@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -701,9 +702,7 @@ func findTableAndSchemaByName(
 ) ([]ast.CIStr, []*model.TableInfo, error) {
 	// INFORMATION_SCHEMA enumerates persistent tables. Local temporary tables
 	// must not hide them on name lookups either. Preserve the MDL table overlay.
-	if extended, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && extended.LocalTemporaryTables != nil {
-		is = extended.DetachTemporaryTableInfoSchema()
-	}
+	is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	type schemaAndTable struct {
 		schema ast.CIStr
 		table  *model.TableInfo
