@@ -157,7 +157,7 @@ func TestVersion(t *testing.T) {
 
 	testKit.MustExec("insert t1 values(1,2)")
 	testKit.MustExec("analyze table t1")
-	offset := 3 * unit
+	offset := cache.LeaseOffset * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
@@ -175,7 +175,8 @@ func TestVersion(t *testing.T) {
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
-	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
+	// Version 1 is below the read window's lower bound, 4, so it is not loaded.
+	require.Equal(t, uint64(4), h.GetNextCheckVersionWithOffset())
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())

@@ -17,6 +17,7 @@ package lfu
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -313,4 +314,33 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return int64(0) == lfu.Cost()
 	}, 5*time.Second, 100*time.Millisecond)
+}
+
+// TestCloseDuringWait covers closing the LFU while another goroutine repeatedly waits for buffered
+// writes to become visible. This race can occur when a full stats initialization replaces a cache
+// while sync stats loading is still reading and writing it. Each iteration writes an item, starts
+// the waiter, closes the cache after a short randomized delay, and requires the waiter to finish
+// rather than remain blocked on a stopped Ristretto worker.
+func TestCloseDuringWait(t *testing.T) {
+	for range 300 {
+		lfu, err := NewLFU(100000000)
+		require.NoError(t, err)
+		lfu.Put(1, testutil.NewMockStatisticsTable(1, 1, true, false, false))
+		var stop atomic.Bool
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for !stop.Load() {
+				lfu.WaitForAsyncUpdates()
+			}
+		}()
+		time.Sleep(time.Duration(rand.Intn(200)) * time.Microsecond)
+		lfu.Close()
+		stop.Store(true)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("WaitForAsyncUpdates hangs when the cache is closed concurrently")
+		}
+	}
 }

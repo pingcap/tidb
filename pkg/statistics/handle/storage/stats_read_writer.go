@@ -197,6 +197,24 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	statsVersion int,
 	updateAnalyzeTime bool,
 ) (err error) {
+	_, err = s.SaveColOrIdxStatsToStorageWithStatus(tableID, count, modifyCount, isIndex,
+		hg, cms, topN, fms, statsVersion, updateAnalyzeTime)
+	return err
+}
+
+// SaveColOrIdxStatsToStorageWithStatus also reports whether the histogram transaction
+// committed. A later slow-save version update can fail after persistence succeeds.
+func (s *statsReadWriter) SaveColOrIdxStatsToStorageWithStatus(
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	fms *statistics.FMSketch,
+	statsVersion int,
+	updateAnalyzeTime bool,
+) (persisted bool, err error) {
 	var statsVer uint64
 	start := time.Now()
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
@@ -205,11 +223,12 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		persisted = true
 		failpoint.InjectCall("afterSaveColOrIdxStatsToStorage", tableID, isIndex)
 		// Check if saving was slow and update stats version if needed
 		err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
-			return err2
+			return persisted, err2
 		}
 	}
 	return

@@ -17,7 +17,9 @@ package cache
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -117,6 +119,36 @@ func TestUpdateStatsHealthyMetrics(t *testing.T) {
 		require.Equal(t, expected[idx].label, cfg.Label)
 		require.Equal(t, expected[idx].value, promtestutils.ToFloat64(gauge))
 	}
+}
+
+// TestUpdateKeepsImmediateTableUpdate verifies that a table update submitted immediately after
+// the same table is first inserted is not lost. This mirrors sync stats loading, which reads a
+// newly inserted table, copies it with loaded statistics, and puts the copy back right away.
+// Ristretto admits a new key asynchronously, so Update must drain that admission before returning;
+// otherwise the second write can be rejected and Get can keep returning the older table.
+func TestUpdateKeepsImmediateTableUpdate(t *testing.T) {
+	sc, err := newStatsCache()
+	require.NoError(t, err)
+	defer sc.Close()
+
+	const tableID = int64(1)
+	added := testutil.NewMockStatisticsTable(1, 1, true, false, false)
+	added.PhysicalID = tableID
+	sc.Update([]*statistics.Table{added}, nil, false)
+
+	// Simulate the immediate read-modify-write performed by sync stats loading.
+	updated := added.CopyAs(statistics.ColumnMapWritable)
+	updated.PhysicalID = tableID
+	updated.SetCol(2, &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 2},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	})
+	sc.Update([]*statistics.Table{updated}, nil, false)
+
+	got, ok := sc.Get(tableID)
+	require.True(t, ok)
+	require.Same(t, updated, got)
+	require.NotNil(t, got.GetCol(2))
 }
 
 func newMockTable(t *testing.T, physicalID int64, pseudo bool, realtimeCount, modifyCount int64, analyzeVersion uint64) *statistics.Table {
