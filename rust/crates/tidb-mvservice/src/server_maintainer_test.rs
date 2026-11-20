@@ -89,7 +89,7 @@ fn node_count(sch: &ServerConsistentHash) -> usize {
 }
 
 #[test]
-fn server_consistent_hash_rebuild_maintains_sorted_server_ids_and_ring() {
+fn test_server_consistent_hash_rebuild_maintains_sorted_server_ids_and_ring() {
     let mapping = [("nodeA#0", 10), ("nodeB#0", 20), ("key-low", 5), ("key-mid", 15)];
     let sch = new_server_consistent_hash_for_test(&mapping, Arc::new(MockServerHelper::default()), "nodeB", &["nodeA", "nodeB"]);
     {
@@ -112,7 +112,7 @@ fn server_consistent_hash_rebuild_maintains_sorted_server_ids_and_ring() {
 }
 
 #[test]
-fn server_consistent_hash_available_supports_different_key_types() {
+fn test_server_consistent_hash_available_supports_different_key_types() {
     let key: i64 = 123_456_789;
     let key_bytes = key.to_be_bytes();
     let cases: Vec<(&str, AvailableKey<'_>, Box<dyn Fn(&[u8]) -> u32 + Send + Sync>)> = vec![
@@ -156,7 +156,7 @@ fn server_consistent_hash_available_supports_different_key_types() {
 }
 
 #[test]
-fn server_consistent_hash_fetch_applies_filter() {
+fn test_server_consistent_hash_fetch_applies_filter() {
     let mapping = [("nodeA#0", 10), ("nodeB#0", 20), ("key-mid", 15)];
     let helper = MockServerHelper {
         all_infos: HashMap::from([("nodeA".to_owned(), info("nodeA")), ("nodeB".to_owned(), info("nodeB"))]),
@@ -175,7 +175,7 @@ fn server_consistent_hash_fetch_applies_filter() {
 }
 
 #[test]
-fn server_consistent_hash_fetch_no_change() {
+fn test_server_consistent_hash_fetch_no_change() {
     let mapping = [("nodeA#0", 10), ("key-mid", 15)];
     let helper = Arc::new(MockServerHelper {
         all_infos: HashMap::from([("nodeA".to_owned(), info("nodeA"))]),
@@ -191,7 +191,7 @@ fn server_consistent_hash_fetch_no_change() {
 }
 
 #[test]
-fn server_consistent_hash_init() {
+fn test_server_consistent_hash_init() {
     let _serial = serial();
     let mapping = [("nodeA#0", 10), ("key-mid", 15)];
     let helper = Arc::new(MockServerHelper {
@@ -209,7 +209,7 @@ fn server_consistent_hash_init() {
 }
 
 #[test]
-fn server_consistent_hash_init_canceled() {
+fn test_server_consistent_hash_init_canceled() {
     let _serial = serial();
     let (ctx, cancel) = Context::with_cancel(&Context::background());
     cancel.cancel();
@@ -226,7 +226,7 @@ fn server_consistent_hash_init_canceled() {
 }
 
 #[test]
-fn server_consistent_hash_fetch_error() {
+fn test_server_consistent_hash_fetch_error() {
     let helper = MockServerHelper { all_err: Some("boom".to_owned()), ..MockServerHelper::default() };
     let sch = ServerConsistentHash::new(Context::background(), 1, Arc::new(helper));
     assert!(sch.refresh().is_err());

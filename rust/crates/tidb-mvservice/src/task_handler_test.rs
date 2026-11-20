@@ -29,7 +29,7 @@ use crate::time_proxy::{mvs_now, unix_milli};
 
 /// Go `TestMVServiceMarkFetchFailureRetryCadence`.
 #[test]
-fn mark_fetch_failure_retry_cadence() {
+fn test_mv_service_mark_fetch_failure_retry_cadence() {
     let _serial = serial();
     let _clock = install_mock_time_for_test();
     let now = mvs_now();
@@ -50,10 +50,9 @@ fn mark_fetch_failure_retry_cadence() {
     assert_eq!(svc.next_fetch_time(&now), now.add(cfg.fetch_interval));
 }
 
-/// Go `TestMVServiceFetchAllMVMetaReportsDuration` and
-/// `TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError`.
+/// Go `TestMVServiceFetchAllMVMetaReportsDuration`.
 #[test]
-fn fetch_all_mv_meta_reports_duration_and_avoids_partial_apply() {
+fn test_mv_service_fetch_all_mv_meta_reports_duration() {
     let _serial = serial();
     let _clock = install_mock_time_for_test();
     let helper = Arc::new(MockMVServiceHelper::default());
@@ -61,7 +60,15 @@ fn fetch_all_mv_meta_reports_duration_and_avoids_partial_apply() {
     svc.fetch_all_mv_meta().unwrap();
     assert_eq!(helper.task_duration_count(MV_FETCH_TYPE_MLOG_PURGE, MV_DURATION_RESULT_SUCCESS), 1);
     assert_eq!(helper.task_duration_count(MV_FETCH_TYPE_MVIEW_REFRESH, MV_DURATION_RESULT_SUCCESS), 1);
+    assert_eq!(helper.task_duration_count(MV_FETCH_TYPE_MLOG_PURGE, MV_DURATION_RESULT_FAILED), 0);
+    assert_eq!(helper.task_duration_count(MV_FETCH_TYPE_MVIEW_REFRESH, MV_DURATION_RESULT_FAILED), 0);
+}
 
+/// Go `TestMVServiceFetchAllMVMetaAvoidsPartialApplyOnFetchError`.
+#[test]
+fn test_mv_service_fetch_all_mv_meta_avoids_partial_apply_on_fetch_error() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
     let helper = Arc::new(MockMVServiceHelper::default());
     {
         let mut knobs = helper.knobs.lock().unwrap();
@@ -121,9 +128,7 @@ fn pending_refresh(svc: &MVService, id: i64) -> Option<Arc<MViewTask>> {
 }
 
 /// Go `TestMVServiceTaskResult/purge`.
-#[test]
 fn task_result_purge() {
-    let _serial = serial();
     let _clock = install_mock_time_for_test();
 
     // remove_on_zero_next
@@ -193,9 +198,7 @@ fn task_result_purge() {
 }
 
 /// Go `TestMVServiceTaskResult/refresh`.
-#[test]
 fn task_result_refresh() {
-    let _serial = serial();
     let _clock = install_mock_time_for_test();
 
     // remove_on_zero_next
@@ -247,4 +250,12 @@ fn task_result_refresh() {
     assert_eq!(helper.refresh_manual_cancel_backoff_calls.load(SeqCst), 1);
     assert_eq!(pending_refresh(&svc, 404).unwrap().order_ts(), unix_milli(&now.add(MANUAL_CANCEL_BACKOFF_DELAY)));
     svc.close_task_executors();
+}
+
+/// Go `TestMVServiceTaskResult` (its `purge` and `refresh` subtests).
+#[test]
+fn test_mv_service_task_result() {
+    let _serial = serial();
+    task_result_purge();
+    task_result_refresh();
 }

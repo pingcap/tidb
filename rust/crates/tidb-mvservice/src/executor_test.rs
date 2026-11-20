@@ -37,7 +37,7 @@ fn blocking_task(started: Sender<String>, name: &str, block: Receiver<()>) -> cr
 }
 
 #[test]
-fn task_executor_max_concurrency() {
+fn test_task_executor_max_concurrency() {
     let _serial = serial();
     let _clock = install_mock_time_for_test();
     let exec = TaskExecutor::new(1, 0);
@@ -63,7 +63,7 @@ fn task_executor_max_concurrency() {
 }
 
 #[test]
-fn task_executor_update_max_concurrency() {
+fn test_task_executor_update_max_concurrency() {
     let _serial = serial();
     let _clock = install_mock_time_for_test();
     let exec = TaskExecutor::new(1, 0);
@@ -97,7 +97,7 @@ fn task_executor_update_max_concurrency() {
 }
 
 #[test]
-fn task_executor_timeout_releases_slot() {
+fn test_task_executor_timeout_releases_slot() {
     let _serial = serial();
     let (module, _clock) = install_mock_time_for_test();
     let exec = TaskExecutor::new(1, 50 * MS);
@@ -141,7 +141,7 @@ fn task_executor_timeout_releases_slot() {
 }
 
 #[test]
-fn task_executor_update_timeout() {
+fn test_task_executor_update_timeout() {
     let _serial = serial();
     let (module, _clock) = install_mock_time_for_test();
     let exec = TaskExecutor::new(1, 0);
@@ -184,7 +184,7 @@ fn task_executor_update_timeout() {
 }
 
 #[test]
-fn task_executor_reject_after_close() {
+fn test_task_executor_reject_after_close() {
     let _serial = serial();
     let exec = TaskExecutor::new(1, 0);
     assert!(exec.close());
@@ -233,7 +233,7 @@ impl TaskBackpressureController for SignalBackpressureController {
 }
 
 #[test]
-fn task_executor_backpressure() {
+fn test_task_executor_backpressure() {
     let _serial = serial();
     let (module, _clock) = install_mock_time_for_test();
     let exec = TaskExecutor::new(1, 0);
@@ -266,7 +266,7 @@ fn task_executor_backpressure() {
 }
 
 #[test]
-fn task_executor_backpressure_check_does_not_block_submit() {
+fn test_task_executor_backpressure_check_does_not_block_submit() {
     let _serial = serial();
     let exec = TaskExecutor::new(1, 0);
     exec.run();
@@ -305,7 +305,7 @@ fn task_executor_backpressure_check_does_not_block_submit() {
 }
 
 #[test]
-fn task_executor_close_interrupts_backpressure_wait() {
+fn test_task_executor_close_interrupts_backpressure_wait() {
     let _serial = serial();
     let exec = TaskExecutor::new(1, 0);
     exec.run();
@@ -329,7 +329,7 @@ fn task_executor_close_interrupts_backpressure_wait() {
 }
 
 #[test]
-fn cpu_mem_backpressure_controller() {
+fn test_cpu_mem_backpressure_controller() {
     let mut controller = CpuMemBackpressureController::new(0.7, 0.8, 0);
     controller.get_cpu_usage = Box::new(|| (0.9, false));
     controller.get_mem_total = Box::new(|| 100);
@@ -347,7 +347,7 @@ fn cpu_mem_backpressure_controller() {
 
 /// Go `TestWaitForCountDoesNotAdvanceMockTime`.
 #[test]
-fn wait_for_count_does_not_advance_mock_time() {
+fn test_wait_for_count_does_not_advance_mock_time() {
     let _serial = serial();
     let (module, _clock) = install_mock_time_for_test();
     let start = module.now();

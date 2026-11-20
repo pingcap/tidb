@@ -32,7 +32,7 @@ fn ring_sorted(c: &ConsistentHash) -> bool {
 }
 
 #[test]
-fn consistent_hash_get_node_wraps() {
+fn test_consistent_hash_get_node_wraps() {
     let mut c = ConsistentHash::new(1);
     c.set_hash_func(must_hash(&[("nodeA#0", 10), ("nodeB#0", 20), ("key-low", 5), ("key-mid", 15), ("key-high", 25)]));
     c.add_node("nodeA");
@@ -44,7 +44,7 @@ fn consistent_hash_get_node_wraps() {
 }
 
 #[test]
-fn consistent_hash_remove_node_updates_state() {
+fn test_consistent_hash_remove_node_updates_state() {
     let mut c = ConsistentHash::new(2);
     c.set_hash_func(must_hash(&[("nodeA#0", 10), ("nodeA#1", 30), ("nodeB#0", 20), ("nodeB#1", 40)]));
     c.add_node("nodeA");
@@ -62,7 +62,7 @@ fn consistent_hash_remove_node_updates_state() {
 }
 
 #[test]
-fn consistent_hash_empty_state() {
+fn test_consistent_hash_empty_state() {
     let c = ConsistentHash::new(1);
     assert_eq!(c.get_node(b"any"), "");
     assert_eq!(c.node_count(), 0);
@@ -70,7 +70,7 @@ fn consistent_hash_empty_state() {
 }
 
 #[test]
-fn consistent_hash_rebuild_resets_ring() {
+fn test_consistent_hash_rebuild_resets_ring() {
     let mut c = ConsistentHash::new(2);
     c.set_hash_func(must_hash(&[
         ("nodeA#0", 10),
@@ -94,7 +94,7 @@ fn consistent_hash_rebuild_resets_ring() {
 }
 
 #[test]
-fn consistent_hash_rebuild() {
+fn test_consistent_hash_rebuild() {
     let mut c = ConsistentHash::new(2);
     c.set_hash_func(must_hash(&[("nodeA#0", 10), ("nodeA#1", 30), ("nodeB#0", 20), ("nodeB#1", 40), ("key", 35)]));
     c.rebuild(&HashMap::from([
@@ -133,7 +133,7 @@ fn drain(pq: &mut PriorityQueue<Node>) -> Vec<String> {
 
 /// Go `TestPriorityQueue`.
 #[test]
-fn priority_queue() {
+fn test_priority_queue() {
     // Go `time.Time{}.Add(time.Hour * 8192).UnixMilli()`.
     let base = -62_135_596_800_000 + 8192 * 3_600_000;
 

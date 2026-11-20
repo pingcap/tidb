@@ -274,9 +274,7 @@ fn max_concurrency(exec: &crate::executor::TaskExecutor) -> i64 {
     exec.max_concurrency.load(SeqCst)
 }
 
-#[test]
 fn new_mv_service_config_applied() {
-    let _serial = serial();
     let mut cfg = default_mv_service_config();
     cfg.task_max_concurrency = 3;
     cfg.refresh_task_concurrency_ratio = 0.6;
@@ -311,9 +309,7 @@ fn new_mv_service_config_applied() {
     assert_eq!(svc.server_refresh_interval, cfg.server_refresh_interval);
 }
 
-#[test]
 fn new_mv_service_config_normalized_defaults() {
-    let _serial = serial();
     let mut cfg = default_mv_service_config();
     cfg.task_max_concurrency = -1;
     cfg.mlog_analyze_task_concurrency = -1;
@@ -329,9 +325,7 @@ fn new_mv_service_config_normalized_defaults() {
     assert_eq!(max_concurrency(&svc.mlog_analyze_executor), DEFAULT_MLOG_ANALYZE_TASK_CONCURRENCY);
 }
 
-#[test]
 fn new_mv_service_config_invalid_panics() {
-    let _serial = serial();
     let mut cfg = default_mv_service_config();
     cfg.retry_base_delay = 10 * SECOND;
     cfg.retry_max_delay = 2 * SECOND;
@@ -344,7 +338,7 @@ fn new_mv_service_config_invalid_panics() {
 
 /// Go `TestMVServiceUpdateConfigs`.
 #[test]
-fn mv_service_update_configs() {
+fn test_mv_service_update_configs() {
     let _serial = serial();
     // fetch_interval
     let svc = new_service(Arc::default(), default_mv_service_config());
@@ -394,11 +388,11 @@ fn mv_service_update_configs() {
     assert_eq!(svc.history_gc_interval(), SECOND);
     assert!(svc.set_mview_refresh_hist_retention(0).is_err());
     assert!(svc.set_mlog_purge_hist_retention(0).is_err());
+    // Go `history_gc_reschedule_earlier_only`.
+    mv_service_history_gc_reschedule_earlier_only();
 }
 
-#[test]
 fn mv_service_history_gc_reschedule_earlier_only() {
-    let _serial = serial();
     let _clock = install_mock_time_for_test();
     let svc = new_service(Arc::default(), default_mv_service_config());
     let now = mvs_now();
@@ -416,7 +410,7 @@ fn mv_service_history_gc_reschedule_earlier_only() {
 
 /// Go `TestMVServiceFullChainSimulation`.
 #[test]
-fn mv_service_full_chain_simulation() {
+fn test_mv_service_full_chain_simulation() {
     let _serial = serial();
     let (module, _clock) = install_mock_time_for_test();
     let helper = Arc::new(MockMVServiceHelper {
@@ -551,4 +545,14 @@ fn mv_service_full_chain_simulation() {
         matches!(run_done.recv_timeout(Duration::from_secs(1)), Err(crossbeam_channel::RecvTimeoutError::Disconnected)),
         "mv service did not stop in time"
     );
+}
+
+/// Go `TestNewMVServiceConfig` (its `applied`, `normalized_defaults` and
+/// `invalid_*_panics` subtests).
+#[test]
+fn test_new_mv_service_config() {
+    let _serial = serial();
+    new_mv_service_config_applied();
+    new_mv_service_config_normalized_defaults();
+    new_mv_service_config_invalid_panics();
 }

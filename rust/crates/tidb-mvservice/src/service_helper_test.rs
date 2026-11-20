@@ -20,7 +20,7 @@ use crate::service_helper::{latest_server_infos_by_instance, need_analyze_mlog, 
 
 /// Go `TestLatestServerInfosByInstanceKeepsNewestDDLID`.
 #[test]
-fn latest_server_infos_by_instance_keeps_newest_ddl_id() {
+fn test_latest_server_infos_by_instance_keeps_newest_ddlid() {
     let server = |id: &str, ip: &str, start: i64| {
         (
             ServerInfo { id: id.to_owned(), ip: ip.to_owned(), port: 4000, start_timestamp: start },
@@ -48,7 +48,7 @@ fn latest_server_infos_by_instance_keeps_newest_ddl_id() {
 
 /// Go `TestNeedAnalyzeMLog` (with Go's `AutoAnalyzeMinCnt` 1000).
 #[test]
-fn need_analyze_mlog_as_go() {
+fn test_need_analyze_m_log() {
     const MIN: i64 = 1000;
     let analyzed = |realtime_count, modify_count| MLogStats {
         realtime_count,
@@ -79,7 +79,7 @@ fn need_analyze_mlog_as_go() {
 
 /// Go `TestBuildResolvedMVRefreshAlertSQL`.
 #[test]
-fn build_resolved_mv_refresh_alert_sql() {
+fn test_build_resolved_mv_refresh_alert_sql() {
     use crate::service_helper::{
         build_clear_disabled_mv_refresh_alert_level_sql, build_clear_resolved_mv_refresh_alert_level_sql,
         build_delete_resolved_mv_refresh_alert_sql,
