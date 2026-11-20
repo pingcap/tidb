@@ -269,9 +269,11 @@ func CompileLike2Regexp(str string, escape byte) string {
 		case PatMatch:
 			result.WriteString(regexp.QuoteMeta(string(patChars[i])))
 		case PatOne:
-			result.WriteByte('.')
+			// LIKE wildcards match newlines as well as other runes. Scope the
+			// DOTALL flag so it cannot affect other combined regexp patterns.
+			result.WriteString("(?s:.)")
 		case PatAny:
-			result.WriteString(".*")
+			result.WriteString("(?s:.*)")
 		}
 	}
 	result.WriteByte('$')
