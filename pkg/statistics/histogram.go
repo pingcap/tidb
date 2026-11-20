@@ -1385,6 +1385,8 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 // for int/float/string/bytes types, a small interface box for Decimal
 // or Time. Keeping the ref itself tiny means sortedRefs stays ~32 MB
 // at 8 k partitions × 500 buckets (vs ~350 MB if we inlined Datums).
+// A partition histogram with more buckets than bucketIdx can address is
+// split before the merge (splitOversizedHistograms).
 type bucketRef struct {
 	histIdx   uint16
 	bucketIdx uint16
@@ -1794,6 +1796,53 @@ func sumPartitionTotals(hists []*Histogram) (totHistCount, totNull, totColSize i
 	return totHistCount, totNull, totColSize, totalBuckets
 }
 
+// splitOversizedHistograms splits every histogram with more than
+// math.MaxUint16 buckets into consecutive histograms of at most
+// math.MaxUint16 buckets, since bucketRef addresses buckets with 16 bits.
+// ANALYZE accepts up to 100000 buckets, so a partition histogram can
+// exceed it. The merge walks a partition's buckets independently of each
+// other, so a split histogram merges like the original: each piece's
+// cumulative counts restart at zero, and the null count and column size
+// stay on the first piece, so the totals are unchanged. Without an
+// oversized histogram, hists is returned as is.
+func splitOversizedHistograms(hists []*Histogram) []*Histogram {
+	extra := 0
+	for _, h := range hists {
+		if h != nil && h.Len() > math.MaxUint16 {
+			extra += (h.Len() - 1) / math.MaxUint16
+		}
+	}
+	if extra == 0 {
+		return hists
+	}
+	out := make([]*Histogram, 0, len(hists)+extra)
+	var lower, upper types.Datum
+	for _, h := range hists {
+		if h == nil || h.Len() <= math.MaxUint16 {
+			out = append(out, h)
+			continue
+		}
+		for start := 0; start < h.Len(); start += math.MaxUint16 {
+			end := min(start+math.MaxUint16, h.Len())
+			var nullCount, totColSize, base int64
+			if start == 0 {
+				nullCount, totColSize = h.NullCount, h.TotColSize
+			} else {
+				base = h.Buckets[start-1].Count
+			}
+			piece := NewHistogram(h.ID, 0, nullCount, h.LastUpdateVersion, h.Tp, end-start, totColSize)
+			for i := start; i < end; i++ {
+				h.LowerToDatum(i, &lower)
+				h.UpperToDatum(i, &upper)
+				b := h.Buckets[i]
+				piece.AppendBucketWithNDV(&lower, &upper, b.Count-base, b.Repeat, b.NDV)
+			}
+			out = append(out, piece)
+		}
+	}
+	return out
+}
+
 // selectGlobalTopN turns the winning candidates into the global TopN
 // (step 1d). It returns the TopN (nil when there are no candidates), a
 // presence map keyed by encoded value for Pass 2, and the summed
@@ -1929,6 +1978,7 @@ func MergePartTopNAndHistToGlobal(
 	// validates this), and the default is 256, so this is only reachable
 	// via a programmer error in a caller.
 	intest.Assert(expBucketNumber > 0, "expBucketNumber must be positive")
+	hists = splitOversizedHistograms(hists)
 	if len(hists) > math.MaxUint16 {
 		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: too many partition histograms (%d > %d)", len(hists), math.MaxUint16)
 	}
@@ -1938,14 +1988,9 @@ func MergePartTopNAndHistToGlobal(
 	// are fine (TopN-only columns still carry a Histogram wrapper).
 	var firstHist *Histogram
 	for _, h := range hists {
-		if h == nil {
-			continue
-		}
-		if h.Len() > math.MaxUint16 {
-			return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: partition histogram has too many buckets (%d > %d)", h.Len(), math.MaxUint16)
-		}
-		if firstHist == nil {
+		if h != nil {
 			firstHist = h
+			break
 		}
 	}
 	if firstHist == nil {
