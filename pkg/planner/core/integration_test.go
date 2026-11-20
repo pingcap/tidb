@@ -2794,26 +2794,23 @@ func TestIndexScanSeekCost(t *testing.T) {
 		"└─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
 		"  └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
 
-	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
-	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
-	fullRanges := make([]string, 0, 60)
-	for b := 1; b <= 6; b++ {
-		for c := 1; c <= 10; c++ {
-			fullRanges = append(fullRanges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
-		}
-	}
+	// With ORDER BY d, scanning pruned ranges and sorting is cheaper than opening
+	// 60 independent requests for the full point ranges and merging their results.
 	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where + " order by d limit 5").Check(testkit.Rows(
-		"Limit 5.00 root  offset:0, count:5",
-		"└─IndexReader 5.00 root  index:Limit",
-		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
-		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:"+strings.Join(fullRanges, ", ")+", keep order:true"))
+		"TopN 5.00 root  test.t.d, offset:0, count:5",
+		"└─IndexReader 5.00 root  index:TopN",
+		"  └─TopN 5.00 cop[tikv]  test.t.d, offset:0, count:5",
+		"    └─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
+		"      └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
 
 	// Compare against a full table scan, which applies every predicate as a filter.
 	tk.MustQuery("select a, b, c, d from t where " + where).Sort().Check(
 		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where).Sort().Rows())
-	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
-	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
-		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+	// Check both the chosen plan and the forced keep-order scan without sorting their results.
+	for _, hint := range []string{"", "/*+ order_index(t, idx_abcd) */"} {
+		tk.MustQuery("select " + hint + " a, b, c, d from t where " + where + " order by d limit 5").Check(
+			tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+	}
 
 	// Many IN-lists ahead of a selective equality: 12*4*3*9 = 1296 ranges for a lookup that
 	// returns nothing. Dropping columns also drops the equality on `e` from the ranges, but each

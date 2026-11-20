@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -129,6 +130,79 @@ func TestCostModelTraceVer2(t *testing.T) {
 			require.True(t, ok)
 		}
 	})
+}
+
+func TestIndexReaderMergeSortCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version = 2")
+	tk.MustExec("create table t (a int, b int, c int, key abc(a, b, c))")
+
+	// Keep two groups (one for each a), while growing the number of ranges within
+	// each group. The executor opens one request per range, even for an empty table.
+	var readers []*physicalop.PhysicalIndexReader
+	for _, values := range []string{"1", "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16"} {
+		tk.MustQuery("explain select /*+ order_index(t, abc) */ a, b, c from t " +
+			"where a in (1,2) and b in (1,2) and c in (" + values + ") order by b, c")
+		explain := tk.Session().GetSessionVars().StmtCtx.GetPlan().(*core.Explain)
+		reader, ok := explain.TargetPlan.(*physicalop.PhysicalIndexReader)
+		require.True(t, ok, "%T", explain.TargetPlan)
+		scan := reader.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+		require.True(t, scan.KeepOrder)
+		require.NotEmpty(t, scan.ByItems)
+		require.Len(t, scan.GroupedRanges, 2)
+		readers = append(readers, reader)
+	}
+	require.Len(t, readers[0].IndexPlans[0].(*physicalop.PhysicalIndexScan).Ranges, 4)
+	require.Len(t, readers[1].IndexPlans[0].(*physicalop.PhysicalIndexScan).Ranges, 64)
+
+	option := costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate | costusage.CostFlagTrace)
+	for _, rows := range []float64{0, 10} {
+		t.Run(fmt.Sprintf("rows=%g", rows), func(t *testing.T) {
+			var previousOverheads []float64
+			for _, concurrency := range []int{1, 15, 30} {
+				tk.MustExec(fmt.Sprintf("set tidb_distsql_scan_concurrency = %d", concurrency))
+				var overheads, requests []float64
+				for _, reader := range readers {
+					// Fix cardinality to isolate range fan-out from selectivity estimates.
+					reader.StatsInfo().RowCount = rows
+					for _, plan := range reader.IndexPlans {
+						plan.StatsInfo().RowCount = rows
+					}
+					scan := reader.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+					merged, err := reader.GetPlanCostVer2(property.RootTaskType, option)
+					require.NoError(t, err)
+					// Compare identical scan/transfer work without the merge operation.
+					byItems := scan.ByItems
+					scan.ByItems = nil
+					plain, err := reader.GetPlanCostVer2(property.RootTaskType, option)
+					scan.ByItems = byItems
+					require.NoError(t, err)
+					overhead := merged.GetCost() - plain.GetCost()
+					t.Logf("rows=%g concurrency=%d ranges=%d merge overhead=%g", rows, concurrency, len(scan.Ranges), overhead)
+					require.Positive(t, overhead, "merging independent range requests must cost more than a batched request")
+					factors := merged.GetTrace().GetFactorCosts()
+					require.Positive(t, factors["tidb_request_factor"])
+					require.NotContains(t, plain.GetTrace().GetFactorCosts(), "tidb_request_factor")
+					if rows > 0 {
+						require.Greater(t, factors["tidb_cpu_factor"], plain.GetTrace().GetFactorCosts()["tidb_cpu_factor"])
+					}
+					overheads = append(overheads, overhead)
+					requests = append(requests, factors["tidb_request_factor"])
+				}
+				require.Greater(t, overheads[1], overheads[0])
+				require.InDelta(t, 16*requests[0], requests[1], 0.01, "charge ranges, not groups")
+				if previousOverheads != nil {
+					for i := range overheads {
+						require.InDelta(t, previousOverheads[i], overheads[i], 0.01,
+							"request setup and the serial merge must not be divided by scan concurrency")
+					}
+				}
+				previousOverheads = overheads
+			}
+		})
+	}
 }
 
 func BenchmarkGetPlanCost(b *testing.B) {

@@ -1240,7 +1240,8 @@ func TestExpressionIndexMergeSort(t *testing.T) {
 						// g and the index's hidden column have different IDs. Covering scans
 						// merge output rows, while lookups merge rows from the index side.
 						suffix := " where " + predicate + " order by g " + order + " limit 3"
-						sql := "select " + fields + " from t_merge_expr force index(ix)" + suffix
+						// Exercise the ordered path even when a scan plus TopN costs less.
+						sql := "select /*+ order_index(t_merge_expr, ix) */ " + fields + " from t_merge_expr" + suffix
 						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
 						require.NotContains(t, plan, "TopN", sql)
 						require.NotContains(t, plan, "Sort", sql)

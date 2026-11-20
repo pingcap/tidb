@@ -295,8 +295,12 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 }
 
 // getPlanCostVer24PhysicalIndexReader returns the plan-cost of this sub-plan, which is:
-// plan-cost = (child-cost + net-cost) / concurrency
+// plan-cost = (child-cost + net-cost) / concurrency + request-cost + merge-cost
 // net-cost = rows * row-size * net-factor
+// For an ordered scan that merges range groups:
+// request-cost = ranges * request-factor
+// merge-cost = rows * log2(ranges) * cpu-factor
+// Otherwise request-cost and merge-cost are zero.
 func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -315,7 +319,27 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+	readerCost := costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+	// A merge-sort IndexReader issues one request per range and merges the result streams
+	// serially in TiDB. Charge request setup and merge comparisons outside scan concurrency.
+	// The child cost already includes TiKV seeks for each range.
+	for _, plan := range p.IndexPlans {
+		scan, ok := plan.(*physicalop.PhysicalIndexScan)
+		if !ok || !scan.KeepOrder || len(scan.GroupedRanges) == 0 || len(scan.ByItems) == 0 || len(scan.Ranges) <= 1 {
+			continue
+		}
+		numRanges := float64(len(scan.Ranges))
+		requestFactor := getTaskRequestFactorVer2(p, taskType)
+		requestCost := costusage.NewCostVer2(option, requestFactor, numRanges*requestFactor.Value,
+			func() string { return fmt.Sprintf("request(%v*%v)", numRanges, requestFactor) })
+		cpuFactor := getTaskCPUFactorVer2(p, property.RootTaskType)
+		mergeCost := costusage.NewCostVer2(option, cpuFactor, rows*math.Log2(numRanges)*cpuFactor.Value,
+			func() string { return fmt.Sprintf("merge(%v*log2(%v)*%v)", rows, numRanges, cpuFactor) })
+		readerCost = costusage.SumCostVer2(readerCost, requestCost, mergeCost)
+		break
+	}
+
+	p.PlanCostVer2 = readerCost
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
