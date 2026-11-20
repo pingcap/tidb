@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
@@ -428,7 +429,15 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			return ver, errors.Trace(err)
 		}
 
+		lastBarrierRenew := time.Now()
 		for _, recoverInfo := range recoverTbls {
+			if time.Since(lastBarrierRenew) > recoverGCBarrierTTL/2 {
+				if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Trace(err)
+				}
+				lastBarrierRenew = time.Now()
+			}
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false

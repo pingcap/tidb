@@ -517,10 +517,10 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
-const recoverGCBarrierTTL = 10 * time.Minute
+const recoverGCBarrierTTL = time.Hour
 
-func recoverGCBarrierID(jobID int64) string {
-	return fmt.Sprintf("ddl-recover-%d", jobID)
+func recoverGCBarrierID(keyspaceID uint32, jobID int64) string {
+	return fmt.Sprintf("ddl-recover-%d-%d", keyspaceID, jobID)
 }
 
 func isGCBarrierUnimplementedErr(err error) bool {
@@ -535,8 +535,9 @@ func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS
 	if !ok || pdStore.GetPDClient() == nil {
 		return nil
 	}
+	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
 	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
-	if _, err := gcClient.SetGCBarrier(ctx, recoverGCBarrierID(jobID), snapshotTS, recoverGCBarrierTTL); err != nil {
+	if _, err := gcClient.SetGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID), snapshotTS, recoverGCBarrierTTL); err != nil {
 		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
 			logutil.DDLLogger().Warn("PD does not support SetGCBarrier, skip setting recover GC barrier",
 				zap.Int64("jobID", jobID), zap.Error(err))
@@ -552,8 +553,9 @@ func deleteRecoverGCBarrier(ctx context.Context, w *worker, jobID int64) error {
 	if !ok || pdStore.GetPDClient() == nil {
 		return nil
 	}
+	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
 	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
-	if _, err := gcClient.DeleteGCBarrier(ctx, recoverGCBarrierID(jobID)); err != nil {
+	if _, err := gcClient.DeleteGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID)); err != nil {
 		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
 			return nil
 		}
