@@ -3461,3 +3461,74 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
+drop table if exists t11128;
+create table t11128 (a int unsigned, b int unsigned, key(b));
+insert into t11128 values (0, 0), (1, 1), (100, 100), (null, null);
+explain format='brief' select * from t11128 where a > -100.1;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		gt(test.t11128.a, -1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t11128	keep order:false, stats:pseudo
+explain format='brief' select * from t11128 where a >= -1e30;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		ge(test.t11128.a, -1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t11128	keep order:false, stats:pseudo
+explain format='brief' select * from t11128 where -100.1 < a;
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		lt(-1, test.t11128.a)
+  └─TableFullScan	10000.00	cop[tikv]	table:t11128	keep order:false, stats:pseudo
+explain format='brief' select * from t11128 where a > '-100.1';
+id	estRows	task	access object	operator info
+TableReader	3333.33	root		data:Selection
+└─Selection	3333.33	cop[tikv]		gt(test.t11128.a, -1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t11128	keep order:false, stats:pseudo
+explain format='brief' select * from t11128 use index(b) where b > -100.1;
+id	estRows	task	access object	operator info
+IndexLookUp	3333.33	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t11128, index:b(b)	range:[0,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t11128	keep order:false, stats:pseudo
+explain format='brief' select * from t11128 where b < -100.1;
+id	estRows	task	access object	operator info
+TableDual	1.00	root		rows:0
+select a from t11128 where a > -100.1 order by a;
+a
+0
+1
+100
+select a from t11128 where a >= -1e30 order by a;
+a
+0
+1
+100
+select a from t11128 where -100.1 < a order by a;
+a
+0
+1
+100
+select a from t11128 where a < -100.1 order by a;
+a
+select a from t11128 where a = -100.0 order by a;
+a
+select a from t11128 where a != -100.1 order by a;
+a
+0
+1
+100
+select a from t11128 where not (a > -100.1) order by a;
+a
+select a from t11128 where a <=> -100.1 order by a;
+a
+select b from t11128 use index(b) where b > -100.1 order by b;
+b
+0
+1
+100
+select a, a > -100.1, a < -100.1, a = -100.0, a != -100.1, a <=> -100.1 from t11128 order by a;
+a	a > -100.1	a < -100.1	a = -100.0	a != -100.1	a <=> -100.1
+NULL	NULL	NULL	NULL	NULL	0
+0	1	0	0	1	0
+1	1	0	0	1	0
+100	1	0	0	1	0
+drop table t11128;
