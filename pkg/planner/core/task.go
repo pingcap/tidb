@@ -1527,8 +1527,14 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 					cop.FinishIndexPlan()
 				}
 			}
+			if cop.SkipScan {
+				setSkipScanRows(p, cop.Plan().StatsCount())
+			}
 			copTask := attachPlan2Task(p, cop)
 			return copTask
+		}
+		if cop.SkipScan {
+			return base.InvalidTask
 		}
 	} else if mpp, ok := t.(*physicalop.MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
@@ -1708,6 +1714,7 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
 	if cop, ok := t.(*physicalop.CopTask); ok {
+		skip := cop.SkipScan
 		// We should not push agg down across
 		//  1. double read, since the data of second read is ordered by handle instead of index. The `extraHandleCol` is added
 		//     if the double read needs to keep order. So we just use it to decided
@@ -1715,6 +1722,9 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 		//  2. the case that there's filters should be calculated on TiDB side.
 		//  3. the case of index merge
 		if (cop.IndexPlan != nil && cop.TablePlan != nil && cop.KeepOrder) || len(cop.RootTaskConds) > 0 || len(cop.IdxMergePartPlans) > 0 {
+			if skip {
+				return base.InvalidTask
+			}
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(p, t)
 		} else {
@@ -1723,9 +1733,14 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
 				return base.InvalidTask
 			}
-			markSkipScanForStreamAgg(p, cop)
 			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
+			if skip && partialAgg == nil {
+				return base.InvalidTask
+			}
 			if partialAgg != nil {
+				if skip && partialAgg.StatsCount() > cop.Plan().StatsCount() {
+					setSkipScanRows(partialAgg, cop.Plan().StatsCount())
+				}
 				if cop.TablePlan != nil {
 					cop.FinishIndexPlan()
 					// the partialAgg attachment didn't follow the attachPlan2Task function, so here we actively call
@@ -1763,53 +1778,59 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return t
 }
 
-// markSkipScanForStreamAgg records the storage-side skip-scan properties on an
-// index scan. It is intentionally conservative: skipping rows is
-// only valid when the aggregation result can be obtained from one
-// representative row per grouping prefix.
-//
-// The properties are carried by PhysicalIndexScan until the tipb protocol
-// exposes the corresponding IndexScan fields. TiDB does not calculate a next
-// prefix or perform result deduplication here; those responsibilities belong
-// to the storage scanner and the existing upper StreamAgg respectively.
-func markSkipScanForStreamAgg(agg *physicalop.PhysicalStreamAgg, cop *physicalop.CopTask) {
-	if len(cop.IdxMergePartPlans) > 0 {
-		return
+// A skip scan drops whole duplicate prefixes, not a random sample. Preserve
+// the existing NDV estimates up to the new row count.
+func setSkipScanRows(plan base.PhysicalPlan, rows float64) {
+	stats := *plan.StatsInfo()
+	stats.RowCount = rows
+	stats.ColNDVs = make(map[int64]float64, len(stats.ColNDVs))
+	for id, ndv := range plan.StatsInfo().ColNDVs {
+		stats.ColNDVs[id] = min(ndv, rows)
 	}
-	scan, ok := cop.IndexPlan.(*physicalop.PhysicalIndexScan)
-	if !ok || scan.Index == nil || len(agg.GroupByItems) == 0 {
-		return
+	stats.GroupNDVs = append([]property.GroupNDV(nil), stats.GroupNDVs...)
+	for i := range stats.GroupNDVs {
+		stats.GroupNDVs[i].NDV = min(stats.GroupNDVs[i].NDV, rows)
 	}
-	prefixColumnCount, ok := skipScanPrefixColumnCount(agg.GroupByItems, scan.IdxCols)
-	if !ok || !skipScanAggregationSupported(agg.AggFuncs) {
-		return
-	}
-	scan.SkipScan = true
-	scan.SkipScanPrefixColumnCount = prefixColumnCount
+	plan.SetStats(&stats)
 }
 
-func skipScanPrefixColumnCount(groupByItems []expression.Expression, indexColumns []*expression.Column) (int, bool) {
-	if len(groupByItems) == 0 || len(groupByItems) > len(indexColumns) {
-		return 0, false
-	}
-	for i, item := range groupByItems {
-		groupByCol, ok := item.(*expression.Column)
-		if !ok || !groupByCol.EqualColumn(indexColumns[i]) {
-			return 0, false
-		}
-	}
-	return len(groupByItems), true
+type streamAggScanKey struct {
+	tableID, physicalID, indexID int64
+	projections                  int
+	tableScan, desc              bool
 }
 
-func skipScanAggregationSupported(aggFuncs []*aggregation.AggFuncDesc) bool {
-	for _, aggFunc := range aggFuncs {
-		switch aggFunc.Name {
-		case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
-		default:
-			return false
+// streamAggScan identifies a predicate-free, ordered single read below a
+// StreamAgg or one of its projections. It excludes different reader shapes.
+func streamAggScan(task base.Task) (streamAggScanKey, bool) {
+	cop, ok := task.(*physicalop.CopTask)
+	if !ok || !cop.KeepOrder || cop.Invalid() || cop.IndexJoinInfo != nil ||
+		len(cop.RootTaskConds)+len(cop.IdxMergePartPlans) != 0 ||
+		(cop.IndexPlan != nil && cop.TablePlan != nil) {
+		return streamAggScanKey{}, false
+	}
+	p := cop.Plan()
+	key := streamAggScanKey{}
+	for {
+		if _, ok := p.(*physicalop.PhysicalProjection); !ok || len(p.Children()) != 1 {
+			break
+		}
+		key.projections++
+		p = p.Children()[0]
+	}
+	switch scan := p.(type) {
+	case *physicalop.PhysicalIndexScan:
+		if scan.Table != nil && scan.Index != nil && len(scan.AccessCondition) == 0 && scan.IsFullScan() {
+			key.tableID, key.physicalID, key.indexID, key.desc = scan.Table.ID, scan.PhysicalTableID, scan.Index.ID, scan.Desc
+			return key, scan.SkipScan
+		}
+	case *physicalop.PhysicalTableScan:
+		if scan.Table != nil && scan.StoreType == kv.TiKV && len(scan.AccessCondition)+len(scan.FilterCondition) == 0 && scan.IsFullScan() {
+			key.tableID, key.physicalID, key.tableScan, key.desc = scan.Table.ID, scan.PhysicalTableID, true, scan.Desc
+			return key, scan.SkipScan
 		}
 	}
-	return true
+	return streamAggScanKey{}, false
 }
 
 func attach2TaskForMpp1Phase(p *physicalop.PhysicalHashAgg, mpp *physicalop.MppTask) base.Task {

@@ -163,6 +163,12 @@ func enumeratePhysicalPlans4TaskHelper(
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
+	// Strict StreamAgg candidates are enumerated before ordinary ones.
+	type skipAlternativeKey struct {
+		scan streamAggScanKey
+		prop string
+	}
+	var attachedSkipScans map[skipAlternativeKey]struct{}
 
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
@@ -184,10 +190,37 @@ func enumeratePhysicalPlans4TaskHelper(
 			continue
 		}
 
+		var skipKey skipAlternativeKey
+		var skip bool
+		if _, ok := pp.(*physicalop.PhysicalStreamAgg); ok {
+			req := pp.GetChildReqProps(0)
+			if req.SkipScanInfo != nil || len(attachedSkipScans) != 0 {
+				scan, marked := streamAggScan(childTasks[0])
+				skip = req.SkipScanInfo != nil
+				if skip && !marked {
+					continue
+				}
+				if scan != (streamAggScanKey{}) {
+					normal := req.CloneEssentialFields()
+					normal.SkipScanInfo = nil
+					skipKey = skipAlternativeKey{scan: scan, prop: string(normal.HashCode())}
+					if _, replaced := attachedSkipScans[skipKey]; !skip && replaced {
+						continue
+					}
+				}
+			}
+		}
+
 		// Combine the best child tasks with parent physical plan.
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
 			continue
+		}
+		if skip {
+			if attachedSkipScans == nil {
+				attachedSkipScans = make(map[skipAlternativeKey]struct{})
+			}
+			attachedSkipScans[skipKey] = struct{}{}
 		}
 
 		// An optimal task could not satisfy the property, so it should be converted here.
@@ -630,7 +663,8 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 			return base.InvalidTask, nil
 		}
 	}
-	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
+	_, isProjection := self.(*logicalop.LogicalProjection)
+	if !(prop.SkipScanInfo != nil && isProjection) && !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
 		// Currently all plan cannot totally push down to TiKV.
 		p.StoreTask(prop, base.InvalidTask)
 		return base.InvalidTask, nil
@@ -638,7 +672,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 
 	canAddEnforcer := prop.CanAddEnforcer
 
-	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
+	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() && prop.SkipScanInfo == nil {
 		// Currently all plan cannot totally push down to TiKV.
 		// only save the physical to logicalOp under volcano mode.
 		if ge == nil {
@@ -667,7 +701,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	if err != nil {
 		return nil, err
 	}
-	if !hintWorksWithProp && !newProp.IsSortItemEmpty() && newProp.IndexJoinProp == nil {
+	if !hintWorksWithProp && !newProp.IsSortItemEmpty() && newProp.IndexJoinProp == nil && newProp.SkipScanInfo == nil {
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
 		// make sure the hint can work.
@@ -2337,6 +2371,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop == nil {
 		return nil, nil
 	}
+	if prop.SkipScanInfo != nil && ds.IsForUpdateRead {
+		return base.InvalidTask, nil
+	}
 	sessionVars := ds.SCtx().GetSessionVars()
 	_, isolationReadEnginesHasTiKV := sessionVars.GetIsolationReadEngines()[kv.TiKV]
 	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
@@ -2369,6 +2406,13 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if t != nil {
 			return
 		}
+	}
+	if prop.SkipScanInfo != nil {
+		t, err = findBestSkipScanTask(ds, prop)
+		if err == nil && ge == nil {
+			ds.StoreTask(prop, t)
+		}
+		return
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
@@ -2635,6 +2679,134 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 
 	return
+}
+
+func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
+	best := base.InvalidTask
+	if ds.SampleInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 ||
+		len(ds.AllConds)+len(ds.PushedDownConds) != 0 {
+		return best, nil
+	}
+	if _, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; !ok {
+		return best, nil
+	}
+	cols := prop.SkipScanInfo.GroupByCols
+	stats := ds.TableStats
+	if len(cols) == 0 || stats == nil || ds.StatisticTable == nil || stats.StatsVersion == statistics.PseudoVersion {
+		return best, nil
+	}
+	prefixStats := *stats
+	if stats.GetGroupNDV4Cols(cols) == nil {
+		if len(stats.ColNDVs) == 0 {
+			return best, nil
+		}
+		prefixStats.ColNDVs = maps.Clone(stats.ColNDVs)
+		for _, col := range cols {
+			hist := ds.StatisticTable.GetCol(col.ID)
+			if hist == nil || !hist.IsStatsInitialized() {
+				return best, nil
+			}
+			// Column histograms account for NULL separately, while GROUP
+			// BY needs one representative for the NULL group too.
+			if hist.NullCount > 0 {
+				prefixStats.ColNDVs[col.UniqueID]++
+			}
+			if prefixStats.ColNDVs[col.UniqueID] <= 0 {
+				return best, nil
+			}
+		}
+	}
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ds.SCtx(), cols, ds.Schema(), &prefixStats)
+	for _, path := range ds.PossibleAccessPaths {
+		if !matchesSkipScanPath(ds, path, prop.SkipScanInfo) {
+			continue
+		}
+		// matchProperty updates per-search range grouping on the path.
+		pathCopy := *path
+		match := matchProperty(ds, &pathCopy, prop)
+		if match != property.PropMatched {
+			continue
+		}
+		candidate := &candidatePath{path: &pathCopy, matchPropResult: match, isFullRange: true}
+		var task base.Task
+		var err error
+		if path.IsTablePath() {
+			task, err = convertToTableScan(ds, prop, candidate)
+		} else {
+			task, err = convertToIndexScan(ds, prop, candidate, accessesExtraCommitTSColumn(ds))
+		}
+		if err != nil {
+			return nil, err
+		}
+		cop, ok := task.(*physicalop.CopTask)
+		if !ok || cop.Invalid() || !cop.KeepOrder || len(cop.RootTaskConds) != 0 {
+			continue
+		}
+		scan := cop.Plan()
+		originalRows := scan.StatsCount()
+		rows := min(ndv, originalRows)
+		if !(rows > 0 && rows < originalRows) {
+			continue
+		}
+		switch scan := scan.(type) {
+		case *physicalop.PhysicalIndexScan:
+			scan.SkipScan, scan.SkipScanPrefixColumnCount = true, len(cols)
+		case *physicalop.PhysicalTableScan:
+			scan.SkipScan, scan.SkipScanPrefixColumnCount = true, len(cols)
+		default:
+			continue
+		}
+		setSkipScanRows(scan, rows)
+		cop.SkipScan = true
+		better, err := compareTaskCost(cop, best)
+		if err != nil {
+			return nil, err
+		}
+		if better {
+			best = cop
+		}
+	}
+	return best, nil
+}
+
+func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *property.SkipScanInfo) bool {
+	if path.StoreType != kv.TiKV || path.ForceNoKeepOrder ||
+		path.PartialIndexPaths != nil || path.PartialAlternativeIndexPaths != nil ||
+		len(path.AccessConds)+len(path.IndexFilters)+len(path.TableFilters) != 0 ||
+		!path.IsFullScanRange(ds.TableInfo) {
+		return false
+	}
+	idx := path.Index
+	if idx == nil || idx.Global || idx.MVIndex || idx.ConditionExprString != "" || idx.Tp != ast.IndexTypeBtree {
+		return false
+	}
+	keyCols, keyLengths := path.IdxCols, path.IdxColLens
+	if path.IsTablePath() {
+		if !path.IsCommonHandlePath {
+			// An integer handle is a complete unique key.
+			return false
+		}
+		keyCols, keyLengths = ds.CommonHandleCols, ds.CommonHandleLens
+	} else if !path.IsSingleScan {
+		return false
+	}
+	n := len(skip.GroupByCols)
+	if n > len(idx.Columns) || n > len(keyCols) || n > len(keyLengths) {
+		return false
+	}
+	for i, col := range skip.GroupByCols {
+		if keyCols[i] == nil || keyLengths[i] != types.UnspecifiedLength ||
+			col.VirtualExpr != nil || !col.EqualColumn(keyCols[i]) {
+			return false
+		}
+	}
+	if n == len(idx.Columns) && idx.Unique {
+		// A secondary unique key can still have repeated NULL prefixes.
+		return slices.ContainsFunc(idx.Columns, func(col *model.IndexColumn) bool {
+			return !mysql.HasNotNullFlag(ds.TableInfo.Columns[col.Offset].GetFlag())
+		})
+	}
+	return true
 }
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
