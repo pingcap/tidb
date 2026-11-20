@@ -827,8 +827,11 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	defer tracing.StartRegion(ctx, "buildMemIndexMergeReader").End()
 	indexCount := len(indexMergeReader.indexes)
 	memReaders := make([]memReader, 0, indexCount)
-	for i := 0; i < indexCount; i++ {
-		if indexMergeReader.indexes[i] == nil {
+	for i := range indexCount {
+		// A full-text partial plan has no index entries UnionScan could read
+		// back as column values; the transaction's changed rows are found
+		// from the records themselves, within the table's record range.
+		if indexMergeReader.indexes[i] == nil || indexMergeReader.isFullTextPartial(i) {
 			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.Ctx(), indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{
 				ctx:           us.Ctx(),

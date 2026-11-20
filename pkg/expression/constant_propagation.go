@@ -159,6 +159,13 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
+	// MATCH ... AGAINST is not derived over another column: the copy would
+	// be rebuilt without the search modifier and the place of evaluation the
+	// planner set on the original, and would need a FULLTEXT index of its
+	// own to be answered by one.
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst || sf.FuncName.L == TiKVMatchAgainst {
+		return false, true, cond
+	}
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}

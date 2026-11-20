@@ -472,6 +472,7 @@ import (
 	issuer                "ISSUER"
 	jsonType              "JSON"
 	keyBlockSize          "KEY_BLOCK_SIZE"
+	keyColumns            "KEY_COLUMNS"
 	labels                "LABELS"
 	language              "LANGUAGE"
 	last                  "LAST"
@@ -6644,6 +6645,8 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.Condition != nil {
 				opt1.Condition = opt2.Condition
+			} else if len(opt2.FullTextKeyColumns) > 0 {
+				opt1.FullTextKeyColumns = opt2.FullTextKeyColumns
 			}
 			$$ = opt1
 		}
@@ -6702,6 +6705,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Condition: $2.(ast.ExprNode),
+		}
+	}
+|	"KEY_COLUMNS" '(' ColumnNameList ')'
+	{
+		$$ = &ast.IndexOption{
+			FullTextKeyColumns: $3.([]*ast.ColumnName),
 		}
 	}
 
@@ -6932,6 +6941,7 @@ UnReservedKeyword:
 |	"CHECKSUM"
 |	"COMPRESSION"
 |	"KEY_BLOCK_SIZE"
+|	"KEY_COLUMNS"
 |	"MASTER"
 |	"MAX_ROWS"
 |	"MIN_ROWS"
@@ -13861,7 +13871,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}

@@ -1673,6 +1673,7 @@ func colsToStr(cols []pmodel.CIStr) string {
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
+	alterTableAddFullTextFormat    = "ALTER TABLE %%n.%%n ADD FULLTEXT INDEX %%n(%s)"
 	alterTableAddUniqueIndexFormat = "ALTER TABLE %%n.%%n ADD UNIQUE KEY %%n(%s)"
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 	alterTableAddForeignKeyFormat  = "ALTER TABLE %%n.%%n ADD CONSTRAINT %%n FOREIGN KEY (%s) REFERENCES %%n.%%n (%s)"
@@ -1739,6 +1740,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		var (
 			addSQL  strings.Builder
 			addArgs []any = make([]any, 0, 5+len(info.ColumnArgs))
+			// fullTextKeyArgs are the key columns of a FULLTEXT index built
+			// in TiKV, every column but the tokenized last one, which
+			// KEY_COLUMNS names. Such an index has no expression or prefix
+			// key parts, so each column is one name argument.
+			fullTextKeyArgs []any
 		)
 		if info.IsPrimary {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddPrimaryFormat, info.ColumnList))
@@ -1748,6 +1754,11 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(fmt.Sprintf(alterTableAddUniqueIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
 			addArgs = append(addArgs, info.ColumnArgs...)
+		} else if info.IndexInfo.TiKVFullText != nil && len(info.ColumnArgs) > 0 {
+			last := len(info.ColumnArgs) - 1
+			fmt.Fprintf(&addSQL, alterTableAddFullTextFormat, "%n")
+			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O, info.ColumnArgs[last])
+			fullTextKeyArgs = info.ColumnArgs[:last]
 		} else {
 			addSQL.WriteString(fmt.Sprintf(alterTableAddIndexFormat, info.ColumnList))
 			addArgs = append(addArgs, info.SchemaName.O, info.TableName.O, info.IndexInfo.Name.O)
@@ -1758,13 +1769,33 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			addSQL.WriteString(" WHERE ")
 			addSQL.WriteString(info.IndexInfo.ConditionExprString)
 		}
-		// USING BTREE/HASH/RTREE
+		// USING BTREE/HASH/RTREE. A FULLTEXT index names its kind in the
+		// statement itself and rejects a USING clause.
 		indexTypeStr := info.IndexInfo.Tp.String()
-		if len(indexTypeStr) > 0 {
+		if len(indexTypeStr) > 0 && info.IndexInfo.TiKVFullText == nil {
 			addSQL.WriteString(" USING ")
 			addSQL.WriteString(indexTypeStr)
 		}
-
+		// WITH PARSER [...]
+		if info.IndexInfo.FullTextInfo != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if info.IndexInfo.TiKVFullText != nil {
+			addSQL.WriteString(" WITH PARSER ")
+			addSQL.WriteString(info.IndexInfo.TiKVFullText.ParserType.SQLName())
+		}
+		if len(fullTextKeyArgs) > 0 {
+			addSQL.WriteString(" KEY_COLUMNS(")
+			for i := range fullTextKeyArgs {
+				if i > 0 {
+					addSQL.WriteByte(',')
+				}
+				addSQL.WriteString("%n")
+			}
+			addSQL.WriteByte(')')
+			addArgs = append(addArgs, fullTextKeyArgs...)
+		}
 		// COMMENT [...]
 		if len(info.IndexInfo.Comment) > 0 {
 			addSQL.WriteString(" COMMENT %?")
@@ -1790,6 +1821,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			IndexName:  info.IndexInfo.Name.O,
 			AddSQL:     addSQL.String(),
 			AddArgs:    addArgs,
+			// The settings the index recorded, not the ones in force in
+			// this cluster now, are what its rows have been analyzed with.
+			TiKVFullText: info.IndexInfo.TiKVFullText.Clone(),
 		})
 
 		return nil
@@ -1944,6 +1978,14 @@ func (rc *LogClient) RepairIngestIndex(
 				}
 			})
 			// create the repaired index when first execution or not found it
+			if sql.TiKVFullText != nil {
+				// A FULLTEXT index is rebuilt with the analyzer it recorded.
+				sessVars := indexSession.GetSessionCtx().GetSessionVars()
+				sessVars.TiKVFullTextAnalyzerForRebuild = sql.TiKVFullText
+				defer func() {
+					sessVars.TiKVFullTextAnalyzerForRebuild = nil
+				}()
+			}
 			if err := indexSession.ExecuteInternal(ectx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}

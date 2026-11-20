@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -499,8 +500,13 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
+		model.SetTiKVFullTextSupported(false)
 	}
-	t.Cleanup(reset)
+	t.Cleanup(func() {
+		reset()
+		// The rest of the package creates FULLTEXT indexes in TiKV.
+		model.SetTiKVFullTextSupported(true)
+	})
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
@@ -534,7 +540,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
 			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
-		d.detectAndUpdateJobVersion()
+		require.NoError(t, d.detectAndUpdateJobVersionOnce())
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
 
@@ -570,12 +576,27 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 				// upgrade done
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
+			} else if iterateCnt == 6 {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.False(t, model.GetTiKVFullTextSupported())
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-v9.0.0")
 			} else {
+				require.True(t, model.GetTiKVFullTextSupported())
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 			}
 		})
 		d.detectAndUpdateJobVersion()
 		d.wg.Wait()
-		require.EqualValues(t, 6, iterateCnt)
+		require.EqualValues(t, 7, iterateCnt)
 	})
+}
+
+func TestTiKVFullTextSameBuildGate(t *testing.T) {
+	old := versioninfo.TiDBGitHash
+	t.Cleanup(func() { versioninfo.TiDBGitHash = old })
+	versioninfo.TiDBGitHash = "0123456789012345678901234567890123456789"
+	require.True(t, sameTiKVFullTextBuild(versioninfo.TiDBGitHash))
+	require.False(t, sameTiKVFullTextBuild("1123456789012345678901234567890123456789"))
+	versioninfo.TiDBGitHash = "None"
+	require.False(t, sameTiKVFullTextBuild("None"))
 }

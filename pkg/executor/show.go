@@ -1257,7 +1257,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.FullTextInfo != nil {
+		} else if idxInfo.FullTextInfo != nil || idxInfo.TiKVFullText != nil {
 			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
@@ -1276,6 +1276,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			}
 			cols = append(cols, colInfo)
 		}
+		// A FULLTEXT index built in TiKV lists the tokenized column, its
+		// last, as MySQL lists the columns it searches; the columns ahead of
+		// it are key columns, which KEY_COLUMNS names.
+		var fullTextKeyCols []string
+		if idxInfo.TiKVFullText != nil && len(cols) > 1 {
+			fullTextKeyCols, cols = cols[:len(cols)-1], cols[len(cols)-1:]
+		}
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
@@ -1287,6 +1294,15 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.TiKVFullText != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.TiKVFullText.ParserType.SQLName())
+		}
+		if len(fullTextKeyCols) > 0 {
+			fmt.Fprintf(buf, " /*T![%s] KEY_COLUMNS(%s) */", tidb.FeatureIDFullTextKey, strings.Join(fullTextKeyCols, ","))
+		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)

@@ -726,6 +726,8 @@ const (
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 // with the addition of Global Index
 type IndexOption struct {
+	// FullTextKeyColumns holds the non-tokenized prefix columns.
+	FullTextKeyColumns []*ColumnName `json:"-"`
 	node
 
 	KeyBlockSize uint64
@@ -748,7 +750,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
-		n.Condition != nil {
+		n.Condition != nil || len(n.FullTextKeyColumns) > 0 {
 		return false
 	}
 	return true
@@ -788,6 +790,30 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("WITH PARSER ")
 		ctx.WriteName(n.ParserName.O)
+		hasPrevOption = true
+	}
+
+	if len(n.FullTextKeyColumns) > 0 {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDFullTextKey, func() error {
+			ctx.WriteKeyWord("KEY_COLUMNS")
+			ctx.WritePlain("(")
+			for i, col := range n.FullTextKeyColumns {
+				if i > 0 {
+					ctx.WritePlain(",")
+				}
+				if err := col.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while splicing IndexOption FullTextKeyColumns[%d]", i)
+				}
+			}
+			ctx.WritePlain(")")
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 		hasPrevOption = true
 	}
 

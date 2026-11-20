@@ -1871,8 +1871,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: ScopeGlobal | ScopeSession, Name: InteractiveTimeout, Value: "28800", Type: TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbFtEnableStopword, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeGlobal, Name: InnodbFtMaxTokenSize, Value: "84", Type: TypeUnsigned, MinValue: 10, MaxValue: 84},
-	{Scope: ScopeGlobal, Name: InnodbFtMinTokenSize, Value: "3", Type: TypeUnsigned, MinValue: 0, MaxValue: 16},
+	{Scope: ScopeGlobal, Name: InnodbFtMaxTokenSize, Value: "84", Type: TypeUnsigned, MinValue: 10, MaxValue: 84, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
+		return validateInnodbFtTokenSizes(vars, InnodbFtMinTokenSize, normalizedValue, true)
+	}},
+	{Scope: ScopeGlobal, Name: InnodbFtMinTokenSize, Value: "3", Type: TypeUnsigned, MinValue: 0, MaxValue: 16, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
+		return validateInnodbFtTokenSizes(vars, InnodbFtMaxTokenSize, normalizedValue, false)
+	}},
 	{Scope: ScopeGlobal, Name: NgramTokenSize, Value: "2", Type: TypeUnsigned, MinValue: 1, MaxValue: 10},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbLockWaitTimeout, Value: strconv.FormatInt(DefInnodbLockWaitTimeout, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 3600, SetSession: func(s *SessionVars, val string) error {
 		lockWaitSec := TidbOptInt64(val, DefInnodbLockWaitTimeout)
@@ -2382,6 +2386,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableFTSLikeFallback = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBEnableTiKVFullTextIndex, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error { s.EnableTiKVFullTextIndex = TiDBOptOn(val); return nil }},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(DefTiDBEnableLocalMatchAgainst), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLocalMatchAgainst = TiDBOptOn(val)
 		return nil
@@ -4137,3 +4142,38 @@ const (
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
 )
+
+// validateInnodbFtTokenSizes rejects a new value of innodb_ft_max_token_size
+// (settingMax) or of innodb_ft_min_token_size that would leave the minimum
+// above the maximum. otherName is the variable the new value is checked
+// against.
+func validateInnodbFtTokenSizes(vars *SessionVars, otherName, normalizedValue string, settingMax bool) (string, error) {
+	if vars.GlobalVarsAccessor == nil {
+		return normalizedValue, nil
+	}
+	otherValue, err := vars.GlobalVarsAccessor.GetGlobalSysVar(otherName)
+	if err != nil {
+		return normalizedValue, err
+	}
+	newSize, err := strconv.ParseUint(normalizedValue, 10, 64)
+	if err != nil {
+		return normalizedValue, err
+	}
+	otherSize, err := strconv.ParseUint(otherValue, 10, 64)
+	if err != nil {
+		return normalizedValue, err
+	}
+	if settingMax && newSize < otherSize {
+		return normalizedValue, fmt.Errorf("%s (%d) cannot be less than %s (%d)",
+			InnodbFtMaxTokenSize, newSize, InnodbFtMinTokenSize, otherSize)
+	}
+	if !settingMax && newSize > otherSize {
+		return normalizedValue, fmt.Errorf("%s (%d) cannot be greater than %s (%d)",
+			InnodbFtMinTokenSize, newSize, InnodbFtMaxTokenSize, otherSize)
+	}
+	return normalizedValue, nil
+}
+
+// TiDBEnableTiKVFullTextIndex opts new FULLTEXT DDL into the experimental
+// positional TiKV format. Reads and writes use persisted metadata independently.
+const TiDBEnableTiKVFullTextIndex = "tidb_enable_tikv_fulltext_index"

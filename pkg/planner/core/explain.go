@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	utilredact "github.com/pingcap/tidb/pkg/util/redact"
+
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -61,6 +63,9 @@ func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalIndexScan) TP() string {
+	if p.FullText != nil {
+		return plancodec.TypeFullTextIndexScan
+	}
 	if p.isFullScan() {
 		return plancodec.TypeIndexFullScan
 	}
@@ -82,6 +87,16 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
+	if p.FullText != nil {
+		if normalized {
+			buffer.WriteString("fulltext:?, ")
+		} else {
+			buffer.WriteString("fulltext:")
+			utilredact.WriteRedact(&buffer, strconv.Quote(p.FullText.Search), redact)
+			buffer.WriteString(", ")
+		}
+	}
+
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
 			buffer.WriteString("range: decided by ")

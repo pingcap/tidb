@@ -40,6 +40,36 @@ const (
 	IndexLookUpPushDownBySysVar
 )
 
+// FullTextAccessInfo describes how a FULLTEXT index built in TiKV answers a
+// MATCH ... AGAINST predicate: the boolean search string compiled with the
+// index's analyzer selects exactly the rows the predicate accepts, so the
+// predicate is consumed by the path rather than re-evaluated on the rows
+// returned.
+type FullTextAccessInfo struct {
+	// Match is the MATCH ... AGAINST predicate the path serves.
+	Match *expression.ScalarFunction
+	// Search is the constant boolean-mode search string.
+	Search string
+	// PostingRows estimates the posting entries the search reads, which
+	// rather than the rows matched is what reading the index costs: the
+	// lists a union, a prefix or the smallest child of an intersection read
+	// in full, and what the seeks into the other children of an
+	// intersection read.
+	PostingRows float64
+	// PostingScans estimates the posting scans the search opens: one per
+	// term and handle range, one per prefix, and one per seek that reopens
+	// a scan.
+	PostingScans float64
+}
+
+// Clone clones FullTextAccessInfo.
+func (info *FullTextAccessInfo) Clone() *FullTextAccessInfo {
+	if info == nil {
+		return nil
+	}
+	return &FullTextAccessInfo{Match: info.Match.Clone().(*expression.ScalarFunction), Search: info.Search, PostingRows: info.PostingRows, PostingScans: info.PostingScans}
+}
+
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
@@ -85,6 +115,11 @@ type AccessPath struct {
 	IndexMergeIsIntersection bool
 	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
 	IndexMergeAccessMVIndex bool
+	// FullText is set on the partial path of a FULLTEXT index built in TiKV.
+	// Such a path is answered by TiDB's posting-list engine rather than by a
+	// coprocessor range scan, so it has no ranges; it only ever appears as the
+	// single partial path of an IndexMerge path.
+	FullText *FullTextAccessInfo
 
 	StoreType kv.StoreType
 
@@ -176,6 +211,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
+		FullText:                     path.FullText.Clone(),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()

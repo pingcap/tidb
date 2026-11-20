@@ -784,6 +784,9 @@ func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
 
 // PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
+	// FullText describes a posting scan executed in TiDB.
+	FullText *FullTextScanInfo `plan-cache-clone:"shallow"`
+
 	physicalSchemaProducer
 
 	// AccessCondition is used to calculate range.
@@ -3269,4 +3272,10 @@ func detachRootTableScanPlan(p base.PhysicalPlan) (root *PhysicalTableScan, root
 		rootParent.SetChildren()
 	}
 	return
+}
+
+// FullTextScanInfo describes a versioned TiKV FULLTEXT scan.
+type FullTextScanInfo struct {
+	Search                    string
+	PostingRows, PostingScans float64
 }

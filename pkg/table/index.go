@@ -131,6 +131,15 @@ type IndexKVGenerator struct {
 	i          int
 	// Only used by non multi-value index.
 	idxVals []types.Datum
+	// err, when set, is returned by Next in place of any KV; the generator
+	// yields nothing else.
+	err error
+}
+
+// NewErrIndexKVGenerator creates a generator that reports err instead of
+// producing any KV, for an index whose values could not be derived.
+func NewErrIndexKVGenerator(err error) IndexKVGenerator {
+	return IndexKVGenerator{err: err}
 }
 
 // NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
@@ -177,12 +186,10 @@ func NewPlainIndexKVGenerator(
 // Next returns the next index key and value.
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
-	var val []types.Datum
-	if iter.isMultiValue {
-		val = iter.allIdxVals[iter.i]
-	} else {
-		val = iter.idxVals
+	if iter.err != nil {
+		return nil, nil, false, iter.err
 	}
+	val := iter.PeekIndexedValues()
 	key, distinct, err := iter.index.GenIndexKey(iter.ec, iter.loc, val, iter.handle, keyBuf)
 	if err != nil {
 		return nil, nil, false, err
@@ -201,4 +208,12 @@ func (iter *IndexKVGenerator) Valid() bool {
 		return iter.i < len(iter.allIdxVals)
 	}
 	return iter.i == 0
+}
+
+// PeekIndexedValues returns the tuple for the next generated entry.
+func (iter *IndexKVGenerator) PeekIndexedValues() []types.Datum {
+	if iter.isMultiValue {
+		return iter.allIdxVals[iter.i]
+	}
+	return iter.idxVals
 }

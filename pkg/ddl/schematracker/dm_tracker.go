@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -410,6 +411,16 @@ func (d *SchemaTracker) createIndex(
 			return nil
 		}
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+	}
+
+	if keyType == ast.IndexKeyTypeFullText && ctx.GetSessionVars().EnableTiKVFullTextIndex {
+		// The tracker sees the statement before the preprocessor marks it. On
+		// the classic kernel the executor builds a FULLTEXT index in TiKV;
+		// mirror that, so the tracked schema matches what the cluster holds.
+		var err error
+		if indexOption, indexPartSpecifications, err = ddl.NormalizeTiKVFullTextIndex(indexOption, indexPartSpecifications); err != nil {
+			return err
+		}
 	}
 
 	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
@@ -936,8 +947,12 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
 				err = d.createPrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+			case ast.ConstraintFulltext:
+				if sctx.GetSessionVars().EnableTiKVFullTextIndex {
+					err = d.createIndex(sctx, ident, ast.IndexKeyTypeFullText, pmodel.NewCIStr(constr.Name),
+						spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+				}
 			case ast.ConstraintForeignKey,
-				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
 			default:
 				// Nothing to do now.

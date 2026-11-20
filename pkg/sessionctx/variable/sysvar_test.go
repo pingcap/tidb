@@ -1938,3 +1938,32 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }
+
+// TestInnodbFtTokenSizeBounds covers the ranges of innodb_ft_min_token_size
+// and innodb_ft_max_token_size overlapping: a minimum above the maximum would
+// make the STANDARD analyzer drop every token, so neither can be set past the
+// other.
+func TestInnodbFtTokenSizeBounds(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	ctx := context.Background()
+
+	require.NoError(t, mock.SetGlobalSysVar(ctx, InnodbFtMaxTokenSize, "10"))
+	require.NoError(t, mock.SetGlobalSysVar(ctx, InnodbFtMinTokenSize, "10"))
+	require.ErrorContains(t, mock.SetGlobalSysVar(ctx, InnodbFtMinTokenSize, "11"),
+		"innodb_ft_min_token_size (11) cannot be greater than innodb_ft_max_token_size (10)")
+	val, err := mock.GetGlobalSysVar(InnodbFtMinTokenSize)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	require.NoError(t, mock.SetGlobalSysVar(ctx, InnodbFtMaxTokenSize, "84"))
+	require.NoError(t, mock.SetGlobalSysVar(ctx, InnodbFtMinTokenSize, "16"))
+	require.ErrorContains(t, mock.SetGlobalSysVar(ctx, InnodbFtMaxTokenSize, "15"),
+		"innodb_ft_max_token_size (15) cannot be less than innodb_ft_min_token_size (16)")
+	val, err = mock.GetGlobalSysVar(InnodbFtMaxTokenSize)
+	require.NoError(t, err)
+	require.Equal(t, "84", val)
+	require.NoError(t, mock.SetGlobalSysVar(ctx, InnodbFtMaxTokenSize, "16"))
+}

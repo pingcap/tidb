@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -47,6 +48,37 @@ func WithExprCtx(exprCtx exprctx.ExprContext) Option {
 	return funcOpt(func(ctx *Context) {
 		ctx.exprCtx = exprCtx
 	})
+}
+
+// WithTiKVFullTextAnalyzer sets the analyzer settings a FULLTEXT index built in
+// TiKV is created with. The parser type is not part of the settings; it comes
+// from the index definition.
+func WithTiKVFullTextAnalyzer(analyzer model.TiKVFullTextIndexInfo) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.tikvFullTextAnalyzer = analyzer
+	})
+}
+
+// WithTiKVFullTextAnalyzerError records that the analyzer settings could not be
+// read from the session, so that building a FULLTEXT index reports the failure
+// instead of silently using defaults the session did not ask for.
+func WithTiKVFullTextAnalyzerError(err error) Option {
+	return funcOpt(func(ctx *Context) {
+		ctx.tikvFullTextAnalyzerErr = err
+	})
+}
+
+// DefaultTiKVFullTextAnalyzer returns the analyzer settings a default-configured
+// server resolves from its system variables. Callers that build table metadata
+// without a session, such as Lightning, use them so that a FULLTEXT index
+// emitted by SHOW CREATE TABLE can be imported.
+func DefaultTiKVFullTextAnalyzer() model.TiKVFullTextIndexInfo {
+	return model.TiKVFullTextIndexInfo{
+		MinTokenSize:   3,
+		MaxTokenSize:   84,
+		EnableStopword: true,
+		NgramTokenSize: 2,
+	}
 }
 
 // WithEnableAutoIncrementInGenerated sets whether enable auto increment in generated column.
@@ -100,6 +132,7 @@ func WithInfoSchema(schema infoschemactx.MetaOnlyInfoSchema) Option {
 
 // Context is used to build meta like `TableInfo`, `IndexInfo`, etc...
 type Context struct {
+	tikvFullTextIndex              bool
 	exprCtx                        exprctx.ExprContext
 	enableAutoIncrementInGenerated bool
 	primaryKeyRequired             bool
@@ -108,6 +141,8 @@ type Context struct {
 	preSplitRegions                uint64
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
+	tikvFullTextAnalyzer           model.TiKVFullTextIndexInfo
+	tikvFullTextAnalyzerErr        error
 }
 
 // NewContext creates a new context for meta-building.
@@ -119,6 +154,7 @@ func NewContext(opts ...Option) *Context {
 		shardRowIDBits:                 variable.DefShardRowIDBits,
 		preSplitRegions:                variable.DefPreSplitRegions,
 		suppressTooLongIndexErr:        false,
+		tikvFullTextAnalyzer:           DefaultTiKVFullTextAnalyzer(),
 	}
 
 	for _, opt := range opts {
@@ -183,6 +219,15 @@ func (ctx *Context) GetClusteredIndexDefMode() variable.ClusteredIndexDefMode {
 	return ctx.clusteredIndexDefMode
 }
 
+// GetTiKVFullTextAnalyzer returns the analyzer settings a FULLTEXT index built
+// in TiKV is created with; see WithTiKVFullTextAnalyzer.
+func (ctx *Context) GetTiKVFullTextAnalyzer() (model.TiKVFullTextIndexInfo, error) {
+	if ctx.tikvFullTextAnalyzerErr != nil {
+		return model.TiKVFullTextIndexInfo{}, ctx.tikvFullTextAnalyzerErr
+	}
+	return ctx.tikvFullTextAnalyzer, nil
+}
+
 // GetShardRowIDBits returns the shard row id bits.
 func (ctx *Context) GetShardRowIDBits() uint64 {
 	return ctx.shardRowIDBits
@@ -203,3 +248,11 @@ func (ctx *Context) SuppressTooLongIndexErr() bool {
 func (ctx *Context) GetInfoSchema() (infoschemactx.MetaOnlyInfoSchema, bool) {
 	return ctx.is, ctx.is != nil
 }
+
+// WithTiKVFullTextIndex selects the experimental physical FULLTEXT format.
+func WithTiKVFullTextIndex(enabled bool) Option {
+	return funcOpt(func(ctx *Context) { ctx.tikvFullTextIndex = enabled })
+}
+
+// TiKVFullTextIndexEnabled reports whether new FULLTEXT definitions are physical.
+func (ctx *Context) TiKVFullTextIndexEnabled() bool { return ctx != nil && ctx.tikvFullTextIndex }

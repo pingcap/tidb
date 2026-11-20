@@ -610,7 +610,8 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
-		if underIndexMerge && x.isFullScan() {
+		// A FULLTEXT scan reads only the postings of its search's terms.
+		if underIndexMerge && x.FullText == nil && x.isFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 		if x.Index != nil && x.Index.HasCondition() && x.NotAlwaysValid {

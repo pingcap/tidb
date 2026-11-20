@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -27,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
@@ -190,6 +193,163 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+// fullTextCheckRowCacheBytes bounds the rows CheckFullTextIndexAndRecord
+// remembers. The entries of the index are in term order, so a row comes back
+// once per term it holds and remembering it saves fetching and tokenizing it
+// again; but remembering every row would hold the whole index in memory.
+const fullTextCheckRowCacheBytes = 64 << 20
+
+// CheckFullTextIndexAndRecord is the index-to-record direction of ADMIN CHECK
+// for a FULLTEXT index built in TiKV: every entry must belong to a row that
+// exists, its key-column values must be the ones the row encodes to, and its
+// term must be one the row's document analyzes to. The record-to-index
+// direction is CheckRecordAndIndex, which for this index checks each row for
+// an entry per term.
+func CheckFullTextIndexAndRecord(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+	idxInfo := idx.Meta()
+	textCol := idxInfo.TiKVFullTextColumn()
+	if textCol == nil {
+		return errors.Errorf("index %s is not a fulltext index built in TiKV", idxInfo.Name.O)
+	}
+	keyColumnCount := len(idxInfo.Columns) - 1
+	cols := t.Cols()
+	rowDecoder, err := makeRowDecoder(t, sessCtx)
+	if err != nil {
+		return err
+	}
+	loc := sessCtx.GetSessionVars().Location()
+	report := func(handle kv.Handle, keyValues [][]byte, term string, row *consistency.RecordData) error {
+		reporter := &consistency.Reporter{
+			HandleEncode:    func(handle kv.Handle) kv.Key { return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle) },
+			IndexEncode:     func(*consistency.RecordData) kv.Key { return nil },
+			Tbl:             t.Meta(),
+			Idx:             idxInfo,
+			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
+			Storage:         sessCtx.GetStore(),
+		}
+		values := make([]types.Datum, 0, keyColumnCount+1)
+		for _, encoded := range keyValues {
+			// The key holds the encoded form; under a collation that is the
+			// sort key, which is still what identifies the entry.
+			_, value, err := codec.DecodeOne(encoded)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			values = append(values, value)
+		}
+		values = append(values, types.NewStringDatum(term))
+		entry := &consistency.RecordData{Handle: handle, Values: values}
+		return reporter.ReportAdminCheckInconsistent(ctx, handle, entry, row)
+	}
+
+	// t is one partition of a partitioned table, whose entries are keyed by
+	// the partition's ID rather than the table's.
+	physicalID := t.Meta().ID
+	if physicalTable, ok := t.(table.PhysicalTable); ok {
+		physicalID = physicalTable.GetPhysicalID()
+	}
+	prefix := tablecodec.EncodeTableIndexPrefix(physicalID, idxInfo.ID)
+	it, err := txn.Iter(prefix, prefix.PrefixNext())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+	// Entries of one row are spread over its terms, so rows are fetched and
+	// tokenized once and remembered while their entries keep appearing, up to
+	// a bound: past it they are forgotten, and fetched again when their next
+	// entry appears. What is remembered is charged to the statement.
+	type rowEntries struct {
+		keyValues []types.Datum
+		terms     map[string]struct{}
+	}
+	rows := make(map[string]rowEntries)
+	cacheLimit := int64(fullTextCheckRowCacheBytes)
+	failpoint.Inject("fullTextCheckRowCacheBytes", func(val failpoint.Value) {
+		cacheLimit = int64(val.(int))
+	})
+	memTracker := sessCtx.GetSessionVars().StmtCtx.MemTracker
+	var cached int64
+	defer func() { memTracker.Consume(-cached) }()
+	for it.Valid() {
+		keyValues, term, err := tables.DecodeTiKVFullTextIndexKey(idxInfo, it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		handle, err := tablecodec.DecodeIndexHandle(it.Key(), it.Value(), len(idxInfo.Columns))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := it.Next(); err != nil {
+			return errors.Trace(err)
+		}
+		handleKey := string(handle.Encoded())
+		entries, seen := rows[handleKey]
+		if !seen {
+			rowValue, err := kv.GetValue(ctx, txn, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+			if kv.ErrNotExist.Equal(err) {
+				return report(handle, keyValues, string(term), nil)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, rowValue, loc, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// A row written before a column was added does not store it; it
+			// holds the column's original default, as the index was built.
+			columnValue := func(col *table.Column) (types.Datum, error) {
+				if value, ok := rowMap[col.ID]; ok {
+					return value, nil
+				}
+				return table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
+			}
+			entries.keyValues = make([]types.Datum, 0, keyColumnCount)
+			for _, idxCol := range idxInfo.Columns[:keyColumnCount] {
+				value, err := columnValue(cols[idxCol.Offset])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				entries.keyValues = append(entries.keyValues, value)
+			}
+			doc, err := columnValue(cols[textCol.Offset])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if entries.terms, err = tables.FullTextIndexTerms(idx, doc); err != nil {
+				return errors.Trace(err)
+			}
+			// stringOverhead stands for the string header and map slot of
+			// each key held.
+			const stringOverhead = 32
+			size := int64(len(handleKey) + stringOverhead)
+			for i := range entries.keyValues {
+				size += entries.keyValues[i].MemUsage()
+			}
+			for rowTerm := range entries.terms {
+				size += int64(len(rowTerm) + stringOverhead)
+			}
+			if cached > 0 && cached+size > cacheLimit {
+				clear(rows)
+				memTracker.Consume(-cached)
+				cached = 0
+			}
+			rows[handleKey] = entries
+			cached += size
+			memTracker.Consume(size)
+		}
+		mismatch, err := tables.FullTextIndexKeyColumnMismatch(idx, loc, keyValues, entries.keyValues)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if _, ok := entries.terms[string(term)]; mismatch >= 0 || !ok {
+			row := &consistency.RecordData{Handle: handle, Values: entries.keyValues}
+			return report(handle, keyValues, string(term), row)
+		}
+	}
 	return nil
 }
 

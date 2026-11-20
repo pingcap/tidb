@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -90,7 +91,11 @@ const (
 )
 
 var (
-	jobV2FirstVer        = *semver.New("8.4.0")
+	jobV2FirstVer = *semver.New("8.4.0")
+	// tikvFullTextFirstVer is the first release whose nodes maintain a
+	// FULLTEXT index built in TiKV; older nodes would treat it as an ordinary
+	// index over the column.
+	tikvFullTextFirstVer = *semver.New("9.0.0")
 	detectJobVerInterval = 10 * time.Second
 )
 
@@ -961,6 +966,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			return
 		}
 		model.SetJobVerInUse(model.JobVersion2)
+		model.SetTiKVFullTextSupported(true)
 		return
 	}
 
@@ -969,7 +975,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
 
-	if model.GetJobVerInUse() == model.JobVersion2 {
+	if model.GetJobVerInUse() == model.JobVersion2 && model.GetTiKVFullTextSupported() {
 		return
 	}
 
@@ -989,8 +995,8 @@ func (d *ddl) detectAndUpdateJobVersion() {
 				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 {
-				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
+			if model.GetJobVerInUse() == model.JobVersion2 && model.GetTiKVFullTextSupported() {
+				logutil.DDLLogger().Info("job version in use is v2, global index v1 and fulltext index in TiKV supported now, stop detecting")
 				return
 			}
 		}
@@ -1005,6 +1011,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		return err
 	}
 	allSupportV2 := true
+	allSupportTiKVFullText := true
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
@@ -1012,6 +1019,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		idx := strings.Index(tidbVer, mysql.VersionSeparator)
 		if idx < 0 {
 			allSupportV2 = false
+			allSupportTiKVFullText = false
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -1022,6 +1030,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
+			allSupportTiKVFullText = false
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
@@ -1031,6 +1040,11 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		ver.PreRelease = ""
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
+		}
+		if ver.LessThan(tikvFullTextFirstVer) && !sameTiKVFullTextBuild(info.GitHash) {
+			allSupportTiKVFullText = false
+		}
+		if !allSupportV2 && !allSupportTiKVFullText {
 			break
 		}
 	}
@@ -1043,6 +1057,12 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			zap.Stringer("old", model.GetJobVerInUse()),
 			zap.Stringer("new", targetVer))
 		model.SetJobVerInUse(targetVer)
+	}
+	if model.GetTiKVFullTextSupported() != allSupportTiKVFullText {
+		logutil.DDLLogger().Info("change fulltext index in TiKV support",
+			zap.Bool("old", model.GetTiKVFullTextSupported()),
+			zap.Bool("new", allSupportTiKVFullText))
+		model.SetTiKVFullTextSupported(allSupportTiKVFullText)
 	}
 	return nil
 }
@@ -1674,4 +1694,11 @@ func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]
 		return err
 	}
 	return IterHistoryDDLJobs(txn, finishFn)
+}
+
+// sameTiKVFullTextBuild permits this feature branch before its upstream release
+// threshold only when every node advertises the exact running build. A generic
+// 8.5 patch version cannot prove that another node maintains positional entries.
+func sameTiKVFullTextBuild(gitHash string) bool {
+	return len(versioninfo.TiDBGitHash) == 40 && gitHash == versioninfo.TiDBGitHash
 }

@@ -960,6 +960,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
+		if constraint.Option != nil && len(constraint.Option.FullTextKeyColumns) > 0 && constraint.Tp != ast.ConstraintFulltext {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV")
+			return
+		}
+
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex, ast.ConstraintForeignKey:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -1180,6 +1185,11 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 }
 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
+	if stmt.IndexOption != nil && len(stmt.IndexOption.FullTextKeyColumns) > 0 && stmt.KeyType != ast.IndexKeyTypeFullText {
+		p.err = dbterror.ErrUnsupportedIndexType.FastGen("KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV")
+		return
+	}
+
 	tName := stmt.Table.Name.String()
 	if util.IsInCorrectIdentifierName(tName) {
 		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
@@ -1307,6 +1317,10 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
+			if spec.Constraint.Option != nil && len(spec.Constraint.Option.FullTextKeyColumns) > 0 && spec.Constraint.Tp != ast.ConstraintFulltext {
+				p.err = dbterror.ErrUnsupportedIndexType.FastGen("KEY_COLUMNS can only be used on a FULLTEXT index stored in TiKV")
+				return
+			}
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
