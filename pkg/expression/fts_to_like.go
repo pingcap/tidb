@@ -18,7 +18,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -352,13 +354,15 @@ func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expr
 // reuse its TopN/histogram-based estimation paths instead of falling back
 // to a flat default that ignores column statistics.
 //
-// Restricted to single-column MATCH: GetSelectivityByFilter only estimates
-// expressions over a single column, so a multi-column substituted ILIKE would
-// be declined by the stats engine and fall through to the same str-match
-// default that the un-substituted FTS expression already receives. Returning
-// an error for the multi-column case lets the selectivity caller's existing
-// err-check fall through cleanly, without producing a substitute that would
-// never improve the estimate.
+// Non-NULL string proxies are restricted to single-column MATCH:
+// GetSelectivityByFilter only estimates expressions over a single column, so a
+// multi-column substituted ILIKE would be declined by the stats engine and fall
+// through to the same str-match default that the un-substituted FTS expression
+// already receives. Returning an error for the multi-column case lets the
+// selectivity caller's existing err-check fall through cleanly, without
+// producing a substitute that would never improve the estimate. A NULL search
+// is returned before that restriction because it is column-independent and
+// preserves SQL three-valued logic for every MATCH arity.
 func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction) (Expression, error) {
 	if fts == nil || fts.FuncName.L != ast.FTSMysqlMatchAgainst {
 		return nil, errors.Errorf("expected %s, got %v", ast.FTSMysqlMatchAgainst, fts)
@@ -366,9 +370,6 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	args := fts.GetArgs()
 	if len(args) < 2 {
 		return nil, errors.Errorf("%s expects at least 2 args, got %d", ast.FTSMysqlMatchAgainst, len(args))
-	}
-	if len(args) > 2 {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
 	againstConst, ok := args[0].(*Constant)
 	if !ok {
@@ -386,12 +387,33 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, nil
 	}
+	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
+	if local && localInfo.MatchNothing {
+		// The query provably matches nothing, so the exact selectivity is 0
+		// for every arity. Report that directly instead of approximating.
+		return ftsZeroIntConst(), nil
+	}
+	if len(args) > 2 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
+	}
 	if againstConst.Value.Kind() != types.KindString {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search constant")
 	}
 	sig, ok := fts.Function.(*builtinFtsMysqlMatchAgainstSig)
 	if !ok {
 		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, fts.Function)
+	}
+	if local {
+		// Estimate the locally-evaluated predicate from a single analyzed
+		// token rather than re-deriving terms from the raw search string: the
+		// analyzer may have dropped stop words or over-length tokens, so the
+		// raw string can name terms the predicate never actually tests.
+		if localInfo.SelectivityTerm == "" {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs(
+				"local MATCH...AGAINST query has no analyzer-safe string selectivity proxy",
+			)
+		}
+		return buildFTSILikePredicate(ctx, args[1], localInfo.SelectivityTerm)
 	}
 	return BuildFTSToILikeExpression(ctx, args[1:], againstConst.Value.GetString(), sig.modifier)
 }
@@ -435,4 +457,123 @@ func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (E
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
 	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+}
+
+// BuildFTSLocalMatchPreFilters builds cheap substring predicates entailed by a
+// locally evaluated MATCH ... AGAINST, for the column it matches.
+//
+// Every token the analyzer requires of a matching document appears verbatim in
+// that document's text, so `LOWER(col) LIKE '%token%'` is implied by the MATCH.
+// Adding the implication as a conjunct cannot change which rows qualify, but it
+// can be pushed to the storage layer, where it discards most non-matching rows
+// before they are shipped to TiDB for the exact check.
+//
+// LOWER is applied to the column rather than using ILIKE because ILIKE is not
+// among the functions TiKV can evaluate, while LOWER and LIKE both are. The
+// analyzer already lowercases its tokens, so comparing against the lowered
+// column reproduces the case-insensitivity MySQL full-text search has.
+//
+// This narrows rather than decides: a phrase contributes its tokens but not
+// their adjacency, and a prefix contributes its prefix but not the word
+// boundary. The MATCH must remain in the plan.
+func BuildFTSLocalMatchPreFilters(
+	ctx BuildContext,
+	column Expression,
+	query *fulltext.Query,
+) ([]Expression, error) {
+	terms, ok := query.FilterTerms(true)
+	if !ok {
+		return nil, nil
+	}
+	// The pre-filter lowercases with SQL LOWER, which applies the column
+	// encoding's case table, while the analyzer lowercases with strings.ToLower.
+	// Where the two disagree the pushed predicate rejects a document the MATCH
+	// accepts, and the row is lost before TiDB ever sees it. Only emit the
+	// pre-filter for encodings whose ToLower is the Unicode mapping the
+	// analyzer uses.
+	//
+	// Binary is excluded by the same rule for a starker reason: LOWER is a
+	// no-op there, so mixed-case content never matches a lowercased token.
+	// GB18030 is excluded because its case table leaves characters such as
+	// U+1C90 unchanged where strings.ToLower maps them.
+	colTp := column.GetType(ctx.GetEvalCtx())
+	if !ftsPreFilterSafeCharset(colTp.GetCharset()) {
+		return nil, nil
+	}
+	lowered, err := NewFunction(ctx, ast.Lower, colTp.Clone(), column)
+	if err != nil {
+		return nil, err
+	}
+	if len(terms.Required) > 0 {
+		filters := make([]Expression, 0, len(terms.Required))
+		for _, token := range terms.Required {
+			like, err := buildFTSLowerLikePredicate(ctx, lowered, token)
+			if err != nil {
+				return nil, err
+			}
+			filters = append(filters, like)
+		}
+		return filters, nil
+	}
+	if len(terms.Optional) == 0 {
+		return nil, nil
+	}
+	// A single disjunction: the document need only contain one of these.
+	var disjunction Expression
+	for _, token := range terms.Optional {
+		like, err := buildFTSLowerLikePredicate(ctx, lowered, token)
+		if err != nil {
+			return nil, err
+		}
+		if disjunction == nil {
+			disjunction = like
+			continue
+		}
+		if disjunction, err = NewFunction(ctx, ast.LogicOr,
+			types.NewFieldType(mysql.TypeTiny), disjunction, like); err != nil {
+			return nil, err
+		}
+	}
+	return []Expression{disjunction}, nil
+}
+
+// buildFTSLowerLikePredicate builds `lowered LIKE '%token%'`, wrapped so a NULL
+// column reads as "does not contain" rather than making the conjunct NULL.
+func buildFTSLowerLikePredicate(ctx BuildContext, lowered Expression, token string) (Expression, error) {
+	pattern := "%" + escapeFTSLikePattern(token) + "%"
+	patternConst := &Constant{
+		Value:   types.NewStringDatum(pattern),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}
+	escapeConst := &Constant{
+		Value:   types.NewIntDatum(92),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	like, err := NewFunction(ctx, ast.Like, types.NewFieldType(mysql.TypeTiny),
+		lowered, patternConst, escapeConst)
+	if err != nil {
+		return nil, err
+	}
+	zeroConst := &Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), like, zeroConst)
+}
+
+// ftsPreFilterSafeCharset reports whether SQL LOWER on this charset lowercases
+// the way the fulltext analyzer does, which is what makes a pushed
+// LOWER(col) LIKE predicate a sound over-approximation of the MATCH.
+//
+// Deliberately an allowlist. A charset whose case table differs anywhere makes
+// the pre-filter drop matching rows, and the difference cannot be detected from
+// the search terms alone - it depends on the document. Narrowing is an
+// optimisation, so an unlisted charset simply does not get one.
+func ftsPreFilterSafeCharset(cs string) bool {
+	switch cs {
+	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetASCII:
+		return true
+	default:
+		return false
+	}
 }
