@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -56,6 +57,64 @@ var groupKeyPool = sync.Pool{
 		s := make([][]byte, 0, defaultGroupKeyCap)
 		return &s
 	},
+}
+
+const (
+	groupKeyArenaBlockSize       = 16 * 1024
+	partialResultsArenaBlockSize = 1024
+)
+
+// groupKeyArena copies group keys into large shared blocks so that a new group
+// costs no separate string allocation. Copied bytes are never modified after
+// being handed out, so the returned strings stay immutable. A block stays
+// alive as long as any string pointing into it is reachable.
+type groupKeyArena struct {
+	block []byte
+}
+
+func (a *groupKeyArena) copyString(key []byte) string {
+	if len(key) == 0 {
+		return ""
+	}
+	// Large keys would waste most of a block, so allocate them separately.
+	if len(key) > groupKeyArenaBlockSize/4 {
+		return string(key)
+	}
+	if len(key) > cap(a.block)-len(a.block) {
+		a.block = make([]byte, 0, groupKeyArenaBlockSize)
+	}
+	start := len(a.block)
+	a.block = append(a.block, key...)
+	return string(hack.String(a.block[start:len(a.block):len(a.block)]))
+}
+
+// reset drops the current block so that it can be garbage collected once no
+// key references it any more.
+func (a *groupKeyArena) reset() {
+	a.block = nil
+}
+
+// partialResultsArena carves the per-group []aggfuncs.PartialResult slices out
+// of large shared blocks so that a new group costs no separate slice allocation.
+// The returned slices have their capacity clipped, so appending to one can
+// never overwrite its neighbors.
+type partialResultsArena struct {
+	block []aggfuncs.PartialResult
+}
+
+func (a *partialResultsArena) alloc(n int) []aggfuncs.PartialResult {
+	if n > cap(a.block)-len(a.block) {
+		a.block = make([]aggfuncs.PartialResult, 0, max(partialResultsArenaBlockSize, n))
+	}
+	start := len(a.block)
+	a.block = a.block[:start+n]
+	return a.block[start : start+n : start+n]
+}
+
+// reset drops the current block so that it can be garbage collected once no
+// group references it any more.
+func (a *partialResultsArena) reset() {
+	a.block = nil
 }
 
 func getBuffer() (*[][]aggfuncs.PartialResult, *[][]byte) {
