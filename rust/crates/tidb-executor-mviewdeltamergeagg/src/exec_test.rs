@@ -825,3 +825,215 @@ fn test_table_result_writer_column_offsets() {
         }
     }
 }
+
+use crate::recompute::{
+    MinMaxBatchBuildRequest, MinMaxBatchExecBuilder, MinMaxRecomputeExec, MinMaxRecomputeSingleRowExec,
+    MinMaxRecomputeSingleRowWorker, MinMaxRecomputeSpec, MinMaxRecomputeStrategy,
+};
+
+/// An executor over fixed rows of int64 cells (`None` = NULL), one batch
+/// per `Next` call after `Open`; Go's mock recompute executors' shape.
+struct RowsExec {
+    meta: ExecutorMeta,
+    rows: Vec<Vec<Option<i64>>>,
+    idx: usize,
+}
+
+fn rows_exec(col_cnt: usize, rows: Vec<Vec<Option<i64>>>) -> RowsExec {
+    let cols = (0..col_cnt).map(|i| tidb_expr::column::Column::new(i as i64 + 1, ft(FieldTypeCode::LongLong))).collect();
+    RowsExec { meta: ExecutorMeta::new(Schema::new(cols), 0, 32, 1024), rows, idx: 0 }
+}
+
+impl Executor for RowsExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.idx = 0;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        while self.idx < self.rows.len() && req.num_rows() < req.capacity() {
+            for (col, cell) in self.rows[self.idx].iter().enumerate() {
+                match cell {
+                    Some(v) => req.append_int64(col, *v),
+                    None => req.append_null(col),
+                }
+            }
+            self.idx += 1;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+/// Go `mockSingleRowRecomputeExec` (`multi`: `mockSingleRowRecomputeExecMulti`):
+/// on each `Open`, the rows for the bound key.
+struct MockSingleRowRecomputeExec {
+    inner: RowsExec,
+    key: Arc<std::sync::RwLock<tidb_datatype::Datum>>,
+    values: std::collections::HashMap<i64, Vec<i64>>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Executor for MockSingleRowRecomputeExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        let key = match &*self.key.read().unwrap() {
+            tidb_datatype::Datum::Int(v) => *v,
+            other => panic!("unexpected key {other:?}"),
+        };
+        self.inner.rows = match self.values.get(&key) {
+            Some(values) => values.iter().map(|v| vec![Some(*v)]).collect(),
+            // Go's single mock answers NULL for an unknown key.
+            None => vec![vec![None]],
+        };
+        self.inner.open()
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        if self.inner.idx == 0 {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.inner.next(req)
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.inner.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.inner.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.inner.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.inner.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.inner.new_chunk()
+    }
+}
+
+/// Go `mockBatchRecomputeBuilder`: rows `(key, value)` for the lookup keys
+/// (NULL values for `null_keys`), `extra_rows` after them, all reversed
+/// when `reverse_output`.
+#[derive(Clone, Default)]
+struct MockBatchRecomputeBuilder {
+    values: std::collections::HashMap<i64, i64>,
+    null_keys: std::collections::HashSet<i64>,
+    reverse_output: bool,
+    extra_rows: Vec<[i64; 2]>,
+    /// Go `retTp`'s column count beyond the key and value (default 2).
+    col_cnt: usize,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl MinMaxBatchExecBuilder for MockBatchRecomputeBuilder {
+    fn build(&self, req: &MinMaxBatchBuildRequest) -> Result<Box<dyn Executor>, ExecError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut rows: Vec<Vec<Option<i64>>> = req
+            .lookup_keys
+            .iter()
+            .map(|key| {
+                let tidb_datatype::Datum::Int(k) = key.keys[0] else { panic!("int keys") };
+                let value = if self.null_keys.contains(&k) { None } else { Some(self.values.get(&k).copied().unwrap_or(0)) };
+                vec![Some(k), value]
+            })
+            .collect();
+        rows.extend(self.extra_rows.iter().map(|[k, v]| vec![Some(*k), Some(*v)]));
+        if self.reverse_output {
+            rows.reverse();
+        }
+        Ok(Box::new(rows_exec(self.col_cnt.max(2), rows)))
+    }
+}
+
+/// One single-row worker slot over `values` per key.
+fn single_row_worker(
+    values: &[(i64, Vec<i64>)],
+    calls: &Arc<std::sync::atomic::AtomicUsize>,
+) -> MinMaxRecomputeSingleRowWorker {
+    let key_col = tidb_expr::column::CorrelatedColumn::new(tidb_expr::column::Column::new(100, ft(FieldTypeCode::LongLong)));
+    let exec = MockSingleRowRecomputeExec {
+        inner: rows_exec(1, Vec::new()),
+        key: key_col.data.clone().expect("bound"),
+        values: values.iter().cloned().collect(),
+        calls: Arc::clone(calls),
+    };
+    MinMaxRecomputeSingleRowWorker { key_cols: vec![key_col], exec: Mutex::new(Box::new(exec)) }
+}
+
+fn not_null_int_arg(index: i64) -> Expression {
+    col_arg(index, ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::NOT_NULL))
+}
+
+#[test]
+fn test_reject_min_max_delta_dependency_from_computed() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    for dep_idx in 0..4 {
+        let mut deps = vec![1, 2, 3, 4];
+        // Force the dependency to come from the computed output col.
+        deps[dep_idx] = 6;
+        let mut exec = Exec::new(new_mock_source(&vec![ft_int.clone(); 8], Vec::new()));
+        exec.agg_mappings = vec![
+            mapping(count_star(), &[6], &[0]),
+            Mapping {
+                min_max_recompute: Some(MinMaxRecomputeSpec {
+                    strategy: MinMaxRecomputeStrategy::Batch,
+                    batch_result_col_idxes: vec![1],
+                    ..MinMaxRecomputeSpec::default()
+                }),
+                ..mapping(agg_desc(names::MIN, vec![not_null_int_arg(1)]), &[7], &deps)
+            },
+        ];
+        exec.delta_agg_col_count = 6;
+        exec.min_max_recompute = Some(MinMaxRecomputeExec {
+            key_input_col_ids: vec![5],
+            key_result_col_idxes: vec![0],
+            batch_builder: Some(Box::new(MockBatchRecomputeBuilder::default())),
+        });
+        let got = open_err(exec);
+        assert!(got.contains("must come from delta aggregation input"), "dep {dep_idx}: {got}");
+    }
+}
+
+#[test]
+fn test_reject_min_max_for_stage1() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(); 4],
+        vec![mapping(count_star(), &[1], &[0]), mapping(agg_desc(names::MIN, vec![col_arg(0, ft_int)]), &[2, 3], &[0])],
+        1,
+    );
+    assert!(got.contains("requires MinMaxRecompute metadata"), "{got}");
+}
