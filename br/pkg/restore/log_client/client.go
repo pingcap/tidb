@@ -1666,13 +1666,11 @@ func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Contex
 				continue
 			}
 			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
-				// Best effort: a single table failing to rebase must not abort the
-				// whole restore, so log and continue.
-				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
-					zap.Int64("schemaID", dbReplace.DbID),
-					zap.Int64("tableID", tableReplace.TableID),
-					zap.String("tableName", tableReplace.Name),
-					zap.Error(err))
+				// A stale allocator can reuse restored IDs. Do not report restore
+				// success unless every required allocator repair has succeeded.
+				return errors.Annotatef(err,
+					"failed to rebase auto-increment allocator after PiTR log replay (schema ID %d, table ID %d, table %q)",
+					dbReplace.DbID, tableReplace.TableID, tableReplace.Name)
 			}
 		}
 	}
