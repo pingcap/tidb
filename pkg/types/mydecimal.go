@@ -2088,13 +2088,24 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			wordsFrac2 = 0
 		} else {
 			tmp2 -= wordsFracTo
-			tmp1 = tmp2 >> 1
-			if wordsFrac1 <= wordsFrac2 {
-				wordsFrac1 -= tmp1
-				wordsFrac2 -= tmp2 - tmp1
-			} else {
-				wordsFrac2 -= tmp1
-				wordsFrac1 -= tmp2 - tmp1
+			// Discard whole trailing zero words before significant fractional words.
+			for tmp2 > 0 && wordsFrac1 > 0 && from1.wordBuf[idx1+wordsFrac1-1] == 0 {
+				wordsFrac1--
+				tmp2--
+			}
+			for tmp2 > 0 && wordsFrac2 > 0 && from2.wordBuf[idx2+wordsFrac2-1] == 0 {
+				wordsFrac2--
+				tmp2--
+			}
+			if tmp2 > 0 {
+				tmp1 = tmp2 >> 1
+				if wordsFrac1 <= wordsFrac2 {
+					wordsFrac1 -= tmp1
+					wordsFrac2 -= tmp2 - tmp1
+				} else {
+					wordsFrac2 -= tmp1
+					wordsFrac1 -= tmp2 - tmp1
+				}
 			}
 		}
 	}
