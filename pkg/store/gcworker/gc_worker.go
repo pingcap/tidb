@@ -556,6 +556,9 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
+	if config.GetGlobalConfig().DisableGC {
+		return false, nil
+	}
 	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
 }
 

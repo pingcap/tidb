@@ -49,7 +49,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/diagnosticmode",
