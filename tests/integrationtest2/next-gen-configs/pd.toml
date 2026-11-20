@@ -1,0 +1,3 @@
+# list all the keyspace names here, each keyspace represents a tenant.
+[keyspace]
+pre-alloc = ["keyspace1", "keyspace2"]
