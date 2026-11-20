@@ -818,6 +818,32 @@
         "Warn": null
       },
       {
+        "SQL": "explain format = 'plan_tree' with tt as (select * from t1 where a=2 limit 100) select /*+ qb_name(my_select, tt@sel_1), ignore_index(t1@my_select, idx_a) */ * from tt;",
+        "Plan": [
+          "IndexLookUp root  limit embedded(offset:0, count:100)",
+          "├─Limit(Build) cop[tikv]  offset:0, count:100",
+          "│ └─IndexRangeScan cop[tikv] table:t1, index:idx_a(a) range:[2,2], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Hint ignore_index(`t1`@`my_select` `idx_a`) is ignored due to unknown query block name",
+          "[planner:1815]The qb_name hint my_select is unused, please check whether the table list in the qb_name hint my_select is correct"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' with tt as (select * from t1 where a=2 limit 100) select /*+ qb_name(my_select_i_am_unused, tt@sel_1), ignore_index(t1@my_select, idx_a) */ * from tt;",
+        "Plan": [
+          "IndexLookUp root  limit embedded(offset:0, count:100)",
+          "├─Limit(Build) cop[tikv]  offset:0, count:100",
+          "│ └─IndexRangeScan cop[tikv] table:t1, index:idx_a(a) range:[2,2], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Hint ignore_index(`t1`@`my_select` `idx_a`) is ignored due to unknown query block name",
+          "[planner:1815]The qb_name hint my_select_i_am_unused is unused, please check whether the table list in the qb_name hint my_select_i_am_unused is correct"
+        ]
+      },
+      {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
           "HashAgg root  funcs:sum(Column)->Column",
