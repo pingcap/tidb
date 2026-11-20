@@ -1421,7 +1421,8 @@ PD keyspace lookups, SQL queries, waits for another caller to open or close a
 runtime, and storage-open retry delays honor request cancellation. They share
 one two-minute timeout across the batch, subject to any earlier request deadline.
 Individual runtime and session initialization operations and teardown can take longer.
-After each check, including a failed check, the handler returns or destroys
-the borrowed session and releases its runtime handle. If it was the last holder,
-the handler closes the runtime immediately. Other holders can continue using
-the shared runtime and release it under their usual policy.
+The handler returns the borrowed session to the pool on success and discards it
+if a query fails, including during result-set cleanup. It then releases its
+runtime handle. If it was the last holder, the handler closes the runtime
+immediately. Other holders can continue using the shared runtime and release it
+under their usual policy.

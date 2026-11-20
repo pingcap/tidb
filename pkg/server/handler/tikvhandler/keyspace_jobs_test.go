@@ -310,13 +310,30 @@ func TestKeyspaceActiveJobsCounts(t *testing.T) {
 
 type jobCountFailingSession struct {
 	sessionapi.Session
-	err error
+	err               error
+	failOnImportClose bool
 }
 
 func (s *jobCountFailingSession) GetSQLExecutor() sqlexec.SQLExecutor { return s }
 
-func (s *jobCountFailingSession) ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error) {
-	return nil, s.err
+func (s *jobCountFailingSession) ExecuteInternal(ctx context.Context, query string, args ...any) (sqlexec.RecordSet, error) {
+	if !s.failOnImportClose {
+		return nil, s.err
+	}
+	rs, err := s.Session.GetSQLExecutor().ExecuteInternal(ctx, query, args...)
+	if err == nil && strings.Contains(query, "mysql.tidb_import_jobs") {
+		return jobCountFailingRecordSet{RecordSet: rs, err: s.err}, nil
+	}
+	return rs, err
+}
+
+type jobCountFailingRecordSet struct {
+	sqlexec.RecordSet
+	err error
+}
+
+func (rs jobCountFailingRecordSet) Close() error {
+	return errors.Join(rs.RecordSet.Close(), rs.err)
 }
 
 type jobCountTestPool struct {
@@ -357,7 +374,8 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 		require.ErrorContains(t, err, "ENTRY_NOT_FOUND")
 	})
 	queryErr := errors.New("job count query failed")
-	for _, tc := range []string{"success", "acquire error", "session error", "query error", "cancellation"} {
+	closeErr := errors.New("import job count result failed to close")
+	for _, tc := range []string{"success", "acquire error", "session error", "query error", "import result close error", "cancellation"} {
 		t.Run(tc, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -381,6 +399,9 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 			if tc == "query error" {
 				pool.resource = &jobCountFailingSession{Session: tk.Session(), err: queryErr}
 			}
+			if tc == "import result close error" {
+				pool.resource = &jobCountFailingSession{Session: tk.Session(), err: closeErr, failOnImportClose: true}
+			}
 			_, err := h.countKeyspace(ctx, "user_ks")
 			switch tc {
 			case "success":
@@ -397,6 +418,9 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 				require.Equal(t, []string{"release(true)"}, events)
 			case "query error":
 				require.ErrorIs(t, err, queryErr)
+				require.Equal(t, []string{"destroy", "release(true)"}, events)
+			case "import result close error":
+				require.ErrorIs(t, err, closeErr)
 				require.Equal(t, []string{"destroy", "release(true)"}, events)
 			}
 		})

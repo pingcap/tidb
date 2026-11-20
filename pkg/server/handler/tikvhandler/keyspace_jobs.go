@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	ddlsession "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,7 +38,7 @@ import (
 
 const (
 	maxActiveJobsKeyspacesPerRequest = 1000
-	maxActiveJobsRequestBytes        = 256 << 10
+	maxActiveJobsRequestBytes        = 256 * units.KiB
 	activeJobsBatchTimeout           = 2 * time.Minute
 )
 
@@ -132,7 +132,7 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 	}{Keyspaces: results})
 }
 
-func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS string) (_ keyspaceJobCounts, err error) {
+func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS string) (_ keyspaceJobCounts, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return keyspaceJobCounts{}, err
 	}
@@ -165,9 +165,7 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 		return keyspaceJobCounts{}, err
 	}
 	defer func() {
-		// A failed or cancelled SQL execution must not return a session with
-		// unfinished transaction state to another holder of the runtime.
-		if err != nil {
+		if resultErr != nil {
 			pool.Destroy(resource)
 		} else {
 			pool.Put(resource)
@@ -178,29 +176,30 @@ func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS 
 
 func countActiveKeyspaceJobs(ctx context.Context, se sessionctx.Context) (keyspaceJobCounts, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	ddlJobs, err := countActiveDDLJobs(ctx, se)
+	ddlJobs, err := queryJobCount(ctx, se, "select count(1) from mysql.tidb_ddl_job")
 	if err != nil {
 		return keyspaceJobCounts{}, err
 	}
-	rows, err := ddlsession.NewSession(se).Execute(ctx,
-		"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')",
-		"count_active_import_jobs")
+	importJobs, err := queryJobCount(ctx, se,
+		"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')")
 	if err != nil {
 		return keyspaceJobCounts{}, err
 	}
-	return keyspaceJobCounts{DDLJobs: ddlJobs, ImportJobs: rows[0].GetInt64(0)}, nil
+	return keyspaceJobCounts{DDLJobs: ddlJobs, ImportJobs: importJobs}, nil
 }
 
-func countActiveDDLJobs(ctx context.Context, se sessionctx.Context) (count int64, err error) {
-	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select count(1) from mysql.tidb_ddl_job")
+func queryJobCount(ctx context.Context, se sessionctx.Context, query string) (_ int64, resultErr error) {
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, query)
+	if rs != nil {
+		defer func() {
+			if closeErr := rs.Close(); resultErr == nil {
+				resultErr = closeErr
+			}
+		}()
+	}
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := rs.Close(); err == nil {
-			err = closeErr
-		}
-	}()
 
 	chk := rs.NewChunk(nil)
 	if err := rs.Next(ctx, chk); err != nil {
