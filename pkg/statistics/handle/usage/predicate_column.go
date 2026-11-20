@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -55,7 +56,13 @@ func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap m
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return GetPredicateColumns(u.statsHandle.SPool(), tableID)
+}
+
+// GetPredicateColumns is statsUsageImpl.GetPredicateColumns with a session of
+// pool. It also serves handle.AnalyzeHandle, which has no statsUsageImpl.
+func GetPredicateColumns(pool syssession.Pool, tableID int64) (columnIDs []int64, err error) {
+	err = utilstats.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tableID)
 		return err
 	}, utilstats.FlagWrapTxn)

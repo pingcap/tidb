@@ -18,10 +18,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -37,7 +35,7 @@ type globalStatsKey struct {
 // The meaning of value in map is some additional information needed to build global-level stats.
 type globalStatsMap map[globalStatsKey]statstypes.GlobalStatsInfo
 
-func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsMap globalStatsMap) error {
+func (e *AnalyzeExec) handleGlobalStats(statsHandle statstypes.AnalyzeStatsHandle, globalStatsMap globalStatsMap) error {
 	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
@@ -83,8 +81,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {
-	dom := domain.GetDomain(e.Ctx())
-	is := dom.InfoSchema()
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(context.Background(), key.tableID)
 	if !ok {
 		return nil

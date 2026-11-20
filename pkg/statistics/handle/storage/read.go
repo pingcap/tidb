@@ -748,7 +748,7 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.ReadWriterHandle) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -800,7 +800,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, fullLoad bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.ReadWriterHandle, col model.TableItemID, fullLoad bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -935,7 +935,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
-func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.ReadWriterHandle, idx model.TableItemID) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)

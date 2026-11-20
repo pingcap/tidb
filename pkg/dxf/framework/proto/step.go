@@ -57,6 +57,8 @@ func Step2Str(t TaskType, s Step) string {
 		return importIntoStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
+	case AutoAnalyze:
+		return autoAnalyzeStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
 }
@@ -94,6 +96,19 @@ func exampleStep2Str(s Step) string {
 	default:
 		return unknownStepStr(s)
 	}
+}
+
+// Steps of the auto-analyze task type: StepInit -> AutoAnalyzeStepRun -> StepDone.
+const (
+	// AutoAnalyzeStepRun runs the analyze statement in a single subtask.
+	AutoAnalyzeStepRun Step = 1
+)
+
+func autoAnalyzeStep2Str(s Step) string {
+	if s == AutoAnalyzeStepRun {
+		return "run"
+	}
+	return unknownStepStr(s)
 }
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.

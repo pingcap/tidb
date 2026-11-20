@@ -66,8 +66,10 @@ func (p *PDHelper) Stop() {
 	p.wg.Wait()
 }
 
-func approximateTableCountKey(tid int64, dbName, tableName, partitionName string) string {
-	return strings.Join([]string{strconv.FormatInt(tid, 10), dbName, tableName, partitionName}, "_")
+// approximateTableCountKey includes the keyspace: a TiDB may run statements of
+// other keyspaces, and the tables of two keyspaces can share IDs and names.
+func approximateTableCountKey(keyspace string, tid int64, dbName, tableName, partitionName string) string {
+	return strings.Join([]string{keyspace, strconv.FormatInt(tid, 10), dbName, tableName, partitionName}, "_")
 }
 
 // GetApproximateTableCountFromStorage gets the approximate count of the table.
@@ -75,7 +77,7 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(
 	ctx context.Context, sctx sessionctx.Context,
 	tid int64, dbName, tableName, partitionName string,
 ) (float64, bool) {
-	key := approximateTableCountKey(tid, dbName, tableName, partitionName)
+	key := approximateTableCountKey(sctx.GetStore().GetKeyspace(), tid, dbName, tableName, partitionName)
 	if item := p.cacheForApproximateTableCountFromStorage.Get(key); item != nil {
 		return item.Value(), true
 	}

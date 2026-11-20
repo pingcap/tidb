@@ -15,8 +15,10 @@
 package exec
 
 import (
+	"context"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -54,6 +56,32 @@ func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql 
 	return sqlexec.ExecOptionAnalyzeVer2
 }
 
+// AnalyzedTable is the table that an auto-analyze statement analyzes. A
+// statement for some partitions of the table names them in PartitionNames.
+type AnalyzedTable struct {
+	PartitionNames []string
+	ID             int64
+}
+
+// Dispatcher runs an auto-analyze statement on some TiDB node and waits for the result. sctx is an
+// idle session of the statement's keyspace. On false, sctx is unchanged and the caller runs it.
+type Dispatcher func(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sysproctrack.Tracker,
+	needVersionRewriteWarn bool,
+	table AnalyzedTable,
+	sql string,
+	params ...any,
+) (taken bool, err error)
+
+var dispatcher atomic.Pointer[Dispatcher]
+
+// SetDispatcher sets the dispatcher used when tidb_enable_dist_auto_analyze is ON.
+func SetDispatcher(d Dispatcher) {
+	dispatcher.Store(&d)
+}
+
 // AutoAnalyze executes the auto analyze task.
 func AutoAnalyze(
 	sctx sessionctx.Context,
@@ -61,11 +89,21 @@ func AutoAnalyze(
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	needVersionRewriteWarn bool,
+	table AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	var (
+		taken bool
+		err   error
+	)
+	if d := dispatcher.Load(); d != nil && vardef.EnableDistAutoAnalyze.Load() {
+		taken, err = (*d)(sctx, statsHandle, sysProcTracker, needVersionRewriteWarn, table, sql, params...)
+	}
+	if !taken {
+		_, _, err = RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	}
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -96,10 +134,30 @@ func RunAnalyzeStmt(
 	sql string,
 	params ...any,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+	return RunAnalyzeStmtWithCtx(statsutil.StatsCtx, sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+}
+
+// RunAnalyzeStmtWithCtx is RunAnalyzeStmt that stops when ctx, which must carry an internal
+// source type, is cancelled. It recovers no panic: an unfinished statement must not look finished.
+func RunAnalyzeStmtWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	procIDGenerator statsutil.AutoAnalyzeProcIDGenerator,
+	sysProcTracker sysproctrack.Tracker,
+	statsVer int,
+	needVersionRewriteWarn bool,
+	sql string,
+	params ...any,
+) ([]chunk.Row, []*resolve.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
-	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
+	autoAnalyzeProcID := procIDGenerator.AutoAnalyzeProcID()
 	optFuncs := []sqlexec.OptionFuncAlias{
 		execOptionForAnalyzeVersion(statsVer, needVersionRewriteWarn, sql, params...),
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
@@ -107,13 +165,22 @@ func RunAnalyzeStmt(
 		sqlexec.ExecOptionUseCurSession,
 		sqlexec.ExecOptionWithSysProcTrack(autoAnalyzeProcID, autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
+	// A cancellation of ctx also kills the process: steps like the global stats merge only watch
+	// the SQL killer. The session resets a kill from before the statement, but then checks ctx.
+	killed := make(chan struct{})
+	stopKill := context.AfterFunc(ctx, func() {
+		defer close(killed)
+		sysProcTracker.KillSysProcess(autoAnalyzeProcID)
+	})
 	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
+		// The kill must be over before the ID is released: a released ID can be
+		// given to another process.
+		if !stopKill() {
+			<-killed
 		}
-		statsHandle.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+		procIDGenerator.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
 	}()
-	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
+	return statsutil.ExecWithOptsWithCtx(ctx, sctx, optFuncs, sql, params...)
 }
 
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.

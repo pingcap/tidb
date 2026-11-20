@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -71,6 +70,9 @@ type AnalyzeExec struct {
 	gp         *gp.Pool
 	// errExitCh is used to notice the worker that the whole analyze task is finished when to meet error.
 	errExitCh chan struct{}
+	// sampledNDVThreshold is tidb_analyze_sampled_ndv_threshold of the session
+	// keyspace, read one time, so that all tasks of the statement use one value.
+	sampledNDVThreshold int64
 }
 
 var (
@@ -105,6 +107,11 @@ func runningUnderGoTest() bool {
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
 func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
+	if sctx.GetPlanCtx().IsCrossKS() {
+		// The broadcast goes to the TiDB servers of the keyspace of this TiDB, not of the session.
+		// Whoever asks a node of another keyspace to analyze must first flush in the table's keyspace.
+		return nil
+	}
 	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
 	if len(flushObjects) == 0 {
 		return nil
@@ -308,7 +315,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
 		}
 	}()
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
 	ctx, stop := e.buildAnalyzeKillCtx(ctx)
@@ -320,7 +327,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
-	warnUnusedNDVRate(sessionVars, tasks)
+	warnUnusedNDVRate(sessionVars, tasks, e.sampledNDVThreshold)
 
 	if len(tasks) == 0 {
 		return nil
@@ -478,7 +485,7 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle statstypes.AnalyzeStatsHandle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -542,7 +549,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 }
 
 // getLockedTableAndPartitionIDs queries the locked tables and partitions.
-func getLockedTableAndPartitionIDs(statsHandle *handle.Handle, tasks []*analyzeTask) (map[int64]struct{}, error) {
+func getLockedTableAndPartitionIDs(statsHandle statstypes.AnalyzeStatsHandle, tasks []*analyzeTask) (map[int64]struct{}, error) {
 	tidAndPids := make([]int64, 0, len(tasks))
 	// Check the locked tables in one transaction.
 	// We need to check all tables and its partitions.
@@ -576,10 +583,9 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 
 // warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
 // NDVRATE below 1, in the statement or in saved options, but none samples rows
-// because none has more than tidb_analyze_sampled_ndv_threshold rows.
-func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+// because none has more than threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask, threshold int64) {
 	// Zero turns sampled NDV off, so skip the warning.
-	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
 	if threshold == 0 {
 		return
 	}
@@ -640,8 +646,12 @@ func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOption
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
-	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+	if len(e.OptionsMap) == 0 {
 		return nil
+	}
+	persist, err := core.PersistAnalyzeOptions(e.Ctx().GetPlanCtx())
+	if err != nil || !persist {
+		return err
 	}
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
@@ -688,7 +698,7 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
 	}
@@ -787,7 +797,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
@@ -890,7 +900,7 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 
 // trySendAnalyzeResult may drop and destroy result when the statement is already
 // aborting, so callers should not reuse result after calling it.
-func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle statstypes.AnalyzeStatsHandle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
 		failpoint.InjectCall("analyzeResultSent")
@@ -914,7 +924,7 @@ func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *han
 // ctx must be from AnalyzeExec.buildAnalyzeKillCtx
 func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -985,14 +995,14 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	}
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(ctx)
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
 		statslogutil.StatsErrVerboseLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
-func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, analyzeErr error) {
+func finishJobWithLog(statsHandle statstypes.AnalyzeStatsHandle, job *statistics.AnalyzeJob, analyzeErr error) {
 	statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 	if job != nil {
 		var state string

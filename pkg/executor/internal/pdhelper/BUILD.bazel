@@ -27,9 +27,11 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/sessionctx",
         "//pkg/testkit/testsetup",
+        "//pkg/util/mock",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

@@ -45,6 +45,12 @@ type Runtime interface {
 	AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error
 }
 
+// UserTableAllower is implemented by the runtime of another keyspace, which only knows
+// its system tables. AllowUserTable makes one user table visible until release is called.
+type UserTableAllower interface {
+	AllowUserTable(dbID, tableID int64) (release func(), err error)
+}
+
 // KSRuntimeHandle is an acquired runtime handle for a target keyspace.
 type KSRuntimeHandle interface {
 	Runtime

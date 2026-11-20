@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tiancaiamao/gp"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -165,11 +167,6 @@ type StatsAnalyze interface {
 	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
-
-	// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
-	// session version. For partitioned tables it checks the global stats and every partition;
-	// for non-partitioned tables it checks the table stats alone.
-	AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
@@ -498,4 +495,47 @@ type StatsHandle interface {
 
 	// DDL is used to handle ddl events.
 	DDL
+}
+
+// AnalyzeStatsHandle is the part of the stats handle that an ANALYZE statement uses.
+// A session without a domain gets one that has no cache, see handle.AnalyzeHandle.
+type AnalyzeStatsHandle interface {
+	GPool() *gp.Pool
+
+	// GetPhysicalTableStats returns the statistics of a physical table, or pseudo statistics.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+
+	// Update loads the new statistics of the tables into the cache, if the handle has one.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
+
+	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
+	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
+	GetPredicateColumns(tableID int64) ([]int64, error)
+
+	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+
+	StatsGlobal
+}
+
+// ReadWriterHandle is the part of the stats handle that a StatsReadWriter works on.
+type ReadWriterHandle interface {
+	SPool() syssession.Pool
+	GPool() *gp.Pool
+	handleutil.TableInfoGetter
+	Lease() time.Duration
+	Get(tableID int64) (*statistics.Table, bool)
+	UpdateStatsCache(update CacheUpdate)
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
+}
+
+// GlobalStatsHandle is the part of the stats handle that merging global statistics works on.
+type GlobalStatsHandle interface {
+	SPool() syssession.Pool
+	handleutil.TableInfoGetter
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool) (err error)
 }

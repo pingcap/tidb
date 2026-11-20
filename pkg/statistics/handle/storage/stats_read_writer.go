@@ -45,11 +45,11 @@ import (
 
 // statsReadWriter implements the util.StatsReadWriter interface.
 type statsReadWriter struct {
-	statsHandler statstypes.StatsHandle
+	statsHandler statstypes.ReadWriterHandle
 }
 
 // NewStatsReadWriter creates a new StatsReadWriter.
-func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsReadWriter {
+func NewStatsReadWriter(statsHandler statstypes.ReadWriterHandle) statstypes.StatsReadWriter {
 	return &statsReadWriter{statsHandler: statsHandler}
 }
 
