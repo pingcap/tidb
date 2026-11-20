@@ -588,6 +588,14 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chu
 			continue
 		}
 		fv := strconv.FormatFloat(f64s[i], 'f', -1, 64)
+		if b.tp.GetType() == mysql.TypeDate && f64s[i] > -1 && f64s[i] < 1 {
+			err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), fv)
+			if err = handleInvalidTimeError(ctx, err); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
 		if fv == "0" {
 			times[i] = types.ZeroTime
 			continue
