@@ -54,7 +54,7 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	}
 	policyInfo, replaceOnExist := args.Policy, args.ReplaceOnExist
 	policyInfo.State = model.StateNone
-	submittedDB, submittedTable, submittedColumn := policyInfo.DBName, policyInfo.TableName, policyInfo.ColumnName
+	submittedColumn := policyInfo.ColumnName
 
 	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, policyInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -75,9 +75,7 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if submittedDB.L != policyInfo.DBName.L || submittedTable.L != policyInfo.TableName.L || submittedColumn.L != policyInfo.ColumnName.L {
-		rewriteMaskingPolicyJobQuery(job, policyInfo)
-	}
+	rebindMaskingPolicyJob(job, policyInfo, submittedColumn)
 
 	existPolicy, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, policyInfo.TableID)
 	if err != nil {
@@ -174,6 +172,7 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 	}
 
 	newPolicy := oldPolicy.Clone()
+	submittedColumn := newPolicy.ColumnName
 	switch args.AlterAction {
 	case ast.AlterTableEnableMaskingPolicy, ast.AlterTableDisableMaskingPolicy:
 		newPolicy.Status = args.Policy.Status
@@ -194,7 +193,8 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		args.AlterAction != ast.AlterTableModifyMaskingPolicyRestrictOn {
 		// A rename can finish after the submitter validated this expression.
 		// Bind its column reference to the current name before validating again.
-		if args.Policy.ColumnName.L != newPolicy.ColumnName.L {
+		submittedColumn = args.Policy.ColumnName
+		if submittedColumn.L != newPolicy.ColumnName.L {
 			newPolicy.Expression, err = rewriteMaskingPolicyExprColumnName(newPolicy.Expression, args.Policy.ColumnName, newPolicy.ColumnName)
 			if err != nil {
 				job.State = model.JobStateCancelled
@@ -215,10 +215,8 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if args.Policy.ColumnName.L != newPolicy.ColumnName.L {
-			rewriteMaskingPolicyJobQuery(job, newPolicy)
-		}
 	}
+	rebindMaskingPolicyJob(job, newPolicy, submittedColumn)
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
 	if err = w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -250,6 +248,8 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, meta.ErrMaskingPolicyNotExists.GenWithStackByArgs(args.PolicyName.O)
 	}
 	policyInfo.State = model.StateNone
+	// A table rename keeps the names of its policies in the system table synced.
+	rebindMaskingPolicyJob(job, policyInfo, policyInfo.ColumnName)
 	if err = w.deleteMaskingPolicyFromSysTable(jobCtx, policyInfo.ID); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -899,11 +899,16 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 	return restoreMaskingExpression(rewritten.(ast.ExprNode))
 }
 
-// rewriteMaskingPolicyJobQuery replaces the submitted names and expression in
-// job.Query with the ones the worker bound, keeping the other options. The
-// submitted text names a table or column that no longer exists, so replaying
-// it from DDL history, as BR incremental restore does, would fail.
-func rewriteMaskingPolicyJobQuery(job *model.Job, policy *model.MaskingPolicyInfo) {
+// rebindMaskingPolicyJob replaces the submitted names and expression in
+// job.Query, and the job's schema and table names, with the ones the worker
+// bound, keeping the other options. A table or column renamed after submission
+// no longer exists under the submitted name, so replaying the submitted text
+// from DDL history, as BR incremental restore does, would fail.
+func rebindMaskingPolicyJob(job *model.Job, policy *model.MaskingPolicyInfo, submittedColumn ast.CIStr) {
+	if job.SchemaName == policy.DBName.L && job.TableName == policy.TableName.L && submittedColumn.L == policy.ColumnName.L {
+		return
+	}
+	job.SchemaName, job.TableName = policy.DBName.L, policy.TableName.L
 	if job.Query == "" {
 		return
 	}

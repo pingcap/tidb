@@ -6807,6 +6807,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		PolicyName: policy.Name,
 		PolicyID:   policy.ID,
 	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyDrop")
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1041,6 +1042,76 @@ func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
 			tk.MustExec(query)
 			tk.MustQuery(policySQL).Check(policy)
 		})
+	}
+}
+
+func TestMaskingPolicyConcurrentRenameTableHistoryQuery(t *testing.T) {
+	const fullPolicy = "create masking policy p on %s(c) as mask_full(c)"
+	for _, tc := range []struct {
+		name string
+		base string // creates the policy the statement operates on
+		sql  string
+		want string // column, expression, status and restrict options; empty if dropped
+	}{
+		{"create", "", "create masking policy if not exists p on t(c) as mask_full(c) restrict on (ctas) disable", "c MASK_FULL(`c`) DISABLED CTAS"},
+		{"replace", "create masking policy p on %s(c) as mask_null(c)", "create or replace masking policy p on t(c) as mask_full(c)", "c MASK_FULL(`c`) ENABLED NONE"},
+		{"add", "", "alter table t add masking policy p on (c) as mask_full(c) restrict on (ctas)", "c MASK_FULL(`c`) ENABLED CTAS"},
+		{"expression", fullPolicy, "alter table t modify masking policy p set expression = mask_null(c)", "c MASK_NULL(`c`) ENABLED NONE"},
+		{"restrict", fullPolicy, "alter table t modify masking policy p set restrict on (ctas)", "c MASK_FULL(`c`) ENABLED CTAS"},
+		{"disable", fullPolicy, "alter table t disable masking policy p", "c MASK_FULL(`c`) DISABLED NONE"},
+		{"enable", fullPolicy + " disable", "alter table t enable masking policy p", "c MASK_FULL(`c`) ENABLED NONE"},
+		{"drop", fullPolicy, "alter table t drop masking policy p", ""},
+	} {
+		for _, dstDB := range []string{"mp_src", "mp_dst"} {
+			t.Run(tc.name+"/"+dstDB, func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("create database mp_src")
+				tk.MustExec("create database mp_dst")
+				tk.MustExec("create table mp_src.t(c varchar(20))")
+				if tc.base != "" {
+					tk.MustExec(fmt.Sprintf(tc.base, "mp_src.t"))
+				}
+				other := testkit.NewTestKit(t, store)
+				other.MustExec("use mp_src")
+				prepared, release := make(chan struct{}), make(chan struct{})
+				var once sync.Once
+				pause := func() { once.Do(func() { close(prepared); <-release }) }
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate", pause)
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter", func(ast.AlterTableType) { pause() })
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyDrop", pause)
+				done := make(chan error, 1)
+				go func() { done <- other.ExecToErr(tc.sql) }()
+				<-prepared
+				tk.MustExec("rename table mp_src.t to " + dstDB + ".t2")
+				close(release)
+				require.NoError(t, <-done)
+
+				policySQL := "select db_name,table_name,column_name,expression,status,restrict_on from mysql.tidb_masking_policy where policy_name='p'"
+				policy := testkit.Rows()
+				if tc.want != "" {
+					policy = testkit.Rows(dstDB + " t2 " + tc.want)
+				}
+				tk.MustQuery(policySQL).Check(policy)
+
+				// BR switches to the job's database and replays the history
+				// query where only the renamed table exists.
+				job := tk.MustQuery("admin show ddl jobs 1").Rows()[0]
+				query := lastDDLJobQuery(tk)
+				t.Logf("history query: %s", query)
+				tk.MustExec("drop database mp_src")
+				tk.MustExec("drop database mp_dst")
+				tk.MustExec("create database " + dstDB)
+				tk.MustExec("create table " + dstDB + ".t2(c varchar(20))")
+				if tc.base != "" {
+					tk.MustExec(fmt.Sprintf(tc.base, dstDB+".t2"))
+				}
+				tk.MustExec("use " + job[1].(string))
+				tk.MustExec(query)
+				tk.MustQuery(policySQL).Check(policy)
+				require.Equal(t, []any{dstDB, "t2"}, job[1:3])
+			})
+		}
 	}
 }
 
