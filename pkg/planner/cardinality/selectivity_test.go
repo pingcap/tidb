@@ -472,6 +472,8 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustExec("set @@tidb_opt_table_full_scan_cost_factor=1000")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	// Resolve pending secondary locks before mock ANALYZE scans the committed rows.
+	testKit.MustQuery("select count(*) from t use index()").Check(testkit.Rows("501"))
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("create index idxb on t(b)")
 	// Create index after ANALYZE. SkyLine pruning should ensure that idxa is chosen because it has statistics
