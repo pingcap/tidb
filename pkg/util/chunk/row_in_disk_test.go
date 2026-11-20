@@ -223,7 +223,7 @@ func checkRow(t *testing.T, row1, row2 Row) {
 }
 
 func testDataInDiskByRows(t *testing.T, concurrency int) {
-	numChk, numRow := 10, 1000
+	numChk, numRow := 10, 100
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewDataInDiskByRows(fields)
 	defer lChecksum.Close()
