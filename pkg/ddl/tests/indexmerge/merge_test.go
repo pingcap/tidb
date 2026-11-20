@@ -15,6 +15,7 @@
 package indexmergetest
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -990,4 +991,74 @@ func TestAddIndexInsertAfterReorgSkipCheck(t *testing.T) {
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
 	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexConsumesSkippedBackfillTemp(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	writer := testkit.NewTestKit(t, store)
+	writer.MustExec("use test")
+	tk.MustExec("create table skipped_temp (a int)")
+	tk.MustExec("insert into skipped_temp values (1)")
+	oldInitialized := ingest.LitInitialized
+	ingest.LitInitialized = false
+	t.Cleanup(func() { ingest.LitInitialized = oldInitialized })
+	inserted := false
+	var insertErr, errorAfterMerge error
+	var tblID, idxID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if inserted || job.Type != model.ActionAddIndex || job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		idx := testutil.FindIdxInfo(dom, "test", "skipped_temp", "idx")
+		if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer != 0 {
+			return
+		}
+		inserted = true
+		tblID = job.TableID
+		idxID = idx.ID
+		_, insertErr = writer.Exec("insert into skipped_temp values (2)")
+	})
+	oldHook := ddl.MockDMLExecutionMerging
+	checked := false
+	ddl.MockDMLExecutionMerging = func() {
+		if checked {
+			return
+		}
+		checked = true
+		prefix := tablecodec.EncodeIndexSeekKey(tblID, tablecodec.TempIndexPrefix|idxID, nil)
+		it, err := store.GetSnapshot(kv.MaxVersion).Iter(prefix, prefix.PrefixNext())
+		if err != nil {
+			errorAfterMerge = err
+			return
+		}
+		defer it.Close()
+		for it.Valid() {
+			history, err := tablecodec.DecodeTempIndexValue(it.Value())
+			if err != nil {
+				errorAfterMerge = err
+				return
+			}
+			for _, elem := range history {
+				if elem.KeyVer == tablecodec.TempIndexKeyTypeBackfill {
+					errorAfterMerge = fmt.Errorf("skipped backfill temp remains after SQL ADD INDEX merge")
+					return
+				}
+			}
+			if err = it.Next(); err != nil {
+				errorAfterMerge = err
+				return
+			}
+		}
+	}
+	t.Cleanup(func() { ddl.MockDMLExecutionMerging = oldHook })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "return(true)")
+	tk.MustExec("alter table skipped_temp add unique index idx(a)")
+	require.True(t, inserted)
+	require.NoError(t, insertErr)
+	require.True(t, checked)
+	require.NoError(t, errorAfterMerge)
+	tk.MustExec("admin check table skipped_temp")
+	tk.MustQuery("select a from skipped_temp use index(idx) order by a").Check(testkit.Rows("1", "2"))
 }

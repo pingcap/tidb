@@ -1,0 +1,495 @@
+[
+  {
+    "name": "NEGATIVE_retired_index_stale_backfill_put",
+    "adapter_verified": true,
+    "version": 1,
+    "snapshot_ts": 470409126354878468,
+    "table": {
+      "id": 9000,
+      "name": {
+        "O": "partition_proto",
+        "L": "partition_proto"
+      },
+      "charset": "utf8mb4",
+      "collate": "utf8mb4_bin",
+      "cols": [
+        {
+          "id": 2,
+          "name": {
+            "O": "value",
+            "L": "value"
+          },
+          "offset": 0,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 3,
+          "name": {
+            "O": "identity",
+            "L": "identity"
+          },
+          "offset": 1,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 1,
+          "name": {
+            "O": "route",
+            "L": "route"
+          },
+          "offset": 2,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 4,
+          "name": {
+            "O": "null_flag",
+            "L": "null_flag"
+          },
+          "offset": 3,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 5,
+          "name": {
+            "O": "payload",
+            "L": "payload"
+          },
+          "offset": 4,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 15,
+            "Flag": 0,
+            "Flen": 512,
+            "Decimal": -1,
+            "Charset": "utf8mb4",
+            "Collate": "utf8mb4_bin",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 6,
+          "name": {
+            "O": "raw_value",
+            "L": "raw_value"
+          },
+          "offset": 5,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        },
+        {
+          "id": 7,
+          "name": {
+            "O": "logical_identity",
+            "L": "logical_identity"
+          },
+          "offset": 6,
+          "origin_default": null,
+          "origin_default_bit": null,
+          "default": null,
+          "default_bit": null,
+          "default_is_expr": false,
+          "generated_expr_string": "",
+          "generated_stored": false,
+          "dependences": null,
+          "type": {
+            "Tp": 8,
+            "Flag": 0,
+            "Flen": 20,
+            "Decimal": 0,
+            "Charset": "binary",
+            "Collate": "binary",
+            "Elems": null,
+            "ElemsIsBinaryLit": null,
+            "Array": false
+          },
+          "state": 5,
+          "comment": "",
+          "hidden": false,
+          "change_state_info": null,
+          "version": 0
+        }
+      ],
+      "index_info": [
+        {
+          "id": 1,
+          "idx_name": {
+            "O": "idx_1",
+            "L": "idx_1"
+          },
+          "tbl_name": {
+            "O": "",
+            "L": ""
+          },
+          "idx_cols": [
+            {
+              "name": {
+                "O": "value",
+                "L": "value"
+              },
+              "offset": 0,
+              "length": -1
+            }
+          ],
+          "state": 5,
+          "backfill_state": 0,
+          "comment": "",
+          "index_type": 0,
+          "is_unique": false,
+          "is_primary": false,
+          "is_invisible": false,
+          "is_global": false,
+          "mv_index": false,
+          "vector_index": null,
+          "inverted_index": null,
+          "full_text_index": null,
+          "condition_expr_string": ""
+        },
+        {
+          "id": 2,
+          "idx_name": {
+            "O": "idx_2",
+            "L": "idx_2"
+          },
+          "tbl_name": {
+            "O": "",
+            "L": ""
+          },
+          "idx_cols": [
+            {
+              "name": {
+                "O": "identity",
+                "L": "identity"
+              },
+              "offset": 1,
+              "length": -1
+            }
+          ],
+          "state": 5,
+          "backfill_state": 0,
+          "comment": "",
+          "index_type": 0,
+          "is_unique": true,
+          "is_primary": false,
+          "is_invisible": false,
+          "is_global": false,
+          "mv_index": false,
+          "vector_index": null,
+          "inverted_index": null,
+          "full_text_index": null,
+          "condition_expr_string": ""
+        },
+        {
+          "id": 110,
+          "idx_name": {
+            "O": "idx_110",
+            "L": "idx_110"
+          },
+          "tbl_name": {
+            "O": "",
+            "L": ""
+          },
+          "idx_cols": [
+            {
+              "name": {
+                "O": "value",
+                "L": "value"
+              },
+              "offset": 0,
+              "length": -1
+            }
+          ],
+          "state": 5,
+          "backfill_state": 0,
+          "comment": "",
+          "index_type": 0,
+          "is_unique": false,
+          "is_primary": false,
+          "is_invisible": false,
+          "is_global": true,
+          "mv_index": false,
+          "vector_index": null,
+          "inverted_index": null,
+          "full_text_index": null,
+          "condition_expr_string": "",
+          "global_index_version": 1
+        },
+        {
+          "id": 111,
+          "idx_name": {
+            "O": "idx_111",
+            "L": "idx_111"
+          },
+          "tbl_name": {
+            "O": "",
+            "L": ""
+          },
+          "idx_cols": [
+            {
+              "name": {
+                "O": "identity",
+                "L": "identity"
+              },
+              "offset": 1,
+              "length": -1
+            }
+          ],
+          "state": 5,
+          "backfill_state": 0,
+          "comment": "",
+          "index_type": 0,
+          "is_unique": true,
+          "is_primary": false,
+          "is_invisible": false,
+          "is_global": true,
+          "mv_index": false,
+          "vector_index": null,
+          "inverted_index": null,
+          "full_text_index": null,
+          "condition_expr_string": "",
+          "global_index_version": 1
+        }
+      ],
+      "constraint_info": null,
+      "fk_info": null,
+      "state": 5,
+      "pk_is_handle": false,
+      "is_common_handle": false,
+      "common_handle_version": 0,
+      "comment": "",
+      "auto_inc_id": 0,
+      "auto_id_cache": 0,
+      "auto_rand_id": 0,
+      "max_col_id": 0,
+      "max_idx_id": 0,
+      "max_fk_id": 0,
+      "max_cst_id": 0,
+      "update_timestamp": 0,
+      "ShardRowIDBits": 0,
+      "max_shard_row_id_bits": 0,
+      "auto_random_bits": 0,
+      "auto_random_range_bits": 0,
+      "pre_split_regions": 0,
+      "partition": {
+        "type": 1,
+        "expr": "route",
+        "columns": null,
+        "enable": true,
+        "is_empty_columns": false,
+        "definitions": [
+          {
+            "id": 2010,
+            "name": {
+              "O": "p0",
+              "L": "p0"
+            },
+            "less_than": [
+              "50"
+            ],
+            "in_values": null,
+            "policy_ref_info": null
+          },
+          {
+            "id": 2011,
+            "name": {
+              "O": "p1",
+              "L": "p1"
+            },
+            "less_than": [
+              "100"
+            ],
+            "in_values": null,
+            "policy_ref_info": null
+          },
+          {
+            "id": 2012,
+            "name": {
+              "O": "p2",
+              "L": "p2"
+            },
+            "less_than": [
+              "150"
+            ],
+            "in_values": null,
+            "policy_ref_info": null
+          },
+          {
+            "id": 2013,
+            "name": {
+              "O": "p3",
+              "L": "p3"
+            },
+            "less_than": [
+              "200"
+            ],
+            "in_values": null,
+            "policy_ref_info": null
+          }
+        ],
+        "adding_definitions": null,
+        "dropping_definitions": null,
+        "states": null,
+        "num": 0,
+        "ddl_state": 0
+      },
+      "compression": "",
+      "view": null,
+      "sequence": null,
+      "Lock": null,
+      "version": 0,
+      "tiflash_replica": null,
+      "is_columnar": false,
+      "temp_table_type": 0,
+      "cache_table_status": 0,
+      "policy_ref_info": null,
+      "stats_options": null,
+      "exchange_partition_info": null,
+      "ttl_info": null,
+      "revision": 0
+    },
+    "rows": null,
+    "input": [
+      {
+        "Key": "dIAAAAAAAAfaX2n//wAAAAAAAQADgAAAAAAAAAc=",
+        "Value": "ATBi"
+      }
+    ],
+    "ranges": [
+      {
+        "physical_id": 2010,
+        "index_id": 1,
+        "expected": null,
+        "adapter": null
+      }
+    ],
+    "fault_injection": "Bypass exported-snapshot provenance gate to test retired-state admission; no positive adapter-equivalence claim."
+  }
+]

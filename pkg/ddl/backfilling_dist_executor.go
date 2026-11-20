@@ -65,6 +65,9 @@ type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
 	EleIDs []int64 `json:"ele_ids"`
+	// PartitionIDs explicitly selects private reorganization inputs. Empty keeps
+	// the existing ADD INDEX table view.
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 	// EleTypeKey is the type of the element to backfill with distributed framework.
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
@@ -158,7 +161,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	// TODO This is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
 	failpoint.InjectCall("beforeGetUserTableForBackfillStep", jobMeta)
-	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)
+	tblIface, err := getBackfillTaskTable(ddlObj.ctx, store, s.taskMeta)
 	if err != nil {
 		return nil, err
 	}
