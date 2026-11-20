@@ -610,3 +610,20 @@ drop global binding for update t1 set a = 1 where b = 1 and c > 1;
 drop global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b;
 drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
 drop global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+create database issue57462;
+use issue57462;
+create table olaptest1(id int primary key, created_at timestamp);
+insert into olaptest1 values(1, '2025-01-01 00:00:00');
+create global binding for select low_priority sql_no_cache id,created_at from issue57462.olaptest1 where created_at<from_unixtime(?) order by id,created_at asc limit ? using select /*+ RESOURCE_GROUP(default) */ low_priority sql_no_cache id,created_at from issue57462.olaptest1 where created_at<from_unixtime(?) order by id,created_at asc limit ?;
+select original_sql,bind_sql,status from mysql.bind_info where original_sql like '%issue57462%';
+original_sql	bind_sql	status
+select low_priority sql_no_cache `id` , `created_at` from `issue57462` . `olaptest1` where `created_at` < `from_unixtime` ( ? ) order by `id` , `created_at` limit ?	SELECT /*+ RESOURCE_GROUP(`default`)*/ LOW_PRIORITY SQL_NO_CACHE `id`,`created_at` FROM `issue57462`.`olaptest1` WHERE `created_at` < from_unixtime(?) ORDER BY `id`,`created_at` LIMIT ?	enabled
+select low_priority sql_no_cache id,created_at from issue57462.olaptest1 where created_at<from_unixtime(2000000000) order by id,created_at asc limit 10;
+id	created_at
+1	2025-01-01 00:00:00
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop global binding for select low_priority sql_no_cache id,created_at from issue57462.olaptest1 where created_at<from_unixtime(?) order by id,created_at asc limit ?;
+drop database issue57462;
+use test;
