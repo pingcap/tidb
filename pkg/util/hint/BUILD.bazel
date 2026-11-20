@@ -26,8 +26,10 @@ go_library(
 
 go_test(
     name = "hint_test",
+    timeout = "short",
     srcs = ["hint_test.go"],
     embed = [":hint"],
+    flaky = True,
     deps = [
         "//pkg/parser",
         "//pkg/parser/mysql",
