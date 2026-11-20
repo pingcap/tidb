@@ -33,7 +33,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 | Task | Required action |
 | --- | --- |
-| Build/test preparation or changes affecting Bazel metadata | Apply the complete trigger list in `Build Flow` -> `When make bazel_prepare is required`; use `tidb-bazel-prepare-gate` if the decision is unclear. |
+| Build/test preparation or changes affecting Bazel metadata | Apply `Build Flow` -> `Bazel metadata consistency`; use `tidb-bazel-prepare-gate` to choose no generation, CI generation, or local preparation. |
 | Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
 | Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
 | Recording integration tests | MUST use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
@@ -59,7 +59,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 1. Restate the task goal and acceptance criteria.
 2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`). Before changing or reviewing code behavior, agents MUST read the target package's `doc.go` when present. Pure spelling or formatting edits may skip this contract reading; reuse unchanged documentation already read during the task.
-3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
+3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `Bazel metadata consistency`).
 4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
 5. If `AGENTS.md`, repository skills, or docs under `docs/agents/` changed, follow `docs/agents/agents-review-guide.md` before delivery.
 
@@ -87,34 +87,24 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 ## Build Flow
 
-### When `make bazel_prepare` is required
+### Bazel metadata consistency
 
-When any condition below applies, MUST run `make bazel_prepare` before build/test and include resulting Bazel metadata changes (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`) in the change:
+Local bug-fix iteration SHOULD use scoped Go tests and `make server` when a server binary is needed. `make bazel_prepare` is not a prerequisite for Go builds/tests. A new worktree, fresh clone, branch switch, or ordinary function-body change alone MUST NOT trigger local Bazel preparation.
 
-- New workspace or fresh clone.
-- Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
-- Any Go source file is added/removed/renamed/moved in the PR.
-- The import section changed in any existing Go source file (including `*_test.go`).
-- A code change adds a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file.
-- Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
-- Bazel test targets were updated (for example `shard_count` changed, test `srcs` list edited, or `tests/realtikvtest/**/BUILD.bazel` modified).
-- Local Bazel dependency/toolchain errors occurred.
+Agents MUST assess metadata impact across the whole intended PR (including committed changes), not only the unstaged diff. Generation/verification is required when any of these inputs changes:
 
-For an operational decision checklist, use `.agents/skills/tidb-bazel-prepare-gate`.
+- Go files added, removed, renamed, or moved; import sections changed.
+- Top-level tests added, removed, or renamed in a way that can affect tazel's test count; ordinary subtest/body changes alone do not qualify.
+- Go module dependencies, including nested modules; Bazel rules, dependency patches, toolchains, or generator code/configuration.
+- Build constraints, embedded resources, Gazelle directives, or test-target attributes that can affect generated metadata.
 
-Recommended local build flow:
+For affected PRs, agents MUST include necessary generated metadata, using either the target branch's canonical local preparation or an applicable CI generation workflow. Agents SHOULD prefer CI generation for ordinary source/test changes and MAY publish a PR after local validation with metadata explicitly pending. Before reporting metadata validation complete, agents MUST verify generation/check results for the current PR head and incorporate any generated patch. CI generation is not a substitute for build/test CI success.
 
-```bash
-# Conditional step: run only when required by this section or `.agents/skills/tidb-bazel-prepare-gate`.
-make bazel_prepare
-```
+Agents MUST verify workflow availability for the target branch; master-only automation MUST NOT be assumed for release branches. If suitable CI generation is unavailable, use canonical local preparation before delivery. Changes to dependencies, Bazel rules/toolchains, or generators MUST receive applicable Bazel validation locally or in CI, beyond merely generating files. Diagnose Bazel errors before selecting a remedy; download/toolchain errors alone do not justify blindly regenerating metadata.
 
-```bash
-# Then continue with normal local build steps.
-make bazel_bin
-make gogenerate   # optional: regenerate generated code
-go mod tidy       # optional: if go.mod/go.sum changed
-```
+Agents MUST NOT hand-edit generated metadata as a substitute for generation. When importing CI patches, verify repository, PR, exact head SHA, and allowed generated paths; reject stale or unexpected patches and recheck the resulting head. Do not overwrite unrelated work. Local preparation remains available for explicitly requested Bazel work, unavailable CI generation, and scoped Bazel failure reproduction.
+
+Operational routing and CI patch handling: `docs/agents/metadata-generation-flow.md` and `.agents/skills/tidb-bazel-prepare-gate`. Regression tests, failpoint cleanup, lint, and the validation matrix remain unchanged.
 
 Run `git fetch origin --prune` when the task needs current remote refs, such as comparing an upstream base or preparing a backport; it is not a build prerequisite.
 

@@ -18,6 +18,7 @@ Use while iterating on a change.
 
 - Run only the smallest scoped checks that validate the changed behavior.
 - Prefer targeted unit tests (`go test -run <TestName> -tags=intest,deadlock`).
+- Route metadata separately using `docs/agents/metadata-generation-flow.md`; Go tests do not wait for Bazel generation.
 - Avoid slow sweeps by default (`make lint`, package-wide runs, `realtikvtest`).
 
 ### `Ready` (completion gate)
@@ -28,6 +29,8 @@ Use when delivering changes or preparing a PR, as defined in `AGENTS.md` -> `Qui
 2. Run the required checks for those changes. Preserve regression evidence for bug fixes, documentation review for agent instructions/skills, and scoped checks for testdata or build configuration. Formatting-only changes do not require RealTiKV tests.
 3. If code changed, run `make lint`.
 4. Follow `AGENTS.md` -> `Agent Output Contract` for final reporting.
+
+For CI metadata generation, distinguish local Ready checks from current-head metadata/CI status. Follow `docs/agents/metadata-generation-flow.md` for publication with metadata pending and subsequent patch verification; do not report pending checks as passed.
 
 Reuse completed checks that still cover the delivered changes. Rerun affected checks when relevant changes or new failures invalidate the results, not merely because another status update is due.
 

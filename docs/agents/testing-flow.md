@@ -7,6 +7,8 @@ Detailed command snippets in this file are the canonical operational reference; 
 
 ## Unit tests (`/pkg/...`)
 
+Build preparation: use `docs/agents/metadata-generation-flow.md` to select no generation, CI generation, or local preparation under root policy. Scoped Go tests and `make server` do not require `make bazel_prepare` first. Metadata verification and applicable Bazel CI remain separate delivery checks.
+
 ```bash
 pushd pkg/<package_name>
 go test -run <TestName> -tags=intest,deadlock
