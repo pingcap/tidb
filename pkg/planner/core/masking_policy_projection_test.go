@@ -1926,6 +1926,104 @@ func TestMaskingPolicyRestrictDirectUpdateAssignment(t *testing.T) {
 	src("t_da").Check(testkit.Rows("1 secret secret", "2 hidden hidden"))
 }
 
+// TestMaskingPolicyRestrictOnDuplicateAssignment tests that an assignment of
+// INSERT ... ON DUPLICATE KEY UPDATE reading a protected column of the
+// existing row is restricted like an UPDATE assignment.
+func TestMaskingPolicyRestrictOnDuplicateAssignment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_od(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create table t_od_free(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create table t_od_src(id int primary key, v varchar(20))")
+	root.MustExec("insert into t_od_src values (1, 'from_src')")
+	root.MustExec("create masking policy p on t_od(c) as case when current_role() != 'NONE' or current_user()='root@%' then c else mask_full(c) end restrict on (update_select) enable")
+	root.MustExec("create masking policy p_free on t_od_free(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (insert_into_select, delete_select) enable")
+	root.MustExec("create user u_od")
+	root.MustExec("create role r_od")
+	root.MustExec("grant r_od to u_od")
+	root.MustExec("grant select, insert, update, delete on test.* to u_od")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_od", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	original := testkit.Rows("1 secret a")
+	reset := func() {
+		for _, tbl := range []string{"t_od", "t_od_free"} {
+			root.MustExec("delete from " + tbl)
+			root.MustExec("insert into " + tbl + " values (1,'secret','a')")
+		}
+	}
+	rows := func(tbl string) *testkit.Result {
+		return root.MustQuery("select id, c, c2 from " + tbl + " order by id")
+	}
+	reset()
+
+	for _, sql := range []string{
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c2 = c",
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c2 = t_od.c",
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c2 = concat(c, '!')",
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c2 = if(c = 'secret', 'y', 'n')",
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c = upper(c)",
+		"insert into t_od values (1, 'n', 'n') on duplicate key update c2 = 'k', c = concat(c, values(c))",
+		"insert into t_od set id = 1, c = 'n' on duplicate key update c2 = c",
+		"insert into t_od(id, c2) select id, v from t_od_src on duplicate key update c2 = t_od.c",
+		"insert into t_od(id, c2) select id, v from t_od_src on duplicate key update c2 = concat(t_od.c, t_od_src.v)",
+	} {
+		tk.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		rows("t_od").Check(original)
+	}
+	require.ErrorContains(t, tk.ExecToErr("prepare s from 'insert into t_od values (?, ?, ?) on duplicate key update c2 = c'"), "Access to masked column")
+
+	// Not restricted: the values of the new row, constants, other columns
+	// and the protected column assigned to itself.
+	for _, tc := range []struct {
+		sql  string
+		rows [][]any
+	}{
+		{"insert into t_od values (1, 'n', 'm') on duplicate key update c = values(c), c2 = values(c2)", testkit.Rows("1 n m")},
+		{"insert into t_od values (1, 'n', 'm') on duplicate key update c2 = 'k'", testkit.Rows("1 secret k")},
+		{"insert into t_od values (1, 'n', 'm') on duplicate key update c = c2", testkit.Rows("1 a a")},
+		{"insert into t_od values (1, 'n', 'm') on duplicate key update c = c", original},
+		{"insert into t_od values (1, 'n', 'm') on duplicate key update c2 = concat(c2, values(c))", testkit.Rows("1 secret an")},
+		{"insert into t_od(id, c2) select id, v from t_od_src on duplicate key update c2 = t_od_src.v", testkit.Rows("1 secret from_src")},
+		{"insert into t_od values (2, 'n', 'm') on duplicate key update c2 = 'k'", testkit.Rows("1 secret a", "2 n m")},
+	} {
+		tk.MustExec(tc.sql)
+		rows("t_od").Check(tc.rows)
+		reset()
+	}
+
+	// A policy without UPDATE_SELECT and an identity that the policy does not
+	// mask keep writing original values.
+	tk.MustExec("insert into t_od_free values (1, 'n', 'n') on duplicate key update c2 = concat(c, '!')")
+	rows("t_od_free").Check(testkit.Rows("1 secret secret!"))
+	root.MustExec("insert into t_od values (1, 'n', 'n') on duplicate key update c2 = concat(c, '!')")
+	rows("t_od").Check(testkit.Rows("1 secret secret!"))
+	reset()
+
+	// A cached plan is checked again for the identity that runs it.
+	tk.MustExec("set role all")
+	tk.MustExec("prepare st from 'insert into t_od values (?, ?, ?) on duplicate key update c2 = c'")
+	tk.MustExec("set @a = 1, @b = 'n'")
+	tk.MustExec("execute st using @a, @b, @b")
+	rows("t_od").Check(testkit.Rows("1 secret secret"))
+	tk.MustExec("execute st using @a, @b, @b")
+	reset()
+	tk.MustExec("set role none")
+	require.ErrorContains(t, tk.ExecToErr("execute st using @a, @b, @b"), "Access to masked column")
+	rows("t_od").Check(original)
+	tk.MustExec("set role all")
+	tk.MustExec("execute st using @a, @b, @b")
+	rows("t_od").Check(testkit.Rows("1 secret secret"))
+	reset()
+
+	root.MustExec("alter table t_od modify masking policy p set restrict on none")
+	tk.MustExec("set role none")
+	tk.MustExec("insert into t_od values (1, 'n', 'n') on duplicate key update c2 = c")
+	rows("t_od").Check(testkit.Rows("1 secret secret"))
+}
+
 func TestMaskingPolicyRestrictDirectUpdateAssignmentPlanCache(t *testing.T) {
 	for _, instance := range []bool{false, true} {
 		t.Run(fmt.Sprint(instance), func(t *testing.T) {

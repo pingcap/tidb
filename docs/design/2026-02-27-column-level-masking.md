@@ -90,6 +90,16 @@ raw aggregate result. Predicate outputs whose policy cannot be preserved
 (including unsupported aggregates or correlated result shapes) retain their
 raw values; each column of a row-valued result is handled separately.
 
+A result expression over a protected column is rebuilt from the masked value
+after sorting and filtering. An expression that has to be evaluated exactly once
+and in its own place cannot be rebuilt, such as `RAND()`, variable assignments and the
+advisory lock functions (`GET_LOCK`, `RELEASE_LOCK`, `RELEASE_ALL_LOCKS`,
+`IS_FREE_LOCK`, `IS_USED_LOCK`). A query with such an expression over a
+protected column in its result fields is rejected with "masking policy cannot be
+preserved through mutable expression" while the policy is enabled, also for an
+identity that reads the original value: the limit is on the query shape, not a
+missing privilege. The same call in `WHERE` is not affected.
+
 This choice minimizes optimizer/storage regressions and keeps compatibility risk lower than predicate-time rewriting.
 The tradeoff is that raw values can still participate in write/read transformations unless restricted by `RESTRICT ON`.
 
@@ -266,7 +276,8 @@ If not allowed, the statement is rejected with masking access-denied error.
 
 `UPDATE_SELECT` also covers an `UPDATE` assignment that reads a masked column directly, without a subquery, such as `UPDATE dst JOIN src ON ... SET dst.c = src.c` or `UPDATE t SET c2 = c`: the assignment would write the original value, or a value computed from it, into another column or another row.
 Such an assignment is validated like a restricted subquery and rejected with the same error; it is never rewritten to store the masked value. The same table under another alias is a different source.
-The only exception is assigning a column to itself as is (`SET c = c`), which writes the same value into the same column of the same row. Columns that are only compared in `WHERE` or `JOIN ... ON` are not affected.
+The only exception is assigning a column to itself as is (`SET c = c`), which writes the same value into the same column of the same row. A value computed from the column and written back to the same column, such as `SET c = UPPER(c)`, is restricted like any other computed value. Columns that are only compared in `WHERE` or `JOIN ... ON` are not affected.
+The assignments of `INSERT ... ON DUPLICATE KEY UPDATE` update the existing row and follow the same rule under `UPDATE_SELECT`: an assignment that reads a protected column of the existing row is rejected. The values of the new row (`VALUES(c)`), constants and unprotected columns are not restricted.
 
 ### Expression semantics
 

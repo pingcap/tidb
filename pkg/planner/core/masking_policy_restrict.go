@@ -68,6 +68,48 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnAssignment(ctx context.Context
 	return b.checkMaskingPolicyRestrictOnSources(ctx, sources, ast.MaskingPolicyRestrictOpUpdateSelect, make(map[int64]struct{}))
 }
 
+// checkMaskingPolicyRestrictOnDuplicate applies RESTRICT ON (UPDATE_SELECT) to
+// the assignments of INSERT ... ON DUPLICATE KEY UPDATE that read a protected
+// column of the existing row: they update that row like an UPDATE assignment.
+// The values of the new row, constants and assigning a column to itself are
+// not restricted.
+func (b *PlanBuilder) checkMaskingPolicyRestrictOnDuplicate(ctx context.Context, insertPlan *Insert, tblInfo *model.TableInfo) error {
+	if b.is == nil || len(insertPlan.OnDuplicate) == 0 || b.ctx.GetSessionVars().InRestrictedSQL ||
+		tblInfo.TempTableType != model.TempTableNone {
+		return nil
+	}
+	hasPolicies, err := b.is.HasMaskingPolicies(ctx)
+	if err != nil || !hasPolicies {
+		return err
+	}
+	sources := make([]maskingPolicySourceColumn, 0, 2)
+	appendSource := func(col *expression.Column) {
+		if !insertPlan.tableSchema.Contains(col) {
+			return
+		}
+		colInfo := model.FindColumnInfoByID(tblInfo.Columns, col.ID)
+		if colInfo == nil || colInfo.State != model.StatePublic {
+			return
+		}
+		sources = append(sources, maskingPolicySourceColumn{tblInfo: tblInfo, colInfo: colInfo})
+	}
+	for _, assign := range insertPlan.OnDuplicate {
+		if assign.Expr == nil {
+			continue
+		}
+		if col, ok := assign.Expr.(*expression.Column); ok && col.UniqueID == assign.Col.UniqueID {
+			continue
+		}
+		for _, col := range expression.ExtractColumns(assign.Expr) {
+			appendSource(col)
+		}
+		for _, col := range expression.ExtractCorColumns(assign.Expr) {
+			appendSource(&col.Column)
+		}
+	}
+	return b.checkMaskingPolicyRestrictOnSources(ctx, sources, ast.MaskingPolicyRestrictOpUpdateSelect, make(map[int64]struct{}))
+}
+
 // checkMaskingPolicyRestrictOnSources rejects the operation if the session
 // reads any of the source columns masked under a policy that restricts it.
 // The policies that allow it are recorded, to be checked again when the plan
