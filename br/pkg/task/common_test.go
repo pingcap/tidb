@@ -3,6 +3,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
@@ -22,6 +24,58 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
+
+func TestReadBackupMeta(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	storage, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+	for _, method := range []encryptionpb.EncryptionMethod{
+		encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR,
+	} {
+		for size := 0; size <= metautil.CrypterIvLen; size++ {
+			t.Run(fmt.Sprintf("%s/%d", method, size), func(t *testing.T) {
+				require.NoError(t, storage.WriteFile(ctx, metautil.MetaFile, make([]byte, size)))
+				cfg := &Config{Storage: "local://" + dir, CipherInfo: backup.CipherInfo{CipherType: method}}
+				var meta *backup.BackupMeta
+				var readErr error
+				require.NotPanics(t, func() {
+					_, _, meta, readErr = ReadBackupMeta(ctx, metautil.MetaFile, cfg)
+				})
+				if size < metautil.CrypterIvLen {
+					require.ErrorContains(t, readErr, "encrypted backupmeta is too short")
+					require.Nil(t, meta)
+				} else {
+					// Preserve the existing behavior for an IV with an empty payload.
+					require.NoError(t, readErr)
+					require.Equal(t, &backup.BackupMeta{}, meta)
+				}
+			})
+		}
+	}
+
+	expected := &backup.BackupMeta{StartVersion: 42, EndVersion: 84}
+	data, err := expected.Marshal()
+	require.NoError(t, err)
+	for _, cipher := range []backup.CipherInfo{
+		{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
+		{CipherType: encryptionpb.EncryptionMethod_AES128_CTR, CipherKey: make([]byte, 16)},
+		{CipherType: encryptionpb.EncryptionMethod_AES192_CTR, CipherKey: make([]byte, 24)},
+		{CipherType: encryptionpb.EncryptionMethod_AES256_CTR, CipherKey: make([]byte, 32)},
+	} {
+		t.Run(cipher.CipherType.String()+"/valid", func(t *testing.T) {
+			encrypted, iv, err := metautil.Encrypt(data, &cipher)
+			require.NoError(t, err)
+			require.NoError(t, storage.WriteFile(ctx, metautil.MetaFile, append(iv, encrypted...)))
+			cfg := &Config{Storage: "local://" + dir, CipherInfo: cipher, CheckRequirements: true}
+			_, _, actual, err := ReadBackupMeta(ctx, metautil.MetaFile, cfg)
+			require.NoError(t, err)
+			require.Equal(t, expected, actual)
+		})
+	}
+}
 
 type fakeValue string
 
