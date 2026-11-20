@@ -4,7 +4,6 @@ go_test(
     name = "integration_test_test",
     timeout = "short",
     srcs = [
-        "found_rows_test.go",
         "integration_test.go",
         "main_test.go",
     ],
@@ -32,7 +31,6 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/session",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",

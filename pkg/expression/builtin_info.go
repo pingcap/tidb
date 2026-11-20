@@ -169,6 +169,7 @@ func (b *builtinFoundRowsSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet
 
 // evalInt evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
+// TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	data, err := b.GetSessionVars(ctx)
 	if err != nil {
