@@ -949,7 +949,7 @@ func appendVisitInfo4Test(vs []visitInfo) {
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	// Fast plans return before the normal planner's table-mode check. A table
-	// being restored must remain inaccessible even while its policies are absent.
+	// that is not in Normal mode must remain inaccessible on these paths too.
 	for _, tbl := range node.GetResolveContext().GetTableNames() {
 		if tbl.TableInfo != nil && tbl.TableInfo.Mode != model.TableModeNormal {
 			return nil

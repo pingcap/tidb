@@ -984,7 +984,7 @@ func TestMaskingPolicyAlterExpressionAfterConcurrentRename(t *testing.T) {
 	tk.MustQuery("select d from t_rename_expr").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_rename_expr'").Check(testkit.Rows("d MASK_NULL(`d`)"))
 
-	// BR replays the history query after the rename.
+	// The query recorded in DDL history names the column as it is now.
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter")
 	query := lastDDLJobQuery(tk)
 	t.Logf("history query: %s", query)
@@ -1030,7 +1030,7 @@ func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
 			tk.MustQuery(policySQL).Check(policy)
 			tk.MustQuery("select d from t_create_rename").Check(testkit.Rows("XXXXXX"))
 
-			// BR replays the history query after the rename.
+			// The query recorded in DDL history names the column as it is now.
 			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate")
 			query := lastDDLJobQuery(tk)
 			t.Logf("history query: %s", query)
@@ -1094,8 +1094,8 @@ func TestMaskingPolicyConcurrentRenameTableHistoryQuery(t *testing.T) {
 				}
 				tk.MustQuery(policySQL).Check(policy)
 
-				// BR switches to the job's database and replays the history
-				// query where only the renamed table exists.
+				// The query recorded in DDL history is valid in the job's
+				// database, where only the renamed table exists.
 				job := tk.MustQuery("admin show ddl jobs 1").Rows()[0]
 				query := lastDDLJobQuery(tk)
 				t.Logf("history query: %s", query)

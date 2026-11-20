@@ -902,8 +902,9 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 // rebindMaskingPolicyJob replaces the submitted names and expression in
 // job.Query, and the job's schema and table names, with the ones the worker
 // bound, keeping the other options. A table or column renamed after submission
-// no longer exists under the submitted name, so replaying the submitted text
-// from DDL history, as BR incremental restore does, would fail.
+// no longer exists under the submitted name, so the submitted text would leave
+// in DDL history a statement that names objects which are not there: the
+// history records the statement as it took effect.
 func rebindMaskingPolicyJob(job *model.Job, policy *model.MaskingPolicyInfo, submittedColumn ast.CIStr) {
 	if job.SchemaName == policy.DBName.L && job.TableName == policy.TableName.L && submittedColumn.L == policy.ColumnName.L {
 		return
