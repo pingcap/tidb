@@ -586,6 +586,14 @@ func TestInfoSchemaLocalTemporaryTableShadowing(t *testing.T) {
 				tk.MustQuery("execute stmt using @db, @tbl").Check(testkit.Rows("a", "b"))
 			}
 			tk.MustExec("deallocate prepare stmt")
+			tk.MustExec("begin")
+			tk.MustExec("set @snapshot_ts = tidb_parse_tso(@@tidb_current_ts)")
+			tk.MustExec("commit")
+			for _, predicate := range []string{"concat(table_name,'')='t'", "table_name='t'"} {
+				tk.MustQuery("select column_name from information_schema.columns as of timestamp @snapshot_ts " +
+					"where table_schema='temp_shadow' and " + predicate + " order by ordinal_position").Check(testkit.Rows("a", "b"))
+			}
+			tk.MustGetErrMsg("select * from t as of timestamp @snapshot_ts", "can not stale read temporary table")
 			// Ordinary SQL must still resolve the session-local temporary table.
 			tk.MustQuery("select shadow from t").Check(testkit.Rows("42"))
 			tk.MustExec("drop temporary table t")
