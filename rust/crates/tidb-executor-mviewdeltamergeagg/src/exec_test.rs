@@ -723,3 +723,105 @@ fn test_mark_update_touched_rows_by_column_enum_set_use_binary_name_compare() {
     mark(&set_chk, &[0], &mut set_bitmap, 1, 0, &set_tp, true);
     assert_eq!(vec![0], set_bitmap);
 }
+
+#[test]
+fn test_no_op_when_agg_value_unchanged() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let ft_real = ft(FieldTypeCode::Double);
+    let fts = vec![ft_int.clone(), ft_real.clone(), ft_int.clone(), ft_real];
+    let mut chk = Chunk::new_chunk_with_capacity(&fts, 1);
+    chk.append_int64(0, 0);
+    chk.append_float64(1, 0.0);
+    chk.append_int64(2, 7);
+    chk.append_float64(3, 3.5);
+    let mut exec = Exec::new(new_mock_source(&fts, vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[2], &[0]),
+        mapping(
+            agg_desc(names::SUM, vec![col_arg(1, ft_flags(FieldTypeCode::Double, FieldTypeFlags::NOT_NULL))]),
+            &[3],
+            &[1],
+        ),
+    ];
+    exec.delta_agg_col_count = 2;
+    let results = run(exec).unwrap();
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Update], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    assert_eq!(1, res.update_touched_stride);
+    assert_eq!(2, res.update_touched_bit_cnt);
+    assert_eq!(0, res.update_touched_bitmap[0]);
+
+    let mut table_writer = crate::writer::TableResultWriter::for_touched_test(vec![0, 1]);
+    let changed = table_writer.build_touched_from_bitmap(&res.update_touched_bitmap, res.update_touched_stride, 0);
+    assert!(!changed);
+    assert_eq!(vec![false, false], table_writer.touched);
+}
+
+/// Go `tables.MockTableFromMeta` of a two-column view.
+struct MockTargetTable(Vec<crate::writer::TargetColumn>);
+
+impl crate::writer::TargetTable for MockTargetTable {
+    fn writable_cols(&self) -> Vec<crate::writer::TargetColumn> {
+        self.0.clone()
+    }
+
+    fn public_col_count(&self) -> usize {
+        self.0.len()
+    }
+
+    fn add_record(&mut self, _: &[tidb_datatype::Datum], _: usize) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn update_record(&mut self, _: &tidb_txnkv::Handle, _: &[tidb_datatype::Datum], _: &[tidb_datatype::Datum], _: &[bool]) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn remove_record(&mut self, _: &tidb_txnkv::Handle, _: &[tidb_datatype::Datum]) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn may_flush(&mut self) -> Result<(), ExecError> {
+        Ok(())
+    }
+
+    fn shard_allocate_step(&self) -> i64 {
+        1
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
+    }
+}
+
+#[test]
+fn test_table_result_writer_column_offsets() {
+    for (name, offsets, want_err) in [
+        ("dense", [0, 1], ""),
+        ("reordered", [1, 0], "column `a` offset 1 != writable ordinal 0"),
+        ("gapped", [0, 2], "column `b` offset 2 != writable ordinal 1"),
+    ] {
+        let tp = ft(FieldTypeCode::LongLong);
+        let target = MockTargetTable(vec![
+            crate::writer::TargetColumn { name: "a".to_owned(), offset: offsets[0], field_type: tp.clone() },
+            crate::writer::TargetColumn { name: "b".to_owned(), offset: offsets[1], field_type: tp.clone() },
+        ]);
+        let mut handle_col = tidb_expr::column::Column::new(2, tp.clone());
+        handle_col.index = 1;
+        let writer = crate::writer::build_table_result_writer(
+            Box::new(target),
+            tidb_planner_util::handle_cols::new_int_handle_cols(handle_col),
+            &[tp.clone(), tp.clone(), tp],
+            1,
+            &[2],
+        );
+        match writer {
+            Err(error) => {
+                assert!(!want_err.is_empty(), "{name}: {}", error_text(&error));
+                assert!(error_text(&error).contains(want_err), "{name}: {}", error_text(&error));
+            }
+            Ok(_) => assert!(want_err.is_empty(), "{name}"),
+        }
+    }
+}

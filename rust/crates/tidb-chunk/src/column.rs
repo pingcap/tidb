@@ -50,7 +50,7 @@
 //! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
 use crate::go_append::GoAppend;
-use tidb_datatype::{deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
+use tidb_datatype::{deserialize_vector_float32, Datum, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;
 
@@ -849,6 +849,12 @@ impl Column {
         let start = usize::try_from(self.offsets[row_id]).expect("non-negative offset");
         let end = usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset");
         self.data.copy_from_slice(start..end, bytes);
+    }
+
+    /// Go `chunkRowColDatum` / `Row.DatumWithBuffer` for a standalone
+    /// column: the typed cell of `row_id` as a datum.
+    pub fn datum_with_buffer(&self, row_id: usize, field_type: &FieldType, datum: &mut Datum) {
+        crate::row::DatumCell { column: self, row: row_id }.datum_with_buffer(field_type, datum);
     }
 
     /// Go `GetInt64`.

@@ -19,6 +19,7 @@ mod exec;
 mod merge;
 mod merge_count;
 mod merge_sum;
+mod writer;
 
 #[cfg(test)]
 mod exec_test;
@@ -27,3 +28,4 @@ pub use exec::{
     ChunkResult, Exec, Mapping, MergeRuntimeStats, MergeWorkerData, MergeWriterStats, NoopWriter, ResultWriter, RowOp,
     RowOpType,
 };
+pub use writer::{TargetColumn, TargetTable};

@@ -21,3 +21,5 @@ tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-executor-internal-util = { path = "../tidb-executor-internal-util" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
+tidb-planner-util = { path = "../tidb-planner-util" }
+tidb-txnkv = { path = "../tidb-txnkv" }

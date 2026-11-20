@@ -224,8 +224,14 @@ pub struct Exec {
     pub delta_agg_col_count: i64,
     /// Go `WorkerCnt`; `<= 0` takes the session's executor concurrency.
     pub worker_cnt: i64,
-    /// Go `Writer`; `None` is Go's `noopWriter`.
+    /// Go `Writer`; when unset, `Open` writes through `target_table`, or
+    /// nowhere (Go's `noopWriter`) without one.
     pub writer: Option<Box<dyn ResultWriter>>,
+    /// Go `TargetTable` (with the session it writes through).
+    pub target_table: Option<Box<dyn crate::writer::TargetTable>>,
+    /// Go `TargetHandleCols`: builds row handles for update/delete from child
+    /// input rows.
+    pub target_handle_cols: Option<tidb_planner_util::handle_cols::HandleCols>,
 
     core: MergeCore,
     prepared: bool,
@@ -278,6 +284,8 @@ impl Exec {
             delta_agg_col_count: 0,
             worker_cnt: 0,
             writer: None,
+            target_table: None,
+            target_handle_cols: None,
             core: MergeCore::default(),
             prepared: false,
             executed: false,
@@ -302,7 +310,21 @@ impl Exec {
         }
         self.prepare_mergers()?;
         if self.writer.is_none() {
-            self.writer = Some(Box::new(NoopWriter));
+            self.writer = Some(match self.target_table.take() {
+                Some(table) => {
+                    let Some(handle_cols) = self.target_handle_cols.clone() else {
+                        return Err(err("TargetHandleCols is nil"));
+                    };
+                    Box::new(crate::writer::build_table_result_writer(
+                        table,
+                        handle_cols,
+                        &self.core.child_types,
+                        self.delta_agg_col_count,
+                        &self.core.agg_output_col_ids,
+                    )?)
+                }
+                None => Box::new(NoopWriter),
+            });
         }
         self.prepared = true;
         self.executed = false;

@@ -7107,6 +7107,8 @@ dependencies = [
  "tidb-expr",
  "tidb-expression-aggregation",
  "tidb-mysql",
+ "tidb-planner-util",
+ "tidb-txnkv",
 ]
 
 [[package]]
