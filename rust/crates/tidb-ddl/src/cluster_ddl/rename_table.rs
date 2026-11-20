@@ -282,7 +282,7 @@ impl EvolvingTables {
     /// schema it entered.
     fn write(&self, txn: &mut JobTxn<'_>) -> Result<(), DdlPlanError> {
         let meta = txn.meta();
-        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+        let meta_error = |error| job_meta_error(&meta, error);
         for (schema_id, table_id) in &self.deleted {
             meta.drop_table_or_view(*schema_id, *table_id).map_err(meta_error)?;
         }
@@ -501,7 +501,7 @@ pub(super) fn on_rename_table(
     let schema_version = {
         let meta = txn.meta();
         meta.gen_schema_version()
-            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?
+            .map_err(|error| job_meta_error(&meta, error))?
     };
     let mut diff = SchemaDiff {
         version: schema_version,
@@ -699,5 +699,5 @@ fn set_rename_diff(
 fn push_version(txn: &mut JobTxn<'_>, diff: &SchemaDiff) -> Result<(), DdlPlanError> {
     let meta = txn.meta();
     meta.set_schema_diff(diff)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+        .map_err(|error| job_meta_error(&meta, error))
 }

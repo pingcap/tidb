@@ -290,12 +290,18 @@ impl StepSession {
     }
 }
 
-/// A meta error of a step: the snapshot's own when a read failed.
-pub fn job_meta_error(meta: &JobMeta<'_, '_>, error: tidb_meta::MetaError) -> ClusterCatalogError {
-    meta.inspect(|txn| txn.failed.clone())
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| ClusterCatalogError::Decode(error.to_string()))
+/// A meta error of a step: the snapshot's own when a read failed, else
+/// the meta error itself, as the Go `*terror.Error` it is raised as when it
+/// is one (`errors.Trace(meta.ErrDBNotExists...)`).
+pub fn job_meta_error(meta: &JobMeta<'_, '_>, error: tidb_meta::MetaError) -> tidb_ddl_build::plan_error::DdlPlanError {
+    use tidb_ddl_build::plan_error::DdlPlanError;
+    if let Some(failed) = meta.inspect(|txn| txn.failed.clone()).ok().flatten() {
+        return DdlPlanError::Meta(failed);
+    }
+    match error.to_terror() {
+        Some(terror) => DdlPlanError::Source(terror),
+        None => DdlPlanError::Meta(ClusterCatalogError::Decode(error.to_string())),
+    }
 }
 
 impl MetaSnapshot for JobTxn<'_> {

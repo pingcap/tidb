@@ -252,7 +252,7 @@ pub(super) fn on_create_table(
                 info.state = SchemaState::DELETE_ONLY;
                 let meta = txn.meta();
                 meta.update_table(database_id, &mut info)
-                    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                    .map_err(|error| job_meta_error(&meta, error))?;
                 active.job.schema_state = SchemaState::DELETE_ONLY;
             }
             !has_foreign_keys
@@ -263,7 +263,7 @@ pub(super) fn on_create_table(
             info.update_ts = start_ts;
             let meta = txn.meta();
             meta.update_table(database_id, &mut info)
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
             true
         }
         state => {

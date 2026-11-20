@@ -713,7 +713,7 @@ pub(super) fn on_create_view(
     info.state = SchemaState::PUBLIC;
     info.update_ts = start_ts;
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     if let Some(old) = old.filter(|_| or_replace) {
         // Go `DropTableOrView` and `GetAutoIDAccessors(...).Del()`.
         meta.drop_table_or_view(database_id, old).map_err(meta_error)?;
@@ -774,7 +774,7 @@ pub(super) fn create_sequence_with_check(
         info,
         sequence_base_for(increment_and_start.0, increment_and_start.1),
     )
-    .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+    .map_err(|error| job_meta_error(&meta, error))
 }
 
 /// Go `onCreateSequence`.

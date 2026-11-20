@@ -1795,3 +1795,124 @@ pub(crate) fn refresh_materialized_view_complete_out_of_place_cutover_job(
         id_allocated: false,
     })
 }
+
+/// Go master `pkg/ddl/mview_worker_test.go`'s cutover involving-schema test.
+#[cfg(test)]
+mod mview_worker_tests {
+    use tidb_model::table::{MaterializedViewBaseInfo, MaterializedViewInfo, MaterializedViewLogInfo, MaterializedViewShadowInfo};
+    use tidb_model::{GoShared, SchemaState, TableInfo};
+
+    /// Go `infoschema.MockInfoSchema(tables)`: the tables, public, in `test`.
+    fn mock_info_schema(tables: Vec<TableInfo>) -> super::SessionExtendedInfoSchema {
+        let mut db = tidb_model::db::DBInfo { id: 1, name: tidb_ast::CiString::new("test"), state: SchemaState::PUBLIC, ..Default::default() };
+        for mut table in tables {
+            table.state = SchemaState::PUBLIC;
+            table.db_id = 1;
+            db.deprecated_tables.push_go(table);
+        }
+        super::SessionExtendedInfoSchema::init_with_db_infos(vec![GoShared::new(db)], Vec::new(), Vec::new(), 1)
+    }
+
+    fn table(id: i64, name: &str) -> TableInfo {
+        TableInfo { id, name: tidb_ast::CiString::new(name), ..Default::default() }
+    }
+
+    fn tables_of(involving: &[tidb_model::InvolvingSchemaInfo]) -> Vec<String> {
+        involving
+            .iter()
+            .map(|info| {
+                assert_eq!(info.database.to_string(), "test");
+                assert_eq!(info.mode, tidb_model::InvolvingSchemaInfo::default().mode);
+                info.table.to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_build_m_view_refresh_out_of_place_cutover_involving_schema_info() {
+        let mut base = table(1, "base");
+        base.materialized_view_base = Some(GoShared::new(MaterializedViewBaseInfo { mlog_id: 2, mview_ids: vec![3].into(), ..Default::default() }));
+        let mut mlog = table(2, "$mlog$base");
+        mlog.materialized_view_log =
+            Some(GoShared::new(MaterializedViewLogInfo { base_table_id: 1, dependent_mview_ids: vec![3].into(), ..Default::default() }));
+        let mut old_mview = table(3, "mv");
+        old_mview.materialized_view = Some(GoShared::new(MaterializedViewInfo { base_table_ids: vec![1].into(), ..Default::default() }));
+        let mut shadow = table(4, "__mv_shadow");
+        shadow.materialized_view_shadow = Some(GoShared::new(MaterializedViewShadowInfo { source_mview_id: 3, ..Default::default() }));
+        let build = |tables: Vec<TableInfo>| {
+            tables_of(&super::build_mview_refresh_out_of_place_cutover_involving_schema_info(&mock_info_schema(tables), "test", 3, 4).unwrap())
+        };
+        assert_eq!(build(vec![base.clone(), mlog.clone(), old_mview.clone(), shadow.clone()]), vec!["mv", "base", "__mv_shadow", "$mlog$base"]);
+
+        // "A MLog that does not list the old MV is unrelated to this cutover
+        // and is intentionally omitted from the involving-schema lock set."
+        let mut unrelated = mlog.clone();
+        unrelated.materialized_view_log =
+            Some(GoShared::new(MaterializedViewLogInfo { base_table_id: 1, ..Default::default() }));
+        let involving = build(vec![base.clone(), unrelated, old_mview.clone(), shadow.clone()]);
+        assert_eq!(involving.len(), 3);
+        assert!(!involving.contains(&"$mlog$base".to_owned()));
+
+        // "A shared child can have another source. The cutover claim includes
+        // the child once and every upstream source/log that the worker can
+        // rewrite."
+        let mut parent = old_mview.clone();
+        parent.materialized_view = Some(GoShared::new(MaterializedViewInfo { base_table_ids: vec![1, 107].into(), ..Default::default() }));
+        parent.materialized_view_base = Some(GoShared::new(MaterializedViewBaseInfo { mlog_id: 105, mview_ids: vec![106].into(), ..Default::default() }));
+        let mut base_info = base.clone();
+        base_info.materialized_view_base = Some(GoShared::new(MaterializedViewBaseInfo { mlog_id: 104, mview_ids: vec![3].into(), ..Default::default() }));
+        let mut input_log = table(104, "input_log");
+        input_log.materialized_view_log =
+            Some(GoShared::new(MaterializedViewLogInfo { base_table_id: 1, dependent_mview_ids: vec![3].into(), ..Default::default() }));
+        let mut shared_child = table(106, "shared_child");
+        shared_child.materialized_view = Some(GoShared::new(MaterializedViewInfo { base_table_ids: vec![3, 1].into(), ..Default::default() }));
+        let mut second_source = table(107, "second_source");
+        second_source.materialized_view_base = Some(GoShared::new(MaterializedViewBaseInfo { mlog_id: 108, ..Default::default() }));
+        let mut second_log = table(108, "second_log");
+        second_log.materialized_view_log =
+            Some(GoShared::new(MaterializedViewLogInfo { base_table_id: 107, dependent_mview_ids: vec![106].into(), ..Default::default() }));
+        let mut involving = build(vec![parent, base_info, shadow, input_log, table(105, "output_log"), shared_child, second_source, second_log]);
+        involving.sort();
+        // "second_log serves another MV, so cutover does not rewrite or claim it."
+        let mut expected = vec!["mv", "base", "__mv_shadow", "input_log", "output_log", "shared_child", "second_source"];
+        expected.sort_unstable();
+        assert_eq!(involving, expected);
+    }
+
+    #[test]
+    fn test_build_drop_table_involving_schema_info() {
+        use crate::cluster_ddl::drop_object::build_drop_table_involving_schema_info;
+        let mut base1 = table(1, "base1");
+        let base2 = table(2, "base2");
+        let mut mv = table(3, "mv");
+        mv.materialized_view = Some(GoShared::new(MaterializedViewInfo { base_table_ids: vec![1, 2].into(), ..Default::default() }));
+        let mut mlog = table(4, "$mlog$base1");
+        mlog.materialized_view_log = Some(GoShared::new(MaterializedViewLogInfo { base_table_id: 1, ..Default::default() }));
+        base1.materialized_view_base = Some(GoShared::new(MaterializedViewBaseInfo { mlog_id: 4, ..Default::default() }));
+        mlog.materialized_view_log.as_ref().unwrap().write().dependent_mview_ids = vec![3].into();
+        // Go's MockInfoSchema shares the table pointers its test mutates;
+        // here each state is a fresh schema of the same tables.
+        let is = |tables: &[&TableInfo]| mock_info_schema(tables.iter().map(|t| (*t).clone_like_go()).collect());
+        let build = |is: &super::SessionExtendedInfoSchema, info: &TableInfo| build_drop_table_involving_schema_info(is, "test", info);
+
+        let involving = build(&is(&[&base1, &base2, &mv, &mlog]), &mv).unwrap();
+        assert_eq!(tables_of(&involving), vec!["mv", "base1", "$mlog$base1", "base2"]);
+
+        mlog.materialized_view_log.as_ref().unwrap().write().dependent_mview_ids = Vec::new().into();
+        let involving = build(&is(&[&base1, &base2, &mv, &mlog]), &mv).unwrap();
+        assert_eq!(tables_of(&involving), vec!["mv", "base1", "base2"]);
+
+        base1.materialized_view_base.as_ref().unwrap().write().mlog_id = 99;
+        let err = build(&is(&[&base1, &base2, &mv, &mlog]), &mv).unwrap_err();
+        assert!(err.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS), "{err:?}");
+        base1.materialized_view_base.as_ref().unwrap().write().mlog_id = 4;
+
+        // "A missing base table must not prevent dropping an orphaned MView."
+        let schema = is(&[&base1, &mv, &mlog]);
+        let involving = build(&schema, &mv).unwrap();
+        assert_eq!(tables_of(&involving), vec!["mv", "base1"]);
+
+        let involving = build(&schema, &mlog).unwrap();
+        assert_eq!(tables_of(&involving), vec!["$mlog$base1", "base1"]);
+    }
+}

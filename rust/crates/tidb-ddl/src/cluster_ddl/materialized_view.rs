@@ -1084,8 +1084,23 @@ pub(super) fn get_table_info(txn: &mut JobTxn<'_>, table_id: i64, schema_id: i64
             tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .gen_with_stack_by_args(&[format!("(Schema ID {schema_id})").into()]),
         )),
-        Err(error) => Err(DdlPlanError::Meta(job_meta_error(&meta, error))),
+        Err(error) => Err(job_meta_error(&meta, error)),
     }
+}
+
+/// Go `getTableInfoAndCancelNonExistJob`: the table, or Go's not-exists
+/// error with the job cancelled.
+pub(super) fn get_table_info_and_cancel_non_exist_job(
+    txn: &mut JobTxn<'_>,
+    job: &mut Job,
+    table_id: i64,
+    schema_id: i64,
+) -> Result<TableInfo, DdlPlanError> {
+    get_table_info(txn, table_id, schema_id).inspect_err(|error| {
+        if is_not_exists(error) {
+            job.state = JobState::CANCELLED;
+        }
+    })
 }
 
 fn is_not_exists(error: &DdlPlanError) -> bool {
@@ -1097,7 +1112,7 @@ fn is_not_exists(error: &DdlPlanError) -> bool {
 fn update_table(txn: &mut JobTxn<'_>, schema_id: i64, table: &mut TableInfo, start_ts: u64) -> Result<(), DdlPlanError> {
     table.update_ts = start_ts;
     let meta = txn.meta();
-    meta.update_table(schema_id, table).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+    meta.update_table(schema_id, table).map_err(|error| job_meta_error(&meta, error))
 }
 
 /// Go `SetSchemaDiffForMultiInfos`: each extra table not already in the diff
@@ -1197,38 +1212,6 @@ pub(crate) fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id:
         Err(error) if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) => Ok(()),
         other => other.map_err(DdlPlanError::from_mysql_error),
     }
-}
-
-/// Go `updateMaterializedViewBaseInfoOnDrop` for a dropped MV log: its base
-/// table forgets it (and its `MaterializedViewBase` once nothing remains).
-pub(crate) fn update_materialized_view_base_info_on_drop_log(
-    txn: &mut JobTxn<'_>,
-    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    dropping: &TableInfo,
-) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
-    let Some(log) = &dropping.materialized_view_log else {
-        return Ok(Vec::new());
-    };
-    let base_id = log.read().base_table_id;
-    let schema_id = active.job.schema_id;
-    let meta = txn.meta();
-    let base = meta.table(schema_id, base_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-    let Some(mut base) = base else {
-        return Ok(Vec::new());
-    };
-    if let Some(info) = base.materialized_view_base.clone() {
-        let (mlog_id, empty) = {
-            let mut info = info.write();
-            if info.mlog_id == active.job.table_id {
-                info.mlog_id = 0;
-            }
-            (info.mlog_id, info.mview_ids.is_empty())
-        };
-        if mlog_id == 0 && empty {
-            base.materialized_view_base = None;
-        }
-    }
-    Ok(vec![(schema_id, base)])
 }
 
 /// Go `(*worker).onCreateMaterializedViewLog`.
@@ -1529,14 +1512,14 @@ fn rollback_create_materialized_view_log(
         Err(error) => return Err(error),
     };
     let dropping = actual.clone().unwrap_or_else(|| mlog.clone());
-    let extra = update_materialized_view_base_info_on_drop_log(txn, active, &dropping)?;
+    let extra = update_materialized_view_base_info_on_drop(txn, &active.job, &dropping)?;
     for (extra_schema, table) in &extra {
         update_table(txn, *extra_schema, &mut table.clone(), start_ts)?;
     }
     if actual.is_some() {
         let meta = txn.meta();
-        meta.drop_table_or_view(schema_id, table_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-        meta.auto_ids(schema_id, table_id).delete().map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        meta.drop_table_or_view(schema_id, table_id).map_err(|error| job_meta_error(&meta, error))?;
+        meta.auto_ids(schema_id, table_id).delete().map_err(|error| job_meta_error(&meta, error))?;
     }
     delete_materialized_view_log_purge_info(txn, table_id)?;
     // Go: the rollback diff needs RollbackDone (`SetSchemaDiffForCreateTable`
@@ -2002,22 +1985,28 @@ fn is_create_materialized_view_base_check_cancelled_err(error: &DdlPlanError) ->
 /// Go master `updateMaterializedViewBaseInfoOnCreate` for a materialized
 /// view: its base tables list it, its logs read for it. An error cancels the
 /// job.
+/// Go `job.State = model.JobStateCancelled` before returning `error`.
+fn cancel_job(job: &mut Job, error: impl Into<DdlPlanError>) -> DdlPlanError {
+    job.state = JobState::CANCELLED;
+    error.into()
+}
+
 fn update_materialized_view_base_info_on_create(
     txn: &mut JobTxn<'_>,
-    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    job: &mut Job,
     created: &TableInfo,
     mlog_ids: &[i64],
     start_ts: u64,
 ) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
-    let schema_id = active.job.schema_id;
+    let schema_id = job.schema_id;
     let base_ids: Vec<i64> = created
         .materialized_view
         .as_ref()
         .map(|info| info.read().base_table_ids.iter().copied().collect())
         .unwrap_or_default();
     if base_ids.is_empty() {
-        return Err(cancel_ddl_job(
-            active,
+        return Err(cancel_job(
+            job,
             DdlPlanError::plain_refusal("materialized view must reference at least one base table"),
         ));
     }
@@ -2025,13 +2014,13 @@ fn update_materialized_view_base_info_on_create(
     let mut processed: Vec<i64> = Vec::new();
     for &base_id in &base_ids {
         if base_id == 0 {
-            return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal("materialized view base table id is invalid")));
+            return Err(cancel_job(job, DdlPlanError::plain_refusal("materialized view base table id is invalid")));
         }
         if processed.contains(&base_id) {
             continue;
         }
         processed.push(base_id);
-        let mut base = get_table_info(txn, base_id, schema_id).map_err(|error| cancel_ddl_job(active, error))?;
+        let mut base = get_table_info(txn, base_id, schema_id).map_err(|error| cancel_job(&mut *job, error))?;
         {
             let info = base.materialized_view_base.get_or_insert_with(Default::default);
             let mut info = info.write();
@@ -2041,28 +2030,28 @@ fn update_materialized_view_base_info_on_create(
                 info.mview_ids = ids.into();
             }
         }
-        update_table(txn, schema_id, &mut base, start_ts).map_err(|error| cancel_ddl_job(active, error))?;
+        update_table(txn, schema_id, &mut base, start_ts).map_err(|error| cancel_job(&mut *job, error))?;
         extra.push((schema_id, base));
     }
     let mut processed_mlogs: Vec<i64> = Vec::new();
     for &mlog_id in mlog_ids {
         if mlog_id == 0 {
-            return Err(cancel_ddl_job(active, DdlPlanError::plain_refusal("materialized view log id is invalid")));
+            return Err(cancel_job(job, DdlPlanError::plain_refusal("materialized view log id is invalid")));
         }
         if processed_mlogs.contains(&mlog_id) {
             continue;
         }
         processed_mlogs.push(mlog_id);
-        let mut mlog = get_table_info(txn, mlog_id, schema_id).map_err(|error| cancel_ddl_job(active, error))?;
+        let mut mlog = get_table_info(txn, mlog_id, schema_id).map_err(|error| cancel_job(&mut *job, error))?;
         let Some(log) = mlog.materialized_view_log.clone() else {
-            return Err(cancel_ddl_job(
-                active,
+            return Err(cancel_job(
+                job,
                 DdlPlanError::from_mysql_error(invalid_ddl_job("create materialized view: invalid materialized view log")),
             ));
         };
         if !base_ids.contains(&log.read().base_table_id) {
-            return Err(cancel_ddl_job(
-                active,
+            return Err(cancel_job(
+                job,
                 DdlPlanError::from_mysql_error(invalid_ddl_job(
                     "create materialized view: materialized view log does not belong to a base table",
                 )),
@@ -2074,69 +2063,123 @@ fn update_materialized_view_base_info_on_create(
         let mut ids: Vec<i64> = log.read().dependent_mview_ids.iter().copied().collect();
         ids.push(created.id);
         log.write().dependent_mview_ids = ids.into();
-        update_table(txn, schema_id, &mut mlog, start_ts).map_err(|error| cancel_ddl_job(active, error))?;
+        update_table(txn, schema_id, &mut mlog, start_ts).map_err(|error| cancel_job(&mut *job, error))?;
         extra.push((schema_id, mlog));
     }
     Ok(extra)
 }
 
-/// Go master `updateMaterializedViewBaseInfoOnDrop` for a materialized view:
-/// its base tables and their logs forget it.
-pub(crate) fn update_materialized_view_base_info_on_drop_mview(
+/// Go master `updateMaterializedViewBaseInfoOnDrop`: the base tables of a
+/// dropped materialized view or log forget it, and so do the logs that read
+/// for a dropped view.
+pub(crate) fn update_materialized_view_base_info_on_drop(
     txn: &mut JobTxn<'_>,
-    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    dropping: &TableInfo,
+    job: &Job,
+    dropping_table: &TableInfo,
 ) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
-    let Some(info) = &dropping.materialized_view else {
-        return Ok(Vec::new());
+    let logger = tidb_ddl_logutil::ddl_logger;
+    let i64_field = |key: &str, value: i64| tidb_log::Field::new(key, tidb_log::Value::I64(value));
+    let base_table_ids: Vec<i64>;
+    let apply: &dyn Fn(&mut TableInfo);
+    let drop_mview = |base: &mut TableInfo| {
+        let Some(info) = base.materialized_view_base.clone() else {
+            return;
+        };
+        let empty = {
+            let mut info = info.write();
+            let new_ids: Vec<i64> = info.mview_ids.iter().copied().filter(|&id| id != job.table_id).collect();
+            info.mview_ids = new_ids.into();
+            info.mlog_id == 0 && info.mview_ids.is_empty()
+        };
+        if empty {
+            base.materialized_view_base = None;
+        }
     };
-    let base_ids: Vec<i64> = info.read().base_table_ids.iter().copied().collect();
-    let schema_id = active.job.schema_id;
-    let mview_id = active.job.table_id;
-    let mut extra = Vec::new();
-    let mut processed: Vec<i64> = Vec::new();
-    for base_id in base_ids {
+    let drop_mlog = |base: &mut TableInfo| {
+        let Some(info) = base.materialized_view_base.clone() else {
+            return;
+        };
+        let empty = {
+            let mut info = info.write();
+            if info.mlog_id == job.table_id {
+                info.mlog_id = 0;
+            }
+            info.mlog_id == 0 && info.mview_ids.is_empty()
+        };
+        if empty {
+            base.materialized_view_base = None;
+        }
+    };
+    if let Some(mview) = &dropping_table.materialized_view {
+        if mview.read().base_table_ids.is_empty() {
+            logger().warn(
+                "materialized view has no base tables in metadata, skip dependency cleanup when dropping",
+                &[i64_field("mviewID", dropping_table.id)],
+            );
+            return Ok(Vec::new());
+        }
+        base_table_ids = mview.read().base_table_ids.iter().copied().collect();
+        apply = &drop_mview;
+    } else if let Some(mlog) = &dropping_table.materialized_view_log {
+        base_table_ids = vec![mlog.read().base_table_id];
+        apply = &drop_mlog;
+    } else {
+        return Ok(Vec::new());
+    }
+    let mut extra_infos = Vec::with_capacity(base_table_ids.len());
+    let mut processed: Vec<i64> = Vec::with_capacity(base_table_ids.len());
+    for base_id in base_table_ids {
         if processed.contains(&base_id) {
             continue;
         }
         processed.push(base_id);
         let meta = txn.meta();
-        let base = meta.table(schema_id, base_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        let base = meta.table(job.schema_id, base_id).map_err(|error| job_meta_error(&meta, error))?;
         let Some(mut base) = base else {
             continue;
         };
-        let mlog_id = base.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
-        if let Some(info) = base.materialized_view_base.clone() {
-            let empty = {
-                let mut info = info.write();
-                let kept: Vec<i64> = info.mview_ids.iter().copied().filter(|&id| id != mview_id).collect();
-                info.mview_ids = kept.into();
-                info.mlog_id == 0 && info.mview_ids.is_empty()
-            };
-            if empty {
-                base.materialized_view_base = None;
-            }
-        }
-        extra.push((schema_id, base));
+        let mlog_id = match (&dropping_table.materialized_view, &base.materialized_view_base) {
+            (Some(_), Some(info)) => info.read().mlog_id,
+            _ => 0,
+        };
+        apply(&mut base);
+        extra_infos.push((job.schema_id, base));
         if mlog_id == 0 {
             continue;
         }
         let meta = txn.meta();
-        let mlog = meta.table(schema_id, mlog_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-        let Some(mlog) = mlog else {
+        let mlog = meta.table(job.schema_id, mlog_id).map_err(|error| job_meta_error(&meta, error))?;
+        let Some(log) = mlog.as_ref().and_then(|mlog| mlog.materialized_view_log.clone()) else {
+            // "The executor rejects this corrupted metadata before submitting
+            // the job. Do not leave an already-started DROP job retrying in
+            // delete-only state."
+            logger().error(
+                "drop materialized view: materialized view log is missing or invalid during dependency cleanup",
+                &[i64_field("mviewID", job.table_id), i64_field("baseTableID", base_id), i64_field("mlogID", mlog_id)],
+            );
             continue;
         };
-        let Some(log) = mlog.materialized_view_log.clone() else {
-            continue;
-        };
-        if log.read().base_table_id != base_id || !log.read().dependent_mview_ids.iter().any(|&id| id == mview_id) {
+        let mlog_base_table_id = log.read().base_table_id;
+        if mlog_base_table_id != base_id {
+            logger().error(
+                "drop materialized view: materialized view log belongs to a different base table during dependency cleanup",
+                &[
+                    i64_field("mviewID", job.table_id),
+                    i64_field("baseTableID", base_id),
+                    i64_field("mlogID", mlog_id),
+                    i64_field("mlogBaseTableID", mlog_base_table_id),
+                ],
+            );
             continue;
         }
-        let kept: Vec<i64> = log.read().dependent_mview_ids.iter().copied().filter(|&id| id != mview_id).collect();
+        if !log.read().dependent_mview_ids.iter().any(|&id| id == job.table_id) {
+            continue;
+        }
+        let kept: Vec<i64> = log.read().dependent_mview_ids.iter().copied().filter(|&id| id != job.table_id).collect();
         log.write().dependent_mview_ids = kept.into();
-        extra.push((schema_id, mlog));
+        extra_infos.push((job.schema_id, mlog.expect("the log was read")));
     }
-    Ok(extra)
+    Ok(extra_infos)
 }
 
 /// Go master `buildCreateMaterializedViewRefreshInfoUpsertSQL`.
@@ -2408,7 +2451,7 @@ pub(super) fn on_create_materialized_view(
                 &mut affinity_groups,
             )?;
             active.job.table_id = mview.id;
-            let extra = update_materialized_view_base_info_on_create(txn, active, &mview, &mlog_ids, start_ts)?;
+            let extra = update_materialized_view_base_info_on_create(txn, &mut active.job, &mview, &mlog_ids, start_ts)?;
             let mut diff = SchemaDiff {
                 action_type: active.job.type_,
                 schema_id,
@@ -2698,14 +2741,14 @@ fn rollback_create_materialized_view(
         Err(error) => return Err(error),
     };
     let dropping = actual.clone().unwrap_or_else(|| mview.clone_like_go());
-    let extra = update_materialized_view_base_info_on_drop_mview(txn, active, &dropping)?;
+    let extra = update_materialized_view_base_info_on_drop(txn, &active.job, &dropping)?;
     for (extra_schema, table) in &extra {
         update_table(txn, *extra_schema, &mut table.clone_like_go(), start_ts)?;
     }
     if actual.is_some() {
         let meta = txn.meta();
-        meta.drop_table_or_view(schema_id, table_id).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
-        meta.auto_ids(schema_id, table_id).delete().map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        meta.drop_table_or_view(schema_id, table_id).map_err(|error| job_meta_error(&meta, error))?;
+        meta.auto_ids(schema_id, table_id).delete().map_err(|error| job_meta_error(&meta, error))?;
     }
     delete_create_materialized_view_refresh_info(txn, table_id)?;
     if let Err(error) = delete_create_materialized_view_refresh_alert(txn, table_id) {
@@ -3120,16 +3163,12 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         }
     }
 
-    // Go `getMViewOutOfPlaceCutoverTable` (`getTableInfoAndCancelNonExistJob`).
+    // Go `getMViewOutOfPlaceCutoverTable`.
     let cutover_table = |txn: &mut JobTxn<'_>,
                          active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
                          id: i64|
      -> Result<TableInfo, DdlPlanError> {
-        match get_table_info(txn, id, schema_id) {
-            Ok(table) => Ok(table),
-            Err(error) if is_not_exists(&error) => Err(cancel_ddl_job(active, error)),
-            Err(error) => Err(error),
-        }
+        get_table_info_and_cancel_non_exist_job(txn, &mut active.job, id, schema_id)
     };
     let mut infos: Vec<TableInfo> = Vec::new();
     for &id in &base_ids {
@@ -3228,10 +3267,10 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         {
             let meta = txn.meta();
             meta.drop_table_or_view(schema_id, args.old_mlog_id)
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
             meta.auto_ids(schema_id, args.old_mlog_id)
                 .delete()
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
         }
         // Go `createTableOrViewWithCheck`.
         if let Err(error) = check_table_info_valid(replacement) {
@@ -3240,7 +3279,7 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         {
             let meta = txn.meta();
             meta.create_table_or_view(schema_id, replacement)
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
         }
         if let Some((count, labels)) = crate::cluster_ddl::tiflash_replica_spec(replacement) {
             crate::cluster_ddl::configure_tiflash_pd_for_table(replacement.id, count, &labels)
@@ -3271,10 +3310,10 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     {
         let meta = txn.meta();
         meta.drop_table_or_view(schema_id, args.old_mview_id)
-            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+            .map_err(|error| job_meta_error(&meta, error))?;
         meta.auto_ids(schema_id, args.old_mview_id)
             .delete()
-            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+            .map_err(|error| job_meta_error(&meta, error))?;
     }
     let mut new_mview = shadow.clone_like_go();
     new_mview.name = old.name.clone();
@@ -3544,5 +3583,229 @@ mod build_sql_tests {
         assert!(sql.contains("WITH disable_precheck, disk_quota='100gib'"), "{sql}");
         let sql = super::build_create_materialized_view_import_sql("test", &mview, 12, "64gib").unwrap();
         assert!(sql.contains("WITH disable_precheck, thread=12, disk_quota='64gib'"), "{sql}");
+    }
+}
+
+/// Go master `pkg/ddl/mview_worker_test.go` (its internal-function tests).
+#[cfg(test)]
+mod mview_worker_tests {
+    use super::FieldTypeFlags;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    fn usage(sql: &str, column: &str) -> super::MvColumnUsage {
+        super::analyze_mv_column_usage(&super::parse_select_from_sql(sql).unwrap(), column)
+    }
+
+    #[test]
+    fn test_analyze_mv_column_usage_group_by_alias() {
+        let usage = usage("select a as k, count(1) from t group by k", "a");
+        assert_eq!(usage.unsupported_reason, "");
+        assert_eq!(usage.direct_output_offsets, vec![0]);
+        assert!(usage.is_group_key);
+    }
+
+    #[test]
+    fn test_analyze_mv_column_usage_where_reference_unsupported() {
+        let usage = usage("select a, count(1) from t where b > 0 group by a", "b");
+        assert_eq!(usage.unsupported_reason, "WHERE clause");
+        assert!(usage.direct_output_offsets.is_empty());
+        assert!(!usage.is_group_key);
+    }
+
+    #[test]
+    fn test_analyze_mv_column_usage_group_by_ordinal() {
+        let usage = usage("select a, count(1) from t group by 1", "a");
+        assert_eq!(usage.unsupported_reason, "");
+        assert_eq!(usage.direct_output_offsets, vec![0]);
+        assert!(usage.is_group_key);
+    }
+
+    #[test]
+    fn test_field_type_for_mv_related_column_clears_base_only_flags() {
+        let mut old_related_ft = FieldType::new(FieldTypeCode::Long);
+        old_related_ft.add_flags(FieldTypeFlags::UNIQUE_KEY);
+        let old_related = tidb_model::ColumnInfo { field_type: old_related_ft, ..Default::default() };
+        let mut base_new_ft = FieldType::new(FieldTypeCode::LongLong);
+        base_new_ft.add_flags(
+            FieldTypeFlags::NOT_NULL
+                | FieldTypeFlags::AUTO_INCREMENT
+                | FieldTypeFlags::ON_UPDATE_NOW
+                | FieldTypeFlags::PREVENT_NULL_INSERT
+                | FieldTypeFlags::GENERATED_COLUMN
+                | FieldTypeFlags::PRI_KEY,
+        );
+        let base_new = tidb_model::ColumnInfo { field_type: base_new_ft, ..Default::default() };
+        let new_field_type = super::field_type_for_mv_related_column(&old_related, &base_new);
+        assert!(new_field_type.has_flag(FieldTypeFlags::NOT_NULL));
+        assert!(new_field_type.has_flag(FieldTypeFlags::UNIQUE_KEY));
+        for cleared in [
+            FieldTypeFlags::PRI_KEY,
+            FieldTypeFlags::AUTO_INCREMENT,
+            FieldTypeFlags::ON_UPDATE_NOW,
+            FieldTypeFlags::PREVENT_NULL_INSERT,
+            FieldTypeFlags::GENERATED_COLUMN,
+        ] {
+            assert!(!new_field_type.has_flag(cleared), "{cleared:#x}");
+        }
+    }
+
+    #[test]
+    fn test_format_sql_mode() {
+        for s in ["", tidb_mysql::consts::DefaultSQLMode, "ANSI", "TRADITIONAL", "PAD_CHAR_TO_FULL_LENGTH,NO_BACKSLASH_ESCAPES"] {
+            let mode = tidb_mysql::consts::get_sql_mode(&tidb_mysql::consts::format_sql_mode_str(s)).unwrap();
+            let got = tidb_mysql::consts::get_sql_mode(&super::format_sql_mode(i64::try_from(mode.0).unwrap())).unwrap();
+            assert_eq!(mode, got, "{s}");
+        }
+    }
+
+    struct EmptySnapshot;
+
+    impl tidb_infoschema::cluster_catalog::MetaSnapshot for EmptySnapshot {
+        fn get(&mut self, _: &[u8]) -> Result<Option<Vec<u8>>, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(None)
+        }
+
+        fn scan_prefix(
+            &mut self,
+            _: &[u8],
+        ) -> Result<tidb_infoschema::cluster_catalog::MetaPairs, tidb_infoschema::cluster_catalog::ClusterCatalogError> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Go `mockstore.NewMockStore()` + `kv.RunInNewTxn` + `meta.NewMutator`.
+    fn run_in_new_txn(f: impl FnOnce(&mut super::JobTxn<'_>)) {
+        let mut store = EmptySnapshot;
+        let mut txn = super::JobTxn::new(&mut store, 1);
+        f(&mut txn);
+    }
+
+    fn create_test_database(txn: &mut super::JobTxn<'_>) {
+        let db = tidb_model::db::DBInfo { id: 1, name: tidb_ast::CiString::new("test"), ..Default::default() };
+        txn.meta().create_database(&db).unwrap();
+    }
+
+    fn table(id: i64, name: &str) -> super::TableInfo {
+        super::TableInfo { id, name: tidb_ast::CiString::new(name), ..Default::default() }
+    }
+
+    fn new_job(schema_id: i64, table_id: i64, state: super::JobState) -> super::Job {
+        let mut job = super::Job::default();
+        job.schema_id = schema_id;
+        job.table_id = table_id;
+        job.state = state;
+        job
+    }
+
+    fn mview_of(id: i64, base_table_ids: Vec<i64>) -> super::TableInfo {
+        let mut mview = table(id, "");
+        mview.materialized_view = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewInfo {
+            base_table_ids: base_table_ids.into(),
+            ..Default::default()
+        }));
+        mview
+    }
+
+    #[test]
+    fn test_update_materialized_view_base_info_on_create_missing_base_table() {
+        run_in_new_txn(|txn| {
+            create_test_database(txn);
+            let mut job = new_job(1, 0, super::JobState::RUNNING);
+            let created_table = mview_of(2, vec![3]);
+            let err = super::update_materialized_view_base_info_on_create(txn, &mut job, &created_table, &[], 0).unwrap_err();
+            assert!(err.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS), "{err:?}");
+            assert_eq!(job.state, super::JobState::CANCELLED);
+        });
+    }
+
+    #[test]
+    fn test_get_table_info_and_cancel_non_exist_job() {
+        run_in_new_txn(|txn| {
+            create_test_database(txn);
+            for (name, table_id, schema_id) in [("missing table", 2, 1), ("missing database", 2, 2)] {
+                let mut job = new_job(0, 0, super::JobState::RUNNING);
+                assert!(super::get_table_info_and_cancel_non_exist_job(txn, &mut job, table_id, schema_id).is_err(), "{name}");
+                assert_eq!(job.state, super::JobState::CANCELLED, "{name}");
+            }
+        });
+    }
+
+    #[test]
+    fn test_update_materialized_view_base_info_on_drop_propagates_get_table_error() {
+        run_in_new_txn(|txn| {
+            let job = new_job(1, 0, super::JobState::NONE);
+            let dropping_table = mview_of(2, vec![3]);
+            let err = super::update_materialized_view_base_info_on_drop(txn, &job, &dropping_table).unwrap_err();
+            assert!(err.equal(&tidb_meta::meta_errors::ERR_DB_NOT_EXISTS), "{err:?}");
+        });
+    }
+
+    #[test]
+    fn test_update_materialized_view_base_info_on_drop_without_base_tables() {
+        run_in_new_txn(|txn| {
+            let dropping_table = mview_of(2, Vec::new());
+            let job = new_job(0, dropping_table.id, super::JobState::NONE);
+            let extra_infos = super::update_materialized_view_base_info_on_drop(txn, &job, &dropping_table).unwrap();
+            assert!(extra_infos.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_update_materialized_view_base_info_on_drop_m_log_dependency() {
+        use tidb_model::table::{MaterializedViewBaseInfo, MaterializedViewLogInfo};
+        let run_case = |dependent: bool, base_exists: bool, mlog_exists: bool, wrong_base_table_id: bool| {
+            run_in_new_txn(|txn| {
+                create_test_database(txn);
+                let mut base = table(1, "base");
+                base.materialized_view_base = Some(tidb_model::GoShared::new(MaterializedViewBaseInfo {
+                    mlog_id: 2,
+                    mview_ids: vec![3].into(),
+                    ..Default::default()
+                }));
+                let mut log = MaterializedViewLogInfo { base_table_id: 1, ..Default::default() };
+                if dependent {
+                    log.dependent_mview_ids = vec![3].into();
+                }
+                if wrong_base_table_id {
+                    log.base_table_id = 4;
+                }
+                let mut mlog = table(2, "$mlog$base");
+                mlog.materialized_view_log = Some(tidb_model::GoShared::new(log));
+                if base_exists {
+                    txn.meta().create_table_or_view(1, &base).unwrap();
+                }
+                if mlog_exists {
+                    txn.meta().create_table_or_view(1, &mlog).unwrap();
+                }
+                let dropping_table = mview_of(3, vec![1]);
+                let job = new_job(1, dropping_table.id, super::JobState::NONE);
+                let extra_infos = super::update_materialized_view_base_info_on_drop(txn, &job, &dropping_table).unwrap();
+                if !base_exists {
+                    assert!(extra_infos.is_empty());
+                    return;
+                }
+                if !dependent {
+                    assert_eq!(extra_infos.len(), 1);
+                    return;
+                }
+                if !mlog_exists || wrong_base_table_id {
+                    assert_eq!(extra_infos.len(), 1);
+                    assert!(extra_infos[0].1.materialized_view_base.as_ref().unwrap().read().mview_ids.is_empty());
+                    return;
+                }
+                assert_eq!(extra_infos.len(), 2);
+                assert!(extra_infos[1].1.materialized_view_log.as_ref().unwrap().read().dependent_mview_ids.is_empty());
+            });
+        };
+        // "dependent mlog is updated"
+        run_case(true, true, true, false);
+        // "unrelated mlog is not updated"
+        run_case(false, true, true, false);
+        // "missing base table is skipped"
+        run_case(true, false, true, false);
+        // "missing mlog does not retry a started drop"
+        run_case(true, true, false, false);
+        // "mlog with wrong base table does not retry a started drop"
+        run_case(true, true, true, true);
     }
 }

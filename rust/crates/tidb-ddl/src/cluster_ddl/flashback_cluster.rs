@@ -237,7 +237,7 @@ fn check_and_set_flashback_cluster_info(
     set_global_sys_var_from_bool(pool, tidb_vardef::tidb_vars::TIDB_TTL_JOB_ENABLE, false)?;
 
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let now_schema_version = meta.schema_version().map_err(meta_error)?;
 
     let store = sessions

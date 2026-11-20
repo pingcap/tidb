@@ -303,7 +303,7 @@ pub(super) fn on_modify_schema_charset_and_collate(
     // Go: `UpdateDatabase`, then `updateSchemaVersion`.
     let meta = txn.meta();
     meta.update_database(&info)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     let action_type = active.job.type_;
     let (schema_version, diff) = update_schema_version(
         &meta,

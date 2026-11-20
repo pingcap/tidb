@@ -122,6 +122,7 @@ pub fn drop_table<S: MetaSnapshot>(
     let db_id = database.read().id;
     drop_table_like(
         snapshot,
+        &catalog,
         job_context,
         ActionType::ACTION_DROP_TABLE,
         db_id,
@@ -174,6 +175,7 @@ pub fn drop_materialized_view_object<S: MetaSnapshot>(
     let db_id = database.read().id;
     drop_table_like(
         snapshot,
+        &catalog,
         job_context,
         action,
         db_id,
@@ -214,6 +216,7 @@ pub fn drop_view<S: MetaSnapshot>(
     check_cluster_drop_object(schema, name, &table, true)?;
     drop_table_like(
         snapshot,
+        &catalog,
         job_context,
         ActionType::ACTION_DROP_VIEW,
         db_id,
@@ -254,6 +257,7 @@ pub fn drop_sequence<S: MetaSnapshot>(
     }
     drop_table_like(
         snapshot,
+        &catalog,
         job_context,
         ActionType::ACTION_DROP_SEQUENCE,
         db_id,
@@ -322,8 +326,10 @@ pub fn drop_schema<S: MetaSnapshot>(
 
 /// The job of one `dropTableObject` target.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn drop_table_like<S: MetaSnapshot>(
     snapshot: &mut S,
+    catalog: &SessionExtendedInfoSchema,
     job_context: &dyn DdlSessionContext,
     action: ActionType,
     schema_id: i64,
@@ -340,6 +346,8 @@ fn drop_table_like<S: MetaSnapshot>(
     job.table_id = table.id;
     job.table_name = table.name.lowercase().to_owned().into();
     job.schema_state = table.state;
+    job.involving_schema_info =
+        GoSharedSlice::from_vec(build_drop_table_involving_schema_info(catalog, &tidb_hack::go_to_lower(schema), table)?);
     let args = GoShared::new(tidb_model::DropTableArgs {
         identifiers: identifiers
             .iter()
@@ -358,6 +366,62 @@ fn drop_table_like<S: MetaSnapshot>(
         start_ts,
         upgrading,
     )
+}
+
+/// Go master `buildDropTableInvolvingSchemaInfo`: the dropped object, the
+/// base table of a log, and for a materialized view each existing base table
+/// with that base's log when the log lists the view.
+pub(crate) fn build_drop_table_involving_schema_info(
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    table_info: &TableInfo,
+) -> Result<Vec<tidb_model::InvolvingSchemaInfo>, DdlPlanError> {
+    let involving_of = |name: &str| tidb_model::InvolvingSchemaInfo {
+        database: schema_name.to_owned().into(),
+        table: name.to_owned().into(),
+        ..tidb_model::InvolvingSchemaInfo::default()
+    };
+    let mut involving_schemas = vec![involving_of(table_info.name.lowercase())];
+    if let Some(mlog) = &table_info.materialized_view_log {
+        if let Some(base_tbl) = catalog.table_info_by_id(mlog.read().base_table_id) {
+            involving_schemas.push(involving_of(base_tbl.read().name.lowercase()));
+        }
+    }
+    if let Some(mview) = &table_info.materialized_view {
+        let base_table_ids: Vec<i64> = mview.read().base_table_ids.iter().copied().collect();
+        for base_table_id in base_table_ids {
+            let Some(base_tbl) = catalog.table_info_by_id(base_table_id) else {
+                continue;
+            };
+            let base_tbl = base_tbl.read();
+            involving_schemas.push(involving_of(base_tbl.name.lowercase()));
+            let mlog_id = base_tbl.materialized_view_base.as_ref().map_or(0, |info| info.read().mlog_id);
+            if mlog_id == 0 {
+                continue;
+            }
+            let Some(mlog_tbl) = catalog.table_info_by_id(mlog_id) else {
+                return Err(DdlPlanError::from(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                        .gen_with_stack_by_args(&[schema_name.to_owned().into(), format!("(Table ID {mlog_id})").into()]),
+                ));
+            };
+            let mlog_tbl = mlog_tbl.read();
+            let dependent = match &mlog_tbl.materialized_view_log {
+                Some(info) if info.read().base_table_id == base_table_id => {
+                    info.read().dependent_mview_ids.iter().any(|&id| id == table_info.id)
+                }
+                _ => {
+                    return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[
+                        "drop materialized view: invalid materialized view log metadata".into(),
+                    ])));
+                }
+            };
+            if dependent {
+                involving_schemas.push(involving_of(mlog_tbl.name.lowercase()));
+            }
+        }
+    }
+    Ok(involving_schemas)
 }
 
 /// Go `ErrForeignKeyCannotDropParent` (3730): `table` (as the statement or

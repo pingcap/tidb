@@ -873,7 +873,7 @@ pub(super) fn on_reorganize_partition(
                 // under its new id, its auto-ID counters carried across.
                 old_table_id = info.id;
                 let meta = txn.meta();
-                let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+                let meta_error = |error| job_meta_error(&meta, error);
                 let auto_ids = meta.auto_ids(database_id, old_table_id).get().map_err(meta_error)?;
                 meta.drop_table_or_view(database_id, old_table_id).map_err(meta_error)?;
                 info.id = part_info.new_table_id;

@@ -2104,7 +2104,7 @@ fn finish_modify_column_without_reorg(
     };
     // Go `updateVersionAndTableInfoWithCheck(..., childTableInfos...)`.
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let mut affected: Vec<AffectedOption> = Vec::new();
     for (schema_id, child) in &children {
         let mut child = child.clone_like_go();

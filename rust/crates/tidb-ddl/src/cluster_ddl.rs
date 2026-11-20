@@ -3875,7 +3875,7 @@ pub(super) fn update_schema_version(
     if let Some(error) = call.1 {
         return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(error)));
     }
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(meta, error));
+    let meta_error = |error| job_meta_error(meta, error);
     let schema_version = meta.gen_schema_version().map_err(meta_error)?;
     diff.version = schema_version;
     meta.set_schema_diff(&diff).map_err(meta_error)?;
@@ -3936,7 +3936,7 @@ fn plan_persisted_create_schema_job_step(
     // none -> public
     db_info.state = SchemaState::PUBLIC;
     meta.create_database(&db_info)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
 
     active.job.finish_db_job(
         JobState::DONE,
@@ -4197,7 +4197,7 @@ fn plan_persisted_drop_schema_job_step(
         )?;
     }
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let action_type = active.job.type_;
     let (schema_version, diff) = update_schema_version(
         &meta,
@@ -4413,10 +4413,8 @@ fn plan_persisted_drop_table_job_step(
     // forget the dropped log, in the same version.
     let extra_tables = if table.state != SchemaState::NONE {
         Vec::new()
-    } else if table.materialized_view.is_some() {
-        materialized_view::update_materialized_view_base_info_on_drop_mview(txn, active, &table)?
     } else {
-        materialized_view::update_materialized_view_base_info_on_drop_log(txn, active, &table)?
+        materialized_view::update_materialized_view_base_info_on_drop(txn, &active.job, &table)?
     };
     // Go `updateVersionAndTableInfo` on every state change, then, as the
     // table reaches none, `DropTableOrView` with `GetAutoIDAccessors(...)
@@ -4424,7 +4422,7 @@ fn plan_persisted_drop_table_job_step(
     let database_id = database.read().id;
     let action_type = active.job.type_;
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let mut diff = SchemaDiff {
         action_type,
         schema_id: database_id,
@@ -4890,7 +4888,7 @@ fn checked_job_table(
                 ),
             ));
         }
-        Err(error) => return Err(DdlPlanError::Meta(job_meta_error(&meta, error))),
+        Err(error) => return Err(job_meta_error(&meta, error)),
     };
     let table = table.map(GoShared::new).ok_or_else(|| {
         cancel_ddl_job(
@@ -6003,12 +6001,12 @@ fn apply_create_table(
     // Go `createTableOrViewWithCheck`.
     let meta = txn.meta();
     meta.create_table_or_view(db_id, info)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     // Go: "Updating auto id meta kv is done in a separate txn"; here it is
     // the job's, the ids being bound to a table no one reads before the
     // version publishes.
     let meta = txn.meta();
-    handle_auto_inc_id(&meta, db_id, info).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+    handle_auto_inc_id(&meta, db_id, info).map_err(|error| job_meta_error(&meta, error))
 }
 
 /// Go `handleAutoIncID`: each allocator `NewAllocatorsFromTblInfo` gives the
@@ -6104,7 +6102,7 @@ fn apply_truncate_table(
     // id (the allocators travel with the table id; deleting them is what
     // restarts the counters), then `CreateTableOrView` under the new one.
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     meta.drop_table_or_view(db_id, old_table_id).map_err(meta_error)?;
     meta.auto_ids(db_id, old_table_id).delete().map_err(meta_error)?;
     meta.create_table_or_view(db_id, &info).map_err(meta_error)?;
@@ -6249,7 +6247,7 @@ fn stored_table_by_ids(
     match meta.table(schema_id, table_id) {
         Ok(table) => Ok(table.map(GoShared::new)),
         Err(tidb_meta::MetaError::DatabaseNotExists) => Ok(None),
-        Err(error) => Err(DdlPlanError::Meta(job_meta_error(&meta, error))),
+        Err(error) => Err(job_meta_error(&meta, error)),
     }
 }
 
@@ -6260,7 +6258,7 @@ fn job_schema_tables(
 ) -> Result<Vec<TableInfo>, DdlPlanError> {
     let meta = txn.meta();
     meta.tables(schema_id)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+        .map_err(|error| job_meta_error(&meta, error))
 }
 
 /// Go `meta.Mutator.GetDatabase` with `ListTables` over `jobCtx.metaMut`:
@@ -6272,7 +6270,7 @@ fn job_schema_with_tables(
     schema_id: i64,
 ) -> Result<Option<GoShared<DBInfo>>, DdlPlanError> {
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let Some(mut database) = meta.database(schema_id).map_err(meta_error)? else {
         return Ok(None);
     };
@@ -6288,7 +6286,7 @@ fn job_schema(
     let meta = txn.meta();
     meta.database(schema_id)
         .map(|database| database.map(GoShared::new))
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))
+        .map_err(|error| job_meta_error(&meta, error))
 }
 
 /// go's note for one missing table: `Note | 1051 | Unknown table 'd.t'`.

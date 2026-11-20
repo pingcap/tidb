@@ -234,7 +234,7 @@ pub(super) fn on_recover_table(
     let meta = txn.meta();
     let existing = meta
         .table(schema_id, table_id)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     if let Some(existing) = existing {
         return Err(cancel_ddl_job(
             active,
@@ -459,7 +459,7 @@ pub(super) fn on_recover_schema(
             db_info.state = SchemaState::PUBLIC;
             let meta = txn.meta();
             meta.create_database(&db_info)
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
             // Check the GC safe point.
             tidb_gcutil::validate_snapshot(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()), snapshot_ts)
                 .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
@@ -814,7 +814,7 @@ fn recover_table(
     table_info.update_ts = start_ts;
     let meta = txn.meta();
     meta.create_table_and_set_auto_id(schema_id, &table_info, auto_ids)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     label_rules
         .push(
             label_rules::update_label_rules(

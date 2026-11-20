@@ -302,7 +302,7 @@ pub(super) fn on_repair_table(
             return Err(cancel_ddl_job(active, error));
         }
         meta.update_table(schema_id, &mut info)
-            .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+            .map_err(|error| job_meta_error(&meta, error))?;
     }
     // Finish this job.
     active.job.finish_table_job(

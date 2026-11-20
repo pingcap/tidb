@@ -217,7 +217,7 @@ fn exchange_step(
     partitioned: Option<&TableInfo>,
 ) -> Result<DdlWrite, DdlPlanError> {
     let meta = txn.meta();
-    let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+    let meta_error = |error| job_meta_error(&meta, error);
     let mut diff = SchemaDiff {
         action_type: active.job.type_,
         schema_id: active.job.schema_id,
@@ -443,7 +443,7 @@ pub(super) fn on_exchange_table_partition(
     // dropped; each table takes the larger of each counter after.
     let (partitioned_auto_ids, standalone_auto_ids) = {
         let meta = txn.meta();
-        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+        let meta_error = |error| job_meta_error(&meta, error);
         (
             meta.auto_ids(args.pt_schema_id, partitioned.id).get().map_err(meta_error)?,
             meta.auto_ids(database_id, original_standalone_id).get().map_err(meta_error)?,
@@ -489,7 +489,7 @@ pub(super) fn on_exchange_table_partition(
         // standalone table under the partition's id, then both tables'
         // auto-ID groups.
         let meta = txn.meta();
-        let meta_error = |error| DdlPlanError::Meta(job_meta_error(&meta, error));
+        let meta_error = |error| job_meta_error(&meta, error);
         meta.drop_table_or_view(database_id, original_standalone_id).map_err(meta_error)?;
         meta.update_table(args.pt_schema_id, &mut partitioned).map_err(meta_error)?;
         meta.create_table_or_view(database_id, &standalone).map_err(meta_error)?;

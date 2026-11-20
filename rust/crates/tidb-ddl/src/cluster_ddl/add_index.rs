@@ -1061,7 +1061,7 @@ pub(super) fn table_step_with_diff(
         info.update_ts = start_ts;
     }
     meta.update_table(database_id, &mut info)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     // The step's meta writes are its transaction's.
     let mut write = job_only_write(active.job.id, Vec::new());
     write.schema_version = schema_version;

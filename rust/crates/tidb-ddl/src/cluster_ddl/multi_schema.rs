@@ -1018,7 +1018,7 @@ pub(super) fn on_multi_schema_change(
             super::materialized_view::set_schema_diff_for_multi_infos(&mut diff, &collected_infos);
             let meta = txn.meta();
             meta.set_schema_diff(&diff)
-                .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+                .map_err(|error| job_meta_error(&meta, error))?;
             merged.diff = diff;
         }
         merged.schema_version = version;

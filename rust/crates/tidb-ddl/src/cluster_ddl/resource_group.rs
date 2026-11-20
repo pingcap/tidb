@@ -133,7 +133,7 @@ fn group_step(
     finished_state: SchemaState,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let meta = txn.meta();
-    write(&meta).map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+    write(&meta).map_err(|error| job_meta_error(&meta, error))?;
     let action_type = active.job.type_;
     let schema_id = active.job.schema_id;
     let (schema_version, diff) = update_schema_version(

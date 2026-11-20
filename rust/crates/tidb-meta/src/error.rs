@@ -116,8 +116,23 @@ pub enum MetaError {
 impl fmt::Display for MetaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Structure(error) => error.fmt(formatter),
-            Self::InvalidFieldPrefix(message) => classed(formatter, self, message),
+            Self::Structure(error) => return error.fmt(formatter),
+            // Go `errors.Wrapf(ErrMaskingPolicy..., "masking policy id : %d ...")`.
+            Self::MaskingPolicyIdExists(id) => {
+                write!(formatter, "masking policy id : {id} already exists: ")?;
+            }
+            Self::MaskingPolicyIdNotExists(id) => {
+                write!(formatter, "masking policy id : {id} doesn't exist: ")?;
+            }
+            _ => {}
+        }
+        if let Some(message) = self.classed_message() {
+            return match self.proto() {
+                Some(proto) => write!(formatter, "{}", proto.generate(message)),
+                None => formatter.write_str(&message),
+            };
+        }
+        match self {
             Self::InvalidFieldInteger { value, failure, .. } => write!(
                 formatter,
                 "strconv.Atoi: parsing {}: {}",
@@ -127,7 +142,6 @@ impl fmt::Display for MetaError {
                     IntegerParseFailure::Range => "value out of range",
                 }
             ),
-            Self::CannotSetNilValue => classed(formatter, self, "can not set nil value"),
             Self::InvalidUnsignedIntValue => {
                 formatter.write_str("invalid meta unsigned integer value")
             }
@@ -142,48 +156,11 @@ impl fmt::Display for MetaError {
             Self::NoSchemaVersionWrite => {
                 formatter.write_str("There is no Write MVCC info for the schema version key")
             }
-            Self::DatabaseExists => classed(formatter, self, "database already exists"),
-            Self::DatabaseNotExists => classed(formatter, self, "database doesn't exist"),
-            Self::TableExists => classed(formatter, self, "table already exists"),
-            Self::TableNotExists => classed(formatter, self, "table doesn't exist"),
-            Self::DdlReorgElementNotExist => {
-                classed(formatter, self, "DDL reorg element does not exist")
-            }
-            Self::PolicyExists => classed(formatter, self, "policy already exists"),
-            Self::PolicyNotExists => classed(formatter, self, "policy doesn't exist"),
-            Self::PolicyIdNotExists(id) => classed(
-                formatter,
-                self,
-                format_args!("policy id : {id} doesn't exist"),
-            ),
-            Self::MaskingPolicyExists => classed(formatter, self, "masking policy already exists"),
-            Self::MaskingPolicyNotExists => {
-                classed(formatter, self, "masking policy doesn't exist")
-            }
-            Self::MaskingPolicyIdExists(id) => {
-                write!(formatter, "masking policy id : {id} already exists: ")?;
-                classed(formatter, self, "masking policy already exists")
-            }
-            Self::MaskingPolicyIdNotExists(id) => {
-                write!(formatter, "masking policy id : {id} doesn't exist: ")?;
-                classed(formatter, self, "masking policy doesn't exist")
-            }
-            Self::MaskingPolicyExpressionInvalidColumn => classed(
-                formatter,
-                self,
-                "masking policy expression can only reference the target column '%-.64s'",
-            ),
-            Self::ResourceGroupExists => classed(formatter, self, "group already exists"),
-            Self::ResourceGroupNotExists => classed(formatter, self, "group doesn't exist"),
-            Self::ResourceGroupIdNotExists(id) => classed(
-                formatter,
-                self,
-                format_args!("resource group id : {id} doesn't exist"),
-            ),
             Self::InvalidObjectId(object) => write!(formatter, "{object}.ID is invalid"),
             Self::GlobalIdExceedsLimit { generated, limit } => {
                 write!(formatter, "global id:{generated} exceeds the limit:{limit}")
             }
+            _ => unreachable!("every classed meta error has a message"),
         }
     }
 }
@@ -196,19 +173,49 @@ impl From<StructureError> for MetaError {
     }
 }
 
-/// Go `*terror.Error`'s `Error()`: `[<class>:<code>]<message>`.
-fn classed(
-    formatter: &mut fmt::Formatter<'_>,
-    error: &MetaError,
-    message: impl fmt::Display,
-) -> fmt::Result {
-    match error.proto() {
-        Some(proto) => write!(formatter, "{}", proto.generate(message.to_string())),
-        None => write!(formatter, "{message}"),
-    }
-}
-
 impl MetaError {
+    /// The message Go's `*terror.Error` carries for an error raised from a
+    /// meta definition (`ErrDBNotExists.GenWithStack("database doesn't
+    /// exist")`, ...); `None` for the plain errors.
+    fn classed_message(&self) -> Option<String> {
+        Some(match self {
+            Self::InvalidFieldPrefix(message) => (*message).to_owned(),
+            Self::CannotSetNilValue => "can not set nil value".to_owned(),
+            Self::DatabaseExists => "database already exists".to_owned(),
+            Self::DatabaseNotExists => "database doesn't exist".to_owned(),
+            Self::TableExists => "table already exists".to_owned(),
+            Self::TableNotExists => "table doesn't exist".to_owned(),
+            Self::DdlReorgElementNotExist => "DDL reorg element does not exist".to_owned(),
+            Self::PolicyExists => "policy already exists".to_owned(),
+            Self::PolicyNotExists => "policy doesn't exist".to_owned(),
+            Self::PolicyIdNotExists(id) => format!("policy id : {id} doesn't exist"),
+            Self::MaskingPolicyExists | Self::MaskingPolicyIdExists(_) => {
+                "masking policy already exists".to_owned()
+            }
+            Self::MaskingPolicyNotExists | Self::MaskingPolicyIdNotExists(_) => {
+                "masking policy doesn't exist".to_owned()
+            }
+            Self::MaskingPolicyExpressionInvalidColumn => {
+                "masking policy expression can only reference the target column '%-.64s'".to_owned()
+            }
+            Self::ResourceGroupExists => "group already exists".to_owned(),
+            Self::ResourceGroupNotExists => "group doesn't exist".to_owned(),
+            Self::ResourceGroupIdNotExists(id) => format!("resource group id : {id} doesn't exist"),
+            _ => return None,
+        })
+    }
+
+    /// The `*terror.Error` Go returns as is (`errors.Trace` keeps it the
+    /// cause): `None` for the plain errors, the structure errors and the
+    /// ones Go wraps with more text.
+    #[must_use]
+    pub fn to_terror(&self) -> Option<tidb_terror::TerrorError> {
+        if matches!(self, Self::MaskingPolicyIdExists(_) | Self::MaskingPolicyIdNotExists(_)) {
+            return None;
+        }
+        Some(self.proto()?.generate(self.classed_message()?))
+    }
+
     /// The Go definition this error is raised as (`pkg/meta/meta.go`,
     /// `pkg/structure`'s, and the `pkg/kv` errors they propagate):
     /// class and code travel with the value.

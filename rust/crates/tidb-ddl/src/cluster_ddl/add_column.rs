@@ -212,7 +212,7 @@ fn refresh_mlog_added_column_from_base(
     // Go `t.GetTable`: nil without an error when the table key is absent.
     let base = meta
         .table(active.job.schema_id, base_id)
-        .map_err(|error| DdlPlanError::Meta(job_meta_error(&meta, error)))?;
+        .map_err(|error| job_meta_error(&meta, error))?;
     let Some(base) = base else {
         return Err(DdlPlanError::from(tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[
             "ALTER MATERIALIZED VIEW LOG with invalid base table metadata".into(),
