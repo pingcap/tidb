@@ -311,7 +311,28 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
+			if e.ignoreErr {
+				sc := e.Ctx().GetSessionVars().StmtCtx
+				ignored := false
+				for _, fkc := range e.fkChecks {
+					ignored, err = fkc.checkIgnoreForInsert(ctx, sc, txn, newRows[i])
+					if err != nil {
+						return err
+					}
+					if ignored {
+						break
+					}
+				}
+				if ignored {
+					continue
+				}
+			}
+			var err error
+			if e.ignoreErr {
+				err = e.addRecordAfterFKPrecheck(ctx, newRows[i], addRecordDupKeyCheck)
+			} else {
+				err = e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
+			}
 			if err != nil {
 				return err
 			}

@@ -150,4 +150,115 @@ func TestDeleteIgnoreWithFK(t *testing.T) {
 	tk.MustExec("batch on `a` limit 1000 delete ignore from parent where a = 1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
+
+	cases := []struct {
+		name         string
+		ddl          string
+		seed         string
+		sql          string
+		rows         []string
+		handleRows   []string
+		affectedRows uint64
+		warningCount int
+		multiTable   bool
+	}{
+		{
+			name:         "normal self delete",
+			ddl:          "create table t_self_delete (id int primary key clustered, pid int, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (1, 1)",
+			sql:          "delete from t_self_delete where id=1",
+			affectedRows: 1,
+		},
+		{
+			name:         "ignore self delete",
+			ddl:          "create table t_self_delete (id int primary key clustered, pid int, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (1, 1)",
+			sql:          "delete ignore from t_self_delete where id=1",
+			affectedRows: 1,
+		},
+		{
+			name:         "retains another child",
+			ddl:          "create table t_self_delete (id int primary key clustered, pid int, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (1, 1), (3, 1)",
+			sql:          "delete ignore from t_self_delete where id=1",
+			rows:         []string{"1 1", "3 1"},
+			warningCount: 1,
+		},
+		{
+			name:         "multi table self delete",
+			ddl:          "create table t_self_delete (id int primary key clustered, pid int, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (1, 1)",
+			sql:          "delete ignore d, s from t_self_delete d inner join t_delete_selector s on d.id=s.id",
+			affectedRows: 2,
+			multiTable:   true,
+		},
+		{
+			name:         "multi table retains another child",
+			ddl:          "create table t_self_delete (id int primary key clustered, pid int, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (1, 1), (3, 1)",
+			sql:          "delete ignore d, s from t_self_delete d inner join t_delete_selector s on d.id=s.id",
+			rows:         []string{"1 1", "3 1"},
+			affectedRows: 1,
+			warningCount: 1,
+			multiTable:   true,
+		},
+		{
+			name:         "hidden handle self delete",
+			ddl:          "create table t_self_delete (id int unique, pid int unique, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (100, 100)",
+			sql:          "delete ignore from t_self_delete where id=100",
+			handleRows:   []string{"1 100"},
+			affectedRows: 1,
+		},
+		{
+			name:         "hidden handle retains different row",
+			ddl:          "create table t_self_delete (id int unique, pid int unique, foreign key (pid) references t_self_delete(id))",
+			seed:         "insert into t_self_delete values (2, null), (100, 2)",
+			sql:          "delete ignore from t_self_delete where id=2",
+			rows:         []string{"100 2", "2 <nil>"},
+			handleRows:   []string{"1 2", "2 100"},
+			warningCount: 1,
+		},
+		{
+			name:         "common handle self delete",
+			ddl:          "create table t_self_delete (id varchar(10), seq int, pid varchar(10), pseq int, primary key (id, seq) clustered, foreign key (pid, pseq) references t_self_delete(id, seq))",
+			seed:         "insert into t_self_delete values ('self', 10, 'self', 10)",
+			sql:          "delete ignore from t_self_delete where id='self' and seq=10",
+			affectedRows: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			t.Cleanup(func() {
+				tk.MustExec("rollback")
+				tk.MustExec("set foreign_key_checks=0")
+				tk.MustExec("drop table if exists t_self_delete, t_delete_selector")
+			})
+			tk.MustExec(tc.ddl)
+			tk.MustExec(tc.seed)
+			if tc.multiTable {
+				tk.MustExec("create table t_delete_selector (id int primary key)")
+				tk.MustExec("insert into t_delete_selector values (1)")
+			}
+			if len(tc.handleRows) > 0 {
+				tk.MustQuery("select _tidb_rowid, id from t_self_delete order by _tidb_rowid").Check(testkit.Rows(tc.handleRows...))
+			}
+			tk.MustExec(tc.sql)
+			require.Equal(t, tc.affectedRows, tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+			warnings := tk.MustQuery("show warnings").Rows()
+			require.Len(t, warnings, tc.warningCount)
+			for _, warning := range warnings {
+				require.Equal(t, "Warning", warning[0])
+				require.Equal(t, "1451", warning[1])
+			}
+			tk.MustQuery("select * from t_self_delete").Sort().Check(testkit.Rows(tc.rows...))
+			tk.MustExec("admin check table t_self_delete")
+			if tc.multiTable {
+				tk.MustQuery("select * from t_delete_selector").Check(testkit.Rows())
+				tk.MustExec("admin check table t_delete_selector")
+			}
+		})
+	}
 }
