@@ -100,6 +100,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_enable_vectorized_expression":               {},
 	"tidb_enable_tikv_short_circuit_expression":       {},
 	"tidb_opt_join_reorder_threshold":                 {},
+	"tidb_opt_join_reorder_through_sel":               {},
 	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_enable_index_merge":                         {},
 	"tidb_enable_no_backslash_escapes_in_like":        {},
