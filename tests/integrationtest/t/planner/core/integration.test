@@ -2345,3 +2345,21 @@ select 1 from (select t.col as c0, 46578369 as c1 from t) as t where
 drop table if exists t;
 create table t (col timestamp);
 explain format='plan_tree' select cast(col as char) from t group by cast(col as char);
+
+# TestIssue73242
+drop table if exists t0, t1, t2;
+create table t0 (c0 int);
+create table t1 (c0 int);
+create table t2 (c0 int, c1 int);
+insert into t0 values (1);
+insert into t1 values (1);
+insert into t2 values (1, 1);
+select t1.c0 from t1 natural join t0 where 1=0 order by t0.c0;
+select t1.c0 from t1 join t0 using (c0) where 1=0 order by t0.c0;
+select t1.c0 from t1 left join t0 using (c0) where 0 order by t0.c0;
+select t1.c0 from t1 natural join t0 where 1=1 order by t0.c0;
+# The USING join is wrapped in a Selection from the ON condition of the outer join.
+select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=0 order by t0.c0;
+select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=1 order by t0.c0;
+explain format='brief' select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=0 order by t0.c0;
+drop table t0, t1, t2;

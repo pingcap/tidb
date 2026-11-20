@@ -4255,3 +4255,29 @@ Projection	root		cast(planner__core__integration.t.col, var_string(19))->Column
   └─TableReader	root		data:HashAgg
     └─HashAgg	cop[tikv]		group by:cast(planner__core__integration.t.col, var_string(19)), funcs:firstrow(planner__core__integration.t.col)->Column
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t0, t1, t2;
+create table t0 (c0 int);
+create table t1 (c0 int);
+create table t2 (c0 int, c1 int);
+insert into t0 values (1);
+insert into t1 values (1);
+insert into t2 values (1, 1);
+select t1.c0 from t1 natural join t0 where 1=0 order by t0.c0;
+c0
+select t1.c0 from t1 join t0 using (c0) where 1=0 order by t0.c0;
+c0
+select t1.c0 from t1 left join t0 using (c0) where 0 order by t0.c0;
+c0
+select t1.c0 from t1 natural join t0 where 1=1 order by t0.c0;
+c0
+1
+select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=0 order by t0.c0;
+c0
+select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=1 order by t0.c0;
+c0
+1
+explain format='brief' select t1.c0 from t1 join t0 using (c0) join t2 on t1.c0 = t2.c1 where 1=0 order by t0.c0;
+id	estRows	task	access object	operator info
+Projection	0.00	root		planner__core__integration.t1.c0
+└─TableDual	0.00	root		rows:0
+drop table t0, t1, t2;
