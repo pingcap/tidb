@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -118,6 +119,44 @@ type dagContext struct {
 	dagReq        *tipb.DAGRequest
 	keyRanges     []*coprocessor.KeyRange
 	startTS       uint64
+	// keysBudget emulates TiKV's tidb_max_keys_read early stop. nil when the
+	// request carries no budget.
+	keysBudget *maxKeysReadState
+}
+
+// maxKeysReadState emulates TiKV's max_keys_read stop: once the keys read
+// exceed the budget, the response carries only error 8274 (no chunks, no
+// range), is not cacheable and still reports the keys scanned.
+type maxKeysReadState struct {
+	limit   uint64
+	scanned uint64
+	stopped bool
+}
+
+// onRows charges n rows a scan hands to its parent and reports whether to
+// stop. It runs on the request goroutine, so no locking is needed.
+func (s *maxKeysReadState) onRows(n int) bool {
+	if s == nil {
+		return false
+	}
+	s.scanned += uint64(n)
+	if s.scanned <= s.limit {
+		return false
+	}
+	s.stopped = true
+	return true
+}
+
+func (s *maxKeysReadState) isStopped() bool {
+	return s != nil && s.stopped
+}
+
+// errMaxKeysReadStop is the error TiKV reports in the SelectResponse when a
+// request stops on its tidb_max_keys_read budget.
+var errMaxKeysReadStop = &mysql.SQLError{
+	Code:    errno.ErrMaxKeysReadExceeded,
+	State:   mysql.DefaultMySQLState,
+	Message: "tidb_max_keys_read limit exceeded",
 }
 
 // ExecutorListsToTree converts a list of executors to a tree.
@@ -162,13 +201,15 @@ func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
 func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
 	resp = &coprocessor.Response{}
+	// A response stopped by tidb_max_keys_read must not be cached.
+	budgetStopped := false
 	failpoint.Inject("mockCopCacheInUnistore", func(cacheVersion failpoint.Value) {
 		if req.IsCacheEnabled {
 			if uint64(cacheVersion.(int)) == req.CacheIfMatchVersion {
 				failpoint.Return(&coprocessor.Response{IsCacheHit: true, CacheLastVersion: uint64(cacheVersion.(int))})
 			} else {
 				defer func() {
-					resp.CanBeCached = true
+					resp.CanBeCached = !budgetStopped
 					resp.CacheLastVersion = uint64(cacheVersion.(int))
 					if resp.ExecDetails == nil {
 						resp.ExecDetails = &kvrpcpb.ExecDetails{TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}}
@@ -187,7 +228,12 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		return resp
 	}
 
+	if req.MaxKeysRead > 0 {
+		dagCtx.keysBudget = &maxKeysReadState{limit: req.MaxKeysRead}
+	}
+
 	exec, chunks, intermediateOutput, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
+	budgetStopped = dagCtx.keysBudget.isStopped()
 
 	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	if err != nil {
@@ -197,6 +243,11 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			return resp
 		}
 		return genRespWithMPPExec(nil, nil, lastRange, nil, nil, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
+	}
+	if budgetStopped {
+		resp = genRespWithMPPExec(nil, nil, nil, nil, nil, exec, dagReq, errMaxKeysReadStop, sc.GetWarnings(), time.Since(startTime))
+		resp.CanBeCached = false
+		return resp
 	}
 	return genRespWithMPPExec(chunks, intermediateOutput, lastRange, counts, ndvs, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
 }

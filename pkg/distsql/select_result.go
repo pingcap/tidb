@@ -29,6 +29,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -423,9 +425,9 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if err != nil {
 			// On error paths with a non-nil resultSubset (e.g. ErrMaxKeysReadExceeded),
 			// still merge CopExecDetails so ProcessedKeys reaches StmtCtx.ExecDetails
-			// (feeds tidb_keys_examined and the slow query log). Skip
-			// updateCopRuntimeStats because r.selectResp is not unmarshaled on this
-			// path, so there are no ExecutionSummaries for per-operator stats.
+			// (feeds the slow query log). Skip updateCopRuntimeStats because
+			// r.selectResp is not unmarshaled on this path, so there are no
+			// ExecutionSummaries for per-operator stats.
 			if resultSubset != nil {
 				if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
 					if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
@@ -464,8 +466,18 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		respSize := int64(r.selectResp.Size())
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
-		if err := r.selectResp.Error; err != nil {
-			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+		if respErr := r.selectResp.Error; respErr != nil {
+			// An error response (e.g. a tidb_max_keys_read stop) still carries the
+			// stats of the work done before it; merge them for the slow log and
+			// EXPLAIN ANALYZE. Its execution summaries may not match the cop plan,
+			// so they are merged as unconsumed stats.
+			if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
+				if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
+					_ = r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime(), true)
+					r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+				}
+			}
+			return selectRespError(respErr)
 		}
 
 		if len(r.selectResp.IntermediateOutputs) != len(intermediateOutputTypes) {
@@ -516,6 +528,15 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		}
 	}
 	return nil
+}
+
+// selectRespError converts a SelectResponse error. A tidb_max_keys_read stop
+// becomes exeerrors.ErrMaxKeysReadExceeded, the error TiDB raises itself.
+func selectRespError(respErr *tipb.Error) error {
+	if respErr.Code == errno.ErrMaxKeysReadExceeded {
+		return exeerrors.ErrMaxKeysReadExceeded
+	}
+	return dbterror.ClassTiKV.Synthesize(terror.ErrCode(respErr.Code), respErr.Msg)
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {

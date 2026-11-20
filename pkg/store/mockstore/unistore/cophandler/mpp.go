@@ -97,6 +97,7 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 	if b.dagCtx != nil {
 		ts.lockStore = b.dagCtx.lockStore
 		ts.resolvedLocks = b.dagCtx.resolvedLocks
+		ts.keysBudget = b.dagCtx.keysBudget
 	}
 	for i, col := range pb.Columns {
 		if col.ColumnId == model.ExtraPhysTblID {
@@ -207,6 +208,7 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		physTblIDColIdx:    physTblIDColIdx,
 		commonHandleKeyIdx: commonHandleKeyIdx,
 		paging:             b.paging,
+		keysBudget:         b.dagCtx.keysBudget,
 	}
 	return idxScan, nil
 }
