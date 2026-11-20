@@ -34,10 +34,11 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 			se.GetSQLExecutor(),
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-			 where id = %? and exec_id = %?`,
+			 where id = %? and exec_id = %? and state = %?`,
 			proto.SubtaskStateRunning,
 			subtaskID,
-			execID)
+			execID,
+			proto.SubtaskStatePending)
 		if err != nil {
 			return err
 		}
