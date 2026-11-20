@@ -343,6 +343,8 @@ const (
 
 	// TiDBEnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
+	// Its ON default applies to fresh installations; upgrades preserve persisted
+	// values because an old default OFF cannot be distinguished from an opt-out.
 	//
 	// Deprecated: Local MATCH is enabled by default. This variable will be removed
 	// in a future release, when Local MATCH will always be enabled.
