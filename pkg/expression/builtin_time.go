@@ -6653,12 +6653,20 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {
 			return tb, true, nil
 		}
-		tb = t.AddDate(0, 3*int(v), 0)
+		var err error
+		tb, err = types.AddDate(0, 3*int64(v), 0, t)
+		if err != nil {
+			return tb, false, err
+		}
 	case "YEAR":
 		if !validAddMonth(v*12, t.Year(), int(t.Month())) {
 			return tb, true, nil
 		}
-		tb = t.AddDate(int(v), 0, 0)
+		var err error
+		tb, err = types.AddDate(int64(v), 0, 0, t)
+		if err != nil {
+			return tb, false, err
+		}
 	default:
 		return tb, false, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, unit)
 	}
