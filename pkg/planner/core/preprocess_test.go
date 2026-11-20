@@ -406,11 +406,22 @@ func TestValidator(t *testing.T) {
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 
-		// _tidb_commit_ts reads and deletes do not depend on tidb_mview_enable.
+		// _tidb_commit_ts reads do not depend on tidb_mview_enable.
 		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
 		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
 		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
-		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false,
+		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false, nil},
+		{"UPDATE t SET a = (_tidb_commit_ts > 0)", false, nil},
+		{"INSERT INTO t (a) SELECT _tidb_commit_ts FROM t", false, nil},
+		{"UPDATE t SET t._tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_TIDB_COMMIT_TS) VALUES (1)", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_tidb_commit_ts) SELECT a FROM t", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t SET _tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE _tidb_commit_ts = 1", false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
 		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false, nil},
 	}
@@ -430,13 +441,14 @@ func TestValidator(t *testing.T) {
 		"SELECT _tidb_commit_ts FROM t WHERE a = 1",
 		"SELECT a FROM t WHERE _tidb_commit_ts > 0",
 		"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t",
+		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
 		"DELETE FROM t WHERE _tidb_commit_ts > 0",
 		"DELETE FROM t WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= 1 LIMIT 1",
 	} {
 		runSQL(t, tk.Session(), is, sql, false, nil)
 	}
 	for _, sql := range []string{
-		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
+		"UPDATE t SET _tidb_commit_ts = 1",
 	} {
 		runSQL(t, tk.Session(), is, sql, false,
 			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now"))
