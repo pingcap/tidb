@@ -18,6 +18,7 @@
 mod exec;
 mod merge;
 mod merge_count;
+mod merge_minmax;
 mod merge_sum;
 mod writer;
 

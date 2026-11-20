@@ -98,8 +98,25 @@ impl ResultWriter for NoopWriter {
 /// Go `mergeWorkerData`.
 #[derive(Default)]
 pub struct MergeWorkerData {
+    /// Go `minMaxMappingIdxToRows[mappingIdx]`: the recompute row indexes of
+    /// one MIN/MAX mapping, strictly increasing and in chunk row range.
+    pub(crate) min_max_mapping_idx_to_rows: Vec<Vec<usize>>,
     /// Go `updateRows`: the update candidates of the chunk being merged.
     pub(crate) update_rows: Vec<usize>,
+}
+
+impl MergeWorkerData {
+    /// Go `prepareMinMaxRecompute`.
+    pub(crate) fn prepare_min_max_recompute(&mut self, mapping_cnt: usize) {
+        if mapping_cnt == 0 {
+            return;
+        }
+        self.min_max_mapping_idx_to_rows.resize_with(mapping_cnt, Vec::new);
+        self.min_max_mapping_idx_to_rows.truncate(mapping_cnt);
+        for rows in &mut self.min_max_mapping_idx_to_rows {
+            rows.clear();
+        }
+    }
 }
 
 /// Go `mergeWriterStats`.
@@ -430,7 +447,7 @@ impl Exec {
         }
 
         let mut mergers = Vec::with_capacity(self.agg_mappings.len());
-        for mapping in &self.agg_mappings {
+        for (mapping_idx, mapping) in self.agg_mappings.iter().enumerate() {
             let Some(agg_func) = &mapping.agg_func else {
                 return Err(err("MViewDeltaMergeAgg mapping requires AggFunc"));
             };
@@ -442,7 +459,7 @@ impl Exec {
                 names::COUNT => self.build_count_merger(mapping, &col_id_to_computed_idx, &child_types)?,
                 names::SUM => self.build_sum_merger(mapping, &col_id_to_computed_idx, &child_types)?,
                 names::MIN | names::MAX => {
-                    return Err(err(format!("{agg_name} merge requires MinMaxRecompute metadata")));
+                    self.build_min_max_merger(mapping_idx, mapping, &col_id_to_computed_idx, &child_types)?
                 }
                 other => return Err(err(format!("unsupported agg function in Exec: {other}"))),
             };
@@ -471,6 +488,7 @@ impl Exec {
             mergers.push(merger);
         }
         core.compiled_mergers = mergers;
+        core.mapping_cnt = self.agg_mappings.len();
         self.core = core;
         Ok(())
     }
@@ -494,12 +512,15 @@ pub(crate) struct MergeCore {
     agg_output_col_ids: Vec<i64>,
     /// Go `Children(0).RetFieldTypes()`.
     child_types: Vec<FieldType>,
+    /// Go `len(AggMappings)`.
+    mapping_cnt: usize,
 }
 
 impl MergeCore {
 
     /// Go `mergeOneChunk`.
     pub(crate) fn merge_one_chunk(&self, chk: Chunk, worker_data: &mut MergeWorkerData) -> Result<ChunkResult, ExecError> {
+        worker_data.prepare_min_max_recompute(self.mapping_cnt);
         let mut computed_by_order: Vec<Column> = Vec::with_capacity(self.compiled_output_col_cnt);
         let mut computed_by_col_id: Vec<Option<Column>> = (0..chk.num_cols()).map(|_| None).collect();
         for merger in &self.compiled_mergers {

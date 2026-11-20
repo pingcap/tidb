@@ -7106,6 +7106,8 @@ dependencies = [
  "tidb-executor-internal-util",
  "tidb-expr",
  "tidb-expression-aggregation",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-mysql",
  "tidb-planner-util",
  "tidb-txnkv",
