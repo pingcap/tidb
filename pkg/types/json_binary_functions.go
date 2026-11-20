@@ -1147,6 +1147,27 @@ func containsArrayElem(obj, elem BinaryJSON) bool {
 	return false
 }
 
+// HasNestedArray reports whether bj has an array as an element of another array, at any depth,
+// e.g. [[1]] or {"a":[1,[2]]}. Such a JSON_CONTAINS candidate is affected by containsArrayElem.
+func (bj BinaryJSON) HasNestedArray() bool {
+	switch bj.TypeCode {
+	case JSONTypeCodeArray:
+		for i := range bj.GetElemCount() {
+			elem := bj.ArrayGetElem(i)
+			if elem.TypeCode == JSONTypeCodeArray || elem.HasNestedArray() {
+				return true
+			}
+		}
+	case JSONTypeCodeObject:
+		for i := range bj.GetElemCount() {
+			if bj.objectGetVal(i).HasNestedArray() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // OverlapsBinaryJSON is similar with ContainsBinaryJSON, but it checks the `OR` relationship.
 func OverlapsBinaryJSON(obj, target BinaryJSON) bool {
 	if obj.TypeCode != JSONTypeCodeArray && target.TypeCode == JSONTypeCodeArray {

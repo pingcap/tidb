@@ -415,6 +415,26 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	}
 }
 
+func TestBinaryJSONHasNestedArray(t *testing.T) {
+	tests := []struct {
+		in     string
+		nested bool
+	}{
+		{`1`, false},
+		{`[]`, false},
+		{`[1,2]`, false},
+		{`{"a":[1,2]}`, false},
+		{`[{"a":[1]}]`, false},
+		{`[[]]`, true},
+		{`[1,[2]]`, true},
+		{`{"a":[[1]]}`, true},
+		{`[{"a":[1,[2]]}]`, true},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.nested, mustParseBinaryFromString(t, tt.in).HasNestedArray(), tt.in)
+	}
+}
+
 func TestBinaryJSONContains(t *testing.T) {
 	var tests = []struct {
 		input    string
