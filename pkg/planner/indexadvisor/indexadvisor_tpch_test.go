@@ -758,6 +758,8 @@ func TestIndexAdvisorTPCH1(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	createTPCHTables(tk)
+	// Test recommendation generation, allowing for slow CI workers; timeout behavior is tested in TestOptionTimeout.
+	tk.MustExec(`recommend index set timeout='2m'`)
 
 	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ1, Frequency: 1})
