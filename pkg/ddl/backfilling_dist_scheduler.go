@@ -144,6 +144,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				storeWithPD,
 				taskHandle,
 				task,
+				nodeCnt,
 				backfillMeta.CloudStorageURI,
 				logger)
 		}
@@ -400,6 +401,7 @@ func generateGlobalSortIngestPlan(
 	store kv.StorageWithPD,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
 	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -432,11 +434,14 @@ func generateGlobalSortIngestPlan(
 		// it means the merge sort step is skipped.
 	}
 
+<<<<<<< HEAD
 	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
 	iCnt := int64(len(instanceIDs))
+=======
+>>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
 	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		if g == nil {
@@ -449,7 +454,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, int64(nodeCnt), logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -553,10 +558,18 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
+<<<<<<< HEAD
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
 				EndKey:      endKey,
 				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
+=======
+			MetaGroups: []*globalsort.SortedKVMeta{{
+				StartKey: startKey,
+				EndKey:   endKey,
+				// A non-empty range must not be mistaken for an empty engine.
+				TotalKVSize: max(1, kvMeta.TotalKVSize/uint64(instanceCnt)),
+>>>>>>> fbd695f684b (ddl: use task node count for global-sort ingest planning (#73382))
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
