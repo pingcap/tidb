@@ -60,6 +60,13 @@ pub(crate) struct RecordingSession {
     pub(crate) tables: HashMap<i64, TableInfo>,
     pub(crate) global_vars: HashMap<String, String>,
     pub(crate) global_var_errs: HashMap<String, MvsError>,
+    /// Go `faultyGlobalAccessor.failAfter`: a variable's reads fail after
+    /// this many succeed.
+    pub(crate) global_var_fail_after: HashMap<String, usize>,
+    global_var_get_calls: HashMap<String, usize>,
+    /// The values a session variable refuses (Go `SetSystemVar`'s validation
+    /// of `not-a-float`, `bad-quota`, ...).
+    pub(crate) invalid_system_var_values: Vec<(String, String)>,
     pub(crate) system_vars: HashMap<String, String>,
     /// The listed session variables' values at each restricted statement
     /// (Go's `restricted*` slices).
@@ -121,8 +128,21 @@ impl MVServiceSessionContext for RecordingSessionContext {
     }
 
     fn global_system_var(&self, name: &str) -> Result<String, MvsError> {
-        let s = self.0.lock().unwrap();
-        if let Some(err) = s.global_var_errs.get(name) {
+        let mut s = self.0.lock().unwrap();
+        let calls = {
+            let calls = s.global_var_get_calls.entry(name.to_owned()).or_default();
+            *calls += 1;
+            *calls
+        };
+        if let Some(&ok_after) = s.global_var_fail_after.get(name) {
+            if calls > ok_after {
+                return Err(s
+                    .global_var_errs
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| MvsError::Other("mock global read failure".to_owned())));
+            }
+        } else if let Some(err) = s.global_var_errs.get(name) {
             return Err(err.clone());
         }
         Ok(s.global_vars.get(name).cloned().unwrap_or_default())
@@ -133,7 +153,11 @@ impl MVServiceSessionContext for RecordingSessionContext {
     }
 
     fn set_system_var(&self, name: &str, value: &str) -> Result<(), MvsError> {
-        self.0.lock().unwrap().system_vars.insert(name.to_owned(), value.to_owned());
+        let mut s = self.0.lock().unwrap();
+        if s.invalid_system_var_values.iter().any(|(n, v)| n == name && v == value) {
+            return Err(MvsError::Other(format!("invalid value {value} for {name}")));
+        }
+        s.system_vars.insert(name.to_owned(), value.to_owned());
         Ok(())
     }
 
@@ -654,4 +678,277 @@ fn test_server_helper_load_tidb_mv_log_accumulation_row_counts() {
     assert_eq!(Some("1".to_owned()), s.restricted_var_values[0][concurrency]);
     assert_eq!(Some("7"), s.system_vars.get(concurrency).map(String::as_str));
     assert_eq!(HashMap::from([(201, 50)]), got);
+}
+
+const TEST_SQL_LOCK_PURGE_NEXT_TIME: &str =
+    "SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT";
+const TEST_SQL_UPDATE_PURGE_NEXT_TIME: &str = "UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?";
+
+/// Go `TestServerHelperTryBackoffPurgeManualCancel` (its subtests in order).
+#[test]
+fn test_server_helper_try_backoff_purge_manual_cancel() {
+    use crate::service::MANUAL_CANCEL_BACKOFF_DELAY;
+    let backoff = |pool: &SystemSessionPool,
+                   next: &GoTime,
+                   resolve: fn(&dyn MVServiceSessionContext, i64) -> Result<(Option<GoTime>, bool), MvsError>| {
+        crate::service_helper::try_backoff_mv_task_manual_cancel(
+            pool,
+            TEST_SQL_LOCK_PURGE_NEXT_TIME,
+            TEST_SQL_UPDATE_PURGE_NEXT_TIME,
+            201,
+            next,
+            resolve,
+        )
+    };
+    let lock = |se: &RecordingSessionContext, value: Option<i64>| {
+        se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_LOCK_PURGE_NEXT_TIME.to_owned(), vec![ints(&[value])]);
+    };
+    let check = |se: &RecordingSessionContext, restricted: &[&str], update: Option<Vec<String>>| {
+        let s = se.0.lock().unwrap();
+        assert_eq!(vec!["BEGIN PESSIMISTIC".to_owned(), "COMMIT".to_owned()], s.executed_sql);
+        assert_eq!(restricted.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(), s.executed_restricted_sql);
+        assert_eq!(vec!["201".to_owned()], s.executed_restricted_args[0]);
+        if let Some(update) = update {
+            assert_eq!(update, s.executed_restricted_args[1]);
+        }
+    };
+    let both = [TEST_SQL_LOCK_PURGE_NEXT_TIME, TEST_SQL_UPDATE_PURGE_NEXT_TIME];
+
+    // "applied"
+    let (se, pool) = new_recording_session();
+    lock(&se, Some(1));
+    let expected_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY);
+    let (applied, applied_next, err) = backoff(&pool, &expected_next, |_, _| Ok((Some(mvs_unix(1_700_000_000, 0).add(MINUTE)), false)));
+    assert!(err.is_none() && applied);
+    assert_eq!(expected_next, applied_next);
+    check(&se, &both, Some(vec![expected_next.unix().to_string(), "201".to_owned()]));
+
+    // "keep_later_next_time"
+    let (se, pool) = new_recording_session();
+    lock(&se, Some(1));
+    let cooldown_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY);
+    let current_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY + MINUTE);
+    let (applied, applied_next, err) = backoff(&pool, &cooldown_next, |_, _| {
+        Ok((Some(mvs_unix(1_700_000_000, 0).add(crate::service::MANUAL_CANCEL_BACKOFF_DELAY + MINUTE)), true))
+    });
+    assert!(err.is_none() && applied);
+    assert_eq!(current_next, applied_next);
+    check(&se, &both, Some(vec![current_next.unix().to_string(), "201".to_owned()]));
+
+    // "no_next_schedule_clears_next_time"
+    let (se, pool) = new_recording_session();
+    lock(&se, Some(1));
+    let (applied, applied_next, err) = backoff(&pool, &cooldown_next, |_, _| Ok((None, true)));
+    assert!(err.is_none() && applied);
+    assert!(applied_next.is_zero());
+    check(&se, &both, Some(vec!["Null".to_owned(), "201".to_owned()]));
+
+    // "locked_next_time_null_keeps_unscheduled"
+    let (se, pool) = new_recording_session();
+    lock(&se, None);
+    RESOLVER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (applied, applied_next, err) = backoff(&pool, &cooldown_next, |_, _| {
+        RESOLVER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok((Some(mvs_unix(1_700_000_000, 0).add(tidb_timer::go_time::HOUR)), true))
+    });
+    assert!(err.is_none() && applied);
+    assert!(applied_next.is_zero());
+    assert!(!RESOLVER_CALLED.load(std::sync::atomic::Ordering::SeqCst));
+    check(&se, &[TEST_SQL_LOCK_PURGE_NEXT_TIME], None);
+}
+
+/// The refresh's maintenance variables Go's `recordingSessionContext`
+/// samples at each restricted statement.
+fn refresh_session_var_names() -> Vec<&'static str> {
+    use tidb_vardef::tidb_vars as v;
+    vec![
+        v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
+        v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
+        v::TIDB_MAX_TIFLASH_THREADS,
+        v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+        v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
+        v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
+        v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+        v::TIFLASH_QUERY_SPILL_RATIO,
+        v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+        v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+        v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+        v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
+    ]
+}
+
+/// Go `vars.SetSystemVar` for each `(name, value)`.
+fn set_session_vars(se: &RecordingSessionContext, vars: &[(&str, &str)]) {
+    let mut s = se.0.lock().unwrap();
+    for (name, value) in vars {
+        s.system_vars.insert((*name).to_owned(), (*value).to_owned());
+    }
+}
+
+/// The values each restricted statement saw for `name` (Go's
+/// `restricted*` slices).
+fn sampled(se: &RecordingSessionContext, name: &str) -> Vec<String> {
+    se.0.lock().unwrap().restricted_var_values.iter().map(|values| values[name].clone().unwrap_or_default()).collect()
+}
+
+fn refresh_mv_ready_session() -> (Arc<RecordingSessionContext>, SystemSessionPool, GoTime) {
+    let (se, pool) = new_recording_session();
+    let expected_next_refresh = mvs_unix(1_700_000_000, 0).add(MINUTE);
+    se.0.lock().unwrap().restricted_rows.insert(
+        TEST_SQL_FIND_MV_NEXT_TIME.to_owned(),
+        vec![ints(&[Some(expected_next_refresh.unix())])],
+    );
+    with_mock_info_schema(&se, vec![table(101, "mv1")]);
+    se.0.lock().unwrap().watched_vars = refresh_session_var_names().iter().map(|n| (*n).to_owned()).collect();
+    (se, pool, expected_next_refresh)
+}
+
+#[test]
+fn test_server_helper_refresh_mv_uses_global_refresh_session_vars() {
+    use tidb_vardef::tidb_vars as v;
+    let (se, pool, expected_next_refresh) = refresh_mv_ready_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        for (name, value) in [
+            (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+            (v::TIDB_MAX_TIFLASH_THREADS, "8"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "111"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "222"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "333"),
+            (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "444"),
+            (v::TIFLASH_QUERY_SPILL_RATIO, "0.25"),
+            (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "16"),
+            (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "4096"),
+            (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "12"),
+            (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "64gib"),
+            (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tikv"),
+        ] {
+            s.global_vars.insert(name.to_owned(), value.to_owned());
+        }
+    }
+    let session = [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "268435456"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_MAX_TIFLASH_THREADS, "2"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "101"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "202"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "303"),
+        (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "404"),
+        (v::TIFLASH_QUERY_SPILL_RATIO, "0.75"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "4"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "1024"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "3"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "8gib"),
+    ];
+    set_session_vars(&se, &session);
+
+    let next_refresh = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap();
+    assert_eq!(expected_next_refresh.unix(), next_refresh.unix());
+    assert_eq!(
+        vec![TEST_SQL_REFRESH_MV.to_owned(), TEST_SQL_FIND_MV_NEXT_TIME.to_owned()],
+        se.0.lock().unwrap().executed_restricted_sql
+    );
+    for (name, value) in [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tikv"),
+        (v::TIDB_MAX_TIFLASH_THREADS, "8"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "111"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "222"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "333"),
+        (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "444"),
+        (v::TIFLASH_QUERY_SPILL_RATIO, "0.25"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "16"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "4096"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "12"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "64gib"),
+    ] {
+        assert_eq!(vec![value.to_owned(), value.to_owned()], sampled(&se, name), "{name}");
+    }
+
+    se.0.lock().unwrap().restricted_errs.insert(TEST_SQL_REFRESH_MV.to_owned(), MvsError::Other("mock refresh failure".to_owned()));
+    let err = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap_err();
+    assert_eq!(MvsError::Other("mock refresh failure".to_owned()), err);
+    // The session's own values come back.
+    let s = se.0.lock().unwrap();
+    for (name, value) in session {
+        assert_eq!(Some(value), s.system_vars.get(name).map(String::as_str), "{name}");
+    }
+}
+
+#[test]
+fn test_server_helper_refresh_mv_best_effort_when_global_session_vars_unavailable() {
+    use tidb_vardef::tidb_vars as v;
+    let (se, pool, expected_next_refresh) = refresh_mv_ready_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        s.global_var_errs.insert(v::TIDB_MAX_TIFLASH_THREADS.to_owned(), MvsError::Other("mock global read failure".to_owned()));
+        s.global_var_errs.insert(
+            v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned(),
+            MvsError::Other("mock global read failure".to_owned()),
+        );
+        s.global_var_fail_after.insert(v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned(), 1);
+        for (name, value) in [
+            (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+            (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "111"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "222"),
+            (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "333"),
+            (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "444"),
+            (v::TIFLASH_QUERY_SPILL_RATIO, "not-a-float"),
+            (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "16"),
+            (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "4096"),
+            (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "12"),
+            (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "bad-quota"),
+        ] {
+            s.global_vars.insert(name.to_owned(), value.to_owned());
+        }
+        // Go's `SetSystemVar` refuses these values.
+        s.invalid_system_var_values = vec![
+            (v::TIFLASH_QUERY_SPILL_RATIO.to_owned(), "not-a-float".to_owned()),
+            (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA.to_owned(), "bad-quota".to_owned()),
+        ];
+    }
+    let session = [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "268435456"),
+        (v::TIDB_ISOLATION_READ_ENGINES, "tikv"),
+        (v::TIDB_MAX_TIFLASH_THREADS, "2"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "101"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "202"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "303"),
+        (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "404"),
+        (v::TIFLASH_QUERY_SPILL_RATIO, "0.75"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "4"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "1024"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "3"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "8gib"),
+    ];
+    set_session_vars(&se, &session);
+
+    let next_refresh = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap();
+    assert_eq!(expected_next_refresh.unix(), next_refresh.unix());
+    assert_eq!(
+        vec![TEST_SQL_REFRESH_MV.to_owned(), TEST_SQL_FIND_MV_NEXT_TIME.to_owned()],
+        se.0.lock().unwrap().executed_restricted_sql
+    );
+    for (name, value) in [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_MAX_TIFLASH_THREADS, "2"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, "111"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, "222"),
+        (v::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, "333"),
+        (v::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, "444"),
+        (v::TIFLASH_QUERY_SPILL_RATIO, "0.75"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, "16"),
+        (v::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, "4096"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, "12"),
+        (v::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, "8gib"),
+    ] {
+        assert_eq!(vec![value.to_owned(), value.to_owned()], sampled(&se, name), "{name}");
+    }
+    let s = se.0.lock().unwrap();
+    for (name, value) in session {
+        assert_eq!(Some(value), s.system_vars.get(name).map(String::as_str), "{name}");
+    }
 }
