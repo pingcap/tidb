@@ -1385,6 +1385,10 @@ impl Session {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
+            // Go `failpoint.InjectCall("mvRefreshInputCaptured", refreshSctx,
+            // actualRefreshReadTSO)`: the refresh session, whose for-update
+            // timestamp the read TSO is.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", &mut *refresh);
             let mut read_tso = actual_read_tso;
             if bounded_fast {
                 if target_tso > actual_read_tso {
