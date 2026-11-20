@@ -527,6 +527,9 @@ const (
 
 	// version285 adds scan_index_id to mysql.tidb_ttl_task for index-ordered TTL scans.
 	version285 = 285
+
+	// version286 backfills the default for tidb_enable_adaptive_limit_scan on upgraded clusters.
+	version286 = 286
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -540,7 +543,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version285
+var currentBootstrapVersion int64 = version286
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -730,6 +733,7 @@ var (
 		{version: version283, fn: upgradeToVer283},
 		{version: version284, fn: upgradeToVer284},
 		{version: version285, fn: upgradeToVer285},
+		{version: version286, fn: upgradeToVer286},
 	}
 )
 
@@ -2329,4 +2333,8 @@ func upgradeToVer284(s sessionapi.Session, _ int64) {
 
 func upgradeToVer285(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS scan_index_id bigint DEFAULT NULL")
+}
+
+func upgradeToVer286(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableAdaptiveLimitScan, vardef.Off)
 }
