@@ -17,6 +17,7 @@ package infoschema
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ngaut/pools"
@@ -104,7 +105,7 @@ func TestInitWithOldInfoSchemaCopiesMaskingLoadedState(t *testing.T) {
 func TestInitWithOldInfoSchemaDoesNotInheritMaskingLoadChannel(t *testing.T) {
 	oldIS := newInfoSchema(nil)
 	oldIS.maskingPoliciesLoaded = false
-	oldIS.maskingPoliciesLoadCh = make(chan struct{})
+	oldIS.maskingPoliciesLoad = &maskingPolicyLoad{done: make(chan struct{})}
 	oldIS.maskingPolicyTableColumnMap[42] = map[int64]*model.MaskingPolicyInfo{
 		7: {
 			ID:       1,
@@ -118,7 +119,7 @@ func TestInitWithOldInfoSchemaDoesNotInheritMaskingLoadChannel(t *testing.T) {
 	require.NoError(t, builder.InitWithOldInfoSchema(oldIS))
 
 	newIS := builder.infoSchema
-	require.Nil(t, newIS.maskingPoliciesLoadCh)
+	require.Nil(t, newIS.maskingPoliciesLoad)
 	require.False(t, newIS.maskingPoliciesLoaded)
 	policy, ok := newIS.maskingPolicyTableColumnMap[42][7]
 	require.True(t, ok)
@@ -184,7 +185,7 @@ func TestMaskingPolicyLoadErrorsAreReturned(t *testing.T) {
 func TestMaskingPolicyLoadWaitCancellation(t *testing.T) {
 	is := newInfoSchema(nil)
 	is.factory = func() (pools.Resource, error) { panic("waiter must not start another load") }
-	is.maskingPoliciesLoadCh = make(chan struct{})
+	is.maskingPoliciesLoad = &maskingPolicyLoad{done: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	waiting := make(chan struct{})
 	waitCtx := maskingPolicyWaitContext{Context: ctx, waiting: waiting}
@@ -211,7 +212,73 @@ func TestMaskingPolicyLoadCancellation(t *testing.T) {
 	_, err := is.HasMaskingPolicies(ctx)
 	require.Equal(t, context.Canceled, err)
 	require.False(t, is.maskingPoliciesLoaded)
-	require.Nil(t, is.maskingPoliciesLoadCh)
+	require.Nil(t, is.maskingPoliciesLoad)
+}
+
+func TestMaskingPolicyLoadFailureSharedWithWaiters(t *testing.T) {
+	const callers = 8
+	firstErr, secondErr := errors.New("first load failure"), errors.New("second load failure")
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	is := newInfoSchema(nil)
+	is.factory = func() (pools.Resource, error) {
+		if calls.Add(1) > 1 {
+			return nil, secondErr
+		}
+		close(started)
+		<-release
+		return nil, firstErr
+	}
+
+	finished := make(chan error, callers)
+	go func() { finished <- is.loadMaskingPoliciesIfNeeded(context.Background()) }()
+	<-started
+	for range callers - 1 {
+		waiting := make(chan struct{})
+		go func() {
+			finished <- is.loadMaskingPoliciesIfNeeded(maskingPolicyWaitContext{Context: context.Background(), waiting: waiting})
+		}()
+		<-waiting
+	}
+	close(release)
+	for range callers {
+		require.ErrorIs(t, <-finished, firstErr)
+	}
+	require.Equal(t, int32(1), calls.Load())
+
+	// The failure is not cached: a request arriving afterwards loads again.
+	require.ErrorIs(t, is.loadMaskingPoliciesIfNeeded(context.Background()), secondErr)
+	require.Equal(t, int32(2), calls.Load())
+}
+
+func TestMaskingPolicyLoaderCancellationNotSharedWithWaiters(t *testing.T) {
+	retryErr := errors.New("retry load failure")
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	is := newInfoSchema(nil)
+	is.factory = func() (pools.Resource, error) {
+		if calls.Add(1) > 1 {
+			return nil, retryErr
+		}
+		close(started)
+		<-release
+		return nil, context.Canceled
+	}
+
+	loaderCtx, cancel := context.WithCancel(context.Background())
+	loaderDone, waiterDone := make(chan error, 1), make(chan error, 1)
+	go func() { loaderDone <- is.loadMaskingPoliciesIfNeeded(loaderCtx) }()
+	<-started
+	waiting := make(chan struct{})
+	go func() {
+		waiterDone <- is.loadMaskingPoliciesIfNeeded(maskingPolicyWaitContext{Context: context.Background(), waiting: waiting})
+	}()
+	<-waiting
+	cancel()
+	close(release)
+	require.ErrorIs(t, <-loaderDone, context.Canceled)
+	require.ErrorIs(t, <-waiterDone, retryErr)
+	require.Equal(t, int32(2), calls.Load())
 }
 
 func TestMaskingPolicyCachedReadWithCanceledContext(t *testing.T) {
@@ -230,6 +297,10 @@ type maskingPolicyWaitContext struct {
 }
 
 func (ctx maskingPolicyWaitContext) Done() <-chan struct{} {
-	close(ctx.waiting)
+	select {
+	case <-ctx.waiting:
+	default:
+		close(ctx.waiting)
+	}
 	return ctx.Context.Done()
 }

@@ -413,7 +413,7 @@ func applyMaskingPolicyChange(b *Builder, m meta.Reader, diff *model.SchemaDiff)
 	b.infoSchema.maskingPolicyMutex.Lock()
 	b.infoSchema.maskingPoliciesLoaded = false
 	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
-	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPoliciesLoad = nil
 	b.infoSchema.maskingPolicyMutex.Unlock()
 	return nil, nil
 }
@@ -1057,10 +1057,10 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
 	// Do not inherit an in-progress loader channel from old infoschema instance.
 	// If loading is in progress during clone, force lazy reload in new infoschema.
-	if oldIS.maskingPoliciesLoadCh != nil {
+	if oldIS.maskingPoliciesLoad != nil {
 		b.infoSchema.maskingPoliciesLoaded = false
 	}
-	b.infoSchema.maskingPoliciesLoadCh = nil
+	b.infoSchema.maskingPoliciesLoad = nil
 	oldIS.maskingPolicyMutex.RUnlock()
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)

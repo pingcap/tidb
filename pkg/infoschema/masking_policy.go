@@ -115,10 +115,20 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded(ctx context.Context) error {
 	return is.loadMaskingPolicies(ctx, nil)
 }
 
+// maskingPolicyLoadTimeout bounds one policy lookup, including the time spent
+// waiting for a load owned by another caller.
+const maskingPolicyLoadTimeout = 30 * time.Second
+
+// maskingPolicyLoad is one load attempt. err is set before done is closed.
+type maskingPolicyLoad struct {
+	done chan struct{}
+	err  error
+}
+
 // Only one goroutine performs loading, others wait for completion.
 func (is *infoSchema) loadMaskingPolicies(ctx context.Context, snapshotSchema InfoSchema) error {
+	var deadline time.Time
 	for {
-		var loadCh chan struct{}
 		is.maskingPolicyMutex.Lock()
 		if is.maskingPoliciesLoaded {
 			is.maskingPolicyMutex.Unlock()
@@ -134,30 +144,46 @@ func (is *infoSchema) loadMaskingPolicies(ctx context.Context, snapshotSchema In
 			is.maskingPolicyMutex.Unlock()
 			return nil
 		}
-		if is.maskingPoliciesLoadCh != nil {
-			loadCh = is.maskingPoliciesLoadCh
+		if deadline.IsZero() {
+			deadline = time.Now().Add(maskingPolicyLoadTimeout)
+		}
+		if load := is.maskingPoliciesLoad; load != nil {
 			is.maskingPolicyMutex.Unlock()
+			var waitErr error
+			timer := time.NewTimer(time.Until(deadline))
 			select {
-			case <-loadCh:
+			case <-load.done:
 			case <-ctx.Done():
-				return ctx.Err()
+				waitErr = ctx.Err()
+			case <-timer.C:
+				waitErr = context.DeadlineExceeded
+			}
+			timer.Stop()
+			if waitErr != nil {
+				return waitErr
+			}
+			// A failed attempt fails everyone who waited for it. Only requests
+			// arriving after it has finished start a new one.
+			if load.err != nil {
+				return load.err
 			}
 			continue
 		}
-		loadCh = make(chan struct{})
-		is.maskingPoliciesLoadCh = loadCh
+		load := &maskingPolicyLoad{done: make(chan struct{})}
+		is.maskingPoliciesLoad = load
 		snapshotTS := is.maskingPolicySnapshotTS
 		is.maskingPolicyMutex.Unlock()
 
 		// Keep user RPC interceptors and statement-local values out of internal SQL,
 		// while still allowing the caller to cancel the load.
-		loadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		loadCtx, cancel := context.WithDeadline(context.Background(), deadline)
 		stopCancel := context.AfterFunc(ctx, cancel)
 		policies, err := loadMaskingPoliciesWithTableIDs(loadCtx, is.factory, nil, snapshotTS, snapshotSchema)
 		stopCancel()
 		cancel()
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			err = ctxErr
+		callerErr := ctx.Err()
+		if callerErr != nil {
+			err = callerErr
 		}
 
 		is.maskingPolicyMutex.Lock()
@@ -184,8 +210,13 @@ func (is *infoSchema) loadMaskingPolicies(ctx context.Context, snapshotSchema In
 			is.maskingPoliciesLoaded = true
 			logutil.BgLogger().Info("masking policies loaded", zap.Int("count", len(policies)))
 		}
-		close(loadCh)
-		is.maskingPoliciesLoadCh = nil
+		// The loader's own cancellation is not a result of the load, so its
+		// waiters retry within their remaining budget instead of inheriting it.
+		if callerErr == nil {
+			load.err = err
+		}
+		close(load.done)
+		is.maskingPoliciesLoad = nil
 		is.maskingPolicyMutex.Unlock()
 		return err
 	}
