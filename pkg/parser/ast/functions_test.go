@@ -42,6 +42,9 @@ func TestFunctionsVisitorCover(t *testing.T) {
 
 func TestFuncCallExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
+		{"MOD(c1, c0 + 1)", "MOD(`c1`, `c0`+1)"},
+		{"MOD(c1 + 1, MOD(c0, 3))", "MOD(`c1`+1, MOD(`c0`, 3))"},
+		{"-MOD(c1, c0 + 1)", "-MOD(`c1`, `c0`+1)"},
 		{"JSON_ARRAYAGG(attribute)", "JSON_ARRAYAGG(`attribute`)"},
 		{"JSON_OBJECTAGG(attribute, value)", "JSON_OBJECTAGG(`attribute`, `value`)"},
 		{"ABS(-1024)", "ABS(-1024)"},
