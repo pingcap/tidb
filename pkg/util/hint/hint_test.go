@@ -28,14 +28,16 @@ func (testHintWarningRecorder) SetHintWarning(string) {}
 
 func (testHintWarningRecorder) SetHintWarningFromError(error) {}
 
-func TestParsePreferSkipScanHint(t *testing.T) {
-	hints, errs := parser.ParseHint("/*+ PREFER_SKIP_SCAN(employee_salary, idx_dept_salary) */", mysql.ModeNone, parser.Pos{Line: 1})
+func TestParseSkipScanHints(t *testing.T) {
+	hints, errs := parser.ParseHint("/*+ SKIP_SCAN(employee_salary, idx_dept_salary) NO_SKIP_SCAN(employee_salary, idx_dept_salary) */", mysql.ModeNone, parser.Pos{Line: 1})
 	require.Empty(t, errs)
 
 	planHints, _, err := ParsePlanHints(hints, 0, "test", NewQBHintHandler(nil), false, false, false, false, testHintWarningRecorder{})
 	require.NoError(t, err)
-	require.Len(t, planHints.PreferSkipScan, 1)
-	require.Equal(t, HintPreferSkipScan, planHints.PreferSkipScan[0].HintTypeString())
-	require.Equal(t, "employee_salary", planHints.PreferSkipScan[0].TblName.L)
-	require.Equal(t, "idx_dept_salary", planHints.PreferSkipScan[0].IndexHint.IndexNames[0].L)
+	require.Len(t, planHints.SkipScan, 1)
+	require.Equal(t, HintSkipScan, planHints.SkipScan[0].HintTypeString())
+	require.Equal(t, "employee_salary", planHints.SkipScan[0].TblName.L)
+	require.Equal(t, "idx_dept_salary", planHints.SkipScan[0].IndexHint.IndexNames[0].L)
+	require.Len(t, planHints.NoSkipScan, 1)
+	require.Equal(t, HintNoSkipScan, planHints.NoSkipScan[0].HintTypeString())
 }

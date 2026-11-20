@@ -181,10 +181,15 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: "PREFER_SKIP_SCAN(employee_salary, idx_dept_salary)",
+			input: "SKIP_SCAN(employee_salary, idx_dept_salary) NO_SKIP_SCAN(employee_salary, idx_dept_salary)",
 			output: []*ast.TableOptimizerHint{
 				{
-					HintName: ast.NewCIStr("PREFER_SKIP_SCAN"),
+					HintName: ast.NewCIStr("SKIP_SCAN"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("employee_salary")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("idx_dept_salary")},
+				},
+				{
+					HintName: ast.NewCIStr("NO_SKIP_SCAN"),
 					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("employee_salary")}},
 					Indexes:  []ast.CIStr{ast.NewCIStr("idx_dept_salary")},
 				},
