@@ -79,6 +79,7 @@ fn build_alter_table_spec<S: MetaSnapshot>(
                 *if_exists,
                 false,
                 context.as_ref(),
+                multi_schema,
             )
         }
         tidb_ast::AlterTableAction::RenameTable { new_name } => {
@@ -532,6 +533,7 @@ fn build_alter_table_spec<S: MetaSnapshot>(
                 false,
                 false,
                 context.as_ref(),
+                multi_schema,
             )
         }
         tidb_ast::AlterTableAction::RenameIndex(action) => {

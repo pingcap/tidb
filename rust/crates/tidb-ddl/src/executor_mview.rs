@@ -573,6 +573,100 @@ pub(crate) struct MViewQueryAnalysis {
     pub has_min_or_max: bool,
 }
 
+/// Go master `analyzeStoredMaterializedViewQuery`: a stored definition
+/// parsed with the session's connection charset (the DDL session's when
+/// `context` is `None`) and validated as CREATE MATERIALIZED VIEW does.
+pub(crate) fn analyze_stored_materialized_view_query(
+    context: Option<&dyn DdlSessionContext>,
+    base_schema: &str,
+    base: &tidb_model::TableInfo,
+    mlog_columns: &[String],
+    sql: &str,
+) -> Result<MViewQueryAnalysis, MysqlError> {
+    let (charset, collation, time_zone) = match context {
+        Some(context) => {
+            let (charset, collation) = context.connection_charset_info();
+            (charset.to_owned(), collation.to_owned(), context.session_zone())
+        }
+        None => (
+            tidb_mysql::DefaultCharset.to_owned(),
+            tidb_mysql::DefaultCollationName.to_owned(),
+            tidb_datatype::SessionTimeZone::default(),
+        ),
+    };
+    let stmt = tidb_parser::parse_with_connection(sql, &charset, &collation)
+        .map_err(|error| MysqlError::unknown(error.compatibility_message(sql)))?;
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return Err(MysqlError::unknown("expected select statement"));
+    };
+    validate_create_materialized_view_query(time_zone, base_schema, base.name.original(), base, mlog_columns, &query)
+}
+
+/// Go master `checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable`:
+/// every MIN/MAX view on `base` must keep a visible public index (of
+/// `effective`, the table as the DDL leaves it, without
+/// `excluded_index_name`) whose leading columns cover its GROUP BY.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_with_effective_table(
+    context: Option<&dyn DdlSessionContext>,
+    table_by_id: &dyn Fn(i64) -> Option<tidb_model::TableInfo>,
+    schema_name: &str,
+    base: &tidb_model::TableInfo,
+    effective: &tidb_model::TableInfo,
+    excluded_index_name: &str,
+    index_name_for_err: &str,
+    op: &str,
+) -> Result<(), MysqlError> {
+    let Some(base_info) = base.materialized_view_base.as_ref().map(|info| info.read().clone()) else {
+        return Ok(());
+    };
+    if base_info.mview_ids.is_empty() {
+        return Ok(());
+    }
+    let Some(mlog) = table_by_id(base_info.mlog_id).filter(|mlog| mlog.materialized_view_log.is_some()) else {
+        return Err(general_unsupported(format!("{op} on base table with invalid materialized view log metadata")));
+    };
+    let mlog_columns: Vec<String> = mlog
+        .materialized_view_log
+        .as_ref()
+        .expect("checked above")
+        .read()
+        .columns
+        .iter()
+        .map(|column| column.original().to_owned())
+        .collect();
+    for &mview_id in base_info.mview_ids.iter() {
+        let Some(mview) = table_by_id(mview_id).filter(|mview| mview.materialized_view.is_some()) else {
+            return Err(general_unsupported(format!(
+                "{op} on base table with invalid dependent materialized view metadata"
+            )));
+        };
+        let sql = mview.materialized_view.as_ref().expect("checked above").read().sql_content.clone();
+        let Ok(analysis) = analyze_stored_materialized_view_query(context, schema_name, base, &mlog_columns, &sql) else {
+            return Err(general_unsupported(format!(
+                "{op} on base table with invalid dependent materialized view {} metadata",
+                mview.name.original()
+            )));
+        };
+        if !analysis.has_min_or_max {
+            continue;
+        }
+        if tidb_mviewutil::has_index_with_prefix_covering_columns(
+            effective,
+            &analysis.group_by_cols,
+            &tidb_hack::go_to_lower(excluded_index_name),
+            true,
+        ) {
+            continue;
+        }
+        return Err(general_unsupported(format!(
+            "{op} on base table index {index_name_for_err} required by materialized view {} for MIN/MAX fast refresh",
+            mview.name.original()
+        )));
+    }
+    Ok(())
+}
+
 fn general_unsupported(message: impl Into<String>) -> MysqlError {
     MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack(message.into()))
 }
@@ -672,7 +766,7 @@ fn is_count_star_or_one(arg: &tidb_ast::Expr) -> bool {
 /// Go master `buildMViewSingleTableExpr`'s column scope: the base table's
 /// columns, named by the alias when there is one.
 struct MViewBaseColumns<'a> {
-    context: &'a dyn DdlSessionContext,
+    time_zone: tidb_datatype::SessionTimeZone,
     schema: String,
     table: String,
     columns: &'a [tidb_model::ColumnInfo],
@@ -700,7 +794,7 @@ impl tidb_expr::rewriter::ColumnResolver for MViewBaseColumns<'_> {
             .map(|(offset, base)| (offset, base.field_type.clone(), base.id))
     }
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        self.context.session_zone()
+        self.time_zone.clone()
     }
 }
 
@@ -708,7 +802,7 @@ impl tidb_expr::rewriter::ColumnResolver for MViewBaseColumns<'_> {
 /// aggregation a materialized view keeps, its GROUP BY keys and whether it
 /// needs a MIN/MAX index; every column it reads must be in the log.
 pub(crate) fn validate_create_materialized_view_query(
-    context: &dyn DdlSessionContext,
+    time_zone: tidb_datatype::SessionTimeZone,
     base_schema: &str,
     base_table: &str,
     base: &tidb_model::TableInfo,
@@ -777,7 +871,7 @@ pub(crate) fn validate_create_materialized_view_query(
 
     if let Some(condition) = &select.where_clause {
         let scope = MViewBaseColumns {
-            context,
+            time_zone: time_zone.clone(),
             schema: base_schema.to_owned(),
             table: alias.filter(|alias| !alias.is_empty()).unwrap_or(base_table).to_owned(),
             columns: &base_columns,
@@ -1048,7 +1142,7 @@ pub(crate) fn create_materialized_view_plan(
     let log = mlog.materialized_view_log.as_ref().expect("validate_materialized_view_source_mlog checked the log");
     let mlog_columns: Vec<String> = log.read().columns.iter().map(|column| column.original().to_owned()).collect();
     let analysis =
-        validate_create_materialized_view_query(context, &base_schema, &base_table, &base, &mlog_columns, &select)?;
+        validate_create_materialized_view_query(context.session_zone(), &base_schema, &base_table, &base, &mlog_columns, &select)?;
     normalize_mv_definition_hint_db_names(&mut select, &schema_name);
     let select_sql = select.restore_with_flags(
         tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::STRING_WITHOUT_CHARSET,
@@ -1349,24 +1443,36 @@ pub(crate) fn delete_materialized_view_refresh_alert(
     let session = tidb_ddl_session::Session::new(std::sync::Arc::clone(&sess_ctx));
     let context = tidb_sqlexec::BackgroundContext;
     let id = [tidb_sqlescape::SqlArg::Signed(mview_id)];
-    let result = session
+    let mut result = session
         .execute(
             &context,
             "UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATE_TIME = NOW(6) WHERE MVIEW_ID = %? AND ALERT_LEVEL IS NOT NULL",
             "alter-materialized-view-refresh-clear-alert-level",
             &id,
         )
-        .and_then(|_| {
-            session.execute(
-                &context,
-                "DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %? AND REFRESH_FAILED IS NULL",
-                "alter-materialized-view-refresh-delete-alert",
-                &id,
-            )
-        })
         .map(|_| ())
+        .map_err(|error| cause_mysql_error(error.as_ref()));
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteMaterializedViewRefreshAlertTableNotExists")
+        .is_some_and(|value| value.bool())
+    {
+        result = Err(MysqlError::from_terror(
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&["mysql".to_owned().into(), "tidb_mview_refresh_alert".to_owned().into()]),
+        ));
+    }
+    let result = result
+        .and_then(|_| {
+            session
+                .execute(
+                    &context,
+                    "DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %? AND REFRESH_FAILED IS NULL",
+                    "alter-materialized-view-refresh-delete-alert",
+                    &id,
+                )
+                .map(|_| ())
+                .map_err(|error| cause_mysql_error(error.as_ref()))
+        })
         .map_err(|error| {
-            let error = cause_mysql_error(error.as_ref());
             if error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS) {
                 MysqlError::unknown(
                     "alter materialized view refresh: required system table mysql.tidb_mview_refresh_alert does not exist",

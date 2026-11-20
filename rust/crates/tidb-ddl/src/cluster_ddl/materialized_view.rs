@@ -2568,6 +2568,59 @@ pub(super) fn rollingback_create_materialized_view(
     }
 }
 
+/// Go master `checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner`:
+/// the owner's recheck against the latest schema, cancelling the job on a
+/// refusal. A multi-schema change validates its final table shape instead.
+pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_in_owner(
+    catalog: &SessionExtendedInfoSchema,
+    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    base: &TableInfo,
+    effective: &TableInfo,
+    index_name: &str,
+    op: &str,
+) -> Result<(), DdlPlanError> {
+    if active.job.multi_schema_info.is_some()
+        || base.materialized_view_base.as_ref().is_none_or(|info| info.read().mview_ids.is_empty())
+    {
+        return Ok(());
+    }
+    let schema_name = active.job.schema_name.to_string();
+    crate::worker::executor_mview::check_base_table_dependent_mview_min_max_index_constraints_with_effective_table(
+        None,
+        &|id| catalog.table_info_by_id(id).map(|table| table.read().clone_like_go()),
+        &schema_name,
+        base,
+        effective,
+        "",
+        index_name,
+        op,
+    )
+    .map_err(|error| cancel_ddl_job(active, DdlPlanError::from_mysql_error(error)))
+}
+
+/// Go master `checkBaseTableDependentMViewMinMaxIndexConstraints` at the
+/// statement: the table as it is, without the named index.
+pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints(
+    context: &dyn DdlSessionContext,
+    catalog: &SessionExtendedInfoSchema,
+    schema_name: &str,
+    base: &TableInfo,
+    index_name: &str,
+    op: &str,
+) -> Result<(), DdlPlanError> {
+    crate::worker::executor_mview::check_base_table_dependent_mview_min_max_index_constraints_with_effective_table(
+        Some(context),
+        &|id| catalog.table_info_by_id(id).map(|table| table.read().clone_like_go()),
+        schema_name,
+        base,
+        base,
+        index_name,
+        index_name,
+        op,
+    )
+    .map_err(DdlPlanError::from_mysql_error)
+}
+
 /// Go `dbterror.ErrWaitReorgTimeout`: the job runs this state again.
 fn wait_reorg_timeout() -> DdlPlanError {
     DdlPlanError::from(tidb_dbterror::ERR_WAIT_REORG_TIMEOUT.gen_with_stack_by_args(&[]))

@@ -24,7 +24,7 @@ pub mod executor;
 #[path = "executor_masking.rs"]
 mod executor_masking;
 #[path = "executor_mview.rs"]
-mod executor_mview;
+pub(crate) mod executor_mview;
 pub use executor::ExecutorStore;
 
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;

@@ -1398,6 +1398,7 @@ pub fn drop_index<E: ExecutorStore>(
             statement.if_exists,
             statement.is_hypo,
             context.as_ref(),
+            false,
         )?;
         crate::cluster_ddl::submit_built_job(snapshot, built, start_ts, upgrading)
     })

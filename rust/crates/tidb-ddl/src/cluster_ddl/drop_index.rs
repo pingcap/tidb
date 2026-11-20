@@ -32,6 +32,7 @@ pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
     if_exists: bool,
     hypo: bool,
     job_context: &dyn DdlSessionContext,
+    multi_schema: bool,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     if hypo {
         let (_, stored) = locate_table(&catalog, schema, table)?;
@@ -95,6 +96,16 @@ pub(crate) fn drop_index_by_name<S: MetaSnapshot>(
     };
     super::materialized_view::check_index_operation_materialized_view_constraints(&stored, "DROP INDEX", false)
         .map_err(DdlPlanError::from_mysql_error)?;
+    if !multi_schema {
+        super::materialized_view::check_base_table_dependent_mview_min_max_index_constraints(
+            job_context,
+            &catalog,
+            schema,
+            &stored,
+            &index_name,
+            "DROP INDEX",
+        )?;
+    }
     let index = index.read().clone_like_go();
     crate::foreign_key_build::check_index_needed_in_foreign_key(&catalog, schema, &stored, &index)
         .map_err(DdlPlanError::Admission)?;
@@ -201,6 +212,25 @@ fn check_drop_index(
         )
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
         indexes.push(index);
+    }
+    // Go `buildEffectiveBaseTableInfoForDropIndexMViewMinMaxConstraints`.
+    let mut effective = stored.clone_like_go();
+    let dropping: Vec<i64> = indexes.iter().map(|index| index.read().id).collect();
+    let kept: Vec<IndexInfo> = effective
+        .indices
+        .iter_deref()
+        .filter(|index| !dropping.contains(&index.read().id))
+        .map(|index| index.read().clone_like_go())
+        .collect();
+    effective.indices = kept.into();
+    if active.job.type_ == ActionType::ACTION_DROP_PRIMARY_KEY {
+        effective.pk_is_handle = false;
+    }
+    for arg in args.read().index_args.iter_deref() {
+        let name = arg.read().index_name.original().to_owned();
+        super::materialized_view::check_base_table_dependent_mview_min_max_index_constraints_in_owner(
+            catalog, active, &stored, &effective, &name, "DROP INDEX",
+        )?;
     }
     Ok((stored, Ok(indexes)))
 }

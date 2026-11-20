@@ -16,6 +16,7 @@
 
 use super::*;
 
+mod alter;
 mod create;
 mod drop;
 

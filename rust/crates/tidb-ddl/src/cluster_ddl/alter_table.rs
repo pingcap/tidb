@@ -158,6 +158,16 @@ pub(crate) fn alter_index_visibility<S: MetaSnapshot>(
         }
         super::materialized_view::check_index_operation_materialized_view_constraints(&stored, "ALTER INDEX", false)
             .map_err(DdlPlanError::from_mysql_error)?;
+        if *invisible && !multi_schema {
+            super::materialized_view::check_base_table_dependent_mview_min_max_index_constraints(
+                job_context,
+                catalog,
+                schema,
+                &stored,
+                index,
+                "ALTER INDEX INVISIBLE",
+            )?;
+        }
         (
             ActionType::ACTION_ALTER_INDEX_VISIBILITY,
             schema,
@@ -1806,6 +1816,18 @@ pub(super) fn plan_persisted_alter_table_job_step(
             let mut probe = info.clone_like_go();
             match apply_index_visibility(&mut probe, &schema, &table, index.original(), invisible) {
                 Ok(AlterColumnOutcome::Applied) => {
+                    // Go `checkAlterIndexVisibility`: an index turning
+                    // invisible must not be one a MIN/MAX view needs.
+                    if invisible {
+                        super::materialized_view::check_base_table_dependent_mview_min_max_index_constraints_in_owner(
+                            catalog,
+                            active,
+                            &info,
+                            &probe,
+                            index.original(),
+                            "ALTER INDEX INVISIBLE",
+                        )?;
+                    }
                     if let Some(step) =
                         revertible_point_with_table(txn, active, &info, false, start_ts)?
                     {

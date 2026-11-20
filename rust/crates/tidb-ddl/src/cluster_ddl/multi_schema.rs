@@ -61,8 +61,10 @@ pub(super) fn build_multi_schema_job(
     // Go master `appendToSubJobs`: each sub-job's involving objects.
     let mut sub_involving = Vec::new();
     let mut foreign_key_refs = Vec::new();
+    let mut sub_ops = Vec::with_capacity(specs.len());
     for spec in specs {
         names.fill(&spec)?;
+        sub_ops.push((spec.job.type_, spec.args.clone()));
         append_involving_schema_info(&mut sub_involving, spec.job.involving_schema_info.snapshot());
         if let JobArgsValue::AddForeignKey(Some(args)) = &spec.args {
             if let Some(fk) = &args.read().fk_info {
@@ -94,6 +96,8 @@ pub(super) fn build_multi_schema_job(
         sub_jobs.push(sub);
     }
     names.check(&stored)?;
+    // Go `checkMultiSchemaInfo`'s `checkOperateBaseTableDependentMViewMinMaxIndexConstraints`.
+    check_operate_base_table_dependent_mview_min_max_index_constraints(catalog, job_context, schema, &stored, &sub_ops)?;
     merge_add_index(&mut sub_jobs);
     let set_reorg_param = sub_jobs.iter().any(|sub| {
         matches!(
@@ -356,6 +360,153 @@ impl MultiSchemaNames {
             (stored.columns.len() + self.add_columns.len()).saturating_sub(self.drop_columns.len()),
         )
     }
+}
+
+/// Go `buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints`: the base
+/// table's indexes as the multi-schema change leaves them.
+fn build_effective_base_table_info_for_mview_min_max_index_constraints(
+    base: &TableInfo,
+    sub_ops: &[(ActionType, JobArgsValue)],
+) -> TableInfo {
+    let mut effective = base.clone_like_go();
+    let find = |effective: &TableInfo, name: &str| {
+        effective.indices.iter_deref().find(|index| index.read().name.lowercase() == name.go_to_lower())
+    };
+    for (action, args) in sub_ops {
+        match (*action, args) {
+            (ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY, JobArgsValue::ModifyIndex(Some(args))) => {
+                for arg in args.read().index_args.iter_deref() {
+                    let arg = arg.read();
+                    let mut index = IndexInfo {
+                        name: arg.index_name.clone(),
+                        state: SchemaState::PUBLIC,
+                        ..IndexInfo::default()
+                    };
+                    if arg
+                        .index_option
+                        .as_ref()
+                        .is_some_and(|option| option.read().visibility == 2)
+                    {
+                        index.invisible = true;
+                    }
+                    let mut columns = Vec::new();
+                    let mut usable = true;
+                    for spec in arg.index_part_specifications.iter_deref() {
+                        let spec = spec.read();
+                        let (Some(column), None) = (&spec.column, &spec.expr) else {
+                            usable = false;
+                            break;
+                        };
+                        let Some(info) = effective
+                            .columns
+                            .iter_deref()
+                            .find(|info| info.read().name.lowercase() == column.name.lowercase())
+                        else {
+                            usable = false;
+                            break;
+                        };
+                        columns.push(tidb_model::IndexColumn {
+                            name: column.name.clone(),
+                            offset: info.read().offset,
+                            length: spec.length,
+                            ..tidb_model::IndexColumn::default()
+                        });
+                    }
+                    if usable {
+                        index.columns = columns.into();
+                        effective.indices.push_go(index);
+                    }
+                }
+            }
+            (ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY, JobArgsValue::ModifyIndex(Some(args))) => {
+                for arg in args.read().index_args.iter_deref() {
+                    let name = arg.read().index_name.lowercase().to_owned();
+                    let kept: Vec<IndexInfo> = effective
+                        .indices
+                        .iter_deref()
+                        .filter(|index| index.read().name.lowercase() != name)
+                        .map(|index| index.read().clone_like_go())
+                        .collect();
+                    effective.indices = kept.into();
+                }
+                if *action == ActionType::ACTION_DROP_PRIMARY_KEY {
+                    effective.pk_is_handle = false;
+                }
+            }
+            (ActionType::ACTION_RENAME_INDEX, JobArgsValue::ModifyIndex(Some(args))) => {
+                let args = args.read();
+                let (Some(from), Some(to)) = (args.index_args.get(0), args.index_args.get(1)) else {
+                    continue;
+                };
+                let (from, to) = (from.read().index_name.clone(), to.read().index_name.clone());
+                if let Some(index) = find(&effective, from.original()) {
+                    index.write().name = to;
+                }
+            }
+            (ActionType::ACTION_ALTER_INDEX_VISIBILITY, JobArgsValue::AlterIndexVisibility(Some(args))) => {
+                let args = args.read();
+                if let Some(index) = find(&effective, args.index_name.get().original()) {
+                    index.write().invisible = args.invisible.get();
+                }
+            }
+            _ => {}
+        }
+    }
+    effective
+}
+
+/// Go `checkOperateBaseTableDependentMViewMinMaxIndexConstraints`.
+fn check_operate_base_table_dependent_mview_min_max_index_constraints(
+    catalog: &SessionExtendedInfoSchema,
+    job_context: &dyn DdlSessionContext,
+    schema: &str,
+    base: &TableInfo,
+    sub_ops: &[(ActionType, JobArgsValue)],
+) -> Result<(), DdlPlanError> {
+    if base.materialized_view_base.as_ref().is_none_or(|info| info.read().mview_ids.is_empty()) {
+        return Ok(());
+    }
+    let destructive = sub_ops.iter().any(|(action, args)| match (*action, args) {
+        (ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY, _) => true,
+        (ActionType::ACTION_ALTER_INDEX_VISIBILITY, JobArgsValue::AlterIndexVisibility(Some(args))) => {
+            args.read().invisible.get()
+        }
+        _ => false,
+    });
+    if !destructive {
+        return Ok(());
+    }
+    let effective = build_effective_base_table_info_for_mview_min_max_index_constraints(base, sub_ops);
+    let check = |index_name: &str, op: &str| {
+        crate::worker::executor_mview::check_base_table_dependent_mview_min_max_index_constraints_with_effective_table(
+            Some(job_context),
+            &|id| catalog.table_info_by_id(id).map(|table| table.read().clone_like_go()),
+            schema,
+            base,
+            &effective,
+            "",
+            index_name,
+            op,
+        )
+        .map_err(DdlPlanError::from_mysql_error)
+    };
+    for (action, args) in sub_ops {
+        match (*action, args) {
+            (ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY, JobArgsValue::ModifyIndex(Some(args))) => {
+                for arg in args.read().index_args.iter_deref() {
+                    check(arg.read().index_name.original(), "DROP INDEX")?;
+                }
+            }
+            (ActionType::ACTION_ALTER_INDEX_VISIBILITY, JobArgsValue::AlterIndexVisibility(Some(args))) => {
+                let args = args.read();
+                if args.invisible.get() {
+                    check(args.index_name.get().original(), "ALTER INDEX INVISIBLE")?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Go `mergeAddIndex`: more than one ADD INDEX become one sub-job at the
