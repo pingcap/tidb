@@ -425,6 +425,16 @@ func (c *rightShiftFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
+	argType := args[0].GetType(ctx.GetEvalCtx())
+	if types.IsBinaryStr(argType) && !IsBinaryLiteral(args[0]) {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.SetFlen(argType.GetFlen())
+		SetBinFlagOrBinStr(argType, bf.tp)
+		return &builtinRightShiftBinarySig{baseBuiltinFunc: bf}, nil
+	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
@@ -459,6 +469,53 @@ func (b *builtinRightShiftSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 		return 0, isNull, err
 	}
 	return int64(uint64(arg0) >> uint64(arg1)), false, nil
+}
+
+type builtinRightShiftBinarySig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinRightShiftBinarySig) Clone() builtinFunc {
+	newSig := &builtinRightShiftBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinRightShiftBinarySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	arg0, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	arg1, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return rightShiftBinaryString(arg0, uint64(arg1)), false, nil
+}
+
+func rightShiftBinaryString(arg string, shift uint64) string {
+	if shift == 0 || len(arg) == 0 {
+		return arg
+	}
+
+	result := make([]byte, len(arg))
+	byteShift := shift / 8
+	if byteShift >= uint64(len(arg)) {
+		return string(result)
+	}
+	bitShift := shift % 8
+	for i := int(byteShift); i < len(arg); i++ {
+		src := i - int(byteShift)
+		result[i] = arg[src] >> bitShift
+		if bitShift != 0 && src > 0 {
+			result[i] |= arg[src-1] << (8 - bitShift)
+		}
+	}
+	return string(result)
 }
 
 type isTrueOrFalseFunctionClass struct {
