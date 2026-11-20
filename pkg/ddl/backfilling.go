@@ -1171,7 +1171,7 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	if endKey == nil {
 		upperBound = keyPrefix.PrefixNext()
 	} else {
-		upperBound = endKey.PrefixNext()
+		upperBound = endKey
 	}
 
 	ver := kv.Version{Ver: version}
