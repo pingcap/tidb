@@ -922,3 +922,15 @@ NULL
 112844655
 select json_sum_crc32(j AS double ARRAY) from charTable;
 Error 1105 (HY000): Invalid JSON value for CAST to type double
+SELECT JSON_CONTAINS('[1,2]', '[[1]]') AS a, JSON_CONTAINS('[1,[2,3]]', '[[1,2]]') AS b, JSON_CONTAINS('[1,[2,3]]', '[[2]]') AS c;
+a	b	c
+0	0	1
+SELECT JSON_CONTAINS('{"a":[1,2]}', '{"a":[[1]]}') AS d, JSON_CONTAINS('[1,2]', '[[]]') AS e, JSON_CONTAINS('{"x":[1,2]}', '[[1]]', '$.x') AS f;
+d	e	f
+0	0	0
+drop table if exists j5;
+CREATE TABLE j5 (id INT PRIMARY KEY, doc JSON, cand JSON);
+INSERT INTO j5 VALUES (1, '[1,2]', '[[1]]'), (2, '[1,[2,3]]', '[[1,2]]'), (3, '[1,[2,3]]', '[[2]]');
+SELECT id FROM j5 WHERE JSON_CONTAINS(doc, cand) ORDER BY id;
+id
+3

@@ -1090,7 +1090,8 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 // ContainsBinaryJSON check whether JSON document contains specific target according the following rules:
 // 1) object contains a target object if and only if every key is contained in source object and the value associated with the target key is contained in the value associated with the source key;
 // 2) array contains a target nonarray if and only if the target is contained in some element of the array;
-// 3) array contains a target array if and only if every element is contained in some element of the array;
+// 3) array contains a target array if and only if every element is contained in the array, where a nested array
+// element must be contained in some array element of the array (it isn't unwrapped), see containsArrayElem;
 // 4) scalar contains a target scalar if and only if they are comparable and are equal;
 func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 	switch obj.TypeCode {
@@ -1111,7 +1112,7 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 		if target.TypeCode == JSONTypeCodeArray {
 			elemCount := target.GetElemCount()
 			for i := range elemCount {
-				if !ContainsBinaryJSON(obj, target.ArrayGetElem(i)) {
+				if !containsArrayElem(obj, target.ArrayGetElem(i)) {
 					return false
 				}
 			}
@@ -1127,6 +1128,44 @@ func ContainsBinaryJSON(obj, target BinaryJSON) bool {
 	default:
 		return CompareBinaryJSON(obj, target) == 0
 	}
+}
+
+// containsArrayElem checks whether the array obj contains elem, an element of a candidate array.
+// Like MySQL, a nested array in the candidate is only contained in an array element of obj, e.g.
+// [1,[2,3]] contains [[2]], but [1,2] doesn't contain [[1]]. Other elements follow rule 2).
+func containsArrayElem(obj, elem BinaryJSON) bool {
+	if elem.TypeCode != JSONTypeCodeArray {
+		return ContainsBinaryJSON(obj, elem)
+	}
+	elemCount := obj.GetElemCount()
+	for i := range elemCount {
+		objElem := obj.ArrayGetElem(i)
+		if objElem.TypeCode == JSONTypeCodeArray && ContainsBinaryJSON(objElem, elem) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasNestedArray reports whether bj has an array as an element of another array, at any depth,
+// e.g. [[1]] or {"a":[1,[2]]}. Such a JSON_CONTAINS candidate is affected by containsArrayElem.
+func (bj BinaryJSON) HasNestedArray() bool {
+	switch bj.TypeCode {
+	case JSONTypeCodeArray:
+		for i := range bj.GetElemCount() {
+			elem := bj.ArrayGetElem(i)
+			if elem.TypeCode == JSONTypeCodeArray || elem.HasNestedArray() {
+				return true
+			}
+		}
+	case JSONTypeCodeObject:
+		for i := range bj.GetElemCount() {
+			if bj.objectGetVal(i).HasNestedArray() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // OverlapsBinaryJSON is similar with ContainsBinaryJSON, but it checks the `OR` relationship.
