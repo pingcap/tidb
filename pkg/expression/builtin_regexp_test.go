@@ -922,6 +922,21 @@ func TestRegexpInStrVec(t *testing.T) {
 
 func TestRegexpReplace(t *testing.T) {
 	ctx := createContext(t)
+	t.Run("numeric regexp result", func(t *testing.T) {
+		args := datumsToConstants(types.MakeDatums("1", "[0-9]"))
+		col := &Column{Index: 0, RetType: args[0].GetType(ctx)}
+		for _, fn := range []string{ast.RegexpLike, ast.RegexpInStr} {
+			inner, err := newFunctionForTest(ctx, fn, col, args[1])
+			require.NoError(t, err)
+			require.Equal(t, CoercibilityNumeric, inner.Coercibility())
+			replaceArgs := datumsToConstants(types.MakeDatums("[0-9]", "aaaaa"))
+			outer, err := newFunctionForTest(ctx, ast.RegexpReplace, inner, replaceArgs[0], replaceArgs[1])
+			require.NoError(t, err)
+			result, err := outer.Eval(ctx, chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow())
+			require.NoError(t, err)
+			require.Equal(t, "aaaaa", result.GetString())
+		}
+	})
 
 	url1 := "https://go.mail/folder-1/online/ru-en/#lingvo/#1О 50000&price_ashka/rav4/page=/check.xml"
 	url2 := "http://saint-peters-total=меньше 1000-rublyayusche/catalogue/kolasuryat-v-2-kadyirovka-personal/serial_id=0&input_state/apartments/mokrotochki.net/upravda.ru/yandex.ru/GameMain.aspx?mult]/on/orders/50195&text=мыс и орелка в Балаш смотреть онлайн бесплатно в хорошем камбалакс&lr=20030393833539353862643188&op_promo=C-Teaser_id=06d162.html"
