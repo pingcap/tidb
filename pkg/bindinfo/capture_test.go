@@ -573,6 +573,11 @@ func TestIssue25505(t *testing.T) {
 }
 
 func TestCaptureUserFilter(t *testing.T) {
+	// Capture explicitly below; background refresh can race with clearing the bindings.
+	originalLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	t.Cleanup(func() { bindinfo.Lease = originalLease })
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
