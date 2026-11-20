@@ -231,3 +231,21 @@ set @@group_concat_max_len='hello';
 Error 1232 (42000): Incorrect argument type to variable 'group_concat_max_len'
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
+set @saved_record_plan = @@global.tidb_record_plan_in_slow_log;
+set global tidb_record_plan_in_slow_log = 0;
+select @@global.tidb_record_plan_in_slow_log;
+@@global.tidb_record_plan_in_slow_log
+0
+set global tidb_record_plan_in_slow_log = ON;
+select @@global.tidb_record_plan_in_slow_log;
+@@global.tidb_record_plan_in_slow_log
+1
+set tidb_record_plan_in_slow_log = OFF;
+select @@tidb_record_plan_in_slow_log;
+@@tidb_record_plan_in_slow_log
+0
+set global tidb_record_plan_in_slow_log = 1;
+select @@global.tidb_record_plan_in_slow_log;
+@@global.tidb_record_plan_in_slow_log
+1
+set global tidb_record_plan_in_slow_log = @saved_record_plan;

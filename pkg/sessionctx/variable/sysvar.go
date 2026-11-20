@@ -604,7 +604,11 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), nil
 		}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		atomic.StoreUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog, uint32(TidbOptInt64(val, logutil.DefaultRecordPlanInSlowLog)))
+		var enabled uint32
+		if TiDBOptOn(val) {
+			enabled = 1
+		}
+		atomic.StoreUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog, enabled)
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
