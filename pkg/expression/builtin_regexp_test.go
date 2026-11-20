@@ -954,6 +954,8 @@ func TestRegexpReplace(t *testing.T) {
 		{url1, urlPat, url1Repl, url1Res, url1BinRes, nil},
 		{url2, urlPat, url2Repl, url2Res, url2BinRes, nil},
 		{"abc", nil, nil, nil, nil, nil},
+		{"abc", "", nil, nil, nil, nil},
+		{"abc", "[", nil, nil, nil, nil},
 		{nil, "bc", nil, nil, nil, nil},
 		{nil, nil, nil, nil, nil, nil},
 		{"abc", "\\d*", "d", "dadbdcd", "0x64616462646364", nil},
@@ -1011,6 +1013,7 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "bc", "a", int64(4), "", "", ErrRegexp},
 		// Some nullable input tests
 		{"", "^$", "a", nil, nil, nil, nil},
+		{"abc", "", "a", nil, nil, nil, nil},
 		{nil, "^$", "a", nil, nil, nil, nil}, // index 15
 		{"", nil, nil, nil, nil, nil, nil},
 		{nil, nil, nil, int64(1), nil, nil, nil},

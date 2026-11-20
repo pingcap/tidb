@@ -307,6 +307,29 @@ func TestIssue28073(t *testing.T) {
 }
 
 func TestIssue32422(t *testing.T) {
+	t.Run("regexp null replacement", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t " +
+			"(id int, pat varchar(255), repl bigint, d date)")
+		tk.MustExec("insert into t values " +
+			"(1, '', NULL, '2030-06-01'), (2, 'abc', 5, '2024-01-15')")
+		tk.MustExec("create view v as select * from t")
+		query := "select d from v where regexp_replace(647356755, pat, repl)"
+		tk.MustQuery(query).Check(testkit.Rows("2024-01-15"))
+		tk.MustExec("alter table t cache")
+		require.Eventually(t, func() bool {
+			tk.MustQuery("select id from t").Sort().Check(
+				testkit.Rows("1", "2"))
+			return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+		}, 5*time.Second, 10*time.Millisecond)
+		for range 2 {
+			tk.MustQuery(query).Check(testkit.Rows("2024-01-15"))
+			require.True(t,
+				tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+		}
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
