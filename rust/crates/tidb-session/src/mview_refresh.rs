@@ -812,12 +812,6 @@ impl Session {
         // Go master `isInternalSQL`: the MV service runs its refreshes as
         // restricted SQL.
         let method = validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
-        if s.observe_type == RefreshMaterializedViewObserveType::DryRun {
-            return self.refresh_materialized_view_dry_run(s);
-        }
-        if s.observe_type == RefreshMaterializedViewObserveType::Profile {
-            return self.refresh_materialized_view_profile(s, sql);
-        }
         // Go master `evaluateRefreshMaterializedViewTargetTSO`: FAST ... AS OF
         // TIMESTAMP bounds the window.
         let target_tso = match &s.as_of {

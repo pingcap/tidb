@@ -477,3 +477,23 @@ fn closing_the_domain_stops_its_ddl_once() {
     drop(unclosed);
     assert_eq!(stops(), 2, "a domain no one closed is closed by its drop");
 }
+
+/// Go runs SetGlobal hooks from the domain's one sysvar cache: opening a
+/// session (here with a login store of its own, `session_context`) leaves a
+/// `SET GLOBAL`'s process state alone.
+#[test]
+fn opening_a_session_keeps_a_set_global_hooks_process_state() {
+    let node = MockNode::start();
+    let factory = factory_with_globals(&node, GlobalSysvars::from_cluster_rows([])).shared();
+    let mut first = factory.open_session(session_context(81)).unwrap();
+    first
+        .node_conn()
+        .execute_write("SET GLOBAL tidb_enable_instance_plan_cache = ON")
+        .unwrap();
+    let read = |session: &mut Session| format!("{:?}", rows(session, "SELECT @@global.tidb_enable_instance_plan_cache"));
+    let before = read(&mut first);
+    let mut second = factory.open_session(session_context(82)).unwrap();
+    assert_eq!(before, read(&mut first));
+    assert_eq!(before, read(&mut second));
+    assert!(tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE.load(std::sync::atomic::Ordering::SeqCst));
+}

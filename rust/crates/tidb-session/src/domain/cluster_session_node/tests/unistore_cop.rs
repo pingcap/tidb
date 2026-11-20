@@ -2491,6 +2491,11 @@ fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
         .unwrap()
         .1
         .read().id;
+    // Go has one notifier per domain: the domain's own (the statistics owner
+    // campaign's) would finish the event without the unready subscriber.
+    if let Some(domain_notifier) = stack.factory.ddl_notifier_for_test() {
+        domain_notifier.stop();
+    }
     let notifier = tidb_domain_core::domain::ddl_notifier::build_notifier(&stack.factory, Duration::ZERO);
     // Deterministically model the uninitialized priority queue's retry result
     // without modifying process-global auto-analyze settings in parallel tests.

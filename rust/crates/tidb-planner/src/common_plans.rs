@@ -196,15 +196,34 @@ pub struct ImportInto {
     pub names: Vec<FieldName>,
 }
 
+/// Go master `DryRunRefreshMaterializedView`: a refresh dry-run statement.
+#[derive(Clone, Debug)]
+pub struct DryRunRefreshMaterializedView {
+    pub statement: tidb_ast::RefreshMaterializedViewStmt,
+    pub schema: Schema,
+    pub names: Vec<FieldName>,
+}
+
+/// Go master `ProfileRefreshMaterializedView`: a refresh profile statement.
+#[derive(Clone, Debug)]
+pub struct ProfileRefreshMaterializedView {
+    pub statement: tidb_ast::RefreshMaterializedViewStmt,
+    pub schema: Schema,
+    pub names: Vec<FieldName>,
+}
+
 /// Go `base.Plan`: an operator tree before or after optimization, or one of
 /// the common plans.
 #[derive(Clone, Debug)]
 pub enum Plan {
     /// Go `ImportInto`.
     ImportInto(Box<ImportInto>),
-    /// Go master `RefreshMaterializedView` (and its `DryRun` / `Profile`
-    /// observers, by the statement's observe type).
+    /// Go master `RefreshMaterializedView`.
     RefreshMaterializedView(Box<tidb_ast::RefreshMaterializedViewStmt>),
+    /// Go master `DryRunRefreshMaterializedView`.
+    DryRunRefreshMaterializedView(Box<DryRunRefreshMaterializedView>),
+    /// Go master `ProfileRefreshMaterializedView`.
+    ProfileRefreshMaterializedView(Box<ProfileRefreshMaterializedView>),
     /// Go master `PurgeMaterializedViewLog`.
     PurgeMaterializedViewLog(Box<tidb_ast::PurgeMaterializedViewLogStmt>),
     /// Go master `CompareMaterializedView`.

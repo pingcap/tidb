@@ -1805,3 +1805,39 @@ fn test_import_into_plan_fields() {
         if expected == 6 { assert_eq!(builder.visit_info[5].privilege, tidb_mysql::FilePriv); }
     }
 }
+
+/// Go master `casetest/mview`'s `builder.Build` of a FAST refresh with
+/// `observe` (the catalog holds `test.mv`: Rust's builder runs Go's
+/// preprocessor `handleTableName` check, which Go's test skips).
+fn build_refresh_observe_plan(observe: &str) -> crate::common_plans::Plan {
+    let mut catalog = catalog();
+    let mut mv = catalog.tables[1].clone();
+    mv.set_table_id(300);
+    mv.physical_table_id = 300;
+    mv.set_table_name("mv".to_owned());
+    catalog.tables.push(mv);
+    let context = LikeEscapeColumns(0);
+    let plan_ids = PlanIdAllocator::default();
+    let column_ids = ColumnIdAllocator::new();
+    let mut builder = PlanBuilder::new(&catalog, &context, &plan_ids, &column_ids, SessionTimeZone::utc());
+    let stmt = tidb_parser::parse(&format!("REFRESH MATERIALIZED VIEW test.mv FAST {observe}")).expect("the refresh parses");
+    builder.build_stmt(&stmt).expect("the refresh plan builds")
+}
+
+#[test]
+fn test_build_dry_run_refresh_materialized_view_plan() {
+    let crate::common_plans::Plan::DryRunRefreshMaterializedView(dry_run_plan) = build_refresh_observe_plan("DRY RUN") else {
+        panic!("expected a DryRunRefreshMaterializedView plan");
+    };
+    assert_eq!(1, dry_run_plan.schema.columns.len());
+    assert_eq!("refresh steps", dry_run_plan.names[0].names.column.original.to_lowercase());
+}
+
+#[test]
+fn test_build_profile_refresh_materialized_view_plan() {
+    let crate::common_plans::Plan::ProfileRefreshMaterializedView(profile_plan) = build_refresh_observe_plan("WITH PROFILE") else {
+        panic!("expected a ProfileRefreshMaterializedView plan");
+    };
+    assert_eq!(1, profile_plan.schema.columns.len());
+    assert_eq!("refresh steps", profile_plan.names[0].names.column.original.to_lowercase());
+}

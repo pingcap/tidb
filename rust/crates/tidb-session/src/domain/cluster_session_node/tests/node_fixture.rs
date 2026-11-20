@@ -523,9 +523,13 @@ fn open_session_on_with_context_and_seams_and_usage(
 }
 
 pub(super) fn session_context(connection_id: u64) -> SessionContext {
+    // A login store of its own, beside the node's: its table is not the
+    // domain's, so its first read runs no SetGlobal hook (one would push its
+    // defaults into the node's process state).
     let users =
         ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
-            .expect("configured user store");
+            .expect("configured user store")
+            .with_global_vars(crate::GlobalSysvars::before_domain());
     let identity = users
         .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
         .expect("authenticated identity");

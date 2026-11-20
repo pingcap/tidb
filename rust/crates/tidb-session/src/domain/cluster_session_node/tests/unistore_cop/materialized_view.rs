@@ -31,6 +31,7 @@ mod refresh;
 mod refresh_entry;
 mod refresh_operator;
 mod refresh_source;
+mod select_lock;
 mod show;
 
 /// One statement's answer as the capture script prints it: `OK`, `RS:` and

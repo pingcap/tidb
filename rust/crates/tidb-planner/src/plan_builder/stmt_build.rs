@@ -1659,10 +1659,32 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             ));
         }
         self.visit_info.push(visit(tidb_mysql::OperateViewPriv, &database, &table, table_denied("OPERATE VIEW", &table)));
-        if refresh.observe_type != tidb_ast::RefreshMaterializedViewObserveType::None {
-            self.visit_info.push(visit(tidb_mysql::ShowViewPriv, &database, &table, table_denied("SHOW VIEW", &table)));
+        match refresh.observe_type {
+            tidb_ast::RefreshMaterializedViewObserveType::None => Ok(Plan::RefreshMaterializedView(Box::new(refresh.clone()))),
+            tidb_ast::RefreshMaterializedViewObserveType::DryRun => {
+                self.add_refresh_observe_visit_info(&database, &table);
+                let (schema, names) = crate::show_schema::build_refresh_observe_schema();
+                Ok(Plan::DryRunRefreshMaterializedView(Box::new(crate::common_plans::DryRunRefreshMaterializedView {
+                    statement: refresh.clone(),
+                    schema,
+                    names,
+                })))
+            }
+            tidb_ast::RefreshMaterializedViewObserveType::Profile => {
+                self.add_refresh_observe_visit_info(&database, &table);
+                let (schema, names) = crate::show_schema::build_refresh_observe_schema();
+                Ok(Plan::ProfileRefreshMaterializedView(Box::new(crate::common_plans::ProfileRefreshMaterializedView {
+                    statement: refresh.clone(),
+                    schema,
+                    names,
+                })))
+            }
         }
-        Ok(Plan::RefreshMaterializedView(Box::new(refresh.clone())))
+    }
+
+    /// Go master `addRefreshObserveVisitInfo`: SHOW VIEW on the view.
+    fn add_refresh_observe_visit_info(&mut self, database: &str, table: &str) {
+        self.visit_info.push(visit(tidb_mysql::ShowViewPriv, database, table, table_denied("SHOW VIEW", table)));
     }
 
     /// A referenced table named relative to `owner_db`, as Go's

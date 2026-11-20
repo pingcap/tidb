@@ -551,6 +551,14 @@ impl Session {
                 let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
                 self.refresh_materialized_view(refresh, &sql).map(Some)
             }
+            // Go master `RefreshMaterializedViewDryRunExec` /
+            // `RefreshMaterializedViewProfileExec`.
+            Plan::DryRunRefreshMaterializedView(plan) => self.refresh_materialized_view_dry_run(&plan.statement).map(Some),
+            Plan::ProfileRefreshMaterializedView(plan) => {
+                let client = self.vars.build_parser_config().charset_client;
+                let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
+                self.refresh_materialized_view_profile(&plan.statement, &sql).map(Some)
+            }
             // Go master `PurgeMaterializedViewLogExec`.
             Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
             // Go master `CompareMaterializedViewExec`.

@@ -3465,6 +3465,14 @@ impl Domain {
     /// This node's DDL notifier, owning: what Go's
     /// `statstestutil.HandleNextDDLEventWithTxn` runs until the statistics
     /// subscriber has handled every pending event. The caller stops it.
+    /// The domain's own DDL notifier, once the statistics owner campaign has
+    /// built it (Go has one per domain: a test running a notifier of its own
+    /// stops this one first).
+    #[must_use]
+    pub fn ddl_notifier_for_test(&self) -> Option<Arc<tidb_ddl_notifier::DdlNotifier>> {
+        self.ddl_notifier.get().cloned()
+    }
+
     pub fn owned_ddl_notifier_for_test(self: &Arc<Self>) -> Arc<tidb_ddl_notifier::DdlNotifier> {
         let notifier = ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
         tidb_owner::Listener::on_become_owner(notifier.as_ref());
