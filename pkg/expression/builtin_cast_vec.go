@@ -350,7 +350,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 			i64s[i], err = duration.ConvertToYear(tc)
 		} else {
 			var dur types.Duration
-			dur, err = duration.RoundFrac(types.DefaultFsp, location(ctx))
+			dur, err = duration.RoundFrac(types.DefaultFsp)
 			if err != nil {
 				return err
 			}
@@ -1346,7 +1346,7 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 		if err != nil {
 			return err
 		}
-		d, err = d.RoundFrac(b.tp.GetDecimal(), location(ctx))
+		d, err = d.RoundFrac(b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1375,7 +1375,7 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(ctx EvalContext, inpu
 			continue
 		}
 		dur.Duration = v
-		rd, err = dur.RoundFrac(b.tp.GetDecimal(), location(ctx))
+		rd, err = dur.RoundFrac(b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1981,7 +1981,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(ctx EvalContext, input *c
 			if err != nil {
 				return err
 			}
-			d, err = d.RoundFrac(b.tp.GetDecimal(), location(ctx))
+			d, err = d.RoundFrac(b.tp.GetDecimal())
 			if err != nil {
 				return err
 			}
