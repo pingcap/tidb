@@ -1641,6 +1641,9 @@ func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *mode
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
 	}
+	if err := checkAddPartitionTooManyPartitions(numParts); err != nil {
+		return nil, err
+	}
 
 	definitions := make([]model.PartitionDefinition, numParts)
 	oldParts := uint64(len(tbInfo.Partition.Definitions))
