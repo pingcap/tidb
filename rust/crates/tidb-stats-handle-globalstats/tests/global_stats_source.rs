@@ -19,7 +19,7 @@ use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{CmsSketch, FmSketch, TopN, MAX_SKETCH_SIZE};
-use tidb_stats_handle_globalstats::{merge_partition_stats_item, merge_part_top_n_2_global_top_n, merge_global_stats_top_n_by_concurrency, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, MAX_PARTITION_MERGE_BATCH_SIZE};
+use tidb_stats_handle_globalstats::{merge_partition_stats_item, merge_part_top_n_2_global_top_n, merge_global_stats_top_n_by_concurrency, GlobalStatsMergeError, PartitionStatsItem, MAX_PARTITION_MERGE_BATCH_SIZE};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {
@@ -150,7 +150,6 @@ fn source_concurrent_topn_merge_matches_the_blocking_worker_result() {
             400,
             &FieldType::new(FieldTypeCode::Tiny),
             false,
-            GlobalStatsMergeMode::Blocking,
             concurrency,
             partitions.clone(),
             &killer,
@@ -216,7 +215,6 @@ fn source_merge_item_uses_fm_ndv_and_clears_bucket_ndv() {
         20,
         &FieldType::new(FieldTypeCode::Tiny),
         false,
-        GlobalStatsMergeMode::Async,
         1,
         vec![partition_item([1, 2]), partition_item([2, 3])],
         &killer,
@@ -240,7 +238,6 @@ fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
         10,
         &FieldType::new(FieldTypeCode::Tiny),
         false,
-        GlobalStatsMergeMode::Async,
         1,
         vec![item],
         &killer,
@@ -250,15 +247,12 @@ fn source_merge_item_without_fm_uses_go_s_nil_ndv() {
 }
 
 /// Pinned `globalstats.TestEmptyHists`: deleting every histogram row leaves
-/// no partition items, and both the async and blocking merge paths return an
-/// empty global result without error.
+/// no partition items, and the merge returns an empty global result without
+/// error.
 #[test]
-fn source_empty_histograms_are_noop_for_both_workers() {
+fn source_empty_histograms_are_noop() {
     let killer = SqlKiller::default();
-    for mode in [
-        GlobalStatsMergeMode::Async,
-        GlobalStatsMergeMode::Blocking,
-    ] {
+    {
         let merged = merge_partition_stats_item(
             Some(&Utc),
             2,
@@ -267,7 +261,6 @@ fn source_empty_histograms_are_noop_for_both_workers() {
             0,
             &FieldType::new(FieldTypeCode::LongLong),
             false,
-            mode,
             1,
             Vec::new(),
             &killer,
@@ -280,14 +273,14 @@ fn source_empty_histograms_are_noop_for_both_workers() {
 }
 
 #[test]
-fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
+fn source_cms_nil_order_matches_go_worker() {
     let killer = SqlKiller::default();
     let first = partition_item([1]);
     let mut second = partition_item([2]);
     let mut cms = CmsSketch::new(2, 8);
     cms.insert_bytes_by_count(b"x", 5);
     second.cmsketch = Some(cms);
-    let merge = |mode| {
+    let merge = || {
         merge_partition_stats_item(
             Some(&Utc),
             2,
@@ -296,16 +289,14 @@ fn source_async_and_blocking_cms_nil_order_matches_go_workers() {
             20,
             &FieldType::new(FieldTypeCode::Tiny),
             false,
-            mode,
             1,
             vec![first.clone(), second.clone()],
             &killer,
         )
         .expect("global item merge succeeds")
     };
-    assert!(merge(GlobalStatsMergeMode::Blocking).cmsketch.is_none());
     assert_eq!(
-        merge(GlobalStatsMergeMode::Async)
+        merge()
             .cmsketch
             .expect("async worker adopts the later sketch")
             .total_count(),
@@ -356,7 +347,6 @@ fn source_concurrent_topn_merge_joins_worker_kill_errors_like_go() {
         20,
         &FieldType::new(FieldTypeCode::Tiny),
         false,
-        GlobalStatsMergeMode::Blocking,
         2,
         vec![first, second],
         &killer,
@@ -415,7 +405,6 @@ fn global_topn_selector_skips_empty_topns_before_polling_killer() {
         10,
         &FieldType::new(FieldTypeCode::Tiny),
         false,
-        GlobalStatsMergeMode::Blocking,
         2,
         vec![partition_item([1])],
         &killer,

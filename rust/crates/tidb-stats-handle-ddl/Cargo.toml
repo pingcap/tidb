@@ -14,7 +14,6 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-model = { path = "../tidb-model" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
-tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }

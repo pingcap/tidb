@@ -984,6 +984,10 @@ impl ClusterSnapshot for SwappableSnapshot {
         }
     }
 
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.snapshot()?.stmt_for_update_ts()
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         if let Some(snapshot) = self.bound.as_mut() {
             snapshot.set_statement_kv_context(context);
@@ -1090,6 +1094,10 @@ impl ClusterSnapshot for CommittedOnlySnapshot {
         self.inner().advise_keep_for_update_ts(check_ts);
     }
 
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.inner().stmt_for_update_ts()
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         self.inner().set_statement_kv_context(context);
     }
@@ -1190,6 +1198,10 @@ impl ClusterSnapshot for CacheTableSnapshot {
 
     fn advise_keep_for_update_ts(&mut self, check_ts: bool) {
         self.snapshot.advise_keep_for_update_ts(check_ts);
+    }
+
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.snapshot.stmt_for_update_ts()
     }
 
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
@@ -1423,6 +1435,13 @@ impl TableStorage for ClusterTableStorage {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .advise_keep_for_update_ts(check_ts);
+    }
+
+    fn stmt_for_update_ts(&self) -> Result<u64, StorageError> {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stmt_for_update_ts()
     }
 
     fn has_external_statement_rollback(&self) -> bool {

@@ -795,8 +795,8 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         validation: Some(super::super::validation::tidb_enable_async_merge_global_stats),
         set_session: None,
         set_global: None,
-        get_session: None,
-        get_global: None,
+        get_session: Some(super::super::validation::always_on_session),
+        get_global: Some(super::super::validation::always_on),
     },
     SysVarDef {
         name: "tidb_load_based_replica_read_threshold",

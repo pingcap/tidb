@@ -63,9 +63,10 @@ fn wrap_txn(
     Ok(stats_ver)
 }
 
-/// Go `statsReadWriter.SaveAnalyzeResultToStorage` without its history
-/// record: the save and, when it versioned the table, its
-/// `handleSlowStatsSaving`. Returns the final `statsVer` (0: not versioned).
+/// Go `statsReadWriter.SaveAnalyzeResultToStorage`: the save and, when it
+/// versioned the table, its `handleSlowStatsSaving`. Answers the save's
+/// `statsVer` (0: a newer analysis was saved first), which this port's
+/// ANALYZE report carries.
 pub fn save_analyze_result_to_storage(
     pool: &dyn StatsSessionPool,
     lease: Duration,
@@ -76,27 +77,15 @@ pub fn save_analyze_result_to_storage(
     let stats_ver = wrap_txn(pool, |sctx| {
         save::save_analyze_result_to_storage(sctx, results, analyze_snapshot)
     })?;
-    after_save(pool, lease, results.stats.table_id, start, stats_ver)
-}
-
-/// The `statsVer != 0` tail of Go's save wrappers: `handleSlowStatsSaving`'s
-/// version, when it bumped one, replaces the save's.
-fn after_save(
-    pool: &dyn StatsSessionPool,
-    lease: Duration,
-    table_id: i64,
-    start: Instant,
-    stats_ver: u64,
-) -> Result<u64, SqlQueryError> {
-    if stats_ver == 0 {
-        return Ok(0);
+    if stats_ver != 0 {
+        handle_slow_stats_saving(pool, lease, results.stats.table_id, start)?;
     }
-    let version = handle_slow_stats_saving(pool, lease, table_id, start)?;
-    Ok(if version != 0 { version } else { stats_ver })
+    Ok(stats_ver)
 }
 
-/// Go `statsReadWriter.SaveColOrIdxStatsToStorage` without its history
-/// record; returns the final `statsVer`.
+/// Go `statsReadWriter.SaveColOrIdxStatsToStorage`; answers the save's
+/// `statsVer`, as [`save_analyze_result_to_storage`] does.
+#[allow(clippy::too_many_arguments)]
 pub fn save_col_or_idx_stats_to_storage(
     pool: &dyn StatsSessionPool,
     lease: Duration,
@@ -119,7 +108,10 @@ pub fn save_col_or_idx_stats_to_storage(
             update_analyze_time,
         )
     })?;
-    after_save(pool, lease, table_id, start, stats_ver)
+    if stats_ver != 0 {
+        handle_slow_stats_saving(pool, lease, table_id, start)?;
+    }
+    Ok(stats_ver)
 }
 
 /// Go `handleSlowStatsSaving`'s version bump
@@ -144,17 +136,16 @@ pub fn is_load_interval_exceeded(lease: Duration, elapsed: Duration) -> bool {
 }
 
 /// Go `statsReadWriter.handleSlowStatsSaving`: a slow save re-versions the
-/// table's `stats_meta` so other nodes do not miss it; returns that
-/// version, or 0 when the save was not slow.
+/// table's `stats_meta` so other nodes do not miss it.
 pub fn handle_slow_stats_saving(
     pool: &dyn StatsSessionPool,
     lease: Duration,
     table_id: i64,
     start: Instant,
-) -> Result<u64, SqlQueryError> {
+) -> Result<(), SqlQueryError> {
     let elapsed = start.elapsed();
     if !is_load_interval_exceeded(lease, elapsed) {
-        return Ok(0);
+        return Ok(());
     }
     let logger = tidb_stats_handle_logutil::stats_logger();
     logger.warn(
@@ -176,18 +167,18 @@ pub fn handle_slow_stats_saving(
                     Field::new("physicalID", Value::I64(table_id)),
                 ],
             );
-            Ok(stats_ver)
+            Ok(())
         }
         Err(error) => {
             logger.error(
                 "Failed to update stats meta version for slow saving, the stats cache on other TiDB nodes may be inconsistent",
                 &[
                     Field::new("physicalID", Value::I64(table_id)),
-                    tidb_logutil::zap_error(error.message),
+                    tidb_logutil::zap_error(error.to_string()),
                 ],
             );
-            Err(SqlQueryError::unknown(
-                "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later",
+            Err(error.annotate(
+                "failed to update stats meta version while saving statistics; the system may be too busy; please retry the operation later",
             ))
         }
     }
@@ -206,15 +197,17 @@ pub fn delete_table_stats_from_kv(
     .map(|_| ())
 }
 
-/// Go `statsReadWriter.SaveMetaToStorage`'s save; returns `statsVer`.
+/// Go `statsReadWriter.SaveMetaToStorage`.
 pub fn save_meta_to_storage(
     pool: &dyn StatsSessionPool,
     refresh_last_hist_ver: bool,
     meta_updates: &[MetaUpdate],
-) -> Result<u64, SqlQueryError> {
+) -> Result<(), SqlQueryError> {
     wrap_txn(pool, |sctx| {
-        save::save_meta_to_storage(sctx, refresh_last_hist_ver, meta_updates)
+        save::save_meta_to_storage(sctx, refresh_last_hist_ver, meta_updates)?;
+        Ok(0)
     })
+    .map(|_| ())
 }
 
 /// Go `statsReadWriter.SaveColumnStatsUsageToStorage`.
@@ -283,15 +276,15 @@ mod tests {
     fn a_fast_save_keeps_its_version_and_a_failed_refresh_is_go_error() {
         let pool = FailingPool(AtomicUsize::new(0));
         let lease = Duration::from_secs(3600);
-        assert_eq!(handle_slow_stats_saving(&pool, lease, 7, Instant::now()).unwrap(), 0);
+        handle_slow_stats_saving(&pool, lease, 7, Instant::now()).unwrap();
         assert_eq!(pool.0.load(Ordering::SeqCst), 0);
         let slow_start = Instant::now() - Duration::from_millis(10);
         let error = handle_slow_stats_saving(&pool, Duration::from_millis(1), 7, slow_start)
             .expect_err("a failed refresh fails the save");
         assert_eq!(pool.0.load(Ordering::SeqCst), 1);
         assert_eq!(
-            error.message,
-            "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later"
+            error.annotation.as_deref(),
+            Some("failed to update stats meta version while saving statistics; the system may be too busy; please retry the operation later")
         );
     }
 

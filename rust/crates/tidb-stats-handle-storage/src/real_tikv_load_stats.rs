@@ -16,8 +16,7 @@
 //!
 //! This is deliberately not the ANALYZE writer. Go commits every loaded
 //! column and index independently, then commits the complete predicate-usage
-//! slice, then commits the final table meta update. Historical meta is a later
-//! best-effort transaction after each successful item/final-meta write.
+//! slice, then commits the final table meta update.
 
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -37,9 +36,6 @@ use crate::cluster_load_stats::{
 use crate::save::MetaUpdate;
 use crate::stats_read_writer::{self, StatsSessionPool};
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-
-/// Go `StatsMetaHistorySourceLoadStats`.
-pub const LOAD_STATS_HISTORY_SOURCE: &str = "load stats";
 
 /// What durable LOAD STATS storage completed before cache refresh.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -80,21 +76,12 @@ impl fmt::Display for ClusterLoadStatsCommitError {
 impl std::error::Error for ClusterLoadStatsCommitError {}
 
 /// Commits the storage half of pinned Go `LoadStatsFromJSON`.
-///
-/// `record_history` is Go's `RecordHistoricalStatsMeta` through the stats
-/// handle, present when historical stats are enabled; `item_history_initialized`
-/// supplies its `RecordHistoricalStatsMeta(...,
-/// enforce=false)` cache gate for column/index transactions. Final meta uses
-/// `enforce=true` and therefore does not consult it. History failures remain
-/// nonfatal, exactly as the Go handle logs and ignores them.
 pub fn commit_cluster_load_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     stats_pool: &dyn StatsSessionPool,
     json: &JsonTable,
     timeout: Duration,
     stats_lease: Duration,
-    record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
-    item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
 ) -> Result<ClusterLoadStatsReport, ClusterLoadStatsCommitError> {
     let resolved = resolve_tables(opener, json, timeout)?;
@@ -105,13 +92,7 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
         .collect::<Vec<_>>();
     let load = |target: &ClusterLoadStatsTarget| {
         let table = load_cluster_stats_target(&resolved.schema, target).map_err(other)?;
-        load_stats_from_json(
-            stats_pool,
-            stats_lease,
-            &table,
-            record_history,
-            &item_history_initialized,
-        )
+        load_stats_from_json(stats_pool, stats_lease, &table)
     };
     let item_count = if resolved.concurrent {
         run_load_workers(&resolved.targets, concurrency_for_partition, &load)?
@@ -133,14 +114,12 @@ fn load_stats_from_json(
     stats_pool: &dyn StatsSessionPool,
     stats_lease: Duration,
     table: &LoadedStatsTable,
-    record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
-    item_history_initialized: &(impl Fn(i64) -> bool + Sync),
 ) -> Result<usize, ClusterLoadStatsCommitError> {
     let mut item_count = 0;
     for item in table.columns.iter().chain(&table.indexes) {
         // The table-level count and modify_count are overridden by the
         // `SaveMetaToStorage` below.
-        let version = stats_read_writer::save_col_or_idx_stats_to_storage(
+        stats_read_writer::save_col_or_idx_stats_to_storage(
             stats_pool,
             stats_lease,
             table.physical_id,
@@ -152,11 +131,6 @@ fn load_stats_from_json(
         )
         .map_err(ClusterLoadStatsCommitError::Sql)?;
         item_count += 1;
-        if let Some(record_history) = record_history
-            .filter(|_| version != 0 && item_history_initialized(table.physical_id))
-        {
-            record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
-        }
     }
     stats_read_writer::save_column_stats_usage_to_storage(
         stats_pool,
@@ -164,7 +138,7 @@ fn load_stats_from_json(
         &table.predicate_columns,
     )
     .map_err(ClusterLoadStatsCommitError::Sql)?;
-    let version = stats_read_writer::save_meta_to_storage(
+    stats_read_writer::save_meta_to_storage(
         stats_pool,
         true,
         &[MetaUpdate {
@@ -174,9 +148,6 @@ fn load_stats_from_json(
         }],
     )
     .map_err(ClusterLoadStatsCommitError::Sql)?;
-    if let Some(record_history) = record_history.filter(|_| version != 0) {
-        record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
-    }
     Ok(item_count)
 }
 

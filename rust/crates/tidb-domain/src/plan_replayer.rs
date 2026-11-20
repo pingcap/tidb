@@ -80,12 +80,6 @@
 //!   `(io.WriteCloser, fileName, error)`; here it returns just the file name
 //!   and the implementor keeps the writer, since nothing in this file touches
 //!   it beyond assigning `task.Zf`.
-//! - `// boundary:` Go
-//!   `vardef.EnableHistoricalStatsForCapture.Load()` — the process-global
-//!   atomic behind `tidb_enable_historical_stats_for_capture`
-//!   (`tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS_FOR_CAPTURE`).
-//!   It is a parameter of [`PlanReplayerDumper::generate_plan_replayer_file`]
-//!   rather than a global read, so the worker stays testable.
 //! - `// boundary:` Go `pkg/domain/metrics` — `PlanReplayerCaptureTaskSendCounter`,
 //!   `PlanReplayerCaptureTaskDiscardCounter` and `PlanReplayerRegisterTaskGauge`
 //!   are reproduced against the workspace registry, not the Go prometheus
@@ -106,8 +100,7 @@
 //!    branch is `strings.Contains(baseName, "replayer") &&
 //!    strings.Contains(baseName, "capture")`, and
 //!    `replayer.generatePlanReplayerFileName` emits
-//!    `capture_normal_replayer_...` when `isCapture` is set without
-//!    historical stats. Such a file gets the *capture* retention, not the
+//!    `capture_normal_replayer_...` for a capture. Such a file gets the *capture* retention, not the
 //!    default one — upstream's own GC test depends on it.
 //! 3. **Any file whose name merely contains `replayer` triggers a status
 //!    delete.** `isPlanReplayer` is a substring test on the base name, not on
@@ -255,8 +248,6 @@ pub struct PlanReplayerDumpTask {
     pub is_continues_capture: bool,
     /// Go `PlanReplayerDumpTask.StartTS`.
     pub start_ts: u64,
-    /// Go `PlanReplayerDumpTask.HistoricalStatsTS`.
-    pub historical_stats_ts: u64,
     /// Go `PlanReplayerDumpTask.Analyze`: `PLAN REPLAYER DUMP EXPLAIN
     /// ANALYZE`.
     pub analyze: bool,
@@ -388,7 +379,7 @@ pub trait DumpFileStorage {
 /// `DumpPlanReplayerInfo` (`plan_replayer_dump.go`).
 pub trait PlanReplayerDumper {
     /// Go `replayer.GeneratePlanReplayerFile(ctx, storage, isCapture,
-    /// isContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())`,
+    /// isContinuesCapture)`,
     /// returning only the generated file name; the `io.WriteCloser` stays
     /// with the implementor.
     ///
@@ -398,7 +389,6 @@ pub trait PlanReplayerDumper {
         &self,
         is_capture: bool,
         is_continues_capture: bool,
-        enable_historical_stats_for_capture: bool,
     ) -> Result<String, PlanReplayerError>;
 
     /// Go `DumpPlanReplayerInfo(ctx, sctx, task)`.
@@ -949,20 +939,12 @@ pub struct PlanReplayerTaskDumpWorker<E, D> {
     pub dumper: D,
     /// Go's `status`.
     pub status: std::sync::Arc<PlanReplayerDumpTaskStatus>,
-    /// boundary: Go `vardef.EnableHistoricalStatsForCapture.Load()`, read
-    /// inside `HandleTask`. Kept as a field so no process-global is needed.
-    enable_historical_stats: bool,
 }
 
 impl<E: SqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E, D> {
     /// A worker over a shared status.
     pub fn new(sctx: E, dumper: D, status: std::sync::Arc<PlanReplayerDumpTaskStatus>) -> Self {
-        Self {
-            sctx,
-            dumper,
-            status,
-            enable_historical_stats: false,
-        }
+        Self { sctx, dumper, status }
     }
 
     /// Go `(*planReplayerTaskDumpWorker).run` (`plan_replayer.go:406`): drain
@@ -1058,12 +1040,7 @@ impl<E: SqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E, D> {
         }
         // boundary: Go also fetches the global external storage here and
         // fails the task when that fails; the storage is the dumper's here.
-        let enable_historical_stats = self.enable_historical_stats_for_capture();
-        let file_name = match self.dumper.generate_plan_replayer_file(
-            task.is_capture,
-            task.is_continues_capture,
-            enable_historical_stats,
-        ) {
+        let file_name = match self.dumper.generate_plan_replayer_file(task.is_capture, task.is_continues_capture) {
             Ok(name) => name,
             // boundary: Go logs "generate task file failed".
             Err(_) => return false,
@@ -1072,21 +1049,6 @@ impl<E: SqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E, D> {
         let mut dumped = task.clone();
         dumped.file_name = Some(file_name);
         self.dumper.dump_plan_replayer_info(&dumped).is_ok()
-    }
-
-    /// boundary: Go `vardef.EnableHistoricalStatsForCapture.Load()`. There is
-    /// no process-global sysvar state in this crate, so the value comes from
-    /// the worker's own field, which `domain.go` will wire to the atomic.
-    fn enable_historical_stats_for_capture(&self) -> bool {
-        self.enable_historical_stats
-    }
-}
-
-impl<E, D> PlanReplayerTaskDumpWorker<E, D> {
-    /// Set the value this worker reads for
-    /// `vardef.EnableHistoricalStatsForCapture`.
-    pub fn set_enable_historical_stats_for_capture(&mut self, enabled: bool) {
-        self.enable_historical_stats = enabled;
     }
 }
 
@@ -1425,15 +1387,8 @@ mod tests {
 
         for is_capture in [false, true] {
             for is_continues_capture in [false, true] {
-                for enable_historical_stats_for_capture in [false, true] {
-                    let name = generate_plan_replayer_file_name(
-                        is_capture,
-                        is_continues_capture,
-                        enable_historical_stats_for_capture,
-                    )
-                    .unwrap();
-                    assert!(parse_time(&name).is_ok(), "{name}");
-                }
+                let name = generate_plan_replayer_file_name(is_capture, is_continues_capture).unwrap();
+                assert!(parse_time(&name).is_ok(), "{name}");
             }
         }
     }
@@ -1467,7 +1422,7 @@ mod tests {
     fn plan_replayer_different_gc() {
         let now = Utc::now();
         let hour = chrono::Duration::hours(1);
-        // isCapture=true, historical stats off -> "capture_normal_replayer".
+        // isCapture=true -> "capture_normal_replayer".
         let f1 = file_named("capture_normal_replayer", now - hour * 7 * 25);
         let f2 = file_named("capture_normal_replayer", now - hour * 7 * 23);
         let f3 = file_named("replayer", now - hour * 2);
@@ -1940,7 +1895,7 @@ mod tests {
     struct MockDumper {
         generate_err: bool,
         dump_err: bool,
-        generated: RefCell<Vec<(bool, bool, bool)>>,
+        generated: RefCell<Vec<(bool, bool)>>,
         dumped: RefCell<Vec<PlanReplayerDumpTask>>,
     }
 
@@ -1960,13 +1915,8 @@ mod tests {
             &self,
             is_capture: bool,
             is_continues_capture: bool,
-            enable_historical_stats_for_capture: bool,
         ) -> Result<String, PlanReplayerError> {
-            self.generated.borrow_mut().push((
-                is_capture,
-                is_continues_capture,
-                enable_historical_stats_for_capture,
-            ));
+            self.generated.borrow_mut().push((is_capture, is_continues_capture));
             if self.generate_err {
                 return Err(PlanReplayerError::Other("no file".to_owned()));
             }
@@ -2104,18 +2054,17 @@ mod tests {
     }
 
     /// WRITTEN. The generated file name lands on the task the dumper sees,
-    /// and the capture flags plus the sysvar reach the generator unchanged.
+    /// and the capture flags reach the generator unchanged.
     #[test]
     fn the_generated_file_name_reaches_the_dumper() {
-        let mut w = worker(MockExec::default(), MockDumper::default());
-        w.set_enable_historical_stats_for_capture(true);
+        let w = worker(MockExec::default(), MockDumper::default());
         let task = PlanReplayerDumpTask {
             key: task_key("s", "p"),
             is_capture: true,
             ..PlanReplayerDumpTask::default()
         };
         assert!(w.handle_task_inner(&task));
-        assert_eq!(*w.dumper.generated.borrow(), vec![(true, false, true)]);
+        assert_eq!(*w.dumper.generated.borrow(), vec![(true, false)]);
         assert_eq!(
             w.dumper.dumped.borrow()[0].file_name.as_deref(),
             Some("replayer_key_1.zip")
@@ -2266,20 +2215,13 @@ pub mod sql_meta_key {
     pub const IS_CONTINUES: &str = "isContinues";
     pub const SQL_DIGEST: &str = "sqlDigest";
     pub const PLAN_DIGEST: &str = "planDigest";
-    pub const ENABLE_HISTORICAL_STATS: &str = "enableHistoricalStats";
-    pub const HISTORICAL_STATS_TS: &str = "historicalStatsTS";
 }
 
 /// Go `dumpSQLMeta`'s record set: the `sql_meta.toml` key/value pairs for
-/// one task. `enable_historical_stats_for_capture` reads the process-global
-/// switch (`vardef.EnableHistoricalStatsForCapture.Load()`) in Go and is
-/// passed explicitly here. A Go `toml` encoder writes the map with
-/// alphabetically sorted keys, which the `BTreeMap` reproduces.
+/// one task. A Go `toml` encoder writes the map with alphabetically sorted
+/// keys, which the `BTreeMap` reproduces.
 #[must_use]
-pub fn build_sql_meta_records(
-    task: &PlanReplayerDumpTask,
-    enable_historical_stats_for_capture: bool,
-) -> std::collections::BTreeMap<String, String> {
+pub fn build_sql_meta_records(task: &PlanReplayerDumpTask) -> std::collections::BTreeMap<String, String> {
     let mut records = std::collections::BTreeMap::new();
     records.insert(sql_meta_key::START_TS.to_owned(), task.start_ts.to_string());
     records.insert(
@@ -2295,16 +2237,6 @@ pub fn build_sql_meta_records(
         sql_meta_key::PLAN_DIGEST.to_owned(),
         task.key.plan_digest.clone(),
     );
-    records.insert(
-        sql_meta_key::ENABLE_HISTORICAL_STATS.to_owned(),
-        enable_historical_stats_for_capture.to_string(),
-    );
-    if task.historical_stats_ts > 0 {
-        records.insert(
-            sql_meta_key::HISTORICAL_STATS_TS.to_owned(),
-            task.historical_stats_ts.to_string(),
-        );
-    }
     records
 }
 
@@ -2314,8 +2246,7 @@ mod dump_seed_tests {
     
 
     /// Go `dumpSQLMeta`: every task field lands in `sql_meta.toml` under its
-    /// pinned key, with the historical-stats pair present only when the task
-    /// carries a TS.
+    /// pinned key.
     #[test]
     fn sql_meta_records_cover_every_field() {
         let task = PlanReplayerDumpTask {
@@ -2323,10 +2254,9 @@ mod dump_seed_tests {
             is_capture: true,
             is_continues_capture: false,
             key: PlanReplayerTaskKey { sql_digest: "dig".to_owned(), plan_digest: "pdig".to_owned() },
-            historical_stats_ts: 4_377_391_814_600_000_000,
             ..PlanReplayerDumpTask::default()
         };
-        let records = build_sql_meta_records(&task, true);
+        let records = build_sql_meta_records(&task);
         assert_eq!(
             records.get(sql_meta_key::START_TS).map(String::as_str),
             Some("4377391814500000000")
@@ -2347,37 +2277,7 @@ mod dump_seed_tests {
             records.get(sql_meta_key::PLAN_DIGEST).map(String::as_str),
             Some("pdig")
         );
-        assert_eq!(
-            records
-                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
-                .map(String::as_str),
-            Some("true")
-        );
-        assert_eq!(
-            records
-                .get(sql_meta_key::HISTORICAL_STATS_TS)
-                .map(String::as_str),
-            Some("4377391814600000000")
-        );
-    }
-
-    /// Without a historical-stats TS the pair is absent; the capture flags
-    /// still render as booleans.
-    #[test]
-    fn sql_meta_records_omit_absent_ts() {
-        let task = PlanReplayerDumpTask::default();
-        let records = build_sql_meta_records(&task, false);
-        assert!(!records.contains_key(sql_meta_key::HISTORICAL_STATS_TS));
-        assert_eq!(
-            records.get(sql_meta_key::IS_CAPTURE).map(String::as_str),
-            Some("false")
-        );
-        assert_eq!(
-            records
-                .get(sql_meta_key::ENABLE_HISTORICAL_STATS)
-                .map(String::as_str),
-            Some("false")
-        );
+        assert_eq!(records.len(), 5);
     }
 }
 
@@ -3188,17 +3088,11 @@ pub trait StatsDumpSource {
         table: &str,
     ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError>;
 
-    /// Go `getStatsForTable`: the table's stats JSON plus the fallback
-    /// table names whose historical stats were unavailable.
+    /// Go `getStatsForTable`: the table's stats JSON.
     ///
     /// # Errors
     /// Whatever the stats provider reports.
-    fn stats_json_for_table(
-        &self,
-        db: &str,
-        table: &str,
-        history_stats_ts: u64,
-    ) -> Result<(String, Vec<String>), PlanReplayerError>;
+    fn stats_json_for_table(&self, db: &str, table: &str) -> Result<String, PlanReplayerError>;
 }
 
 /// Go `dumpStatsMemStatus`: one `statsMem/<db>.<table>.txt` per non-view
@@ -3235,38 +3129,20 @@ pub fn dump_stats_mem_status(
     Ok(())
 }
 
-/// Go `dumpStats`: one `stats/<db>.<table>.json` per non-view table and the
-/// aggregated fallback message when historical stats were unavailable for
-/// any of them (`"Historical stats for t1, t2 are unavailable, fallback to
-/// latest stats"`).
+/// Go `dumpStats`: one `stats/<db>.<table>.json` per non-view table.
 pub fn dump_stats(
     source: &dyn StatsDumpSource,
     pairs: &BTreeSet<TableNamePair>,
-    history_stats_ts: u64,
     zw: &mut dyn DumpArchiveWriter,
-) -> Result<String, PlanReplayerError> {
-    let mut all_fallback: Vec<String> = Vec::new();
+) -> Result<(), PlanReplayerError> {
     for pair in pairs {
         if pair.is_view {
             continue;
         }
-        let (json, fallbacks) =
-            source.stats_json_for_table(&pair.db_name, &pair.table_name, history_stats_ts)?;
-        zw.create_file(
-            &format!("stats/{}.{}.json", pair.db_name, pair.table_name),
-            json.as_bytes(),
-        )?;
-        all_fallback.extend(fallbacks);
+        let json = source.stats_json_for_table(&pair.db_name, &pair.table_name)?;
+        zw.create_file(&format!("stats/{}.{}.json", pair.db_name, pair.table_name), json.as_bytes())?;
     }
-    let msg = if all_fallback.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "Historical stats for {} are unavailable, fallback to latest stats",
-            all_fallback.join(", ")
-        )
-    };
-    Ok(msg)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3276,7 +3152,6 @@ mod stats_dump_tests {
 
     struct FakeStats {
         json: HashMap<(String, String), String>,
-        fallbacks: HashMap<(String, String), Vec<String>>,
         mem: HashMap<(String, String), (Vec<String>, Vec<String>)>,
     }
 
@@ -3288,21 +3163,9 @@ mod stats_dump_tests {
         ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError> {
             Ok(self.mem.get(&(db.to_owned(), table.to_owned())).cloned())
         }
-        fn stats_json_for_table(
-            &self,
-            db: &str,
-            table: &str,
-            _history_stats_ts: u64,
-        ) -> Result<(String, Vec<String>), PlanReplayerError> {
+        fn stats_json_for_table(&self, db: &str, table: &str) -> Result<String, PlanReplayerError> {
             match self.json.get(&(db.to_owned(), table.to_owned())) {
-                Some(json) => {
-                    let fallbacks = self
-                        .fallbacks
-                        .get(&(db.to_owned(), table.to_owned()))
-                        .cloned()
-                        .unwrap_or_default();
-                    Ok((json.clone(), fallbacks))
-                }
+                Some(json) => Ok(json.clone()),
                 None => Err(PlanReplayerError::Other(format!(
                     "no stats for {db}.{table}"
                 ))),
@@ -3321,19 +3184,14 @@ mod stats_dump_tests {
         }
     }
 
-    /// Go `dumpStats`: one JSON file per non-view table plus the aggregated
-    /// fallback message.
+    /// Go `dumpStats`: one JSON file per non-view table.
     #[test]
-    fn dump_stats_writes_json_files_and_joins_fallbacks() {
+    fn dump_stats_writes_json_files() {
         let mut json = HashMap::new();
         json.insert(("db1".to_owned(), "t1".to_owned()), "{\"t1\":1}".to_owned());
         json.insert(("db2".to_owned(), "t2".to_owned()), "{\"t2\":2}".to_owned());
-        let mut fallbacks = HashMap::new();
-        fallbacks.insert(("db1".to_owned(), "t1".to_owned()), vec!["t1".to_owned()]);
-        fallbacks.insert(("db2".to_owned(), "t2".to_owned()), vec!["t2".to_owned()]);
         let source = FakeStats {
             json,
-            fallbacks,
             mem: HashMap::new(),
         };
         let mut pairs = BTreeSet::new();
@@ -3350,11 +3208,7 @@ mod stats_dump_tests {
         let mut writer = Collecting {
             files: std::collections::BTreeMap::new(),
         };
-        let msg = dump_stats(&source, &pairs, 0, &mut writer).unwrap();
-        assert_eq!(
-            "Historical stats for t1 are unavailable, fallback to latest stats",
-            msg
-        );
+        dump_stats(&source, &pairs, &mut writer).unwrap();
         // db2.t2 is a view in this fixture: views produce no JSON file.
         assert!(writer.files.contains_key("stats/db1.t1.json"));
         assert!(!writer.files.contains_key("stats/db2.t2.json"));
@@ -3374,7 +3228,6 @@ mod stats_dump_tests {
         );
         let mut source = FakeStats {
             json: HashMap::new(),
-            fallbacks: HashMap::new(),
             mem,
         };
         source
@@ -3421,7 +3274,6 @@ pub struct DumpSeams<'a> {
     /// The registry and the dumping session's SEM view `dumpVariables`
     /// filters on.
     pub variables: &'a dyn VariablesDumpSource,
-    pub enable_historical_stats_for_capture: bool,
 }
 
 /// The observable outcome of one dump: the status records the caller
@@ -3665,7 +3517,7 @@ pub fn dump_plan_replayer_info(
         // Dump SQLMeta
         zw.create_file(
             dump_file::PLAN_REPLAYER_SQL_META_FILE,
-            flat_toml(&build_sql_meta_records(task, seams.enable_historical_stats_for_capture)).as_bytes(),
+            flat_toml(&build_sql_meta_records(task)).as_bytes(),
         )?;
         // Dump config
         zw.create_file(
@@ -3698,16 +3550,8 @@ pub fn dump_plan_replayer_info(
             dump_file::PLAN_REPLAYER_TIFLASH_REPLICAS_FILE,
             build_tiflash_replica_file(seams.tiflash, &pairs).as_bytes(),
         )?;
-        // A continuous capture dumps the stats in storage only when
-        // historical stats for capture are off; a manual dump or a capture
-        // always does.
-        if !(task.is_capture && task.is_continues_capture) || !seams.enable_historical_stats_for_capture {
-            let ts = if task.is_capture && task.is_continues_capture { 0 } else { task.historical_stats_ts };
-            let fallback = dump_stats(seams.stats, &pairs, ts, zw)?;
-            if !fallback.is_empty() {
-                err_msgs.push(fallback);
-            }
-        }
+        // Dump stats
+        dump_stats(seams.stats, &pairs, zw)?;
         dump_stats_mem_status(seams.mem_stats, &pairs, zw)?;
         // Dump variables
         let variables = build_variables_records(seams.variables, &task.session_vars).map_err(PlanReplayerError::Other)?;
@@ -3805,13 +3649,8 @@ mod dump_assembly_tests {
         ) -> Result<Option<(Vec<String>, Vec<String>)>, PlanReplayerError> {
             Ok(None)
         }
-        fn stats_json_for_table(
-            &self,
-            db: &str,
-            table: &str,
-            _ts: u64,
-        ) -> Result<(String, Vec<String>), PlanReplayerError> {
-            Ok((format!("json-for-{db}.{table}"), Vec::new()))
+        fn stats_json_for_table(&self, db: &str, table: &str) -> Result<String, PlanReplayerError> {
+            Ok(format!("json-for-{db}.{table}"))
         }
     }
 
@@ -3947,7 +3786,6 @@ mod dump_assembly_tests {
             tiflash: &tiflash,
             presign: &presign,
             variables: &registry,
-            enable_historical_stats_for_capture: false,
         };
         let mut task = PlanReplayerDumpTask {
             key: PlanReplayerTaskKey { sql_digest: "sdig".to_owned(), plan_digest: String::new() },

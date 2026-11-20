@@ -136,7 +136,6 @@ tidb-tracing = { path = "../tidb-tracing" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }

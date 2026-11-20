@@ -344,10 +344,7 @@ impl Session {
             vars.sort_by_key(|(name, _)| {
                 !matches!(
                     name.as_str(),
-                    "tidb_allow_mpp"
-                        | "tidb_enable_noop_functions"
-                        | "tidb_enable_historical_stats"
-                        | "tidb_enable_local_txn"
+                    "tidb_allow_mpp" | "tidb_enable_noop_functions" | "tidb_enable_local_txn"
                 )
             });
             for (name, value) in vars {

@@ -95,10 +95,9 @@ pub fn run_unistore_cluster_session(
         factory.telemetry_loop();
     }
     // Go `BootstrapSession`: the plan replayer handle and the dump-file GC
-    // loop start before the historical stats worker.
+    // loop.
     tidb_session::domain::cluster_session_node::start_plan_replayer_handle(&factory);
     tidb_session::domain::cluster_session_node::setup_extract_handle(&factory);
-    factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();
     // Go `BootstrapSession`: `dom.StartTTLJobManager()` after the stats

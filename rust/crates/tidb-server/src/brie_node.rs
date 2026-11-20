@@ -397,17 +397,11 @@ impl tidb_br::glue::Domain for BrDomain {
 
 impl BrDomain {
     fn load_stats(&self, json: &tidb_stats_util::JsonTable) -> Result<()> {
-        let historical = self
-            .0
-            .global_vars
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|v| v.eq_ignore_ascii_case("ON") || v == "1");
         let pool = self.0.advanced_sys_session_pool();
         tidb_session::domain::cluster_session_node::node_services(&self.0)
             .analyze()
             .load_stats(
                 json,
-                historical,
                 &tidb_domain_core::sys_session::StatsPool {
                     session_pool: Some(&pool),
                 },

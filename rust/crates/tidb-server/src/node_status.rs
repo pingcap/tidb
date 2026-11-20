@@ -75,83 +75,20 @@ pub(crate) fn status_settings(factory: &Arc<Domain>) -> crate::http_settings::Se
     crate::http_settings::Settings::new(factory.global_vars(), factory.http_global_setter())
 }
 
-/// Go `StatsHandler`'s dump (the named table of the latest schema,
-/// `is.TableByName`, through `DumpStatsToJSON`) and `StatsHistoryHandler`'s
-/// (`DumpHistoricalStatsBySnapshot` as of the `{snapshot}` time).
+/// Go `StatsHandler`'s dump: the named table of the latest schema
+/// (`is.TableByName`) through `DumpStatsToJSON`.
 pub(crate) fn stats_dump(factory: &Arc<Domain>) -> crate::http_status::StatsDump {
     let factory = Arc::clone(factory);
-    Arc::new(move |database: &str, table: &str, request: crate::http_status::StatsDumpRequest<'_>| {
-        let latest_table = || {
-            let catalog = factory.catalog_snapshot();
-            let (_, info) = catalog
-                .table_info_by_name(database, table)
-                .ok_or_else(|| format!("[schema:1146]Table '{database}.{table}' doesn't exist"))?;
-            let info = info.read().clone();
-            Ok::<_, String>(info)
-        };
-        let json = match request {
-            crate::http_status::StatsDumpRequest::Latest { dump_partition_stats } => {
-                factory.dump_stats_to_json(database, &latest_table()?, dump_partition_stats)?
-            }
-            crate::http_status::StatsDumpRequest::HistoricalAt(ts) => {
-                factory.dump_historical_stats_by_snapshot(database, &latest_table()?, ts)?.0
-            }
-            crate::http_status::StatsDumpRequest::Snapshot(snapshot) => {
-                let snapshot = stats_history_snapshot(&factory, snapshot)?;
-                // Go `getSnapshotTableInfo`, falling back to the latest schema.
-                let info = match tidb_session::domain::cluster_session_node::get_snapshot_info_schema(&factory, snapshot)
-                    .map_err(|error| error.to_mysql_error().message)
-                    .and_then(|catalog| {
-                        catalog
-                            .table_info_by_name(database, table)
-                            .map(|(_, info)| info.read().clone())
-                            .ok_or_else(|| format!("[schema:1146]Table '{database}.{table}' doesn't exist"))
-                    }) {
-                    Ok(info) => info,
-                    Err(error) => {
-                        tidb_logutil::bg_logger().info(
-                            "fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema",
-                            &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
-                        );
-                        latest_table()?
-                    }
-                };
-                factory.dump_historical_stats_by_snapshot(database, &info, snapshot)?.0
-            }
-        };
+    Arc::new(move |database: &str, table: &str, request: crate::http_status::StatsDumpRequest| {
+        let catalog = factory.catalog_snapshot();
+        let (_, info) = catalog
+            .table_info_by_name(database, table)
+            .ok_or_else(|| format!("[schema:1146]Table '{database}.{table}' doesn't exist"))?;
+        let info = info.read().clone();
+        let crate::http_status::StatsDumpRequest::Latest { dump_partition_stats } = request;
+        let json = factory.dump_stats_to_json(database, &info, dump_partition_stats)?;
         serde_json::to_string(&json).map_err(|error| error.to_string())
     })
-}
-
-/// `StatsHistoryHandler`'s first steps: `CheckHistoricalStatsEnable`, then
-/// `types.ParseTime(snapshot, TypeTimestamp, 6)` in the local zone,
-/// `GoTime(time.Local)` and `oracle.GoTimeToTS`.
-fn stats_history_snapshot(factory: &Domain, snapshot: &str) -> Result<u64, String> {
-    let enabled = factory
-        .global_vars
-        .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-        .map(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-        .map_err(|error| format!("{error:?}"))?;
-    if !enabled {
-        return Err(format!("{} should be enabled", tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS));
-    }
-    let wrong_value = || {
-        tidb_datatype::types_errors::ERR_WRONG_VALUE
-            .generate(format!("Incorrect datetime value: '{snapshot}'"))
-            .to_string()
-    };
-    let parsed = tidb_datatype::parse_time(
-        snapshot,
-        tidb_datatype::TimeType::Timestamp,
-        6,
-        false,
-        false,
-        false,
-        &chrono::Local,
-    )
-    .map_err(|_| wrong_value())?;
-    let at = parsed.time.go_time(&chrono::Local).map_err(|_| wrong_value())?;
-    Ok(tikv_client::oracle::compose_ts(at.timestamp_millis(), 0))
 }
 
 /// Go `SchemaTableStorage`.
@@ -1619,10 +1556,9 @@ mod tests {
     }
 
     /// Go `SchemaStorageHandler` and `StatsHistoryHandler` over a node:
-    /// the named database and table must exist; the history route needs
-    /// `tidb_enable_historical_stats` and a parsable snapshot.
+    /// the named database and table must exist.
     #[test]
-    fn schema_storage_and_stats_history_answer_like_go() {
+    fn schema_storage_and_stats_dump_answer_like_go() {
         let stack = stack();
         let factory = &stack.factory;
         run(factory, "CREATE TABLE test.stored (a INT)");
@@ -1637,23 +1573,9 @@ mod tests {
         );
 
         let dump = stats_dump(factory);
-        let snapshot = crate::http_status::StatsDumpRequest::Snapshot;
-        run(factory, "SET GLOBAL tidb_enable_historical_stats = OFF");
-        assert_eq!(
-            dump("test", "stored", snapshot("2026-11-05 01:00:00")).unwrap_err(),
-            "tidb_enable_historical_stats should be enabled"
-        );
-        // Go checks the switch before it parses the snapshot.
-        assert_eq!(
-            dump("test", "stored", snapshot("xyz")).unwrap_err(),
-            "tidb_enable_historical_stats should be enabled"
-        );
-        run(factory, "SET GLOBAL tidb_enable_historical_stats = ON");
-        assert_eq!(
-            dump("test", "stored", snapshot("xyz")).unwrap_err(),
-            "[types:1292]Incorrect datetime value: 'xyz'"
-        );
-        dump("test", "stored", snapshot(&chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())).unwrap();
+        let latest = crate::http_status::StatsDumpRequest::Latest { dump_partition_stats: true };
+        dump("test", "stored", latest).unwrap();
+        assert_eq!(dump("test", "nope", latest).unwrap_err(), "[schema:1146]Table 'test.nope' doesn't exist");
     }
 }
 

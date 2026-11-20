@@ -182,11 +182,7 @@ mod analyze {
             true
         }
 
-        fn execute(
-            &self,
-            statement: &AnalyzeStatement,
-            _historical_stats_enabled: bool,
-        ) -> Result<ClusterAnalyzeReport, DriverError> {
+        fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, DriverError> {
             self.0
                 .borrow_mut()
                 .push(format!("execute {}", statement.table));
@@ -204,10 +200,6 @@ mod analyze {
                 .borrow_mut()
                 .push(format!("update {}", physical_ids.len()));
             Ok(())
-        }
-
-        fn dump_historical_stats(&self, table_id: i64) {
-            self.0.borrow_mut().push(format!("history {table_id}"));
         }
     }
 

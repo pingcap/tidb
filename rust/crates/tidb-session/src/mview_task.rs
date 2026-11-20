@@ -81,6 +81,16 @@ impl MvTaskCancelController {
         handle
     }
 
+    /// Go `kctx.Err()` on the task's cancelable context: `context canceled`
+    /// once a manual cancel was requested.
+    pub(crate) fn err(&self) -> Result<(), DriverError> {
+        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.manual {
+            return Err(plain("context canceled"));
+        }
+        Ok(())
+    }
+
     /// [`Self::watch`] for the guard's lifetime: dropping it resets the
     /// session's statements to uncanceled (Go's cleanup runs on
     /// `finalizeCtx`, outside the canceled context).

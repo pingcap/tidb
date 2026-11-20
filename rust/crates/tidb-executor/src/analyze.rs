@@ -282,8 +282,6 @@ pub struct AnalyzeStatement {
     pub enable_ddl_analyze_exec_opt: bool,
     /// Pinned `tidb_enable_analyze_snapshot` count-reconciliation policy.
     pub analyze_snapshot: bool,
-    /// Pinned `tidb_enable_async_merge_global_stats` worker selection.
-    pub enable_async_merge_global_stats: bool,
     /// Pinned `tidb_merge_partition_stats_concurrency` TopN worker count.
     pub partition_merge_concurrency: usize,
     /// Session ANALYZE coprocessor concurrency; nonpositive selects adaptive sizing.
@@ -626,7 +624,6 @@ pub fn lower_analyze_admin(
             skip_missing_partition_stats: true,
             enable_ddl_analyze_exec_opt: false,
             analyze_snapshot: false,
-            enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
@@ -1630,8 +1627,6 @@ pub struct ClusterAnalyzeReport {
     pub analyzed_column_ids: Vec<i64>,
     /// The index IDs the analysis covered.
     pub analyzed_index_ids: Vec<i64>,
-    /// See [`Self::historical_stats_table_ids`].
-    pub historical_stats_table_ids: Vec<i64>,
     /// See [`Self::cache_update_physical_ids`].
     pub cache_update_physical_ids: Vec<i64>,
     /// Go's build-time diagnostics as `(is_note, code, message)`: the
@@ -1641,16 +1636,8 @@ pub struct ClusterAnalyzeReport {
 }
 
 impl ClusterAnalyzeReport {
-    /// Physical IDs pinned Go queues for historical-statistics generation
-    /// after all successful result saves and global-stat merges finish.
-    #[must_use]
-    pub fn historical_stats_table_ids(&self) -> &[i64] {
-        &self.historical_stats_table_ids
-    }
-
     /// Physical IDs pinned Go passes to the targeted post-ANALYZE cache
-    /// update. This is task-derived and deliberately distinct from the IDs
-    /// queued for historical-statistics generation.
+    /// update, task-derived.
     #[must_use]
     pub fn cache_update_physical_ids(&self) -> &[i64] {
         &self.cache_update_physical_ids

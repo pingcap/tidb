@@ -19,7 +19,7 @@ use super::*;
 /// Go `executeRefreshOperator`: the internal statement as materialized view
 /// maintenance's restricted SQL, then the root operator's analyzed plan row
 /// (its id and execution info).
-fn execute_refresh_operator(tk: &mut Session, stmt: tidb_ast::RefreshMaterializedViewImplementStmt) -> (String, String) {
+pub(super) fn execute_refresh_operator(tk: &mut Session, stmt: tidb_ast::RefreshMaterializedViewImplementStmt) -> (String, String) {
     let implement = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::RefreshMaterializedViewImplement(Box::new(stmt))));
     let sql = implement.restore();
     let original = (tk.vars.in_mview_maintenance, tk.vars.restricted_sql);

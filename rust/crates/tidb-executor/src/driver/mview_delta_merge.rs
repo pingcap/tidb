@@ -148,6 +148,11 @@ impl FullUpdateLookup {
     pub(crate) fn key_off2_idx_off(&self) -> &[i64] {
         &self.join.key_off2_idx_off
     }
+
+    /// Go `FullUpdateSnapshot`.
+    pub(crate) fn full_update_snapshot(&self) -> Option<&FullUpdateSnapshot> {
+        self.snapshot.as_ref()
+    }
 }
 
 /// Go `findMVFullUpdateIndexJoinTemplatePlan`: the template's IndexJoin,
@@ -435,6 +440,9 @@ pub(crate) fn merge_order(build: &BuildResult) -> Result<Vec<usize>, DriverError
 /// OF FAST refresh: the target's schema, and the statement reading the base
 /// table at the target.
 pub struct FullUpdateSnapshot {
+    /// Go `TS`: the AS OF target the base table is read at.
+    pub ts: u64,
+    /// Go `InfoSchema`: the target's schema.
     pub catalog: SessionExtendedInfoSchema,
     pub ctx: crate::StmtContext,
 }

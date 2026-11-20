@@ -1705,6 +1705,162 @@ pub fn maybe_mock_mview_execution_session_var_apply_error(var_name: &str) -> Opt
     (value.as_string() == Some(var_name)).then(|| format!("mock mv execution session var apply error: {var_name}"))
 }
 
+/// Go master `ApplyMViewExecutionSessionVars`.
+///
+/// # Errors
+///
+/// A variable failed to apply; the session is restored.
+pub fn apply_m_view_execution_session_vars(
+    vars: &mut tidb_variable::SessionVars,
+    target: &tidb_variable::mview_execution::MViewExecutionSessionVars,
+) -> Result<tidb_variable::mview_execution::MViewExecutionSessionVarsRestore, tidb_terror::MysqlError> {
+    apply_m_view_execution_session_vars_inner(vars, target, false)
+}
+
+/// Go master `ApplyMViewExecutionSessionVarsBestEffort`: a setting this
+/// server cannot apply keeps the session's value.
+///
+/// # Errors
+///
+/// Never in practice: every failure falls back to the session's value.
+pub fn apply_m_view_execution_session_vars_best_effort(
+    vars: &mut tidb_variable::SessionVars,
+    target: &tidb_variable::mview_execution::MViewExecutionSessionVars,
+) -> Result<tidb_variable::mview_execution::MViewExecutionSessionVarsRestore, tidb_terror::MysqlError> {
+    apply_m_view_execution_session_vars_inner(vars, target, true)
+}
+
+/// Go master `applyMViewExecutionSessionVars`.
+fn apply_m_view_execution_session_vars_inner(
+    vars: &mut tidb_variable::SessionVars,
+    target: &tidb_variable::mview_execution::MViewExecutionSessionVars,
+    best_effort: bool,
+) -> Result<tidb_variable::mview_execution::MViewExecutionSessionVarsRestore, tidb_terror::MysqlError> {
+    use tidb_variable::mview_execution as mv;
+    mv::apply_m_view_execution_session_vars_with_config(
+        vars,
+        target,
+        mv::MViewExecutionSessionVarsApplyConfig {
+            maintain_mem_quota_var_name: tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY,
+            maintain_isolation_read_engines_var_name: tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES,
+            capture_applied_vars: Some(mv::capture_applied_m_view_execution_session_vars),
+            best_effort,
+            inject_apply_error: Some(|name| {
+                maybe_mock_mview_execution_session_var_apply_error(name).map(tidb_terror::MysqlError::unknown)
+            }),
+            on_apply_error: Some(|name, value, error| {
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "mv execution: failed to apply session var, fallback to current session value",
+                    &[
+                        tidb_log::Field::new("var", tidb_log::Value::Str(name.to_owned())),
+                        tidb_log::Field::new("value", tidb_log::Value::Str(value.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }),
+            on_restore_error: Some(|name, origin, current, error| {
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "mv execution: failed to restore session var",
+                    &[
+                        tidb_log::Field::new("var", tidb_log::Value::Str(name.to_owned())),
+                        tidb_log::Field::new("origin", tidb_log::Value::Str(origin.to_owned())),
+                        tidb_log::Field::new("current", tidb_log::Value::Str(current.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }),
+        },
+    )
+}
+
+/// The restore closure Go master `InitMViewSession` answers.
+#[must_use = "the session keeps the view's definition settings until it is restored"]
+pub struct MViewSessionRestore {
+    original_db: String,
+    original_resource_group: String,
+    orig_enable_mview: bool,
+    orig_mview_maintenance: bool,
+    original_vars: Vec<(&'static str, String)>,
+}
+
+impl MViewSessionRestore {
+    /// Runs the restore closure.
+    pub fn restore(self, vars: &mut tidb_variable::SessionVars) {
+        vars.current_db = self.original_db;
+        vars.resource_group = self.original_resource_group;
+        let enable = if self.orig_enable_mview { "ON" } else { "OFF" };
+        if let Err(error) = vars.set_system_var(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE, enable.to_owned()) {
+            tidb_ddl_logutil::ddl_logger().warn(
+                "materialized view: failed to restore materialized view enablement",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
+            );
+        }
+        for (name, value) in self.original_vars {
+            if let Err(error) = vars.set_system_var(name, value) {
+                tidb_ddl_logutil::ddl_logger().warn(
+                    "materialized view: failed to restore session variable",
+                    &[
+                        tidb_log::Field::new("name", tidb_log::Value::Str(name.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                    ],
+                );
+            }
+        }
+        vars.in_mview_maintenance = self.orig_mview_maintenance;
+    }
+}
+
+/// Go master `InitMViewSession`: materialized views on, the definition's SQL
+/// mode, time zone and division precision, the view's schema, the
+/// maintenance resource group and maintenance mode, answered with the
+/// restore closure. (Go also sets the current statement context's time
+/// zone, type flags and error levels; this port derives a statement's
+/// context from these variables when the statement starts.)
+///
+/// # Errors
+///
+/// The definition time zone is invalid or a variable cannot be set; the
+/// session is restored.
+pub fn init_m_view_session(
+    vars: &mut tidb_variable::SessionVars,
+    mview_info: &tidb_model::table::MaterializedViewInfo,
+    current_db: &str,
+    resource_group: &str,
+) -> Result<MViewSessionRestore, tidb_terror::MysqlError> {
+    mview_info
+        .definition_time_zone
+        .get_location()
+        .map_err(|error| tidb_terror::MysqlError::unknown(error).annotate("materialized view: invalid definition timezone"))?;
+    let mut restore = MViewSessionRestore {
+        original_db: vars.current_db.clone(),
+        original_resource_group: vars.resource_group.clone(),
+        orig_enable_mview: vars.enable_mview(),
+        orig_mview_maintenance: vars.in_mview_maintenance,
+        original_vars: Vec::with_capacity(3),
+    };
+    vars.set_system_var(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE, "on".to_owned())
+        .map_err(|error| error.annotate("materialized view: failed to enable materialized view support"))?;
+    for (name, value) in [
+        ("sql_mode", format_sql_mode(mview_info.definition_sql_mode)),
+        ("time_zone", definition_time_zone_value(&mview_info.definition_time_zone)),
+        ("div_precision_increment", mview_info.definition_div_precision_increment.to_string()),
+    ] {
+        match vars.set_system_var_with_old_state_as_ret(name, value) {
+            Ok(old) => restore.original_vars.push((name, old)),
+            Err(error) => {
+                restore.restore(vars);
+                return Err(error.annotate(&format!("materialized view: failed to set {name}")));
+            }
+        }
+    }
+    vars.current_db = current_db.to_owned();
+    if !resource_group.is_empty() {
+        vars.resource_group = resource_group.to_owned();
+    }
+    vars.in_mview_maintenance = true;
+    Ok(restore)
+}
+
 /// Go master `initCreateMaterializedViewBuildSession`
 /// (`ApplyMViewExecutionSessionVars` then `InitMViewSession`) on a session
 /// of the pool: the settings it applies, the session's own values to
@@ -3646,6 +3802,53 @@ mod mview_worker_tests {
             FieldTypeFlags::GENERATED_COLUMN,
         ] {
             assert!(!new_field_type.has_flag(cleared), "{cleared:#x}");
+        }
+    }
+
+    #[test]
+    fn test_init_m_view_session() {
+        let mut sess_vars = tidb_variable::SessionVars::new();
+        let original = [("sql_mode", ""), ("time_zone", "+00:00"), ("div_precision_increment", "2")];
+        for (name, value) in original {
+            sess_vars.set_system_var(name, value.to_owned()).unwrap();
+        }
+        sess_vars.current_db = "before".to_owned();
+        sess_vars.resource_group = "before_group".to_owned();
+        let info = tidb_model::table::MaterializedViewInfo {
+            definition_sql_mode: i64::try_from(tidb_mysql::consts::ModeNoBackslashEscapes.0).unwrap(),
+            definition_div_precision_increment: 9,
+            definition_time_zone: tidb_model::TimeZoneLocation::new("Asia/Shanghai", 0),
+            ..Default::default()
+        };
+        let restore = super::init_m_view_session(&mut sess_vars, &info, "mv_db", "mv_group").unwrap();
+        assert!(sess_vars.enable_mview());
+        assert_eq!("mv_db", sess_vars.current_db);
+        assert_eq!("mv_group", sess_vars.resource_group);
+        assert_eq!("9", sess_vars.get_system("div_precision_increment").unwrap());
+        assert!(sess_vars.sql_mode().has_no_backslash_escapes_mode());
+        let mut worker_vars = tidb_variable::SessionVars::new();
+        for (name, expected) in [("sql_mode", "NO_BACKSLASH_ESCAPES"), ("time_zone", "Asia/Shanghai"), ("div_precision_increment", "9")] {
+            let (value, keep) = sess_vars.get_session_states_system_var(name).unwrap();
+            assert!(keep, "{name}");
+            assert_eq!(expected, value, "{name}");
+            worker_vars.set_system_var(name, value).unwrap();
+        }
+        assert_eq!(sess_vars.sql_mode(), worker_vars.sql_mode());
+        assert_eq!(sess_vars.session_time_zone(), worker_vars.session_time_zone());
+        assert_eq!(
+            sess_vars.get_system("div_precision_increment").unwrap(),
+            worker_vars.get_system("div_precision_increment").unwrap()
+        );
+        restore.restore(&mut sess_vars);
+        assert!(!sess_vars.enable_mview());
+        assert_eq!("before", sess_vars.current_db);
+        assert_eq!("before_group", sess_vars.resource_group);
+        assert_eq!("2", sess_vars.get_system("div_precision_increment").unwrap());
+        assert!(!sess_vars.sql_mode().has_no_backslash_escapes_mode());
+        for (name, expected) in original {
+            let (value, keep) = sess_vars.get_session_states_system_var(name).unwrap();
+            assert!(keep, "{name}");
+            assert_eq!(expected, value, "{name}");
         }
     }
 

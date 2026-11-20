@@ -68,16 +68,12 @@ pub static STATS_CONTEXT: LazyLock<TraceContext> = LazyLock::new(|| {
 pub trait StatsSessionContext: SessionContext {
     /// Go `GlobalVarsAccessor.GetGlobalSysVar`.
     fn global_system_var(&self, name: &str) -> Result<String, SqlExecError>;
-    /// Go `EnableAsyncMergeGlobalStats`.
-    fn set_enable_async_merge_global_stats(&self, enabled: bool);
     /// Go `AnalyzePartitionConcurrency`.
     fn set_analyze_partition_concurrency(&self, concurrency: i64);
     /// Go `AnalyzeVersion`.
     fn set_analyze_version(&self, version: i64);
     /// Go `SessionVars.SetSystemVar(tidb_analyze_store_batch_size, value)`.
     fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), SqlExecError>;
-    /// Go `EnableHistoricalStats`.
-    fn set_enable_historical_stats(&self, enabled: bool);
     /// Go `PartitionPruneMode.Store`.
     fn set_partition_prune_mode(&self, mode: &str);
     /// Go `PartitionPruneMode.Load`.
@@ -263,9 +259,6 @@ pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     // On an error the guard drops here: Go `restoreOnErr`.
     let restore = RestoreStatsVars { context, snapshot: Some(snapshot) };
 
-    let value = context.global_system_var(tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)?;
-    context.set_enable_async_merge_global_stats(tidb_opt_on(&value));
-
     // concurrency of save stats to storage
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY)?;
     context.set_analyze_partition_concurrency(parse_i64(
@@ -281,9 +274,6 @@ pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     // stale value held by its pooled internal session.
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)?;
     context.set_analyze_store_batch_size(&value)?;
-
-    let value = context.global_system_var(tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)?;
-    context.set_enable_historical_stats(tidb_opt_on(&value));
 
     // partition mode
     let value = context.global_system_var(tidb_vars::TIDB_PARTITION_PRUNE_MODE)?;
@@ -622,14 +612,12 @@ mod tests {
 
     #[derive(Default)]
     struct StatsState {
-        async_merge: bool,
         partition_concurrency: i64,
         analyze_version: i64,
         /// The loaded `tidb_analyze_store_batch_size` (empty: not loaded).
         analyze_store_batch_size: String,
         /// Go `AnalyzeStoreBatchSize`.
         batch_size_typed: i64,
-        historical: bool,
         prune_mode: String,
         snapshot: bool,
         skip_types: BTreeSet<String>,
@@ -659,10 +647,6 @@ mod tests {
             Self {
                 globals: Mutex::new(HashMap::from([
                     (
-                        tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS.to_owned(),
-                        "ON".to_owned(),
-                    ),
-                    (
                         tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY.to_owned(),
                         "2".to_owned(),
                     ),
@@ -670,10 +654,6 @@ mod tests {
                     (
                         tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE.to_owned(),
                         "4".to_owned(),
-                    ),
-                    (
-                        tidb_vars::TIDB_ENABLE_HISTORICAL_STATS.to_owned(),
-                        "1".to_owned(),
                     ),
                     (
                         tidb_vars::TIDB_PARTITION_PRUNE_MODE.to_owned(),
@@ -777,10 +757,6 @@ mod tests {
                 .ok_or_else(|| error(format!("missing {name}")))
         }
 
-        fn set_enable_async_merge_global_stats(&self, enabled: bool) {
-            self.state.lock().unwrap().async_merge = enabled;
-        }
-
         fn set_analyze_partition_concurrency(&self, concurrency: i64) {
             self.state.lock().unwrap().partition_concurrency = concurrency;
         }
@@ -796,10 +772,6 @@ mod tests {
             state.analyze_store_batch_size = value.to_owned();
             state.batch_size_typed = typed;
             Ok(())
-        }
-
-        fn set_enable_historical_stats(&self, enabled: bool) {
-            self.state.lock().unwrap().historical = enabled;
         }
 
         fn set_partition_prune_mode(&self, mode: &str) {
@@ -913,11 +885,9 @@ mod tests {
         assert_eq!(
             *context.reads.lock().unwrap(),
             [
-                tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS,
                 tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
                 tidb_vars::TIDB_ANALYZE_VERSION,
                 tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
-                tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
                 tidb_vars::TIDB_PARTITION_PRUNE_MODE,
                 tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT,
                 tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES,
@@ -927,11 +897,9 @@ mod tests {
             ]
         );
         let state = context.state.lock().unwrap();
-        assert!(state.async_merge);
         assert_eq!(state.partition_concurrency, 2);
         assert_eq!(state.analyze_version, 2);
         assert_eq!(state.analyze_store_batch_size, "4");
-        assert!(state.historical);
         assert_eq!(state.prune_mode, "dynamic");
         assert!(!state.snapshot);
         assert_eq!(
@@ -942,26 +910,6 @@ mod tests {
         assert_eq!(state.lock_wait_ms, 50_000);
         assert_eq!(state.location, "UTC");
         assert_eq!(state.statement_location, "UTC");
-    }
-
-    #[test]
-    fn analyze_store_batch_size_is_loaded_before_historical_stats() {
-        let context = MockContext::new();
-        let _restore = update_sctx_vars_for_stats(&context).unwrap();
-        let reads = context.reads.lock().unwrap();
-        let version = reads
-            .iter()
-            .position(|name| name == tidb_vars::TIDB_ANALYZE_VERSION)
-            .unwrap();
-        let batch_size = reads
-            .iter()
-            .position(|name| name == tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)
-            .unwrap();
-        let historical = reads
-            .iter()
-            .position(|name| name == tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .unwrap();
-        assert!(version < batch_size && batch_size < historical);
     }
 
     #[test]
@@ -984,15 +932,11 @@ mod tests {
         );
         assert!(update_sctx_vars_for_stats(&context).is_err());
         let state = context.state.lock().unwrap();
-        assert!(state.async_merge);
         assert_eq!(state.partition_concurrency, 0);
         assert_eq!(state.analyze_version, 0);
         assert_eq!(
             *context.reads.lock().unwrap(),
-            [
-                tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS,
-                tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
-            ]
+            [tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY]
         );
     }
 

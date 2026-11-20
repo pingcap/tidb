@@ -1007,13 +1007,6 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
             .map_err(|error| stats_session_error(format!("{error:?}")))
     }
 
-    fn set_enable_async_merge_global_stats(&self, enabled: bool) {
-        self.set_var(
-            tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS,
-            if enabled { "ON" } else { "OFF" },
-        );
-    }
-
     fn set_analyze_partition_concurrency(&self, concurrency: i64) {
         self.set_var(
             tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
@@ -1041,16 +1034,6 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
                 Err(error) => Err(stats_session_error(format!("{error:?}"))),
             }
         })
-    }
-
-    fn set_enable_historical_stats(&self, enabled: bool) {
-        // Go assigns `SessionVars.EnableHistoricalStats`: the variable is
-        // GLOBAL-only, so a session `SetSystemVar` would only fail.
-        self.with_session(|session| {
-            session.session.vars.enable_historical_stats = enabled;
-            Ok(())
-        })
-        .expect("the statistics session is available");
     }
 
     fn set_partition_prune_mode(&self, mode: &str) {
@@ -1472,20 +1455,10 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
         &self,
         event: &tidb_ddl_notifier::SchemaChangeEvent,
     ) -> Result<(), String> {
-        let (stats, catalog) = self
-            .with_session(|session| {
-                let domain = session.node.domain();
-                Ok((Arc::clone(&domain.stats), domain.catalog.get_latest()))
-            })
+        let catalog = self
+            .with_session(|session| Ok(session.node.domain().catalog.get_latest()))
             .map_err(|error| error.to_string())?;
-        let stats = stats.load();
         tidb_stats_handle_ddl::subscriber::Subscriber {
-            stats_initialized: &|id| {
-                stats
-                    .get(&id)
-                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
-                    .is_some_and(|table| table.is_initialized())
-            },
             schema_name_of: &|table| {
                 // Go `infoschema.SchemaByTable`.
                 if table.db_id > 0 {

@@ -1651,11 +1651,10 @@ impl SysVarDef {
 
 /// The variables `sysvar.go` marks `Depended: true` — other variables refuse
 /// to load correctly until these are set, so session-state decode orders them
-/// first. The generated catalog does not carry the flag, so the source's four
+/// first. The generated catalog does not carry the flag, so the source's three
 /// carriers are pinned here.
-pub const DEPENDED_SYSVARS: [&str; 4] = [
+pub const DEPENDED_SYSVARS: [&str; 3] = [
     tidb_vardef::tidb_vars::TIDB_ENABLE_LOCAL_TXN,
-    tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
     tidb_vardef::tidb_vars::TIDB_ALLOW_MPP_EXECUTION,
     tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_FUNCS,
 ];
@@ -1846,8 +1845,6 @@ mod variable_core_tests {
             "tidb_enforce_mpp",
             "tidb_allow_mpp",
             "tidb_enable_local_txn",
-            "tidb_enable_plan_replayer_continuous_capture",
-            "tidb_enable_historical_stats",
         ];
         let ordered = order_by_dependency(&names);
         let index = |name: &str| {
@@ -1860,10 +1857,6 @@ mod variable_core_tests {
         assert!(index("tx_read_only") > index("tidb_enable_noop_functions"));
         assert!(index("sql_auto_is_null") > index("tidb_enable_noop_functions"));
         assert!(index("tidb_enforce_mpp") > index("tidb_allow_mpp"));
-        assert!(
-            index("tidb_enable_plan_replayer_continuous_capture")
-                > index("tidb_enable_historical_stats")
-        );
         assert!(ordered.contains(&"unknown".to_owned()));
         assert_eq!(ordered.len(), names.len());
     }

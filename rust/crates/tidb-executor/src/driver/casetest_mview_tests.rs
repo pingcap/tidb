@@ -282,6 +282,65 @@ fn test_build_refresh_mv_fast_plan() {
 }
 
 #[test]
+fn test_build_refresh_mv_fast_as_of_timestamp_plan_with_min_max_carries_full_update_snapshot() {
+    let (base_id, mlog_id, mv_id) = (1, 2, 3);
+    let (mut base, mlog) = base_and_mlog(base_id, mlog_id);
+    base.indices = vec![index(1, "idx_a", &[("a", 0)], false)].into();
+    for table in [&base, &mlog] {
+        for i in 0..2 {
+            col_at(table, i).write().field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        }
+    }
+    let mv = mview_table(
+        mv_id,
+        "mv_refresh_asof_plan",
+        vec![
+            mk_col(1, "a", 0, FieldTypeCode::Long),
+            mk_col(2, "cnt", 1, FieldTypeCode::LongLong),
+            mk_col(3, "mx", 2, FieldTypeCode::Long),
+            mk_col(4, "mn", 3, FieldTypeCode::Long),
+        ],
+        vec![base_id],
+        "select a, count(1), max(b), min(b) from t group by a",
+    );
+    let tables = [&base, &mlog, &mv];
+    let is = mock_info_schema(&tables);
+    // Go `oracle.GoTimeToTS(time.Now().UTC().Add(time.Second))`.
+    let target_tso = compose_ts(START_PHYSICAL + 1000);
+    let plan = MViewDeltaMerge {
+        database: "test".to_owned(),
+        name: "mv_refresh_asof_plan".to_owned(),
+        options: BuildOptions { from_ts: 1, to_ts: target_tso },
+        mlog_retained_lower_tso: 0,
+        registered_mlog_ids: Vec::new(),
+    };
+    let ctx = mview_test_context()
+        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let build = super::mview_delta_merge::build_merge_source(&plan, &is, &ctx).unwrap();
+    // The session's `staleread.GetSessionSnapshotInfoSchema` at the target.
+    let requested = std::cell::Cell::new(0);
+    let snapshot_at = |to_ts: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+        requested.set(to_ts);
+        Ok(super::mview_delta_merge::FullUpdateSnapshot { ts: to_ts, catalog: mock_info_schema(&tables), ctx: ctx.clone() })
+    };
+    let (_, _, full_update) = super::mview_delta_merge::plan_mview_delta_merge(
+        &plan,
+        &build,
+        &is,
+        "test",
+        &ctx,
+        compose_ts(START_PHYSICAL),
+        &snapshot_at,
+    )
+    .unwrap();
+    let full_update = full_update.expect("FullUpdateInnerSource");
+    let snapshot = full_update.full_update_snapshot().expect("FullUpdateSnapshot");
+    assert_eq!(target_tso, requested.get());
+    assert_eq!(target_tso, snapshot.ts);
+    assert!(snapshot.catalog.table_info_by_id(base_id).is_some());
+}
+
+#[test]
 fn test_build_refresh_mv_fast_plan_with_min_max_has_full_update() {
     let (base_id, mlog_id, mv_id) = (10001, 10002, 10003);
     let (mut base, mlog) = base_and_mlog(base_id, mlog_id);

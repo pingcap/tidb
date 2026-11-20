@@ -324,10 +324,6 @@ impl tidb_stats_handle_util::StatsSessionContext for RecordingSessionContext {
         self.0.lock().unwrap().global_system_var(name).map_err(exec_error)
     }
 
-    fn set_enable_async_merge_global_stats(&self, enabled: bool) {
-        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS, ON_OFF[usize::from(enabled)]);
-    }
-
     fn set_analyze_partition_concurrency(&self, concurrency: i64) {
         self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY, concurrency.to_string());
     }
@@ -339,10 +335,6 @@ impl tidb_stats_handle_util::StatsSessionContext for RecordingSessionContext {
     fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
         self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE, value);
         Ok(())
-    }
-
-    fn set_enable_historical_stats(&self, enabled: bool) {
-        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS, ON_OFF[usize::from(enabled)]);
     }
 
     fn set_partition_prune_mode(&self, mode: &str) {

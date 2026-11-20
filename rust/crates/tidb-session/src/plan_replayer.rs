@@ -235,21 +235,15 @@ impl replayer::StatsDumpSource for StatsSource {
         }
     }
 
-    fn stats_json_for_table(
-        &self,
-        db: &str,
-        table: &str,
-        history_stats_ts: u64,
-    ) -> Result<(String, Vec<String>), replayer::PlanReplayerError> {
+    fn stats_json_for_table(&self, db: &str, table: &str) -> Result<String, replayer::PlanReplayerError> {
         let error = |error: DriverError| replayer::PlanReplayerError::Other(error.to_mysql_error().message);
         let service = self
             .0
             .as_ref()
             .ok_or_else(|| replayer::PlanReplayerError::Other("this node has no statistics to dump".to_owned()))?;
-        let (json, fallbacks) = service.plan_replayer_stats_json(db, table, history_stats_ts).map_err(error)?;
+        let json = service.plan_replayer_stats_json(db, table).map_err(error)?;
         // Go `json.Marshal(jsonTbl)`.
-        let text = serde_json::to_string(&json).map_err(|e| replayer::PlanReplayerError::Other(e.to_string()))?;
-        Ok((text, fallbacks))
+        serde_json::to_string(&json).map_err(|e| replayer::PlanReplayerError::Other(e.to_string()))
     }
 }
 
@@ -311,7 +305,6 @@ pub(crate) struct PlanReplayerDumpInfo {
     file: Option<Box<dyn tidb_replayer::WriteCloser + Send>>,
     file_name: String,
     start_ts: u64,
-    historical_stats_ts: u64,
 }
 
 impl PlanReplayerDumpInfo {
@@ -331,7 +324,7 @@ impl PlanReplayerDumpInfo {
 fn create_file() -> Result<(Box<dyn tidb_replayer::WriteCloser + Send>, String), DriverError> {
     let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
     let storage = tidb_planner_extstore::get_global_ext_storage().map_err(unknown)?;
-    let (file, file_name) = tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false, false)
+    let (file, file_name) = tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false)
         .map_err(|error| unknown(error.to_string()))?;
     Ok((Box::new(file), file_name))
 }
@@ -377,8 +370,11 @@ impl Session {
             }
             tidb_ast::PlanReplayerStmt::Dump { historical_stats, analyze, target } => {
                 // Go `buildPlanReplayer` and `executorBuilder.buildPlanReplayer`.
-                let historical_stats_ts =
-                    historical_stats.as_ref().map_or(0, |ts_expr| self.calc_ts_for_plan_replayer(ts_expr));
+                if historical_stats.is_some() {
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                        "WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics",
+                    )));
+                }
                 let exec_stmts = match target.as_ref() {
                     // Go `execStmt.Text()`: the statement's own source text.
                     tidb_ast::PlanReplayerTarget::Statement(statement) => {
@@ -401,7 +397,6 @@ impl Session {
                     file: Some(file),
                     file_name,
                     start_ts,
-                    historical_stats_ts,
                 };
                 if let tidb_ast::PlanReplayerTarget::File(_) = target.as_ref() {
                     // As we can only read file from the connection (which
@@ -498,7 +493,6 @@ impl Session {
             file_name: Some(dump_info.file_name.clone()),
             start_ts: dump_info.start_ts,
             analyze: dump_info.analyze,
-            historical_stats_ts: dump_info.historical_stats_ts,
             session_vars: self.plan_replayer_session_vars(),
             exec_stmts,
             ..replayer::PlanReplayerDumpTask::default()
@@ -508,102 +502,6 @@ impl Session {
         let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or_else(|| dump_info.file_name.clone());
         self.vars.last_plan_replayer_token = token.clone();
         Ok(token)
-    }
-
-    /// Go `calcTSForPlanReplayer`: the `WITH STATS AS OF TIMESTAMP` value as
-    /// a TSO, else as a date/time; 0 (the latest statistics) with a warning
-    /// when it is neither.
-    fn calc_ts_for_plan_replayer(&mut self, ts_expr: &tidb_ast::Expr) -> u64 {
-        let ts_val = match self.eval_value(ts_expr) {
-            Ok(value) => value,
-            Err(error) => {
-                self.append_driver_error(tidb_context::WarningLevel::Warning, &error);
-                return 0;
-            }
-        };
-        // mustn't be NULL
-        if ts_val.is_null() {
-            return 0;
-        }
-        let ctx = self.statement_context(false);
-        let location = ctx.session_zone();
-
-        // first, treat it as a TSO
-        let tp_longlong = FieldType::new(FieldTypeCode::LongLong).with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-        // We need a strict check, which means no truncate or any other
-        // warnings/errors, or it will wrongly try to parse a date/time string
-        // into a TSO (Go `types.DefaultStmtNoWarningContext.WithLocation`).
-        let no_warning = tidb_datatype::ConversionContext::new(
-            tidb_datatype::STRICT_FLAGS,
-            tidb_datatype::ConversionLocation::from_time_zone(&location),
-            &tidb_context::IGNORE_CONVERSION_WARNINGS,
-        );
-        if let Ok(tso) = ts_val.convert_to_in_context(&tp_longlong, &no_warning, &location) {
-            if tso.error.is_none() {
-                return match tso.value {
-                    Datum::UInt(value) => value,
-                    Datum::Int(value) => value as u64,
-                    _ => 0,
-                };
-            }
-        }
-
-        // if failed, treat it as a date/time
-        // this part is similar to CalculateAsOfTsExpr
-        #[derive(Default)]
-        struct Warnings(RefCell<Vec<tidb_terror::TerrorError>>);
-        impl tidb_context::ConversionWarningAppender for Warnings {
-            fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
-                self.0.borrow_mut().push(warning);
-            }
-        }
-        let warnings = Warnings::default();
-        let tp_date_time = FieldType::new(FieldTypeCode::Datetime).with_decimal(6);
-        // Go `StmtCtx.TypeCtx()`.
-        let type_ctx = tidb_datatype::ConversionContext::new(
-            tidb_exprctx::Columns::type_flags(&ctx),
-            tidb_datatype::ConversionLocation::from_time_zone(&location),
-            &warnings,
-        );
-        let converted = ts_val.convert_to_in_context(&tp_date_time, &type_ctx, &location);
-        for warning in warnings.0.take() {
-            let reported = warning.to_sql_error();
-            self.append_sql_warning(tidb_context::SqlWarn::from_error(
-                tidb_context::WarningLevel::Warning,
-                reported.code,
-                reported.message,
-                reported.identity,
-            ));
-        }
-        let timestamp = match converted {
-            Ok(converted) => match converted.error {
-                None => converted.value,
-                Some(error) => {
-                    self.append_driver_error(tidb_context::WarningLevel::Warning, &DriverError::from(error));
-                    return 0;
-                }
-            },
-            Err(error) => {
-                self.append_driver_error(
-                    tidb_context::WarningLevel::Warning,
-                    &DriverError::Mysql(tidb_terror::MysqlError::unknown(error.to_string())),
-                );
-                return 0;
-            }
-        };
-        let Datum::Time(timestamp) = timestamp else {
-            return 0;
-        };
-        match timestamp.go_time(&location) {
-            Ok(go_time) => tikv_client::oracle::go_time_to_ts(std::time::SystemTime::from(go_time)),
-            Err(error) => {
-                self.append_driver_error(
-                    tidb_context::WarningLevel::Warning,
-                    &DriverError::Mysql(tidb_terror::MysqlError::unknown(error.to_string())),
-                );
-                0
-            }
-        }
     }
 
     /// Go `DumpPlanReplayerInfo(ctx, sctx, task)` with this session as
@@ -620,11 +518,6 @@ impl Session {
         );
         let stats = StatsSource(self.domain_services().map(|services| (services.stats)(self)));
         let presign = LocalPresign(tidb_planner_extstore::get_global_ext_storage().ok());
-        // Go `vardef.EnableHistoricalStatsForCapture.Load()`.
-        let enable_historical_stats_for_capture = self
-            .vars
-            .get_global(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS_FOR_CAPTURE)
-            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
         let variables = self.plan_replayer_sys_var_registry();
         let mut archive = ArchiveWriter(tidb_replayer::zip::ZipWriter::new(Vec::new()));
         let outcome = {
@@ -638,7 +531,6 @@ impl Session {
                 tiflash: &catalog,
                 presign: &presign,
                 variables: &variables,
-                enable_historical_stats_for_capture,
             };
             replayer::dump_plan_replayer_info(&seams, task, &mut archive)
         };
@@ -910,14 +802,12 @@ impl replayer::PlanReplayerDumper for PlanReplayerWorkerDumper {
         &self,
         is_capture: bool,
         is_continues_capture: bool,
-        enable_historical_stats_for_capture: bool,
     ) -> Result<String, replayer::PlanReplayerError> {
         let storage = tidb_planner_extstore::get_global_ext_storage().map_err(replayer::PlanReplayerError::Other)?;
         let (file, file_name) = tidb_replayer::generate_plan_replayer_file(
             storage.as_ref(),
             is_capture,
             is_continues_capture,
-            enable_historical_stats_for_capture,
         )
         .map_err(|error| replayer::PlanReplayerError::Other(error.to_string()))?;
         self.files

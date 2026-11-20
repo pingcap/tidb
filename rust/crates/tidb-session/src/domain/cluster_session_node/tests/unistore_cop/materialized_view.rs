@@ -18,6 +18,7 @@ use super::*;
 
 mod alter;
 mod basic;
+mod casetest;
 mod create;
 mod drop;
 mod log_alter;
@@ -4488,7 +4489,6 @@ fn materialized_view_infoschema_privileges_as_go_master() {
 /// validates at the transaction's earlier one, so the paused child does not
 /// see the cutover and succeeds.
 #[test]
-#[ignore = "register X05 (3): a statement's fresh for-update timestamp is deferred to its first read"]
 fn test_materialized_view_refresh_complete_out_of_place_concurrent_child_fast() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let (stack, mut tk, old_mv) = new_mview_refresh_source_fixture();

@@ -154,10 +154,8 @@ impl PlanReplayerDumper for SharedDumper {
         &self,
         is_capture: bool,
         is_continues_capture: bool,
-        enable_historical_stats_for_capture: bool,
     ) -> Result<String, PlanReplayerError> {
-        self.0
-            .generate_plan_replayer_file(is_capture, is_continues_capture, enable_historical_stats_for_capture)
+        self.0.generate_plan_replayer_file(is_capture, is_continues_capture)
     }
 
     fn dump_plan_replayer_info(&self, task: &PlanReplayerDumpTask) -> Result<(), PlanReplayerError> {
@@ -210,10 +208,9 @@ impl PlanReplayerRuntime {
                 .performance
                 .plan_replayer_dump_worker_concurrency;
             for index in 0..workers {
-                let global_vars = domain.global_vars.clone();
                 let receiver = Arc::clone(&receiver);
                 let stop = Arc::clone(&stop);
-                let mut worker =
+                let worker =
                     PlanReplayerTaskDumpWorker::new(sql.clone(), dumper.clone(), handle.dump_handle.get_task_status());
                 threads.push(
                     tidb_worker_stack::sql_worker_thread(format!("plan-replayer-dump-{index}"))
@@ -227,13 +224,6 @@ impl PlanReplayerRuntime {
                                 .recv_timeout(Duration::from_millis(200));
                             match task {
                                 Ok(task) => {
-                                    // Go `vardef.EnableHistoricalStatsForCapture.Load()`,
-                                    // the global variable's current value.
-                                    worker.set_enable_historical_stats_for_capture(
-                                        global_vars
-                                            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS_FOR_CAPTURE)
-                                            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value)),
-                                    );
                                     worker.handle_task(&task);
                                 }
                                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

@@ -46,10 +46,6 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_table::table_from_meta::TableAutoIds;
 use tidb_ddl::worker::ClusterDdl;
 use tidb_domain::global_sysvars::GlobalSysvars;
-use tidb_domain::historical_stats::{
-    HistoricalStatsMetrics, HistoricalStatsWorker, InfoSchemaView, SessionInfoSchema,
-    StatsHandle as HistoricalStatsHandle, TableMeta,
-};
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
 use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
@@ -781,10 +777,6 @@ pub struct Domain {
         std::sync::OnceLock<Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
     pub auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
-    /// Go Domain's capacity-16 historical-statistics mailbox.
-    pub historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
-    /// Go `StartHistoricalStatsWorker`, installed after stable `Arc` ownership.
-    historical_stats_runtime: std::sync::OnceLock<HistoricalStatsRuntime>,
     /// Go `planReplayerHandle` and the dump-file GC loop.
     plan_replayer: std::sync::OnceLock<plan_replayer_owner::PlanReplayerRuntime>,
     /// Go `Domain.extractTaskHandle`.
@@ -1094,10 +1086,6 @@ impl Domain {
             transactions: Arc::clone(&transactions),
         });
         let (expensive_query_exit, expensive_query_exited) = std::sync::mpsc::channel();
-        let historical_stats_worker =
-            Arc::new(HistoricalStatsWorker::new(ClusterHistoricalInfoSchema {
-                catalog: Arc::clone(&catalog),
-            }));
         let approximate_table_counts = Arc::new(ClusterApproximateTableCountProvider::new(
             Arc::clone(&transactions),
         ));
@@ -1160,8 +1148,6 @@ impl Domain {
             bdr_role_store: std::sync::OnceLock::new(),
             ddl_job_history_store: std::sync::OnceLock::new(),
             auto_analyze_worker: std::sync::OnceLock::new(),
-            historical_stats_worker,
-            historical_stats_runtime: std::sync::OnceLock::new(),
             plan_replayer: std::sync::OnceLock::new(),
             extract_task_handle: std::sync::OnceLock::new(),
             runaway: std::sync::OnceLock::new(),
@@ -1194,7 +1180,6 @@ impl Domain {
             tidb_stats_handle_autoanalyze_priorityqueue::AnalysisPriorityQueue::new(source)
         }))
     }
-
 
 
 
@@ -1255,7 +1240,6 @@ impl Domain {
         })
     }
 
-    /// Starts Go `Domain.StartHistoricalStatsWorker`.
     /// Go `Domain.SetupWorkloadBasedLearningWorker`: the read-table-cost
     /// worker, started after the statistics loops as Go's bootstrap does.
     pub fn setup_workload_based_learning_worker(self: &Arc<Self>) {
@@ -1278,27 +1262,6 @@ impl Domain {
         }
     }
 
-    pub fn start_historical_stats_worker(self: &Arc<Self>) {
-        if !tidb_domain::historical_stats::enable_dump_historical_stats()
-            || self.historical_stats_runtime.get().is_some()
-        {
-            return;
-        }
-        let handle = Arc::new(ClusterHistoricalStatsHandle {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            global_vars: self.global_vars.clone(),
-            auto_ids: Arc::clone(&self.auto_ids),
-            domain: self.binding_session_factory.clone(),
-        });
-        let _ = self
-            .historical_stats_runtime
-            .set(HistoricalStatsRuntime::start(
-                Arc::clone(&self.historical_stats_worker),
-                handle,
-            ));
-    }
-
     /// Go `Domain.LoadSigningCertLoop`: binds the session-token signing
     /// certificate and reloads it periodically so a rotated one is picked up.
     pub fn load_signing_cert_loop(&self, signing_cert: &str, signing_key: &str) {
@@ -1317,7 +1280,7 @@ impl Domain {
         table: &tidb_model::table_info::TableInfo,
         dump_partition_stats: bool,
     ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
-        let handle = ClusterHistoricalStatsHandle {
+        let handle = ClusterStatsReadWriter {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
@@ -1366,7 +1329,7 @@ impl Domain {
         snapshot: u64,
         persist: &mut dyn FnMut(Option<tidb_stats_util::JsonTable>, i64) -> Result<(), String>,
     ) -> Result<(), String> {
-        let handle = ClusterHistoricalStatsHandle {
+        let handle = ClusterStatsReadWriter {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
             global_vars: self.global_vars.clone(),
@@ -1386,37 +1349,6 @@ impl Domain {
             persist(Some(global), table.id)?;
         }
         Ok(())
-    }
-
-    /// Pinned Go `StatsHandle.DumpHistoricalStatsBySnapshot` over the live
-    /// shared catalog and restricted cluster transactions.
-    pub fn dump_historical_stats_by_snapshot(
-        &self,
-        database_name: &str,
-        table: &tidb_model::table_info::TableInfo,
-        snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
-        ClusterHistoricalStatsHandle {
-            transactions: Arc::clone(&self.transactions),
-            catalog: Arc::clone(&self.catalog),
-            global_vars: self.global_vars.clone(),
-            auto_ids: Arc::clone(&self.auto_ids),
-            domain: self.binding_session_factory.clone(),
-        }
-        .dump_historical_stats_by_snapshot(database_name, table, snapshot_ts)
-    }
-
-    /// Go `statsGCImpl.ClearOutdatedHistoryStats` on one of the statistics
-    /// handle's sessions.
-    pub fn clear_outdated_history_stats(&self) -> Result<(), String> {
-        let pool = self.stats_session_pool()?;
-        let historical_stats_duration = self.historical_stats_duration()?;
-        tidb_stats_handle_util::call_with_sctx(
-            pool.as_ref(),
-            |sctx| tidb_stats_handle_storage::gc::clear_outdated_history_stats(sctx, historical_stats_duration),
-            &[],
-        )
-        .map_err(|error| error.to_string())
     }
 
     /// Go `statsHandle.SPool()`: the domain's system sessions.
@@ -1564,34 +1496,16 @@ impl Domain {
     fn gc_stats_on_pool(&self, lease: Duration) -> Result<(), String> {
         let pool = self.stats_session_pool()?;
         let catalog = self.catalog.get_latest();
-        let historical_stats_duration = self.historical_stats_duration()?;
         tidb_stats_handle_util::call_with_sctx(
             pool.as_ref(),
             |sctx| {
-                tidb_stats_handle_storage::gc::gc_stats(
-                    sctx,
-                    lease,
-                    historical_stats_duration,
-                    &|physical_id| ClusterHistoricalStatsHandle::physical_table(&catalog, physical_id),
-                )
+                tidb_stats_handle_storage::gc::gc_stats(sctx, lease, &|physical_id| {
+                    catalog.physical_table_info_by_id(physical_id)
+                })
             },
             &[],
         )
         .map_err(|error| error.to_string())
-    }
-
-    /// Go `vardef.HistoricalStatsDuration`.
-    fn historical_stats_duration(&self) -> Result<Duration, String> {
-        let configured = self
-            .global_vars
-            .get(tidb_vardef::tidb_vars::TIDB_HISTORICAL_STATS_DURATION)
-            .map_err(|error| format!("read tidb_historical_stats_duration failed: {error:?}"))?;
-        let nanos = serde_json::from_value::<tidb_config_configtypes::Duration>(
-            serde_json::Value::String(configured),
-        )
-        .map_err(|error| error.to_string())?
-        .0;
-        Ok(Duration::from_nanos(u64::try_from(nanos).unwrap_or(0)))
     }
 
     pub fn check_auto_analyze_windows_at(&self, now: chrono::DateTime<Utc>) {
@@ -1884,30 +1798,6 @@ impl Domain {
                 .map_err(|error| error.message)?;
             for update in original_updates {
                 pending.mark_persisted(update.table_id);
-            }
-            let historical_stats_enabled = global_vars
-                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
-            if historical_stats_enabled {
-                // Go `RecordHistoricalStatsMeta(statsVersion, "flush stats",
-                // false, unlockedTableIDs...)`: only initialized tables.
-                let targeted: Vec<i64> = updates
-                    .iter()
-                    .filter(|update| {
-                        !update.is_locked
-                            && stats
-                                .get(&update.table_id)
-                                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
-                                .is_some_and(|table| table.is_initialized())
-                    })
-                    .map(|update| update.table_id)
-                    .collect();
-                tidb_stats_handle_history::history_stats::record_historical_stats_meta_on(
-                    stats_pool,
-                    stats_version,
-                    "flush stats",
-                    &targeted,
-                );
             }
         }
         Ok(())
@@ -2488,38 +2378,8 @@ impl Drop for Domain {
     }
 }
 
-#[derive(Clone)]
-pub struct ClusterHistoricalInfoSchema {
-    pub catalog: Arc<InfoCache>,
-}
-
-pub struct ClusterHistoricalSchemaView {
-    catalog: SessionExtendedInfoSchema,
-}
-
-impl InfoSchemaView for ClusterHistoricalSchemaView {
-    fn table_by_id(&self, table_id: i64) -> Option<TableMeta> {
-        self.catalog.table_info_by_id(table_id).map(|table| { let table = table.read(); TableMeta { id: table.id, name: table.name.original().to_owned() } })
-    }
-    fn find_table_by_partition_id(&self, partition_id: i64) -> Option<TableMeta> {
-        self.catalog.physical_table_info_by_id(partition_id).map(|table| { let table = table.read(); TableMeta { id: table.id, name: table.name.original().to_owned() } })
-    }
-    fn schema_by_table(&self, table: &TableMeta) -> Option<String> {
-        self.catalog.schema_name_by_table_id(table.id)
-    }
-}
-
-impl SessionInfoSchema for ClusterHistoricalInfoSchema {
-    type View = ClusterHistoricalSchemaView;
-
-    fn info_schema(&self) -> Self::View {
-        ClusterHistoricalSchemaView {
-            catalog: (*self.catalog.get_latest()).clone(),
-        }
-    }
-}
-
-pub struct ClusterHistoricalStatsHandle {
+/// Go `statsReadWriter`: reads a table's statistics into Go's JSON form.
+pub struct ClusterStatsReadWriter {
     pub transactions: Arc<dyn ClusterTransactions>,
     pub catalog: Arc<InfoCache>,
     pub global_vars: GlobalSysvars,
@@ -2530,40 +2390,7 @@ pub struct ClusterHistoricalStatsHandle {
     pub domain: Weak<Domain>,
 }
 
-impl ClusterHistoricalStatsHandle {
-    fn physical_table<'catalog>(
-        catalog: &'catalog SessionExtendedInfoSchema,
-        physical_id: i64,
-    ) -> Option<tidb_model::GoShared<tidb_model::table_info::TableInfo>> {
-        catalog.physical_table_info_by_id(physical_id)
-    }
-
-    /// Go `statsReadWriter.tableHistoricalStatsToJSON`.
-    fn table_historical_json(
-        &self,
-        physical_id: i64,
-        snapshot_ts: u64,
-    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
-        let session_pool = self.domain.upgrade().map(|domain| domain.advanced_sys_session_pool());
-        let mut table = None;
-        crate::sys_session::StatsPool {
-            session_pool: session_pool.as_ref(),
-        }
-        .call_with_sctx(
-            &mut |sctx| {
-                table = tidb_stats_handle_storage::json::table_historical_stats_to_json(
-                    sctx,
-                    physical_id,
-                    snapshot_ts,
-                )?;
-                Ok(())
-            },
-            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
-        )
-        .map_err(|error| error.message)?;
-        Ok(table)
-    }
-
+impl ClusterStatsReadWriter {
     /// Go `statsReadWriter.TableStatsToJSON` (snapshot 0): the full
     /// statistics in one wrapped transaction, then the current meta counters
     /// and predicate-column usage in another.
@@ -2657,195 +2484,6 @@ impl ClusterHistoricalStatsHandle {
         .map_err(|error| error.message)?;
         Ok(json)
     }
-
-    fn historical_json(
-        &self,
-        database_name: &str,
-        table: &tidb_model::table_info::TableInfo,
-        physical_id: i64,
-        is_partition: bool,
-    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
-        if is_partition || table.get_partition_info().is_none() {
-            return self.table_json(database_name, table, physical_id);
-        }
-        let partition = table.get_partition_info().expect("partition checked above");
-        let mut partitions = std::collections::BTreeMap::new();
-        for definition in partition.read().definitions.snapshot() {
-            if let Some(json) = self.table_json(database_name, table, definition.id)? {
-                partitions.insert(definition.name.lowercase().to_owned(), Some(json));
-            }
-        }
-        if let Some(global) = self.table_json(database_name, table, table.id)? {
-            partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), Some(global));
-        }
-        Ok(Some(tidb_stats_util::JsonTable {
-            database_name: database_name.to_owned(),
-            table_name: table.name.lowercase().to_owned(),
-            partitions: Some(partitions),
-            ..tidb_stats_util::JsonTable::default()
-        }))
-    }
-
-    fn historical_or_latest_json(
-        &self,
-        database_name: &str,
-        table: &tidb_model::table_info::TableInfo,
-        physical_id: i64,
-        snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats_util::JsonTable>, bool), String> {
-        if let Some(historical) = self.table_historical_json(physical_id, snapshot_ts)? {
-            return Ok((Some(historical), false));
-        }
-        Ok((
-            self.table_json(database_name, table, physical_id)?,
-            snapshot_ts != 0,
-        ))
-    }
-
-    /// Pinned Go `statsReadWriter.DumpHistoricalStatsBySnapshot`, including
-    /// its feature gate, per-physical-table fallback names, and dump metrics.
-    fn dump_historical_stats_by_snapshot(
-        &self,
-        database_name: &str,
-        table: &tidb_model::table_info::TableInfo,
-        snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
-        let enabled = self
-            .global_vars
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .map_err(|error| format!("check tidb_enable_historical_stats failed: {error:?}"))?;
-        if !tidb_vardef::option_values::tidb_opt_on(&enabled) {
-            return Err("tidb_enable_historical_stats should be enabled".to_owned());
-        }
-        let result =
-            self.dump_historical_stats_by_snapshot_inner(database_name, table, snapshot_ts);
-        if result.is_ok() {
-            tidb_stats_handle_metrics::dump_historical_stats_success_counter().inc();
-        } else {
-            tidb_stats_handle_metrics::dump_historical_stats_failed_counter().inc();
-        }
-        result
-    }
-
-    fn dump_historical_stats_by_snapshot_inner(
-        &self,
-        database_name: &str,
-        table: &tidb_model::table_info::TableInfo,
-        snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
-        let Some(partition) = table.get_partition_info() else {
-            let (json, fallback) = self.historical_or_latest_json(
-                database_name,
-                table,
-                table.id,
-                snapshot_ts,
-            )?;
-            return Ok((
-                json,
-                fallback
-                    .then(|| format!("{database_name}.{}", table.name.original()))
-                    .into_iter()
-                    .collect(),
-            ));
-        };
-
-        let mut partitions = std::collections::BTreeMap::new();
-        let mut fallbacks = Vec::new();
-        for definition in partition.read().definitions.snapshot() {
-            let (json, fallback) = self.historical_or_latest_json(
-                database_name,
-                table,
-                definition.id,
-                snapshot_ts,
-            )?;
-            if fallback {
-                fallbacks.push(format!(
-                    "{database_name}.{} {}",
-                    table.name.original(),
-                    definition.name.original()
-                ));
-            }
-            partitions.insert(definition.name.lowercase().to_owned(), json);
-        }
-        let (global, fallback) =
-            self.historical_or_latest_json(database_name, table, table.id, snapshot_ts)?;
-        if fallback {
-            fallbacks.push(format!("{database_name}.{} global", table.name.original()));
-        }
-        if global.is_some() {
-            partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), global);
-        }
-        Ok((
-            Some(tidb_stats_util::JsonTable {
-                database_name: database_name.to_owned(),
-                table_name: table.name.lowercase().to_owned(),
-                partitions: Some(partitions),
-                ..tidb_stats_util::JsonTable::default()
-            }),
-            fallbacks,
-        ))
-    }
-}
-
-impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
-    fn check_historical_stats_enable(&self) -> Result<bool, String> {
-        self.global_vars
-            .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .map(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-            .map_err(|error| format!("{error:?}"))
-    }
-
-    fn record_historical_stats_to_storage(
-        &self,
-        database_name: &str,
-        table: &TableMeta,
-        physical_id: i64,
-        is_partition: bool,
-    ) -> Result<u64, String> {
-        let catalog = self.catalog.get_latest();
-        let table_info = catalog.table_info_by_id(table.id)
-            .ok_or_else(|| format!("cannot get table by id {}", table.id))?;
-        let table_info = table_info.read();
-        let Some(json) = self.historical_json(
-            database_name,
-            &table_info,
-            physical_id,
-            is_partition,
-        )?
-        else {
-            // Go `RecordHistoricalStatsToStorage`.
-            tidb_stats_handle_logutil::stats_logger().warn(
-                "no stats data to record",
-                &[
-                    tidb_log::Field::new("dbName", tidb_log::Value::Str(database_name.to_string())),
-                    tidb_log::Field::new("tableName", tidb_log::Value::Str(table.name.clone())),
-                ],
-            );
-            return Ok(0);
-        };
-        // Go `handleutil.CallWithSCtx(sh.statsHandle.SPool(), ...,
-        // FlagWrapTxn)`.
-        let pool = self
-            .domain
-            .upgrade()
-            .map(|domain| domain.advanced_sys_session_pool())
-            .ok_or_else(|| "cluster session factory is stopped".to_owned())?;
-        let mut version = 0;
-        tidb_stats_handle_util::call_with_sctx(
-            pool.as_ref(),
-            |sctx| {
-                version = tidb_stats_handle_history::history_stats::record_historical_stats_to_storage(
-                    sctx,
-                    physical_id,
-                    &json,
-                )?;
-                Ok(())
-            },
-            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(version)
-    }
 }
 
 /// The thread of Go `Domain.LoadSigningCertLoop`, stopped when the node is
@@ -2878,66 +2516,6 @@ impl SigningCertLoop {
 impl Drop for SigningCertLoop {
     fn drop(&mut self) {
         drop(self.exit.take());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-pub(crate) struct HistoricalStatsRuntime {
-    worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-pub(crate) struct ClusterHistoricalStatsMetrics;
-
-impl HistoricalStatsMetrics for ClusterHistoricalStatsMetrics {
-    fn inc_generate_failed(&self) {
-        tidb_stats_handle_metrics::domain_metrics::generate_historical_stats_failed_counter().inc();
-    }
-
-    fn inc_generate_success(&self) {
-        tidb_stats_handle_metrics::domain_metrics::generate_historical_stats_success_counter()
-            .inc();
-    }
-}
-
-impl HistoricalStatsRuntime {
-    fn start(
-        worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
-        handle: Arc<ClusterHistoricalStatsHandle>,
-    ) -> Self {
-        let running = Arc::clone(&worker);
-        let thread = tidb_worker_stack::sql_worker_thread("historical-stats-worker")
-            .spawn(move || {
-                while let Some(table_id) = running.recv_historical_stats_table() {
-                    if let Err(error) = running.dump_historical_stats(
-                        table_id,
-                        handle.as_ref(),
-                        &ClusterHistoricalStatsMetrics,
-                    ) {
-                        // Go `Domain.StartHistoricalStatsWorker`.
-                        tidb_logutil::bg_logger().warn(
-                            "dump historical stats failed",
-                            &[
-                                tidb_logutil::zap_error(error),
-                                tidb_log::Field::new("tableID", tidb_log::Value::I64(table_id)),
-                            ],
-                        );
-                    }
-                }
-            })
-            .expect("spawning historical statistics worker");
-        Self {
-            worker,
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for HistoricalStatsRuntime {
-    fn drop(&mut self) {
-        self.worker.close_table_channel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

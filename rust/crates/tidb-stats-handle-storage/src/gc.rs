@@ -91,7 +91,6 @@ fn now_ts() -> u64 {
 pub fn gc_stats<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     lease: Duration,
-    historical_stats_duration: Duration,
     table_info_by_id: &dyn Fn(i64) -> Option<GoShared<TableInfo>>,
 ) -> Result<(), SqlExecError> {
     // To make sure that all the deleted tables' schema and stats info have
@@ -111,76 +110,9 @@ pub fn gc_stats<C: StatsSessionContext + ?Sized>(
     )?;
     for row in rows {
         let table_id = datum_i64(row.first());
-        let table = table_info_by_id(table_id);
-        gc_table_stats(sctx, table.as_ref(), table_id)?;
-        // Go `is.TableByID`: a partition's ID is not a table's.
-        let existed = table.is_some_and(|table| table.read().id == table_id);
-        if !existed {
-            gc_history_stats_from_kv(sctx, table_id)?;
-        }
-    }
-    if let Err(error) = clear_outdated_history_stats(sctx, historical_stats_duration) {
-        tidb_logutil::bg_logger().warn(
-            "failed to gc outdated historical stats",
-            &[
-                Field::new(
-                    "duration",
-                    Value::Duration(
-                        i64::try_from(historical_stats_duration.as_nanos()).unwrap_or(i64::MAX),
-                    ),
-                ),
-                tidb_logutil::zap_error(error.to_string()),
-            ],
-        );
+        gc_table_stats(sctx, table_info_by_id(table_id).as_ref(), table_id)?;
     }
     write_gc_timestamp_to_kv(sctx, gc_ver)
-}
-
-/// Go `ClearOutdatedHistoryStats`.
-pub fn clear_outdated_history_stats<C: StatsSessionContext + ?Sized>(
-    sctx: &C,
-    historical_stats_duration: Duration,
-) -> Result<(), SqlExecError> {
-    let seconds = [SqlArg::Float64(historical_stats_duration.as_secs_f64())];
-    let (rows, _) = exec_rows(
-        sctx,
-        "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND",
-        &seconds,
-    )?;
-    let count = datum_i64(rows.first().and_then(|row| row.first()));
-    if count > 0 {
-        for _ in 0..for_count(count, 1000) {
-            exec_rows(
-                sctx,
-                "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 ",
-                &seconds,
-            )?;
-        }
-        // Go returns inside its `stats_history` loop, so one 50-row
-        // statement runs and its closing log line is never reached.
-        exec_rows(
-            sctx,
-            "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 ",
-            &seconds,
-        )?;
-    }
-    Ok(())
-}
-
-/// Go `forCount`.
-fn for_count(total: i64, batch: i64) -> i64 {
-    total / batch + i64::from(total % batch > 0)
-}
-
-/// Go `gcHistoryStatsFromKV`.
-fn gc_history_stats_from_kv<C: StatsSessionContext + ?Sized>(
-    sctx: &C,
-    physical_id: i64,
-) -> Result<(), SqlExecError> {
-    let id = [SqlArg::Signed(physical_id)];
-    exec_rows(sctx, "delete from mysql.stats_history where table_id = %?", &id)?;
-    exec_rows(sctx, "delete from mysql.stats_meta_history where table_id = %?", &id)?;
-    Ok(())
 }
 
 /// Go `deleteHistStatsFromKV`: one column's or index's statistics, the

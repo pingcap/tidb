@@ -111,7 +111,6 @@ tidb-vitess = { path = "../tidb-vitess" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-table = { path = "../tidb-table" }

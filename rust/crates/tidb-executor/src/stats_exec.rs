@@ -59,22 +59,11 @@ pub trait StatsStatementService {
         statement: &tidb_executor_lockstats::ClusterStatsLockStatement,
     ) -> Result<String, DriverError>;
     /// Go `LoadStatsFromJSON` for one parsed, non-null dump.
-    fn load_stats(
-        &self,
-        json: &JsonTable,
-        historical_stats_enabled: bool,
-    ) -> Result<(), DriverError>;
+    fn load_stats(&self, json: &JsonTable) -> Result<(), DriverError>;
 
     /// Go `getStatsForTable` for the plan replayer: the named table's
-    /// statistics as JSON (`DumpHistoricalStatsBySnapshot` when
-    /// `history_stats_ts` is set, else `DumpStatsToJSON(..., true)`), and
-    /// the tables whose historical statistics fell back to the latest.
-    fn plan_replayer_stats_json(
-        &self,
-        _db: &str,
-        _table: &str,
-        _history_stats_ts: u64,
-    ) -> Result<(Option<JsonTable>, Vec<String>), DriverError> {
+    /// statistics as JSON (`DumpStatsToJSON(..., true)`).
+    fn plan_replayer_stats_json(&self, _db: &str, _table: &str) -> Result<Option<JsonTable>, DriverError> {
         Err(DriverError::unsupported("this node has no statistics to dump"))
     }
 
@@ -376,7 +365,7 @@ pub trait StatsExec: AnalyzeExec {
         let Some(json) = parse_load_stats_dump(data)? else {
             return Ok(());
         };
-        service.load_stats(&json, self.historical_stats_enabled())
+        service.load_stats(&json)
     }
 }
 

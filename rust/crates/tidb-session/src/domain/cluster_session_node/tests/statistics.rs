@@ -28,7 +28,6 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
-        _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
@@ -50,7 +49,6 @@ impl ClusterAnalyze for PanickingAnalyze {
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
-        _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>

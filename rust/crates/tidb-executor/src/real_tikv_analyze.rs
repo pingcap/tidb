@@ -35,13 +35,10 @@ use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
 use tidb_stats::fm_sketch_ndv;
 use tidb_stats::merge_fm_sketch;
 use tidb_stats_handle_globalstats::merge_partition_histogram_topn;
-use tidb_stats_handle_globalstats::merge_partition_stats_item;
 use tidb_stats::CmsSketch;
 use tidb_stats::FmSketch;
 use tidb_stats_handle_globalstats::GlobalStatsItem;
 use tidb_stats_handle_globalstats::GlobalStatsMergeError;
-use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
-use tidb_stats_handle_globalstats::PartitionStatsItem;
 use tidb_stats::StatsLoadedStatus;
 use tidb_stats::TopN;
 use tidb_store_driver_txn::transaction::StoreClient;
@@ -59,7 +56,6 @@ use tidb_stats_handle_storage::cluster_stats_load::{
 use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
 use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
-use tidb_stats_handle_history::history_stats::record_historical_stats_meta_on;
 use tidb_stats_handle_usage_predicatecolumn::predicate_column::get_predicate_columns;
 use tidb_sqlescape::SqlArg;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
@@ -1014,12 +1010,6 @@ fn global_stats_merge_error(error: GlobalStatsMergeError) -> ClusterAnalyzeError
     }
 }
 
-/// Go's non-enforced historical-meta gate for one global-statistics save.
-#[must_use]
-pub fn record_global_history_enabled(enabled: bool, initialized: bool) -> bool {
-    enabled && initialized
-}
-
 /// Runs and commits one `ANALYZE TABLE`.
 pub fn commit_cluster_analyze<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
@@ -1028,8 +1018,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     timeout: Duration,
     stats_lease: Duration,
     killer: &SqlKiller,
-    record_history: &dyn Fn() -> bool,
-    record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
     stats_pool: &dyn StatsSessionPool,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
@@ -1100,7 +1088,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 options,
                 timeout,
                 stats_lease,
-                record_history,
                 &|count| job.update(jobs, count),
                 selected_columns,
                 predicate_columns_empty,
@@ -1146,7 +1133,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: Vec::new(),
-        historical_stats_table_ids: Vec::new(),
         cache_update_physical_ids: Vec::new(),
         build_diagnostics: Vec::new(),
     });
@@ -1192,7 +1178,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 independent_options,
                 timeout,
                 stats_lease,
-                record_history,
                 &|count| job.update(jobs, count),
                 killer,
                 resource_group,
@@ -1230,7 +1215,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 independent_options,
                 timeout,
                 stats_lease,
-                record_history,
                 &|count| job.update(jobs, count),
                 killer,
                 resource_group,
@@ -1261,15 +1245,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     {
         let column_ids = report.analyzed_column_ids.clone();
         let index_ids = report.analyzed_index_ids.clone();
-        if (!column_ids.is_empty() || !index_ids.is_empty())
-            && !report
-                .historical_stats_table_ids
-                .contains(&resolved.logical_table_id())
-        {
-            report
-                .historical_stats_table_ids
-                .push(resolved.logical_table_id());
-        }
         if !column_ids.is_empty() {
             let job = AnalyzeJobHandle::pending(jobs, &resolved.global_job_spec(None));
             job.start(jobs);
@@ -1283,7 +1258,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 timeout,
                 stats_lease,
                 killer,
-                record_global_history,
             );
             job.finish(
                 jobs,
@@ -1305,7 +1279,6 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 timeout,
                 stats_lease,
                 killer,
-                record_global_history,
             );
             job.finish(
                 jobs,
@@ -1381,11 +1354,6 @@ fn merge_analyze_report(report: &mut ClusterAnalyzeReport, next: ClusterAnalyzeR
             report.analyzed_index_ids.push(id);
         }
     }
-    for id in next.historical_stats_table_ids {
-        if !report.historical_stats_table_ids.contains(&id) {
-            report.historical_stats_table_ids.push(id);
-        }
-    }
 }
 
 fn commit_cluster_global_stats<S: StoreClient>(
@@ -1398,7 +1366,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
     timeout: Duration,
     stats_lease: Duration,
     killer: &SqlKiller,
-    record_history: &dyn Fn() -> bool,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -1433,12 +1400,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
                 (index.id, index.name.original().to_owned())
             })
             .collect();
-        let mode = if resolved.statement.enable_async_merge_global_stats {
-            GlobalStatsMergeMode::Async
-        } else {
-            GlobalStatsMergeMode::Blocking
-        };
-        if mode == GlobalStatsMergeMode::Async {
+        {
             // Go `AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats`:
             // `prepare` and the IO worker on one statistics session.
             let mut merged = Err(ClusterAnalyzeError::Other("global stats merge did not run".to_owned()));
@@ -1467,70 +1429,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
                 .map_err(ClusterAnalyzeError::Sql)?;
             let (total_count, modify_count, items) = merged?;
             (table.id, total_count, modify_count, items)
-        } else {
-            let mut partitions = Vec::with_capacity(definitions.len());
-            for definition in definitions.iter() {
-                let stats = load_table_partition_stats(stats_pool, &table, definition.id, stats_lease)?;
-                partitions.push((definition.name.original().to_owned(), stats));
-            }
-            let total_count = partitions.iter().try_fold(0_i64, |total, (_, stats)| {
-                let count = stats.as_ref().map_or(0, |stats| stats.hist_coll.realtime_count);
-                Ok::<_, ClusterAnalyzeError>(total.wrapping_add(count))
-            })?;
-            let modify_count = partitions
-                .iter()
-                .filter_map(|(_, stats)| stats.as_ref())
-                .fold(0_i64, |total, stats| total.wrapping_add(stats.hist_coll.modify_count));
-            let items = match &resolved.statement.eval_context.session_zone() {
-                SessionTimeZone::Local => merge_global_items(
-                    &table,
-                    Some(&chrono::Local),
-                    &partitions,
-                    column_ids,
-                    index_ids,
-                    &column_types,
-                    &column_names,
-                    &index_names,
-                    &resolved.statement,
-                    total_count,
-                    mode,
-                    killer,
-                ),
-                SessionTimeZone::Named(zone) => merge_global_items(
-                    &table,
-                    Some(zone),
-                    &partitions,
-                    column_ids,
-                    index_ids,
-                    &column_types,
-                    &column_names,
-                    &index_names,
-                    &resolved.statement,
-                    total_count,
-                    mode,
-                    killer,
-                ),
-                SessionTimeZone::Fixed { offset_secs, .. } => {
-                    let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
-                        ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
-                    })?;
-                    merge_global_items(
-                        &table,
-                        Some(&zone),
-                        &partitions,
-                        column_ids,
-                        index_ids,
-                        &column_types,
-                        &column_names,
-                        &index_names,
-                        &resolved.statement,
-                        total_count,
-                        mode,
-                        killer,
-                    )
-                }
-            }?;
-            (table.id, total_count, modify_count, items)
         }
     };
     transaction
@@ -1543,9 +1441,6 @@ fn commit_cluster_global_stats<S: StoreClient>(
             commit_global_stats_item(stats_pool, logical_id, total_count, modify_count, item, stats_lease)
         },
         |write| {
-            if record_history() {
-                record_historical_stats_meta_on(stats_pool, write.0, ANALYZE_HISTORY_SOURCE, &[logical_id]);
-            }
             report.version = report.version.max(write.0);
             report.histogram_count += write.1;
             report.bucket_count += write.2;
@@ -1640,60 +1535,6 @@ fn merge_async_on(
 /// A statistics-session read failure inside the merge's callback.
 fn sql_exec_error(error: Box<dyn std::error::Error + Send + Sync>) -> ClusterAnalyzeError {
     ClusterAnalyzeError::StatsRead(error)
-}
-
-/// Go `statsReadWriter.LoadTablePartitionStats`: the partition's statistics
-/// with every payload (`TableStatsFromStorage(loadAll)`), `None` without a
-/// `stats_meta` row (Go `ErrPartitionStatsMissing`).
-fn load_table_partition_stats(
-    stats_pool: &dyn StatsSessionPool,
-    table: &tidb_model::TableInfo,
-    partition_id: i64,
-    stats_lease: Duration,
-) -> Result<Option<tidb_stats::Table>, ClusterAnalyzeError> {
-    let mut loaded = None;
-    stats_pool
-        .call_with_sctx(
-            &mut |sctx| {
-                loaded = tidb_stats_handle_storage::read::table_stats_from_storage(
-                    sctx,
-                    0,
-                    table,
-                    partition_id,
-                    true,
-                    stats_lease,
-                    None,
-                )?;
-                Ok(())
-            },
-            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
-        )
-        .map_err(ClusterAnalyzeError::Sql)?;
-    Ok(loaded)
-}
-
-/// Go `Table.GetStatsInfo`: one item's payload, `None` when the partition
-/// has no such item or it is not analyzed.
-fn partition_stats_info(table: &tidb_stats::Table, id: i64, is_index: bool) -> Option<PartitionStatsItem> {
-    if is_index {
-        let index = table.hist_coll.get_index(id)?;
-        let index = index.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        (index.stats_version != 0).then(|| PartitionStatsItem {
-            histogram: index.histogram.clone(),
-            cmsketch: index.cmsketch.clone(),
-            topn: index.top_n.clone(),
-            fm_sketch: index.fm_sketch.clone(),
-        })
-    } else {
-        let column = table.hist_coll.get_column(id)?;
-        let column = column.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        (column.stats_version != 0).then(|| PartitionStatsItem {
-            histogram: column.histogram.clone(),
-            cmsketch: column.cmsketch.clone(),
-            topn: column.top_n.clone(),
-            fm_sketch: column.fm_sketch.clone(),
-        })
-    }
 }
 
 fn write_global_stats_items<T, E>(
@@ -2072,149 +1913,6 @@ fn join_async_global_worker_results<T>(
     }
 }
 
-fn merge_global_items<TZ: TimeZone + Sync>(
-    table: &tidb_model::TableInfo,
-    timezone: Option<&TZ>,
-    partitions: &[(String, Option<tidb_stats::Table>)],
-    column_ids: &[i64],
-    index_ids: &[i64],
-    column_types: &std::collections::BTreeMap<i64, FieldType>,
-    column_names: &std::collections::BTreeMap<i64, String>,
-    index_names: &std::collections::BTreeMap<i64, String>,
-    statement: &AnalyzeStatement,
-    total_count: i64,
-    mode: GlobalStatsMergeMode,
-    killer: &SqlKiller,
-) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError> {
-    let mut result = Vec::with_capacity(column_ids.len() + index_ids.len());
-    for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
-        for &id in ids {
-            let mut inputs = Vec::with_capacity(partitions.len());
-            for (partition_name, stats) in partitions {
-                let Some(stats) = stats else {
-                    if mode == GlobalStatsMergeMode::Async {
-                        continue;
-                    }
-                    if statement.skip_missing_partition_stats {
-                        continue;
-                    }
-                    return Err(tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
-                        .gen_with_stack_by_args(&[format!(
-                            "table `{}` partition `{partition_name}`",
-                            statement.table
-                        )
-                        .into()])
-                        .into());
-                };
-                if mode == GlobalStatsMergeMode::Async
-                    && if is_index {
-                        stats.hist_coll.index_count() == 0
-                    } else {
-                        stats.hist_coll.column_count() == 0
-                    }
-                {
-                    continue;
-                }
-                let item = partition_stats_info(stats, id, is_index);
-                let Some(item) = item else {
-                    if statement.skip_missing_partition_stats {
-                        continue;
-                    }
-                    let name = if is_index {
-                        index_names.get(&id)
-                    } else {
-                        column_names.get(&id)
-                    }
-                    .map_or("", String::as_str);
-                    let detail = format!(
-                        "table `{}` partition `{partition_name}` {} `{name}`",
-                        statement.table,
-                        if is_index { "index" } else { "column" }
-                    );
-                    let proto = if mode == GlobalStatsMergeMode::Async {
-                        &tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                    } else {
-                        &tidb_datatype::types_errors::ERR_PARTITION_STATS_MISSING
-                    };
-                    return Err(proto.gen_with_stack_by_args(&[detail.into()]).into());
-                };
-                let topn_count = item.topn.as_ref().map_or(0, |topn| topn.total_count());
-                if mode == GlobalStatsMergeMode::Blocking
-                    && stats.hist_coll.realtime_count > 0
-                    && item.histogram.total_row_count() <= 0.0
-                    && topn_count == 0
-                {
-                    if statement.skip_missing_partition_stats {
-                        continue;
-                    }
-                    let name = if is_index {
-                        index_names.get(&id)
-                    } else {
-                        column_names.get(&id)
-                    }
-                    .map_or("", String::as_str);
-                    return Err(
-                        tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                            .gen_with_stack_by_args(&[format!(
-                                "table `{}` partition `{partition_name}` {} `{name}`",
-                                statement.table,
-                                if is_index { "index" } else { "column" }
-                            )
-                            .into()])
-                            .into(),
-                    );
-                }
-                inputs.push(item);
-            }
-            let field_type = if is_index {
-                FieldType::new(FieldTypeCode::Blob)
-            } else {
-                column_types.get(&id).cloned().ok_or_else(|| {
-                    ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
-                })?
-            };
-            let unique_ndv =
-                tidb_stats_handle_globalstats::is_local_unique(table, is_index, id).then(|| {
-                    tidb_stats_handle_globalstats::unique_global_ndv(
-                        inputs.iter().map(|item| &item.histogram),
-                        total_count,
-                    )
-                });
-            let merged = merge_partition_stats_item(
-                timezone,
-                2,
-                statement.options.num_topn as u32,
-                statement.options.num_buckets as usize,
-                total_count,
-                &field_type,
-                is_index,
-                mode,
-                statement.partition_merge_concurrency,
-                inputs,
-                killer,
-            )
-            .map_err(global_stats_merge_error)?;
-            if let Some(mut histogram) = merged.histogram {
-                if let Some(ndv) = unique_ndv {
-                    histogram.ndv = ndv;
-                }
-                result.push(ClusterStatsItem {
-                    id,
-                    is_index,
-                    stats_ver: 2,
-                    flag: 0,
-                    load_status: StatsLoadedStatus::full_load(),
-                    histogram,
-                    topn: merged.topn,
-                    cms: merged.cmsketch,
-                    fm_sketch: None,
-                });
-            }
-        }
-    }
-    Ok(result)
-}
-
 /// Go `statsReadWriter.SaveColOrIdxStatsToStorage` for one merged global
 /// histogram, with its `handleSlowStatsSaving`.
 fn commit_global_stats_item(
@@ -2281,7 +1979,6 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     options: &crate::analyze::V2AnalyzeOptions,
     timeout: Duration,
     stats_lease: Duration,
-    record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
     selected_columns_for_task: Option<&HashSet<i64>>,
     predicate_columns_empty_for_task: bool,
@@ -2379,17 +2076,9 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: report.stats.columns.iter().map(|item| item.id).collect(),
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
-        historical_stats_table_ids: if saved {
-            vec![report.stats.table_id]
-        } else {
-            Vec::new()
-        },
         cache_update_physical_ids: Vec::new(),
         build_diagnostics: build_diagnostics.to_vec(),
     };
-    if saved {
-        record_analyze_history_if(stats_pool, receipt.table_id, stats_ver, record_history);
-    }
     Ok(receipt)
 }
 
@@ -2402,7 +2091,6 @@ fn commit_cluster_independent_index<S: StoreClient>(
     options: &crate::analyze::AnalyzeOptions,
     timeout: Duration,
     stats_lease: Duration,
-    record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
     killer: &SqlKiller,
     resource_group: &str,
@@ -2492,30 +2180,10 @@ fn commit_cluster_independent_index<S: StoreClient>(
         skipped_columnar_indexes: Vec::new(),
         analyzed_column_ids: Vec::new(),
         analyzed_index_ids: vec![index_id],
-        historical_stats_table_ids: vec![report.stats.table_id],
         cache_update_physical_ids: Vec::new(),
     };
-    if stats_ver != 0 {
-        record_analyze_history_if(stats_pool, receipt.table_id, stats_ver, record_history);
-    }
     Ok(receipt)
 }
-
-/// Go's `RecordHistoricalStatsMeta(statsVer, "analyze", ...)` after a
-/// versioned save.
-fn record_analyze_history_if(
-    stats_pool: &dyn StatsSessionPool,
-    table_id: i64,
-    version: u64,
-    record_history: &dyn Fn() -> bool,
-) {
-    if record_history() {
-        record_historical_stats_meta_on(stats_pool, version, ANALYZE_HISTORY_SOURCE, &[table_id]);
-    }
-}
-
-/// Go `util.StatsMetaHistorySourceAnalyze`.
-const ANALYZE_HISTORY_SOURCE: &str = "analyze";
 
 fn selected_columns(
     stats_pool: &dyn StatsSessionPool,
@@ -2589,7 +2257,6 @@ fn selected_columns_for_choice(
         skip_missing_partition_stats: true,
         enable_ddl_analyze_exec_opt: false,
         analyze_snapshot: false,
-        enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
         scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
         store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
@@ -2872,7 +2539,7 @@ mod tests {
     use super::{
         analyze_partition_ids, automatic_sample_rate,
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
-        final_column_choice, merge_global_items, record_global_history_enabled,
+        final_column_choice,
         select_index_tasks,
         write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
         AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
@@ -3022,43 +2689,8 @@ mod tests {
     use tidb_model::SchemaState;
     use tidb_stats::histogram::{Bucket, Histogram};
     use tidb_stats::FmSketch;
-    use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
-    use tidb_stats::MAX_SKETCH_SIZE;
+        use tidb_stats::MAX_SKETCH_SIZE;
     use tidb_txnkv::rpc::UnaryCallContext;
-    use tidb_sqlkiller::SqlKiller;
-
-    fn global_partition_item(id: i64, count: i64) -> (i64, tidb_stats::Column) {
-        (id, tidb_stats::Column {
-            stats_version: 2,
-            histogram: Histogram {
-                id,
-                ndv: 2,
-                null_count: 0,
-                last_update_version: 7,
-                tot_col_size: count,
-                correlation: 0.0,
-                buckets: vec![Bucket {
-                    count,
-                    repeat: 1,
-                    ndv: 2,
-                    lower_bound: tidb_datatype::Datum::Int(1),
-                    upper_bound: tidb_datatype::Datum::Int(4),
-                }],
-                ..Default::default()
-            },
-            fm_sketch: Some(FmSketch::from_raw_parts(
-                0,
-                MAX_SKETCH_SIZE,
-                [id as u64, id as u64 + 1],
-            )),
-            ..Default::default()
-        })
-    }
-
-    fn global_partition_stats(item: Option<(i64, tidb_stats::Column)>) -> tidb_stats::Table {
-        tidb_stats::Table::from_analyzed_items(11, 5, 1, item, [])
-    }
-
     fn global_statement(skip_missing: bool) -> AnalyzeStatement {
         AnalyzeStatement {
             schema: "test".to_owned(),
@@ -3076,7 +2708,6 @@ mod tests {
             skip_missing_partition_stats: skip_missing,
             enable_ddl_analyze_exec_opt: false,
             analyze_snapshot: false,
-            enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
@@ -3216,200 +2847,6 @@ mod tests {
     }
 
     #[test]
-    fn stats_ndv_batch_local_unique_global_ndv_sums_partition_counts() {
-        let table = TableInfo {
-            columns: vec![ColumnInfo::new(
-                1,
-                "a",
-                FieldType::new(FieldTypeCode::LongLong),
-            )]
-            .into(),
-            indices: vec![IndexInfo {
-                id: 2,
-                unique: true,
-                state: SchemaState::PUBLIC,
-                columns: vec![IndexColumn {
-                    offset: 0,
-                    length: -1,
-                    ..IndexColumn::default()
-                }]
-                .into(),
-                ..IndexInfo::default()
-            }]
-            .into(),
-            ..TableInfo::default()
-        };
-        let partitions = vec![
-            (
-                "p0".to_owned(),
-                Some(global_partition_stats(Some(global_partition_item(1, 5)))),
-            ),
-            (
-                "p1".to_owned(),
-                Some(global_partition_stats(Some(global_partition_item(1, 5)))),
-            ),
-        ];
-        for mode in [GlobalStatsMergeMode::Blocking, GlobalStatsMergeMode::Async] {
-            let merged = merge_global_items(
-                &table,
-                Some(&chrono::Utc),
-                &partitions,
-                &[1],
-                &[],
-                &BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]),
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-                &global_statement(false),
-                10,
-                mode,
-                &SqlKiller::default(),
-            )
-            .unwrap();
-            assert_eq!(merged[0].histogram.ndv, 4);
-        }
-    }
-
-    #[test]
-    fn dynamic_global_merge_uses_all_partitions_and_skip_policy() {
-        let killer = SqlKiller::default();
-        let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
-        let column_names = BTreeMap::from([(1, "a".to_owned())]);
-        let partitions = vec![
-            (
-                "p0".to_owned(),
-                Some(global_partition_stats(Some(global_partition_item(1, 5)))),
-            ),
-            ("p1".to_owned(), None),
-        ];
-        let error = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(false),
-            5,
-            GlobalStatsMergeMode::Blocking,
-            &killer,
-        )
-        .expect_err("missing partition stats are reported when skipping is disabled");
-        assert_eq!(
-            error.to_string(),
-            "Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`"
-        );
-
-        let merged = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(true),
-            5,
-            GlobalStatsMergeMode::Async,
-            &killer,
-        )
-        .expect("the configured missing partition is skipped");
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].histogram.ndv, 2);
-
-        let merged = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(false),
-            5,
-            GlobalStatsMergeMode::Async,
-            &killer,
-        )
-        .expect("the async worker always skips a partition with no histogram rows");
-        assert_eq!(merged.len(), 1);
-    }
-
-    #[test]
-    fn dynamic_global_merge_distinguishes_missing_item_payload() {
-        let killer = SqlKiller::default();
-        let column_types = BTreeMap::from([(1, FieldType::new(FieldTypeCode::LongLong))]);
-        let column_names = BTreeMap::from([(1, "a".to_owned())]);
-        let mut empty = global_partition_item(1, 0);
-        empty.1.histogram.buckets.clear();
-        empty.1.top_n = None;
-        let partitions = vec![("p0".to_owned(), Some(global_partition_stats(Some(empty))))];
-        let error = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(false),
-            5,
-            GlobalStatsMergeMode::Blocking,
-            &killer,
-        )
-        .expect_err("an empty item on a non-empty partition is reported");
-        assert_eq!(
-            error.to_string(),
-            "Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `a`, please run analyze table to refresh columns of all partitions"
-        );
-
-        let merged = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(false),
-            5,
-            GlobalStatsMergeMode::Async,
-            &killer,
-        )
-        .expect("the async worker only checks whether the histogram row exists");
-        assert_eq!(merged.len(), 1);
-        assert!(merged[0].histogram.buckets.is_empty());
-
-        let partitions = vec![(
-            "p0".to_owned(),
-            Some(global_partition_stats(Some(global_partition_item(2, 5)))),
-        )];
-        let error = merge_global_items(
-            &TableInfo::default(),
-            Some(&chrono::Utc),
-            &partitions,
-            &[1],
-            &[],
-            &column_types,
-            &column_names,
-            &BTreeMap::new(),
-            &global_statement(false),
-            5,
-            GlobalStatsMergeMode::Async,
-            &killer,
-        )
-        .expect_err("the async worker reports a missing item when sibling rows exist");
-        assert_eq!(
-            error.to_string(),
-            "Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `a`, please run analyze table to refresh columns of all partitions"
-        );
-    }
-
-    #[test]
     fn global_stats_storage_attempts_every_item_and_returns_the_final_attempt_result() {
         let mut attempted = Vec::new();
         let mut recorded = Vec::new();
@@ -3441,14 +2878,6 @@ mod tests {
         )
         .expect_err("Go returns an error when the final attempted storage write fails");
         assert_eq!(error, "last");
-    }
-
-    #[test]
-    fn global_history_requires_both_the_live_switch_and_initialized_cache() {
-        assert!(!record_global_history_enabled(false, false));
-        assert!(!record_global_history_enabled(false, true));
-        assert!(!record_global_history_enabled(true, false));
-        assert!(record_global_history_enabled(true, true));
     }
 
     #[test]

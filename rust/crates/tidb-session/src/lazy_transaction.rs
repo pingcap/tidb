@@ -561,6 +561,10 @@ impl ClusterSnapshot for LazySnapshot {
         state.kv_context = Some(context.clone());
     }
 
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.state().open()?.stmt_for_update_ts()
+    }
+
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         self.state()
             .opened

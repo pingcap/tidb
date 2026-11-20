@@ -1624,6 +1624,10 @@ impl ClusterSnapshot for MutationOverlaySnapshot {
         self.snapshot.advise_keep_for_update_ts(check_ts);
     }
 
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.snapshot.stmt_for_update_ts()
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         self.snapshot.set_statement_kv_context(context);
     }
@@ -2019,6 +2023,10 @@ impl<S: StoreClient> fmt::Debug for SessionSnapshot<S> {
 }
 
 impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.statement_read_ts()
+    }
+
     fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
         self.read_options = options;
         self.read_options.rc_check_ts |= self.check_ts_in_write_stmt;

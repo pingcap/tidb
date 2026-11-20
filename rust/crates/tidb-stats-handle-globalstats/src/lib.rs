@@ -40,15 +40,6 @@ use tidb_stats::FmSketch;
 /// one concurrent TopN merge task.
 pub const MAX_PARTITION_MERGE_BATCH_SIZE: usize = 256;
 
-/// Which pinned Go global-statistics worker owns the merge.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GlobalStatsMergeMode {
-    /// `blockingMergePartitionStats2GlobalStats`.
-    Blocking,
-    /// `AsyncMergePartitionStats2GlobalStats`.
-    Async,
-}
-
 /// One partition's payload for a single column or index.
 #[derive(Clone, Debug)]
 pub struct PartitionStatsItem {
@@ -369,7 +360,6 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
     total_count: i64,
     field_type: &FieldType,
     is_index: bool,
-    mode: GlobalStatsMergeMode,
     merge_concurrency: usize,
     partitions: Vec<PartitionStatsItem>,
     killer: &SqlKiller,
@@ -389,7 +379,6 @@ pub fn merge_partition_stats_item<TZ: TimeZone + Sync>(
             .map(|partition| partition.fm_sketch.as_ref()),
     );
     let cmsketch = merge_partition_cmsketches(
-        mode,
         partitions
             .iter()
             .map(|partition| partition.cmsketch.as_ref()),
@@ -436,32 +425,17 @@ pub fn merge_partition_fm_sketches<'a>(
     fm_sketch_ndv(fm_sketch.as_ref()).min(total_count)
 }
 
-/// Pinned Go CMS-worker reduction. The blocking worker anchors on the first
-/// partition even when it is nil; the async worker adopts the first non-nil
-/// sketch it receives.
+/// Go's CMS-worker reduction (`AsyncMergePartitionStats2GlobalStats`): it
+/// adopts the first non-nil sketch it receives.
 pub fn merge_partition_cmsketches<'a>(
-    mode: GlobalStatsMergeMode,
     sketches: impl IntoIterator<Item = Option<&'a CmsSketch>>,
 ) -> Result<Option<CmsSketch>, GlobalStatsMergeError> {
-    let sketches = sketches.into_iter().collect::<Vec<_>>();
     let mut cmsketch = None;
-    match mode {
-        GlobalStatsMergeMode::Blocking => {
-            cmsketch = sketches.first().copied().flatten().cloned();
-            if let Some(destination) = &mut cmsketch {
-                for source in sketches.iter().skip(1).copied().flatten() {
-                    destination.merge(source)?;
-                }
-            }
-        }
-        GlobalStatsMergeMode::Async => {
-            for source in sketches {
-                match (&mut cmsketch, source) {
-                    (None, Some(source)) => cmsketch = Some(source.clone()),
-                    (Some(destination), Some(source)) => destination.merge(source)?,
-                    _ => {}
-                }
-            }
+    for source in sketches {
+        match (&mut cmsketch, source) {
+            (None, Some(source)) => cmsketch = Some(source.clone()),
+            (Some(destination), Some(source)) => destination.merge(source)?,
+            _ => {}
         }
     }
     Ok(cmsketch)

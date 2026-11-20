@@ -353,7 +353,6 @@ pub fn cluster_session_stack(
         authority.tikv_store(),
         &resource_groups_controller,
     );
-    factory.start_historical_stats_worker();
     // Go `BootstrapSession`: after the statistics loops.
     factory.setup_workload_based_learning_worker();
     factory.load_signing_cert_loop(

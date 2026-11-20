@@ -389,7 +389,6 @@ pub(super) fn analyze_service_over(
     let stats = Arc::clone(&domain.stats);
     let global_vars = domain.global_vars.clone();
     let approximate_table_counts = Arc::clone(&domain.approximate_table_counts);
-    let historical_stats_worker = Arc::clone(&domain.historical_stats_worker);
     let session_pool = domain
         .binding_session_factory
         .upgrade()
@@ -406,7 +405,6 @@ pub(super) fn analyze_service_over(
             global_vars: global_vars.clone(),
             analyze: Arc::clone(&analyze),
             approximate_table_counts: Arc::clone(&approximate_table_counts),
-            historical_stats_worker: Arc::clone(&historical_stats_worker),
             session_pool: session_pool.clone(),
         }) as Box<dyn tidb_executor::analyze::exec::AnalyzeService>
     })
@@ -459,9 +457,6 @@ struct ClusterAnalyzeService {
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
     approximate_table_counts: Arc<super::ClusterApproximateTableCountProvider>,
-    historical_stats_worker: Arc<
-        tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
-    >,
     /// Go `statsHandle.SPool()`: the analyze jobs' statements run on it.
     session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
 }
@@ -489,9 +484,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
-        historical_stats_enabled: bool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_driver_error::DriverError>
-    {
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_driver_error::DriverError> {
         let jobs = PersistedAnalyzeJobs {
             session_pool: self.session_pool.clone(),
             instance: self.instance.clone(),
@@ -503,7 +496,6 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
                 &self.resource_group,
                 self.approximate_table_counts.as_ref(),
                 self.statement_memory.sql_killer(),
-                &|| historical_stats_enabled,
                 &jobs,
                 &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
@@ -553,11 +545,6 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
             )
             .map_err(into_driver_error)
     }
-
-    fn dump_historical_stats(&self, table_id: i64) {
-        self.historical_stats_worker
-            .send_tbl_to_dump_historical_stats(table_id);
-    }
 }
 
 /// The statistics handle as the session's [`StatsStatementService`]: owned
@@ -584,8 +571,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         &self,
         db: &str,
         table: &str,
-        history_stats_ts: u64,
-    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), tidb_driver_error::DriverError> {
+    ) -> Result<Option<tidb_stats_util::JsonTable>, tidb_driver_error::DriverError> {
         let domain = self
             .domain
             .upgrade()
@@ -597,14 +583,8 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         })?;
         let info = info.read().clone();
         drop(catalog);
-        if history_stats_ts > 0 {
-            return domain
-                .dump_historical_stats_by_snapshot(db, &info, history_stats_ts)
-                .map_err(tidb_driver_error::DriverError::unsupported);
-        }
         domain
             .dump_stats_to_json(db, &info, true)
-            .map(|json| (json, Vec::new()))
             .map_err(tidb_driver_error::DriverError::unsupported)
     }
 
@@ -720,16 +700,11 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         .map_err(|error| into_driver_error(stats_session_sql_error(error)))
     }
 
-    fn load_stats(
-        &self,
-        json: &tidb_stats_util::JsonTable,
-        historical_stats_enabled: bool,
-    ) -> Result<(), tidb_driver_error::DriverError> {
+    fn load_stats(&self, json: &tidb_stats_util::JsonTable) -> Result<(), tidb_driver_error::DriverError> {
         // Go's LOAD STATS path logs nothing on success.
         self.analyze
             .load_stats(
                 json,
-                historical_stats_enabled,
                 &tidb_domain_core::sys_session::StatsPool {
                     session_pool: self.session_pool.as_ref(),
                 },

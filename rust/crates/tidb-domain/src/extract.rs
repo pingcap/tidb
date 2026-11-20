@@ -460,7 +460,7 @@ fn dump_extract_plan_package(
         dump_global_bindings(sctx.sql, &mut zw)?;
         // Dump stats
         if !task.skip_stats {
-            dump_stats(sctx.stats, &p.tables, 0, &mut zw)?;
+            dump_stats(sctx.stats, &p.tables, &mut zw)?;
         }
         // Dump sqls and plan
         dump_sql_records(&p.records, &mut zw)

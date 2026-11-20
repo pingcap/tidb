@@ -25,16 +25,11 @@ use tidb_stats_handle_storage::{read, save, update};
 use tidb_stats_handle_util::{exec_rows, get_start_ts, StatsSessionContext};
 use tidb_variable::table_delta::TableDelta;
 
-/// Go `util.StatsMetaHistorySourceSchemaChange`.
-const SCHEMA_CHANGE_HISTORY_SOURCE: &str = "schema change";
-
 /// Go `schemaNotFound`.
 const SCHEMA_NOT_FOUND: &str = "Not Found";
 
 /// Go `subscriber`: what it reads of the statistics handle and the schema.
 pub struct Subscriber<'a> {
-    /// Go `statsCache.Get(id)` holding an initialized table.
-    pub stats_initialized: &'a dyn Fn(i64) -> bool,
     /// Go `infoschema.SchemaByTable(is, table)`'s name, for the logs.
     pub schema_name_of: &'a dyn Fn(&TableInfo) -> Option<String>,
 }
@@ -228,26 +223,7 @@ impl Subscriber<'_> {
         info: &TableInfo,
         id: i64,
     ) -> Result<(), SqlExecError> {
-        let start_ts = save::insert_table_stats_2_kv(sctx, info, id)?;
-        self.record_historical_stats_meta(sctx, id, start_ts)
-    }
-
-    /// Go `subscriber.recordHistoricalStatsMeta`.
-    fn record_historical_stats_meta<C: StatsSessionContext + ?Sized>(
-        &self,
-        sctx: &C,
-        id: i64,
-        start_ts: u64,
-    ) -> Result<(), SqlExecError> {
-        if start_ts == 0 || !get_enable_historical_stats(sctx)? || !(self.stats_initialized)(id) {
-            return Ok(());
-        }
-        tidb_stats_handle_history::history_stats::record_historical_stats_meta(
-            sctx,
-            start_ts,
-            SCHEMA_CHANGE_HISTORY_SOURCE,
-            id,
-        )
+        save::insert_table_stats_2_kv(sctx, info, id)
     }
 
     /// Go `subscriber.delayedDeleteStats4PhysicalID`: the statistics stay
@@ -257,8 +233,8 @@ impl Subscriber<'_> {
         sctx: &C,
         id: i64,
     ) -> Result<(), SqlExecError> {
-        let start_ts = update::update_stats_meta_ver_and_last_hist_update_ver(sctx, id)?;
-        self.record_historical_stats_meta(sctx, id, start_ts)
+        update::update_stats_meta_ver_and_last_hist_update_ver(sctx, id)?;
+        Ok(())
     }
 
     /// Go `subscriber.insertStats4Col`.
@@ -269,9 +245,7 @@ impl Subscriber<'_> {
         physical_id: i64,
         col_infos: &[ColumnInfo],
     ) -> Result<(), SqlExecError> {
-        let start_ts =
-            save::insert_col_stats_2_kv(sctx, table.name.original(), physical_id, col_infos)?;
-        self.record_historical_stats_meta(sctx, physical_id, start_ts)
+        save::insert_col_stats_2_kv(sctx, table.name.original(), physical_id, col_infos)
     }
 
     /// Go `infoschema.SchemaByTable`'s name, or Go's placeholder.
@@ -521,13 +495,6 @@ fn get_physical_ids<C: StatsSessionContext + ?Sized>(
 /// Go `getCurrentPruneMode`.
 fn get_current_prune_mode<C: StatsSessionContext + ?Sized>(sctx: &C) -> Result<String, SqlExecError> {
     sctx.global_system_var(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-}
-
-/// Go `getEnableHistoricalStats`.
-fn get_enable_historical_stats<C: StatsSessionContext + ?Sized>(sctx: &C) -> Result<bool, SqlExecError> {
-    Ok(tidb_vardef::option_values::tidb_opt_on(
-        &sctx.global_system_var(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)?,
-    ))
 }
 
 fn definitions(info: &PartitionInfo) -> Vec<PartitionDefinition> {

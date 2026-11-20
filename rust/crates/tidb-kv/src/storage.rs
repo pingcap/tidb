@@ -192,6 +192,15 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// See `ClusterSnapshot::advise_keep_for_update_ts`.
     fn advise_keep_for_update_ts(&self, _check_ts: bool) {}
 
+    /// See `ClusterSnapshot::stmt_for_update_ts`.
+    ///
+    /// # Errors
+    ///
+    /// The fresh timestamp could not be fetched.
+    fn stmt_for_update_ts(&self) -> Result<u64, StorageError> {
+        Ok(self.start_ts())
+    }
+
     /// Go snapshot runtime command totals. In-process storage has no RPCs.
     fn point_rpc_counts(&mut self) -> (u64, u64) {
         (0, 0)

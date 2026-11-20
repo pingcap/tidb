@@ -789,42 +789,12 @@ fn foreign_key_check_in_shared_lock_obeys_kernel_gate_like_go() {
     }
 }
 
-/// Go's continuous plan-replayer capture validation requires the GLOBAL
-/// historical-stats switch before either SESSION or GLOBAL capture is enabled.
+/// Go master (`fb0565aa38b`, historical statistics removed): continuous
+/// plan-replayer capture no longer needs `tidb_enable_historical_stats`, and
+/// turning that switch on only warns.
 #[test]
-fn continuous_plan_replayer_capture_requires_historical_stats() {
+fn continuous_plan_replayer_capture_no_longer_requires_historical_stats() {
     let mut session = Session::new();
-
-    let error = session
-        .run("SET SESSION tidb_enable_plan_replayer_continuous_capture = ON")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1105);
-    assert_eq!(
-        error.message,
-        "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-    );
-    assert_eq!(
-        one(
-            &mut session,
-            "SELECT @@session.tidb_enable_plan_replayer_continuous_capture"
-        ),
-        "0"
-    );
-
-    let error = session
-        .run("SET GLOBAL tidb_enable_plan_replayer_continuous_capture = ON")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1105);
-    assert_eq!(
-        error.message,
-        "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-    );
-
-    session
-        .run("SET GLOBAL tidb_enable_historical_stats = ON")
-        .unwrap();
     session
         .run("SET SESSION tidb_enable_plan_replayer_continuous_capture = ON")
         .unwrap();
@@ -844,6 +814,17 @@ fn continuous_plan_replayer_capture_requires_historical_stats() {
             "SELECT @@global.tidb_enable_plan_replayer_continuous_capture"
         ),
         "1"
+    );
+    session
+        .run("SET GLOBAL tidb_enable_historical_stats = ON")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "the historical statistics feature has been removed, so this will have no effect".to_owned(),
+        ]]
     );
 }
 

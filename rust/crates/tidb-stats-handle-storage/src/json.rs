@@ -76,7 +76,6 @@ use tidb_stats::histogram::Histogram;
 use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, FmSketchProto, HistColl, Index, StatsLoadedStatus, Table};
 use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch, JsonHistogram, JsonPredicateColumn};
 use tidb_stats_util::JsonTable;
-use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_table::tables::TableCommon;
 use tidb_hack::GoToLower;
@@ -128,83 +127,6 @@ pub fn parse_stats_json(data: &str) -> Result<JsonTable, LoadStatsError> {
         return Ok(JsonTable::default());
     }
     serde_json::from_str(data).map_err(|error| LoadStatsError::Json(error.to_string()))
-}
-
-/// Go `storage.JSONTableToBlocks`.
-///
-/// # Panics
-///
-/// Panics for a zero block size, matching Go's integer division by zero.
-pub fn json_table_to_blocks(
-    table: &JsonTable,
-    block_size: usize,
-) -> Result<Vec<Vec<u8>>, LoadStatsError> {
-    assert_ne!(block_size, 0, "integer divide by zero");
-    let json =
-        serde_json::to_vec(table).map_err(|error| LoadStatsError::Json(error.to_string()))?;
-    let compressed = Arc::new(Mutex::new(Vec::new()));
-    let mut writer = GzipWriterPool.get();
-    writer.reset(SharedBuffer(Arc::clone(&compressed)));
-    let result = (|| {
-        writer
-            .write_all(&json)
-            .map_err(|error| LoadStatsError::Gzip(error.to_string()))?;
-        writer
-            .close()
-            .map_err(|error| LoadStatsError::Gzip(error.to_string()))
-    })();
-    GzipWriterPool.put(writer);
-    result?;
-    let compressed = compressed
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    Ok(compressed.chunks(block_size).map(<[u8]>::to_vec).collect())
-}
-
-/// Go `storage.BlocksToJSONTable`.
-pub fn blocks_to_json_table(blocks: &[Vec<u8>]) -> Result<JsonTable, LoadStatsError> {
-    if blocks.is_empty() {
-        return Err(LoadStatsError::EmptyBlocks);
-    }
-    let compressed: Vec<u8> = blocks.iter().flatten().copied().collect();
-    let mut reader = GzipReaderPool.get();
-    if let Err(error) = reader.reset(Cursor::new(compressed)) {
-        GzipReaderPool.put(reader);
-        return Err(LoadStatsError::Gzip(error.to_string()));
-    }
-    if let Err(error) = reader.close() {
-        GzipReaderPool.put(reader);
-        return Err(LoadStatsError::Gzip(error.to_string()));
-    }
-    let mut json = Vec::new();
-    let result = reader
-        .read_to_end(&mut json)
-        .map_err(|error| LoadStatsError::Gzip(error.to_string()))
-        .and_then(|_| {
-            serde_json::from_slice(&json).map_err(|error| LoadStatsError::Json(error.to_string()))
-        });
-    GzipReaderPool.put(reader);
-    result
-}
-
-/// A small owned writer used to collect compressed bytes while the gzip
-/// encoder itself remains in the process-wide pool.
-#[derive(Clone)]
-struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl Write for SharedBuffer {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 fn encode_base64(value: &[u8]) -> String {
@@ -307,78 +229,6 @@ fn stats_item_to_json(
         last_update_version: histogram.last_update_version,
         correlation: histogram.correlation,
     })
-}
-
-/// Go `TableHistoricalStatsToJSON`: the newest metadata history at or
-/// before `snapshot` over the newest statistics dump at or before it (each
-/// version chosen on its own). `None` when either history is missing.
-pub fn table_historical_stats_to_json<C: tidb_stats_handle_util::StatsSessionContext + ?Sized>(
-    sctx: &C,
-    physical_id: i64,
-    snapshot: u64,
-) -> Result<Option<JsonTable>, tidb_sqlexec::SqlExecError> {
-    use tidb_sqlescape::SqlArg;
-    use tidb_stats_handle_util::exec_rows;
-    let int64 = |row: &[Datum], index: usize| row.get(index).map_or(0, Datum::get_int64);
-    let missing = |what: &str| {
-        tidb_logutil::bg_logger().warn(
-            what,
-            &[
-                tidb_log::Field::new("table-id", tidb_log::Value::I64(physical_id)),
-                tidb_log::Field::new("snapshotTS", tidb_log::Value::U64(snapshot)),
-            ],
-        );
-    };
-    // get meta version
-    let (rows, _) = exec_rows(
-        sctx,
-        "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1",
-        &[SqlArg::Signed(physical_id), SqlArg::Unsigned(snapshot)],
-    )?;
-    let Some(row) = rows.first() else {
-        missing("failed to get records of stats_meta_history");
-        return Ok(None);
-    };
-    let stats_meta_version = int64(row, 0);
-    // get stats meta
-    let (rows, _) = exec_rows(
-        sctx,
-        "select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?",
-        &[SqlArg::Signed(physical_id), SqlArg::Signed(stats_meta_version)],
-    )?;
-    let (modify_count, count) = (int64(&rows[0], 0), int64(&rows[0], 1));
-    // get stats version
-    let (rows, _) = exec_rows(
-        sctx,
-        "select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1",
-        &[SqlArg::Signed(physical_id), SqlArg::Unsigned(snapshot)],
-    )?;
-    let Some(row) = rows.first() else {
-        missing("failed to get record of stats_history");
-        return Ok(None);
-    };
-    let stats_version = int64(row, 0);
-    // get stats
-    let (rows, _) = exec_rows(
-        sctx,
-        "select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no",
-        &[SqlArg::Signed(physical_id), SqlArg::Signed(stats_version)],
-    )?;
-    let blocks = rows
-        .iter()
-        .map(|row| {
-            row.first()
-                .and_then(Datum::as_raw_bytes)
-                .unwrap_or_default()
-                .to_vec()
-        })
-        .collect::<Vec<_>>();
-    let mut json_tbl =
-        blocks_to_json_table(&blocks).map_err(|error| Box::new(error) as tidb_sqlexec::SqlExecError)?;
-    json_tbl.count = count;
-    json_tbl.modify_count = modify_count;
-    json_tbl.is_historical_stats = true;
-    Ok(Some(json_tbl))
 }
 
 /// Go `storage.GenJSONTableFromStats`: converts one canonical full statistics
@@ -870,44 +720,6 @@ mod tests {
         let table = parse_stats_json("null").expect("null parses");
         assert_eq!(table.table_name, "");
         assert_eq!(table.version, 0);
-    }
-
-    /// Go `storage_test.TestJSONTableToBlocks`.
-    #[test]
-    fn json_table_blocks_round_trip() {
-        let source: JsonTable = serde_json::from_str(
-            r#"{
-                "database_name":"test",
-                "table_name":"t",
-                "columns":{"a":{"histogram":{"ndv":2,"buckets":[]},"stats_ver":2}},
-                "indices":{},
-                "count":6,
-                "modify_count":1,
-                "version":42,
-                "predicate_columns":[{"id":1,"last_used_at":"2026-08-29 00:00:00.000000"}]
-            }"#,
-        )
-        .expect("source JSON table");
-        let zero_histogram =
-            serde_json::to_value(JsonHistogram::default()).expect("zero histogram JSON");
-        assert_eq!(zero_histogram["ndv"], 0);
-        assert_eq!(
-            JsonColumn {
-                histogram: Some(JsonHistogram::default()),
-                cm_sketch: Some(JsonCmSketch::default()),
-                fm_sketch: Some(JsonFmSketch::default()),
-                ..JsonColumn::default()
-            }
-            .total_memory_usage(),
-            6
-        );
-        let blocks = json_table_to_blocks(&source, 30).expect("compress table");
-        assert!(blocks.len() > 1);
-        let converted = blocks_to_json_table(&blocks).expect("decompress table");
-        assert_eq!(
-            serde_json::to_value(converted).expect("converted JSON"),
-            serde_json::to_value(source).expect("source JSON")
-        );
     }
 
     /// Go `storage.GenJSONTableFromStats`: columns are converted to BLOB

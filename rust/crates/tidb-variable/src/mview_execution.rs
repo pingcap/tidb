@@ -17,6 +17,9 @@
 
 use tidb_vardef::{defaults, tidb_vars};
 
+use crate::error::VarError;
+use crate::SessionVars;
+
 /// Go master `MViewExecutionSessionVars`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MViewExecutionSessionVars {
@@ -229,4 +232,133 @@ pub struct MViewExecutionSessionVarAssignment {
     pub name: &'static str,
     pub value: String,
     pub failure_message: &'static str,
+}
+
+/// Go master `CaptureMViewExecutionSessionVars`.
+#[must_use]
+pub fn capture_m_view_execution_session_vars(vars: &SessionVars) -> MViewExecutionSessionVars {
+    MViewExecutionSessionVars::capture(|name| vars.get_system(name).ok())
+}
+
+/// Go master `CaptureAppliedMViewExecutionSessionVars`.
+#[must_use]
+pub fn capture_applied_m_view_execution_session_vars(vars: &SessionVars) -> MViewExecutionSessionVars {
+    MViewExecutionSessionVars::capture_applied(|name| vars.get_system(name).ok())
+}
+
+/// Go master `MViewExecutionSessionVarsApplyConfig`.
+#[derive(Clone, Copy, Default)]
+pub struct MViewExecutionSessionVarsApplyConfig {
+    pub maintain_mem_quota_var_name: &'static str,
+    pub maintain_isolation_read_engines_var_name: &'static str,
+    pub capture_applied_vars: Option<fn(&SessionVars) -> MViewExecutionSessionVars>,
+    pub best_effort: bool,
+    pub inject_apply_error: Option<fn(&str) -> Option<VarError>>,
+    pub on_apply_error: Option<fn(&str, &str, &VarError)>,
+    pub on_restore_error: Option<fn(&str, &str, &str, &VarError)>,
+}
+
+/// The restore closure Go master `ApplyMViewExecutionSessionVarsWithConfig`
+/// answers.
+#[must_use = "the session keeps the applied settings until it is restored"]
+pub struct MViewExecutionSessionVarsRestore {
+    origin: MViewExecutionSessionVars,
+    applied: MViewExecutionSessionVars,
+    maintain_mem_quota_var_name: &'static str,
+    maintain_isolation_read_engines_var_name: &'static str,
+    on_restore_error: Option<fn(&str, &str, &str, &VarError)>,
+}
+
+impl MViewExecutionSessionVarsRestore {
+    /// Runs the restore closure.
+    pub fn restore(self, vars: &mut SessionVars) {
+        restore_m_view_execution_session_vars(
+            vars,
+            &self.origin,
+            &self.applied,
+            self.maintain_mem_quota_var_name,
+            self.maintain_isolation_read_engines_var_name,
+            self.on_restore_error,
+        );
+    }
+}
+
+/// Go master `ApplyMViewExecutionSessionVarsWithConfig`: `target` applied
+/// onto the session, answered with the restore closure. In best-effort mode
+/// a variable that fails to apply keeps the session's value.
+///
+/// # Errors
+///
+/// A variable failed to apply (not best effort); the session is restored.
+pub fn apply_m_view_execution_session_vars_with_config(
+    vars: &mut SessionVars,
+    target: &MViewExecutionSessionVars,
+    cfg: MViewExecutionSessionVarsApplyConfig,
+) -> Result<MViewExecutionSessionVarsRestore, VarError> {
+    let capture_applied = cfg.capture_applied_vars.unwrap_or(capture_m_view_execution_session_vars);
+    let maintain_mem_quota_var_name = if cfg.maintain_mem_quota_var_name.is_empty() {
+        tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA
+    } else {
+        cfg.maintain_mem_quota_var_name
+    };
+    let maintain_isolation_read_engines_var_name = if cfg.maintain_isolation_read_engines_var_name.is_empty() {
+        tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES
+    } else {
+        cfg.maintain_isolation_read_engines_var_name
+    };
+
+    // "Always call SetSystemVar to synchronize the session-variable cache
+    // used by EncodeStates, even when the fields already match."
+    let origin = capture_applied(vars);
+    for assignment in target.assignments(maintain_mem_quota_var_name, maintain_isolation_read_engines_var_name) {
+        let mut error = cfg.inject_apply_error.and_then(|inject| inject(assignment.name));
+        if error.is_none() {
+            error = vars.set_system_var(assignment.name, assignment.value.clone()).err();
+        }
+        let Some(error) = error else { continue };
+        if !cfg.best_effort {
+            let current = capture_applied(vars);
+            restore_m_view_execution_session_vars(
+                vars,
+                &origin,
+                &current,
+                maintain_mem_quota_var_name,
+                maintain_isolation_read_engines_var_name,
+                cfg.on_restore_error,
+            );
+            return Err(error.annotate(assignment.failure_message));
+        }
+        if let Some(on_apply_error) = cfg.on_apply_error {
+            on_apply_error(assignment.name, &assignment.value, &error);
+        }
+    }
+
+    let applied = capture_applied(vars);
+    Ok(MViewExecutionSessionVarsRestore {
+        origin,
+        applied,
+        maintain_mem_quota_var_name,
+        maintain_isolation_read_engines_var_name,
+        on_restore_error: cfg.on_restore_error,
+    })
+}
+
+/// Go master `restoreMViewExecutionSessionVars`.
+fn restore_m_view_execution_session_vars(
+    vars: &mut SessionVars,
+    origin: &MViewExecutionSessionVars,
+    current: &MViewExecutionSessionVars,
+    maintain_mem_quota_var_name: &'static str,
+    maintain_isolation_read_engines_var_name: &'static str,
+    on_restore_error: Option<fn(&str, &str, &str, &VarError)>,
+) {
+    let origin_assignments = origin.assignments(maintain_mem_quota_var_name, maintain_isolation_read_engines_var_name);
+    let current_assignments = current.assignments(maintain_mem_quota_var_name, maintain_isolation_read_engines_var_name);
+    for (assignment, current) in origin_assignments.iter().zip(&current_assignments) {
+        if let Err(error) = vars.set_system_var(assignment.name, assignment.value.clone()) {
+            if let Some(on_restore_error) = on_restore_error {
+                on_restore_error(assignment.name, &assignment.value, &current.value, &error);
+            }
+        }
+    }
 }

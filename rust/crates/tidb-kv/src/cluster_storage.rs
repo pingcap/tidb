@@ -52,6 +52,18 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// other snapshot ignores the advice.
     fn advise_keep_for_update_ts(&mut self, _check_ts: bool) {}
 
+    /// Go `TxnManager.GetStmtForUpdateTS`: the statement's for-update
+    /// timestamp, fetched on the first call for a pessimistic statement
+    /// (repeatable read's `getForUpdateTs`) and the start timestamp
+    /// otherwise.
+    ///
+    /// # Errors
+    ///
+    /// The fresh timestamp could not be fetched.
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        Ok(self.start_ts())
+    }
+
     /// Binds the session's statement ctx values (Go `RUDetails` and
     /// resource-group taggers) to every read this snapshot serves.
     fn set_statement_kv_context(&mut self, _context: &tidb_txnkv::StatementKvContextCell) {}

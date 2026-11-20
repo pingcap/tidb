@@ -290,12 +290,12 @@ pub struct MetaUpdate {
 }
 
 /// Go `SaveMetaToStorage`: one batch upsert of `stats_meta` at the
-/// transaction's start TS, which it returns.
+/// transaction's start TS.
 pub fn save_meta_to_storage<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     refresh_last_hist_ver: bool,
     meta_updates: &[MetaUpdate],
-) -> Result<u64, SqlExecError> {
+) -> Result<(), SqlExecError> {
     let version = get_start_ts(sctx)?;
     let sql = if refresh_last_hist_ver {
         let values = meta_updates
@@ -329,16 +329,16 @@ pub fn save_meta_to_storage<C: StatsSessionContext + ?Sized>(
         )
     };
     exec(sctx, &sql, &[])?;
-    Ok(version)
+    Ok(())
 }
 
 /// Go `InsertTableStats2KV`: a new physical table's empty `stats_meta` row
-/// and one empty histogram row per column and index; returns the start TS.
+/// and one empty histogram row per column and index.
 pub fn insert_table_stats_2_kv<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     info: &TableInfo,
     physical_id: i64,
-) -> Result<u64, SqlExecError> {
+) -> Result<(), SqlExecError> {
     let start_ts = get_start_ts(sctx)?;
     exec(
         sctx,
@@ -371,19 +371,19 @@ pub fn insert_table_stats_2_kv<C: StatsSessionContext + ?Sized>(
             ],
         )?;
     }
-    Ok(start_ts)
+    Ok(())
 }
 
 /// Go `InsertColStats2KV`: an added (or modified) column's histogram row
 /// for a table that has statistics -- a NULL default counts every row as
 /// NULL, a non-NULL one is a single default-value bucket -- and the table
-/// re-versioned when any row was new; returns the start TS.
+/// re-versioned when any row was new.
 pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
     sctx: &C,
     table_name: &str,
     physical_id: i64,
     col_infos: &[ColumnInfo],
-) -> Result<u64, SqlExecError> {
+) -> Result<(), SqlExecError> {
     let start_ts = get_start_ts(sctx)?;
     // The table's count fixes the bucket's count and repeats.
     let (rows, _) = exec_rows(
@@ -393,7 +393,7 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
     )?;
     // No row: this table has no statistics.
     let Some(row) = rows.first() else {
-        return Ok(start_ts);
+        return Ok(());
     };
     let count = datum_i64(row.first());
     let mut has_stats_update = false;
@@ -465,7 +465,7 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
         )?;
     }
     if !has_stats_update {
-        return Ok(start_ts);
+        return Ok(());
     }
     exec(
         sctx,
@@ -476,5 +476,5 @@ pub fn insert_col_stats_2_kv<C: StatsSessionContext + ?Sized>(
             SqlArg::Signed(physical_id),
         ],
     )?;
-    Ok(start_ts)
+    Ok(())
 }

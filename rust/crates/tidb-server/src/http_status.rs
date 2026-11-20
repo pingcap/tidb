@@ -230,19 +230,13 @@ fn schema_storage_response(path: &str, storage: Option<&SchemaStorage>) -> Optio
 }
 
 /// Dumps one table's statistics as JSON (`db`, `table`, which dump).
-pub type StatsDump = Arc<dyn Fn(&str, &str, StatsDumpRequest<'_>) -> Result<String, String> + Send + Sync>;
+pub type StatsDump = Arc<dyn Fn(&str, &str, StatsDumpRequest) -> Result<String, String> + Send + Sync>;
 
 /// The dump a `/stats/dump` route asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StatsDumpRequest<'a> {
+pub enum StatsDumpRequest {
     /// Go `StatsHandler`: the latest statistics, `dumpPartitionStats`.
     Latest { dump_partition_stats: bool },
-    /// Go `StatsHistoryHandler`: the historical statistics as of the
-    /// `{snapshot}` time text.
-    Snapshot(&'a str),
-    /// Go `DumpHistoricalStatsBySnapshot` of the latest schema's table at a
-    /// TSO, as `handlePlanReplayerCaptureFile` asks for it.
-    HistoricalAt(u64),
 }
 
 /// Bind HTTP and generated gRPC routes on Go's shared status port.
@@ -867,6 +861,15 @@ struct DownloadFile {
 fn download_file_response(path: &str, routes: &StatusRoutes) -> Option<axum::response::Response> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let file = if let Some(name) = route.strip_prefix("/plan_replayer/dump/").filter(|name| !name.contains('/')) {
+        if name.starts_with("capture_replayer_") {
+            // Go: "Older TiDB versions used this prefix both for bundles
+            // with embedded statistics and for bundles that expected
+            // statistics to be injected at download time."
+            tidb_logutil::bg_logger().warn(
+                "legacy plan replayer capture file may have no statistics",
+                &[tidb_log::Field::new("filename", tidb_log::Value::Str(name.to_owned()))],
+            );
+        }
         DownloadFile {
             file_path: format!("{}/{name}", tidb_replayer::get_plan_replayer_dir_name()),
             file_name: name.to_owned(),
@@ -940,15 +943,6 @@ fn handle_download_file(file: &DownloadFile, is_forwarded: bool, routes: &Status
         let content = match storage.read_file(&ctx, &file.file_path) {
             Ok(content) => content,
             Err(error) => return write_error(error.to_string()),
-        };
-        // A capture_replayer file gets its historical statistics now.
-        let content = if file.downloaded_filename == "plan_replayer" && file.file_name.starts_with("capture_replayer") {
-            match handle_plan_replayer_capture_file(content, routes) {
-                Ok(content) => content,
-                Err(error) => return write_error(error),
-            }
-        } else {
-            content
         };
         log(
             "return dump file successfully",
@@ -1036,56 +1030,6 @@ fn handle_download_file(file: &DownloadFile, is_forwarded: bool, routes: &Status
         None,
         format!("can't find dump file {} in any remote server", file.file_name).into_bytes(),
     )
-}
-
-/// Go `handlePlanReplayerCaptureFile`: a capture_replayer archive gets each
-/// table's historical statistics as of its `startTS`.
-///
-/// Go's `loadSchemaMeta` takes each `schema_meta.txt` line as `db;table`,
-/// which no dump writes (`dumpSchemaMeta` writes `db.table;` entries, as
-/// `PLAN REPLAYER LOAD` reads them), so every such download fails there;
-/// the entries are read here the way the writer and `LOAD` agree on.
-fn handle_plan_replayer_capture_file(content: Vec<u8>, routes: &StatusRoutes) -> Result<Vec<u8>, String> {
-    let entries = tidb_replayer::zip::read_zip(&content).map_err(|error| error.to_string())?;
-    // Go `loadSQLMetaFile`.
-    let start_ts = match entries.iter().find(|(name, _)| name == tidb_domain::plan_replayer::dump_file::PLAN_REPLAYER_SQL_META_FILE) {
-        Some((_, meta)) => {
-            let meta: std::collections::BTreeMap<String, String> =
-                toml::from_str(&String::from_utf8_lossy(meta)).map_err(|error| error.to_string())?;
-            let start_ts = meta.get(tidb_domain::plan_replayer::sql_meta_key::START_TS).map_or("", String::as_str);
-            start_ts.parse::<u64>().map_err(|_| {
-                format!("strconv.ParseUint: parsing {}: invalid syntax", tidb_go_strconv::quote_bytes(start_ts.as_bytes()))
-            })?
-        }
-        None => 0,
-    };
-    if start_ts == 0 {
-        return Ok(content);
-    }
-    // Go `loadSchemaMeta`.
-    let schema_meta = format!("schema/{}", tidb_domain::plan_replayer::dump_file::PLAN_REPLAYER_SCHEMA_META_FILE);
-    let mut tables = std::collections::BTreeMap::new();
-    if let Some((_, meta)) = entries.iter().find(|(name, _)| *name == schema_meta) {
-        for entry in String::from_utf8_lossy(meta).split(['\n', ';']).filter(|entry| !entry.is_empty()) {
-            let (db, table) = entry.split_once('.').unwrap_or((entry, ""));
-            tables.insert((db.to_owned(), table.to_owned()), ());
-        }
-    }
-    let dump = routes.stats_dump.as_ref().ok_or_else(|| "this node has no statistics to dump".to_owned())?;
-    let mut stats = Vec::new();
-    for (db, table) in tables.keys() {
-        stats.push((format!("stats/{db}.{table}.json"), dump(db, table, StatsDumpRequest::HistoricalAt(start_ts))?));
-    }
-    // Go `dumpJSONStatsIntoZipInMemory`: the archive's files, then the stats.
-    let mut writer = tidb_replayer::zip::ZipWriter::new(Vec::new());
-    for (name, contents) in &entries {
-        writer.create_file(name, contents).map_err(|error| error.to_string())?;
-    }
-    for (name, json) in &stats {
-        writer.create_file(name, json.as_bytes()).map_err(|error| error.to_string())?;
-    }
-    writer.close().map_err(|error| error.to_string())?;
-    Ok(writer.into_inner())
 }
 
 /// Go `handler.WriteData`: `json.MarshalIndent(data, "", " ")`, which is the
@@ -1868,10 +1812,6 @@ fn txn_gc_states_response(
 fn stats_dump_response(path: &str, dump: Option<&StatsDump>) -> Option<Result<String, String>> {
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let parts: Vec<&str> = route.strip_prefix("/stats/dump/")?.split('/').collect();
-    if let [database, table, snapshot] = parts.as_slice() {
-        let dump = dump.ok_or_else(|| "this node has no statistics to dump".to_owned());
-        return Some(dump.and_then(|dump| dump(database, table, StatsDumpRequest::Snapshot(snapshot))));
-    }
     let [database, table] = parts.as_slice() else {
         return None;
     };
@@ -2609,20 +2549,20 @@ mod schema_route_tests {
     fn the_stats_dump_route_reads_its_names_and_flag() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let record = Arc::clone(&seen);
-        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest<'_>| {
+        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest| {
             record.lock().unwrap().push((db.to_owned(), table.to_owned(), format!("{request:?}")));
             Ok("{}".to_owned())
         });
         assert_eq!(stats_dump_response("/stats/dump/test/t", Some(&dump)).unwrap().unwrap(), "{}");
         stats_dump_response("/stats/dump/test/t?dumpPartitionStats=0", Some(&dump)).unwrap().unwrap();
-        // Go `StatsHistoryHandler`'s route: the third segment is the snapshot.
-        stats_dump_response("/stats/dump/test/t/20261105010203", Some(&dump)).unwrap().unwrap();
+        // Go master removed `StatsHistoryHandler`'s
+        // `/stats/dump/{db}/{table}/{snapshot}` route.
+        assert!(stats_dump_response("/stats/dump/test/t/20261105010203", Some(&dump)).is_none());
         assert_eq!(
             *seen.lock().unwrap(),
             [
                 ("test".to_owned(), "t".to_owned(), "Latest { dump_partition_stats: true }".to_owned()),
                 ("test".to_owned(), "t".to_owned(), "Latest { dump_partition_stats: false }".to_owned()),
-                ("test".to_owned(), "t".to_owned(), "Snapshot(\"20261105010203\")".to_owned()),
             ]
         );
         assert_eq!(
@@ -3043,7 +2983,7 @@ mod schema_route_tests {
     /// `encoding/json`'s HTML escapes.
     #[test]
     fn json_routes_write_gos_indented_data() {
-        let dump: StatsDump = Arc::new(|_: &str, _: &str, _: StatsDumpRequest<'_>| {
+        let dump: StatsDump = Arc::new(|_: &str, _: &str, _: StatsDumpRequest| {
             Ok(r#"{"table_name":"<t>","columns":{},"buckets":[1,2]}"#.to_owned())
         });
         let routes = StatusRoutes { stats_dump: Some(dump), ..StatusRoutes::default() };
@@ -3079,8 +3019,8 @@ mod schema_route_tests {
     }
 
     /// Go `handleDownloadFile`: a stored dump is served as a zip attachment;
-    /// a forwarded request for a missing one is 404; a capture_replayer
-    /// archive with a start TS gets each table's historical statistics.
+    /// a forwarded request for a missing one is 404; a legacy
+    /// capture_replayer archive downloads unchanged.
     #[test]
     fn dump_files_download_like_go() {
         let base = std::env::temp_dir().join(format!("status-download-{}", std::process::id()));
@@ -3096,7 +3036,7 @@ mod schema_route_tests {
         std::fs::write(base.join("replayer/capture_replayer_x_1.zip"), archive.into_inner()).unwrap();
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let record = Arc::clone(&seen);
-        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest<'_>| {
+        let dump: StatsDump = Arc::new(move |db: &str, table: &str, request: StatsDumpRequest| {
             record.lock().unwrap().push(format!("{db}.{table} {request:?}"));
             Ok(format!("{{\"table_name\":\"{table}\"}}"))
         });
@@ -3109,13 +3049,13 @@ mod schema_route_tests {
         assert_eq!(routed("/plan_replayer/dump/missing.zip?forward=true", &routes).0, 404);
         assert_eq!(routed("/optimize_trace/dump/missing.zip", &routes).0, 404);
 
+        // Go master: a legacy capture_replayer archive is served as stored
+        // (no statistics are injected at download time).
+        let stored = std::fs::read(base.join("replayer/capture_replayer_x_1.zip")).unwrap();
         let (code, _, body) = routed("/plan_replayer/dump/capture_replayer_x_1.zip", &routes);
         assert_eq!(code, 200);
-        let files: std::collections::BTreeMap<_, _> = tidb_replayer::zip::read_zip(&body).unwrap().into_iter().collect();
-        assert_eq!(files["stats/test.t1.json"], b"{\"table_name\":\"t1\"}");
-        assert_eq!(files["stats/test.t2.json"], b"{\"table_name\":\"t2\"}");
-        assert!(files.contains_key("sql_meta.toml"));
-        assert_eq!(*seen.lock().unwrap(), ["test.t1 HistoricalAt(42)", "test.t2 HistoricalAt(42)"]);
+        assert_eq!(body, stored);
+        assert!(seen.lock().unwrap().is_empty());
         tidb_planner_extstore::set_global_ext_storage_for_test(None);
         std::fs::remove_dir_all(&base).unwrap();
     }

@@ -260,7 +260,7 @@ impl ClusterServerSession<'_> {
         }
         let service = self.stats_statement_service();
         service
-            .load_stats(&json, self.session.historical_stats_enabled())
+            .load_stats(&json)
             .map_err(map_error)
     }
 

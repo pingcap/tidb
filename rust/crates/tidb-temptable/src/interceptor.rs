@@ -355,6 +355,10 @@ impl ClusterSnapshot for TemporaryTableSnapshotInterceptor {
         self.snap.advise_keep_for_update_ts(check_ts);
     }
 
+    fn stmt_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        self.snap.stmt_for_update_ts()
+    }
+
     fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
         self.snap.set_statement_kv_context(context);
     }

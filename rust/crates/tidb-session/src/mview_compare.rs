@@ -29,7 +29,7 @@ use tidb_model::{ColumnInfo, TableInfo};
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use crate::mview_refresh::{annotate, init_mview_session_vars, plain, read_refresh_info_snapshot, set_session_vars, sys_sql};
+use crate::mview_refresh::{annotate, plain, read_refresh_info_snapshot, set_session_vars, sys_sql};
 use crate::Session;
 
 const FP: &str = "github.com/pingcap/tidb/pkg/executor/";
@@ -365,8 +365,14 @@ impl Session {
         sql: &str,
     ) -> Result<(Vec<Vec<Datum>>, Vec<FieldType>), DriverError> {
         let mut sys = self.open_compare_materialized_view_snapshot_session(snapshot_ts)?;
-        set_session_vars(&mut sys, &init_mview_session_vars(mview))?;
-        sys.vars.in_mview_maintenance = true;
+        // Go `ddl.InitMViewSession(sessVars, mviewInfo, sessVars.CurrentDB,
+        // sessVars.ResourceGroupName)`; the snapshot session is discarded
+        // afterwards, which drops its restore.
+        let current_db = sys.vars.current_db.clone();
+        let resource_group = sys.vars.resource_group.clone();
+        let init = tidb_ddl::cluster_ddl::materialized_view::init_m_view_session(&mut sys.vars, mview, &current_db, &resource_group);
+        sys.take_var_warnings();
+        let _restore_definition_session = init.map_err(DriverError::Mysql)?;
         let context = tidb_sqlexec::BackgroundContext;
         let (rows, fields) = crate::domain::cluster_session_node::execute_internal_under(&mut sys, &context, sql)
             .map_err(|error| match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
@@ -504,7 +510,10 @@ impl Session {
         };
         // The query rows use the view's definition time zone, TIMESTAMP
         // values included.
-        let zone = init_mview_session_vars(mview).into_iter().filter(|(name, _)| name == "time_zone").collect::<Vec<_>>();
+        let zone = [(
+            "time_zone".to_owned(),
+            tidb_ddl::cluster_ddl::materialized_view::definition_time_zone_value(&mview.definition_time_zone),
+        )];
         if let Err(error) = set_session_vars(&mut session, &zone) {
             drop_compare_materialized_view_output_table(&mut ddl, output_schema, output_table);
             return Err(annotate(&error, "compare materialized view: invalid definition timezone"));

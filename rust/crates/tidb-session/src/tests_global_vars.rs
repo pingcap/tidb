@@ -920,38 +920,45 @@ fn the_partition_switches_are_always_on() {
     );
 }
 
-/// Pinned Go's validation closure warns on every assignment to the async
-/// global-statistics merge switch, for both session and global scope.
+/// Go master `TestRemovedFeatureVarsWarn` (`sysvar_test.go`): the variables
+/// of removed features stay as no-ops and warn on a value that had an effect
+/// before.
 #[test]
-fn async_global_stats_switch_warns_on_every_assignment() {
+fn test_removed_feature_vars_warn() {
     let (mut session, _peer, _globals) = two_sessions_sharing_globals();
-    let expected = vec![vec![
-        "Warning".to_owned(),
-        "1105".to_owned(),
-        "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future \
-         release; changing it is discouraged."
-            .to_owned(),
-    ]];
+    let warning = |message: &str| vec![vec!["Warning".to_owned(), "1105".to_owned(), message.to_owned()]];
+    let removed = "the historical statistics feature has been removed, so this will have no effect";
+    for name in ["tidb_enable_historical_stats", "tidb_enable_historical_stats_for_capture"] {
+        session.run(&format!("SET GLOBAL {name} = ON")).unwrap();
+        assert_eq!(row_text(session.run("SHOW WARNINGS")), warning(removed), "{name}");
+        assert_eq!(row_text(session.run(&format!("SELECT @@GLOBAL.{name}"))), vec![vec!["1".to_owned()]], "{name}");
+        // "Turning the switch off must not warn."
+        session.run(&format!("SET GLOBAL {name} = OFF")).unwrap();
+        assert!(row_text(session.run("SHOW WARNINGS")).is_empty(), "{name}");
+    }
 
-    session
-        .run("SET SESSION tidb_enable_async_merge_global_stats = OFF")
-        .unwrap();
-    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    // "No retention value has an effect, because TiDB no longer deletes the
+    // legacy rows."
+    session.run("SET GLOBAL tidb_historical_stats_duration = '24h'").unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), warning(removed));
+    assert_eq!(
+        row_text(session.run("SELECT @@GLOBAL.tidb_historical_stats_duration")),
+        vec![vec!["24h0m0s".to_owned()]]
+    );
 
-    session
-        .run("SET GLOBAL tidb_enable_async_merge_global_stats = ON")
-        .unwrap();
-    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
-
-    session
-        .run("SET SESSION tidb_enable_async_merge_global_stats = DEFAULT")
-        .unwrap();
-    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
-
-    session
-        .run("SET GLOBAL tidb_enable_async_merge_global_stats = DEFAULT")
-        .unwrap();
-    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+    // "The value is always ON, because TiDB now always merges asynchronously.
+    // Only OFF warns."
+    session.run("SET SESSION tidb_enable_async_merge_global_stats = OFF").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        warning("global statistics are always merged asynchronously, so this will have no effect")
+    );
+    assert_eq!(
+        row_text(session.run("SELECT @@SESSION.tidb_enable_async_merge_global_stats")),
+        vec![vec!["1".to_owned()]]
+    );
+    session.run("SET SESSION tidb_enable_async_merge_global_stats = ON").unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 }
 
 /// Go's statement-summary GLOBAL setters update the process-wide summary map

@@ -125,13 +125,8 @@ pub fn generate_plan_replayer_file<S: Storage + ?Sized>(
     storage: &S,
     is_capture: bool,
     is_continues_capture: bool,
-    enable_historical_stats_for_capture: bool,
 ) -> io::Result<(impl WriteCloser, String)> {
-    let file_name = generate_plan_replayer_file_name(
-        is_capture,
-        is_continues_capture,
-        enable_historical_stats_for_capture,
-    )?;
+    let file_name = generate_plan_replayer_file_name(is_capture, is_continues_capture)?;
     let path = Path::new(get_plan_replayer_dir_name()).join(&file_name);
     let writer = storage.create(&path)?;
     Ok((new_file_writer(writer), file_name))
@@ -141,7 +136,6 @@ pub fn generate_plan_replayer_file<S: Storage + ?Sized>(
 pub fn generate_plan_replayer_file_name(
     is_capture: bool,
     is_continues_capture: bool,
-    enable_historical_stats_for_capture: bool,
 ) -> io::Result<String> {
     let time = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_nanos() as i64,
@@ -150,10 +144,7 @@ pub fn generate_plan_replayer_file_name(
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|error| io::Error::other(error.to_string()))?;
     let key = URL_SAFE.encode(bytes);
-    if is_continues_capture || is_capture && enable_historical_stats_for_capture {
-        return Ok(format!("capture_replayer_{key}_{time}.zip"));
-    }
-    if is_capture && !enable_historical_stats_for_capture {
+    if is_capture || is_continues_capture {
         return Ok(format!("capture_normal_replayer_{key}_{time}.zip"));
     }
     Ok(format!("replayer_{key}_{time}.zip"))

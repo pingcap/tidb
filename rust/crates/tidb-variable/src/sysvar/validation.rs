@@ -1822,7 +1822,9 @@ pub(super) fn tidb_auto_analyze_partition_batch_size(
     Ok(validated)
 }
 
-/// Go `tidb_enable_async_merge_global_stats`'s `Validation`: the deprecation warning it appends.
+/// Go master `tidb_enable_async_merge_global_stats`'s `Validation`: global
+/// statistics are always merged asynchronously, so the value is always ON
+/// and OFF warns.
 pub(super) fn tidb_enable_async_merge_global_stats(
     def: &SysVarDef,
     validated: Validated,
@@ -1830,9 +1832,54 @@ pub(super) fn tidb_enable_async_merge_global_stats(
     scope: u8,
     lookup: Lookup<'_>,
 ) -> Result<Validated, ValidationError> {
-    warn(lookup, None, "The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged.");
+    if !tidb_vardef::option_values::tidb_opt_on(&validated.value) {
+        warn(lookup, None, "global statistics are always merged asynchronously, so this will have no effect");
+    }
+    Ok(Validated { value: "ON".to_owned(), ..validated })
+}
+
+/// Go master `tidb_enable_async_merge_global_stats`'s `GetSession` /
+/// `GetGlobal`: ON, whatever `upgradeToVer177` persisted on an upgraded
+/// cluster (persisted values are read without `Validation`).
+pub(crate) fn always_on() -> String {
+    "ON".to_owned()
+}
+
+/// [`always_on`] as a `GetSession` hook.
+pub(crate) fn always_on_session(_: &crate::vars::SessionVars) -> Result<String, crate::vars::VarError> {
+    Ok(always_on())
+}
+
+/// Go master `tidb_enable_historical_stats` /
+/// `tidb_enable_historical_stats_for_capture`'s `Validation`: the feature
+/// is removed, so ON warns.
+pub(super) fn historical_stats_switch_removed(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    if tidb_vardef::option_values::tidb_opt_on(&validated.value) {
+        warn(lookup, None, HISTORICAL_STATS_REMOVED);
+    }
     Ok(validated)
 }
+
+/// Go master `tidb_historical_stats_duration`'s `Validation`: no retention
+/// has an effect, because TiDB no longer deletes the legacy rows.
+pub(super) fn tidb_historical_stats_duration(
+    def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    scope: u8,
+    lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    warn(lookup, None, HISTORICAL_STATS_REMOVED);
+    Ok(validated)
+}
+
+const HISTORICAL_STATS_REMOVED: &str = "the historical statistics feature has been removed, so this will have no effect";
 
 /// Go `tidb_index_lookup_concurrency`'s `Validation`: the deprecation warning it appends.
 pub(super) fn tidb_index_lookup_concurrency(
@@ -1983,25 +2030,6 @@ pub(super) fn tidb_enforce_mpp(
     if validated.value == "ON" && lookup.and_then(|cx| cx.read("tidb_allow_mpp")).as_deref() != Some("ON") {
         return Err(ValidationError::WrongValueWith(
             "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
-        ));
-    }
-    Ok(validated)
-}
-
-/// Go `tidb_enable_plan_replayer_continuous_capture`'s `Validation`: ON needs
-/// the GLOBAL `tidb_enable_historical_stats`.
-pub(super) fn tidb_enable_plan_replayer_continuous_capture(
-    def: &SysVarDef,
-    validated: Validated,
-    original: &str,
-    scope: u8,
-    lookup: Lookup<'_>,
-) -> Result<Validated, ValidationError> {
-    if validated.value == "ON"
-        && lookup.and_then(|cx| cx.read("tidb_enable_historical_stats")).as_deref() != Some("ON")
-    {
-        return Err(ValidationError::Refused(
-            "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture".to_owned(),
         ));
     }
     Ok(validated)

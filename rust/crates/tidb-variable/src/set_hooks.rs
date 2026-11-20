@@ -86,6 +86,19 @@ impl SessionVars {
         Ok(())
     }
 
+    /// Go `SessionVars.SetSystemVarWithOldStateAsRet`: [`Self::set_system_var`]
+    /// answering the value the variable read before (Go's
+    /// `GetSessionOrGlobalSystemVar`).
+    ///
+    /// # Errors
+    ///
+    /// The variable is unknown, or [`Self::set_system_var`] refuses the value.
+    pub fn set_system_var_with_old_state_as_ret(&mut self, name: &str, value: String) -> Result<String, VarError> {
+        let old = self.get_system(name)?;
+        self.set_system_var(name, value)?;
+        Ok(old)
+    }
+
     /// Go `GlobalVarsAccessor.SetGlobalSysVar` as a `SET GLOBAL` runs it,
     /// up to the store: `Validation` (Go's `require_secure_transport` closure
     /// included) and the GLOBAL table.

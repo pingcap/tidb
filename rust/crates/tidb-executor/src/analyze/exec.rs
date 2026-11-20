@@ -108,7 +108,6 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         self.flush_stats_delta_for_analyze(&column_task_tables, service)?;
         let memory_quota = self.analyze_memory_quota();
         self.begin_routed_statement_warnings();
-        let mut successful_table_ids = BTreeSet::new();
         let mut cache_update_physical_ids: Option<Vec<i64>> = None;
         let mut local_temporary_tables = Vec::new();
         for statement in tables {
@@ -119,21 +118,13 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             statement.local_temporary_table = self.local_temporary_table(&statement)?;
             local_temporary_tables.extend(statement.local_temporary_table.clone());
             let statement = &statement;
-            let analyzed = service.execute(statement, self.historical_stats_enabled());
+            let analyzed = service.execute(statement);
             self.drain_context_warnings(&statement.eval_context);
             let report = analyzed?;
             self.append_analyze_report_warnings(statement, &report);
-            successful_table_ids.extend(report.historical_stats_table_ids());
             cache_update_physical_ids
                 .get_or_insert_with(Vec::new)
                 .extend_from_slice(report.cache_update_physical_ids());
-        }
-        // Go collects `results.TableID.GetStatisticsID()` only from successful
-        // results and enqueues that set after every save worker has finished.
-        if self.historical_stats_enabled() {
-            for table_id in successful_table_ids {
-                service.dump_historical_stats(table_id);
-            }
         }
         // Go ends `AnalyzeExec.Next` with `return statsHandle.Update(...)`, so
         // a failed cache update fails the statement although every table's
@@ -278,12 +269,6 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         ids
     }
 
-    fn historical_stats_enabled(&self) -> bool {
-        self.session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
-            .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-    }
-
     /// The statement with the options Go reads from session variables when
     /// it builds the analyze plan.
     fn analyze_statement_with_session_options(
@@ -321,8 +306,6 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             on(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS);
         statement.enable_ddl_analyze_exec_opt = self.session_vars().enable_ddl_analyze_exec_opt;
         statement.analyze_snapshot = on(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT);
-        statement.enable_async_merge_global_stats =
-            on(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS);
         statement.partition_merge_concurrency = self
             .session_vars()
             .get_system(tidb_vardef::tidb_vars::TIDB_MERGE_PARTITION_STATS_CONCURRENCY)
@@ -404,11 +387,7 @@ pub trait AnalyzeService {
     /// deltas for before sampling (`collectStatsDeltaFlushObjectsForAnalyze`).
     fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool;
     /// Runs and persists one table's analysis.
-    fn execute(
-        &self,
-        statement: &AnalyzeStatement,
-        historical_stats_enabled: bool,
-    ) -> Result<ClusterAnalyzeReport, DriverError>;
+    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, DriverError>;
     /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
     /// tableAndPartitionIDs...)` over every analyzed table's physical ids;
     /// its failure is the statement's error. `local_temporary_tables` are
@@ -419,8 +398,6 @@ pub trait AnalyzeService {
         physical_ids: &[i64],
         local_temporary_tables: &[tidb_model::GoShared<tidb_model::TableInfo>],
     ) -> Result<(), DriverError>;
-    /// Queues one successful table for the historical-stats dump.
-    fn dump_historical_stats(&self, table_id: i64);
 }
 
 /// Go `collectStatsDeltaFlushObjectsForAnalyze`: the database-qualified

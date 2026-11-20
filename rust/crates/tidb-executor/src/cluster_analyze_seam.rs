@@ -52,7 +52,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use crate::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use crate::real_tikv_analyze::{
-    commit_cluster_analyze, record_global_history_enabled, resolve_cluster_analyze_statement,
+    commit_cluster_analyze, resolve_cluster_analyze_statement,
     save_analyze_options, AnalyzeJobLifecycle, ClusterAnalyzeReport,
 };
 use tidb_pdhelper::ApproximateTableCountProvider;
@@ -82,7 +82,6 @@ pub trait ClusterAnalyze: Send + Sync {
         resource_group: &str,
         approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
-        historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError>;
@@ -104,7 +103,6 @@ pub trait ClusterAnalyze: Send + Sync {
     fn load_stats(
         &self,
         _json: &tidb_stats_util::JsonTable,
-        _historical_stats_enabled: bool,
         _stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         Err(SqlQueryError::unknown(
@@ -229,7 +227,6 @@ where
         resource_group: &str,
         approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
-        historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn AnalyzeJobLifecycle,
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterAnalyzeReport, SqlQueryError> {
@@ -243,17 +240,6 @@ where
             stats_pool,
         )
         .map_err(cluster_analyze_error)?;
-        let logical_table_id = statement.logical_table_id();
-        let record_history = || historical_stats_enabled();
-        let record_global_history = || {
-            let initialized = self
-                .stats
-                .load()
-                .get(&logical_table_id)
-                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
-                .is_some_and(|table| table.is_initialized());
-            record_global_history_enabled(record_history(), initialized)
-        };
         let mut report = commit_cluster_analyze(
             &self.opener,
             &statement,
@@ -261,8 +247,6 @@ where
             self.timeout,
             self.stats_lease,
             killer,
-            &record_history,
-            &record_global_history,
             jobs,
             stats_pool,
         )
@@ -286,33 +270,14 @@ where
     fn load_stats(
         &self,
         json: &tidb_stats_util::JsonTable,
-        historical_stats_enabled: bool,
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
-        let current = self.stats.load();
-        // Go `RecordHistoricalStatsMeta` through the stats handle; failures
-        // are logged and ignored there, and ignored here.
-        let record_history = |table_id: i64, version: u64, source: &str| {
-            tidb_stats_handle_history::history_stats::record_historical_stats_meta_on(
-                stats_pool,
-                version,
-                source,
-                &[table_id],
-            );
-        };
         let report = commit_cluster_load_stats(
             &self.opener,
             stats_pool,
             json,
             self.timeout,
             self.stats_lease,
-            historical_stats_enabled.then_some(&record_history as &(dyn Fn(i64, u64, &str) + Sync)),
-            |table_id| {
-                current
-                    .get(&table_id)
-                    .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
-                    .is_some()
-            },
             0,
         )
         .map_err(cluster_load_stats_error)?;

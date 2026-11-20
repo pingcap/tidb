@@ -36,9 +36,7 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
 use tidb_domain_core::domain::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
-use super::super::{
-    ClusterHistoricalStatsHandle, ClusterPriorityQueueSource, Domain, Session,
-};
+use super::super::{ClusterPriorityQueueSource, Domain, Session};
 use super::node_fixture::{rows, session_context, ABC_HASH};
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
@@ -2403,43 +2401,6 @@ fn handle_stats_schema_change(session: &mut Session, event: &SchemaChangeEvent) 
     .unwrap_or_else(|error| panic!("stats subscriber handles the source event: {error}"));
 }
 
-/// Go `UpdateSCtxVarsForStats` copies the GLOBAL-only
-/// `tidb_enable_historical_stats` onto the statistics session as the field
-/// `SessionVars.EnableHistoricalStats`. Writing it as a session variable
-/// instead failed (and was ignored) on every statistics read, its error
-/// capturing a native backtrace -- enough to push sync loads past Go's 100 ms
-/// wait.
-#[test]
-fn statistics_sessions_copy_global_historical_stats_as_a_field_as_go() {
-    let (stack, _users) = cop_backed_stack();
-    let mut session = stack.factory.open_session(session_context(19011)).unwrap();
-    let pool = stack.factory.advanced_sys_session_pool();
-    let read = || {
-        let mut enabled = None;
-        tidb_stats_handle_util::call_with_sctx(
-            pool.as_ref(),
-            |sctx| {
-                let context = sctx
-                    .as_any()
-                    .downcast_ref::<super::super::sessions::ClusterStatsSessionContext>()
-                    .expect("native statistics session");
-                enabled = Some(context.with_session(|session| {
-                    Ok(session.session.vars.enable_historical_stats)
-                })?);
-                Ok(())
-            },
-            &[],
-        )
-        .unwrap();
-        enabled.unwrap()
-    };
-    assert!(!read());
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    assert!(read());
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
-    assert!(!read());
-}
-
 // Go statistics DDL tests explicitly HandleNextDDLEventWithTxn before reading
 // statistics. This fixture does not campaign the background statistics owner.
 fn drain_stats_ddl_events(factory: &Arc<Domain>, session: &mut Session) {
@@ -3103,7 +3064,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
-        historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
@@ -3134,7 +3094,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
             resource_group,
             approximate_counts,
             killer,
-            historical_stats_enabled,
             jobs,
             stats_pool,
         )
@@ -3166,7 +3125,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
-        historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
@@ -3191,7 +3149,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
             resource_group,
             approximate_counts,
             killer,
-            historical_stats_enabled,
             jobs,
             stats_pool,
         )
@@ -6300,13 +6257,12 @@ fn uninitialized_statistics_remain_hidden_and_pseudo() {
     }
 }
 
-/// Go's blocking global-stats merge (`tidb_enable_async_merge_global_stats =
-/// OFF`, `MergePartitionStats2GlobalStats`): each partition's statistics are
-/// `statsReadWriter.LoadTablePartitionStats` on a statistics session, so a
-/// re-analyzed partition merges with the others' stored rows. Expected rows
-/// from a Go node.
+/// Go's global-stats merge (`AsyncMergePartitionStats2GlobalStats`; Go
+/// master removed the blocking one, so `tidb_enable_async_merge_global_stats
+/// = OFF` changes nothing): a re-analyzed partition merges with the others'
+/// stored rows. Expected rows from a Go node.
 #[test]
-fn blocking_global_stats_merge_reads_partitions_like_go() {
+fn global_stats_merge_reads_partitions_like_go() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
@@ -6531,8 +6487,6 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     rows(&mut session, "CREATE TABLE replayed (a INT, b INT, INDEX ia(a))");
     rows(&mut session, "INSERT INTO replayed VALUES (1, 1), (2, 2)");
     rows(&mut session, "ANALYZE TABLE replayed");
-    // Go `dumpSQLMeta` writes the live `vardef.EnableHistoricalStatsForCapture`.
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats_for_capture = ON");
     let answer = displayed(rows(&mut session, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM replayed WHERE a = 1"));
     assert_eq!(answer.len(), 1);
     assert_eq!(answer[0][0], "File token");
@@ -6562,7 +6516,7 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     }
     let text = |name: &str| String::from_utf8(files[name].clone()).unwrap();
     assert_eq!(text("sql/sql0.sql"), "SELECT * FROM replayed WHERE a = 1");
-    assert!(text("sql_meta.toml").contains("enableHistoricalStats = \"true\""), "{}", text("sql_meta.toml"));
+    assert!(!text("sql_meta.toml").contains("enableHistoricalStats"), "{}", text("sql_meta.toml"));
     assert!(text("schema/test.replayed.schema.txt").starts_with("create database if not exists `test`; use `test`;CREATE TABLE `replayed`"));
     assert!(text("explain.txt").contains("IndexLookUp") || text("explain.txt").contains("Reader"), "{}", text("explain.txt"));
     let stats: serde_json::Value = serde_json::from_slice(&files["stats/test.replayed.json"]).unwrap();
@@ -6586,73 +6540,23 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
-/// Go `calcTSForPlanReplayer` (`TestDumpPlanReplayerAPIWithHistoryStats`):
-/// `WITH STATS AS OF TIMESTAMP` takes a TSO, else a date/time in the
-/// session zone, records it as `historicalStatsTS` and dumps the statistics
-/// as of it, falling back to the latest with Go's message; with historical
-/// statistics off the dump fails as Go's does, and NULL dumps the latest.
+/// Go master `TestPlanReplayer`: the legacy `WITH STATS AS OF TIMESTAMP`
+/// syntax still parses, but its execution is refused because the historical
+/// statistics feature has been removed.
 #[test]
-fn plan_replayer_dump_with_stats_as_of_timestamp_runs_gos_calc() {
-    let base = std::env::temp_dir().join(format!("plan-replayer-as-of-{}", std::process::id()));
-    tidb_planner_extstore::set_global_ext_storage_for_test(Some(Arc::new(
-        tidb_objstore::LocalStorage::new(&base.to_string_lossy()).unwrap(),
-    )));
+fn plan_replayer_dump_with_stats_as_of_timestamp_is_refused() {
     let (stack, _users) =
         cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack.factory.open_session(session_context(78)).expect("session opens");
     rows(&mut session, "USE test");
-    rows(&mut session, "SET time_zone = '+00:00'");
     rows(&mut session, "CREATE TABLE t (a INT, b INT, INDEX ia(a))");
-    rows(&mut session, "INSERT INTO t VALUES (1, 1), (2, 2)");
-    rows(&mut session, "ANALYZE TABLE t");
-    let dump = |session: &mut Session, ts: &str| -> std::collections::BTreeMap<String, Vec<u8>> {
-        let answer = displayed(rows(
-            session,
-            &format!("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP {ts} EXPLAIN SELECT * FROM t WHERE a > 1"),
-        ));
-        let archive = std::fs::read(base.join("replayer").join(&answer[0][1])).expect("the archive is written");
-        tidb_replayer::zip::read_zip(&archive).unwrap().into_iter().collect()
-    };
-    let text = |files: &std::collections::BTreeMap<String, Vec<u8>>, name: &str| {
-        files.get(name).map(|bytes| String::from_utf8(bytes.clone()).unwrap())
-    };
-
-    // first, treat it as a TSO: with historical stats off, Go's
-    // `DumpHistoricalStatsBySnapshot` refuses.
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
-    let tso = tikv_client::oracle::compose_ts(1_700_000_000_000, 0);
     let error = session
-        .run(&format!("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP {tso} EXPLAIN SELECT * FROM t"))
+        .run("plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a=10")
         .unwrap_err();
-    assert_eq!(error.to_mysql_error().message, "tidb_enable_historical_stats should be enabled");
-
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    let files = dump(&mut session, &format!("'{tso}'"));
-    let meta = text(&files, "sql_meta.toml").unwrap();
-    assert!(meta.contains(&format!("historicalStatsTS = \"{tso}\"")), "{meta}");
     assert_eq!(
-        text(&files, "errors.txt").as_deref(),
-        Some("Historical stats for test.t are unavailable, fallback to latest stats\n")
+        error.to_mysql_error().message,
+        "WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics"
     );
-
-    // if failed, treat it as a date/time, in the session's zone.
-    let files = dump(&mut session, "'2023-11-14 22:13:20.5'");
-    let expected = tikv_client::oracle::compose_ts(1_700_000_000_500, 0);
-    let meta = text(&files, "sql_meta.toml").unwrap();
-    assert!(meta.contains(&format!("historicalStatsTS = \"{expected}\"")), "{meta}");
-    rows(&mut session, "SET time_zone = '+08:00'");
-    let files = dump(&mut session, "'2023-11-15 06:13:20.5'");
-    let meta = text(&files, "sql_meta.toml").unwrap();
-    assert!(meta.contains(&format!("historicalStatsTS = \"{expected}\"")), "{meta}");
-
-    // mustn't be NULL: the latest statistics, no recorded TS.
-    let files = dump(&mut session, "NULL");
-    let meta = text(&files, "sql_meta.toml").unwrap();
-    assert!(!meta.contains("historicalStatsTS"), "{meta}");
-    assert_eq!(text(&files, "errors.txt"), None);
-
-    tidb_planner_extstore::set_global_ext_storage_for_test(None);
-    std::fs::remove_dir_all(&base).unwrap();
 }
 
 /// Go `TestIssue46197`: `PLAN REPLAYER DUMP EXPLAIN 'file'` asks the client
@@ -7014,7 +6918,6 @@ fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
 
     // Go `checkPlanReplayerContinuesCapture`: every SELECT/DML sends once per
     // key; other statements send nothing.
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
     rows(&mut session, "SET @@tidb_enable_plan_replayer_continuous_capture = ON");
     let continuous = "SELECT b FROM captured WHERE a = 2";
     rows(&mut session, continuous);
@@ -7034,7 +6937,7 @@ fn plan_replayer_capture_dumps_a_matching_statement_and_gc_expires_files() {
         assert!(std::time::Instant::now() < deadline, "no continuous capture status record");
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
-    assert!(token.starts_with("capture_replayer_"), "{token}");
+    assert!(token.starts_with("capture_normal_replayer_"), "{token}");
     // The GC lease passes: expired files go, fresh ones stay.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while base.join(&old_dump).exists() || base.join(&old_extract).exists() {
@@ -7232,236 +7135,6 @@ fn dump_stats_to_json_follows_gos_partition_rules() {
     assert_eq!(keys(false), ["global", "p0", "p1"]);
 }
 
-/// Pinned `TestRecordHistoryStatsAfterAnalyze`: the global switch suppresses
-/// task creation while off; once enabled, a successful ANALYZE posts its
-/// physical ID and the domain dump path writes canonical blocks to
-/// `mysql.stats_history`.
-#[test]
-fn analyze_records_historical_stats_through_the_domain_worker() {
-    let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
-    let mut session = stack
-        .factory
-        .open_session(session_context(75))
-        .expect("session opens");
-    rows(&mut session, "USE test");
-    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
-    rows(
-        &mut session,
-        "CREATE TABLE history_analyze (a INT, b VARCHAR(10), INDEX idx(a, b))",
-    );
-
-    rows(
-        &mut session,
-        "SET GLOBAL tidb_enable_historical_stats = OFF",
-    );
-    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
-    assert_eq!(
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
-    );
-
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    rows(&mut session, "ANALYZE TABLE history_analyze WITH 2 TOPN");
-    let table_id = session
-        .node()
-        .domain()
-        .historical_stats_worker
-        .get_one_historical_stats_table();
-    assert!(table_id > 0, "a successful ANALYZE posts its table ID");
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&stack.factory.transactions),
-        catalog: Arc::clone(&stack.factory.catalog),
-        global_vars: stack.factory.global_vars.clone(),
-        auto_ids: Arc::clone(&stack.factory.auto_ids),
-        domain: Arc::downgrade(&stack.factory),
-    };
-    session
-        .node()
-        .domain()
-        .historical_stats_worker
-        .dump_historical_stats(
-            table_id,
-            &handle,
-            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
-        )
-        .expect("historical statistics dump succeeds");
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
-        )),
-        [["1"]]
-    );
-    // Go `RecordHistoricalStatsToStorage` stores the dump's version: the
-    // table's statistics version, which its ANALYZE history row also names.
-    let version_of = |session: &mut Session, table: &str| {
-        displayed(rows(
-            session,
-            &format!("SELECT max(version) FROM mysql.{table} WHERE table_id = {table_id}"),
-        ))
-    };
-    assert_eq!(version_of(&mut session, "stats_history"), version_of(&mut session, "stats_meta"));
-    assert_eq!(version_of(&mut session, "stats_history"), version_of(&mut session, "stats_meta_history"));
-    let catalog = stack.factory.catalog.get_latest();
-    let (_, table) = catalog
-        .table_info_by_name("test", "history_analyze")
-        .expect("analyzed table remains published");
-    let table = table.clone();
-    let table = table.read();
-    drop(catalog);
-    let (historical, fallbacks) = stack
-        .factory
-        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-        .expect("historical statistics reload succeeds");
-    assert!(fallbacks.is_empty(), "unexpected fallbacks: {fallbacks:?}");
-    let historical = historical.expect("historical statistics exist");
-    assert!(historical.is_historical_stats);
-
-    // Go `TableHistoricalStatsToJSON` picks the metadata and the dump
-    // versions on their own: a newer metadata row (a delta flush) lays its
-    // counts over the older dump.
-    rows(
-        &mut session,
-        &format!(
-            "INSERT INTO mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) \
-             SELECT table_id, 7, 17, version + 10, 'flush stats', NOW(6) FROM mysql.stats_meta_history \
-             WHERE table_id = {table_id} ORDER BY version DESC LIMIT 1"
-        ),
-    );
-    let (overlaid, _) = stack
-        .factory
-        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-        .expect("historical statistics reload succeeds");
-    let overlaid = overlaid.expect("historical statistics exist");
-    assert_eq!((overlaid.count, overlaid.modify_count), (17, 7));
-    assert_eq!(overlaid.version, historical.version);
-}
-
-/// Pinned `TestGCOutdatedHistoryStats`: the global retention duration drives
-/// explicit historical metadata and payload cleanup.
-#[test]
-fn clear_outdated_history_stats_uses_the_go_retention_duration() {
-    const TIMEZONE_TEST: &str = "TIDB_HISTORY_GC_TIMEZONE_TEST";
-    if std::env::var_os(TIMEZONE_TEST).is_none() {
-        let thread = std::thread::current();
-        let name = thread.name().expect("named test thread");
-        // Each child initializes its local clock in this zone without changing
-        // the environment beneath other concurrently running tests.
-        for timezone in ["UTC", "Asia/Shanghai", "America/Los_Angeles"] {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", name, "--nocapture"])
-                .env(TIMEZONE_TEST, "1")
-                .env("TZ", timezone)
-                .output()
-                .expect("start history GC timezone test");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(
-                output.status.success() && stdout.contains("1 passed; 0 failed"),
-                "history GC in {timezone}: {stdout}\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        return;
-    }
-    let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
-    let mut session = stack
-        .factory
-        .open_session(session_context(78))
-        .expect("session opens");
-    rows(&mut session, "USE test");
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    rows(&mut session, "CREATE TABLE history_gc (a INT)");
-    rows(&mut session, "ANALYZE TABLE history_gc");
-    let table_id = session
-        .node()
-        .domain()
-        .historical_stats_worker
-        .get_one_historical_stats_table();
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&stack.factory.transactions),
-        catalog: Arc::clone(&stack.factory.catalog),
-        global_vars: stack.factory.global_vars.clone(),
-        auto_ids: Arc::clone(&stack.factory.auto_ids),
-        domain: Arc::downgrade(&stack.factory),
-    };
-    session
-        .node()
-        .domain()
-        .historical_stats_worker
-        .dump_historical_stats(
-            table_id,
-            &handle,
-            &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
-        )
-        .expect("historical statistics dump succeeds");
-    // A delta flush records its own metadata history row (Go
-    // `RecordHistoricalStatsMeta(..., "flush stats", ...)`), which the
-    // expiry below must delete through Go's statements like the others.
-    rows(&mut session, "INSERT INTO history_gc VALUES (1)");
-    stack
-        .factory
-        .dump_stats_delta_to_kv(true, &[])
-        .expect("the delta flush succeeds");
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            &format!("SELECT count(*) FROM mysql.stats_meta_history WHERE table_id = {table_id} AND source = 'flush stats'"),
-        )),
-        [["1"]]
-    );
-    for (table, count) in [("stats_meta_history", "2"), ("stats_history", "1")] {
-        assert_eq!(
-            displayed(rows(
-                &mut session,
-                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
-            )),
-            [[count]]
-        );
-    }
-
-    rows(
-        &mut session,
-        "SET GLOBAL tidb_historical_stats_duration = '1h'",
-    );
-    stack
-        .factory
-        .clear_outdated_history_stats()
-        .expect("fresh history survives GC");
-    for (table, count) in [("stats_meta_history", "2"), ("stats_history", "1")] {
-        assert_eq!(
-            displayed(rows(
-                &mut session,
-                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}")
-            )),
-            [[count]]
-        );
-    }
-    rows(
-        &mut session,
-        "SET GLOBAL tidb_historical_stats_duration = '1s'",
-    );
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    stack
-        .factory
-        .clear_outdated_history_stats()
-        .expect("historical statistics GC succeeds");
-    for table in ["stats_meta_history", "stats_history"] {
-        assert_eq!(
-            displayed(rows(
-                &mut session,
-                &format!("SELECT count(*) FROM mysql.{table} WHERE table_id = {table_id}"),
-            )),
-            [["0"]]
-        );
-    }
-}
-
 #[test]
 fn stats_gc_runs_periodically_only_after_ownership_is_acquired() {
     // Go `UpdateTableStatsLoop` campaigns the statistics owner at boot only
@@ -7621,27 +7294,6 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
         vec![vec!["1".to_owned()]]
     );
 
-    // Go `gcHistoryStatsFromKV`: the dropped table's history goes with it.
-    let table_id = displayed(rows(
-        &mut session,
-        "SELECT tidb_table_id FROM information_schema.tables WHERE table_schema = 'test' AND table_name = 'stats_gc_t'",
-    ))[0][0]
-        .clone();
-    rows(
-        &mut session,
-        &format!("INSERT INTO mysql.stats_meta_history (table_id, modify_count, count, version, source, create_time) VALUES ({table_id}, 0, 3, 1, 'analyze', NOW(6))"),
-    );
-    rows(
-        &mut session,
-        &format!("INSERT INTO mysql.stats_history (table_id, stats_data, seq_no, version, create_time) VALUES ({table_id}, 'x', 0, 1, NOW(6))"),
-    );
-    let history_count = |session: &mut Session| {
-        displayed(rows(
-            session,
-            &format!("SELECT (SELECT count(*) FROM mysql.stats_meta_history WHERE table_id = {table_id}) + (SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id})"),
-        ))
-    };
-    assert_eq!(history_count(&mut session), [["2"]]);
     rows(&mut session, "DROP TABLE stats_gc_t");
     // Embedded DDL and GC can share one physical millisecond. Go's TSO has a
     // positive logical component while GC's wall-clock TSO has zero, so wait
@@ -7658,7 +7310,6 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
         )),
         vec![vec!["0".to_owned()]]
     );
-    assert_eq!(history_count(&mut session), [["0"]]);
     assert_eq!(
         displayed(rows(&mut session, "SELECT count(*) FROM mysql.stats_meta")),
         vec![vec!["1".to_owned()]]
@@ -7899,9 +7550,7 @@ fn latest_stats_dump_reads_the_analyzed_histograms_as_go() {
     rows(&mut session, "SET SESSION tidb_analyze_version = 2");
     rows(&mut session, "CREATE TABLE dump_latest (a INT, INDEX idx(a))");
     rows(&mut session, "INSERT INTO dump_latest VALUES (1),(1),(1),(2),(2),(3),(4)");
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = OFF");
     rows(&mut session, "ANALYZE TABLE dump_latest WITH 2 TOPN");
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
     // A newer meta version than the cached table's: only Go's second read
     // (`StatsMetaByTableIDFromStorage`) sees it.
     rows(
@@ -7916,12 +7565,11 @@ fn latest_stats_dump_reads_the_analyzed_histograms_as_go() {
     let table = table.clone();
     let table = table.read();
     drop(catalog);
-    let (latest, fallbacks) = stack
+    let latest = stack
         .factory
-        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-        .expect("latest statistics fallback succeeds");
-    assert_eq!(fallbacks, ["test.dump_latest"]);
-    let latest = latest.expect("latest statistics exist");
+        .dump_stats_to_json("test", &table, true)
+        .expect("latest statistics dump succeeds")
+        .expect("latest statistics exist");
     assert_eq!(latest.count, 7);
     assert_eq!(
         displayed(rows(
@@ -7949,196 +7597,6 @@ fn latest_stats_dump_reads_the_analyzed_histograms_as_go() {
     assert_eq!(total(columns["a"].as_ref().expect("column a")), 7);
     let indices = latest.indices.as_ref().expect("index statistics exist");
     assert_eq!(total(indices["idx"].as_ref().expect("index idx")), 7);
-}
-
-/// Pinned `TestDumpHistoricalStatsFallback`: after ANALYZE ran with history
-/// disabled, historical dump uses the latest statistics and names that table
-/// in the fallback list once the feature is enabled.
-#[test]
-fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
-    let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
-    let mut session = stack
-        .factory
-        .open_session(session_context(77))
-        .expect("session opens");
-    rows(&mut session, "USE test");
-    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
-    rows(
-        &mut session,
-        "CREATE TABLE history_fallback (a INT, INDEX idx(a)) \
-         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
-    );
-    rows(
-        &mut session,
-        "SET GLOBAL tidb_enable_historical_stats = OFF",
-    );
-    rows(&mut session, "ANALYZE TABLE history_fallback");
-    let catalog = stack.factory.catalog.get_latest();
-    let (_, table) = catalog
-        .table_info_by_name("test", "history_fallback")
-        .expect("analyzed table remains published");
-    let table = table.clone();
-    let table = table.read();
-    drop(catalog);
-    assert_eq!(
-        stack
-            .factory
-            .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-            .expect_err("the Go feature gate rejects historical reads"),
-        "tidb_enable_historical_stats should be enabled"
-    );
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    let (latest, fallbacks) = stack
-        .factory
-        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-        .expect("latest statistics fallback succeeds");
-    assert_eq!(
-        fallbacks,
-        ["test.history_fallback p0", "test.history_fallback global"]
-    );
-    let latest = latest.expect("latest statistics exist");
-    assert!(!latest.is_historical_stats);
-    let partitions = latest.partitions.expect("partition statistics exist");
-    assert!(
-        !partitions["p0"]
-            .as_ref()
-            .expect("partition fallback exists")
-            .is_historical_stats
-    );
-    assert!(
-        !partitions[tidb_stats_util::TIDB_GLOBAL_STATS]
-            .as_ref()
-            .expect("global fallback exists")
-            .is_historical_stats
-    );
-}
-
-/// Pinned `TestDumpHistoricalStatsByTable`: static ANALYZE queues only the
-/// physical partition, while dynamic ANALYZE queues that partition and the
-/// logical table whose dump contains global statistics.
-#[test]
-fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
-    let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
-    let mut session = stack
-        .factory
-        .open_session(session_context(76))
-        .expect("session opens");
-    rows(&mut session, "USE test");
-    rows(&mut session, "SET SESSION tidb_analyze_version = 2");
-    rows(&mut session, "SET GLOBAL tidb_enable_historical_stats = ON");
-    rows(
-        &mut session,
-        "CREATE TABLE history_partition (a INT, b INT, INDEX idx(b)) \
-         PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))",
-    );
-    let catalog = stack.factory.catalog.get_latest();
-    let (_, table) = catalog
-        .table_info_by_name("test", "history_partition")
-        .expect("partitioned table is published");
-    let table = table.read();
-    let logical_id = table.id;
-    let partition_id = table
-        .get_partition_info()
-        .expect("partition metadata")
-        .read()
-        .definitions
-        .snapshot()[0]
-        .id;
-    let table = table.clone();
-    drop(catalog);
-
-    rows(
-        &mut session,
-        "SET SESSION tidb_partition_prune_mode = 'static'",
-    );
-    rows(&mut session, "ANALYZE TABLE history_partition");
-    assert_eq!(
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-        partition_id
-    );
-    assert_eq!(
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
-    );
-
-    rows(
-        &mut session,
-        "SET SESSION tidb_partition_prune_mode = 'dynamic'",
-    );
-    rows(&mut session, "ANALYZE TABLE history_partition");
-    let mut queued = vec![
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-    ];
-    queued.sort_unstable();
-    let mut expected = vec![partition_id, logical_id];
-    expected.sort_unstable();
-    assert_eq!(queued, expected);
-    assert_eq!(
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .get_one_historical_stats_table(),
-        tidb_domain::historical_stats::NO_HISTORICAL_STATS_TABLE
-    );
-
-    let handle = ClusterHistoricalStatsHandle {
-        transactions: Arc::clone(&stack.factory.transactions),
-        catalog: Arc::clone(&stack.factory.catalog),
-        global_vars: stack.factory.global_vars.clone(),
-        auto_ids: Arc::clone(&stack.factory.auto_ids),
-        domain: Arc::downgrade(&stack.factory),
-    };
-    for table_id in queued {
-        session
-            .node()
-            .domain()
-            .historical_stats_worker
-            .dump_historical_stats(
-                table_id,
-                &handle,
-                &tidb_domain::historical_stats::NoopHistoricalStatsMetrics,
-            )
-            .expect("partition/global historical dump succeeds");
-    }
-    for table_id in [partition_id, logical_id] {
-        assert_eq!(
-            displayed(rows(
-                &mut session,
-                &format!("SELECT count(*) FROM mysql.stats_history WHERE table_id = {table_id}"),
-            )),
-            [["1"]]
-        );
-    }
-    let (historical, _) = stack
-        .factory
-        .dump_historical_stats_by_snapshot("test", &table, u64::MAX)
-        .expect("partition historical statistics reload succeeds");
-    let partitions = historical
-        .expect("partition historical statistics exist")
-        .partitions
-        .expect("partition map exists");
-    assert!(partitions["p0"].is_some());
-    assert!(partitions[tidb_stats_util::TIDB_GLOBAL_STATS].is_some());
 }
 
 /// The probe-33 regression: a derived table whose inner SELECT plans as a
@@ -19164,7 +18622,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
-        historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
@@ -19174,7 +18631,6 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
             resource_group,
             approximate_counts,
             killer,
-            historical_stats_enabled,
             jobs,
             stats_pool,
         )
