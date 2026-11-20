@@ -424,6 +424,7 @@ const (
 		topn BIGINT(64) NOT NULL DEFAULT -1,
 		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
 		column_ids TEXT(19372),
+		ndv_rate DOUBLE NOT NULL DEFAULT -1,
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 	// CreateStatsHistory stores the historical stats.
@@ -1326,6 +1327,11 @@ const (
 	// targets would collide).
 	version233 = 233
 
+	// version 234
+	// Add ndv_rate to mysql.analyze_options and keep sampled NDV off on
+	// upgraded clusters.
+	version234 = 234
+
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1335,7 +1341,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version233
+var currentBootstrapVersion int64 = version234
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1524,6 +1530,7 @@ var (
 		upgradeToVer231,
 		upgradeToVer232,
 		upgradeToVer233,
+		upgradeToVer234,
 	}
 )
 
@@ -3567,6 +3574,17 @@ func upgradeToVer233(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
 
 	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
+}
+
+func upgradeToVer234(s sessiontypes.Session, ver int64) {
+	if ver >= version234 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
+	// Keep sampled NDV off on upgraded clusters: old TiDB cannot read sampled
+	// sketches, so it is turned on only after every node is upgraded.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeSampledNDVThreshold, 0)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
