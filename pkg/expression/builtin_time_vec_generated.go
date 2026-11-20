@@ -1341,9 +1341,13 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 			continue
 		}
 		lhsTime := arg0[i]
-		_, rhsTime, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
+		_, rhsTime, rhsIsDuration, rhsIsNull, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
+		}
+		if rhsIsNull {
+			result.SetNull(i, true)
+			continue
 		}
 		if rhsIsDuration {
 			result.SetNull(i, true)
@@ -1396,9 +1400,13 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 			continue
 		}
 		lhs.Duration = arg0[i]
-		rhsDur, _, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
+		rhsDur, _, rhsIsDuration, rhsIsNull, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
+		}
+		if rhsIsNull {
+			result.SetNull(i, true)
+			continue
 		}
 		if !rhsIsDuration {
 			result.SetNull(i, true)
@@ -1500,9 +1508,13 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 		if result.IsNull(i) {
 			continue
 		}
-		_, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
+		_, lhsTime, lhsIsDuration, lhsIsNull, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
+		}
+		if lhsIsNull {
+			result.SetNull(i, true)
+			continue
 		}
 		if lhsIsDuration {
 			result.SetNull(i, true)
@@ -1555,9 +1567,13 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, _, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
+		lhsDur, _, lhsIsDuration, lhsIsNull, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
+		}
+		if lhsIsNull {
+			result.SetNull(i, true)
+			continue
 		}
 		if !lhsIsDuration {
 			result.SetNull(i, true)
@@ -1611,13 +1627,21 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input 
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
+		lhsDur, lhsTime, lhsIsDuration, lhsIsNull, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
-		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
+		if lhsIsNull {
+			result.SetNull(i, true)
+			continue
+		}
+		rhsDur, rhsTime, rhsIsDuration, rhsIsNull, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
+		}
+		if rhsIsNull {
+			result.SetNull(i, true)
+			continue
 		}
 		if lhsIsDuration != rhsIsDuration {
 			result.SetNull(i, true)

@@ -596,8 +596,8 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(ctx EvalContext, row chu
 	}
 
 	tc := typeCtx(ctx)
-	rhs, _, isDuration, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
-	if err != nil || !isDuration {
+	rhs, _, isDuration, isNull, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
+	if isNull || err != nil || !isDuration {
 		return d, true, err
 	}
 
@@ -632,8 +632,8 @@ func (b *builtinStringDurationTimeDiffSig) evalDuration(ctx EvalContext, row chu
 	}
 
 	tc := typeCtx(ctx)
-	lhs, _, isDuration, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
-	if err != nil || !isDuration {
+	lhs, _, isDuration, isNull, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
+	if isNull || err != nil || !isDuration {
 		return d, true, err
 	}
 
@@ -693,8 +693,8 @@ func (b *builtinTimeStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 	}
 
 	tc := typeCtx(ctx)
-	_, rhs, isDuration, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
-	if err != nil || isDuration {
+	_, rhs, isDuration, isNull, err := convertStringToDuration(tc, rhsStr, b.tp.GetDecimal())
+	if isNull || err != nil || isDuration {
 		return d, true, err
 	}
 
@@ -729,8 +729,8 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(ctx EvalContext, row chunk.R
 	}
 
 	tc := typeCtx(ctx)
-	_, lhs, isDuration, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
-	if err != nil || isDuration {
+	_, lhs, isDuration, isNull, err := convertStringToDuration(tc, lhsStr, b.tp.GetDecimal())
+	if isNull || err != nil || isDuration {
 		return d, true, err
 	}
 
@@ -766,13 +766,13 @@ func (b *builtinStringStringTimeDiffSig) evalDuration(ctx EvalContext, row chunk
 
 	tc := typeCtx(ctx)
 	fsp := b.tp.GetDecimal()
-	lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, lhs, fsp)
-	if err != nil {
+	lhsDur, lhsTime, lhsIsDuration, isNull, err := convertStringToDuration(tc, lhs, fsp)
+	if isNull || err != nil {
 		return d, true, err
 	}
 
-	rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(tc, rhs, fsp)
-	if err != nil {
+	rhsDur, rhsTime, rhsIsDuration, isNull, err := convertStringToDuration(tc, rhs, fsp)
+	if isNull || err != nil {
 		return d, true, err
 	}
 
@@ -811,7 +811,7 @@ func (b *builtinNullTimeDiffSig) evalDuration(ctx EvalContext, row chunk.Row) (d
 // convertStringToDuration converts string to duration, it return types.Time because in some case
 // it will converts string to datetime.
 func convertStringToDuration(tc types.Context, str string, fsp int) (d types.Duration, t types.Time,
-	isDuration bool, err error) {
+	isDuration bool, isNull bool, err error) {
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		lenStrFsp := len(str[n+1:])
 		if lenStrFsp <= types.MaxFsp {
