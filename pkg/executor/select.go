@@ -210,34 +210,38 @@ type SelectLockExec struct {
 	// tblID2PhyTblIDCol is used for partitioned tables.
 	// The child executor need to return an extra column containing
 	// the Physical Table ID (i.e. from which partition the row came from)
+	// tblID2PhysTblIDCol[tblID][i] belongs to the alias of tblID2Handle[tblID][i].
 	// Used during building
-	tblID2PhysTblIDCol map[int64]*expression.Column
+	tblID2PhysTblIDCol map[int64][]*expression.Column
 
 	// Used during execution
-	// Map from logic tableID to column index where the physical table id is stored
+	// Map from logic tableID to the column index, per alias, where the physical table id is stored
 	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
 	// storage and used for physical table id
 	// For static prune mode, model.ExtraPhysTblID is still sent to storage/Protobuf
 	// but could be filled in by the partitions TableReaderExecutor
 	// due to issues with chunk handling between the TableReaderExecutor and the
 	// SelectReader result.
-	tblID2PhysTblIDColIdx map[int64]int
+	tblID2PhysTblIDColIdx map[int64][]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
 	if len(e.tblID2PhysTblIDCol) > 0 {
-		e.tblID2PhysTblIDColIdx = make(map[int64]int)
+		e.tblID2PhysTblIDColIdx = make(map[int64][]int, len(e.tblID2PhysTblIDCol))
 		cols := e.Schema().Columns
-		for i := len(cols) - 1; i >= 0; i-- {
-			if cols[i].ID == model.ExtraPhysTblID {
-				for tblID, col := range e.tblID2PhysTblIDCol {
-					if cols[i].UniqueID == col.UniqueID {
-						e.tblID2PhysTblIDColIdx[tblID] = i
+		for tblID, physTblIDCols := range e.tblID2PhysTblIDCol {
+			idxs := make([]int, len(physTblIDCols))
+			for j, physTblIDCol := range physTblIDCols {
+				idxs[j] = -1
+				for i := len(cols) - 1; physTblIDCol != nil && i >= 0; i-- {
+					if cols[i].ID == model.ExtraPhysTblID && cols[i].UniqueID == physTblIDCol.UniqueID {
+						idxs[j] = i
 						break
 					}
 				}
 			}
+			e.tblID2PhysTblIDColIdx[tblID] = idxs
 		}
 	}
 	return e.BaseExecutor.Open(ctx)
@@ -259,14 +263,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
-				for _, col := range cols {
+				for j, col := range cols {
 					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
 					if err != nil {
 						return err
 					}
 					physTblID := tblID
-					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
-						physTblID = row.GetInt64(physTblColIdx)
+					if idxs := e.tblID2PhysTblIDColIdx[tblID]; j < len(idxs) && idxs[j] >= 0 {
+						physTblID = row.GetInt64(idxs[j])
 						if physTblID == 0 {
 							// select * from t1 left join t2 on t1.c = t2.c for update
 							// The join right side might be added NULL in left join
