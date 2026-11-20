@@ -16,17 +16,62 @@ package mpp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
+
+func TestMPPTopNScalarSortProjection(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			cluster := c.(*unistore.Cluster)
+			_, _, regionID := mockstore.BootstrapWithSingleStore(c)
+			for _, addr := range []string{"tiflash0", "tiflash1"} {
+				storeID, peerID := c.AllocID(), c.AllocID()
+				cluster.AddStore(storeID, addr, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				cluster.AddPeer(regionID, storeID, peerID)
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key,a int,b int,s varchar(1))")
+	tk.MustExec("insert into t values(1,0,1,'y'),(2,0,1,'A'),(3,0,1,'a'),(4,1,1,'0')")
+	tk.MustExec("alter table t set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("set tidb_allow_mpp=1")
+	// The mock TiFlash executor does not support late materialization.
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	for _, engine := range []string{"tikv", "tiflash"} {
+		tk.MustExec("set tidb_isolation_read_engines='" + engine + "'")
+		tk.MustExec(fmt.Sprintf("set tidb_enforce_mpp=%t", engine == "tiflash"))
+		tk.MustQuery("select id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id limit 1").Check(testkit.Rows("2"))
+		tk.MustQuery("select id,id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id limit 2 offset 1").Check(testkit.Rows("3 3", "1 1"))
+		tk.MustQuery("select s,id from t where a=0 and b=1 order by s collate utf8mb4_general_ci desc,id desc limit 2").Check(testkit.Rows("y 1", "a 3"))
+		tk.MustQuery("select id from t where a=0 and b=1 order by s collate utf8mb4_general_ci,id").Check(testkit.Rows("2", "3", "1"))
+	}
+	// Window output and duplicate source columns must survive TopN output pruning.
+	tk.MustExec("set tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set tidb_enforce_mpp=0")
+	tk.MustExec("create table tw(c1 int)")
+	tk.MustExec("insert into tw values (1),(2)")
+	tk.MustExec("create view vw(c_1,c_2,c_3,c_4,c_5,c_6) as select c1 as c_1,2 as c_2,3 as c_3,null != last_value(22) over(partition by c1 order by c1) as c_4,5 as c_5,c1 as c_6 from tw order by c_1,c_2,c_3,c_4,c_5,c_6 limit 164")
+	tk.MustQuery("select * from vw").Check(testkit.Rows("1 2 3 <nil> 5 1", "2 2 3 <nil> 5 2"))
+	tk.MustQuery("select c_1,c_2,c_3,c_4 from vw").Check(testkit.Rows("1 2 3 <nil>", "2 2 3 <nil>"))
+	tk.MustQuery("select c_1 from vw").Check(testkit.Rows("1", "2"))
+}
 
 func TestMPPJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
