@@ -18,7 +18,9 @@ import (
 	"context"
 	goerrors "errors"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,48 @@ type commitErrorStorage struct {
 	tidbkv.Storage
 	commitErrors   []error
 	commitAttempts int
+}
+
+type beginErrorStorage struct {
+	tidbkv.Storage
+	err    error
+	called chan struct{}
+}
+
+func (s *beginErrorStorage) Begin(...tikv.TxnOption) (tidbkv.Transaction, error) {
+	close(s.called)
+	return nil, s.err
+}
+
+func TestDeleterErrorWithIdleInput(t *testing.T) {
+	injectedErr := goerrors.New("injected delete error")
+	store := &beginErrorStorage{err: injectedErr, called: make(chan struct{})}
+	pairs := make(chan *simplesst.KVPair)
+	d := &Deleter{
+		handler: NewBaseHandler(nil, "", nil, nil, nil, nil, zap.NewNop()),
+		keysCh:  make(chan []tidbkv.Key, 1),
+		store:   store,
+		logger:  zap.NewNop(),
+	}
+	d.keysCh <- []tidbkv.Key{tidbkv.Key("k")}
+	done := make(chan error, 1)
+	go func() { done <- d.Run(context.Background(), pairs) }()
+	select {
+	case <-store.called:
+	case <-time.After(5 * time.Second):
+		close(pairs)
+		<-done
+		t.Fatal("delete was not attempted")
+	}
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, injectedErr)
+		close(pairs)
+	case <-time.After(5 * time.Second):
+		close(pairs)
+		require.ErrorIs(t, <-done, injectedErr)
+		t.Fatal("deletion error was blocked by idle input")
+	}
 }
 
 func (s *commitErrorStorage) Begin(opts ...tikv.TxnOption) (tidbkv.Transaction, error) {
