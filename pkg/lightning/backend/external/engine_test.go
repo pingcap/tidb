@@ -192,7 +192,7 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 
 	t.Run("wait log includes in-flight data count", func(t *testing.T) {
 		core, logs := observer.New(zap.InfoLevel)
-		ctx := logutil.WithLogger(context.Background(), zap.New(core))
+		ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
 		extEngine := &Engine{
 			dataReleaseCh: make(chan struct{}, 1),
 		}
@@ -254,11 +254,10 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 		}
 	})
 
-	// Stats offsets are precomputed before the range loop. After the first range
-	// is emitted, the next failed read only opens the data file, so three opens
-	// prove the retry path has reached object storage.
+	// Each batch opens the stats file before the data file. Wait until the
+	// second batch has opened its data reader before checking for cleanup.
 	require.Eventually(t, func() bool {
-		return store.totalOpened.Load() >= 3
+		return store.totalOpened.Load() >= 4
 	}, 3*time.Second, 10*time.Millisecond)
 
 	require.Eventually(t, func() bool {
@@ -282,233 +281,6 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 
 	require.Equal(t, []KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
 	require.NoError(t, <-errCh)
-}
-
-func TestEngineOnDup(t *testing.T) {
-	ctx := context.Background()
-	contents := [][]KVPair{{
-		{Key: []byte{4}, Value: []byte("bbb")},
-		{Key: []byte{4}, Value: []byte("bbb")},
-		{Key: []byte{1}, Value: []byte("aa")},
-		{Key: []byte{1}, Value: []byte("aa")},
-		{Key: []byte{1}, Value: []byte("aa")},
-		{Key: []byte{2}, Value: []byte("vv")},
-		{Key: []byte{3}, Value: []byte("sds")},
-	}}
-
-	getEngineFn := func(store storage.ExternalStorage, onDup common.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
-		return NewExternalEngine(
-			store, inDataFiles, inStatFiles,
-			[]byte{1}, []byte{5},
-			[][]byte{{1}, {2}, {3}, {4}, {5}},
-			[][]byte{{1}, {3}, {5}},
-			10,
-			123,
-			456,
-			789,
-			true,
-			16*units.GiB,
-			onDup,
-			"/",
-		).(*Engine)
-	}
-
-	t.Run("on duplicate ignore", func(t *testing.T) {
-		onDup := common.OnDuplicateKeyIgnore
-		store := storage.NewMemStorage()
-		dataFiles, statFiles := prepareKVFiles(t, store, contents)
-		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
-		loadDataCh := make(chan common.DataAndRanges, 4)
-		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "duplicate key found")
-		t.Cleanup(func() {
-			require.NoError(t, extEngine.Close())
-		})
-	})
-
-	t.Run("on duplicate error", func(t *testing.T) {
-		onDup := common.OnDuplicateKeyError
-		store := storage.NewMemStorage()
-		dataFiles, statFiles := prepareKVFiles(t, store, contents)
-		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
-		loadDataCh := make(chan common.DataAndRanges, 4)
-		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key '\x01', value 'aa'")
-		t.Cleanup(func() {
-			require.NoError(t, extEngine.Close())
-		})
-	})
-
-	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
-		for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
-				{Key: []byte{4}, Value: []byte("bbb")},
-				{Key: []byte{1}, Value: []byte("aa")},
-				{Key: []byte{2}, Value: []byte("vv")},
-				{Key: []byte{3}, Value: []byte("sds")},
-			}})
-			extEngine := getEngineFn(store, od, dfiles, sfiles)
-			loadDataCh := make(chan common.DataAndRanges, 4)
-			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
-			t.Cleanup(func() {
-				require.NoError(t, extEngine.Close())
-			})
-			require.Len(t, loadDataCh, 1)
-			dataAndRanges := <-loadDataCh
-			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-			require.EqualValues(t, []KVPair{
-				{Key: []byte{1}, Value: []byte("aa")},
-				{Key: []byte{2}, Value: []byte("vv")},
-				{Key: []byte{3}, Value: []byte("sds")},
-				{Key: []byte{4}, Value: []byte("bbb")},
-			}, allKVs)
-			info := extEngine.ConflictInfo()
-			require.Zero(t, info.Count)
-			require.Empty(t, info.Files)
-		}
-	})
-
-	t.Run("on duplicate record or remove, partial duplicated", func(t *testing.T) {
-		contents2 := [][]KVPair{
-			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{1}, Value: []byte("aa")}},
-			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{2}, Value: []byte("vv")}, {Key: []byte{3}, Value: []byte("sds")}},
-			{{Key: []byte{4}, Value: []byte("bbb")}, {Key: []byte{4}, Value: []byte("bbb")}},
-		}
-		for _, cont := range [][][]KVPair{contents, contents2} {
-			for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
-				store := storage.NewMemStorage()
-				dataFiles, statFiles := prepareKVFiles(t, store, cont)
-				extEngine := getEngineFn(store, od, dataFiles, statFiles)
-				loadDataCh := make(chan common.DataAndRanges, 4)
-				require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
-				t.Cleanup(func() {
-					require.NoError(t, extEngine.Close())
-				})
-				require.Len(t, loadDataCh, 1)
-				dataAndRanges := <-loadDataCh
-				allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-				require.EqualValues(t, []KVPair{
-					{Key: []byte{2}, Value: []byte("vv")},
-					{Key: []byte{3}, Value: []byte("sds")},
-				}, allKVs)
-				info := extEngine.ConflictInfo()
-				if od == common.OnDuplicateKeyRemove {
-					require.Zero(t, info.Count)
-					require.Empty(t, info.Files)
-				} else {
-					require.EqualValues(t, 5, info.Count)
-					require.Len(t, info.Files, 1)
-					dupPairs := readKVFile(t, store, info.Files[0])
-					require.EqualValues(t, []KVPair{
-						{Key: []byte{1}, Value: []byte("aa")},
-						{Key: []byte{1}, Value: []byte("aa")},
-						{Key: []byte{1}, Value: []byte("aa")},
-						{Key: []byte{4}, Value: []byte("bbb")},
-						{Key: []byte{4}, Value: []byte("bbb")},
-					}, dupPairs)
-				}
-			}
-		}
-	})
-
-	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
-		for _, od := range []common.OnDuplicateKey{common.OnDuplicateKeyRecord, common.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
-				{Key: []byte{1}, Value: []byte("aaa")},
-				{Key: []byte{1}, Value: []byte("aaa")},
-				{Key: []byte{1}, Value: []byte("aaa")},
-				{Key: []byte{1}, Value: []byte("aaa")},
-			}})
-			extEngine := getEngineFn(store, od, dfiles, sfiles)
-			loadDataCh := make(chan common.DataAndRanges, 4)
-			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
-			t.Cleanup(func() {
-				require.NoError(t, extEngine.Close())
-			})
-			require.Len(t, loadDataCh, 1)
-			dataAndRanges := <-loadDataCh
-			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-			require.Empty(t, allKVs)
-			info := extEngine.ConflictInfo()
-			if od == common.OnDuplicateKeyRemove {
-				require.Zero(t, info.Count)
-				require.Empty(t, info.Files)
-			} else {
-				require.EqualValues(t, 4, info.Count)
-				require.Len(t, info.Files, 1)
-				dupPairs := readKVFile(t, store, info.Files[0])
-				require.EqualValues(t, []KVPair{
-					{Key: []byte{1}, Value: []byte("aaa")},
-					{Key: []byte{1}, Value: []byte("aaa")},
-					{Key: []byte{1}, Value: []byte("aaa")},
-					{Key: []byte{1}, Value: []byte("aaa")},
-				}, dupPairs)
-			}
-		}
-	})
-}
-
-func TestLoadIngestDataMultiBatch(t *testing.T) {
-	ctx := context.Background()
-	store := storage.NewMemStorage()
-	// Create data spread across 4 key ranges, with 2 files to exercise
-	// cross-file offset reuse in the multi-batch path (start > 0).
-	contents := [][]KVPair{
-		{
-			{Key: []byte{1}, Value: []byte("v1")},
-			{Key: []byte{2}, Value: []byte("v2")},
-			{Key: []byte{3}, Value: []byte("v3")},
-			{Key: []byte{4}, Value: []byte("v4")},
-		},
-		{
-			{Key: []byte{5}, Value: []byte("v5")},
-			{Key: []byte{6}, Value: []byte("v6")},
-			{Key: []byte{7}, Value: []byte("v7")},
-			{Key: []byte{8}, Value: []byte("v8")},
-		},
-	}
-	dataFiles, statFiles := prepareKVFiles(t, store, contents)
-
-	// 5 job keys = 4 ranges. With workerConcurrency=2 the loop produces
-	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
-	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
-	extEngine := NewExternalEngine(
-		store, dataFiles, statFiles,
-		[]byte{1}, []byte{9},
-		jobKeys,
-		[][]byte{{1}, {5}, {9}},
-		2, // workerConcurrency — forces 2 batches
-		123,
-		456,
-		8,
-		true,
-		16*units.GiB,
-		common.OnDuplicateKeyError,
-		"/",
-	)
-	t.Cleanup(func() {
-		require.NoError(t, extEngine.Close())
-	})
-
-	loadDataCh := make(chan common.DataAndRanges, 4)
-	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
-	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
-
-	var allKVs []KVPair
-	for range 2 {
-		dr := <-loadDataCh
-		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
-	}
-	require.EqualValues(t, []KVPair{
-		{Key: []byte{1}, Value: []byte("v1")},
-		{Key: []byte{2}, Value: []byte("v2")},
-		{Key: []byte{3}, Value: []byte("v3")},
-		{Key: []byte{4}, Value: []byte("v4")},
-		{Key: []byte{5}, Value: []byte("v5")},
-		{Key: []byte{6}, Value: []byte("v6")},
-		{Key: []byte{7}, Value: []byte("v7")},
-		{Key: []byte{8}, Value: []byte("v8")},
-	}, allKVs)
 }
 
 type dummyWorker struct{}

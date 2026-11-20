@@ -68,7 +68,7 @@ func (s *mockExtStore) GetFileSize() (int64, error) {
 func TestByteReader(t *testing.T) {
 	t.Run("concurrent read allocation is non-blocking", func(t *testing.T) {
 		ctx := context.Background()
-		st := objstore.NewMemStorage()
+		st := storage.NewMemStorage()
 		require.NoError(t, st.WriteFile(ctx, "testfile", []byte("abcdef")))
 		rsc, err := st.Open(ctx, "testfile", nil)
 		require.NoError(t, err)
