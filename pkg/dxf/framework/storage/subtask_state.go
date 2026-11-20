@@ -43,6 +43,15 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 			return err
 		}
 		if vars.StmtCtx.AffectedRows() == 0 {
+			rows, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`select state from mysql.tidb_background_subtask where id = %? and exec_id = %?`,
+				subtaskID, execID)
+			if err != nil {
+				return err
+			}
+			if len(rows) > 0 && rows[0].GetString(0) == string(proto.SubtaskStateRunning) {
+				return nil
+			}
 			return ErrSubtaskNotFound
 		}
 		return nil

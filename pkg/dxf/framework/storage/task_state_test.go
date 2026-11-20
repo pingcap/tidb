@@ -471,7 +471,11 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 	require.Equal(t, pausedID, subtasks[0].ID)
 	require.Equal(t, proto.SubtaskStateCanceled, subtasks[0].State)
 
-	// Verify StartSubtask rejects subtasks that are no longer pending (e.g., canceled).
+	// Verify StartSubtask is idempotent if already running for the same execID,
+	// and rejects subtasks that are no longer pending (e.g., canceled).
+	runningSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
 	pendingSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
 	require.NoError(t, gm.CancelSubtask(ctx, ":4000", id))
 	require.ErrorIs(t, gm.StartSubtask(ctx, pendingSubtaskID, ":4000"), storage.ErrSubtaskNotFound)
