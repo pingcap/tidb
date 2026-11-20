@@ -33,13 +33,18 @@ go_library(
 go_test(
     name = "registry_test",
     timeout = "short",
-    srcs = ["registration_test.go"],
+    srcs = [
+        "abort_test.go",
+        "registration_test.go",
+    ],
     embed = [":registry"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 7,
     deps = [
         "//br/pkg/glue",
+        "//br/pkg/gluetidb",
         "//br/pkg/metautil",
+        "//br/pkg/mock",
         "//br/pkg/restore/nameroute",
         "//br/pkg/utils",
         "//pkg/domain",
@@ -47,6 +52,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/types",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/table-filter",
         "@com_github_stretchr_testify//require",
     ],
