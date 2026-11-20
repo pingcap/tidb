@@ -157,6 +157,10 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state
 			constraintTable := external.GetTableByName(t, tk1, "test", "t")
+			// The constraint is not public yet, so the catalog tables do not report it.
+			tk1.MustQuery("select constraint_name from information_schema.table_constraints where table_schema = 'test' and table_name = 't'").Check(testkit.Rows())
+			tk1.MustQuery("select constraint_name from information_schema.check_constraints where constraint_schema = 'test'").Check(testkit.Rows())
+			tk1.MustQuery("select constraint_name from information_schema.tidb_check_constraints where constraint_schema = 'test'").Check(testkit.Rows())
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteOnly
@@ -168,6 +172,7 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add constraint c2 check ( a > 10)")
+	tk.MustQuery("select constraint_name, constraint_type from information_schema.table_constraints where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("c2 CHECK"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\n  CONSTRAINT `c2` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t drop constraint c2")
