@@ -18,10 +18,13 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -139,7 +142,47 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 	p.is = is
 	p.evaluated = true
 	p.tsEvaluator = tsEvaluator
+	if ts != 0 {
+		p.applyStaleReadReplicaReadPolicy(ts)
+	}
 	return nil
+}
+
+// applyStaleReadReplicaReadPolicy decides the replica read type for this stale read statement according to
+// `tidb_stale_read_above_safe_ts_replica_read` and `tidb_stale_read_within_safe_ts_replica_read`. The decision
+// is stored in the statement context, so it is made again on every execution (including executions of prepared
+// statements) and never leaks into cached plans. `SessionVars.GetReplicaRead` only honours it when
+// `tidb_replica_read` is the default `leader` and the statement has no replica read hint.
+//
+// When `tidb_stale_read_above_safe_ts_replica_read` is set and the read ts is above the min safe ts, the statement
+// is additionally marked to be sent as a non stale read: no follower could serve it as a stale read anyway, and a
+// plain read at the same ts lets client-go apply the replica read type the way it does for every other read.
+func (p *baseProcessor) applyStaleReadReplicaReadPolicy(ts uint64) {
+	vars := p.sctx.GetSessionVars()
+	above, within := vars.StaleReadAboveSafeTSReplicaRead, vars.StaleReadWithinSafeTSReplicaRead
+	if !above.Enabled && !within.Enabled {
+		return
+	}
+	sc := vars.StmtCtx
+	var minSafeTS uint64
+	if store := p.sctx.GetStore(); store != nil {
+		minSafeTS = store.GetMinSafeTS(config.GetTxnScopeFromConfig())
+	}
+	failpoint.Inject("injectStaleReadSafeTS", func(val failpoint.Value) {
+		minSafeTS = uint64(val.(int))
+	})
+	// Share the cached value with TIDB_BOUNDED_STALENESS so the whole statement sees one safe ts.
+	minSafeTS = sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
+	policy := within
+	if ts > minSafeTS {
+		policy = above
+		sc.StaleReadAsNonStale = above.Enabled
+	}
+	if !policy.Enabled {
+		return
+	}
+	sc.HasStaleReadReplicaRead = true
+	sc.StaleReadReplicaRead = byte(policy.ReplicaRead)
 }
 
 type staleReadProcessor struct {

@@ -63,7 +63,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 	// to maintain backwards compatibility.
 	ts, datetimeErr := parseTsExprAsDatetime(ctx, sctx, tsVal)
 	if datetimeErr == nil {
-		return ts, nil
+		return refreshNowDerivedTS(ctx, sctx, tsExpr, ts)
 	}
 
 	// If datetime conversion failed, try to parse as a TiDB TSO (not a Unix timestamp).
@@ -84,6 +84,46 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 		return 0, err
 	}
 	return tso, nil
+}
+
+// refreshNowDerivedTS handles an AS OF timestamp derived from NOW() (including TIDB_BOUNDED_STALENESS) whose value
+// is above the cached TSO of the oracle. NOW() is estimated as `cached TSO + time since it arrived`, so with clock
+// drift or a long update interval the estimate may run ahead of PD and the resulting read ts would be rejected as a
+// future timestamp. Validating such a ts needs a PD round trip anyway, so instead fetch a fresh TSO from PD, use it as
+// the statement's NOW(), and recompute the expression with it. Literal timestamps are returned unchanged.
+func refreshNowDerivedTS(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode, ts uint64) (uint64, error) {
+	sc := sctx.GetSessionVars().StmtCtx
+	if !sc.IsStaleTSOEvaluated() {
+		return ts, nil
+	}
+	store := sctx.GetStore()
+	if store == nil {
+		return ts, nil
+	}
+	o := store.GetOracle()
+	opt := &oracle.Option{TxnScope: oracle.GlobalTxnScope}
+	cached, err := o.GetLowResolutionTimestamp(ctx, opt)
+	if err != nil || ts <= cached {
+		// No cached TSO, or the ts is not ahead of it: keep the estimate and let validation decide.
+		return ts, nil
+	}
+	failpoint.Inject("mockStaleReadTSO", func() {
+		// Tests pin NOW() via the failpoint; never replace it with a real PD TSO.
+		failpoint.Return(ts, nil)
+	})
+	pdTS, err := o.GetTimestamp(ctx, opt)
+	if err != nil {
+		return 0, err
+	}
+	sc.OverrideStaleTSO(pdTS)
+	tsVal, err := plannerutil.EvalAstExprWithPlanCtx(sctx, tsExpr)
+	if err != nil {
+		return 0, err
+	}
+	if tsVal.IsNull() {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("as of timestamp cannot be NULL")
+	}
+	return parseTsExprAsDatetime(ctx, sctx, tsVal)
 }
 
 // tsoFromDatum extracts a uint64 TSO value from a Datum.
@@ -148,6 +188,14 @@ func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, 
 // IsStmtStaleness indicates whether the current statement is staleness or not
 func IsStmtStaleness(sctx sessionctx.Context) bool {
 	return sctx.GetSessionVars().StmtCtx.IsStaleness
+}
+
+// UseStaleReadRequests indicates whether the requests of the current stale read statement should carry the stale
+// read flag. It is false when the read ts is above the min safe ts of the TiKV stores and
+// `tidb_stale_read_above_safe_ts_replica_read` is set, see StatementContext.StaleReadAsNonStale.
+func UseStaleReadRequests(sctx sessionctx.Context) bool {
+	sc := sctx.GetSessionVars().StmtCtx
+	return sc.IsStaleness && !sc.StaleReadAsNonStale
 }
 
 // GetExternalTimestamp returns the external timestamp in cache, or get and store it in cache
