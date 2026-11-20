@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,6 +57,95 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t;")
 	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
+}
+
+// TestBindingCacheReloadDoesNotPublishStaleSnapshot checks that a reload that
+// started before a binding was dropped cannot overwrite a later reload.
+func TestBindingCacheReloadDoesNotPublishStaleSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create global binding for select * from t using select * from t")
+
+	handle := bindinfo.NewGlobalBindingHandle(dom.SysSessionPool())
+	t.Cleanup(func() { variable.UnregisterStatistics(handle) })
+	require.NoError(t, handle.LoadFromStorageToCache(true))
+	started := make(chan struct{})
+	contended := make(chan struct{})
+	release := make(chan struct{})
+	var first atomic.Bool
+	var contentionOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/bindinfo/afterLoadBindingsFromStorage", func(target any) {
+		if target == handle && first.CompareAndSwap(false, true) {
+			close(started)
+			<-release
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/bindinfo/bindingCacheReloadContended", func(target any) {
+		if target == handle {
+			contentionOnce.Do(func() { close(contended) })
+		}
+	})
+
+	firstDone := make(chan struct{})
+	secondDone := make(chan struct{})
+	firstResult := make(chan error, 1)
+	secondResult := make(chan error, 1)
+	var secondStarted bool
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		unblock()
+		for _, done := range []<-chan struct{}{firstDone, secondDone} {
+			if done == secondDone && !secondStarted {
+				continue
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("reload worker did not exit")
+			}
+		}
+	})
+	go func() {
+		defer close(firstDone)
+		firstResult <- handle.LoadFromStorageToCache(false)
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first reload did not read storage")
+	}
+
+	// Simulate a committed drop while the first reload holds its old snapshot.
+	tk.MustExec("update mysql.bind_info set status = 'deleted', update_time = date_add(update_time, interval 1 second) where source != 'builtin'")
+	secondStarted = true
+	go func() {
+		defer close(secondDone)
+		secondResult <- handle.LoadFromStorageToCache(false)
+	}()
+	select {
+	case <-contended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second reload did not contend for the reload lock")
+	}
+	unblock()
+	for _, worker := range []struct {
+		name   string
+		result <-chan error
+	}{
+		{name: "first", result: firstResult},
+		{name: "second", result: secondResult},
+	} {
+		select {
+		case err := <-worker.result:
+			require.NoError(t, err, "%s reload failed", worker.name)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s reload did not finish", worker.name)
+		}
+	}
+	require.Empty(t, handle.GetAllGlobalBindings())
 }
 
 // TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:
