@@ -261,6 +261,9 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
+	if shouldKeepDateDiffWithBitAtRoot(expr) {
+		return nil
+	}
 	// Check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
