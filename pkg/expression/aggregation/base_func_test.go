@@ -59,6 +59,8 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 			{10, 2, 4, 14, 6},
 			{10, 2, 30, 40, 30},
 			{65, 30, 4, 65, 30},
+			{60, 10, 30, 65, 15},
+			{65, 0, 4, 65, 0},
 		} {
 			ctx.GetSessionVars().DivPrecisionIncrement = tc.increment
 			colType := types.NewFieldType(mysql.TypeNewDecimal)

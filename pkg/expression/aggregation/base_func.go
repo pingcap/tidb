@@ -302,21 +302,26 @@ func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) 
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	divPrecIncre := ctx.GetDivPrecisionIncrement()
-	switch a.Args[0].GetType(ctx).GetType() {
+	argTp := a.Args[0].GetType(ctx)
+	switch argTp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
-		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType(ctx).GetType())
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(argTp.GetType())
 		a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), divPrecIncre, divPrecIncre)
-		// AVG caps its result scale even when its argument has a wider expression scale.
-		a.RetTp.SetDecimalUnderLimit(a.RetTp.GetDecimal())
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(argTp, divPrecIncre, divPrecIncre)
+		scale := a.RetTp.GetDecimal()
+		if precision, argScale := argTp.GetFlen(), argTp.GetDecimal(); argScale >= 0 && precision >= argScale {
+			// Reserve the input's integer digits when the precision limit is reached.
+			scale = min(scale, max(0, a.RetTp.GetFlen()-(precision-argScale)))
+		}
+		a.RetTp.SetDecimalUnderLimit(scale)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
-		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
+		a.RetTp.SetDecimal(argTp.GetDecimal())
 	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

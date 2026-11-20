@@ -149,9 +149,6 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		}
 	}
 	frac := m.retTp.GetDecimal()
-	if frac == types.UnspecifiedLength {
-		frac = mysql.MaxDecimalScale
-	}
 
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		countExpr := countExprVals[rowIdx]
@@ -197,10 +194,7 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 			return errors.Errorf("AVG SUM dependency has unsupported eval type %s", sumEvalType)
 		}
 		avg := new(types.MyDecimal)
-		if err := types.DecimalDiv(&sum, types.NewDecFromInt(countExpr), avg, m.divPrecisionIncrement); err != nil {
-			return err
-		}
-		if err := avg.Round(avg, frac, types.ModeHalfUp); err != nil {
+		if err := types.DecimalAvg(&sum, countExpr, avg, m.divPrecisionIncrement, frac); err != nil {
 			return err
 		}
 		candidate := *avg
