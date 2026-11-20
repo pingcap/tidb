@@ -344,6 +344,33 @@ func TestCreateTableWithInfo(t *testing.T) {
 	idGenNum, err := strconv.ParseInt(idGen, 10, 64)
 	require.NoError(t, err)
 	require.Greater(t, idGenNum, id)
+
+	tk.MustExec("create table legacy_fk_template (id int primary key, parent_id int)")
+	template, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("legacy_fk_template"))
+	require.NoError(t, err)
+	for _, name := range []string{"legacy_fk_single", "legacy_fk_batch"} {
+		legacy := template.Meta().Clone()
+		legacy.ID = 0
+		legacy.Name = ast.NewCIStr(name)
+		legacy.ForeignKeys = []*model.FKInfo{{
+			ID: 1, Name: ast.NewCIStr("fk_legacy"), Version: model.FKVersion0,
+			RefTable: ast.NewCIStr("missing_parent"), RefCols: []ast.CIStr{ast.NewCIStr("id")},
+			Cols: []ast.CIStr{ast.NewCIStr("parent_id")}, State: model.StatePublic,
+		}}
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
+		if name == "legacy_fk_single" {
+			require.NoError(t, d.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), legacy, nil))
+		} else {
+			require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), []*model.TableInfo{legacy}))
+		}
+		restored, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		require.Len(t, restored.Meta().ForeignKeys, 1)
+		require.Equal(t, model.FKVersion0, restored.Meta().ForeignKeys[0].Version)
+		require.Empty(t, restored.Meta().ForeignKeys[0].RefSchema.L)
+		// Preserve the legacy syntax without accidentally enforcing it.
+		tk.MustExec("insert into " + name + " values (1,42)")
+	}
 }
 
 func TestBatchCreateTable(t *testing.T) {
