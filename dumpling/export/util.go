@@ -12,7 +12,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/utils/tlsutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
@@ -33,15 +36,33 @@ func getPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
 	return pdDDLIds, nil
 }
 
-func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (bool, error) {
+func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string, security pd.SecurityOption) (bool, error) {
+	// The cluster check must use the same credentials as the PD GC client.
+	tlsConfig, err := tlsutil.TLSConfig{
+		CAPath:       security.CAPath,
+		CertPath:     security.CertPath,
+		KeyPath:      security.KeyPath,
+		SSLCABytes:   security.SSLCABytes,
+		SSLCertBytes: security.SSLCertBytes,
+		SSLKEYBytes:  security.SSLKEYBytes,
+	}.ToTLSConfig()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:        pdAddrs,
 		DialTimeout:      defaultEtcdDialTimeOut,
 		AutoSyncInterval: 30 * time.Second,
+		TLS:              tlsConfig,
 	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer func() {
+		if err := cli.Close(); err != nil {
+			tctx.L().Warn("close cluster-check etcd client failed", zap.Error(err))
+		}
+	}()
 	tidbDDLIDs, err := GetTiDBDDLIDs(tctx, db)
 	if err != nil {
 		return false, err
