@@ -2989,10 +2989,10 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 		if utils.IsSysOrTempSysDB(tbl.DB.Name.O) && !(cfg.isPartialRestore() && isPiTR) {
 			continue
 		}
-		copy := *tbl
-		copy.Info = tbl.Info.Clone()
-		copy.Info.Mode = model.TableModeRestore
-		tables[i] = &copy
+		restoredTable := *tbl
+		restoredTable.Info = tbl.Info.Clone()
+		restoredTable.Info.Mode = model.TableModeRestore
+		tables[i] = &restoredTable
 	}
 }
 
