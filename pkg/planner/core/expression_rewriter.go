@@ -1295,6 +1295,31 @@ out:
 	return p
 }
 
+func (er *expressionRewriter) buildInSubqueryConditions(left expression.Expression, innerCols []*expression.Column, markInOperand bool) ([]expression.Expression, error) {
+	evalCtx := er.sctx.GetEvalCtx()
+	onConds := make([]expression.Expression, len(innerCols))
+	for i, col := range innerCols {
+		lhs := left
+		if len(innerCols) > 1 {
+			lhs = expression.GetFuncArg(left, i)
+		}
+		var rhs expression.Expression = col
+		// When both operands are non-null, an ordinary equality suffices.
+		if markInOperand && (!expression.ExprNotNull(evalCtx, lhs) || !expression.ExprNotNull(evalCtx, col)) {
+			// Mark both sides. If projection elimination replaces the inner column
+			// with a constant, the outer column's mark keeps the EQ NULL-aware.
+			lhs = expression.SetExprColumnInOperand(lhs)
+			rhs = expression.SetExprColumnInOperand(col)
+		}
+		eq, err := er.constructBinaryOpFunction(lhs, rhs, ast.EQ)
+		if err != nil {
+			return nil, err
+		}
+		onConds[i] = eq
+	}
+	return onConds, nil
+}
+
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.PatternInExpr) bool {
 	intest.AssertNotNil(planCtx)
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
@@ -1321,61 +1346,24 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return true
 	}
-	var rexpr expression.Expression
+	// AntiSemiJoin, LeftOuterSemiJoin and AntiLeftOuterSemiJoin need to
+	// distinguish UNKNOWN from FALSE when comparing nullable IN operands.
 	markInOperand := v.Not || (asScalar && !er.canTreatInSubqueryAsExistsForFilter(planCtx))
-	if np.Schema().Len() == 1 {
-		rexpr = np.Schema().Columns[0]
-		rCol := rexpr.(*expression.Column)
-		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
-		// normal column equal condition, so we specially mark the inner operand here.
-		if markInOperand {
-			// If both input columns of `in` expression are not null, we can treat the expression
-			// as normal column equal condition instead. Otherwise, mark the left and right side.
-			// eg: for some optimization, the column substitute in right side in projection elimination
-			// will cause case  like <lcol EQ rcol(inOperand)> as <lcol EQ constant> which is not
-			// a valid null-aware EQ. (null in lcol still need to be null-aware)
-			if !expression.ExprNotNull(er.sctx.GetEvalCtx(), lexpr) || !expression.ExprNotNull(er.sctx.GetEvalCtx(), rCol) {
-				rColCopy := *rCol
-				rColCopy.InOperand = true
-				rexpr = &rColCopy
-				lexpr = expression.SetExprColumnInOperand(lexpr)
-			}
-		}
-	} else {
-		args := make([]expression.Expression, 0, np.Schema().Len())
-		for i, col := range np.Schema().Columns {
-			if markInOperand {
-				larg := expression.GetFuncArg(lexpr, i)
-				// If both input columns of `in` expression are not null, we can treat the expression
-				// as normal column equal condition instead. Otherwise, mark the left and right side.
-				if !expression.ExprNotNull(er.sctx.GetEvalCtx(), larg) || !expression.ExprNotNull(er.sctx.GetEvalCtx(), col) {
-					rarg := *col
-					rarg.InOperand = true
-					col = &rarg
-					if larg != nil {
-						lexpr.(*expression.ScalarFunction).GetArgs()[i] = expression.SetExprColumnInOperand(larg)
-					}
-				}
-			}
-			args = append(args, col)
-		}
-		rexpr, er.err = er.newFunction(ast.RowFunc, args[0].GetType(er.sctx.GetEvalCtx()), args...)
-		if er.err != nil {
-			return true
-		}
-	}
-	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
+	onConds, err := er.buildInSubqueryConditions(lexpr, np.Schema().Columns, markInOperand)
 	if err != nil {
 		er.err = err
 		return true
 	}
 
-	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
-	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
-	// To keep it simple, we forbid this converting if they have different collations.
-	// tested by TestCollateSubQuery.
-	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
-	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
+	// The inner join rewrite adds a DISTINCT that groups by the inner key's
+	// collation. If that groups values differently from the join comparison,
+	// the rewrite can change the result. See TestCollateSubQuery.
+	rhsCollation := np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
+	if lLen > 1 {
+		// Preserve the row-level check: the former RHS ROW used the connection collation.
+		_, rhsCollation = er.sctx.GetCharsetInfo()
+	}
+	collFlag := collate.CompatibleCollate(lexpr.GetType(er.sctx.GetEvalCtx()).GetCollate(), rhsCollation)
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
@@ -1426,19 +1414,17 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			er.err = err
 			return true
 		}
-		if eqConds := expression.SplitCNFItems(checkCondition); len(eqConds) == lLen {
-			for i, eqCond := range eqConds {
-				sf, ok := eqCond.(*expression.ScalarFunction)
-				if !ok || sf.FuncName.L != ast.EQ {
-					continue
-				}
-				rhs := sf.GetArgs()[1]
-				if _, isCol := rhs.(*expression.Column); isCol {
-					continue
-				}
-				if cols := expression.ExtractColumns(rhs); len(cols) == 1 && cols[0].EqualColumn(np.Schema().Columns[i]) {
-					agg.GroupByItems[i] = rhs
-				}
+		for i, eqCond := range onConds {
+			sf, ok := eqCond.(*expression.ScalarFunction)
+			if !ok || sf.FuncName.L != ast.EQ {
+				continue
+			}
+			rhs := sf.GetArgs()[1]
+			if _, isCol := rhs.(*expression.Column); isCol {
+				continue
+			}
+			if cols := expression.ExtractColumns(rhs); len(cols) == 1 && cols[0].EqualColumn(np.Schema().Columns[i]) {
+				agg.GroupByItems[i] = rhs
 			}
 		}
 		// Build inner join above the aggregation.
@@ -1448,7 +1434,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
-		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(onConds)
 		// set FullSchema and FullNames for this join
 		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
 			join.FullSchema = left.FullSchema
@@ -1461,7 +1447,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.plan = join
 	} else {
 		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, onConds, asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return true
 		}

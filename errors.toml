@@ -2126,6 +2126,11 @@ error = '''
 tidb_max_keys_read limit exceeded
 '''
 
+["executor:8277"]
+error = '''
+During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
