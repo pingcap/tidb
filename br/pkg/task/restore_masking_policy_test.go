@@ -191,9 +191,29 @@ func TestMaskingPolicySnapshotTargetIsolation(t *testing.T) {
 		require.Equal(t, "mysql", plan.targetTables[0].DB.Name.L)
 		targets = append(targets, plan.targetTables[0].Info.Name.L)
 		require.Equal(t, "tidb_masking_policy", source.Info.Name.L)
+		// Nothing is restored into the temporary system database any more,
+		// so it is not created: left behind empty, it would make the next
+		// restore see a cluster that is not fresh.
+		databases := make([]string, 0, len(plan.databases))
+		for _, database := range plan.databases {
+			databases = append(databases, database.Target.Name.L)
+		}
+		require.Equal(t, []string{"mysql"}, databases)
 	}
 	require.NotEqual(t, targets[0], targets[1])
 	require.Equal(t, targets[0], targets[2])
+
+	// The same holds when the empty policy table is left out altogether, and
+	// a temporary system database that does receive tables is kept.
+	plan, err := buildRestoreNamePlan(router, []*metautil.Database{sourceDB}, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, isolateMaskingPolicySnapshot(plan, &RestoreConfig{RestoreID: 123}))
+	require.Empty(t, plan.databases)
+	user := &metautil.Table{DB: sourceDB.Info, Info: &model.TableInfo{ID: 44, Name: pmodel.NewCIStr("user")}}
+	plan, err = buildRestoreNamePlan(router, []*metautil.Database{sourceDB}, []*metautil.Table{source, user}, nil)
+	require.NoError(t, err)
+	require.NoError(t, isolateMaskingPolicySnapshot(plan, &RestoreConfig{RestoreID: 123}))
+	require.Len(t, plan.databases, 2)
 }
 
 func TestMaskingPolicyStageSurvivesIDMapReload(t *testing.T) {

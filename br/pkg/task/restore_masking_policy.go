@@ -17,6 +17,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -781,6 +782,19 @@ func isolateMaskingPolicySnapshot(plan *restoreNamePlan, cfg *RestoreConfig) err
 			})
 		}
 	}
+	// The temporary system database is selected only to carry the policy
+	// table. Once that table is staged elsewhere, or left out as empty, nothing
+	// is restored into it: creating it would leave an empty database behind,
+	// which the next restore takes for user data on a cluster that is not fresh.
+	tempSysDB := utils.TemporaryDBName(mysql.SystemDB).L
+	plan.databases = slices.DeleteFunc(plan.databases, func(database *restoreutils.DatabaseRestorePlan) bool {
+		if database.Target.Name.L != tempSysDB {
+			return false
+		}
+		return !slices.ContainsFunc(plan.tables, func(table *restoreutils.TableRestorePlan) bool {
+			return table.TargetDB.Name.L == tempSysDB
+		})
+	})
 	plan.targetTables = plan.targetTables[:0]
 	for _, table := range plan.tables {
 		plan.targetTables = append(plan.targetTables, table.TargetTable())
