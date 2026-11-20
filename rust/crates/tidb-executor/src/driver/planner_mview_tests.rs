@@ -61,7 +61,7 @@ pub(super) fn mock_info_schema(tables: &[&TableInfo]) -> SessionExtendedInfoSche
 
 /// Go `optimizeForTest`: the SELECT optimized against `is`, with its
 /// output names.
-fn optimize_for_test(is: &SessionExtendedInfoSchema, sel: &SelectStmt) -> (PhysicalPlan, Vec<tidb_datatype::FieldName>) {
+pub(super) fn optimize_for_test(is: &SessionExtendedInfoSchema, sel: &SelectStmt) -> (PhysicalPlan, Vec<tidb_datatype::FieldName>) {
     optimize_for_test_in(&mview_test_context(), is, sel)
 }
 

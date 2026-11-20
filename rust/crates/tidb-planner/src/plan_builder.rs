@@ -5999,6 +5999,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 };
                 let mut table_ids = std::collections::BTreeSet::new();
                 let mut warned = std::collections::BTreeSet::new();
+                // Go `checkLockClauseTables` reads the FROM table's own name:
+                // a column's original table, or for the extra handle (whose
+                // field name carries none) its table's other columns'.
+                let base_table_of = |name: &FieldName| -> IdentifierMetadata {
+                    if !name.names.original_table.lower.is_empty() {
+                        return name.names.original_table.clone();
+                    }
+                    names
+                        .iter()
+                        .find(|other| {
+                            other.names.table.lower == name.names.table.lower
+                                && other.names.database.lower == name.names.database.lower
+                                && !other.names.original_table.lower.is_empty()
+                        })
+                        .map_or_else(|| name.names.original_table.clone(), |other| other.names.original_table.clone())
+                };
                 for target in &lock.of {
                     // Go checkLockClauseTables: alias, unaliased name, then
                     // compatible base-name lookup, in left-to-right FROM order.
@@ -6018,13 +6034,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             }) {
                                 return None;
                             }
-                            let aliased = name.names.table.lower != name.names.original_table.lower;
+                            let base_table = base_table_of(name);
+                            let aliased = name.names.table.lower != base_table.lower;
                             let direct = lower_name_matches(&name.names.table.lower, target);
                             let rank = if direct && aliased {
                                 0
                             } else if direct {
                                 1
-                            } else if lower_name_matches(&name.names.original_table.lower, target) {
+                            } else if lower_name_matches(&base_table.lower, target) {
                                 2
                             } else {
                                 return None;
@@ -6060,10 +6077,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         ));
                     };
                     table_ids.insert(table_id);
-                    self.append_lock_visit(
-                        &name.names.database.lower,
-                        &name.names.original_table.lower,
-                    );
+                    self.append_lock_visit(&name.names.database.lower, &base_table_of(name).lower);
                     if compatibility
                         && warned.insert((target.clone(), name.names.table.lower.clone()))
                     {

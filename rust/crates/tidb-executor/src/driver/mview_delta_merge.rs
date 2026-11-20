@@ -198,10 +198,24 @@ fn explain_info(build: &BuildResult, full_update: bool) -> String {
 pub struct FullUpdateLookup {
     inner: PhysicalPlan,
     join: tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    /// Go `KeyResultColIdxes`: each join key's column in the inner output.
+    pub(crate) key_result_col_idxes: Vec<usize>,
     /// Go `OutputMVOffsets`: the view offset of each inner output column.
-    output_mv_offsets: Vec<usize>,
+    pub(crate) output_mv_offsets: Vec<usize>,
     /// Go `FullUpdateSnapshot`: an AS OF target's schema and reader.
     snapshot: Option<FullUpdateSnapshot>,
+}
+
+impl FullUpdateLookup {
+    /// Go `FullUpdateInnerColumnCount`.
+    pub(crate) fn inner_column_count(&self) -> usize {
+        self.inner.schema().map_or(0, |schema| schema.columns.len())
+    }
+
+    /// Go `FullUpdateKeyOff2IdxOff`.
+    pub(crate) fn key_off2_idx_off(&self) -> &[i64] {
+        &self.join.key_off2_idx_off
+    }
 }
 
 /// Go `findMVFullUpdateIndexJoinTemplatePlan`: the template's IndexJoin,
@@ -245,6 +259,7 @@ fn extract_full_update_lookup_template(
         )));
     }
     let mut output_mv_offsets: Vec<Option<usize>> = vec![None; inner_schema.len()];
+    let mut key_result_col_idxes = Vec::with_capacity(join.inner_join_keys.len());
     for (key_pos, key) in join.inner_join_keys.iter().enumerate() {
         let index = inner_schema.iter().position(|column| column.unique_id == key.unique_id).ok_or_else(|| {
             plain(format!("mview full-update lookup template: invalid inner join key at position {key_pos}"))
@@ -253,6 +268,7 @@ fn extract_full_update_lookup_template(
             return Err(plain(format!("mview full-update lookup template: duplicate key result col idx {index}")));
         }
         output_mv_offsets[index] = Some(build.group_key_mv_offsets[key_pos]);
+        key_result_col_idxes.push(index);
     }
     let mut non_key = build
         .full_update_lookup_mv_offsets
@@ -272,6 +288,7 @@ fn extract_full_update_lookup_template(
     Ok(FullUpdateLookup {
         inner,
         join: join.clone(),
+        key_result_col_idxes,
         output_mv_offsets: output_mv_offsets.into_iter().flatten().collect(),
         snapshot: None,
     })
@@ -324,6 +341,11 @@ pub fn plan_mview_delta_merge(
     retained_upper_tso: u64,
     full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
 ) -> Result<(PhysicalPlan, bool, Option<FullUpdateLookup>), DriverError> {
+    // Go `buildRefreshMaterializedViewImplement`: the window's upper bound
+    // is the statement transaction's TS, which must be set.
+    if retained_upper_tso == 0 {
+        return Err(plain("RefreshMaterializedViewImplementStmt: invalid transaction start tso"));
+    }
     // Go master `WithMLogCommitTSEstimation` around the merge source's
     // optimization: the retained log window the commit-ts filters are
     // estimated over.

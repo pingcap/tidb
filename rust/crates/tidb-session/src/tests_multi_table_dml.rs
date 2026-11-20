@@ -1899,13 +1899,16 @@ fn shared_write_rowid_assignment_stays_outside_writable_rows() {
         column(&mut session, "SELECT _tidb_rowid,a,v FROM t"),
         ["7|1|8"]
     );
+    // Go `evalDefaultExprWithPlanCtx`: the extra handle's field name has no
+    // `OrigTblName` (`buildDataSource`), so DEFAULT answers
+    // `table.ErrNoDefaultValue`.
     assert_eq!(
         session
             .run("UPDATE t SET _tidb_rowid=DEFAULT")
             .unwrap_err()
             .to_mysql_error()
             .code,
-        1054
+        1364
     );
     assert_eq!(
         session
@@ -1913,7 +1916,7 @@ fn shared_write_rowid_assignment_stays_outside_writable_rows() {
             .unwrap_err()
             .to_mysql_error()
             .code,
-        1054
+        1364
     );
     session.run("ADMIN CHECK TABLE t").unwrap();
 }
