@@ -402,8 +402,8 @@ pub struct MVService {
     pub(crate) ctx: Context,
     pub(crate) sch: ServerConsistentHash,
 
-    next_refresh_alert_scan_millis: AtomicI64,
-    next_mv_log_accumulation_scan_millis: AtomicI64,
+    pub(crate) next_refresh_alert_scan_millis: AtomicI64,
+    pub(crate) next_mv_log_accumulation_scan_millis: AtomicI64,
 
     pub(crate) refresh_executor: Arc<TaskExecutor>,
     pub(crate) purge_executor: Arc<TaskExecutor>,
@@ -422,7 +422,7 @@ pub struct MVService {
     pub(crate) next_history_gc_at_millis: AtomicI64,
     history_gc_retry_count: AtomicI64,
     history_gc_running: AtomicBool,
-    mv_log_accumulation_scan_running: AtomicBool,
+    pub(crate) mv_log_accumulation_scan_running: AtomicBool,
     next_mlog_analyze_scan_millis: AtomicI64,
     mlog_analyze_scan_running: AtomicBool,
 
@@ -434,7 +434,7 @@ pub struct MVService {
     pub metrics: ServiceMetrics,
 
     pub(crate) mview_refresh_mu: Mutex<TaskQueue<MViewTask>>,
-    mview_refresh_alert_mu: Mutex<HashMap<i64, Arc<MViewTask>>>,
+    pub(crate) mview_refresh_alert_mu: Mutex<HashMap<i64, Arc<MViewTask>>>,
     pub(crate) mlog_purge_mu: Mutex<TaskQueue<MlogPurgeTask>>,
     mlog_analyze_tasks: Mutex<HashSet<i64>>,
 }
@@ -770,7 +770,7 @@ impl MVService {
         }
     }
 
-    fn collect_refresh_alert_tasks(&self, now: &GoTime) -> (Vec<RefreshAlertTask>, i64, i64) {
+    pub(crate) fn collect_refresh_alert_tasks(&self, now: &GoTime) -> (Vec<RefreshAlertTask>, i64, i64) {
         let exec_states = self.snapshot_mv_refresh_execution_states();
         let pending = self.mview_refresh_alert_mu.lock().unwrap();
         let mut alert_tasks = Vec::new();
@@ -885,13 +885,13 @@ impl MVService {
         }
     }
 
-    fn is_refresh_alert_checker_owner(&self) -> bool {
+    pub(crate) fn is_refresh_alert_checker_owner(&self) -> bool {
         let state = self.sch.mu.read().unwrap();
         let n = state.server_ids.len().min(2);
         state.server_ids[..n].iter().any(|id| *id == state.id)
     }
 
-    fn is_refresh_alert_metrics_owner(&self) -> bool {
+    pub(crate) fn is_refresh_alert_metrics_owner(&self) -> bool {
         let state = self.sch.mu.read().unwrap();
         state.server_ids.first().is_some_and(|id| *id == state.id)
     }

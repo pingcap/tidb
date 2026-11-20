@@ -60,6 +60,14 @@ pub(crate) struct MockKnobs {
     pub(crate) sync_refresh_alert_err: Option<MvsError>,
     pub(crate) cleanup_stale_refresh_alert_err: Option<MvsError>,
     pub(crate) last_refresh_alert_sync: Vec<RefreshAlertTask>,
+    /// Go `lastRefreshAlertAt`.
+    pub(crate) last_refresh_alert_at: GoTime,
+    /// Go `accumulationRowCountPanic`.
+    pub(crate) accumulation_row_count_panic: bool,
+    /// Go `accumulationRowCountEntered`.
+    pub(crate) accumulation_row_count_entered: Option<Sender<()>>,
+    /// Go `blockAccumulationRowCount`: a scan waits until its sender drops.
+    pub(crate) block_accumulation_row_count: Option<Receiver<()>>,
     pub(crate) last_accumulation_row_count_task_ids: Vec<i64>,
     pub(crate) task_duration_counts: HashMap<String, i64>,
     pub(crate) run_event_counts: HashMap<String, i64>,
@@ -150,11 +158,12 @@ impl MVTaskHandler for MockMVServiceHelper {
         &self,
         _: &Context,
         _: &dyn SessionPool,
-        _: &GoTime,
+        updated_at: &GoTime,
         states: &[RefreshAlertTask],
     ) -> Result<(), MvsError> {
         self.sync_refresh_alert_calls.fetch_add(1, SeqCst);
         let mut knobs = self.knobs.lock().unwrap();
+        knobs.last_refresh_alert_at = updated_at.clone();
         knobs.last_refresh_alert_sync = states.to_vec();
         knobs.sync_refresh_alert_err.clone().map_or(Ok(()), Err)
     }
@@ -199,10 +208,26 @@ impl MVTaskHandler for MockMVServiceHelper {
         tasks: &HashMap<i64, MlogAccumulationTask>,
     ) -> Result<HashMap<i64, u64>, MvsError> {
         self.fetch_accumulation_row_count_calls.fetch_add(1, SeqCst);
-        let mut knobs = self.knobs.lock().unwrap();
-        if let Some(err) = &knobs.fetch_accumulation_row_counts_err {
-            return Err(err.clone());
+        let (panic, err, entered, block) = {
+            let knobs = self.knobs.lock().unwrap();
+            (
+                knobs.accumulation_row_count_panic,
+                knobs.fetch_accumulation_row_counts_err.clone(),
+                knobs.accumulation_row_count_entered.clone(),
+                knobs.block_accumulation_row_count.clone(),
+            )
+        };
+        assert!(!panic, "mock accumulation scan panicked");
+        if let Some(err) = err {
+            return Err(err);
         }
+        if let Some(entered) = entered {
+            let _ = entered.try_send(());
+        }
+        if let Some(block) = block {
+            let _ = block.recv();
+        }
+        let mut knobs = self.knobs.lock().unwrap();
         let mut ids: Vec<i64> = tasks.keys().copied().collect();
         ids.sort_unstable();
         let ret = ids
@@ -555,4 +580,730 @@ fn test_new_mv_service_config() {
     new_mv_service_config_applied();
     new_mv_service_config_normalized_defaults();
     new_mv_service_config_invalid_panics();
+}
+
+// ---------------------------------------------------------------------------
+// Go master `mvservice_test.go`'s refresh alert and MV log accumulation tests.
+
+/// A task as the Go cases write one: `mviewTask{ID, ...}`.
+fn mview_task(id: i64, state: MViewTaskState) -> Arc<MViewTask> {
+    let order_ts = if state.next_refresh.is_zero() { 0 } else { unix_milli(&state.next_refresh) };
+    MViewTask::new(id, state, order_ts)
+}
+
+/// Go `addMVRefreshAlertTasksForTest`.
+fn add_mv_refresh_alert_tasks_for_test(svc: &MVService, tasks: &[&Arc<MViewTask>]) {
+    let pending = tasks.iter().map(|task| (task.id, Arc::clone(task))).collect();
+    svc.build_mview_refresh_alert_tasks(pending);
+}
+
+/// Go `addMVRefreshExecutionTasksForTest`.
+fn add_mv_refresh_execution_tasks_for_test(svc: &MVService, tasks: &[&Arc<MViewTask>]) {
+    let mut queue = svc.mview_refresh_mu.lock().unwrap();
+    for task in tasks {
+        let item = queue.prio.push(Arc::clone(task));
+        queue.pending.insert(task.id, item);
+    }
+}
+
+/// Go `setServiceHashOverridesForTest`: two servers, this one `nodeA`.
+fn set_service_hash_overrides_for_test(svc: &MVService, overrides: &[(Vec<u8>, u32)]) {
+    let mut mapping: HashMap<Vec<u8>, u32> = HashMap::from([
+        (b"nodeA#0".to_vec(), 10),
+        (b"nodeB#0".to_vec(), 30),
+        (MV_HISTORY_GC_OWNER_KEY.as_bytes().to_vec(), 10),
+        (MV_REFRESH_ALERT_CLEANUP_OWNER_KEY.as_bytes().to_vec(), 10),
+    ]);
+    for (key, hash) in overrides {
+        mapping.insert(key.clone(), *hash);
+    }
+    rebuild_owners_for_test(svc, "nodeA", mapping, &["nodeA", "nodeB"]);
+}
+
+fn rebuild_owners_for_test(svc: &MVService, self_id: &str, mapping: HashMap<Vec<u8>, u32>, servers: &[&str]) {
+    let mut state = svc.sch.mu.write().unwrap();
+    state.id = self_id.to_owned();
+    state.chash = crate::consistenthash::ConsistentHash::new(1);
+    state.chash.set_hash_func(move |data: &[u8]| {
+        *mapping.get(data).unwrap_or_else(|| panic!("missing hash mapping for {}", String::from_utf8_lossy(data)))
+    });
+    crate::server_maintainer::ServerConsistentHash::rebuild_locked(
+        &mut state,
+        servers
+            .iter()
+            .map(|id| ((*id).to_owned(), crate::server_maintainer::ServerInfo { id: (*id).to_owned(), ..Default::default() }))
+            .collect(),
+    );
+}
+
+/// Go `setRefreshAlertCleanupOwnerForTest`.
+fn set_refresh_alert_cleanup_owner_for_test(svc: &MVService, owner_hash: u32) {
+    set_service_hash_overrides_for_test(svc, &[(MV_REFRESH_ALERT_CLEANUP_OWNER_KEY.as_bytes().to_vec(), owner_hash)]);
+}
+
+/// Go `setTaskOwnersForTest`.
+fn set_task_owners_for_test(svc: &MVService, task_hashes: &[(i64, u32)]) {
+    let overrides: Vec<(Vec<u8>, u32)> = task_hashes
+        .iter()
+        .map(|(id, hash)| (crate::server_maintainer::int64_key_to_binary_bytes(*id).to_vec(), *hash))
+        .collect();
+    set_service_hash_overrides_for_test(svc, &overrides);
+}
+
+/// Go `setThreeNodeRefreshAlertOwnersForTest`.
+fn set_three_node_refresh_alert_owners_for_test(svc: &MVService, self_id: &str) {
+    let mapping = HashMap::from([
+        (b"nodeA#0".to_vec(), 10),
+        (b"nodeB#0".to_vec(), 20),
+        (b"nodeC#0".to_vec(), 30),
+        (MV_REFRESH_ALERT_CLEANUP_OWNER_KEY.as_bytes().to_vec(), 25),
+    ]);
+    rebuild_owners_for_test(svc, self_id, mapping, &["nodeA", "nodeB", "nodeC"]);
+}
+
+fn set_fetch_views(helper: &MockMVServiceHelper, tasks: &[&Arc<MViewTask>]) {
+    helper.knobs.lock().unwrap().fetch_views = tasks.iter().map(|task| (task.id, Arc::clone(task))).collect();
+}
+
+fn last_refresh_alert_sync(helper: &MockMVServiceHelper) -> (GoTime, Vec<RefreshAlertTask>) {
+    let knobs = helper.knobs.lock().unwrap();
+    (knobs.last_refresh_alert_at.clone(), knobs.last_refresh_alert_sync.clone())
+}
+
+#[test]
+fn test_mv_service_collect_refresh_alert_tasks_by_alert_level() {
+    let _serial = serial();
+    let svc = new_service(Arc::default(), default_mv_service_config());
+    let now = mvs_now();
+    let warn_task = mview_task(101, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_time: now.add(-40 * SECOND),
+        alert_warning_sec: 30,
+        alert_overdue_sec: 120,
+        ..MViewTaskState::default()
+    });
+    let overdue_task = mview_task(102, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_time: now.add(-70 * SECOND),
+        alert_warning_sec: 30,
+        alert_overdue_sec: 60,
+        ..MViewTaskState::default()
+    });
+    // "simulate running task"
+    overdue_task.order_ts.store(MAX_NEXT_SCHEDULE_TS, SeqCst);
+    let disabled_task = mview_task(103, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_time: now.add(-5 * MINUTE),
+        ..MViewTaskState::default()
+    });
+    add_mv_refresh_alert_tasks_for_test(&svc, &[&warn_task, &overdue_task, &disabled_task]);
+    add_mv_refresh_execution_tasks_for_test(&svc, &[&warn_task, &overdue_task, &disabled_task]);
+
+    let (got, warning_count, overdue_count) = svc.collect_refresh_alert_tasks(&now);
+    assert_eq!(got.len(), 2);
+    assert_eq!(1, warning_count);
+    assert_eq!(1, overdue_count);
+    let by_id: HashMap<i64, &RefreshAlertTask> = got.iter().map(|task| (task.mview_id, task)).collect();
+    assert!(!by_id[&101].overdue);
+    assert_eq!("queued", by_id[&101].task_state);
+    assert_eq!(30, by_id[&101].alert_warning_sec);
+    assert_eq!(120, by_id[&101].alert_overdue_sec);
+    assert!(by_id[&102].overdue);
+    assert_eq!("running", by_id[&102].task_state);
+    assert_eq!(30, by_id[&102].alert_warning_sec);
+    assert_eq!(60, by_id[&102].alert_overdue_sec);
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_refresh_alert_scan_interval() {
+    let _serial = serial();
+    let svc = new_service(Arc::default(), default_mv_service_config());
+    let now = mvs_now();
+    let task = mview_task(1, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_time: now.add(-2 * MINUTE),
+        alert_warning_sec: 30,
+        ..MViewTaskState::default()
+    });
+    add_mv_refresh_execution_tasks_for_test(&svc, &[&task]);
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(unix_milli(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL)), svc.next_refresh_alert_scan_millis.load(SeqCst));
+
+    // "Within scan interval: should not trigger another scan."
+    svc.maybe_log_refresh_alert_tasks(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL / 2));
+    assert_eq!(unix_milli(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL)), svc.next_refresh_alert_scan_millis.load(SeqCst));
+
+    // "After interval: one more full scan and next scan time moves forward."
+    svc.maybe_log_refresh_alert_tasks(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL));
+    assert_eq!(unix_milli(&now.add(2 * MV_REFRESH_ALERT_SCAN_INTERVAL)), svc.next_refresh_alert_scan_millis.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_collect_refresh_alert_tasks_dedup_by_last_success_read_tso() {
+    let _serial = serial();
+    struct Step {
+        at_offset: i64,
+        before_collect: Option<fn(&MViewTask, &GoTime)>,
+        expected_count: usize,
+        expected_id: i64,
+        expected_overdue: bool,
+        warning_count: i64,
+        overdue_count: i64,
+    }
+    let step = |at_offset, expected_count, expected_id, expected_overdue, warning_count, overdue_count| Step {
+        at_offset,
+        before_collect: None,
+        expected_count,
+        expected_id,
+        expected_overdue,
+        warning_count,
+        overdue_count,
+    };
+    let now = mvs_now();
+    let cases: Vec<(&str, Arc<MViewTask>, Vec<Step>)> = vec![
+        (
+            "dedup_on_same_tso",
+            mview_task(201, MViewTaskState {
+                next_refresh: now.add(-2 * MINUTE),
+                last_success_read_tso: 123_456,
+                last_success_time: now.add(-2 * MINUTE),
+                alert_warning_sec: 30,
+                ..MViewTaskState::default()
+            }),
+            vec![
+                step(0, 1, 201, false, 1, 0),
+                step(10 * SECOND, 0, 0, false, 1, 0),
+                Step {
+                    before_collect: Some(|task, now| {
+                        let mut state = task.state.lock().unwrap();
+                        state.last_success_read_tso = 223_456;
+                        state.last_success_time = now.add(-2 * MINUTE);
+                    }),
+                    ..step(20 * SECOND, 1, 201, false, 1, 0)
+                },
+            ],
+        ),
+        (
+            "dedup_by_alert_level",
+            mview_task(202, MViewTaskState {
+                next_refresh: now.add(-2 * MINUTE),
+                last_success_read_tso: 123_456,
+                last_success_time: now.add(-40 * SECOND),
+                alert_warning_sec: 30,
+                alert_overdue_sec: 60,
+                ..MViewTaskState::default()
+            }),
+            vec![
+                step(0, 1, 202, false, 1, 0),
+                step(10 * SECOND, 0, 0, false, 1, 0),
+                step(30 * SECOND, 1, 202, true, 0, 1),
+                step(40 * SECOND, 0, 0, false, 0, 1),
+            ],
+        ),
+    ];
+    for (name, task, steps) in cases {
+        let svc = new_service(Arc::default(), default_mv_service_config());
+        add_mv_refresh_alert_tasks_for_test(&svc, &[&task]);
+        for s in steps {
+            let at = now.add(s.at_offset);
+            if let Some(before_collect) = s.before_collect {
+                before_collect(&task, &at);
+            }
+            let (got, warning_count, overdue_count) = svc.collect_refresh_alert_tasks(&at);
+            assert_eq!(got.len(), s.expected_count, "{name}");
+            assert_eq!(s.warning_count, warning_count, "{name}");
+            assert_eq!(s.overdue_count, overdue_count, "{name}");
+            if s.expected_count > 0 {
+                assert_eq!(s.expected_id, got[0].mview_id, "{name}");
+                assert_eq!(s.expected_overdue, got[0].overdue, "{name}");
+            }
+        }
+        svc.close_task_executors();
+    }
+}
+
+#[test]
+fn test_mv_service_maybe_log_refresh_alert_tasks_syncs_alert_states() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 10);
+    let now = mvs_now();
+    let state = |name: &str, tso: u64, since_success: i64, warning: i64, overdue: i64| MViewTaskState {
+        schema_name: "test".to_owned(),
+        mview_name: name.to_owned(),
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_read_tso: tso,
+        last_success_time: now.add(-since_success),
+        alert_warning_sec: warning,
+        alert_overdue_sec: overdue,
+        ..MViewTaskState::default()
+    };
+    let warn_task = mview_task(301, state("mv_warn", 12345, 40 * SECOND, 30, 120));
+    let overdue_task = mview_task(302, state("mv_overdue", 22345, 90 * SECOND, 30, 60));
+    let healthy_task = mview_task(303, state("mv_healthy", 32345, 10 * SECOND, 30, 60));
+    set_fetch_views(&helper, &[&warn_task, &overdue_task, &healthy_task]);
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(1, helper.sync_refresh_alert_calls.load(SeqCst));
+    assert_eq!(1, svc.metrics.alert_warning_count.load(SeqCst));
+    assert_eq!(1, svc.metrics.alert_overdue_count.load(SeqCst));
+
+    let (synced_at, synced) = last_refresh_alert_sync(&helper);
+    assert_eq!(synced_at, now);
+    assert_eq!(synced.len(), 3);
+    let by_id: HashMap<i64, &RefreshAlertTask> = synced.iter().map(|state| (state.mview_id, state)).collect();
+    assert_eq!(MV_REFRESH_ALERT_LEVEL_WARNING, by_id[&301].alert_level);
+    assert_eq!(MV_REFRESH_ALERT_LEVEL_OVERDUE, by_id[&302].alert_level);
+    assert!(by_id[&303].alert_level.is_empty());
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(1, helper.sync_refresh_alert_calls.load(SeqCst));
+    assert_eq!(2, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_log_refresh_alert_tasks_cleans_up_stale_rows_without_local_pending_tasks() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 10);
+    let now = mvs_now();
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(1, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+
+    svc.maybe_log_refresh_alert_tasks(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL / 2));
+    assert_eq!(1, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+
+    svc.maybe_log_refresh_alert_tasks(&now.add(MV_REFRESH_ALERT_SCAN_INTERVAL));
+    assert_eq!(2, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_build_mv_refresh_tasks_does_not_clear_removed_alert_states() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    let now = mvs_now();
+    let m = mview_task(401, MViewTaskState { next_refresh: now.add(MINUTE), ..MViewTaskState::default() });
+
+    svc.build_mview_refresh_tasks(HashMap::from([(m.id, Arc::clone(&m))]));
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+
+    svc.build_mview_refresh_tasks(HashMap::new());
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_log_refresh_alert_tasks_resyncs_when_last_success_read_tso_changes() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 10);
+    let now = mvs_now();
+    let task = mview_task(501, MViewTaskState {
+        schema_name: "test".to_owned(),
+        mview_name: "mv_warn".to_owned(),
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_read_tso: 12345,
+        last_success_time: now.add(-40 * SECOND),
+        alert_warning_sec: 30,
+        ..MViewTaskState::default()
+    });
+    set_fetch_views(&helper, &[&task]);
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(1, helper.sync_refresh_alert_calls.load(SeqCst));
+
+    {
+        let mut state = task.state.lock().unwrap();
+        state.last_success_read_tso = 22345;
+        state.last_success_time = now.add(-35 * SECOND);
+    }
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(2, helper.sync_refresh_alert_calls.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_log_refresh_alert_tasks_skips_unresolved_metadata() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 10);
+    let now = mvs_now();
+    let task = mview_task(601, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        last_success_read_tso: 12345,
+        last_success_time: now.add(-40 * SECOND),
+        alert_warning_sec: 30,
+        metadata_unresolved: true,
+        ..MViewTaskState::default()
+    });
+    set_fetch_views(&helper, &[&task]);
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+    assert_eq!(1, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+    assert_eq!(0, svc.metrics.alert_warning_count.load(SeqCst));
+    assert_eq!(0, svc.metrics.alert_overdue_count.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_build_mv_refresh_tasks_does_not_delete_alerts_on_temporary_metadata_miss() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 10);
+    let now = mvs_now();
+    let existing = mview_task(602, MViewTaskState {
+        next_refresh: now.add(-2 * MINUTE),
+        schema_name: "test".to_owned(),
+        mview_name: "mv".to_owned(),
+        last_success_read_tso: 12345,
+        last_success_time: now.add(-40 * SECOND),
+        alert_warning_sec: 30,
+        last_synced_alert_level: MV_REFRESH_ALERT_LEVEL_WARNING.to_owned(),
+        last_synced_alert_read_tso: 12345,
+        alert_state_initialized: true,
+        ..MViewTaskState::default()
+    });
+    add_mv_refresh_alert_tasks_for_test(&svc, &[&existing]);
+    let fetched = mview_task(602, MViewTaskState {
+        next_refresh: existing.state.lock().unwrap().next_refresh.clone(),
+        last_success_read_tso: 12345,
+        last_success_time: now.add(-40 * SECOND),
+        metadata_unresolved: true,
+        ..MViewTaskState::default()
+    });
+    set_fetch_views(&helper, &[&fetched]);
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+    assert_eq!(1, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+
+    let preserved = svc.mview_refresh_alert_mu.lock().unwrap().get(&602).cloned().expect("preserved");
+    let preserved = preserved.state.lock().unwrap();
+    assert!(preserved.alert_state_initialized);
+    assert_eq!(MV_REFRESH_ALERT_LEVEL_WARNING, preserved.last_synced_alert_level);
+    assert_eq!(12345, preserved.last_synced_alert_read_tso);
+    drop(preserved);
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_log_refresh_alert_tasks_skips_cleanup_when_not_owner() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_refresh_alert_cleanup_owner_for_test(&svc, 20);
+    let now = mvs_now();
+
+    svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+    svc.maybe_log_refresh_alert_tasks(&now);
+    assert_eq!(0, helper.cleanup_stale_refresh_alert_calls.load(SeqCst));
+    assert_eq!(0, helper.sync_refresh_alert_calls.load(SeqCst));
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_refresh_alert_checker_owners_scan_global_tasks() {
+    let _serial = serial();
+    let now = mvs_now();
+    let new_task = || {
+        mview_task(701, MViewTaskState {
+            schema_name: "test".to_owned(),
+            mview_name: "mv_overdue".to_owned(),
+            next_refresh: now.add(-2 * MINUTE),
+            last_success_read_tso: 12345,
+            last_success_time: now.add(-90 * SECOND),
+            alert_warning_sec: 30,
+            alert_overdue_sec: 60,
+            ..MViewTaskState::default()
+        })
+    };
+    // (name, self_id, checker_owner, metrics_owner, fetch_calls, sync_calls, overdue_count, task_state)
+    let cases = [
+        ("first_server_reports_metrics", "nodeA", true, true, 1, 1, 1, MV_REFRESH_ALERT_TASK_STATE_UNKNOWN),
+        ("second_server_does_not_report_metrics", "nodeB", true, false, 1, 1, 0, MV_REFRESH_ALERT_TASK_STATE_UNKNOWN),
+        ("third_server_is_not_checker_owner", "nodeC", false, false, 0, 0, 0, ""),
+    ];
+    for (name, self_id, checker_owner, metrics_owner, fetch_calls, sync_calls, overdue_count, task_state) in cases {
+        let task = new_task();
+        let helper = Arc::new(MockMVServiceHelper::default());
+        set_fetch_views(&helper, &[&task]);
+        let svc = new_service(helper.clone(), default_mv_service_config());
+        set_three_node_refresh_alert_owners_for_test(&svc, self_id);
+        assert_eq!(checker_owner, svc.is_refresh_alert_checker_owner(), "{name}");
+        assert_eq!(metrics_owner, svc.is_refresh_alert_metrics_owner(), "{name}");
+        svc.metrics.alert_warning_count.store(7, SeqCst);
+        svc.metrics.alert_overdue_count.store(7, SeqCst);
+        let (reported_warning, reported_overdue) = svc.refresh_alert_metric_counts();
+        let expected = if metrics_owner { 7 } else { 0 };
+        assert_eq!((expected, expected), (reported_warning, reported_overdue), "{name}");
+
+        svc.next_refresh_alert_scan_millis.store(0, SeqCst);
+        svc.maybe_log_refresh_alert_tasks(&now);
+        assert_eq!(fetch_calls, helper.fetch_view_calls.load(SeqCst), "{name}");
+        assert_eq!(sync_calls, helper.sync_refresh_alert_calls.load(SeqCst), "{name}");
+        assert_eq!(0, svc.metrics.alert_warning_count.load(SeqCst), "{name}");
+        assert_eq!(overdue_count, svc.metrics.alert_overdue_count.load(SeqCst), "{name}");
+        if sync_calls > 0 {
+            let (_, synced) = last_refresh_alert_sync(&helper);
+            assert_eq!(synced.len(), 1, "{name}");
+            assert_eq!(task.id, synced[0].mview_id, "{name}");
+            assert_eq!(MV_REFRESH_ALERT_LEVEL_OVERDUE, synced[0].alert_level, "{name}");
+            assert_eq!(task_state, synced[0].task_state, "{name}");
+        }
+        svc.close_task_executors();
+    }
+}
+
+#[test]
+fn test_mv_service_refresh_alert_checker_owner_single_server() {
+    let _serial = serial();
+    let svc = new_service(Arc::default(), default_mv_service_config());
+    {
+        let mut state = svc.sch.mu.write().unwrap();
+        state.id = "nodeA".to_owned();
+        crate::server_maintainer::ServerConsistentHash::rebuild_locked(
+            &mut state,
+            HashMap::from([(
+                "nodeA".to_owned(),
+                crate::server_maintainer::ServerInfo { id: "nodeA".to_owned(), ..Default::default() },
+            )]),
+        );
+    }
+    assert!(svc.is_refresh_alert_checker_owner());
+    assert!(svc.is_refresh_alert_metrics_owner());
+
+    svc.sch.mu.write().unwrap().id = "nodeB".to_owned();
+    assert!(!svc.is_refresh_alert_checker_owner());
+    assert!(!svc.is_refresh_alert_metrics_owner());
+    svc.close_task_executors();
+}
+
+fn accumulation_task(name: &str, alert_rows: u64) -> MlogAccumulationTask {
+    MlogAccumulationTask { schema_name: "test".to_owned(), mlog_name: name.to_owned(), alert_rows }
+}
+
+fn accumulation_scan_idle(svc: &MVService) -> bool {
+    !svc.mv_log_accumulation_scan_running.load(SeqCst)
+}
+
+#[test]
+fn test_mv_service_maybe_scan_mv_log_accumulation_alerts_filters_unowned_tasks() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.fetch_accumulation_tasks =
+            HashMap::from([(101, accumulation_task("mlog_101", 1000)), (102, accumulation_task("mlog_102", 1000))]);
+        knobs.fetch_accumulation_row_counts = HashMap::from([(101, 1500), (102, 2500)]);
+    }
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_task_owners_for_test(&svc, &[(101, 10), (102, 30)]);
+
+    let now = mvs_now();
+    svc.next_mv_log_accumulation_scan_millis.store(0, SeqCst);
+    svc.maybe_scan_mv_log_accumulation_alerts(&now);
+    eventually(
+        || {
+            accumulation_scan_idle(&svc)
+                && helper.fetch_accumulation_task_calls.load(SeqCst) == 1
+                && helper.fetch_accumulation_row_count_calls.load(SeqCst) == 1
+                && svc.metrics.mv_log_accumulation_count.load(SeqCst) == 1
+        },
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    assert_eq!(vec![101], helper.knobs.lock().unwrap().last_accumulation_row_count_task_ids);
+
+    svc.maybe_scan_mv_log_accumulation_alerts(&now.add(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL / 2));
+    assert_eq!(1, helper.fetch_accumulation_task_calls.load(SeqCst));
+
+    svc.next_mv_log_accumulation_scan_millis.store(0, SeqCst);
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.fetch_accumulation_tasks =
+            HashMap::from([(101, accumulation_task("mlog_101", 1000)), (102, accumulation_task("mlog_102", 1000))]);
+        knobs.fetch_accumulation_row_counts = HashMap::from([(101, 1800), (102, 2800)]);
+    }
+    svc.maybe_scan_mv_log_accumulation_alerts(&now.add(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL));
+    eventually(
+        || {
+            accumulation_scan_idle(&svc)
+                && helper.fetch_accumulation_task_calls.load(SeqCst) == 2
+                && helper.fetch_accumulation_row_count_calls.load(SeqCst) == 2
+                && svc.metrics.mv_log_accumulation_count.load(SeqCst) == 1
+        },
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    assert_eq!(vec![101], helper.knobs.lock().unwrap().last_accumulation_row_count_task_ids);
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_scan_mv_log_accumulation_alerts_preserves_last_value_on_error() {
+    let _serial = serial();
+    // (name, tasks_err, row_counts_err, row_count_panic)
+    let cases = [
+        ("task_fetch_error", Some(MvsError::Other("mock accumulation task fetch failed".to_owned())), None, false),
+        ("row_count_error", None, Some(MvsError::Other("mock accumulation scan failed".to_owned())), false),
+        ("row_count_panic", None, None, true),
+    ];
+    for (name, tasks_err, row_counts_err, row_count_panic) in cases {
+        let (clock, _guard) = install_mock_time_for_test();
+        let helper = Arc::new(MockMVServiceHelper::default());
+        {
+            let mut knobs = helper.knobs.lock().unwrap();
+            knobs.fetch_accumulation_tasks = HashMap::from([(101, accumulation_task("mlog_101", 1000))]);
+            knobs.fetch_accumulation_row_counts = HashMap::from([(101, 1500)]);
+        }
+        let svc = new_service(helper.clone(), default_mv_service_config());
+        set_task_owners_for_test(&svc, &[(101, 10)]);
+
+        svc.maybe_scan_mv_log_accumulation_alerts(&clock.now());
+        eventually(
+            || accumulation_scan_idle(&svc) && svc.metrics.mv_log_accumulation_count.load(SeqCst) == 1,
+            TEST_EVENTUALLY_WAIT,
+            TEST_EVENTUALLY_TICK,
+        );
+
+        {
+            let mut knobs = helper.knobs.lock().unwrap();
+            knobs.fetch_accumulation_tasks_err = tasks_err;
+            knobs.fetch_accumulation_row_counts_err = row_counts_err;
+            knobs.accumulation_row_count_panic = row_count_panic;
+            knobs.fetch_accumulation_row_counts.insert(101, 500);
+        }
+        clock.advance(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL);
+        svc.maybe_scan_mv_log_accumulation_alerts(&clock.now());
+        eventually(
+            || accumulation_scan_idle(&svc) && helper.fetch_accumulation_task_calls.load(SeqCst) == 2,
+            TEST_EVENTUALLY_WAIT,
+            TEST_EVENTUALLY_TICK,
+        );
+        assert_eq!(1, svc.metrics.mv_log_accumulation_count.load(SeqCst), "{name}");
+        assert_eq!(
+            unix_milli(&clock.now().add(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL)),
+            svc.next_mv_log_accumulation_scan_millis.load(SeqCst),
+            "{name}"
+        );
+
+        clock.advance(svc.basic_interval);
+        svc.maybe_scan_mv_log_accumulation_alerts(&clock.now());
+        assert!(accumulation_scan_idle(&svc), "{name}");
+        assert_eq!(2, helper.fetch_accumulation_task_calls.load(SeqCst), "{name}");
+
+        {
+            let mut knobs = helper.knobs.lock().unwrap();
+            knobs.fetch_accumulation_tasks_err = None;
+            knobs.fetch_accumulation_row_counts_err = None;
+            knobs.accumulation_row_count_panic = false;
+        }
+        clock.advance(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL - svc.basic_interval);
+        svc.maybe_scan_mv_log_accumulation_alerts(&clock.now());
+        eventually(
+            || accumulation_scan_idle(&svc) && helper.fetch_accumulation_task_calls.load(SeqCst) == 3,
+            TEST_EVENTUALLY_WAIT,
+            TEST_EVENTUALLY_TICK,
+        );
+        assert_eq!(0, svc.metrics.mv_log_accumulation_count.load(SeqCst), "{name}");
+        svc.close_task_executors();
+    }
+}
+
+#[test]
+fn test_mv_service_maybe_scan_mv_log_accumulation_alerts_uses_strict_greater_than() {
+    let _serial = serial();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.fetch_accumulation_tasks = HashMap::from([(101, accumulation_task("mlog_101", 50))]);
+        knobs.fetch_accumulation_row_counts = HashMap::from([(101, 50)]);
+    }
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_task_owners_for_test(&svc, &[(101, 10)]);
+
+    let now = mvs_now();
+    svc.next_mv_log_accumulation_scan_millis.store(0, SeqCst);
+    svc.maybe_scan_mv_log_accumulation_alerts(&now);
+    eventually(
+        || accumulation_scan_idle(&svc) && helper.fetch_accumulation_row_count_calls.load(SeqCst) == 1,
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    assert_eq!(0, svc.metrics.mv_log_accumulation_count.load(SeqCst));
+    assert_eq!(vec![101], helper.knobs.lock().unwrap().last_accumulation_row_count_task_ids);
+    svc.close_task_executors();
+}
+
+#[test]
+fn test_mv_service_maybe_scan_mv_log_accumulation_alerts_async_and_non_overlapping() {
+    let _serial = serial();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded::<()>(2);
+    let (block_tx, block_rx) = crossbeam_channel::bounded::<()>(0);
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.fetch_accumulation_tasks = HashMap::from([(101, accumulation_task("mlog_101", 1000))]);
+        knobs.fetch_accumulation_row_counts = HashMap::from([(101, 1500)]);
+        knobs.accumulation_row_count_entered = Some(entered_tx);
+        knobs.block_accumulation_row_count = Some(block_rx);
+    }
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    set_task_owners_for_test(&svc, &[(101, 10)]);
+
+    let now = mvs_now();
+    svc.next_mv_log_accumulation_scan_millis.store(0, SeqCst);
+    let (done_tx, done_rx) = crossbeam_channel::bounded::<()>(1);
+    {
+        let svc = Arc::clone(&svc);
+        let now = now.clone();
+        std::thread::spawn(move || {
+            svc.maybe_scan_mv_log_accumulation_alerts(&now);
+            let _ = done_tx.send(());
+        });
+    }
+    entered_rx.recv_timeout(TEST_EVENTUALLY_WAIT).expect("the row count scan starts");
+    done_rx.recv_timeout(TEST_EVENTUALLY_WAIT).expect("the scan runs asynchronously");
+    assert_eq!(0, svc.metrics.mv_log_accumulation_count.load(SeqCst));
+
+    svc.next_mv_log_accumulation_scan_millis.store(0, SeqCst);
+    svc.maybe_scan_mv_log_accumulation_alerts(&now.add(MV_LOG_ACCUMULATION_ALERT_SCAN_INTERVAL));
+    assert_eq!(1, helper.fetch_accumulation_task_calls.load(SeqCst));
+    assert_eq!(1, helper.fetch_accumulation_row_count_calls.load(SeqCst));
+
+    // Go `close(helper.blockAccumulationRowCount)`.
+    drop(block_tx);
+    eventually(
+        || {
+            accumulation_scan_idle(&svc)
+                && svc.metrics.mv_log_accumulation_count.load(SeqCst) == 1
+                && helper.fetch_accumulation_task_calls.load(SeqCst) == 1
+                && helper.fetch_accumulation_row_count_calls.load(SeqCst) == 1
+        },
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    svc.close_task_executors();
 }
