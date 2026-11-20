@@ -50,6 +50,7 @@ type Session interface {
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	// On error it closes any result set and returns nil for the result. The caller closes any result set returned on success.
 	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error

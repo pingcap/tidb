@@ -1098,6 +1098,50 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 	})
 }
 
+func TestExecuteInternalClosesFailedResults(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+	se := tk.Session()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	for _, sql := range []string{
+		"select v from t",
+		"explain analyze update t set v = 2 where id = 1",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			var closeErrors []error
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeCloseRecordSetForTest", func(stmt *executor.ExecStmt, err *error) {
+				if stmt.Ctx == se {
+					closeErrors = append(closeErrors, *err)
+				}
+			})
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/statementRUResultSetErrorForTest",
+				fmt.Sprintf("return(%d)", se.GetSessionVars().ConnectionID))
+
+			rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+			require.ErrorContains(t, err, "statement RU result-set test error")
+			require.Nil(t, rs)
+			require.Len(t, closeErrors, 1)
+			require.ErrorIs(t, closeErrors[0], err)
+		})
+	}
+	tk.MustQuery("select v from t").Check(testkit.Rows("1"))
+
+	t.Run("PointGet failure returns a nil result", func(t *testing.T) {
+		tk.MustExec("prepare point_read from 'select v from t where id = ?'")
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute point_read using @id").Check(testkit.Rows("1"))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/statementRUPointGetErrorForTest",
+			fmt.Sprintf("return(%d)", se.GetSessionVars().ConnectionID))
+
+		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "execute point_read using @id")
+		require.ErrorContains(t, err, "statement RU PointGet test error")
+		require.True(t, rs == nil, "expected a nil RecordSet interface")
+	})
+}
+
 func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 	enableStatementRUExecutionInfo(t)
 

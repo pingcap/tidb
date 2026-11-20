@@ -190,16 +190,14 @@ func countActiveKeyspaceJobs(ctx context.Context, se sessionctx.Context) (keyspa
 
 func queryJobCount(ctx context.Context, se sessionctx.Context, query string) (_ int64, resultErr error) {
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, query)
-	if rs != nil {
-		defer func() {
-			if closeErr := rs.Close(); resultErr == nil {
-				resultErr = closeErr
-			}
-		}()
-	}
 	if err != nil {
 		return 0, err
 	}
+	defer func() {
+		if closeErr := rs.Close(); resultErr == nil {
+			resultErr = closeErr
+		}
+	}()
 
 	chk := rs.NewChunk(nil)
 	if err := rs.Next(ctx, chk); err != nil {

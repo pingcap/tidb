@@ -1932,15 +1932,13 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 		return nil, err
 	}
 
-	rs, err = s.ExecuteStmt(ctx, stmtNode)
+	rs, err = s.executeStmt(ctx, stmtNode, true)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
 		return nil, err
 	}
 
-	return rs, err
+	return rs, nil
 }
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
@@ -2488,17 +2486,21 @@ func (i isInternalAlias) isInternalDumpTriggerCheck(config *traceevent.DumpTrigg
 }
 
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	return s.executeStmt(ctx, stmtNode, false)
+}
+
+func (s *session) executeStmt(ctx context.Context, stmtNode ast.StmtNode, closeResultOnError bool) (sqlexec.RecordSet, error) {
 	if fr := traceevent.GetFlightRecorder(); fr != nil {
 		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", fr.CheckSampling)
 	}
-	rs, err := s.executeStmtImpl(ctx, stmtNode)
+	rs, err := s.executeStmtImpl(ctx, stmtNode, closeResultOnError)
 	if err != nil {
 		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", queryFailDumpTriggerCheck)
 	}
 	return rs, err
 }
 
-func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (recordSet sqlexec.RecordSet, err error) {
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode, closeResultOnError bool) (recordSet sqlexec.RecordSet, err error) {
 	// Reject user SQL before preparing a transaction or resetting statement
 	// state. Internal restricted SQL is used by diagnostic startup and metadata
 	// readers and must continue to run under the process-wide diagnostic mode.
@@ -2811,7 +2813,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 			}
 		})
 	} else {
-		recordSet, err = runStmt(ctx, s, stmt)
+		recordSet, err = runStmt(ctx, s, stmt, closeResultOnError)
 		// A handler can survive a failed previous statement. A current result set must publish
 		// its own outcome in execStmtResult.Finish instead of being mistaken for file transfer.
 		publishStatementRUOutcomeOnNormalReturn = recordSet == nil && err == nil && s.hasFileTransInConn()
@@ -3055,7 +3057,7 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 }
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement, closeResultOnError bool) (rs sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
 		sessiontxn.RecordAssert(se, "assertTxnManagerInRunStmt", true)
 		if stmt, ok := s.(*executor.ExecStmt); ok {
@@ -3169,6 +3171,15 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if err != nil {
 			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+			if closeResultOnError {
+				if finisher, ok := rs.(interface{ Finish() error }); ok {
+					terror.Log(finisher.Finish())
+				}
+				// Pass the execution error to finalization before EXPLAIN ANALYZE DML can commit.
+				_ = finishStmt(ctx, se, err, s)
+				terror.Log(executor.CloseRecordSetWithError(rs, err))
+				return nil, err
+			}
 		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
