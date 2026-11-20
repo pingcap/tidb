@@ -44,7 +44,7 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 // CompileParsedBooleanQuery normalizes a parsed query without mutating its AST.
 // Planning may reuse that AST for the TiFlash payload, independently of Tipb.
 func CompileParsedBooleanQuery(group *matchagainst.BooleanGroup, config AnalyzerConfig) (*Query, error) {
-	analyzer, err := GetAnalyzer(config)
+	analyzer, err := getQueryAnalyzer(config)
 	if err != nil {
 		return nil, err
 	}
@@ -472,26 +472,6 @@ func normalizeBooleanPhrase(phrase *matchagainst.BooleanPhrase, config AnalyzerC
 	if err != nil {
 		return nil, err
 	}
-	if config.ParserType == model.FullTextParserTypeNgramV1 {
-		info := parserInfoFromConfig(config)
-		seenIndexedWord := false
-		for _, word := range PreserveUnderscoreTokenize(phrase.Text()) {
-			// The Boolean plugin emits a short query word as a unigram. It
-			// cannot occur in a fixed-size document ngram index. Do not drop
-			// it and accidentally match the remaining phrase words.
-			if charLen(word.Text) < config.NgramTokenSize {
-				if seenIndexedWord || !info.containsNgramStopword(word.Text) {
-					return neverNode{}, nil
-				}
-			} else {
-				indexed, err := analyzer.Analyze(word.Text)
-				if err != nil {
-					return nil, err
-				}
-				seenIndexedWord = seenIndexedWord || len(indexed) > 0
-			}
-		}
-	}
 	return normalizeAnalyzedPhrase(phrase.Text(), tokens, config)
 }
 
@@ -508,11 +488,11 @@ func normalizeAnalyzedPhrase(text string, tokens []Token, config AnalyzerConfig)
 	rawConfig.InnodbFtEnableStopword = false
 	rawConfig.InnodbFtMinTokenSize = 0
 	rawConfig.InnodbFtMaxTokenSize = math.MaxInt
-	rawAnalyzer, err := GetAnalyzer(rawConfig)
+	rawQueryAnalyzer, err := getQueryAnalyzer(rawConfig)
 	if err != nil {
 		return nil, err
 	}
-	rawTokens, err := rawAnalyzer.Analyze(text)
+	rawTokens, err := rawQueryAnalyzer.Analyze(text)
 	if err != nil {
 		return nil, err
 	}
@@ -524,7 +504,11 @@ func normalizeAnalyzedPhrase(text string, tokens []Token, config AnalyzerConfig)
 	if len(rawTokens) == len(tokens) {
 		return anchor, nil
 	}
-	return verifiedPhraseNode{anchor: anchor, phrase: buildPhraseNode(rawTokens, collator), analyzer: rawAnalyzer}, nil
+	rawDocumentAnalyzer, err := GetAnalyzer(rawConfig)
+	if err != nil {
+		return nil, err
+	}
+	return verifiedPhraseNode{anchor: anchor, phrase: buildPhraseNode(rawTokens, collator), analyzer: rawDocumentAnalyzer}, nil
 }
 
 func normalizePrefixTerm(

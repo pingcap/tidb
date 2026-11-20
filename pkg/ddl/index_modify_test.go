@@ -1473,8 +1473,13 @@ func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
 	tk.MustContainErrMsg("create table bad_parser(a text, fulltext index idx(a) with parser unknown)", "FULLTEXT parser 'unknown' is not supported")
 	tk.MustContainErrMsg("create table duplicate_col(a text, fulltext index idx(a, a))", "FULLTEXT index contains a duplicate column")
 
+	tk.MustExec("create table t_ngram(a text, fulltext index idx(a) with parser ngram)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t_ngram").CheckContain("WITH PARSER NGRAM")
+
 	tk.MustExec("create table t2(a text, b text)")
 	tk.MustExec("create fulltext index idx_ab on t2(a, b) with parser ngram")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("admin show ddl jobs 1").CheckContain("add fulltext index")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
@@ -1498,9 +1503,13 @@ func TestCreateTableWithFullTextIndexMetadata(t *testing.T) {
 	tk.MustExec("alter table t2 drop index idx_renamed")
 	tk.MustContainErrMsg("select * from t2 where match(a, b) against('+hello' in boolean mode)", "Can't find FULLTEXT index matching the column list")
 	tk.MustExec("alter table t2 add fulltext index idx_a(a) with parser standard")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustContainErrMsg("alter table t2 modify column a varchar(255)", "column is covered by a FULLTEXT index")
 	tk.MustContainErrMsg("alter table t2 drop column a", "with FULLTEXT index covered")
 	tk.MustExec("alter table t2 drop index idx_a")
+	tk.MustExec("alter table t2 add fulltext index idx_a(a) with parser ngram")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t2").CheckContain("WITH PARSER NGRAM")
 
 	tk.MustExec("create table pt(id int, a text) partition by hash(id) partitions 2")
 	tk.MustExec("create fulltext index idx_a on pt(a)")

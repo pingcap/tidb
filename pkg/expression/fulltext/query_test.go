@@ -367,6 +367,39 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abx"}}))
 }
 
+func TestCompileBooleanQueryNgramShortWords(t *testing.T) {
+	const separator = "\u2063"
+	const wrappedFour = separator + "4" + separator
+	const wrappedTwelve = separator + "12" + separator
+	for _, collation := range []struct {
+		name             string
+		ignoresSeparator bool
+	}{
+		{"utf8mb4_bin", false},
+		{"utf8mb4_general_ci", false},
+		{"utf8mb4_unicode_ci", true},
+		{"utf8mb4_0900_ai_ci", true},
+	} {
+		t.Run(collation.name, func(t *testing.T) {
+			config := ngramConfigForTest()
+			config.Collation = collation.name
+			for _, search := range []string{"4", "+4", `"4"`, `"` + wrappedFour + `"`} {
+				for _, document := range []string{wrappedFour, separator + "45" + separator, separator + "14" + separator} {
+					require.Equal(t, collation.ignoresSeparator, matchQueryForTest(t, config, search, []ColumnInput{{Text: document}}),
+						"search=%q document=%q", search, document)
+				}
+				for _, document := range []string{"4", "45", wrappedTwelve} {
+					require.False(t, matchQueryForTest(t, config, search, []ColumnInput{{Text: document}}),
+						"search=%q document=%q", search, document)
+				}
+			}
+			require.True(t, matchQueryForTest(t, config, `"`+wrappedTwelve+`"`,
+				[]ColumnInput{{Text: separator + "123" + separator}}))
+			require.False(t, matchQueryForTest(t, config, `"4 12"`, []ColumnInput{{Text: wrappedTwelve}}))
+		})
+	}
+}
+
 func TestCompileBooleanQueryNgramStopwords(t *testing.T) {
 	config := ngramConfigForTest()
 	config.InnodbFtEnableStopword = true

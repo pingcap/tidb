@@ -214,6 +214,20 @@ func TestAnalyzerConfigFromLocalMatchAgainstBooleanQueryDefaults(t *testing.T) {
 	}
 }
 
+func TestLocalMatchAgainstNgramShortWordFromProtocol(t *testing.T) {
+	const document = "\u20634\u2063"
+	const search = `"` + document + `"`
+	config := ngramConfigForTest()
+	config.Collation = "utf8mb4_unicode_ci"
+	wireQuery, err := BuildLocalMatchAgainstBooleanQueryWithAnalyzerConfig(search, config)
+	require.NoError(t, err)
+	require.Equal(t, LocalMatchAgainstProtocolVersion, wireQuery.GetVersion())
+
+	decoded, err := AnalyzerConfigFromLocalMatchAgainstBooleanQuery(wireQuery, config.Collation)
+	require.NoError(t, err)
+	require.True(t, matchQueryForTest(t, decoded, search, []ColumnInput{{Text: document}}))
+}
+
 func TestAnalyzerConfigFromLocalMatchAgainstBooleanQuery(t *testing.T) {
 	for _, parser := range []model.FullTextParserType{model.FullTextParserTypeStandardV1, model.FullTextParserTypeNgramV1} {
 		for _, stopwords := range []bool{false, true} {

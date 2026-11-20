@@ -386,7 +386,12 @@ func TestStopwordKeysMatchCompare(t *testing.T) {
 					require.Equal(t, wantInfo.isStopword(text), gotInfo.isStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
 					require.Equal(t, wantInfo.containsNgramStopword(text), gotInfo.containsNgramStopword(text), "%s size=%d text=%q words=%q", name, size, text, words)
 					require.Equal(t, analyzeStandardV1(text, wantInfo), analyzeStandardV1(text, gotInfo), "%s STANDARD %q", name, text)
-					require.Equal(t, analyzeNgramV1(text, wantInfo), analyzeNgramV1(text, gotInfo), "%s NGRAM size=%d %q", name, size, text)
+					require.Equal(
+						t,
+						analyzeNgramV1(text, wantInfo, ngramDocument),
+						analyzeNgramV1(text, gotInfo, ngramDocument),
+						"%s NGRAM size=%d %q", name, size, text,
+					)
 				}
 			}
 		}
@@ -478,7 +483,7 @@ func BenchmarkBuiltinStopwords(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(text)))
 			for b.Loop() {
-				analyzeNgramV1(text, info)
+				analyzeNgramV1(text, info, ngramDocument)
 			}
 		})
 	}

@@ -33,6 +33,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWithParserWarningOnNonFullTextIndexes(t *testing.T) {
+	p := parser.New()
+	for _, sql := range []string{
+		"CREATE TABLE t (a INT, PRIMARY KEY (a) WITH PARSER ngram)",
+		"CREATE TABLE t (a INT, KEY idx (a) WITH PARSER ngram)",
+		"CREATE TABLE t (a INT, UNIQUE KEY idx (a) WITH PARSER ngram)",
+		"CREATE TABLE t (a VECTOR(3), VECTOR INDEX idx ((VEC_COSINE_DISTANCE(a))) WITH PARSER ngram)",
+		"CREATE INDEX idx ON t (a) WITH PARSER ngram",
+		"ALTER TABLE t ADD INDEX idx (a) WITH PARSER ngram",
+	} {
+		_, warnings, err := p.ParseSQL(sql)
+		require.NoError(t, err, sql)
+		require.Len(t, warnings, 1, sql)
+		require.ErrorContains(t, warnings[0], "The WITH PARSER clause is only supported for FULLTEXT indexes.", sql)
+	}
+}
+
 func TestMaxParenthesesDepth(t *testing.T) {
 	p := parser.New()
 	nestedExpr := func(depth int) string {

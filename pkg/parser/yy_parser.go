@@ -196,6 +196,12 @@ func (parser *Parser) lastErrorAsWarn() {
 	parser.lexer.lastErrorAsWarn()
 }
 
+func (parser *Parser) warnIgnoredIndexParser(option *ast.IndexOption) {
+	if option.ParserName.O != "" {
+		parser.lexer.AppendWarn(parser.lexer.Errorf("The WITH PARSER clause is only supported for FULLTEXT indexes."))
+	}
+}
+
 func checkASTDepth(stmt ast.StmtNode) error {
 	checker := astDepthChecker{}
 	_, _ = stmt.Accept(&checker)

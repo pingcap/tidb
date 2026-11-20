@@ -28,7 +28,8 @@ import (
 // of an existing version; reject unknown versions and add a new version instead.
 // Version 2 returns zero for NULL searches and gives NGRAM document scanning
 // its own multibyte-character rule; STANDARD and the NGRAM query lexer use
-// BMP word characters. Filtered phrases are verified against unfiltered text.
+// BMP word characters. NGRAM queries retain short words for collation-aware
+// matching. Filtered phrases are verified against unfiltered text.
 const LocalMatchAgainstProtocolVersion uint32 = 2
 
 func buildParsedLocalMatchAgainstBooleanQuery(group *matchagainst.BooleanGroup, parserType model.FullTextParserType, ngramTokenSize int) (*tipb.LocalMatchAgainstBooleanQuery, error) {

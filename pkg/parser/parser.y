@@ -3865,6 +3865,7 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+			parser.warnIgnoredIndexParser(c.Option)
 		}
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
@@ -3898,6 +3899,7 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+			parser.warnIgnoredIndexParser(c.Option)
 		}
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
@@ -3917,6 +3919,7 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+			parser.warnIgnoredIndexParser(c.Option)
 		}
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
@@ -4279,6 +4282,9 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
+		if keyType != ast.IndexKeyTypeFullText {
+			parser.warnIgnoredIndexParser(indexOption)
+		}
 		isVectorIndex := keyType == ast.IndexKeyTypeVector
 		if isVectorIndex && indexOption.Tp == model.IndexTypeInvalid {
 			indexOption.Tp = model.IndexTypeHNSW
@@ -6661,8 +6667,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: model.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{
@@ -12519,6 +12523,7 @@ ConstraintVectorIndex:
 
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
+			parser.warnIgnoredIndexParser(c.Option)
 		}
 		if indexType := $4.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
