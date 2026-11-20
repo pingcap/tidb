@@ -298,6 +298,20 @@ func foldMaskingPolicySessionConstants(ctx expression.BuildContext, expr express
 	return expr, nil
 }
 
+// CanReadUnmaskedColumn reports whether the current session reads the stored
+// values of the column: it has no enabled masking policy, or its policy leaves
+// the column unmasked for this session.
+func CanReadUnmaskedColumn(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (bool, error) {
+	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
+	if err != nil {
+		return false, err
+	}
+	if !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+		return true, nil
+	}
+	return canCurrentSessionReadUnmaskedColumn(sctx.GetExprCtx(), sctx.GetSessionVars(), is.SchemaMetaVersion(), policy, tblInfo, colInfo)
+}
+
 func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, checks []stmtctx.MaskingPolicyCheck) error {
 	for _, check := range checks {
 		policy, ok, err := is.MaskingPolicyByTableColumn(ctx, check.TableID, check.ColumnID)

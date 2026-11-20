@@ -109,6 +109,20 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 		return nil, err
 	}
 
+	// The shard boundaries are read by a SELECT of this session and then used
+	// as predicates on the stored values. Masked boundaries would match other
+	// rows, or none, while every job still reports success.
+	if shardColumnInfo != nil {
+		tblInfo := nodeW.GetResolveContext().GetTableName(tableName).TableInfo
+		unmasked, err := core.CanReadUnmaskedColumn(ctx, se, domain.GetDomain(se).InfoSchema(), tblInfo, shardColumnInfo)
+		if err != nil {
+			return nil, err
+		}
+		if !unmasked {
+			return nil, errors.Errorf("Non-transactional DML, shard column %s is masked for the current user by a masking policy. Please specify another shard column", shardColumnInfo.Name.L)
+		}
+	}
+
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
