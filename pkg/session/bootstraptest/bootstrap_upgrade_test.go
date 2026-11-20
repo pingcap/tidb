@@ -694,18 +694,18 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
 func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
-	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
 	for i := 0; i < 20; i++ {
-		rows, err := execute(context.Background(), se, sql)
+		// Look up history by ID to avoid merging running jobs with a history
+		// reverse scan, which can observe a newer snapshot in the mock store.
+		job, err := ddl.GetHistoryJobByID(se, jobID)
 		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		require.Equal(t, rows[0].GetString(2), "upgrade_tbl")
-
-		state := rows[0].GetString(11)
-		if state == "synced" {
-			suc = true
-			break
+		if job != nil {
+			require.Equal(t, "upgrade_tbl", job.TableName)
+			if job.State == model.JobStateSynced {
+				suc = true
+				break
+			}
 		}
 		time.Sleep(time.Millisecond * 200)
 	}
