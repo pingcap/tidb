@@ -94,6 +94,12 @@ func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, of
 	return alloc.alloc4Signed(n, increment, offset)
 }
 
+// RebaseKeepCache implements autoid.Allocator RebaseKeepCache interface.
+// An in-memory allocator shares no cached ranges with other servers, so it is the same as Rebase.
+func (alloc *inMemoryAllocator) RebaseKeepCache(ctx context.Context, requiredBase int64) error {
+	return alloc.Rebase(ctx, requiredBase, true)
+}
+
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
