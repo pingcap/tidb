@@ -463,3 +463,195 @@ fn test_purge_mv_log_skip_when_auto_purge() {
         require_expected_purge_mv_log_sql(&se);
     }
 }
+
+const TEST_SQL_LOCK_MV_NEXT_TIME: &str =
+    "SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT";
+const TEST_SQL_UPDATE_MV_NEXT_TIME: &str = "UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?";
+const TEST_SQL_FETCH_MV_LOG_ACCUMULATION: &str = "SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info";
+const TEST_SQL_COUNT_MV_LOG_ROWS: &str = "SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n";
+
+#[test]
+fn test_server_helper_get_current_tso() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().store_version = 123_456;
+    assert_eq!(123_456, service_helper().get_current_tso(&Context::background(), &pool).unwrap());
+}
+
+#[test]
+fn test_server_helper_get_current_tso_invalid_version() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().store_version = 0;
+    let err = service_helper().get_current_tso(&Context::background(), &pool).unwrap_err();
+    assert!(err.to_string().contains("invalid version"), "{err}");
+}
+
+/// Go `tryBackoffMVTaskManualCancel` over the refresh SQL with `resolve`.
+fn backoff_with(
+    se: &Arc<RecordingSessionContext>,
+    pool: &SystemSessionPool,
+    next_time: &GoTime,
+    resolve: fn(&dyn MVServiceSessionContext, i64) -> Result<(Option<GoTime>, bool), MvsError>,
+) -> (bool, GoTime, Option<MvsError>) {
+    let _ = se;
+    crate::service_helper::try_backoff_mv_task_manual_cancel(
+        pool,
+        TEST_SQL_LOCK_MV_NEXT_TIME,
+        TEST_SQL_UPDATE_MV_NEXT_TIME,
+        101,
+        next_time,
+        resolve,
+    )
+}
+
+fn base_time() -> GoTime {
+    mvs_unix(1_700_000_000, 0)
+}
+
+fn lock_row(se: &RecordingSessionContext, value: Option<i64>) {
+    se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_LOCK_MV_NEXT_TIME.to_owned(), vec![ints(&[value])]);
+}
+
+fn require_backoff_sql(se: &RecordingSessionContext, executed_sql: &[&str], restricted: &[&str]) {
+    let s = se.0.lock().unwrap();
+    assert_eq!(executed_sql.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(), s.executed_sql);
+    assert_eq!(restricted.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(), s.executed_restricted_sql);
+    assert_eq!(vec!["101".to_owned()], s.executed_restricted_args[0]);
+}
+
+fn update_args(se: &RecordingSessionContext) -> Vec<String> {
+    se.0.lock().unwrap().executed_restricted_args[1].clone()
+}
+
+static RESOLVER_CALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Go `TestServerHelperTryBackoffRefreshManualCancel` (its subtests in order).
+#[test]
+fn test_server_helper_try_backoff_refresh_manual_cancel() {
+    use crate::service::MANUAL_CANCEL_BACKOFF_DELAY;
+    // "applied"
+    let (se, pool) = new_recording_session();
+    lock_row(&se, Some(1));
+    let expected_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY);
+    let (applied, applied_next, err) =
+        backoff_with(&se, &pool, &expected_next, |_, _| Ok((Some(mvs_unix(1_700_000_000, 0).add(MINUTE)), false)));
+    assert!(err.is_none());
+    assert!(applied);
+    assert_eq!(expected_next, applied_next);
+    require_backoff_sql(&se, &["BEGIN PESSIMISTIC", "COMMIT"], &[TEST_SQL_LOCK_MV_NEXT_TIME, TEST_SQL_UPDATE_MV_NEXT_TIME]);
+    assert_eq!(vec![expected_next.unix().to_string(), "101".to_owned()], update_args(&se));
+
+    // "keep_later_next_time"
+    let (se, pool) = new_recording_session();
+    lock_row(&se, Some(1));
+    let cooldown_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY);
+    let current_next = base_time().add(MANUAL_CANCEL_BACKOFF_DELAY + MINUTE);
+    let (applied, applied_next, err) = backoff_with(&se, &pool, &cooldown_next, |_, _| {
+        Ok((Some(mvs_unix(1_700_000_000, 0).add(crate::service::MANUAL_CANCEL_BACKOFF_DELAY + MINUTE)), true))
+    });
+    assert!(err.is_none());
+    assert!(applied);
+    assert_eq!(current_next, applied_next);
+    require_backoff_sql(&se, &["BEGIN PESSIMISTIC", "COMMIT"], &[TEST_SQL_LOCK_MV_NEXT_TIME, TEST_SQL_UPDATE_MV_NEXT_TIME]);
+    assert_eq!(vec![current_next.unix().to_string(), "101".to_owned()], update_args(&se));
+
+    // "no_next_schedule_clears_next_time"
+    let (se, pool) = new_recording_session();
+    lock_row(&se, Some(1));
+    let (applied, applied_next, err) = backoff_with(&se, &pool, &cooldown_next, |_, _| Ok((None, true)));
+    assert!(err.is_none());
+    assert!(applied);
+    assert!(applied_next.is_zero());
+    require_backoff_sql(&se, &["BEGIN PESSIMISTIC", "COMMIT"], &[TEST_SQL_LOCK_MV_NEXT_TIME, TEST_SQL_UPDATE_MV_NEXT_TIME]);
+    assert_eq!(vec!["Null".to_owned(), "101".to_owned()], update_args(&se));
+
+    // "locked_next_time_null_keeps_unscheduled"
+    let (se, pool) = new_recording_session();
+    lock_row(&se, None);
+    RESOLVER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (applied, applied_next, err) = backoff_with(&se, &pool, &cooldown_next, |_, _| {
+        RESOLVER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok((Some(mvs_unix(1_700_000_000, 0).add(tidb_timer::go_time::HOUR)), true))
+    });
+    assert!(err.is_none());
+    assert!(applied);
+    assert!(applied_next.is_zero());
+    assert!(!RESOLVER_CALLED.load(std::sync::atomic::Ordering::SeqCst));
+    require_backoff_sql(&se, &["BEGIN PESSIMISTIC", "COMMIT"], &[TEST_SQL_LOCK_MV_NEXT_TIME]);
+
+    // "resolver_error_falls_back_to_cooldown"
+    let (se, pool) = new_recording_session();
+    lock_row(&se, Some(1));
+    let (applied, applied_next, err) =
+        backoff_with(&se, &pool, &cooldown_next, |_, _| Err(MvsError::Other("mock resolver error".to_owned())));
+    assert!(err.is_none());
+    assert!(applied);
+    assert_eq!(cooldown_next, applied_next);
+    require_backoff_sql(&se, &["BEGIN PESSIMISTIC", "COMMIT"], &[TEST_SQL_LOCK_MV_NEXT_TIME, TEST_SQL_UPDATE_MV_NEXT_TIME]);
+    assert_eq!(vec![cooldown_next.unix().to_string(), "101".to_owned()], update_args(&se));
+
+    // "lock_conflict"
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().restricted_errs.insert(
+        TEST_SQL_LOCK_MV_NEXT_TIME.to_owned(),
+        MvsError::Sql { code: 3572, message: "lock acquire failed and no wait is set".to_owned() },
+    );
+    let (applied, applied_next, err) = service_helper().try_backoff_refresh_manual_cancel(
+        &Context::background(),
+        &pool,
+        101,
+        &base_time().add(MANUAL_CANCEL_BACKOFF_DELAY),
+    );
+    assert!(err.is_none());
+    assert!(!applied);
+    assert!(applied_next.is_zero());
+    let s = se.0.lock().unwrap();
+    assert_eq!(vec!["BEGIN PESSIMISTIC".to_owned(), "ROLLBACK".to_owned()], s.executed_sql);
+    assert_eq!(vec![TEST_SQL_LOCK_MV_NEXT_TIME.to_owned()], s.executed_restricted_sql);
+}
+
+#[test]
+fn test_server_helper_load_all_tidb_mv_log_accumulation_tasks_skips_disabled_by_default() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().restricted_rows.insert(
+        TEST_SQL_FETCH_MV_LOG_ACCUMULATION.to_owned(),
+        vec![ints(&[Some(201)]), ints(&[Some(202)])],
+    );
+    let (enabled_base_table, enabled_table) = build_mock_mv_base_and_mv_log_tables(101, 201, &[101]);
+    enabled_table.materialized_view_log.as_ref().unwrap().write().log_accumulation_alert_rows = Some(2048);
+    let (disabled_base_table, disabled_table) = build_mock_mv_base_and_mv_log_tables(102, 202, &[102]);
+    with_mock_info_schema(&se, vec![enabled_base_table, enabled_table, disabled_base_table, disabled_table]);
+
+    let got = service_helper().load_all_tidb_mv_log_accumulation_tasks(&Context::background(), &pool).unwrap();
+    let s = se.0.lock().unwrap();
+    assert_eq!(vec![TEST_SQL_FETCH_MV_LOG_ACCUMULATION.to_owned()], s.executed_restricted_sql);
+    assert_eq!(s.executed_restricted_args.len(), 1);
+    assert!(s.executed_restricted_args[0].is_empty());
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        crate::task_handler::MlogAccumulationTask { schema_name: "test".to_owned(), mlog_name: "mlog1".to_owned(), alert_rows: 2048 },
+        got[&201]
+    );
+}
+
+#[test]
+fn test_server_helper_load_tidb_mv_log_accumulation_row_counts() {
+    let concurrency = tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY;
+    let (se, pool) = new_recording_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        s.system_vars.insert(concurrency.to_owned(), "7".to_owned());
+        s.watched_vars = vec![concurrency.to_owned()];
+        s.restricted_rows.insert(TEST_SQL_COUNT_MV_LOG_ROWS.to_owned(), vec![ints(&[Some(50)])]);
+    }
+    let tasks = HashMap::from([(
+        201,
+        crate::task_handler::MlogAccumulationTask { schema_name: "test".to_owned(), mlog_name: "mlog1".to_owned(), alert_rows: 50 },
+    )]);
+    let got = service_helper().load_tidb_mv_log_accumulation_row_counts(&Context::background(), &pool, &tasks).unwrap();
+    let s = se.0.lock().unwrap();
+    assert_eq!(vec![TEST_SQL_COUNT_MV_LOG_ROWS.to_owned()], s.executed_restricted_sql);
+    assert_eq!(vec!["test", "mlog1", "test", "mlog1"], s.executed_restricted_args[0]);
+    assert_eq!(Some("1".to_owned()), s.restricted_var_values[0][concurrency]);
+    assert_eq!(Some("7"), s.system_vars.get(concurrency).map(String::as_str));
+    assert_eq!(HashMap::from([(201, 50)]), got);
+}

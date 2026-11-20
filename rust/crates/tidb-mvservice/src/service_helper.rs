@@ -588,7 +588,7 @@ fn derive_schedule_next_for_manual_cancel(
 }
 
 /// Go `tryBackoffMVTaskManualCancel`.
-fn try_backoff_mv_task_manual_cancel(
+pub(crate) fn try_backoff_mv_task_manual_cancel(
     pool: &dyn SessionPool,
     lock_sql: &str,
     update_sql: &str,
