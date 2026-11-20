@@ -152,7 +152,7 @@ HashJoin	root		inner join, equal:[eq(cd_test_utf8mb4_0900_bin.t1.code, cd_test_u
 │ └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t2.code, "1")
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), not(isnull(cd_test_utf8mb4_0900_bin.t1.code))
+  └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t1.code, "1"), eq(cd_test_utf8mb4_0900_bin.t1.code, "1")
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t1;
 drop table if exists t2;
