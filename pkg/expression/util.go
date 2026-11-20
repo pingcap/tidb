@@ -515,12 +515,17 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if !substituted {
 				return false, false, v
 			}
-			newFunc, err := source.build(ctx, args)
+			// Building may record other sources and move this one.
+			build, deferred := source.build, source.deferred
+			newFunc, err := build(ctx, args)
 			if err != nil {
 				if *buildErr == nil {
 					*buildErr = err
 				}
 				return true, true, v
+			}
+			if deferred != nil {
+				deferred.rebuilt = true
 			}
 			return true, false, newFunc
 		}

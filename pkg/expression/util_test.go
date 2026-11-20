@@ -236,7 +236,27 @@ func TestSubstituteSource(t *testing.T) {
 	require.True(t, failed)
 	require.ErrorIs(t, err, buildErr)
 
+	// A deferred error is pending until a function sharing its key is built
+	// again from its source.
+	require.False(t, sources.Defer(newLT(), "key", buildErr))
+	require.NoError(t, sources.PendingError())
+	deferred, duplicate := newLT(), newLT()
+	for _, f := range []*ScalarFunction{deferred, duplicate} {
+		sources.Set(f, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+			return NewFunction(ctx, ast.GT, tp, args...)
+		})
+		require.True(t, sources.Defer(f, "key", buildErr))
+	}
+	requireSame(twin, deferred)
+	require.ErrorIs(t, sources.PendingError(), buildErr)
+	require.Equal(t, ast.LT, substitute(deferred, false))
+	require.ErrorIs(t, sources.PendingError(), buildErr)
+	require.True(t, sources.Wrap(duplicate, func(_ BuildContext, built Expression) (Expression, error) { return built, nil }))
+	require.Equal(t, ast.GT, substitute(duplicate, true))
+	require.NoError(t, sources.PendingError())
+
 	sources.Release()
+	require.NoError(t, sources.PendingError())
 	requireSame(plain, sourced)
 	require.Equal(t, ast.LT, substitute(sourced, true))
 	require.Equal(t, ast.LT, substitute(sourced.Clone().(*ScalarFunction), true))

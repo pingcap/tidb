@@ -1768,13 +1768,17 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 
 		source := er.maskingSource([]expression.Expression{arg})
+		// Building the cast completes its type, for example with the length
+		// of its argument. A prepared statement is planned again from this
+		// AST, by then maybe for another argument type or masking policy,
+		// so the type must stay as written. CREATE VIEW keeps storing the
+		// completed type in the definition of a view.
 		castType, sourceType := v.Tp, v.Tp
+		if er.preserveMaskingDependencies || er.planCtx == nil || er.planCtx.builder == nil || !er.planCtx.builder.isCreateView {
+			castType = v.Tp.Clone()
+		}
 		if source != nil {
-			// Building the cast completes its type, for example with the
-			// length of its argument. Keep the type as written, also for
-			// the next time this statement is planned.
 			sourceType = v.Tp.Clone()
-			castType = sourceType.Clone()
 		}
 		castFunction, err := buildExplicitCast(er.sctx, arg, castType, v.ExplicitCharSet)
 		if err != nil {
@@ -1834,6 +1838,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}, types.EmptyName)
 	case *ast.SetCollationExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
+		// A masking policy may replace the argument: the collation is then
+		// applied again to what the expression becomes.
+		collation := v.Collate
+		reapply := func(ctx expression.BuildContext, arg expression.Expression) (expression.Expression, error) {
+			return applyExplicitCollation(ctx, arg, collation)
+		}
 		if collate.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
@@ -1846,15 +1856,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				chs = mysql.UTF8MB4Charset
 			}
 			if chs != "" && collInfo.CharsetName != chs {
-				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				mismatch := charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				// The collation may be valid for what a masking policy returns.
+				if deferred := er.deferCollation(v, arg, mismatch, reapply); deferred != nil {
+					er.ctxStack[len(er.ctxStack)-1] = deferred
+					break
+				}
+				er.err = mismatch
 				break
 			}
-		}
-		// A masking policy may replace the argument: the collation is then
-		// applied again to what the expression becomes.
-		collation := v.Collate
-		reapply := func(ctx expression.BuildContext, arg expression.Expression) (expression.Expression, error) {
-			return applyExplicitCollation(ctx, arg, collation)
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok || arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeJSON {
@@ -1908,6 +1918,41 @@ func (er *expressionRewriter) buildCtx() expression.BuildContext {
 		return maskingProjectionBuildContext{er.sctx}
 	}
 	return er.sctx
+}
+
+// deferCollation handles an explicit collation that is invalid for the charset
+// of arg in a result expression. The charset that matters is the one of the
+// value a masking policy returns for the columns of arg, so the expression is
+// kept without the collation and mismatch is deferred: it is raised when the
+// statement is built unless the expression was built again for such a value,
+// which validates the collation for it. The statement may build node more than
+// once. It returns nil when the error cannot be deferred.
+func (er *expressionRewriter) deferCollation(
+	node *ast.SetCollationExpr, arg expression.Expression, mismatch error,
+	reapply func(expression.BuildContext, expression.Expression) (expression.Expression, error),
+) expression.Expression {
+	if !er.preserveMaskingDependencies || len(expression.ExtractColumns(arg)) == 0 {
+		return nil
+	}
+	b := er.planCtx.builder
+	if sf, ok := arg.(*expression.ScalarFunction); ok {
+		if !b.maskingSources.Wrap(sf, reapply) {
+			return nil
+		}
+		b.maskingSources.Defer(sf, node, mismatch)
+		return sf
+	}
+	// A column has no source: keep it in a cast to its own type.
+	source := er.maskingSource([]expression.Expression{arg})
+	kept, ok := expression.BuildCastFunction(er.sctx, arg, arg.GetType(er.sctx.GetEvalCtx()).Clone()).(*expression.ScalarFunction)
+	if !ok {
+		return nil
+	}
+	er.setMaskingSource(kept, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+		return reapply(ctx, args[0])
+	})
+	b.maskingSources.Defer(kept, node, mismatch)
+	return kept
 }
 
 // buildExplicitCast builds CAST(arg AS tp) as written in the statement.

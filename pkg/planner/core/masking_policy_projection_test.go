@@ -1386,6 +1386,189 @@ func TestMaskingPolicyExplicitCollationAndLength(t *testing.T) {
 	}
 }
 
+// maskingOutcome is what a statement returns: its rows and result types, or its error.
+type maskingOutcome struct {
+	rows   [][]any
+	fields []string
+	err    string
+}
+
+func runMaskingOutcome(ctx context.Context, tk *testkit.TestKit, sql string) (o maskingOutcome) {
+	rs, err := tk.ExecWithContext(ctx, sql)
+	if err != nil {
+		o.err = err.Error()
+		return o
+	}
+	if rs == nil {
+		return o
+	}
+	for _, field := range rs.Fields() {
+		tp := &field.Column.FieldType
+		o.fields = append(o.fields, fmt.Sprint(tp.GetType(), tp.GetFlen(), tp.GetCharset(), tp.GetCollate()))
+	}
+	o.rows = tk.ResultSetToResultWithCtx(ctx, rs, sql).Rows()
+	return o
+}
+
+func TestMaskingPolicyPreparedCastBeforePolicy(t *testing.T) {
+	for _, mode := range []string{"session", "instance", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+			ctx := context.Background()
+			if mode == "instance" {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			tk.MustExec("use test")
+			if mode == "disabled" {
+				tk.MustExec("set tidb_enable_prepared_plan_cache = 0")
+			}
+			tk.MustExec("create table cast_masked(id int primary key, c varchar(1))")
+			tk.MustExec("insert into cast_masked values (1, null), (2, null)")
+			tk.MustExec("create table cast_plain(id int primary key)")
+			tk.MustExec("insert into cast_plain values (1), (2)")
+			// X is the masked column, or the value its policy will return.
+			stmts := []string{
+				"select cast(X as char), length(cast(X as char)) from T order by id",
+				"select cast(X as char(3)), cast(X as binary), binary X from T order by id",
+				"select convert(X, char), convert(X using utf8mb4) from T order by id",
+				"select X collate utf8mb4_general_ci, length(X collate utf8mb4_general_ci), X collate utf8mb4_general_ci = 'ALPHABET' from T order by id",
+				"select concat(cast(X as char), '!'), cast(concat(X, '!') as char) from T order by id",
+				"select x from (select cast(X as char) as x, id from T) s order by id",
+				"select cast(X as char) = ?, convert(X, char) = ? from T order by id",
+			}
+			using := func(stmt string) string {
+				if strings.Contains(stmt, "?") {
+					return " using @p, @p"
+				}
+				return ""
+			}
+			tk.MustExec("set @p = 'Alphabet'")
+			for i, stmt := range stmts {
+				name := fmt.Sprint("early_", i)
+				tk.MustExecWithContext(ctx, "prepare "+name+" from \""+strings.NewReplacer("X", "c", "T", "cast_masked").Replace(stmt)+"\"")
+				// The first plan is built while no policy exists.
+				for range 2 {
+					require.Empty(t, runMaskingOutcome(ctx, tk, "execute "+name+using(stmt)).err)
+				}
+			}
+			tk.MustExec("create masking policy p on cast_masked(c) as 'Alphabet'")
+			for i, stmt := range stmts {
+				tk.MustExecWithContext(ctx, "prepare plain from \""+strings.NewReplacer("X", "('Alphabet')", "T", "cast_plain").Replace(stmt)+"\"")
+				want := runMaskingOutcome(ctx, tk, "execute plain"+using(stmt))
+				require.Empty(t, want.err)
+				// The first execution after the policy plans the statement again.
+				name := fmt.Sprint("early_", i)
+				for range 2 {
+					require.Equal(t, want, runMaskingOutcome(ctx, tk, "execute "+name+using(stmt)), stmt)
+				}
+				tk.MustExecWithContext(ctx, "prepare fresh from \""+strings.NewReplacer("X", "c", "T", "cast_masked").Replace(stmt)+"\"")
+				require.Equal(t, want, runMaskingOutcome(ctx, tk, "execute fresh"+using(stmt)), stmt)
+			}
+			// Without a policy, the length follows the column at each planning.
+			tk.MustExec("create table cast_alter(c varchar(1))")
+			tk.MustExec("insert into cast_alter values ('z')")
+			tk.MustExecWithContext(ctx, "prepare altered from 'select cast(c as char), cast(c as char(3)) from cast_alter'")
+			tk.MustQueryWithContext(ctx, "execute altered").Check(testkit.Rows("z z"))
+			tk.MustExec("alter table cast_alter modify c varchar(10)")
+			tk.MustExec("update cast_alter set c = 'zzzzzz'")
+			tk.MustQueryWithContext(ctx, "execute altered").Check(testkit.Rows("zzzzzz zzz"))
+		})
+	}
+}
+
+func TestMaskingPolicyCollationForPolicyCharset(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	ctx := context.Background()
+	tk.MustExec("use test")
+	// d has no policy. The plain tables hold the same d and no masked column.
+	for _, tbl := range []struct{ name, charset, policy string }{
+		{"latin", "latin1", "_utf8mb4'Alphabet' collate utf8mb4_general_ci"},
+		{"utf8", "utf8mb4", "_latin1'Alphabet' collate latin1_bin"},
+	} {
+		masked, plain := "charset_"+tbl.name, "charset_"+tbl.name+"_plain"
+		tk.MustExec("create table " + masked + "(id int primary key, c varchar(10) charset " + tbl.charset + ", d varchar(10) charset " + tbl.charset + ")")
+		tk.MustExec("create table " + plain + "(id int primary key, d varchar(10) charset " + tbl.charset + ")")
+		tk.MustExec("insert into " + masked + " values (1, 'abc', 'xyz'), (2, null, null)")
+		tk.MustExec("insert into " + plain + " values (1, 'xyz'), (2, null)")
+		tk.MustExec("create masking policy p on " + masked + "(c) as " + tbl.policy)
+		exprs := []string{
+			"X", "charset(X)", "collation(X)",
+			"X collate utf8mb4_bin", "X collate utf8mb4_bin = 'ALPHABET'", "X collate utf8mb4_general_ci = 'ALPHABET'",
+			"collation(X collate utf8mb4_bin)", "length(X collate utf8mb4_bin)", "upper(X collate utf8mb4_bin)",
+			"concat(X, '') collate utf8mb4_bin", "collation(concat(X, '') collate utf8mb4_bin)",
+			"concat(X, '') collate utf8mb4_general_ci = 'ALPHABET'", "ifnull(X, 'n') collate utf8mb4_unicode_ci",
+			"X collate latin1_bin", "X collate latin1_bin = 'ALPHABET'", "X collate latin1_swedish_ci = 'ALPHABET'",
+			"concat(X, '') collate latin1_bin", "collation(concat(X, '') collate latin1_swedish_ci)",
+			"cast(X as char) collate latin1_bin", "cast(X as char) collate utf8mb4_bin",
+			"X collate gbk_bin", "concat(X, '') collate ascii_bin",
+			// Columns with and without a policy in one expression.
+			"concat(d, X) collate utf8mb4_bin", "concat(d, X) collate latin1_bin", "concat(X, d) collate utf8mb4_general_ci = 'alphabetxyz'",
+			"d collate utf8mb4_bin", "d collate latin1_bin", "concat(d, '') collate utf8mb4_bin", "concat(d, '') collate latin1_bin",
+			"X collate utf8mb4_bin, d collate utf8mb4_bin", "X collate latin1_bin, d collate latin1_bin",
+		}
+		shapes := []string{
+			"select E from T order by id",
+			"select * from (select id, E as x from T) s order by id",
+			"with w as (select id as wid, E as x from T) select * from w order by wid",
+		}
+		valid, invalid := 0, 0
+		for _, expr := range exprs {
+			for _, shape := range shapes {
+				got := runMaskingOutcome(ctx, tk, strings.NewReplacer("E", strings.ReplaceAll(expr, "X", "c"), "T", masked).Replace(shape))
+				want := runMaskingOutcome(ctx, tk, strings.NewReplacer("E", strings.ReplaceAll(expr, "X", "("+tbl.policy+")"), "T", plain).Replace(shape))
+				if strings.HasPrefix(shape, "select E") {
+					// The plain table has no column c to name the result after.
+					require.Equal(t, want.rows, got.rows, "%s in %s", expr, shape)
+					require.Equal(t, want.fields, got.fields, "%s in %s", expr, shape)
+					require.Equal(t, want.err, got.err, "%s in %s", expr, shape)
+				} else {
+					require.Equal(t, want, got, "%s in %s", expr, shape)
+				}
+				if want.err == "" {
+					valid++
+				} else if strings.Contains(want.err, "1253") {
+					invalid++
+				}
+			}
+		}
+		// Both outcomes are covered for each direction.
+		require.Greater(t, valid, len(shapes)*5)
+		require.Greater(t, invalid, len(shapes)*5)
+
+		// A predicate compares the original value: the collation must be one
+		// of the column's charset.
+		own, foreign := "latin1_bin", "utf8mb4_bin"
+		if tbl.charset == "utf8mb4" {
+			own, foreign = foreign, own
+		}
+		tk.MustQuery("select id from " + masked + " where c collate " + own + " = 'abc'").Check(testkit.Rows("1"))
+		for _, predicate := range []string{
+			"select id from TBL where COL collate " + foreign + " = 'abc'",
+			"select id from TBL where concat(COL, '') collate " + foreign + " = 'abc'",
+			"select s.id from TBL s join TBL r on s.COL collate " + foreign + " = r.COL",
+			"select count(*) from TBL group by COL collate " + foreign,
+			"select id from TBL order by COL collate " + foreign,
+		} {
+			want := runMaskingOutcome(ctx, tk, strings.NewReplacer("TBL", plain, "COL", "d").Replace(predicate)).err
+			require.Contains(t, want, "1253", predicate)
+			require.Equal(t, want, runMaskingOutcome(ctx, tk, strings.NewReplacer("TBL", masked, "COL", "c").Replace(predicate)).err, predicate)
+			require.Equal(t, want, runMaskingOutcome(ctx, tk, strings.NewReplacer("TBL", masked, "COL", "d").Replace(predicate)).err, predicate)
+		}
+
+		// Without an enabled policy the column is validated as any other.
+		tk.MustExec("alter table " + masked + " disable masking policy p")
+		for _, expr := range []string{"X collate utf8mb4_bin", "X collate latin1_bin", "concat(X, '') collate utf8mb4_bin", "concat(X, '') collate latin1_bin = 'ABC'"} {
+			for _, shape := range shapes {
+				got := runMaskingOutcome(ctx, tk, strings.NewReplacer("E", strings.ReplaceAll(expr, "X", "c"), "T", masked).Replace(shape))
+				want := runMaskingOutcome(ctx, tk, strings.NewReplacer("E", strings.ReplaceAll(expr, "X", "d"), "T", plain).Replace(shape))
+				require.Equal(t, want.err, got.err, "%s in %s", expr, shape)
+				require.Equal(t, want.err == "", strings.Contains(expr, own), expr)
+			}
+		}
+		tk.MustQuery("select c collate " + own + " from " + masked + " where id = 1").Check(testkit.Rows("abc"))
+	}
+}
+
 func TestMaskingPolicyDerivedRollup(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")

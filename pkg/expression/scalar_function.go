@@ -56,6 +56,16 @@ type ScalarFunction struct {
 type substituteSource struct {
 	args  []Expression
 	build func(ctx BuildContext, args []Expression) (Expression, error)
+	// deferred is set by SubstituteSources.Defer. It is shared by the sources
+	// that replace this one for the same function.
+	deferred *deferredError
+}
+
+// deferredError is an error of building a function for its original
+// arguments, which does not apply if the function is built again from others.
+type deferredError struct {
+	err     error
+	rebuilt bool
 }
 
 // SubstituteSources owns the sources recorded for the functions of one
@@ -63,6 +73,8 @@ type substituteSource struct {
 // the clones of these functions, so that a finished plan does not keep them.
 type SubstituteSources struct {
 	entries []substituteSource
+	// deferred holds the errors recorded by Defer, by their key.
+	deferred map[any]*deferredError
 }
 
 // substituteSourceRef identifies the source of a function in its owner. It is
@@ -85,8 +97,51 @@ func (r substituteSourceRef) get() *substituteSource {
 // sf was built. build must only use the context it is given: it may run for
 // another expression context than the one sf was built with.
 func (s *SubstituteSources) Set(sf *ScalarFunction, args []Expression, build func(ctx BuildContext, args []Expression) (Expression, error)) {
-	s.entries = append(s.entries, substituteSource{args: args, build: build})
+	s.set(sf, substituteSource{args: args, build: build})
+}
+
+func (s *SubstituteSources) set(sf *ScalarFunction, source substituteSource) {
+	s.entries = append(s.entries, source)
 	sf.source = substituteSourceRef{owner: s, idx: len(s.entries) - 1}
+}
+
+// Defer records err, which the arguments sf was built from raise, instead of
+// returning it at once: the caller built sf without what raises it. The error
+// does not apply once sf is built again from its source for other arguments,
+// which then validates them. PendingError returns it otherwise. A statement
+// may build the same part of it several times and use only one of the
+// results, as for a CTE: the functions built from one part share key, and
+// building any of them again is enough. It reports whether sf has a source,
+// without which the error cannot be deferred.
+func (s *SubstituteSources) Defer(sf *ScalarFunction, key any, err error) bool {
+	source := sf.source.get()
+	if source == nil || sf.source.owner != s {
+		return false
+	}
+	if s.deferred == nil {
+		s.deferred = make(map[any]*deferredError)
+	}
+	deferred := s.deferred[key]
+	if deferred == nil {
+		deferred = &deferredError{err: err}
+		s.deferred[key] = deferred
+	}
+	source.deferred = deferred
+	return true
+}
+
+// PendingError returns the first deferred error of a function that was not
+// built again from its source.
+func (s *SubstituteSources) PendingError() error {
+	if s == nil {
+		return nil
+	}
+	for i := range s.entries {
+		if deferred := s.entries[i].deferred; deferred != nil && !deferred.rebuilt {
+			return deferred.err
+		}
+	}
+	return nil
 }
 
 // Wrap makes the function built from the source of sf go through wrap, which
@@ -98,13 +153,13 @@ func (s *SubstituteSources) Wrap(sf *ScalarFunction, wrap func(ctx BuildContext,
 		return false
 	}
 	build := source.build
-	s.Set(sf, source.args, func(ctx BuildContext, args []Expression) (Expression, error) {
+	s.set(sf, substituteSource{args: source.args, deferred: source.deferred, build: func(ctx BuildContext, args []Expression) (Expression, error) {
 		built, err := build(ctx, args)
 		if err != nil {
 			return nil, err
 		}
 		return wrap(ctx, built)
-	})
+	}})
 	return true
 }
 
@@ -112,6 +167,7 @@ func (s *SubstituteSources) Wrap(sf *ScalarFunction, wrap func(ctx BuildContext,
 // substituted like any other function.
 func (s *SubstituteSources) Release() {
 	if s != nil {
+		s.deferred = nil
 		s.entries = nil
 	}
 }
@@ -136,7 +192,7 @@ func (sf *ScalarFunction) transformSubstituteSource(fn func(Expression) Expressi
 		args[i] = newArg
 	}
 	if args != nil {
-		sf.source.owner.Set(sf, args, source.build)
+		sf.source.owner.set(sf, substituteSource{args: args, build: source.build, deferred: source.deferred})
 	}
 }
 

@@ -596,7 +596,7 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (p base.Plan, err error) {
 	// Every masking projection of the statement is built when the outermost
 	// call returns: an outer query block substitutes into the expressions of
 	// its derived tables. Their sources must not stay in the plan after that.
@@ -604,6 +604,11 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	defer func() {
 		if b.buildDepth--; b.buildDepth <= 0 {
 			b.buildDepth = 0
+			// An expression that is invalid for its original column, and
+			// was not built for the value of a masking policy instead.
+			if pending := b.maskingSources.PendingError(); err == nil && pending != nil {
+				p, err = nil, pending
+			}
 			b.maskingSources.Release()
 			b.maskingSources = nil
 		}
