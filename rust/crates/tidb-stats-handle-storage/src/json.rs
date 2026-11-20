@@ -61,8 +61,7 @@
 //!   the query side.
 
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read, Write};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use base64::Engine as _;
 use tidb_datatype::{

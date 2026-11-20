@@ -88,10 +88,10 @@ fn slow_query_reads_back_the_nodes_own_slow_log() {
     session.run("SELECT b FROM slow_t WHERE a = 2").unwrap();
 
     let log = read(&slow);
-    let entry_start = log
-        .rfind("# Time: ")
-        .expect("the SELECT wrote a slow-log entry");
-    let entry = &log[entry_start..];
+    // The threshold is the process's (Go `Instance.SlowThreshold`), so the
+    // node's internal statements write entries too.
+    let entry = entry_for(&log, "SELECT b FROM slow_t WHERE a = 2");
+    let entry = entry.as_str();
     let fields: Vec<&str> = entry
         .lines()
         .filter_map(|line| line.strip_prefix("# "))

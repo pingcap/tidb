@@ -159,6 +159,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
         Arc::clone(&stack.factory),
     ))));
     install_brie_node(&stack, &authority);
+    // Go `main`: `if deploymode.IsStarter() { externalWorkloadManager :=
+    // initExternalWorkloadManager(ctx, storage); defer close... }`.
+    let _external_workload_manager = tidb_config_deploymode::is_starter()
+        .then(|| crate::standby_node::init_external_workload_manager(authority.tikv_store().store().keyspace_meta()))
+        .flatten()
+        .map(crate::standby_node::ExternalWorkloadManagerGuard);
     // Go `BootstrapSession` ends with `dom.InitDistTaskLoop()`; the loop
     // retires before the GC worker, as Go's `Domain.Close` stops it before
     // the store closes.

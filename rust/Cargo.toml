@@ -262,6 +262,8 @@ members = [
     "crates/tidb-stats",
     "crates/tidb-stats-handle-globalstats",
     "crates/tidb-standby",
+    "crates/tidb-extworkload",
+    "crates/tidb-metaservice",
     "crates/tidb-stats-util",
     "crates/tidb-stats-asyncload",
     "crates/tidb-stats-handle-util",

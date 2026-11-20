@@ -37,6 +37,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-intest = { path = "../tidb-intest" }
+tidb-extworkload = { path = "../tidb-extworkload" }
 
 [dev-dependencies]
 chrono-tz = { workspace = true }

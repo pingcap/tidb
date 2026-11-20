@@ -22,6 +22,7 @@ pub mod ddl;
 pub mod distsql;
 pub mod domain;
 pub mod executor;
+pub mod external_workload;
 pub mod gc_worker;
 pub mod globalsort;
 pub mod materialized_view;

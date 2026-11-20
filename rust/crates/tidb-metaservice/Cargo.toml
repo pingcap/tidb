@@ -1,0 +1,16 @@
+[package]
+name = "tidb-metaservice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/metaservice: per-keyspace meta service group discovery (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tikv-client.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }

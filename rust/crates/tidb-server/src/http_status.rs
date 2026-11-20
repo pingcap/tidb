@@ -1059,8 +1059,23 @@ fn route_response_with_context(
         return response;
     }
     // Go `svr.StandbyController.Handler(svr)`, mounted in standby mode.
-    if let Some(response) = crate::standby_node::serve(path, request) {
+    let is_auto_id_owner = routes.auto_id.as_ref().is_some_and(|service| service.is_owner());
+    if let Some(response) = crate::standby_node::serve(path, request, is_auto_id_owner) {
         return response;
+    }
+    // Go `if deploymode.IsStarter() { router.Handle("/owner_manager/auto_id_service", ...) }`.
+    if tidb_config_deploymode::is_starter()
+        && path.split_once('?').map_or(path, |(route, _)| route) == "/owner_manager/auto_id_service"
+    {
+        let (code, kind, body) = match crate::standby_node::auto_id_owner_status(is_auto_id_owner) {
+            Ok(status) => (200, "application/json", write_data(&status)),
+            Err(()) => (500, "text/plain", String::new()),
+        };
+        return axum::http::Response::builder()
+            .status(code)
+            .header("content-type", kind)
+            .body(axum::body::Body::from(body))
+            .expect("status response headers");
     }
     if let Some(response) = crate::dxf_handler::serve_with_context(path, request, routes.keyspace_domain.as_deref(),context) {
         return response;

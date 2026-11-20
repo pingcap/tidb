@@ -15,9 +15,8 @@
 //! Go `pkg/dxf/framework/handle`: the API task types use to submit a task,
 //! wait for it and control it, and the schedule status.
 //!
-//! Not ported yet, with the callers that need them:
-//! `SendRowAndSizeMeterData` (the cleanup of DDL ingest and `IMPORT INTO`),
-//! and the object-store adapters.
+//! Not ported yet, with the callers that need them: the object-store
+//! adapters.
 
 mod status;
 
@@ -631,4 +630,62 @@ fn new_obj_store_inner(
 ) -> std::result::Result<Arc<dyn tidb_objstore::storeapi::Storage>, String> {
     let store_backend = tidb_objstore::parse_backend(uri, None)?;
     tidb_objstore::new(ctx, &store_backend, opts).map_err(|e| e.to_string())
+}
+
+/// Go `SendRowAndSizeMeterData`: sends the row count and size metering data
+/// of a finished task (the cleanup of DDL ingest and `IMPORT INTO`).
+///
+/// # Errors
+///
+/// The metering write failed.
+pub fn send_row_and_size_meter_data(
+    ctx: &Context,
+    task: &Task,
+    rows: i64,
+    data_kv_size: i64,
+    index_kv_size: i64,
+) -> std::result::Result<(), String> {
+    use tidb_dxf_metering as metering;
+    // in case of network errors, write might success, but return error, and
+    // we will retry sending metering data in next cleanup, to avoid
+    // duplicated data, we always use the task's last update time as the
+    // metering time and let the SDK overwrite existing file.
+    let ts = task.state_update_time.timestamp().div_euclid(60) * 60;
+    let task_type = task.base.tp.to_string();
+    let mut item = metering::get_base_meter_item(task.base.id, &task.base.keyspace, &task_type);
+    item.insert(metering::ROW_COUNT_FIELD.to_owned(), rows.into());
+    // add-index tasks don't have data kv size.
+    if data_kv_size > 0 {
+        item.insert(metering::DATA_KV_BYTES_FIELD.to_owned(), data_kv_size.into());
+    }
+    item.insert(metering::INDEX_KV_BYTES_FIELD.to_owned(), index_kv_size.into());
+    // below 3 fields are for better analysis of the cost of the task.
+    item.insert(metering::REQUIRED_SLOTS_FIELD.to_owned(), (task.base.required_slots as i64).into());
+    item.insert(metering::MAX_NODE_COUNT_FIELD.to_owned(), (task.base.max_node_count as i64).into());
+    item.insert(
+        metering::DURATION_SECONDS_FIELD.to_owned(),
+        (task.state_update_time - task.base.create_time).num_seconds().into(),
+    );
+    // same as above reason, we use the task ID as the uuid, and we also need
+    // to send different file as the metering service itself to avoid
+    // overwrite.
+    let result = metering::metering::write_meter_data(
+        ctx,
+        ts,
+        &format!("{task_type}_{}", task.base.id),
+        std::slice::from_ref(&item),
+    );
+    tidb_logutil::bg_logger().info(
+        "send size and row metering data",
+        &[
+            tidb_log::Field::new("data", tidb_log::Value::Str(format!("{item:?}"))),
+            tidb_log::Field::new("error", tidb_log::Value::Str(result.clone().err().unwrap_or_default())),
+        ],
+    );
+    result?;
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData",
+        &mut item,
+    );
+    Ok(())
 }

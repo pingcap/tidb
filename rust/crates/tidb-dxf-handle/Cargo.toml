@@ -28,6 +28,7 @@ tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-dxf-metering = { path = "../tidb-dxf-metering" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }

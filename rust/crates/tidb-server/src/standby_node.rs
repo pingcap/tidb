@@ -22,6 +22,10 @@ use std::sync::{Arc, OnceLock};
 
 use tidb_standby::{LoadKeyspaceController, Request, Response, StandbyServer};
 
+/// Go `Server.health`: true while the server accepts connections, false once
+/// its shutdown starts.
+pub(crate) static SERVER_HEALTH: AtomicBool = AtomicBool::new(true);
+
 /// Go `main`'s `standbyController`.
 static CONTROLLER: OnceLock<Arc<LoadKeyspaceController>> = OnceLock::new();
 
@@ -307,17 +311,61 @@ pub(crate) fn decode_query(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Go `initExternalWorkloadManager`: the manager of an enabled
+/// `[external-workload]` section. Its init is non-fatal; TiDB can continue
+/// without external workload coordination.
+pub(crate) fn init_external_workload_manager(
+    meta: Option<&tikv_client::proto::keyspacepb::KeyspaceMeta>,
+) -> Option<Box<dyn tidb_extworkload::Manager>> {
+    let cfg = tidb_config::config_tree::config::get_global_config().external_workload.clone();
+    if !cfg.enable {
+        return None;
+    }
+    if meta.is_none() {
+        tidb_logutil::bg_logger().warn(
+            "external workload controller enabled but keyspace meta is unavailable; TiDB will continue without external workload coordination",
+            &[],
+        );
+        return None;
+    }
+    // Go builds the cluster TLS configuration when the cluster CA is set;
+    // this port's controller client speaks plain gRPC until then.
+    match tidb_extworkload::new_manager(meta, &cfg, None) {
+        Ok(manager) => manager,
+        Err(error) => {
+            tidb_logutil::bg_logger().warn(
+                "failed to initialize external workload manager; TiDB will continue without external workload coordination",
+                &[tidb_logutil::zap_error(error.to_string())],
+            );
+            None
+        }
+    }
+}
+
+/// Go `defer closeExternalWorkloadManager(mgr)`.
+pub(crate) struct ExternalWorkloadManagerGuard(pub(crate) Box<dyn tidb_extworkload::Manager>);
+
+impl Drop for ExternalWorkloadManagerGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.close() {
+            tidb_logutil::bg_logger().warn(
+                "failed to close external workload manager",
+                &[tidb_logutil::zap_error(error.to_string())],
+            );
+        }
+    }
+}
+
 /// The server as the `/tidb-pool/` handlers reach it. This port's server has
-/// no `health` / force-shutdown / manager-free flags yet (register N08), so
-/// it answers as a healthy server that owns no AutoID service.
-struct NodeServer;
+/// no force-shutdown / manager-free flags yet (register N08).
+struct NodeServer(bool);
 
 impl StandbyServer for NodeServer {
     fn health(&self) -> bool {
-        true
+        SERVER_HEALTH.load(Ordering::Acquire)
     }
     fn is_auto_id_owner(&self) -> bool {
-        false
+        self.0
     }
     fn set_force_shutdown(&self) {}
     fn set_need_request_mgr_free(&self) {}
@@ -328,12 +376,12 @@ impl StandbyServer for NodeServer {
 
 /// Go `svr.StandbyController.Handler(svr)` on the status server: the
 /// `/tidb-pool/` API of an activated node.
-pub(crate) fn serve(path: &str, body: &str) -> Option<axum::response::Response> {
+pub(crate) fn serve(path: &str, body: &str, is_auto_id_owner: bool) -> Option<axum::response::Response> {
     let controller = standby_controller()?;
     let (route, raw_query) = path.split_once('?').unwrap_or((path, ""));
     let query = decode_query(raw_query);
     let response = controller.serve(
-        Some(&NodeServer),
+        Some(&NodeServer(is_auto_id_owner)),
         &Request { path: route, query: &query, body: body.as_bytes(), client_closed: &|| false },
     )?;
     let mut builder = axum::http::Response::builder().status(response.status);
@@ -343,9 +391,26 @@ pub(crate) fn serve(path: &str, body: &str) -> Option<axum::response::Response> 
     Some(builder.body(axum::body::Body::from(response.body)).expect("standby response"))
 }
 
+/// Go `AutoIDOwnerHandler.ServeHTTP` (`/owner_manager/auto_id_service`, a
+/// starter deployment's route): 500 unless the server is healthy, else
+/// whether this TiDB owns the auto ID service.
+pub(crate) fn auto_id_owner_status(is_auto_id_owner: bool) -> Result<String, ()> {
+    if !SERVER_HEALTH.load(Ordering::Acquire) {
+        return Err(());
+    }
+    Ok(format!("{{\"is_owner\":{is_auto_id_owner}}}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `AutoIDOwnerHandler`.
+    #[test]
+    fn auto_id_owner_status_answers_as_go() {
+        assert_eq!(auto_id_owner_status(true), Ok("{\"is_owner\":true}".to_owned()));
+        assert_eq!(auto_id_owner_status(false), Ok("{\"is_owner\":false}".to_owned()));
+    }
 
     /// Go `TestParseStarterAdditionalParams`.
     #[test]

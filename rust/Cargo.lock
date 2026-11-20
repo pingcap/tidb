@@ -6298,6 +6298,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-domain-serverinfo",
  "tidb-dxf",
+ "tidb-dxf-metering",
  "tidb-dxf-storage",
  "tidb-failpoint",
  "tidb-gocontext",
@@ -7351,6 +7352,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-extworkload"
+version = "0.0.0"
+dependencies = [
+ "tidb-config",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metrics",
+ "tikv-client",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+]
+
+[[package]]
 name = "tidb-failpoint"
 version = "0.0.0"
 dependencies = [
@@ -7449,6 +7464,7 @@ dependencies = [
  "tidb-ddl-label",
  "tidb-domain-core",
  "tidb-domain-infosync",
+ "tidb-extworkload",
  "tidb-go-time-layout",
  "tidb-intest",
  "tidb-log",
@@ -8192,6 +8208,15 @@ dependencies = [
  "tidb-datatype",
  "tidb-model",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-metaservice"
+version = "0.0.0"
+dependencies = [
+ "tidb-log",
+ "tidb-logutil",
+ "tikv-client",
 ]
 
 [[package]]
@@ -9488,6 +9513,7 @@ dependencies = [
  "tidb-exprctx",
  "tidb-expression-aggregation",
  "tidb-extension",
+ "tidb-extworkload",
  "tidb-failpoint",
  "tidb-format-textrow",
  "tidb-gcworker",
@@ -11239,6 +11265,7 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-extworkload",
  "tidb-gocontext",
  "tidb-intest",
  "tidb-kv",

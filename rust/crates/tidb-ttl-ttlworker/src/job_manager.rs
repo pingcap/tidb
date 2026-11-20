@@ -15,10 +15,9 @@
 //! Go `pkg/ttl/ttlworker/job_manager.go`.
 //!
 //! `// boundary:` Go's `extworkload` option (`WithExternalWorkloadManager`)
-//! makes an external TTL task worker campaign its own owner and recycle
-//! finished tasks; no external workload manager exists in this workspace, so
-//! `IsTTLTaskWorker` is always false and that path has no counterpart, as in
-//! a Go build without the option.
+//! also makes an external TTL task worker campaign its own owner
+//! (`ttlJobManagerLeaderPath`) outside tests; that campaign has no
+//! counterpart here, so such a worker keeps the caller's `leader_func`.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -286,16 +285,32 @@ pub struct JobManagerState {
     pub task_manager: TaskManager,
     last_report_delay_metrics_time: Option<Instant>,
     leader_func: Box<dyn Fn() -> bool + Send + Sync>,
+    /// Go `extWorkload`.
+    ext_workload: Option<Arc<dyn tidb_extworkload::Manager>>,
 }
 
 impl JobManager {
-    /// Go `NewJobManager`.
+    /// Go `NewJobManager` without options.
     pub fn new<C: SysSessionContext + ?Sized + 'static>(
         id: &str,
         sess_pool: Arc<dyn tidb_syssession::Pool<C>>,
         store: Store,
         etcd_cli: Option<Arc<EtcdClient>>,
         leader_func: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> Arc<Self> {
+        Self::new_with_external_workload_manager(id, sess_pool, store, etcd_cli, leader_func, None)
+    }
+
+    /// Go `NewJobManager(..., WithExternalWorkloadManager(extWorkloadMgr))`:
+    /// the external workload manager the job manager recycles its finished
+    /// TTL tasks through.
+    pub fn new_with_external_workload_manager<C: SysSessionContext + ?Sized + 'static>(
+        id: &str,
+        sess_pool: Arc<dyn tidb_syssession::Pool<C>>,
+        store: Store,
+        etcd_cli: Option<Arc<EtcdClient>>,
+        leader_func: Box<dyn Fn() -> bool + Send + Sync>,
+        ext_workload: Option<Arc<dyn tidb_extworkload::Manager>>,
     ) -> Arc<Self> {
         let base = BaseWorker::new(());
         let mut logger = bg_logger().with_fields(&[field("ttl-worker", "job-manager")]);
@@ -343,6 +358,7 @@ impl JobManager {
             task_manager,
             last_report_delay_metrics_time: None,
             leader_func,
+            ext_workload,
         };
         let state = Mutex::new(Some(state));
         base.set_loop(Box::new(move || {
@@ -882,6 +898,9 @@ impl JobManagerState {
 
     /// Go `checkFinishedJob`.
     fn check_finished_job(&mut self, se: &Session) {
+        let running_jobs_count = self.running_jobs.len();
+        let mut total_finished_jobs = 0;
+        let mut max_job_create_time = 0_u64;
         // reverse iteration so that we could remove the job safely in the loop
         for i in (0..self.running_jobs.len()).rev() {
             let job = self.running_jobs[i].clone();
@@ -922,6 +941,20 @@ impl JobManagerState {
                 continue;
             }
             self.remove_job(&job);
+            total_finished_jobs += 1;
+            max_job_create_time = max_job_create_time.max(job.create_time.unix() as u64);
+        }
+        if running_jobs_count > 0
+            && total_finished_jobs == running_jobs_count
+            && tidb_extworkload::is_ttl_task_worker(self.ext_workload.as_deref())
+        {
+            let manager = self.ext_workload.as_ref().expect("a TTL task worker has a manager");
+            if let Err(err) = manager.recycle_ttl_task(max_job_create_time) {
+                self.logger.warn(
+                    "failed to recycle TTL task from external workload controller",
+                    &[uint_field("completedJobCreateTime", max_job_create_time), field("error", err.to_string())],
+                );
+            }
         }
     }
 

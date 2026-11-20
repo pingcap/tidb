@@ -14,7 +14,7 @@
 
 //! Go `pkg/statistics/handle/storage/gc.go`'s statements.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use tidb_datatype::Datum;
 use tidb_log::{Field, Value};

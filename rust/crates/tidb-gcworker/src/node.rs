@@ -88,7 +88,30 @@ pub fn gc_worker_deps<S: tidb_store_driver_txn::transaction::StoreClient + 'stat
             }),
         )),
         rules: Arc::new(NodeGcRules { pd_http_client }),
-        gcv2: None,
+        // Go `extworkload.GetManagerFromStore(w.store)`.
+        gcv2: tidb_extworkload::get_manager_from_store()
+            .map(|manager| Arc::new(ExtWorkloadGcV2(manager)) as Arc<dyn crate::seams::GcV2Manager>),
+    }
+}
+
+/// Go `extworkload.Manager` as the GC worker's `notifyGCV2AfterGC` uses it.
+struct ExtWorkloadGcV2(Arc<dyn tidb_extworkload::Manager>);
+
+impl crate::seams::GcV2Manager for ExtWorkloadGcV2 {
+    fn role(&self) -> tidb_config::external_workload::ExternalWorkloadRole {
+        self.0.role()
+    }
+
+    fn meta(&self) -> Option<tikv_client::proto::keyspacepb::KeyspaceMeta> {
+        Some(self.0.meta().clone())
+    }
+
+    fn register_gcv2(&self, safe_point: u64, gc_life_time: std::time::Duration) -> crate::seams::GcResult<()> {
+        self.0.register_gcv2(safe_point, gc_life_time).map_err(gc_error)
+    }
+
+    fn recycle_gcv2(&self, safe_point: u64) -> crate::seams::GcResult<()> {
+        self.0.recycle_gcv2(safe_point).map_err(gc_error)
     }
 }
 

@@ -84,6 +84,9 @@ pub struct ShutdownHandle {
 impl ShutdownHandle {
     /// Requests shutdown. Repeated requests are idempotent.
     pub fn shutdown(&self) {
+        // Go `Server.startShutdown`: "setting tidb-server to report
+        // unhealthy (shutting-down)".
+        crate::standby_node::SERVER_HEALTH.store(false, Ordering::Release);
         self.requested.store(true, Ordering::Release);
         self.waker.wake();
     }
@@ -657,6 +660,15 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
         let shutdown = ShutdownHandle::default();
         shutdown.waker.bind_to(&listener);
+        // Go `main`: `if deploymode.IsStarter() && cfg.KeyspaceActivateMode {
+        // exitAfterKeyspaceActivate(svr, storage, dom) }` -- the node closes
+        // as soon as its server is created, and the process exits cleanly.
+        if tidb_config_deploymode::is_starter()
+            && tidb_config::config_tree::config::get_global_config().keyspace_activate_mode
+        {
+            tidb_logutil::bg_logger().info("keyspace activation completed, exiting", &[]);
+            shutdown.shutdown();
+        }
         let tracker = Arc::new(ConnectionTracker::with_config(
             &config.global_config,
             factory.server_identity(),
