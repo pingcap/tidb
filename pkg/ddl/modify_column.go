@@ -2549,6 +2549,14 @@ func validateMaterializedViewBaseModifyColumn(
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
 func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	// Changing charset can change byte encoding or character validity, and changing
+	// collation on an indexed column can change index key encoding/ordering.
+	if oldCol.GetCharset() != newCol.GetCharset() {
+		return false
+	}
+	if oldCol.GetCollate() != newCol.GetCollate() && tblInfo != nil && len(getRelatedIndexIDs(tblInfo, oldCol.ID, false)) > 0 {
+		return false
+	}
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
