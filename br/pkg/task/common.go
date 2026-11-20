@@ -941,6 +941,11 @@ func ReadBackupMeta(
 	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
 	var iv []byte
 	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		if len(metaData) < metautil.CrypterIvLen {
+			return nil, nil, nil, errors.Errorf(
+				"encrypted backupmeta is too short: got %d bytes, need at least %d bytes for IV",
+				len(metaData), metautil.CrypterIvLen)
+		}
 		iv = metaData[:metautil.CrypterIvLen]
 	}
 	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
