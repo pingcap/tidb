@@ -861,6 +861,8 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 		if tp.GetDecimal() != types.UnspecifiedFsp && (tp.GetDecimal() < types.MinFsp || tp.GetDecimal() > types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetDecimal(), colName, types.MaxFsp)
 		}
+	case mysql.TypeGeometry:
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
 	}
 	return nil
 }
