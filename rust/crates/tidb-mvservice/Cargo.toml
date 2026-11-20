@@ -27,3 +27,6 @@ tidb-murmur3 = { path = "../tidb-murmur3" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-timer = { path = "../tidb-timer" }
 tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }

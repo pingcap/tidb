@@ -521,6 +521,17 @@ fn apply_mv_maintenance_session_vars_from_global(sctx: &dyn MVServiceSessionCont
 }
 
 impl ServiceHelper {
+    /// Go `&serviceHelper{}`: no server view, metrics to a test sink.
+    #[cfg(test)]
+    pub(crate) fn new_for_test() -> Self {
+        Self {
+            local_server: Box::new(|| Ok(ServerInfo::default())),
+            all_servers: Box::new(|| Ok(Vec::new())),
+            analyzer: None,
+            metrics: Arc::new(crate::mvservice_test::MockMVServiceHelper::default()),
+        }
+    }
+
     fn run_with_restores<T>(
         sctx: &dyn MVServiceSessionContext,
         restores: Vec<(String, String)>,

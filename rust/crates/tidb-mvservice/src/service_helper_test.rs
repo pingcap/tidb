@@ -15,8 +15,277 @@
 //! Go master `pkg/mvservice/service_helper_test.go`, its session-free cases
 //! (the session-backed ones run against a node in `tidb-session`).
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use tidb_datatype::Datum;
+use tidb_gocontext::Context;
+use tidb_model::TableInfo;
+use tidb_sqlescape::SqlArg;
+use tidb_timer::go_time::{GoTime, MINUTE};
+
 use crate::server_maintainer::ServerInfo;
-use crate::service_helper::{latest_server_infos_by_instance, need_analyze_mlog, MLogStats};
+use crate::service_helper::{
+    latest_server_infos_by_instance, need_analyze_mlog, MLogStats, MVServiceSessionContext, MVServiceSessionPool,
+    ServiceHelper, SystemSessionPool,
+};
+use crate::task_handler::{MVTaskHandler, MvsError};
+use crate::time_proxy::{mvs_unix, mvs_unix_milli, unix_milli};
+
+/// Go test_helpers_test.go's SQL texts.
+const TEST_SQL_FETCH_MV_LOG_PURGE: &str =
+    "SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL";
+const TEST_SQL_FETCH_MV_REFRESH: &str = "SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL";
+const TEST_SQL_REFRESH_MV: &str = "REFRESH MATERIALIZED VIEW %n.%n FAST";
+const TEST_SQL_FIND_MV_NEXT_TIME: &str =
+    "SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL";
+const TEST_SQL_PURGE_MV_LOG: &str = "PURGE MATERIALIZED VIEW LOG ON %n.%n";
+const TEST_SQL_FIND_PURGE_NEXT_TIME: &str =
+    "SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL";
+
+/// Go `recordingSessionContext`: restricted SQL answered from canned rows by
+/// its text, every call recorded, the schema from Go's `withMockInfoSchema`.
+#[derive(Default)]
+pub(crate) struct RecordingSession {
+    pub(crate) executed_sql: Vec<String>,
+    pub(crate) exec_errs: HashMap<String, MvsError>,
+    pub(crate) executed_restricted_sql: Vec<String>,
+    pub(crate) executed_restricted_args: Vec<Vec<String>>,
+    pub(crate) restricted_rows: HashMap<String, Vec<Vec<Datum>>>,
+    pub(crate) restricted_errs: HashMap<String, MvsError>,
+    pub(crate) restricted_affected_rows: HashMap<String, Vec<u64>>,
+    restricted_affected_pos: HashMap<String, usize>,
+    affected_rows: u64,
+    /// Go `withMockInfoSchema`'s tables, in schema `test`.
+    pub(crate) tables: HashMap<i64, TableInfo>,
+    pub(crate) global_vars: HashMap<String, String>,
+    pub(crate) global_var_errs: HashMap<String, MvsError>,
+    pub(crate) system_vars: HashMap<String, String>,
+    /// The listed session variables' values at each restricted statement
+    /// (Go's `restricted*` slices).
+    pub(crate) watched_vars: Vec<String>,
+    pub(crate) restricted_var_values: Vec<HashMap<String, Option<String>>>,
+    pub(crate) store_version: u64,
+}
+
+pub(crate) struct RecordingSessionContext(pub(crate) Mutex<RecordingSession>);
+
+fn arg_text(arg: &SqlArg<'_>) -> String {
+    match arg {
+        SqlArg::String(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        SqlArg::Signed(v) => v.to_string(),
+        SqlArg::Unsigned(v) => v.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+impl MVServiceSessionContext for RecordingSessionContext {
+    fn exec_restricted_sql(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, MvsError> {
+        let mut s = self.0.lock().unwrap();
+        s.executed_restricted_sql.push(sql.to_owned());
+        s.executed_restricted_args.push(args.iter().map(arg_text).collect());
+        let values = s.watched_vars.iter().map(|name| (name.clone(), s.system_vars.get(name).cloned())).collect();
+        s.restricted_var_values.push(values);
+        let affected = match s.restricted_affected_rows.get(sql).cloned() {
+            Some(seq) => {
+                let pos = s.restricted_affected_pos.entry(sql.to_owned()).or_default();
+                let value = seq.get(*pos).copied().unwrap_or(0);
+                *pos += 1;
+                value
+            }
+            None => 0,
+        };
+        s.affected_rows = affected;
+        if let Some(err) = s.restricted_errs.get(sql) {
+            return Err(err.clone());
+        }
+        Ok(s.restricted_rows.get(sql).cloned().unwrap_or_default())
+    }
+
+    fn execute_internal(&self, sql: &str) -> Result<(), MvsError> {
+        let mut s = self.0.lock().unwrap();
+        s.executed_sql.push(sql.to_owned());
+        s.exec_errs.get(sql).cloned().map_or(Ok(()), Err)
+    }
+
+    fn affected_rows(&self) -> u64 {
+        self.0.lock().unwrap().affected_rows
+    }
+
+    fn table_info_by_id(&self, id: i64) -> Option<TableInfo> {
+        self.0.lock().unwrap().tables.get(&id).map(TableInfo::clone_like_go)
+    }
+
+    fn schema_name_by_id(&self, _id: i64) -> Option<String> {
+        Some("test".to_owned())
+    }
+
+    fn global_system_var(&self, name: &str) -> Result<String, MvsError> {
+        let s = self.0.lock().unwrap();
+        if let Some(err) = s.global_var_errs.get(name) {
+            return Err(err.clone());
+        }
+        Ok(s.global_vars.get(name).cloned().unwrap_or_default())
+    }
+
+    fn system_var(&self, name: &str) -> Option<String> {
+        self.0.lock().unwrap().system_vars.get(name).cloned()
+    }
+
+    fn set_system_var(&self, name: &str, value: &str) -> Result<(), MvsError> {
+        self.0.lock().unwrap().system_vars.insert(name.to_owned(), value.to_owned());
+        Ok(())
+    }
+
+    fn store_current_version(&self) -> Result<u64, MvsError> {
+        Ok(self.0.lock().unwrap().store_version)
+    }
+
+    fn statement_now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+
+/// Go `recordingSessionPool`.
+pub(crate) struct RecordingSessionPool(pub(crate) Arc<RecordingSessionContext>);
+
+impl MVServiceSessionPool for RecordingSessionPool {
+    fn with_session(&self, f: &mut dyn FnMut(&dyn MVServiceSessionContext) -> Result<(), MvsError>) -> Result<(), MvsError> {
+        f(self.0.as_ref())
+    }
+}
+
+/// `newRecordingSessionContext()` and its pool, as `SessionPool`.
+fn new_recording_session() -> (Arc<RecordingSessionContext>, SystemSessionPool) {
+    let se = Arc::new(RecordingSessionContext(Mutex::new(RecordingSession::default())));
+    (Arc::clone(&se), SystemSessionPool(Arc::new(RecordingSessionPool(se))))
+}
+
+/// Go `&serviceHelper{}`.
+fn service_helper() -> ServiceHelper {
+    ServiceHelper::new_for_test()
+}
+
+fn ints(values: &[Option<i64>]) -> Vec<Datum> {
+    values.iter().map(|v| v.map_or(Datum::Null, Datum::Int)).collect()
+}
+
+/// Go `withMockInfoSchema(t, tables...)`.
+fn with_mock_info_schema(se: &RecordingSessionContext, tables: Vec<TableInfo>) {
+    let mut s = se.0.lock().unwrap();
+    for table in tables {
+        s.tables.insert(table.id, table);
+    }
+}
+
+fn table(id: i64, name: &str) -> TableInfo {
+    TableInfo {
+        id,
+        name: tidb_ast::CiString::new(name),
+        state: tidb_model::SchemaState::PUBLIC,
+        db_id: 1,
+        ..Default::default()
+    }
+}
+
+/// Go `buildMockMVBaseAndMVLogTables`.
+fn build_mock_mv_base_and_mv_log_tables(base_table_id: i64, mlog_id: i64, mview_ids: &[i64]) -> (TableInfo, TableInfo) {
+    let mut base = table(base_table_id, "mv_base");
+    base.materialized_view_base = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewBaseInfo {
+        mlog_id,
+        mview_ids: mview_ids.to_vec().into(),
+        ..Default::default()
+    }));
+    let mut mlog = table(mlog_id, "mlog1");
+    mlog.materialized_view_log = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewLogInfo {
+        base_table_id,
+        purge_method: "TIME_WINDOW".to_owned(),
+        purge_start_with: "'2026-01-02 03:04:05'".to_owned(),
+        purge_next: "60".to_owned(),
+        ..Default::default()
+    }));
+    (base, mlog)
+}
+
+#[test]
+fn test_server_helper_load_all_tidb_m_log_purge() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().restricted_rows.insert(
+        TEST_SQL_FETCH_MV_LOG_PURGE.to_owned(),
+        vec![
+            // Valid rows.
+            ints(&[Some(600), Some(201)]),
+            ints(&[Some(720), Some(202)]),
+            // "Invalid row with non-positive ID should be ignored."
+            ints(&[Some(720), Some(0)]),
+            // "Invalid row with NULL NEXT_PURGE_UNIX_SECONDS should be ignored."
+            ints(&[None, Some(203)]),
+        ],
+    );
+    let got = service_helper().load_all_tidb_mv_log_purge(&Context::background(), &pool).unwrap();
+    assert_eq!(vec![TEST_SQL_FETCH_MV_LOG_PURGE.to_owned()], se.0.lock().unwrap().executed_restricted_sql);
+    assert_eq!(got.len(), 2);
+    for (id, sec) in [(201, 600), (202, 720)] {
+        let l = &got[&id];
+        let expect = mvs_unix(sec, 0);
+        assert_eq!(expect, *l.next_purge.lock().unwrap());
+        assert_eq!(unix_milli(&expect), l.order_ts.load(std::sync::atomic::Ordering::SeqCst));
+    }
+}
+
+#[test]
+fn test_server_helper_load_all_tidb_mv_refresh() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().restricted_rows.insert(
+        TEST_SQL_FETCH_MV_REFRESH.to_owned(),
+        vec![
+            ints(&[Some(900), Some(101), Some(123_456_789)]),
+            ints(&[Some(1200), Some(102), Some(223_456_789)]),
+            ints(&[Some(1200), Some(0), Some(323_456_789)]),
+            ints(&[None, Some(103), Some(423_456_789)]),
+        ],
+    );
+    let got = service_helper().load_all_tidb_mv_refresh(&Context::background(), &pool).unwrap();
+    assert_eq!(vec![TEST_SQL_FETCH_MV_REFRESH.to_owned()], se.0.lock().unwrap().executed_restricted_sql);
+    assert_eq!(got.len(), 2);
+    for (id, sec, tso) in [(101, 900, 123_456_789u64), (102, 1200, 223_456_789)] {
+        let m = &got[&id];
+        let expect = mvs_unix(sec, 0);
+        let state = m.state.lock().unwrap();
+        assert_eq!(expect, state.next_refresh);
+        assert_eq!(unix_milli(&expect), m.order_ts.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(tso, state.last_success_read_tso);
+        // Go `mvsUnixMilli(oracle.ExtractPhysical(tso))`.
+        assert_eq!(mvs_unix_milli((tso >> 18) as i64), state.last_success_time);
+    }
+}
+
+#[test]
+fn test_server_helper_refresh_mv_deleted_when_meta_not_found() {
+    let (se, pool) = new_recording_session();
+    let next_refresh = service_helper().refresh_mv(&Context::background(), &pool, 100).unwrap();
+    assert!(next_refresh.is_zero());
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_sql.is_empty());
+    assert!(s.executed_restricted_sql.is_empty());
+}
+
+#[test]
+fn test_server_helper_refresh_mv_success() {
+    let (se, pool) = new_recording_session();
+    let expected_next_refresh = mvs_unix(1_700_000_000, 0).add(MINUTE);
+    se.0.lock().unwrap().restricted_rows.insert(
+        TEST_SQL_FIND_MV_NEXT_TIME.to_owned(),
+        vec![ints(&[Some(expected_next_refresh.unix())])],
+    );
+    with_mock_info_schema(&se, vec![table(101, "mv1")]);
+    let next_refresh = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap();
+    assert_eq!(expected_next_refresh.unix(), next_refresh.unix());
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_sql.is_empty());
+    assert_eq!(vec![TEST_SQL_REFRESH_MV.to_owned(), TEST_SQL_FIND_MV_NEXT_TIME.to_owned()], s.executed_restricted_sql);
+}
+
 
 /// Go `TestLatestServerInfosByInstanceKeepsNewestDDLID`.
 #[test]
