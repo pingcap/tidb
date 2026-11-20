@@ -1977,10 +1977,11 @@ func (er *expressionRewriter) useCache() bool {
 	return er.sctx.IsUseCache()
 }
 
-// maskingStateWriteFuncArgs maps the functions that keep an argument in
-// session state to the position of that argument. SETVAR is what a user
-// variable assignment is rewritten to, and can also be called by name.
-var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 1, ast.LastInsertId: 0}
+// maskingStateWriteFuncArgs maps the functions that keep arguments in session
+// state to the number of those leading arguments. SETVAR is what a user
+// variable assignment is rewritten to, and can also be called by name: it
+// keeps its value under its name, which is evaluated for every row as well.
+var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 2, ast.LastInsertId: 1}
 
 // enterMaskingStateWrite enters (delta 1) or leaves (delta -1) an expression
 // that keeps its argument in session state. A scalar subquery in the argument
@@ -1995,7 +1996,7 @@ func (er *expressionRewriter) enterMaskingStateWrite(node ast.Node, delta int) {
 			return
 		}
 	case *ast.FuncCallExpr:
-		if idx, ok := maskingStateWriteFuncArgs[v.FnName.L]; !ok || len(v.Args) <= idx {
+		if _, ok := maskingStateWriteFuncArgs[v.FnName.L]; !ok || len(v.Args) == 0 {
 			return
 		}
 	}
@@ -2751,8 +2752,8 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if er.rewriteFuncCall(v) {
 		return
 	}
-	if idx, ok := maskingStateWriteFuncArgs[v.FnName.L]; ok && len(args) > idx {
-		if er.checkMaskingStateWrite(args[idx], strings.ToUpper(v.FnName.L)); er.err != nil {
+	for _, arg := range args[:min(len(args), maskingStateWriteFuncArgs[v.FnName.L])] {
+		if er.checkMaskingStateWrite(arg, strings.ToUpper(v.FnName.L)); er.err != nil {
 			return
 		}
 	}

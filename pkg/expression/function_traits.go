@@ -31,6 +31,9 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.RowCount:             {},
 	ast.Version:              {},
 	ast.Like:                 {},
+	// SETVAR called by name is a user variable assignment, which is not cached
+	// either. Its masking policy check depends on the session planning it.
+	ast.SetVar: {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
 	ast.JSONObject:       {},

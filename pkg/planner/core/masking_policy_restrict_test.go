@@ -776,3 +776,101 @@ func TestMaskingPolicyUserVarAssignment(t *testing.T) {
 	require.ErrorContains(t, user.ExecToErr("execute st"), notPreserved+"user variable assignment")
 	user.MustQuery("select @leak").Check(testkit.Rows("<nil>"))
 }
+
+func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table sv_src(id int primary key, c varchar(20), k varchar(20))")
+	root.MustExec("insert into sv_src values (1, 'secret', 'pub')")
+	root.MustExec("create masking policy p on sv_src(c) as case when current_role() != 'NONE' then c else mask_full(c) end enable")
+	root.MustExec("create role sv_unmask")
+	root.MustExec("create user sv_user")
+	root.MustExec("create user sv_other")
+	root.MustExec("grant select on test.* to sv_user, sv_other")
+	root.MustExec("grant sv_unmask to sv_user")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "sv_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	other := testkit.NewTestKit(t, store)
+	require.NoError(t, other.Session().Auth(&auth.UserIdentity{Username: "sv_other", Hostname: "%"}, nil, nil, nil))
+	other.MustExec("use test")
+
+	// SETVAR keeps both its name and its value in the session.
+	const notPreserved = "masking policy cannot be preserved through SETVAR"
+	for _, sql := range []string{
+		"select 1 from sv_src where setvar(c, 1) is not null",
+		"select 1 from sv_src where setvar(concat('k', c), 1) is not null",
+		"select 1 from sv_src where setvar('x', c) is not null",
+		"select setvar(c, 1) from sv_src",
+		"select setvar(concat('k', c), 1) from sv_src",
+		"select setvar('x', c) from sv_src",
+		"select 1 from (select setvar(c, 1) from sv_src) d",
+		"select 1 from (select setvar('x', c) from sv_src) d",
+		"select 1 from (select c from sv_src) d where setvar(d.c, 1) is not null",
+		"select 1 from sv_src order by setvar(c, 1)",
+	} {
+		require.ErrorContains(t, user.ExecToErr(sql), notPreserved, sql)
+	}
+	user.MustQuery("select @secret, @ksecret, @x").Check(testkit.Rows("<nil> <nil> <nil>"))
+	// GETVAR only reads a variable; a masked column in its name is not rejected.
+	user.MustQuery("select 1 from sv_src where getvar(c) is null").Check(testkit.Rows("1"))
+
+	// Constant names and names from unprotected columns still work.
+	user.MustQuery("select setvar('x', id + 1), setvar(k, 2), setvar(concat('k', k), 3) from sv_src where setvar('y', k) is not null").Check(testkit.Rows("2 2 3"))
+	user.MustQuery("select @x, @pub, @kpub, @y").Check(testkit.Rows("2 2 3 pub"))
+	user.MustQuery("select 1 from (select setvar(k, 4) from sv_src) d").Check(testkit.Rows("1"))
+	user.MustQuery("select @pub").Check(testkit.Rows("4"))
+	// A session the policy does not mask keeps its behavior.
+	user.MustExec("set role all")
+	user.MustQuery("select 1 from sv_src where setvar(c, 5) is not null and setvar('x', c) is not null").Check(testkit.Rows("1"))
+	user.MustQuery("select @secret, @x").Check(testkit.Rows("5 secret"))
+	user.MustExec("set @secret = null, @x = null")
+
+	// A statement with SETVAR is planned for every execution, so neither a
+	// policy enabled later, nor a change of the session's roles, nor another
+	// session can reuse a plan built when the column was not masked.
+	same := testkit.NewTestKit(t, store)
+	require.NoError(t, same.Session().Auth(&auth.UserIdentity{Username: "sv_user", Hostname: "%"}, nil, nil, nil))
+	same.MustExec("use test")
+	sessions := []*testkit.TestKit{user, same, other}
+	for _, instance := range []bool{false, true} {
+		ctx := context.Background()
+		if instance {
+			ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+		}
+		executeTwice := func(tk *testkit.TestKit, name string) {
+			for range 2 {
+				tk.MustQueryWithContext(ctx, "execute "+name).Check(testkit.Rows("1"))
+			}
+			tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+		root.MustExec("alter table sv_src disable masking policy p")
+		for _, tk := range sessions {
+			tk.MustExecWithContext(ctx, "prepare plain from 'select 1 from sv_src where setvar(''x'', id) is not null'")
+			tk.MustExecWithContext(ctx, "prepare st from 'select 1 from sv_src where setvar(''x'', c) is not null'")
+			tk.MustExecWithContext(ctx, "prepare stname from 'select 1 from sv_src where setvar(c, 1) is not null'")
+			executeTwice(tk, "plain")
+			executeTwice(tk, "st")
+			executeTwice(tk, "stname")
+			tk.MustQuery("select @x, @secret").Check(testkit.Rows("secret 1"))
+			tk.MustExec("set @secret = null, @x = null")
+		}
+		root.MustExec("alter table sv_src enable masking policy p")
+		user.MustExec("set role all")
+		executeTwice(user, "st")
+		executeTwice(user, "stname")
+		user.MustQuery("select @x, @secret").Check(testkit.Rows("secret 1"))
+		user.MustExec("set role none")
+		user.MustExec("set @secret = null, @x = null")
+		for _, tk := range sessions {
+			for _, name := range []string{"st", "stname"} {
+				_, err := tk.ExecWithContext(ctx, "execute "+name)
+				require.ErrorContains(t, err, notPreserved)
+			}
+			tk.MustQuery("select @x, @secret").Check(testkit.Rows("<nil> <nil>"))
+			executeTwice(tk, "plain")
+		}
+	}
+}
