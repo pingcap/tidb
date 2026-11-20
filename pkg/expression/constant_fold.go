@@ -49,6 +49,15 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	return e
 }
 
+// skipNotNullFolding reports whether expressions are being built for a result
+// whose columns may later be replaced by nullable expressions, as result masking
+// does. Rewrites that rely on a column's NOT NULL constraint must then be left
+// to the rebuild that follows the replacement.
+func skipNotNullFolding(ctx BuildContext) bool {
+	guard, ok := ctx.(interface{ SkipNotNullFolding() bool })
+	return ok && guard.SkipNotNullFolding()
+}
+
 func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	arg0 := expr.GetArgs()[0]
 	if constArg, isConst := arg0.(*Constant); isConst {
@@ -69,7 +78,7 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	if mysql.HasNotNullFlag(arg0.GetType(ctx.GetEvalCtx()).GetFlag()) {
 		// Result masking can make a base column nullable. Keep its dependency
 		// until the planner substitutes the policy, while still folding constants.
-		if guard, ok := ctx.(interface{ SkipNotNullFolding() bool }); ok && guard.SkipNotNullFolding() {
+		if skipNotNullFolding(ctx) {
 			return expr, false
 		}
 		return NewZero(), false

@@ -1854,12 +1854,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
+// buildCtx returns the context to build functions with. A result expression
+// that masking may substitute later must not be simplified using the NOT NULL
+// constraint of its original columns.
+func (er *expressionRewriter) buildCtx() expression.BuildContext {
+	if er.preserveMaskingDependencies {
+		return maskingProjectionBuildContext{er.sctx}
+	}
+	return er.sctx
+}
+
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
 func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
-	var buildCtx expression.BuildContext = er.sctx
-	if er.preserveMaskingDependencies {
-		buildCtx = maskingProjectionBuildContext{buildCtx}
-	}
+	buildCtx := er.buildCtx()
 	if init != nil {
 		ret, err = expression.NewFunctionWithInit(buildCtx, funcName, retType, init, args...)
 	} else if er.disableFoldCounter > 0 {
@@ -2453,11 +2460,12 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
+	buildCtx := er.buildCtx()
+	l, er.err = expression.NewFunction(buildCtx, ast.GE, &v.Type, expr, lexp)
 	if er.err != nil {
 		return
 	}
-	r, er.err = expression.NewFunction(er.sctx, ast.LE, &v.Type, expr, rexp)
+	r, er.err = expression.NewFunction(buildCtx, ast.LE, &v.Type, expr, rexp)
 	if er.err != nil {
 		return
 	}

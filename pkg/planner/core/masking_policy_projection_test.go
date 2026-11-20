@@ -998,6 +998,86 @@ func TestMaskingPolicyIfnullFallback(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyComparisonOnNotNullColumn(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	// Each comparison is constant for the original NOT NULL column, so its raw
+	// result is known without reading the row.
+	cases := []struct{ expr, raw string }{
+		{"u < 0", "0"}, {"u >= 0", "1"}, {"u = -1", "0"}, {"u <> -1", "1"}, {"-1 < u", "1"},
+		{"u > -1", "1"}, {"u <= -1", "0"}, {"0 > u", "0"}, {"not (u < 0)", "1"},
+		{"u between -5 and -1", "0"}, {"u not between -5 and -1", "1"}, {"u in (-1)", "0"},
+		{"(u, ti) = (-1, 1)", "0"},
+		{"ti < 1000.5", "1"}, {"1000.5 > ti", "1"}, {"ti > -1000.5", "1"}, {"ti = 1.5", "0"},
+		{"ti in (1.5)", "0"}, {"ti in (1.5, 2.5)", "0"},
+		{"b = 18446744073709551615", "0"},
+	}
+	derived := []struct{ expr, raw, masked string }{
+		{"u < 0 or u is null", "0", "1"},
+		{"(u < 0) is null", "0", "1"},
+		{"coalesce(u < 0, 9)", "0", "9"},
+		{"if(u >= 0, 'yes', 'no')", "yes", "no"},
+		{"u <=> -1", "0", "0"},
+	}
+	for _, declaration := range []string{"not null", "null"} {
+		tk.MustExec("create table cmp_source(id int primary key, u int unsigned " + declaration +
+			", ti tinyint " + declaration + ", b bigint " + declaration + ", key(u))")
+		tk.MustExec("insert into cmp_source values (1, 1, 1, 1)")
+		for _, tc := range cases {
+			tk.MustQuery("select " + tc.expr + " from cmp_source").Check(testkit.Rows(tc.raw))
+		}
+		for _, tc := range derived {
+			tk.MustQuery("select " + tc.expr + " from cmp_source").Check(testkit.Rows(tc.raw))
+		}
+		for _, col := range []string{"u", "ti", "b"} {
+			tk.MustExec("create masking policy p_" + col + " on cmp_source(" + col + ") as mask_null(" + col + ")")
+		}
+		for _, tc := range cases {
+			tk.MustQuery("select " + tc.expr + " from cmp_source").Check(testkit.Rows("<nil>"))
+			tk.MustQuery("select x from (select " + tc.expr + " as x from cmp_source) s").Check(testkit.Rows("<nil>"))
+			tk.MustQuery("select x is null from (select " + tc.expr + " as x from cmp_source) s").Check(testkit.Rows("1"))
+			tk.MustQuery("select " + tc.expr + ", count(*) from cmp_source group by u, ti, b").Check(testkit.Rows("<nil> 1"))
+			// Predicates keep comparing the original values.
+			tk.MustQuery("select count(*) from cmp_source where " + tc.expr).Check(testkit.Rows(tc.raw))
+		}
+		tk.MustQuery("select count(*) from cmp_source s join cmp_source r on s.u >= 0 and r.u < 0").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from cmp_source s join cmp_source r on s.u >= 0 and r.u > -1").Check(testkit.Rows("1"))
+		for _, tc := range derived {
+			tk.MustQuery("select " + tc.expr + " from cmp_source").Check(testkit.Rows(tc.masked))
+			tk.MustQuery("select x from (select " + tc.expr + " as x from cmp_source) s").Check(testkit.Rows(tc.masked))
+		}
+		tk.MustQuery("select u < 0, u from cmp_source where u >= 0 and not (u < 0)").Check(testkit.Rows("<nil> <nil>"))
+		rs, err := tk.Exec("select u < 0, ti < 1000.5 from cmp_source")
+		require.NoError(t, err)
+		for _, field := range rs.Fields() {
+			require.False(t, mysql.HasNotNullFlag(field.Column.GetFlag()))
+		}
+		require.NoError(t, rs.Close())
+
+		// A cached plan must not keep a result folded for one parameter value.
+		tk.MustExec("prepare cmp_int from 'select u < ?, u >= ? from cmp_source'")
+		tk.MustExec("prepare cmp_where from 'select count(*) from cmp_source where u >= ?'")
+		for i, param := range []string{"0", "-1", "0", "2"} {
+			tk.MustExec("set @p = " + param)
+			tk.MustQuery("execute cmp_int using @p, @p").Check(testkit.Rows("<nil> <nil>"))
+			if i > 0 {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+			want := "1"
+			if param == "2" {
+				want = "0"
+			}
+			tk.MustQuery("execute cmp_where using @p").Check(testkit.Rows(want))
+		}
+		tk.MustExec("prepare cmp_decimal from 'select ti < ?, ti = ? from cmp_source'")
+		for _, param := range []string{"1000.5", "1.5", "-1000.5"} {
+			tk.MustExec("set @p = " + param)
+			tk.MustQuery("execute cmp_decimal using @p, @p").Check(testkit.Rows("<nil> <nil>"))
+		}
+		tk.MustExec("drop table cmp_source")
+	}
+}
+
 func TestMaskingPolicyDerivedRollup(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")
