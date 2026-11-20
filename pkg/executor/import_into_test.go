@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,11 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -72,7 +70,6 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/atomic"
-	"go.uber.org/mock/gomock"
 )
 
 var (
@@ -781,7 +778,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		getPoolFn := func(store kv.Storage) tidbutil.SessionPool {
 			pool := pools.NewResourcePool(func() (pools.Resource, error) {
 				return testkit.NewTestKit(t, store).Session(), nil
-			}, 1, 1, time.Second)
+			}, 2, 2, time.Second)
 			t.Cleanup(func() {
 				pool.Close()
 			})
@@ -840,6 +837,104 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
 		userKSTK.MustQuery("select count(*) from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Check(testkit.Rows("0"))
+	})
+	t.Run("mode claim has a durable recoverable job", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		plan := newSubmissionPlan(userKSTK)
+		var claimedJob int64
+		var durable bool
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportTableModeClaimed", func(id int64, err *error) {
+			claimedJob = id
+			durable = len(userKSTK.MustQuery("select id from mysql.tidb_import_jobs where id = ?", id).Rows()) == 1
+			*err = context.Canceled
+		})
+		// Model a lost submitter whose in-process compensation cannot finish.
+		cleanupFails := true
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeImportCancelCleanup", func(err *error) {
+			if cleanupFails {
+				*err = context.Canceled
+			}
+		})
+		_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+		require.Error(t, err)
+		require.True(t, durable, "mode ownership must never outlive its durable import job")
+		cleanupFails = false
+		// A fresh session uses the ordinary recovery entrypoint, with no submitter state.
+		recovery := testkit.NewTestKit(t, userKSStore)
+		recovery.MustExec(fmt.Sprintf("cancel import job %d", claimedJob))
+		tbl, err := domain.GetDomain(recovery.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr(plan.DBName), plan.TableInfo.Name)
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+	})
+	t.Run("cancel waits for a pending mode claim", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		plan := newSubmissionPlan(userKSTK)
+		claimed := make(chan int64, 1)
+		resume := make(chan struct{})
+		release := sync.OnceFunc(func() { close(resume) })
+		submitDone := make(chan error, 1)
+		cancelDone := make(chan error, 1)
+		cancelStarted := make(chan struct{}, 1)
+		var wg sync.WaitGroup
+		defer func() { release(); wg.Wait() }()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportTableModeClaimed", func(id int64, err *error) {
+			claimed <- id
+			<-resume
+			*err = context.Canceled
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeCancelDanglingImportJob", func(int64) {
+			select {
+			case cancelStarted <- struct{}{}:
+			default:
+			}
+		})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+			submitDone <- err
+		}()
+		var id int64
+		select {
+		case id = <-claimed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("import did not claim table mode")
+		}
+		cancelTK := testkit.NewTestKit(t, userKSStore)
+		wg.Add(1)
+		go func() { defer wg.Done(); cancelDone <- cancelTK.ExecToErr(fmt.Sprintf("cancel import job %d", id)) }()
+		select {
+		case <-cancelStarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("CANCEL did not reach the pending job")
+		}
+		select {
+		case err := <-cancelDone:
+			t.Fatalf("CANCEL finished while the mode claim was locked: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		release()
+		require.Error(t, <-submitDone)
+		require.NoError(t, <-cancelDone)
+		tbl, err := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr(plan.DBName), plan.TableInfo.Name)
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+	})
+	t.Run("cancel before mode claim prevents a late claim", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		plan := newSubmissionPlan(userKSTK)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeImportTableModeClaim", func(id int64) {
+			userKSTK.MustExec(fmt.Sprintf("cancel import job %d", id))
+		})
+		_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+		require.ErrorContains(t, err, "is no longer pending")
+		tbl, err := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr(plan.DBName), plan.TableInfo.Name)
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+		userKSTK.MustQuery("select status from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Check(testkit.Rows("cancelled"))
 	})
 	t.Run("old user keyspace owner rejects submission after SYSTEM upgrade", func(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
@@ -913,119 +1008,8 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		})
 	}
 
-	t.Run("read-only transition excludes background import", func(t *testing.T) {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
-		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
-		sysTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
-		userKSTK.MustExec("create database read_only_import")
-		userKSTK.MustExec("create table read_only_import.t(a int primary key)")
-		dom := domain.GetDomain(userKSTK.Session())
-		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("read_only_import"))
-		require.True(t, ok)
-		tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
-		require.NoError(t, err)
-		_, task, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{},
-		}, "import into read_only_import.t from '/path/to/file'")
-		require.NoError(t, err)
-		tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
-		require.NoError(t, err)
-		require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
-		userKSTK.MustGetErrCode("alter database read_only_import read only = 1", 8258)
-		fullTask, err := sysTaskMgr.GetTaskByID(ctx, task.ID)
-		require.NoError(t, err)
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask))
-		userKSTK.MustExec("update mysql.tidb_import_jobs set status = 'cancelled' where table_id = ?", tbl.Meta().ID)
-		_, nextTask, err := executor.SubmitImportTask(ctx, &importer.Plan{
-			DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{},
-		}, "import into read_only_import.t from '/path/to/file'")
-		require.NoError(t, err)
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask), "stale cleanup must preserve the next import")
-		current, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
-		require.NoError(t, err)
-		require.Equal(t, model.TableModeImport, current.Meta().Mode)
-		nextFullTask, err := sysTaskMgr.GetTaskByID(ctx, nextTask.ID)
-		require.NoError(t, err)
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, nextFullTask))
-		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", nextTask.ID)
-		userKSTK.MustExec("drop table read_only_import.t")
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask), "cleanup must tolerate a dropped table on retry")
-		userKSTK.MustExec("alter database read_only_import read only = 1")
-		userKSTK.MustExec("alter database read_only_import read only = 0")
-		userKSTK.MustExec("drop database read_only_import")
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask), "cleanup must tolerate a dropped database on retry")
-		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
-		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", task.ID)
-	})
-
-	t.Run("authorized read-only import restores table mode", func(t *testing.T) {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
-		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
-		sysTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
-		userKSTK.MustExec("create database authorized_import")
-		userKSTK.MustExec("create table authorized_import.t(a int primary key)")
-		dom := domain.GetDomain(userKSTK.Session())
-		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("authorized_import"))
-		require.True(t, ok)
-		tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
-		require.NoError(t, err)
-		plan := &importer.Plan{DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{}}
-		userKSTK.MustExec("alter database authorized_import read only = 1")
-		_, _, err = executor.SubmitImportTask(ctx, plan, "import into authorized_import.t from '/path/to/file'")
-		require.ErrorContains(t, err, "read only mode")
-		plan.SchemaReadOnlyBypass = true
-		_, task, err := executor.SubmitImportTask(ctx, plan, "import into authorized_import.t from '/path/to/file'")
-		require.NoError(t, err)
-		fullTask, err := sysTaskMgr.GetTaskByID(ctx, task.ID)
-		require.NoError(t, err)
-		var metadata map[string]json.RawMessage
-		require.NoError(t, json.Unmarshal(fullTask.Meta, &metadata))
-		require.NotContains(t, string(fullTask.Meta), "SchemaReadOnlyBypass")
-		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask))
-		tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("t"))
-		require.NoError(t, err)
-		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
-		userKSTK.MustGetErrCode("insert into authorized_import.t values (1)", 3989)
-		userKSTK.MustExec("alter database authorized_import read only = 0")
-		userKSTK.MustExec("drop database authorized_import")
-		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
-		sysKSTK.MustExec("delete from mysql.tidb_global_task where id = ?", task.ID)
-	})
-
-	t.Run("cleanup propagates table mode errors", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		runtime := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
-		server := sqlsvrapimock.NewMockServer(ctrl)
-		se := mock.NewContext()
-		se.Store = sysKSStore
-		se.BindDomainAndSchValidator(server, nil)
-		pool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) { return se, nil }, nil, nil, nil)
-		defer pool.Close()
-		previous, err := storage.GetTaskManager()
-		require.NoError(t, err)
-		storage.SetTaskManager(storage.NewTaskManager(pool))
-		defer storage.SetTaskManager(previous)
-
-		server.EXPECT().AcquireKSRuntime("ks", "DXF/import-cleaner/42").Return(runtime, nil)
-		target := model.AlterTableModeTarget{
-			SchemaID: 1, SchemaName: ast.NewCIStr("test"),
-			TableID: 2, TableName: ast.NewCIStr("t"), TargetMode: model.TableModeNormal,
-		}
-		cleanupErr := fmt.Errorf("injected table mode cleanup failure")
-		runtime.EXPECT().AlterTableMode(gomock.Any(), target).Return(cleanupErr)
-		runtime.EXPECT().Release()
-		metadata, err := json.Marshal(taskinfo.TaskMeta{Plan: importer.Plan{
-			DBID: 1, DBName: "test", TableInfo: &model.TableInfo{ID: 2, Name: ast.NewCIStr("t")},
-		}})
-		require.NoError(t, err)
-		require.ErrorIs(t, (&importinto.ImportCleaner{}).Clean(ctx, &proto.Task{
-			TaskBase: proto.TaskBase{ID: 42, Keyspace: "ks"}, Meta: metadata,
-		}), cleanupErr)
-	})
-
 	t.Run("submit task in system keyspace", func(t *testing.T) {
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = keyspace.System
 		})

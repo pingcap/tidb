@@ -181,12 +181,6 @@ func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades = append(fkCascades, referredFKCascades...)
-			for _, fk := range referredFKCascades {
-				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, fkDBInfo.Name.L) {
-					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
-				}
-			}
 		}
 	} else if p.IsReplace {
 		referredFKChecks, referredFKCascades, err := p.buildOnReplaceReferredFKTriggers(ctx, is, dbName, tblInfo)
@@ -242,10 +236,6 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infosch
 		}
 		if fkCascade != nil {
 			fkCascades = append(fkCascades, fkCascade)
-			fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
-			if ok && fkDBInfo.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, fkDBInfo.Name.L) {
-				return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
-			}
 		}
 	}
 	return fkChecks, fkCascades, nil
@@ -279,12 +269,6 @@ func (updt *Update) BuildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
-			for _, fk := range referredFKCascades {
-				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, fkDBInfo.Name.L) {
-					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
-				}
-			}
 		}
 		childFKChecks, err := buildOnUpdateChildFKChecks(ctx, is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
@@ -325,10 +309,6 @@ func (del *Delete) BuildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 			if fkCascade != nil {
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
-				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, fkDBInfo.Name.L) {
-					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
-				}
 			}
 		}
 	}
@@ -454,7 +434,14 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	switch fkReferOption {
 	case ast.ReferOptionCascade, ast.ReferOptionSetNull:
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
-		return nil, fkCascade, err
+		if err != nil {
+			return nil, nil, err
+		}
+		db, ok := infoschema.SchemaByTable(is, childTable.Meta())
+		if ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, db.Name.L) {
+			return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O))
+		}
+		return nil, fkCascade, nil
 	default:
 		fkCheck, err := buildFKCheckForReferredFK(ctx, childTable, fk, referredFK)
 		return fkCheck, nil, err

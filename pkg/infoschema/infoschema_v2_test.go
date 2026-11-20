@@ -303,6 +303,7 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 			r := internal.CreateAutoIDRequirement(t)
 			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
 			db := internal.MockDBInfo(t, r.Store(), "refresh_read_only")
+			db.Charset, db.Collate = "latin1", "latin1_bin"
 			internal.AddDB(t, r.Store(), db)
 			tbl := internal.MockTableInfo(t, r.Store(), "kept_table")
 			internal.AddTable(t, r.Store(), db.ID, tbl)
@@ -337,6 +338,9 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 				require.Equal(t, previous.ReadOnly, oldDB.ReadOnly)
 				require.NotEqual(t, updated.ReadOnly, oldDB.ReadOnly, "older schema snapshots must stay immutable")
 				require.Equal(t, db.Charset, updated.Charset)
+				require.Equal(t, db.Collate, updated.Collate)
+				require.Equal(t, previous.Charset, oldDB.Charset)
+				require.Equal(t, previous.Collate, oldDB.Collate)
 				for _, snapshot := range []InfoSchema{oldIS, is} {
 					got, err := snapshot.TableByName(context.Background(), db.Name, tbl.Name)
 					require.NoError(t, err)

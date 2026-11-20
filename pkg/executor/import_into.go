@@ -346,7 +346,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	var runningOnUserKS bool
 	var tableModeClaimed, taskSubmitted, userJobCommitted bool
 	defer func() {
-		if !tableModeClaimed || taskSubmitted {
+		if (!tableModeClaimed && !userJobCommitted) || taskSubmitted {
 			return
 		}
 		cleanupCtx := context.WithoutCancel(ctx)
@@ -364,7 +364,7 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			}
 		}
 		if userJobCommitted {
-			if err := cancelDanglingImportJob(cleanupCtx, jobID); err != nil {
+			if err := cancelAndWaitImportJob(cleanupCtx, jobID); err != nil {
 				resultErr = errors.Annotatef(resultErr, "cancel unregistered import job failed: %v", err)
 			}
 			return
@@ -379,44 +379,65 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			resultErr = errors.Annotatef(resultErr, "release import table mode failed: %v", cleanupErr)
 		}
 	}()
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		runningOnUserKS = kv.IsUserKS(se.GetStore())
-		var err2 error
-		exec := se.GetSQLExecutor()
-		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
-		if err2 != nil {
-			return err2
-		}
+	claimTableMode := func(se sessionctx.Context) error {
 		if plan.SchemaReadOnlyBypass {
 			defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
 		}
 		// Conditional cleanup is safe even if this DDL returns an uncertain outcome.
 		tableModeClaimed = true
-		err2 = domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
+		err := domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
 			SchemaID: plan.DBID, TableID: plan.TableInfo.ID,
 			TableMode: model.TableModeImport, ImportJobID: jobID,
 		})
-		if err2 != nil {
-			return err2
+		failpoint.InjectCall("afterImportTableModeClaimed", jobID, &err)
+		if err == nil {
+			taskMeta.TableModeOwner = jobID
 		}
-		taskMeta.TableModeOwner = jobID
-		// in classical kernel or if we are inside SYSTEM keyspace itself, we
-		// submit the task to DXF in the same transaction as creating the job.
-		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
-			taskMeta.JobID = jobID
-			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
-			planCtx.Keyspace = plan.Keyspace
-			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
-				return err2
-			}
+		return err
+	}
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		runningOnUserKS = kv.IsUserKS(se.GetStore())
+		var err error
+		jobID, err = importer.CreateJob(ctx, se.GetSQLExecutor(), plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
+			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
+		if err != nil || runningOnUserKS {
+			// A user-keyspace job must be durable before the independent mode DDL.
+			return err
 		}
-		return nil
+		if err := claimTableMode(se); err != nil {
+			return err
+		}
+		// Classic and SYSTEM keep job/task creation in the same transaction.
+		taskMeta.JobID = jobID
+		planCtx.SessionCtx = se
+		planCtx.TaskKey = taskkey.ForJob(jobID)
+		planCtx.Keyspace = plan.Keyspace
+		taskID, err = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager)
+		return err
 	}); err != nil {
 		return 0, nil, err
 	}
 	userJobCommitted = runningOnUserKS
+	if runningOnUserKS {
+		failpoint.InjectCall("beforeImportTableModeClaim", jobID)
+		if err := taskManager.WithNewSession(func(se sessionctx.Context) error {
+			// Hold the pending job against CANCEL until its mode DDL finishes.
+			// A normal BEGIN may be optimistic and cannot serialize this boundary.
+			if _, err := se.GetSQLExecutor().ExecuteInternal(ctx, "begin pessimistic"); err != nil {
+				return err
+			}
+			defer se.RollbackTxn(context.WithoutCancel(ctx))
+			if err := importer.LockPendingJob(ctx, se.GetSQLExecutor(), jobID); err != nil {
+				return err
+			}
+			if err := claimTableMode(se); err != nil {
+				return err
+			}
+			return se.CommitTxn(ctx)
+		}); err != nil {
+			return 0, nil, err
+		}
+	}
 	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
 	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
 	if runningOnUserKS {
@@ -741,7 +762,14 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 			return err2
 		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			return errors.New("job state changed during cancel, please try again later")
+			// Another canceller, including submission compensation, may have won.
+			job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
+			if err != nil {
+				return err
+			}
+			if !job.IsCancelled() {
+				return errors.New("job state changed during cancel, please try again later")
+			}
 		}
 		return nil
 	}); err != nil {

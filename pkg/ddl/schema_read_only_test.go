@@ -59,6 +59,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		require.NoError(t, err)
 		// This is the durable boundary between task submission and background ingestion.
 		require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeImport, db.ID, tbl.Meta().ID))
+		schemaID, tableID := db.ID, tbl.Meta().ID
 		resume := make(chan struct{})
 		release := sync.OnceFunc(func() { close(resume) })
 		done := make(chan error, 1)
@@ -68,7 +69,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			defer wg.Done()
 			<-resume
 			// Both normal completion and cleanup use this internal DDL, without a user bypass.
-			done <- ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeNormal, db.ID, tbl.Meta().ID)
+			done <- ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeNormal, schemaID, tableID)
 		}()
 		defer func() { release(); wg.Wait() }()
 		admin.MustGetErrCode("alter database ro read only = 1", 8258)
@@ -189,7 +190,17 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("sequence operation did not activate its registered session transaction")
 		}
-		alter.MustExec("alter database ro read only = 1")
+		alterDone := make(chan error, 1)
+		wg.Add(1)
+		go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
+		select {
+		case err := <-alterDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			release()
+			wg.Wait()
+			t.Fatal("ALTER waited for the paused writer")
+		}
 		release()
 		require.ErrorContains(t, <-done, "read only")
 		alter.MustExec("alter database ro read only = 0")
@@ -502,7 +513,17 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			return false
 		})
 		require.True(t, registered, "INSERT must register its table before the transition")
-		alter.MustExec("alter database ro read only = 1")
+		alterDone := make(chan error, 1)
+		wg.Add(1)
+		go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
+		select {
+		case err := <-alterDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			release()
+			wg.Wait()
+			t.Fatal("ALTER waited for the paused writer")
+		}
 		release()
 		require.ErrorContains(t, <-done, "read only state has changed")
 		alter.MustQuery("select * from ro.t").Check(testkit.Rows())
@@ -653,26 +674,36 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		var observed atomic.Bool
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) { observed.Store(len(ids) != 0) })
 		firstDone := make(chan error, 1)
-		go func() { firstDone <- first.ExecToErr("alter database ro read only = 1") }()
-		defer func() {
-			txn.MustExec("rollback")
-			select {
-			case err := <-firstDone:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Error("first ALTER did not finish")
-			}
-		}()
-		require.Eventually(t, observed.Load, 5*time.Second, 10*time.Millisecond)
 		secondDone := make(chan error, 1)
-		go func() { secondDone <- second.ExecToErr("alter database ro read only = 1") }()
+		var wg sync.WaitGroup
+		defer func() { txn.MustExec("rollback"); wg.Wait() }()
+		wg.Add(1)
+		go func() { defer wg.Done(); firstDone <- first.ExecToErr("alter database ro read only = 1") }()
+		require.Eventually(t, observed.Load, 5*time.Second, 10*time.Millisecond)
+		submitted := make(chan struct{}, 1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() { submitted <- struct{}{} })
+		wg.Add(1)
+		go func() { defer wg.Done(); secondDone <- second.ExecToErr("alter database ro read only = 1") }()
+		select {
+		case <-submitted:
+		case err := <-secondDone:
+			t.Fatalf("second ALTER returned before submission: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("second ALTER was not submitted")
+		}
 		select {
 		case err := <-secondDone:
-			require.NoError(t, err)
-			t.Error("duplicate ALTER returned before the existing transaction finished")
-		case <-time.After(time.Second):
-			txn.MustExec("commit")
-			require.NoError(t, <-secondDone)
+			t.Fatalf("duplicate ALTER returned before the existing transaction finished: %v", err)
+		default:
+		}
+		txn.MustExec("commit")
+		for _, done := range []chan error{firstDone, secondDone} {
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("ALTER did not finish after COMMIT")
+			}
 		}
 	})
 	t.Run("MDLOffExistingWrite", func(t *testing.T) {
@@ -751,7 +782,6 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		planned := make(chan struct{})
 		resume := make(chan struct{})
 		release := sync.OnceFunc(func() { close(resume) })
-		defer release()
 		var paused atomic.Bool
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/planner/core/afterCheckSchemaReadOnlyWithoutMDL", func(db ast.CIStr) {
 			if db.L == "ro" && paused.CompareAndSwap(false, true) {
@@ -760,13 +790,26 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 			}
 		})
 		done := make(chan error, 1)
-		go func() { done <- writer.ExecToErr("insert into ro.t values (1)") }()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() { defer wg.Done(); done <- writer.ExecToErr("insert into ro.t values (1)") }()
+		defer func() { release(); wg.Wait() }()
 		select {
 		case <-planned:
 		case <-time.After(5 * time.Second):
 			t.Fatal("write was not planned")
 		}
-		alter.MustExec("alter database ro read only = 1")
+		alterDone := make(chan error, 1)
+		wg.Add(1)
+		go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
+		select {
+		case err := <-alterDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			release()
+			wg.Wait()
+			t.Fatal("ALTER waited for the paused writer")
+		}
 		release()
 		require.ErrorContains(t, <-done, "read only state has changed")
 		alter.MustQuery("select * from ro.t").Check(testkit.Rows())

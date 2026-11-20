@@ -146,7 +146,8 @@ func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, databases ...strin
 // CanWriteReadOnlySchema accepts an explicit user grant or a database-scoped
 // authorization inherited by trusted internal work; internal SQL alone is insufficient.
 // Trusted BR restore is an explicit exception after the restore entrypoint's
-// authorization. Its scope is one restored database, including when restoring
+// authorization. Incremental DDL covers its recorded write dependencies; other
+// restore operations cover their current target database, including restoring
 // the source ReadOnly flag. SUPER alone still does not authorize ordinary writes.
 func CanWriteReadOnlySchema(ctx interface {
 	Value(fmt.Stringer) any

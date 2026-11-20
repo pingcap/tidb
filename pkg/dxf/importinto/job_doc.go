@@ -36,9 +36,13 @@ package importinto
 //   1. Create the import job in the current/user keyspace with
 //      storage.GetTaskManager().WithNewTxn.
 //   2. Commit the import job row as status=pending, step=''.
-//   3. Open the DXF service task manager with storage.GetDXFSvcTaskMgr().
-//   4. Create the SYSTEM keyspace DXF task in a second WithNewTxn.
-//   5. Commit the DXF task row as state=pending, step=StepInit.
+//   3. Lock the pending job in a pessimistic transaction, claim table mode with
+//      that job ID via independent DDL, and release the row lock. A crash after
+//      the DDL leaves a durable job recoverable through CANCEL IMPORT JOB.
+//      A cancel that wins before the lock prevents a late mode claim.
+//   4. Open the DXF service task manager with storage.GetDXFSvcTaskMgr().
+//   5. Create the SYSTEM keyspace DXF task in a second WithNewTxn.
+//   6. Commit the DXF task row as state=pending, step=StepInit.
 //
 // Classic kernel mode and SYSTEM keyspace mode do not have this split: job
 // creation and task creation are in the same transaction there. The split only
@@ -100,7 +104,8 @@ package importinto
 //     changes the import job from pending to cancelled in the user keyspace.
 //     Unlike most scheduler writes, this path checks affected rows and returns
 //     "job state changed during cancel, please try again later" if the job is
-//     no longer pending.
+//     neither pending nor already cancelled. Concurrent cancellers that find
+//     durable cancellation can retry its cleanup.
 //
 //   S0
 //     The import scheduler runs checkImportJobNotCancelled. It reads only the

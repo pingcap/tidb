@@ -74,6 +74,10 @@ when only reading one package at a time.
 - Table mode in Classic and NextGen:
   - Distributed task submission sets import mode before physical ingestion. Database
     read-only transitions reject tables in that mode.
+  - NextGen user-keyspace submissions commit the pending import job before the
+    independent mode DDL. A pessimistic lock on that pending job serializes mode
+    claiming with cancellation. A lost submitter therefore leaves a discoverable
+    job for CANCEL IMPORT JOB; a cancelled job cannot acquire mode later.
   - New submissions persist the import job ID as the table-mode owner. The DDL
     worker checks ownership in the same metadata transaction as a mode change.
     Another job cannot claim an owned table; stale completion or cleanup skips
