@@ -260,7 +260,14 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.Sleep:       {},
 	ast.SetVar:      {},
 	ast.GetVar:      {},
-	ast.AnyValue:    {},
+	// The advisory lock functions change or observe the lock state of the
+	// session: each call has to be evaluated, in its own place.
+	ast.GetLock:         {},
+	ast.ReleaseLock:     {},
+	ast.ReleaseAllLocks: {},
+	ast.IsFreeLock:      {},
+	ast.IsUsedLock:      {},
+	ast.AnyValue:        {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)

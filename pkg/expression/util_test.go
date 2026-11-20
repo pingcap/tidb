@@ -1029,3 +1029,36 @@ func TestColumnSubstituteNullableCastPreservesOriginalType(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, value.IsNull())
 }
+
+func TestLockFunctionsKeepEveryEvaluation(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	name := &Constant{Value: types.NewStringDatum("lock"), RetType: types.NewFieldType(mysql.TypeVarString)}
+	build := func(funcName string, args ...Expression) Expression {
+		f, err := NewFunctionBase(ctx, funcName, tp, args...)
+		require.NoError(t, err)
+		return f
+	}
+	for _, tc := range []struct {
+		funcName string
+		args     []Expression
+	}{
+		{ast.GetLock, []Expression{name, NewZero()}},
+		{ast.ReleaseLock, []Expression{name}},
+		{ast.ReleaseAllLocks, nil},
+		{ast.IsFreeLock, []Expression{name}},
+		{ast.IsUsedLock, []Expression{name}},
+		// The control: SLEEP is evaluated once per call as well.
+		{ast.Sleep, []Expression{NewZero()}},
+	} {
+		first, second := build(tc.funcName, tc.args...), build(tc.funcName, tc.args...)
+		require.True(t, IsMutableEffectsExpr(first), tc.funcName)
+		// Two calls with the same arguments are two evaluations: the second
+		// GET_LOCK takes the lock again, the second RELEASE_LOCK finds it gone.
+		require.Len(t, RemoveDupExprs([]Expression{first, second}), 2, tc.funcName)
+		_, ok := first.(*ScalarFunction)
+		require.True(t, ok, "%s must not be folded", tc.funcName)
+	}
+	plus := func() Expression { return build(ast.Plus, NewOne(), &Column{UniqueID: 1, RetType: tp}) }
+	require.Len(t, RemoveDupExprs([]Expression{plus(), plus()}), 1)
+}

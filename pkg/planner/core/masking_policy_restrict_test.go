@@ -846,9 +846,14 @@ func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
 	user.MustQuery("select release_lock('sv_const'), release_lock(k), release_lock(concat('k', k)), release_lock('sv_where') from sv_src").Check(testkit.Rows("1 1 1 1"))
 	other.MustQuery("select is_free_lock('sv_const'), is_free_lock('pub'), is_free_lock('kpub'), is_free_lock('sv_where')").Check(testkit.Rows("1 1 1 1"))
 	user.MustExec("set role all")
-	user.MustQuery("select get_lock(c, 0) from sv_src").Check(testkit.Rows("1"))
+	user.MustQuery("select 1 from sv_src where get_lock(c, 0) = 1").Check(testkit.Rows("1"))
 	other.MustQuery("select is_free_lock('secret')").Check(testkit.Rows("0"))
-	user.MustQuery("select release_lock(c) from sv_src").Check(testkit.Rows("1"))
+	user.MustQuery("select 1 from sv_src where release_lock(c) = 1").Check(testkit.Rows("1"))
+	other.MustQuery("select is_free_lock('secret')").Check(testkit.Rows("1"))
+	// In the select list a lock function over the protected column is a result
+	// expression with side effects, which masking cannot substitute into: it
+	// is rejected like the other functions of that kind, whoever runs it.
+	require.ErrorContains(t, user.ExecToErr("select get_lock(c, 0) from sv_src"), "masking policy cannot be preserved through mutable expression")
 	user.MustExec("set role none")
 
 	// A statement with SETVAR or GET_LOCK is planned for every execution, so
@@ -875,7 +880,7 @@ func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
 			tk.MustExecWithContext(ctx, "prepare st from 'select 1 from sv_src where setvar(''x'', c) is not null'")
 			tk.MustExecWithContext(ctx, "prepare stname from 'select 1 from sv_src where setvar(c, 1) is not null'")
 			tk.MustExecWithContext(ctx, "prepare lkplain from 'select get_lock(k, 0) from sv_src'")
-			tk.MustExecWithContext(ctx, "prepare lk from 'select get_lock(c, 0) from sv_src'")
+			tk.MustExecWithContext(ctx, "prepare lk from 'select 1 from sv_src where get_lock(c, 0) = 1'")
 			executeTwice(tk, "plain")
 			executeTwice(tk, "st")
 			executeTwice(tk, "stname")
