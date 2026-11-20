@@ -166,7 +166,7 @@ func TestFoundRowsAfterShowAndExplain(t *testing.T) {
 				tk := testkit.NewTestKit(t, store)
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 				tk.MustExec("use test")
-				tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "2"))
+				tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "2", "2"))
 				rows := tk.MustQuery(tc.query).Rows()
 				expected := len(rows)
 				if tc.preserve {

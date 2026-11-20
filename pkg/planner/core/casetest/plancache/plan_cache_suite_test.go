@@ -2051,9 +2051,11 @@ func testSQLCalcFoundRowsConcurrentInstanceCache(t *testing.T) {
 				}()
 			}
 			close(start)
+			var runErr error
 			for range sessions {
-				require.NoError(t, <-results)
+				runErr = errors.Join(runErr, <-results)
 			}
+			require.NoError(t, runErr)
 		})
 	}
 }

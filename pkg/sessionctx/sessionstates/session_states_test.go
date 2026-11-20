@@ -801,8 +801,10 @@ func TestSessionCtx(t *testing.T) {
 			{"prepared", "execute stmt using @page_size", []string{"1", "2"}, 5},
 		} {
 			t.Run(tt.name, func(t *testing.T) {
+				src := testkit.NewTestKitWithSession(t, store, src.Session())
+				dst := testkit.NewTestKitWithSession(t, store, dst.Session())
 				// A zero total must replace the destination's preceding nonzero count.
-				dst.MustQuery("select 1 union all select 2 union all select 3").Check(testkit.Rows("1", "2", "3"))
+				dst.MustQuery("select 1 union all select 2 union all select 3").Sort().Check(testkit.Rows("1", "2", "3"))
 				src.MustQuery(tt.query).Check(testkit.Rows(tt.rows...))
 				for range 2 {
 					showSessionStatesAndSet(t, src, dst)
