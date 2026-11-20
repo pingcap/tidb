@@ -6710,6 +6710,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if err != nil {
 				return nil, nil, false, err
 			}
+			if err = b.checkMaskingPolicyRestrictOnAssignment(ctx, np, col, newExpr); err != nil {
+				return nil, nil, false, err
+			}
 			dependentColumnsModified[col.UniqueID] = true
 		} else {
 			// rewrite with generation expression

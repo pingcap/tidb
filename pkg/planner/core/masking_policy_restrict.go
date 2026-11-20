@@ -38,44 +38,75 @@ func (b *PlanBuilder) checkMaskingPolicyRestrictOnSelectPlan(ctx context.Context
 	if err != nil || !hasPolicies {
 		return err
 	}
-	cols := p.Schema().Columns
-	if len(cols) == 0 {
+	checkedPolicyIDs := make(map[int64]struct{})
+	for i := range p.Schema().Columns {
+		sources := b.extractMaskingPolicySourceColumnsFromOutputColumn(p, i)
+		if err := b.checkMaskingPolicyRestrictOnSources(ctx, sources, op, checkedPolicyIDs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMaskingPolicyRestrictOnAssignment applies RESTRICT ON (UPDATE_SELECT)
+// to an UPDATE assignment that reads a protected column directly, without a
+// subquery: the value would be written to another column or another row.
+// Assigning a column to itself writes nothing new and is not restricted.
+func (b *PlanBuilder) checkMaskingPolicyRestrictOnAssignment(ctx context.Context, p base.LogicalPlan, target *expression.Column, expr expression.Expression) error {
+	if b.is == nil || p == nil {
 		return nil
 	}
+	if col, ok := expr.(*expression.Column); ok && col.UniqueID == target.UniqueID {
+		return nil
+	}
+	hasPolicies, err := b.maskingEnabled(ctx, p)
+	if err != nil || !hasPolicies {
+		return err
+	}
+	sources := b.extractMaskingPolicySourceColumns(p, -1, expr)
+	return b.checkMaskingPolicyRestrictOnSources(ctx, sources, ast.MaskingPolicyRestrictOpUpdateSelect, make(map[int64]struct{}))
+}
 
+// checkMaskingPolicyRestrictOnSources rejects the operation if the session
+// reads any of the source columns masked under a policy that restricts it.
+// The policies that allow it are recorded, to be checked again when the plan
+// is reused from a plan cache.
+func (b *PlanBuilder) checkMaskingPolicyRestrictOnSources(
+	ctx context.Context,
+	sources []maskingPolicySourceColumn,
+	op ast.MaskingPolicyRestrictOps,
+	checkedPolicyIDs map[int64]struct{},
+) error {
 	sv := b.ctx.GetSessionVars()
 	schemaVersion := b.is.SchemaMetaVersion()
-	checkedPolicyIDs := make(map[int64]struct{})
-	for i := range cols {
-		for _, source := range b.extractMaskingPolicySourceColumnsFromOutputColumn(p, i) {
-			tblInfo, colInfo := source.tblInfo, source.colInfo
-			policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				continue
-			}
-			if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
-				continue
-			}
-			if policy.RestrictOps&op == 0 {
-				continue
-			}
-			if _, ok := checkedPolicyIDs[policy.ID]; ok {
-				continue
-			}
-			allowed, err := canCurrentSessionReadUnmaskedColumn(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
-			if err != nil {
-				return err
-			}
-			if !allowed {
-				return plannererrors.ErrAccessDeniedToMaskedColumn.GenWithStackByArgs(colInfo.Name.O)
-			}
-			sv.StmtCtx.MaskingPolicyChecks = append(sv.StmtCtx.MaskingPolicyChecks,
-				stmtctx.MaskingPolicyCheck{PolicyID: policy.ID, TableID: tblInfo.ID, ColumnID: colInfo.ID, Operation: op})
-			checkedPolicyIDs[policy.ID] = struct{}{}
+	for _, source := range sources {
+		tblInfo, colInfo := source.tblInfo, source.colInfo
+		policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
+		if err != nil {
+			return err
 		}
+		if !ok {
+			continue
+		}
+		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		if policy.RestrictOps&op == 0 {
+			continue
+		}
+		if _, ok := checkedPolicyIDs[policy.ID]; ok {
+			continue
+		}
+		allowed, err := canCurrentSessionReadUnmaskedColumn(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return plannererrors.ErrAccessDeniedToMaskedColumn.GenWithStackByArgs(colInfo.Name.O)
+		}
+		sv.StmtCtx.MaskingPolicyChecks = append(sv.StmtCtx.MaskingPolicyChecks,
+			stmtctx.MaskingPolicyCheck{PolicyID: policy.ID, TableID: tblInfo.ID, ColumnID: colInfo.ID, Operation: op})
+		checkedPolicyIDs[policy.ID] = struct{}{}
 	}
 	return nil
 }

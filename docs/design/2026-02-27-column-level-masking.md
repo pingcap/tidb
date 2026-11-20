@@ -264,6 +264,10 @@ At execution time, restricted operations are validated against source masked col
 The check simplifies session-constant identity and role conditions and allows the operation only when the selected policy expression is the original column. Data-dependent conditions or other expressions whose identity cannot be established are rejected; sampled column values are never used to authorize access.
 If not allowed, the statement is rejected with masking access-denied error.
 
+`UPDATE_SELECT` also covers an `UPDATE` assignment that reads a masked column directly, without a subquery, such as `UPDATE dst JOIN src ON ... SET dst.c = src.c` or `UPDATE t SET c2 = c`: the assignment would write the original value, or a value computed from it, into another column or another row.
+Such an assignment is validated like a restricted subquery and rejected with the same error; it is never rewritten to store the masked value. The same table under another alias is a different source.
+The only exception is assigning a column to itself as is (`SET c = c`), which writes the same value into the same column of the same row. Columns that are only compared in `WHERE` or `JOIN ... ON` are not affected.
+
 ### Expression semantics
 
 Policies use SQL expressions (typically `CASE WHEN`) and support identity checks based on:

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	core "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1831,4 +1832,170 @@ func TestMaskingPolicyNestedScalarSubqueryInWrites(t *testing.T) {
 	require.ErrorContains(t, root.ExecToErr("update t_w_dst set c = (select (select max(i.c) from t_w i))"), notPreserved)
 	root.MustExec("update t_w_dst set c = (select max(i.c) from t_w i)")
 	root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 secret"))
+}
+
+func TestMaskingPolicyRestrictDirectUpdateAssignment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_da(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create table t_da_free(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create table t_da_dst(id int primary key, c varchar(20))")
+	root.MustExec("create masking policy p on t_da(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (update_select) enable")
+	root.MustExec("create masking policy p_free on t_da_free(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (insert_into_select, delete_select) enable")
+	root.MustExec("create user u_da")
+	root.MustExec("grant select, insert, update, delete on test.* to u_da")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_da", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	reset := func() {
+		root.MustExec("delete from t_da_dst")
+		root.MustExec("insert into t_da_dst values (1,'x')")
+		for _, tbl := range []string{"t_da", "t_da_free"} {
+			root.MustExec("delete from " + tbl)
+			root.MustExec("insert into " + tbl + " values (1,'secret','a'),(2,'hidden','b')")
+		}
+	}
+	src := func(tbl string) *testkit.Result {
+		return root.MustQuery("select id, c, c2 from " + tbl + " order by id")
+	}
+	original := testkit.Rows("1 secret a", "2 hidden b")
+	reset()
+
+	// UPDATE_SELECT covers an assignment that reads the protected column
+	// directly and writes it to another column or another row.
+	denied := []string{
+		"update t_da_dst d join T s on s.id = d.id set d.c = s.c",
+		"update t_da_dst d, T set d.c = T.c where d.id = T.id",
+		"update t_da_dst d join T s on s.id = d.id set d.c = concat(s.c, '!')",
+		"update t_da_dst d join T s on s.id = d.id set d.c = if(s.c = 'secret', 'y', 'n')",
+		"update t_da_dst d join T s on s.id = d.id set d.c = length(s.c)",
+		"update T set c2 = c",
+		"update T set c2 = c order by id limit 1",
+		"update T set c2 = 'k', c = upper(c)",
+		"update T a join T b on a.id = b.id + 1 set a.c = b.c",
+		"update T a join T b on a.id = b.id set a.c = b.c",
+		"update T set c = concat(c, 'x')",
+		"update t_da_dst d set c = (select s.c from T s where s.id = d.id)",
+	}
+	for _, sql := range denied {
+		sql = strings.ReplaceAll(sql, "T", "t_da")
+		tk.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		root.MustQuery("select id, c from t_da_dst").Check(testkit.Rows("1 x"))
+		src("t_da").Check(original)
+	}
+	require.ErrorContains(t, tk.ExecToErr("prepare s from 'update t_da set c2 = c where id > ?'"), "Access to masked column")
+
+	// Not restricted: the column assigned to itself, other columns of the
+	// table, and comparisons with the protected column.
+	for _, tc := range []struct {
+		sql      string
+		dst, src [][]any
+	}{
+		{"update t_da set c = c", testkit.Rows("1 x"), original},
+		{"update t_da a join t_da b on a.id = b.id set a.c = a.c", testkit.Rows("1 x"), original},
+		{"update t_da_dst d join t_da s on s.id = d.id set d.c = s.c2", testkit.Rows("1 a"), original},
+		{"update t_da_dst d join t_da s on s.c = 'secret' set d.c = 'hit'", testkit.Rows("1 hit"), original},
+		{"update t_da set c2 = 'w' where c = 'secret'", testkit.Rows("1 x"), testkit.Rows("1 secret w", "2 hidden b")},
+		{"update t_da set c = 'new' where c = 'secret'", testkit.Rows("1 x"), testkit.Rows("1 new a", "2 hidden b")},
+		{"update t_da set c = c2", testkit.Rows("1 x"), testkit.Rows("1 a a", "2 b b")},
+		{"delete d from t_da_dst d join t_da s on s.id = d.id where s.c = 'secret'", testkit.Rows(), original},
+	} {
+		tk.MustExec(tc.sql)
+		root.MustQuery("select id, c from t_da_dst").Check(tc.dst)
+		src("t_da").Check(tc.src)
+		reset()
+	}
+
+	// A policy without UPDATE_SELECT keeps writing original values, and so
+	// does an identity that the policy does not mask.
+	for _, who := range []*testkit.TestKit{tk, root} {
+		tbl := "t_da_free"
+		if who == root {
+			tbl = "t_da"
+		}
+		who.MustExec("update t_da_dst d join " + tbl + " s on s.id = d.id set d.c = s.c")
+		root.MustQuery("select id, c from t_da_dst").Check(testkit.Rows("1 secret"))
+		who.MustExec("update " + tbl + " set c2 = concat(c, '!')")
+		src(tbl).Check(testkit.Rows("1 secret secret!", "2 hidden hidden!"))
+		reset()
+	}
+	root.MustExec("alter table t_da modify masking policy p set restrict on none")
+	tk.MustExec("update t_da set c2 = c")
+	src("t_da").Check(testkit.Rows("1 secret secret", "2 hidden hidden"))
+}
+
+func TestMaskingPolicyRestrictDirectUpdateAssignmentPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint(instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("create user da_role_user")
+			root.MustExec("create role da_unmask_role")
+			root.MustExec("grant da_unmask_role to da_role_user")
+			root.MustExec("grant select,update on test.* to da_role_user")
+			root.MustExec("create table test.da_src(id int primary key, c varchar(20), c2 varchar(20))")
+			root.MustExec("create table test.da_dst(id int primary key, c varchar(20))")
+			root.MustExec("insert into test.da_src values (1, 'secret', 'a')")
+			root.MustExec("insert into test.da_dst values (1, 'x')")
+			root.MustExec("create masking policy p on test.da_src(c) as case when current_role() != 'NONE' then c else mask_full(c) end restrict on (update_select)")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			user := testkit.NewTestKit(t, store)
+			require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "da_role_user", Hostname: "%"}, nil, nil, nil))
+			other := testkit.NewTestKit(t, store)
+			require.NoError(t, other.Session().Auth(&auth.UserIdentity{Username: "da_role_user", Hostname: "%"}, nil, nil, nil))
+			for _, sql := range []string{
+				"update test.da_src set c2 = c where id > ?",
+				"update test.da_dst d join test.da_src s on s.id = d.id set d.c = s.c where d.id > ?",
+			} {
+				root.MustExec("update test.da_src set c2 = 'a'")
+				root.MustExec("update test.da_dst set c = 'x'")
+				unchanged := func() {
+					root.MustQuery("select c2 from test.da_src").Check(testkit.Rows("a"))
+					root.MustQuery("select c from test.da_dst").Check(testkit.Rows("x"))
+				}
+				user.MustExec("set role all")
+				user.MustExec("set @a = 5")
+				user.MustExecWithContext(ctx, "prepare st from '"+sql+"'")
+				for range 2 {
+					user.MustExecWithContext(ctx, "execute st using @a")
+				}
+				user.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				// The cached plan is checked again for the identity that runs it.
+				user.MustExec("set role none")
+				_, err := user.ExecWithContext(ctx, "execute st using @a")
+				require.ErrorContains(t, err, "Access to masked column")
+				if instance {
+					// So is the plan another session finds in the instance cache.
+					other.MustExec("set role all")
+					other.MustExec("set @a = 0")
+					other.MustExecWithContext(ctx, "prepare st from '"+sql+"'")
+					other.MustExec("set role none")
+					cloned := false
+					execCtx := context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(base.Plan, base.Plan) { cloned = true })
+					_, err = other.ExecWithContext(execCtx, "execute st using @a")
+					require.ErrorContains(t, err, "Access to masked column")
+					require.True(t, cloned)
+					other.MustExec("deallocate prepare st")
+				}
+				user.MustExec("set @a = 0")
+				_, err = user.ExecWithContext(ctx, "execute st using @a")
+				require.ErrorContains(t, err, "Access to masked column")
+				unchanged()
+				user.MustExec("set role all")
+				user.MustExecWithContext(ctx, "execute st using @a")
+				user.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				if strings.Contains(sql, "da_dst") {
+					root.MustQuery("select c from test.da_dst").Check(testkit.Rows("secret"))
+				} else {
+					root.MustQuery("select c2 from test.da_src").Check(testkit.Rows("secret"))
+				}
+				user.MustExec("deallocate prepare st")
+			}
+		})
+	}
 }
