@@ -29,6 +29,9 @@ import (
 // that reads a masked column. It is the marker of tidb_redact_log = ON.
 const maskingRedactedValue = "?"
 
+// txnRetryableMark is kv.TxnRetryableMark, which cannot be imported here.
+const txnRetryableMark = "[try again later]"
+
 // errMaskingDiagnosticHidden replaces an execution error that has no error
 // code of its own, so nothing tells which part of its text is a data value.
 var errMaskingDiagnosticHidden = errors.NewNoStackError(
@@ -136,13 +139,26 @@ func redactMaskingDiagnostic(err error, hideUnknown bool) error {
 	te, ok := errors.Cause(err).(*terror.Error)
 	if ok {
 		if redacted := redactMaskingDataValues(te); redacted != nil {
-			return redacted
+			return keepTxnRetryableMark(te, redacted)
 		}
 	}
 	if !hideUnknown || err == nil || ok && terror.ToSQLError(te).Code != mysql.ErrUnknown {
 		return err
 	}
 	return errMaskingDiagnosticHidden
+}
+
+// keepTxnRetryableMark keeps the mark of a transaction error that can be
+// retried at the end of its redacted message: clients rely on it.
+func keepTxnRetryableMark(te *terror.Error, redacted error) error {
+	if !strings.HasSuffix(te.GetMsg(), txnRetryableMark) {
+		return redacted
+	}
+	rte, ok := errors.Cause(redacted).(*terror.Error)
+	if !ok || strings.HasSuffix(rte.GetMsg(), txnRetryableMark) {
+		return redacted
+	}
+	return te.FastGen("%s "+txnRetryableMark, strings.TrimRight(rte.GetMsg(), " "))
 }
 
 // redactMaskingDataValues returns te with its data values replaced, or nil if

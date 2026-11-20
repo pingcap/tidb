@@ -628,6 +628,11 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: 'secret'"), "1292 Incorrect datetime value: '?'", ""},
 		{dbterror.ClassTiKV.Synthesize(mysql.ErrDupEntry, "Duplicate entry 'secret' for key 't.c'"), "1062 Duplicate entry '?' for key '?'", ""},
 		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "secret"), "1292 Truncated incorrect ? value: '?'", ""},
+		// The mark of a transaction error that can be retried is kept.
+		{kv.ErrWriteConflict.FastGenByArgs(1, 2, 3, "{tableID=", "1", ", handle=", "secret}", "Optimistic"),
+			"9007 Write conflict, txnStartTS=?, conflictStartTS=?, conflictCommitTS=?, key=????, reason=? " + kv.TxnRetryableMark, ""},
+		{kv.ErrWriteConflictInTiDB.FastGenByArgs(1), "8005 Write conflict, txnStartTS 1 is stale " + kv.TxnRetryableMark, ""},
+		{kv.ErrTxnRetryable.FastGenByArgs("secret"), "8022 Error: KV error safe to retry ? " + kv.TxnRetryableMark, ""},
 		// Errors without data values.
 		{types.ErrDivByZero.GenWithStackByArgs(), "1365 Division by 0", ""},
 		{types.ErrDataTooLong.GenWithStackByArgs("c", 1), "1406 Data too long for column 'c' at row 1", ""},
