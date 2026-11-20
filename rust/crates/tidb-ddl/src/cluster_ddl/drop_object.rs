@@ -111,6 +111,10 @@ pub fn drop_table<S: MetaSnapshot>(
     if stored.is_base_table() {
         super::materialized_view::check_table_materialized_view_constraints(&stored, "DROP TABLE")
             .map_err(DdlPlanError::from_mysql_error)?;
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/ddl/afterCheckDropTableMaterializedViewConstraints",
+            &mut stored.id.clone(),
+        );
     }
     if !check_cluster_drop_object(schema, table, &stored, false)? {
         return missing();

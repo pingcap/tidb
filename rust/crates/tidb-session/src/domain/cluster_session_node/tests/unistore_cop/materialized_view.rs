@@ -17,6 +17,7 @@
 use super::*;
 
 mod create;
+mod drop;
 
 /// One statement's answer as the capture script prints it: `OK`, `RS:` and
 /// the rows as JSON strings (`null` for NULL), or `ERR code message`.

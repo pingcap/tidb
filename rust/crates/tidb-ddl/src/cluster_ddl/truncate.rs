@@ -46,6 +46,10 @@ pub fn truncate_table_by_name<S: MetaSnapshot>(
     // Go master `checkTableMaterializedViewConstraints`.
     super::materialized_view::check_table_materialized_view_constraints(&stored, "TRUNCATE TABLE")
         .map_err(DdlPlanError::from_mysql_error)?;
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/ddl/afterCheckTruncateTableMaterializedViewConstraints",
+        &mut stored.id.clone(),
+    );
     // Go `TruncateTable` checks under the session's `foreign_key_checks`
     // alone; only the owner's re-check follows `tidb_enable_foreign_key`.
     let fk_check = job_context.foreign_key_checks();

@@ -6586,6 +6586,11 @@ fn append_schema_change_mutations(
     if events.is_empty() {
         return Ok(());
     }
+    // Go `asyncNotifyEvent`'s failpoint, after its system-database skip
+    // (this function's callers skip those).
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError").is_some() {
+        return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown("mock publish event error")));
+    }
     if txn.session().is_some() {
         let sql = format!(
             "INSERT INTO mysql.{NOTIFIER_TABLE_NAME} (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \

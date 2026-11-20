@@ -17,7 +17,7 @@
 use super::*;
 
 /// Go `newMViewTestKit` on a fresh store, `use test`.
-fn new_mview_test_kit(stack: &UnistoreClusterStack, connection_id: u64) -> Session {
+pub(super) fn new_mview_test_kit(stack: &UnistoreClusterStack, connection_id: u64) -> Session {
     let mut tk = stack.factory.open_session(session_context(connection_id)).unwrap();
     must_exec_all(&mut tk, &["set tidb_mview_enable = on", "use test"]);
     tk
@@ -45,7 +45,7 @@ fn assert_base_without_mviews(stack: &UnistoreClusterStack, base: &str) {
 }
 
 /// Go `kv.RunInNewTxn` + `meta.NewMutator(txn).GetTable(dbID, tableID)`.
-fn persisted_table(session: &mut Session, db_id: i64, table_id: i64) -> Option<tidb_model::TableInfo> {
+pub(super) fn persisted_table(session: &mut Session, db_id: i64, table_id: i64) -> Option<tidb_model::TableInfo> {
     let domain = session.domain_services().unwrap().domain.upgrade().unwrap();
     let ts = domain.transactions.fresh_timestamp().unwrap();
     let mut meta = domain.get_snapshot_meta(ts).unwrap();
