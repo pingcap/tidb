@@ -15,15 +15,25 @@
 package physicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	BasePhysicalPlan
+}
+
+// Schema implements Plan.Schema. An empty input produces a row of NULLs,
+// even when the child's columns are declared NOT NULL.
+func (p *PhysicalMaxOneRow) Schema() *expression.Schema {
+	schema := p.Children()[0].Schema().Clone()
+	util.ResetNotNullFlag(schema, 0, schema.Len())
+	return schema
 }
 
 // Init initializes PhysicalMaxOneRow.
