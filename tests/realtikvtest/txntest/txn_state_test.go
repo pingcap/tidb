@@ -122,7 +122,14 @@ func TestEntriesCountAndSize(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	cleanupTK := testkit.NewTestKit(t, store)
+	t.Cleanup(func() {
+		tk.MustExec("rollback")
+		cleanupTK.MustExec("drop database if exists test_entries_count_and_size")
+	})
+	tk.MustExec("drop database if exists test_entries_count_and_size")
+	tk.MustExec("create database test_entries_count_and_size")
+	tk.MustExec("use test_entries_count_and_size")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("insert into t(a) values (1);")
