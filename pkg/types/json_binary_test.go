@@ -437,6 +437,19 @@ func TestBinaryJSONContains(t *testing.T) {
 		{`[{"a":1}]`, `{"a":1}`, true},
 		{`[{"a":1,"b":2}]`, `{"a":1}`, true},
 		{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, false},
+		// issue #73502: a nested candidate array is only contained in an array element.
+		{`[1,2]`, `[[1]]`, false},
+		{`[1,[2,3]]`, `[[1,2]]`, false},
+		{`[1,[2,3]]`, `[[2]]`, true},
+		{`[1,[2,3]]`, `[1,[3]]`, true},
+		{`[1,[2,[3]]]`, `[[[3]]]`, true},
+		{`[1,[2,[3]]]`, `[[3]]`, true},
+		{`{"a":[1,2]}`, `{"a":[[1]]}`, false},
+		{`{"a":[1,[2]]}`, `{"a":[[2]]}`, true},
+		{`[1,2]`, `[[]]`, false},
+		{`[1,[]]`, `[[]]`, true},
+		{`[1,2]`, `[]`, true},
+		{`[[1]]`, `[1]`, true},
 	}
 
 	for _, test := range tests {
