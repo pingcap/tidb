@@ -1,0 +1,30 @@
+set time_zone = '+00:00';
+delete from mysql.tidb_import_jobs where id in (7078801, 7078802);
+
+# A finished job can have missing persisted statistics.
+insert into mysql.tidb_import_jobs
+    (id, create_time, start_time, update_time, end_time, table_schema, table_name,
+     table_id, created_by, parameters, source_file_size, status, step, summary)
+values
+    (7078801, '2026-01-01 00:00:00', '2026-01-01 00:00:01', '2026-01-01 00:00:02',
+     '2026-01-01 00:00:02', 'test', 'import_job_missing_summary', 42, 'root@%',
+     '{"file-location":"s3://bucket/data.csv","format":"csv"}', 100, 'finished', '', NULL),
+    (7078802, '2026-01-01 00:00:00', '2026-01-01 00:00:01', '2026-01-01 00:00:02',
+     '2026-01-01 00:00:02', 'test', 'import_job_with_summary', 43, 'root@%',
+     '{"file-location":"s3://bucket/data.csv","format":"csv"}', 100, 'finished', '',
+     '{"row-count":12,"conflict-row-count":3,"too-many-conflicts":true}');
+
+show import job 7078801;
+--sorted_result
+show import jobs where Job_ID in (7078801, 7078802);
+
+# An available empty summary means zero rows, rather than unknown rows.
+update mysql.tidb_import_jobs set summary = '{}' where id = 7078801;
+show import job 7078801;
+
+# Failed jobs still display their error when no summary is available.
+update mysql.tidb_import_jobs set status = 'failed', summary = NULL,
+    error_message = 'import failed' where id = 7078801;
+show import job 7078801;
+
+delete from mysql.tidb_import_jobs where id in (7078801, 7078802);
