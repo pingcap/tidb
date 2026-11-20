@@ -1032,8 +1032,11 @@ func (tr *TableImporter) postProcess(
 		cp.Status = checkpoints.CheckpointStatusAlteredAutoInc
 	}
 
-	// tidb backend don't need checksum & analyze
-	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
+	// tidb backend don't need checksum & analyze. The local backend still has to resolve
+	// duplicates and add the indexes dropped before the import.
+	localBackendHasWork := isLocalBackend(rc.cfg) &&
+		(rc.cfg.Conflict.Strategy != config.NoneOnDup || rc.cfg.TikvImporter.AddIndexBySQL)
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff && !localBackendHasWork {
 		tr.logger.Debug("skip checksum & analyze, either because not supported by this backend or manually disabled")
 		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
