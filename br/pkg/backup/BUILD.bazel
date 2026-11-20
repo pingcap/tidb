@@ -77,7 +77,7 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/conn",

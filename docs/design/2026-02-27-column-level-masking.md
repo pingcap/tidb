@@ -140,8 +140,10 @@ Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of
 
 Snapshot backups record the protected source table IDs at the backup timestamp
 in `masking-policy.json`, encrypted with the backup cipher. Backups containing
-selected policies require backup schema version 3, so pre-masking BR readers
-that support at most version 2 reject them before importing user data. The
+selected policies require backup schema version 3, so a BR reader that checks
+the backup schema version and supports at most version 2 rejects them before
+importing user data. That check exists from v8.5.7 on; BR v8.5.0 through v8.5.6
+does not check the version and restores such a backup without its policies. The
 manifest is required for version 3 and must match the backup timestamp. An empty
 protection set preserves ordinary restores to targets without a restore registry;
 selected policies require masking support and a registered restore task.
