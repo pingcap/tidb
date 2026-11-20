@@ -1944,7 +1944,7 @@ func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tac_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
-	tk.MustExec("create table tac_uniq (id int primary key, k1 int not null)")
+	tk.MustExec("create table tac_uniq (id int not null, k1 int primary key)")
 	tk.MustExec("create table tac_rep (id int primary key, k1 int not null)")
 	var inner, uniq, rep strings.Builder
 	for key := range 50 {
