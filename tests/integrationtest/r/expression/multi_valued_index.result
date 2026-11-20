@@ -662,10 +662,11 @@ id
 explain format='brief' select /*+ use_index_merge(t, m, ia) */ id from t where json_contains(j, '1', '$[1]') and a = 1;
 id	estRows	task	access object	operator info
 Projection	1.00	root		expression__multi_valued_index.t.id
-└─IndexMerge	0.00	root		type: intersection
+└─IndexMerge	0.01	root		type: intersection
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[1,1], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:m(cast(`j` as signed array))	range:[1,1], keep order:false, stats:pseudo
-  └─Selection(Probe)	0.00	cop[tikv]		eq(expression__multi_valued_index.t.a, 1), json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]")
-    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─Selection(Probe)	0.01	cop[tikv]		json_contains(expression__multi_valued_index.t.j, cast("1", json BINARY), "$[1]")
+    └─TableRowIDScan	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, m, ia) */ id from t where json_contains(j, '1', '$[1]') and a = 1 order by id;
 id
 2

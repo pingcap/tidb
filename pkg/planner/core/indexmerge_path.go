@@ -275,7 +275,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	if !indexMergeHintsHasSpecifiedIdx(ds) {
 		return nil
 	}
-	composedWithMvIndex := len(usedAccessMap) != 0
+	composedWithMvIndex := usedAccessMap != nil
 
 	// 1. Collect partial paths from normal paths.
 	partialPaths := make([]*util.AccessPath, 0, normalPathCnt)
@@ -1398,9 +1398,9 @@ func checkAccessFilter4IdxCol(
 			virColVals = append(virColVals, v)
 			tp = singleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1') or json_contains(a, '1', path)
-			// For json_contains(a, '1', path), the ranges are built from the candidate alone, the same as
-			// json_contains(a, '1'). They are a superset of the matching rows but not exact, so the filter must be
-			// kept and rechecked, see mvAccessFilterNeedsRecheck.
+			// For json_contains(a, '1', path), the ranges are built from the candidate alone (same as
+			// json_contains(a, '1')) without checking path, so the filter must be kept and rechecked;
+			// see mvAccessFilterNeedsRecheck.
 			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[0]) {
 				return false, unspecifiedFilterTp
 			}
@@ -1499,13 +1499,15 @@ func checkAccessFilter4IdxCol(
 	return false, unspecifiedFilterTp
 }
 
-// mvAccessFilterNeedsRecheck reports whether the MVIndex ranges built from this access filter only over-approximate
-// it, so the filter must still be evaluated on the rows returned by the MVIndex path.
-// json_contains(a, '1', path) only checks the value at path. The ranges are built from the candidate alone, like
-// json_contains(a, '1'). The rows indexed by a MVIndex are an array of scalars (or a single scalar), so the value at
-// any path is the array itself or one of its elements, and if it contains the candidate, the whole array contains the
-// candidate too. So the ranges return every matching row, but also rows like [1,2] for
-// json_contains(a, '1', '$[1]'). It's the same as a prefix index: use the ranges and keep the original filter.
+// mvAccessFilterNeedsRecheck reports whether the MVIndex ranges built from this access filter do not fully cover
+// it, so callers must keep the original filter to recheck rows returned by the MVIndex path (instead of treating
+// the filter as eliminated).
+//
+// For json_contains(a, '1', path), the ranges are built from the candidate alone (same as json_contains(a, '1'))
+// without checking path. Because MVIndex values are an array of scalars (or a single scalar), the value at any path
+// is either the array itself or one of its elements, so matching at path implies matching the whole array, while
+// the converse does not hold (e.g., [1,2] matches json_contains(a, '1') but not json_contains(a, '1', '$[1]')).
+// Like a prefix index, we reuse the candidate ranges and keep the original filter for rechecking.
 func mvAccessFilterNeedsRecheck(filter expression.Expression) bool {
 	sf, ok := filter.(*expression.ScalarFunction)
 	return ok && sf.FuncName.L == ast.JSONContains && len(sf.GetArgs()) > 2
