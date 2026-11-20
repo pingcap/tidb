@@ -2951,6 +2951,33 @@ func TestCompareBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
+
+	// issue:73293, a TIME compared with a string compares as TIME
+	tk.MustExec("drop table if exists nc2")
+	tk.MustExec("create table nc2 (id int primary key, c time(1), c0 time, s varchar(40))")
+	tk.MustExec("insert into nc2 values (1, '13:00:00', '13:00:00', '13:00:00'), (2, '14:00:00', '14:00:00', '9:00:00')")
+	tk.MustQuery("select id, c = s, c0 > s, s = c, s < c0 from nc2 order by id").
+		Check(testkit.Rows("1 1 0 1 0", "2 0 1 0 1"))
+	tk.MustQuery("select cast(time'13:00:00' as time(6)) < '2', time'13:00:00' > '9:00:00', '13:00:00.0' = time'13:00:00'").
+		Check(testkit.Rows("0 1 1"))
+	tk.MustQuery("select count(*) from nc2 where c = s").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from nc2 where c0 > s").Check(testkit.Rows("2"))
+	tk.MustQuery("select id, c in (s), c0 between s and '23:00:00', c0 <=> s from nc2 order by id").
+		Check(testkit.Rows("1 1 1 1", "2 0 1 0"))
+	tk.MustQuery("select id, cast(c as time(6)) = cast(s as time(6)), c0 > cast(s as time) from nc2 order by id").
+		Check(testkit.Rows("1 1 0", "2 0 1"))
+	// <=> only returns 1 when both sides are NULL, also when the string isn't a valid TIME
+	tk.MustExec("insert into nc2 values (3, null, null, 'bad')")
+	tk.MustQuery("select c <=> s, s <=> c0, c <=> 'bad', 'bad' <=> c0, c <=> null, cast(null as time) <=> 'bad' from nc2 where id = 3").
+		Check(testkit.Rows("0 0 0 0 1 0"))
+	// valid values compare as TIME under <=> too, and two NULLs are equal
+	tk.MustExec("insert into nc2 values (4, null, null, null), (5, '13:00:00', '13:00:00', 'bad'), (6, null, null, '13:00:00')")
+	tk.MustQuery("select id, c <=> s, s <=> c, c0 <=> s, c = s from nc2 order by id").
+		Check(testkit.Rows("1 1 1 1 1", "2 0 0 0 0", "3 0 0 0 <nil>", "4 1 1 1 <nil>", "5 0 0 0 <nil>", "6 0 0 0 <nil>"))
+	tk.MustQuery("select id from nc2 where c <=> s order by id").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select id from nc2 where time'13:00:00.0' <=> s order by id").Check(testkit.Rows("1", "6"))
+	tk.MustQuery("select time'13:00:00' <=> '13:00:00.0', '13:00:00.0' <=> time'13:00:00', time'13:00:00' <=> 'bad', cast(null as time) <=> cast(null as char)").
+		Check(testkit.Rows("1 1 0 1"))
 }
 
 func TestTimeBuiltin(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,6 +132,10 @@ func TestCompare(t *testing.T) {
 		{jsonVal, jsonVal, ast.NE, mysql.TypeJSON, 0},
 		{jsonVal, jsonVal, ast.EQ, mysql.TypeJSON, 1},
 		{jsonVal, jsonVal, ast.NullEQ, mysql.TypeJSON, 1},
+		// issue:73293, TIME <cmp> string compares as TIME
+		{durationVal, "9:00:00", ast.GT, mysql.TypeDuration, 1},
+		{"12:01:01.0", durationVal, ast.EQ, mysql.TypeDuration, 1},
+		{durationVal, "2", ast.LT, mysql.TypeDuration, 0},
 	}
 
 	for _, test := range tests {
@@ -161,6 +166,27 @@ func TestCompare(t *testing.T) {
 	args = bf.getArgs()
 	require.Equal(t, mysql.TypeDatetime, args[0].GetType(ctx).GetType())
 	require.Equal(t, mysql.TypeDatetime, args[1].GetType(ctx).GetType())
+
+	// test <time column> <cmp> <string column>, issue:73293
+	durationCol, stringCol := &Column{RetType: types.NewFieldType(mysql.TypeDuration)}, &Column{RetType: types.NewFieldType(mysql.TypeVarchar)}
+	for _, cmpArgs := range [][]Expression{{durationCol, stringCol}, {stringCol, durationCol}} {
+		require.Equal(t, types.ETDuration, GetAccurateCmpType(ctx, cmpArgs[0], cmpArgs[1]))
+		bf, err = funcs[ast.EQ].getFunction(ctx, cmpArgs)
+		require.NoError(t, err)
+		args = bf.getArgs()
+		require.Equal(t, mysql.TypeDuration, args[0].GetType(ctx).GetType())
+		require.Equal(t, mysql.TypeDuration, args[1].GetType(ctx).GetType())
+	}
+	// <=> between a TIME column and a string column compares as TIME but keeps the original NULLs, issue:73293
+	for _, cmpArgs := range [][]Expression{{durationCol, stringCol}, {stringCol, durationCol}} {
+		bf, err = funcs[ast.NullEQ].getFunction(ctx, cmpArgs)
+		require.NoError(t, err)
+		require.IsType(t, &builtinNullEQDurationStringSig{}, bf)
+		require.Equal(t, tipb.ScalarFuncSig_Unspecified, bf.PbCode())
+	}
+	// a TIME against a non-string keeps its old comparison type
+	enumCol := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
+	require.NotEqual(t, types.ETDuration, GetAccurateCmpType(ctx, durationCol, enumCol))
 
 	// test <json column> <cmp> <const int expression>
 	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
