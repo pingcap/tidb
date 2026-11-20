@@ -331,7 +331,7 @@ func (h tidbCodecFuncHelper) decodeRecordKey(
 		if len(handleColIDs) != handle.NumCols() {
 			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
 		}
-		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
+		datumMap, err := tablecodec.DecodeKeyHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
