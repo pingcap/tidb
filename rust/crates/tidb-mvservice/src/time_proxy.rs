@@ -114,6 +114,12 @@ impl MockTimeModule {
         let _ = self.after(d).recv();
     }
 
+    /// Go `len(module.afterWaiters)`.
+    #[cfg(test)]
+    pub(crate) fn after_waiters_len(&self) -> usize {
+        self.inner.lock().unwrap().after_waiters.len()
+    }
+
     fn fire_due_waiters_locked(inner: &mut MockInner) {
         let now = inner.now.clone();
         inner.after_waiters.retain(|(deadline, tx)| {
@@ -133,6 +139,14 @@ static ACTIVE_MOCK_TIME_MODULE: RwLock<Option<Arc<MockTimeModule>>> = RwLock::ne
 #[must_use]
 pub fn install_mock_time_module_for_test(module: Arc<MockTimeModule>) -> MockTimeGuard {
     let previous = ACTIVE_MOCK_TIME_MODULE.write().unwrap().replace(module);
+    MockTimeGuard(Some(previous))
+}
+
+/// Go `activeMockTimeModule.Store(nil)` for a test: no mock clock until the
+/// guard restores the previous one.
+#[cfg(test)]
+pub(crate) fn uninstall_mock_time_module_for_test() -> MockTimeGuard {
+    let previous = ACTIVE_MOCK_TIME_MODULE.write().unwrap().take();
     MockTimeGuard(Some(previous))
 }
 

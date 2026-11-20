@@ -36,6 +36,8 @@ mod test_helpers_test;
 #[cfg(test)]
 mod executor_test;
 #[cfg(test)]
+mod time_proxy_test;
+#[cfg(test)]
 mod server_maintainer_test;
 #[cfg(test)]
 mod mvservice_test;

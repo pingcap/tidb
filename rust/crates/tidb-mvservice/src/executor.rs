@@ -16,7 +16,6 @@
 //! execution with a timeout and optional backpressure. Go's goroutines are
 //! threads here; its wait groups are counters under a condition variable.
 
-use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -62,9 +61,71 @@ pub(crate) struct ExecutorMetrics {
     pub(crate) gauges: ExecutorGauges,
 }
 
-struct TaskRequest {
-    name: String,
-    task: TaskFn,
+pub(crate) struct TaskRequest {
+    pub(crate) name: String,
+    pub(crate) task: TaskFn,
+}
+
+/// Go `taskQueue`: the pending requests in a ring buffer (a popped slot is
+/// cleared, Go's `taskRequest{}`).
+#[derive(Default)]
+pub(crate) struct TaskQueue {
+    pub(crate) buf: Vec<Option<TaskRequest>>,
+    pub(crate) head: usize,
+    size: usize,
+}
+
+impl TaskQueue {
+    /// Go `length`.
+    pub(crate) fn length(&self) -> usize {
+        self.size
+    }
+
+    /// Go `push`.
+    pub(crate) fn push(&mut self, req: TaskRequest) {
+        if self.size == self.buf.len() {
+            self.grow();
+        }
+        let tail = (self.head + self.size) % self.buf.len();
+        self.buf[tail] = Some(req);
+        self.size += 1;
+    }
+
+    /// Go `pop`.
+    pub(crate) fn pop(&mut self) -> Option<TaskRequest> {
+        if self.size == 0 {
+            return None;
+        }
+        // Clear references for GC.
+        let req = self.buf[self.head].take();
+        self.head = (self.head + 1) % self.buf.len();
+        self.size -= 1;
+        if self.size == 0 {
+            self.head = 0;
+        }
+        req
+    }
+
+    /// Go `clear`: the requests it held.
+    pub(crate) fn clear(&mut self) -> usize {
+        let pending = self.size;
+        self.buf = Vec::new();
+        self.head = 0;
+        self.size = 0;
+        pending
+    }
+
+    /// Go `grow`.
+    fn grow(&mut self) {
+        let new_cap = if self.buf.is_empty() { 4 } else { self.buf.len() * 2 };
+        let mut new_buf: Vec<Option<TaskRequest>> = (0..new_cap).map(|_| None).collect();
+        let len = self.buf.len();
+        for (i, slot) in new_buf.iter_mut().enumerate().take(self.size) {
+            *slot = self.buf[(self.head + i) % len].take();
+        }
+        self.buf = new_buf;
+        self.head = 0;
+    }
 }
 
 /// Go's `sync.WaitGroup`.
@@ -106,7 +167,7 @@ pub struct TaskExecutor {
     close_rx: Receiver<()>,
     pub(crate) metrics: ExecutorMetrics,
     /// Go `queue.mu` / `queue.cond` / `queue.tasks`.
-    queue: Mutex<VecDeque<TaskRequest>>,
+    queue: Mutex<TaskQueue>,
     queue_cond: Condvar,
     /// Go `workers.count` / `workers.wg`.
     workers_count: AtomicI64,
@@ -128,7 +189,7 @@ impl TaskExecutor {
             close_tx: Mutex::new(Some(close_tx)),
             close_rx,
             metrics: ExecutorMetrics::default(),
-            queue: Mutex::new(VecDeque::new()),
+            queue: Mutex::new(TaskQueue::default()),
             queue_cond: Condvar::new(),
             workers_count: AtomicI64::new(0),
             workers_wg: WaitGroup::default(),
@@ -193,7 +254,7 @@ impl TaskExecutor {
         self.metrics.counters.submitted_count.fetch_add(1, Ordering::SeqCst);
         self.metrics.gauges.waiting_count.fetch_add(1, Ordering::SeqCst);
         self.tasks_wg.add(1);
-        queue.push_back(TaskRequest { name: name.into(), task });
+        queue.push(TaskRequest { name: name.into(), task });
         self.queue_cond.notify_one();
         true
     }
@@ -208,8 +269,7 @@ impl TaskExecutor {
         self.close_tx.lock().unwrap().take();
         let pending = {
             let mut queue = self.queue.lock().unwrap();
-            let pending = queue.len() as i64;
-            queue.clear();
+            let pending = queue.clear() as i64;
             self.queue_cond.notify_all();
             pending
         };
@@ -256,7 +316,7 @@ impl TaskExecutor {
         loop {
             {
                 let mut queue = self.queue.lock().unwrap();
-                while !self.closed() && queue.is_empty() {
+                while !self.closed() && queue.length() == 0 {
                     if self.try_exit_worker_with_lock() {
                         return None;
                     }
@@ -287,7 +347,7 @@ impl TaskExecutor {
             if self.should_exit_worker_with_lock(&queue) {
                 return None;
             }
-            if let Some(req) = queue.pop_front() {
+            if let Some(req) = queue.pop() {
                 drop(queue);
                 self.metrics.gauges.waiting_count.fetch_sub(1, Ordering::SeqCst);
                 return Some(req);
@@ -296,8 +356,8 @@ impl TaskExecutor {
     }
 
     /// Go `shouldExitWorkerWithLock`.
-    fn should_exit_worker_with_lock(&self, queue: &VecDeque<TaskRequest>) -> bool {
-        if self.closed() && queue.is_empty() {
+    fn should_exit_worker_with_lock(&self, queue: &TaskQueue) -> bool {
+        if self.closed() && queue.length() == 0 {
             self.workers_count.fetch_sub(1, Ordering::SeqCst);
             return true;
         }

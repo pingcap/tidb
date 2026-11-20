@@ -355,3 +355,49 @@ fn test_wait_for_count_does_not_advance_mock_time() {
     wait_for_count(|| polls.fetch_add(1, SeqCst) + 1, 2);
     assert_eq!(start, module.now());
 }
+
+fn mk_req(i: i32) -> crate::executor::TaskRequest {
+    crate::executor::TaskRequest { name: format!("t{i}"), task: Box::new(|| Ok(())) }
+}
+
+/// Go `TestTaskQueueRingBufferFIFO`.
+#[test]
+fn test_task_queue_ring_buffer_fifo() {
+    let mut q = crate::executor::TaskQueue::default();
+    for i in 1..=4 {
+        q.push(mk_req(i));
+    }
+    for i in 1..=2 {
+        let req = q.pop().expect("a request");
+        assert_eq!(format!("t{i}"), req.name);
+    }
+    for i in 5..=12 {
+        q.push(mk_req(i));
+    }
+    assert_eq!(10, q.length());
+    for i in 3..=12 {
+        let req = q.pop().expect("a request");
+        assert_eq!(format!("t{i}"), req.name);
+    }
+    assert_eq!(0, q.length());
+    assert!(q.pop().is_none());
+}
+
+/// Go `TestTaskQueueClearsReferences`.
+#[test]
+fn test_task_queue_clears_references() {
+    let mut q = crate::executor::TaskQueue::default();
+    q.push(mk_req(0));
+    assert!(q.pop().is_some());
+    assert_eq!(0, q.length());
+    assert!(!q.buf.is_empty());
+    assert!(q.buf[0].is_none(), "the popped slot holds no name or task");
+
+    q.push(mk_req(1));
+    q.push(mk_req(2));
+    let pending = q.clear();
+    assert_eq!(2, pending);
+    assert_eq!(0, q.length());
+    assert!(q.buf.is_empty());
+    assert_eq!(0, q.head);
+}
