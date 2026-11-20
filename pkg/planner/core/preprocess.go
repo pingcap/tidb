@@ -151,7 +151,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	ast.Walk(node.Node, &v)
+	preprocessSQLCalcFoundRows(node.Node, &v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
@@ -278,7 +278,9 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
-		p.checkSelectNoopFuncs(node)
+		if p.err == nil {
+			p.checkSelectNoopFuncs(node)
+		}
 		// ast.Walk visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
@@ -1393,16 +1395,6 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		}
 		return
 	}
-	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
-		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-		if noopFuncsMode == variable.OffInt {
-			p.err = err
-			return
-		}
-		// NoopFuncsMode is Warn, append an error
-		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
-
 	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
 	// executed as `for update` statements.
 	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
