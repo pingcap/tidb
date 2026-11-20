@@ -353,7 +353,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 	baseMetaBytes, err := baseMeta.Marshal()
 	require.NoError(t, err)
 	newerSchemaMeta := &backuppb.BackupMeta{
-		BackupSchemaVersion: max(backuppb.BackupSchemaVersion, MaskingPolicyBackupSchemaVersion) + 1,
+		BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
 		ClusterVersion:      "8.5.6",
 		BrVersion:           "v8.5.6",
 	}
@@ -399,6 +399,19 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 			require.ErrorContains(t, err, ca.expectedErr)
 		})
 	}
+
+	// Only a snapshot backup may use the masking policy schema version: log
+	// backup metadata and the PiTR ID map still stop at the common one.
+	policyMeta := &backuppb.BackupMeta{BackupSchemaVersion: MaskingPolicyBackupSchemaVersion}
+	policyMetaBytes, err := policyMeta.Marshal()
+	require.NoError(t, err)
+	require.Greater(t, MaskingPolicyBackupSchemaVersion, backuppb.BackupSchemaVersion)
+	require.ErrorContains(t, CheckBackupMetaCompatibilityFromBytes(policyMetaBytes, policyMeta), "requires schema version")
+	require.NoError(t, CheckSnapshotBackupMetaCompatibilityFromBytes(policyMetaBytes, policyMeta))
+	futureMeta := &backuppb.BackupMeta{BackupSchemaVersion: MaskingPolicyBackupSchemaVersion + 1}
+	futureMetaBytes, err := futureMeta.Marshal()
+	require.NoError(t, err)
+	require.ErrorContains(t, CheckSnapshotBackupMetaCompatibilityFromBytes(futureMetaBytes, futureMeta), "requires schema version")
 }
 
 func TestCheckBackupMetaCompatibilityFromBytesDetectsNestedUnknownFields(t *testing.T) {
@@ -479,7 +492,7 @@ func TestMaskingPolicyBackupCompatibility(t *testing.T) {
 		meta := &backuppb.BackupMeta{EndVersion: 123, BackupSchemaVersion: MaskingPolicyBackupSchemaVersion}
 		data, err := meta.Marshal()
 		require.NoError(t, err)
-		require.NoError(t, CheckBackupMetaCompatibilityFromBytes(data, meta))
+		require.NoError(t, CheckSnapshotBackupMetaCompatibilityFromBytes(data, meta))
 		// The pre-masking reader's existing gate compares against kvproto's v2.
 		require.Greater(t, meta.BackupSchemaVersion, backuppb.BackupSchemaVersion)
 		loaded, err := ReadMaskingPolicyManifest(ctx, es, cipher, meta)

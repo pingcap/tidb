@@ -2127,7 +2127,7 @@ func getFullBackupTS(
 	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
+	if err = metautil.CheckSnapshotBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return 0, 0, errors.Trace(err)
 		}

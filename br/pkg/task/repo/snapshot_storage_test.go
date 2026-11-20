@@ -203,7 +203,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 					expectedError string
 				}{
 					{name: "current_schema", schemaVersion: backuppb.BackupSchemaVersion},
-					{name: "newer_schema", schemaVersion: backuppb.BackupSchemaVersion + 1, expectedError: "requires schema version"},
+					{name: "newer_schema", schemaVersion: metautil.MaskingPolicyBackupSchemaVersion + 1, expectedError: "requires schema version"},
 					{name: "unknown_field", schemaVersion: backuppb.BackupSchemaVersion, unknownField: true, expectedError: "unknown protobuf fields"},
 				} {
 					t.Run(tc.name+"/"+backupID.String()+"/"+cipherInfo.CipherType.String(), func(t *testing.T) {

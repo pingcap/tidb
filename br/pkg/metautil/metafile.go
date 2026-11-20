@@ -225,12 +225,31 @@ func getNestedMessageType(fieldTyp reflect.Type) (reflect.Type, bool) {
 
 // CheckBackupMetaCompatibilityFromBytes blocks restore when backup metadata
 // requires a newer metadata schema reader or contains protobuf fields the
-// current BR binary does not recognize.
+// current BR binary does not recognize. It is for metadata other than that of
+// a snapshot backup, such as log backup metadata and the PiTR ID map.
 func CheckBackupMetaCompatibilityFromBytes(
 	backupMetaBytes []byte,
 	backupMeta *backuppb.BackupMeta,
 ) error {
-	supportedVersion := max(backuppb.BackupSchemaVersion, MaskingPolicyBackupSchemaVersion)
+	return checkBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta, backuppb.BackupSchemaVersion)
+}
+
+// CheckSnapshotBackupMetaCompatibilityFromBytes is the check for the metadata
+// of a snapshot backup. Only a snapshot backup carries masking policies, so
+// only its metadata may use MaskingPolicyBackupSchemaVersion.
+func CheckSnapshotBackupMetaCompatibilityFromBytes(
+	backupMetaBytes []byte,
+	backupMeta *backuppb.BackupMeta,
+) error {
+	return checkBackupMetaCompatibilityFromBytes(
+		backupMetaBytes, backupMeta, max(backuppb.BackupSchemaVersion, MaskingPolicyBackupSchemaVersion))
+}
+
+func checkBackupMetaCompatibilityFromBytes(
+	backupMetaBytes []byte,
+	backupMeta *backuppb.BackupMeta,
+	supportedVersion uint32,
+) error {
 	if backupMeta.GetBackupSchemaVersion() > supportedVersion {
 		return errors.Annotatef(
 			berrors.ErrVersionMismatch,

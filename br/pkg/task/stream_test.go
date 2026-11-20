@@ -287,7 +287,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 		const fullBackupTS uint64 = 223344
 		const fullClusterID uint64 = 556677
 		m := backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			BackupSchemaVersion: metautil.MaskingPolicyBackupSchemaVersion + 1,
 			ClusterVersion:      "8.5.6",
 			BrVersion:           "v8.5.6",
 			EndVersion:          fullBackupTS,
