@@ -25,13 +25,17 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1532,6 +1536,13 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	globalStats := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats.RealtimeCount))
 	require.Equal(t, 2, int(globalStats.ModifyCount))
+
+	// A panic in the per-table loop is returned as an error.
+	panicCache, err := cache.NewStatsCacheImpl(panicOnTableInfoByIDHandle{h})
+	require.NoError(t, err)
+	defer panicCache.Close()
+	require.ErrorContains(t, panicCache.Update(context.Background(), dom.InfoSchema()), "panic in StatsCacheImpl.Update")
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
@@ -1540,6 +1551,15 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	globalStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.Equal(t, 6, int(globalStats2.RealtimeCount))
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
+}
+
+// panicOnTableInfoByIDHandle panics in the per-table loop of StatsCacheImpl.Update.
+type panicOnTableInfoByIDHandle struct {
+	statstypes.StatsHandle
+}
+
+func (panicOnTableInfoByIDHandle) TableInfoByID(infoschema.InfoSchema, int64) (table.Table, bool) {
+	panic("mock panic in TableInfoByID")
 }
 
 func TestLoadStatsForBitColumn(t *testing.T) {

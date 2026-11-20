@@ -194,6 +194,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// Collect information for metadata lock.
 	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tblName := make([]model.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
 	for id := range vars.StmtCtx.RelatedTableIDs {
@@ -208,6 +209,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			return nil, nil, 0, errors.New("database not found in info schema")
 		}
 		dbName = append(dbName, db.Name)
+		tblName = append(tblName, tbl.Meta().Name)
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
@@ -226,6 +228,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		UncacheableReason:   reason,
 		BindingInfo:         bindingInfo,
 		dbName:              dbName,
+		tblName:             tblName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
@@ -318,8 +321,17 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(hostName)...)
 	hash = append(hash, hack.Slice(stmtDB)...)
 	hash = append(hash, hack.Slice(stmt.StmtText)...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	if stmt.snapshotVersion != nil {
+		// Zero distinguishes this key from keys that use a global schema version.
+		hash = codec.EncodeInt(hash, 0)
+	} else {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	}
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if stmt.snapshotVersion != nil {
+		hash = codec.EncodeInt(hash, int64(len(stmt.snapshotVersion)))
+		hash = hashInt64Uint64Map(hash, stmt.snapshotVersion)
+	}
 	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -568,6 +580,9 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// snapshotVersion contains table revisions before MDL overrides, or nil when
+	// the cache key must retain the global schema version.
+	snapshotVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
@@ -592,9 +607,10 @@ type PlanCacheStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 
-	// dbName and tbls are used to add metadata lock.
-	dbName []model.CIStr
-	tbls   []table.Table
+	// dbName and tblName retain the table names used to resolve tbls.
+	dbName  []model.CIStr
+	tblName []model.CIStr
+	tbls    []table.Table
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
@@ -633,19 +649,12 @@ func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stm
 	stmtNode.Accept(processor)
 }
 
-// DBName returns the dbName field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) DBName() []model.CIStr { return s.dbName }
-
-// Tbls returns the tbls field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
-
-// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
-// so that this PlanCacheStmt owns independent backing arrays. This is required
-// because planCachePreprocess replaces tbls[i] in-place during Execute, and
-// sharing the backing array with a cached template would cause cross-stmt contamination.
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []model.CIStr, tbls []table.Table) {
-	s.dbName = slices.Clone(dbName)
-	s.tbls = slices.Clone(tbls)
+// CloneTableInfoFrom copies the names and tables used for metadata locking.
+// The table slice must be independent because execution replaces its entries.
+func (s *PlanCacheStmt) CloneTableInfoFrom(other *PlanCacheStmt) {
+	s.dbName = slices.Clone(other.dbName)
+	s.tblName = slices.Clone(other.tblName)
+	s.tbls = slices.Clone(other.tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

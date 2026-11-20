@@ -61,6 +61,10 @@ func (rc *SnapClient) SetDomain(dom *domain.Domain) {
 	rc.dom = dom
 }
 
+func (rc *SnapClient) SetDatabases(dbs map[string]*metautil.Database) {
+	rc.databases = dbs
+}
+
 // Mock the call of setSpeedLimit function
 func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient importclient.ImporterClient, rc *SnapClient, concurrency uint) (err error) {
 	rc.SetRateLimit(42)

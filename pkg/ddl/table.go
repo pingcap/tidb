@@ -958,6 +958,9 @@ func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableI
 	}
 
 	tblInfo.Name = args.NewTableName
+	// Renaming preserves the table ID, so advance its revision to invalidate
+	// cached plans that depend on the previous name-to-ID binding.
+	tblInfo.Revision++
 	err = t.CreateTableOrView(args.NewSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled

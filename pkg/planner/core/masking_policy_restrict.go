@@ -87,10 +87,7 @@ type maskingPolicySourceColumn struct {
 	colInfo *model.ColumnInfo
 }
 
-// maskingScalarJoinInputs identifies the synthetic boolean produced by a
-// scalar IN/ANY subquery. It has no corresponding column in either child;
-// its source columns live in the join's comparison conditions instead.
-func maskingScalarJoinInputs(p base.LogicalPlan, idx int) ([]expression.Expression, bool) {
+func maskingScalarJoin(p base.LogicalPlan) *logicalop.LogicalJoin {
 	var join *logicalop.LogicalJoin
 	switch x := p.(type) {
 	case *logicalop.LogicalJoin:
@@ -98,10 +95,20 @@ func maskingScalarJoinInputs(p base.LogicalPlan, idx int) ([]expression.Expressi
 	case *logicalop.LogicalApply:
 		join = &x.LogicalJoin
 	default:
-		return nil, false
+		return nil
 	}
-	if idx != p.Schema().Len()-1 ||
-		(join.JoinType != logicalop.LeftOuterSemiJoin && join.JoinType != logicalop.AntiLeftOuterSemiJoin) {
+	if join.JoinType != logicalop.LeftOuterSemiJoin && join.JoinType != logicalop.AntiLeftOuterSemiJoin {
+		return nil
+	}
+	return join
+}
+
+// maskingScalarJoinInputs identifies the synthetic boolean produced by a
+// scalar IN/ANY subquery. It has no corresponding column in either child;
+// its source columns live in the join's comparison conditions instead.
+func maskingScalarJoinInputs(p base.LogicalPlan, idx int) ([]expression.Expression, bool) {
+	join := maskingScalarJoin(p)
+	if join == nil || idx != p.Schema().Len()-1 {
 		return nil, false
 	}
 	inputs := expression.ScalarFuncs2Exprs(join.EqualConditions)

@@ -21,12 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -53,6 +55,9 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
+	// A panic would stop the DDL notifier, and a new stats owner would replay the same event.
+	// So log the panic and skip the event, the same as an error below.
+	defer tidbutil.Recover(metrics.LabelStats, "ddlHandlerImpl.HandleDDLEvent", nil, false)
 	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
 	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
 	// See more at: https://github.com/pingcap/tidb/issues/59474

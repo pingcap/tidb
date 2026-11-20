@@ -349,11 +349,13 @@ func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.C
 	return plain, nil
 }
 
-// Expand's generated columns are positional: keep gid/gpos at the schema's end.
+// Expand and scalar semi joins keep their generated columns at the schema's end.
 func appendMaskingInput(p base.LogicalPlan, col *expression.Column) int {
 	idx := p.Schema().Len()
 	if expand, ok := p.(*logicalop.LogicalExpand); ok {
 		idx = p.Schema().ColumnIndex(expand.GID)
+	} else if maskingScalarJoin(p) != nil {
+		idx--
 	}
 	p.Schema().Columns = slices.Insert(p.Schema().Columns, idx, col)
 	p.SetOutputNames(slices.Insert(p.OutputNames(), idx, types.EmptyName))

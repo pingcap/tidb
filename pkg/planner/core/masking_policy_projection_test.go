@@ -1071,3 +1071,123 @@ func TestMaskingPolicyRestoreModeFastPlans(t *testing.T) {
 		}
 	}
 }
+
+func TestMaskingPolicyScalarSemiJoinMultiOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table semi_multi_src(id int primary key,k int,c varchar(20),e varchar(20))")
+	tk.MustExec("insert into semi_multi_src values(1,1,'secret','second'),(2,null,null,'hidden')")
+	tk.MustExec("create table semi_multi_rhs(id int primary key)")
+	tk.MustExec("insert into semi_multi_rhs values(1)")
+	tk.MustExec("create masking policy p on semi_multi_src(c) as mask_full(c)")
+	tk.MustExec("create masking policy q on semi_multi_src(e) as mask_full(e)")
+	derived := " from (select id,k,concat(c,'!') as d from semi_multi_src) s"
+	for _, tc := range []struct {
+		expr string
+		want []string
+	}{
+		{"s.id in(select id from semi_multi_rhs)", []string{"1", "0"}},
+		{"s.id not in(select id from semi_multi_rhs)", []string{"0", "1"}},
+		{"s.id=any(select id from semi_multi_rhs)", []string{"1", "0"}},
+		{"s.k in(select id from semi_multi_rhs)", []string{"1", "<nil>"}},
+		{"s.k not in(select id from semi_multi_rhs)", []string{"0", "<nil>"}},
+		{"s.k=any(select id from semi_multi_rhs)", []string{"1", "<nil>"}},
+		{"s.id in(select id from semi_multi_rhs union all select null)", []string{"1", "<nil>"}},
+		{"s.id not in(select id from semi_multi_rhs union all select null)", []string{"0", "<nil>"}},
+		{"s.id=any(select id from semi_multi_rhs union all select null)", []string{"1", "<nil>"}},
+		{"s.k in(select id from semi_multi_rhs where id<0)", []string{"0", "0"}},
+		{"s.k not in(select id from semi_multi_rhs where id<0)", []string{"1", "1"}},
+		{"s.k=any(select id from semi_multi_rhs where id<0)", []string{"0", "0"}},
+		{"s.id in(select /*+ no_decorrelate() */ id from semi_multi_rhs r where r.id=s.id)", []string{"1", "0"}},
+		{"s.id not in(select /*+ no_decorrelate() */ id from semi_multi_rhs r where r.id=s.id)", []string{"0", "1"}},
+		{"s.id=any(select /*+ no_decorrelate() */ id from semi_multi_rhs r where r.id=s.id)", []string{"1", "0"}},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustQuery("select s.d," + tc.expr + derived + " order by s.id").
+				Check(testkit.Rows("XXXXXX! "+tc.want[0], "<nil> "+tc.want[1]))
+			tk.MustQuery("select " + tc.expr + ",s.d" + derived + " order by s.id").
+				Check(testkit.Rows(tc.want[0]+" XXXXXX!", tc.want[1]+" <nil>"))
+		})
+	}
+	applyQuery := "select s.d,s.id in(select /*+ no_decorrelate() */ id from semi_multi_rhs r where r.id=s.id)" + derived
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain format='brief' "+applyQuery).Rows()), "Apply")
+	// Several dependencies, repeated inputs and nested scalar joins must all
+	// survive schema rebuilding without replacing a generated boolean column.
+	tk.MustQuery("select s.d,s.id in(select id from semi_multi_rhs)," +
+		"s.id not in(select id from semi_multi_rhs),s.id=any(select id from semi_multi_rhs),s.d,s.dd" +
+		" from (select id,concat(c,'/',e) as d,concat(c,'#') as dd from semi_multi_src) s order by s.id").
+		Check(testkit.Rows("XXXXXX/XXXXXX 1 0 1 XXXXXX/XXXXXX XXXXXX#", "<nil> 0 1 0 <nil> <nil>"))
+	// A predicate subquery may retain an unsupported result while masking its
+	// other outputs. Its failed attempt must still leave a valid child schema.
+	tk.MustQuery("select ('XXXXXX!',1) in(select s.d,s.d in(select 'secret!')" + derived + ")").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select (1,'XXXXXX!') in(select s.d in(select 'secret!'),s.d" + derived + ")").
+		Check(testkit.Rows("1"))
+	tk.MustExec("create table semi_multi_dst(d varchar(40),matched int)")
+	tk.MustExec("insert into semi_multi_dst select s.d,s.id in(select id from semi_multi_rhs)" + derived)
+	tk.MustQuery("select d,matched from semi_multi_dst order by matched desc").Check(testkit.Rows("XXXXXX! 1", "<nil> 0"))
+	tk.MustExec("truncate table semi_multi_dst")
+	for _, comparison := range []string{"in", "not in", "=any"} {
+		expr := "s.d " + comparison + "(select 'secret!')"
+		for _, fields := range []string{"s.d," + expr, expr + ",s.d"} {
+			require.ErrorContains(t, tk.ExecToErr("select "+fields+derived), "masking policy cannot be preserved")
+		}
+	}
+	tk.MustExec("alter table semi_multi_src modify masking policy p set restrict on(insert_into_select)")
+	for _, comparison := range []string{"in", "not in", "=any"} {
+		expr := "s.d " + comparison + "(select 'secret!')"
+		tk.MustGetErrCode("insert into semi_multi_dst select s.d,"+expr+derived, errno.ErrAccessDeniedToMaskedColumn)
+		tk.MustGetErrCode("insert into semi_multi_dst(matched,d) select "+expr+",s.d"+derived, errno.ErrAccessDeniedToMaskedColumn)
+	}
+	tk.MustQuery("select * from semi_multi_dst").Check(testkit.Rows())
+	tk.MustExec("alter table semi_multi_src disable masking policy p")
+	tk.MustQuery("select s.d,s.d in(select 'secret!')" + derived + " order by s.id").
+		Check(testkit.Rows("secret! 1", "<nil> <nil>"))
+	tk.MustExec("alter table semi_multi_src drop masking policy p")
+	tk.MustExec("alter table semi_multi_src drop masking policy q")
+	tk.MustQuery("select s.d,s.id in(select id from semi_multi_rhs)" + derived + " order by s.id").
+		Check(testkit.Rows("secret! 1", "<nil> 0"))
+}
+
+func TestMaskingPolicyDDLPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprintf("instance=%t", instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("use test")
+			root.MustExec("create table masking_ddl_cache(id int primary key,c varchar(20))")
+			root.MustExec("insert into masking_ddl_cache values(1,'secret')")
+			root.MustExec("create user masking_ddl_reader")
+			root.MustExec("grant select on test.* to masking_ddl_reader")
+			reader := testkit.NewTestKit(t, store)
+			require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "masking_ddl_reader", Hostname: "%"}, nil, nil, nil))
+			reader.MustExec("use test")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			reader.MustExecWithContext(ctx, "prepare st from 'select c from masking_ddl_cache where id>=? order by id'")
+			reader.MustExec("set @id=1")
+			for _, tc := range []struct{ ddl, want string }{
+				{"", "secret"},
+				{"create masking policy p on masking_ddl_cache(c) as mask_full(c)", "XXXXXX"},
+				{"alter table masking_ddl_cache modify masking policy p set expression=c", "secret"},
+				{"alter table masking_ddl_cache modify masking policy p set expression=mask_full(c)", "XXXXXX"},
+				{"alter table masking_ddl_cache disable masking policy p", "secret"},
+				{"alter table masking_ddl_cache enable masking policy p", "XXXXXX"},
+				{"alter table masking_ddl_cache drop masking policy p", "secret"},
+			} {
+				if tc.ddl != "" {
+					root.MustExec(tc.ddl)
+				}
+				for range 2 {
+					reader.MustQueryWithContext(ctx, "execute st using @id").Check(testkit.Rows(tc.want))
+				}
+				reader.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+		})
+	}
+}

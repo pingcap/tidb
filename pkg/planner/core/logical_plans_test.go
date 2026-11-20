@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -59,6 +60,58 @@ type plannerSuite struct {
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 	ctx  base.PlanContext
+}
+
+func TestMaskingPolicyScalarSemiJoinInputs(t *testing.T) {
+	for _, tp := range []logicalop.JoinType{logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin} {
+		for _, apply := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/apply=%t", tp, apply), func(t *testing.T) {
+				ctx := mock.NewContext().GetPlanCtx()
+				column := func(id int64) *expression.Column {
+					return &expression.Column{UniqueID: id, RetType: expression.NewOne().RetType.Clone()}
+				}
+				left := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+				left.SetSchema(expression.NewSchema(column(1), column(2)))
+				left.SetOutputNames(types.NameSlice{types.EmptyName, types.EmptyName})
+				right := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+				right.SetSchema(expression.NewSchema())
+				var p base.LogicalPlan
+				if apply {
+					p = logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}}.Init(ctx, 0)
+				} else {
+					p = logicalop.LogicalJoin{JoinType: tp}.Init(ctx, 0)
+				}
+				p.SetChildren(left, right)
+				join := maskingScalarJoin(p)
+				require.NotNil(t, join)
+				generated := column(3)
+				join.SetSchema(left.Schema().Clone())
+				p.Schema().Append(generated)
+				p.SetOutputNames(append(left.OutputNames().Shallow(), types.EmptyName))
+				for _, id := range []int64{4, 5} {
+					input := column(id)
+					left.Schema().Append(input)
+					left.SetOutputNames(append(left.OutputNames(), types.EmptyName))
+					idx := appendMaskingInput(p, input)
+					require.Equal(t, left.Schema().Len()-1, idx)
+					require.Equal(t, id, p.Schema().Columns[idx].UniqueID)
+					require.Equal(t, generated.UniqueID, p.Schema().Columns[p.Schema().Len()-1].UniqueID)
+					_, ok := maskingScalarJoinInputs(p, p.Schema().Len()-1)
+					require.True(t, ok)
+					_, ok = maskingScalarJoinInputs(p, idx)
+					require.False(t, ok)
+					join.MergeSchema()
+					require.Equal(t, generated.UniqueID, p.Schema().Columns[p.Schema().Len()-1].UniqueID)
+					require.Len(t, p.OutputNames(), p.Schema().Len())
+					seen := make(map[int64]struct{})
+					for _, col := range p.Schema().Columns {
+						seen[col.UniqueID] = struct{}{}
+					}
+					require.Len(t, seen, p.Schema().Len())
+				}
+			})
+		}
+	}
 }
 
 func (p *plannerSuite) GetParser() *parser.Parser {
@@ -3259,6 +3312,95 @@ func TestNameResolver(t *testing.T) {
 			require.NoError(t, err)
 		} else {
 			require.EqualError(t, err, test.err)
+		}
+	}
+
+	// Wide select lists (at least projNameIndexThreshold fields and input names;
+	// t has 12 columns) resolve their fields through the projection name index.
+	// Check when the index is used, that lookups fall back to scanning once a
+	// subquery in the select list grows the input plan (and so its names), that
+	// a nested wide projection inside such a subquery uses its own index, that
+	// the index is restored afterwards, and that every field still resolves to
+	// the right input column.
+	type lookup struct {
+		tbl     string
+		indexed bool
+	}
+	var lookups []lookup
+	fieldNameLookupHookForTest = func(v *ast.ColumnName, indexed bool) {
+		lookups = append(lookups, lookup{v.Table.L, indexed})
+	}
+	defer func() { fieldNameLookupHookForTest = nil }()
+	for _, tc := range []struct {
+		sql string
+		// indexed gives, per table alias, how many lookups the index served
+		// (exactly; no other lookup may use it). scanned gives, for the listed
+		// aliases, how many lookups fell back to scanning.
+		indexed, scanned map[string]int
+		err              string
+	}{
+		{
+			sql:     "select t1.*, t2.*, t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "t3": 12},
+		},
+		{
+			// The correlated scalar subquery adds an Apply, so the fields after it
+			// resolve against a different names slice and must scan.
+			sql:     "select t1.*, t2.*, (select max(s.a) from t s where s.b = t1.c), t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12},
+			scanned: map[string]int{"t3": 12},
+		},
+		{
+			// The EXISTS subquery builds its own wide projection, which indexes its
+			// own input names; the outer index is restored after it.
+			sql:     "select t1.*, t2.*, exists (select s1.*, s2.*, s3.* from t s1, t s2, t s3 where s1.a = t1.a), t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "s1": 12, "s2": 12, "s3": 12},
+			scanned: map[string]int{"t3": 12},
+		},
+		{
+			sql:     "select t1.*, t2.*, t3.*, a from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "t3": 12, "": 1},
+			err:     "[planner:1052]Column 'a' in field list is ambiguous",
+		},
+	} {
+		comment := fmt.Sprintf("for %s", tc.sql)
+		lookups = lookups[:0]
+		stmt, err := s.GetParser().ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, comment)
+		builder, _ := NewPlanBuilder().Init(s.GetSCtx().GetPlanCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
+		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+		require.Nil(t, builder.projNameIndex, comment)
+		gotIndexed, gotScanned := map[string]int{}, map[string]int{}
+		for _, l := range lookups {
+			if l.indexed {
+				gotIndexed[l.tbl]++
+			} else {
+				gotScanned[l.tbl]++
+			}
+		}
+		require.Equal(t, tc.indexed, gotIndexed, comment)
+		for tbl, n := range tc.scanned {
+			require.Equal(t, n, gotScanned[tbl], "%s table %s", comment, tbl)
+		}
+		if tc.err != "" {
+			require.EqualError(t, err, tc.err, comment)
+			continue
+		}
+		require.NoError(t, err, comment)
+		// Every output column of the top projection is the input column with the
+		// same table and column name.
+		proj, ok := p.(*logicalop.LogicalProjection)
+		require.True(t, ok, comment)
+		child := proj.Children()[0]
+		for i, expr := range proj.Exprs {
+			col, ok := expr.(*expression.Column)
+			if !ok || proj.OutputNames()[i].TblName.L == "" {
+				continue
+			}
+			j := child.Schema().ColumnIndex(col)
+			require.GreaterOrEqual(t, j, 0, "%s field %d", comment, i)
+			require.Equal(t, proj.OutputNames()[i].TblName.L, child.OutputNames()[j].TblName.L, "%s field %d", comment, i)
+			require.Equal(t, proj.OutputNames()[i].ColName.L, child.OutputNames()[j].ColName.L, "%s field %d", comment, i)
 		}
 	}
 }
