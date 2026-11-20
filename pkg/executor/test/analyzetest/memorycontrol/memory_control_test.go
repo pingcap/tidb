@@ -20,15 +20,59 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func newLiveSessionManager(dom *domain.Domain, sessions ...sessionapi.Session) *testkit.MockSessionManager {
+	conn := make(map[uint64]sessionapi.Session, len(sessions))
+	for _, se := range sessions {
+		conn[se.GetSessionVars().ConnectionID] = se
+	}
+	return &testkit.MockSessionManager{
+		Dom:  dom,
+		Conn: conn,
+	}
+}
+
+func TestLiveSessionManagerTracksLatestProcessInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	connID := tk.Session().GetSessionVars().ConnectionID
+
+	staleSM := &testkit.MockSessionManager{
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
+	}
+	liveSM := newLiveSessionManager(nil, tk.Session())
+
+	nextTime := time.Now().Add(time.Second)
+	tk.Session().SetProcessInfo("analyze table t with 1.0 samplerate", nextTime, mysql.ComQuery, 0)
+
+	staleInfo, ok := staleSM.GetProcessInfo(connID)
+	require.True(t, ok)
+	liveInfo, ok := liveSM.GetProcessInfo(connID)
+	require.True(t, ok)
+
+	require.NotSame(t, staleInfo, liveInfo)
+	require.NotEqual(t, staleInfo.Time, liveInfo.Time)
+	require.NotEqual(t, staleInfo.Info, liveInfo.Info)
+	require.Equal(t, nextTime, liveInfo.Time)
+	require.Equal(t, "analyze table t with 1.0 samplerate", liveInfo.Info)
+}
 
 func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -38,9 +82,13 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
+<<<<<<< HEAD
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
 	}
+=======
+	sm := newLiveSessionManager(dom, tk0.Session())
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
@@ -70,9 +118,13 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
+<<<<<<< HEAD
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
 	}
+=======
+	sm := newLiveSessionManager(dom, tk0.Session())
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
@@ -155,10 +207,14 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal5))
 	}()
 
+<<<<<<< HEAD
 	sm := &testkit.MockSessionManager{
 		Dom: dom,
 		PS:  []*util.ProcessInfo{tk.Session().ShowProcess()},
 	}
+=======
+	sm := newLiveSessionManager(dom, tk.Session())
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
