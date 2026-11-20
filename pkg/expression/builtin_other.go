@@ -200,17 +200,24 @@ type baseInSig struct {
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseInSig
-	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
-	hashSet map[int64]bool
+	// The mask retains both signedness domains when negative int64 representations collide.
+	hashSet map[int64]uint8
 
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
+func inIntSignMask(unsigned bool) uint8 {
+	if unsigned {
+		return 2
+	}
+	return 1
+}
+
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
-	b.hashSet = make(map[int64]bool, len(b.args)-1)
+	b.hashSet = make(map[int64]uint8, len(b.args)-1)
 
 	// Keep track of unique args count for in-place modification
 	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
@@ -234,9 +241,12 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 
-			// Only keep this arg if value wasn't seen before
-			if _, exists := b.hashSet[val]; !exists {
-				b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
+			// Nonnegative values are equal across signedness domains, but negative
+			// int64 representations can denote distinct signed and unsigned values.
+			mask := inIntSignMask(mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag()))
+			seen := b.hashSet[val]
+			if seen == 0 || (val < 0 && seen&mask == 0) {
+				b.hashSet[val] = seen | mask
 				b.args[uniqueArgCount] = b.args[i]
 				uniqueArgCount++
 			}
@@ -279,13 +289,8 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		if isUnsigned, ok := b.hashSet[arg0]; ok {
-			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
-				return 1, false, nil
-			}
-			if arg0 >= 0 {
-				return 1, false, nil
-			}
+		if mask := b.hashSet[arg0]; mask != 0 && (arg0 >= 0 || mask&inIntSignMask(isUnsigned0) != 0) {
+			return 1, false, nil
 		}
 		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
