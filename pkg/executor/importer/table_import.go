@@ -212,11 +212,17 @@ func NewTableImporter(
 		return nil, err
 	}
 
+	// FROM SELECT imports still write local engines when the plan inherits a cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery
 	tidbCfg := tidb.GetGlobalConfig()
-	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, id, tidbCfg)
-	if err != nil {
-		return nil, err
+	var dir string
+	var diskQuota int64
+	if localSort {
+		// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
+		dir, err = prepareSortDir(e, id, tidbCfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
@@ -233,15 +239,25 @@ func NewTableImporter(
 
 	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	pdCli := kvStore.(tidbkv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
-	localBackend, err := ingestctrl.NewBackend(ctx, tls, backendConfig, pdCli)
+	var localBackend *ingestctrl.Backend
+	var ingestor *ingestctrl.Ingestor
+	if localSort {
+		localBackend, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCli)
+	} else {
+		ingestor, err = ingestctrl.NewIngestor(ctx, tls, backendConfig, pdCli)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if localSort {
+		diskQuota = adjustDiskQuota(int64(e.DiskQuota), dir, e.logger)
 	}
 
 	return &TableImporter{
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		ingestor:           ingestor,
 		kvStore:            kvStore,
 		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
@@ -257,7 +273,7 @@ func NewTableImporter(
 		// todo: use different default for single-node import and distributed import.
 		regionSplitSize: 2 * int64(config.SplitRegionSize),
 		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
-		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
+		diskQuota:       diskQuota,
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
@@ -270,6 +286,7 @@ type TableImporter struct {
 	// uuid. we use this id to create a unique directory for this importer.
 	id        string
 	backend   *ingestctrl.Backend
+	ingestor  *ingestctrl.Ingestor
 	kvStore   tidbkv.Storage
 	tableInfo *importdef.TableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
@@ -313,16 +330,27 @@ func NewTableImporterForTest(
 		return nil, err
 	}
 
+	// FROM SELECT imports still write local engines when the plan inherits a cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, id, tidbCfg)
-	if err != nil {
-		return nil, err
+	var dir string
+	if localSort {
+		dir, err = prepareSortDir(e, id, tidbCfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
-	localBackend, err := ingestctrl.NewBackendForTest(ctx, backendConfig, helper)
-	if err != nil {
-		return nil, err
+	var localBackend *ingestctrl.Backend
+	var ingestor *ingestctrl.Ingestor
+	if localSort {
+		localBackend, err = ingestctrl.NewBackendForTest(ctx, backendConfig, helper)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ingestor = ingestctrl.NewIngestorForTest(ctx, backendConfig, helper)
 	}
 	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
@@ -330,6 +358,7 @@ func NewTableImporterForTest(
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		ingestor:           ingestor,
 		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
@@ -621,9 +650,17 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 	return kvCount, multierr.Combine(importErr, cleanupErr)
 }
 
-// Backend returns the backend of the importer.
+// Backend returns the backend when the importer uses local engines.
 func (ti *TableImporter) Backend() *ingestctrl.Backend {
 	return ti.backend
+}
+
+// Ingestor returns the ingest controller shared by local and global sort.
+func (ti *TableImporter) Ingestor() *ingestctrl.Ingestor {
+	if ti.ingestor != nil {
+		return ti.ingestor
+	}
+	return ti.backend.Ingestor
 }
 
 // Close implements the io.Closer interface.
@@ -631,7 +668,11 @@ func (ti *TableImporter) Close() error {
 	if ti.LoadDataController != nil {
 		ti.LoadDataController.Close()
 	}
-	ti.backend.Close()
+	if ti.backend != nil {
+		ti.backend.Close()
+	} else {
+		ti.ingestor.Close()
+	}
 	return nil
 }
 

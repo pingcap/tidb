@@ -464,7 +464,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 func getRegionJobWorkerPool(
 	workerCtx context.Context,
 	jobWg *sync.WaitGroup,
-	local *Backend,
+	local *Ingestor,
 	balancer *storeBalancer,
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
 	clusterID uint64,
