@@ -2090,7 +2090,7 @@ func TestExchangePartitionHookGeneratedAndAutoInc(t *testing.T) {
 	// 2. Auto-increment column as partition key (lazy auto-ID allocation path).
 	tk.MustExec(`create table pt_ai (id int primary key auto_increment) partition by range (id) (
 		partition p0 values less than (5),
-		partition p1 values less than (100)
+		partition p1 values less than MAXVALUE
 	)`)
 	tk.MustExec(`create table nt_ai (id int primary key auto_increment)`)
 	tk.MustExec("insert into nt_ai values (9)")
