@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -816,7 +817,7 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
+	coveredByPlainIndex := ds.isIndexColsCoveringCol(column, indexColumns, idxColLens, ignoreLen)
 	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
 		return false
 	}
@@ -837,21 +838,55 @@ func (ds *DataSource) handleCoveringColumn(column *expression.Column, ignoreLen 
 	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
 		return stateCoveredByIntHandle
 	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	coveredByClusteredIndex := ds.isIndexColsCoveringCol(column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
 	if coveredByClusteredIndex {
 		return stateCoveredByCommonHandle
 	}
 	return stateNotCoveredByHandle
 }
 
-func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+func (ds *DataSource) isIndexColsCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+	sctx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	for i, indexCol := range indexCols {
 		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
 			continue
 		}
 		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
 			return true
+		}
+		collation := col.RetType.GetCollate()
+		if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan ||
+			!collate.IsBinCollation(collation) || collate.IsPadSpaceCollation(collation) {
+			continue
+		}
+		// With byte-preserving NO PAD equality to a strictly shorter string, matching rows
+		// contain the complete column in the prefix index. Keep the equality filter:
+		// ranger may fall back to a wider range, or this may not be a leading column.
+		for _, cond := range ds.PushedDownConds {
+			eq, ok := cond.(*expression.ScalarFunction)
+			if !ok || eq.FuncName.L != ast.EQ {
+				continue
+			}
+			_, cmpCollation := eq.CharsetAndCollation()
+			if cmpCollation != collation {
+				continue
+			}
+			for j, arg := range eq.GetArgs() {
+				if !col.Equal(sctx, arg) {
+					continue
+				}
+				constant, ok := eq.GetArgs()[1-j].(*expression.Constant)
+				// Parameter markers and deferred expressions can change length on cache reuse.
+				if !ok || constant.ConstLevel() != expression.ConstStrict || constant.GetType(sctx).EvalType() != types.ETString {
+					continue
+				}
+				value := constant.Value
+				if (value.Kind() == types.KindString || value.Kind() == types.KindBytes) &&
+					!ranger.CutDatumByPrefixLen(&value, idxColLens[i], col.RetType) &&
+					!ranger.ReachPrefixLen(&value, idxColLens[i], col.RetType) {
+					return true
+				}
+			}
 		}
 	}
 	return false

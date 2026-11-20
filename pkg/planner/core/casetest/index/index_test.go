@@ -92,6 +92,123 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 	})
 }
 
+func TestShortConstantForPrefixIndex(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_prefix_index_single_scan = on")
+	tk.MustExec(`create table t (
+		id int primary key, a varchar(40) collate utf8mb4_0900_bin, b int, extra int,
+		key idx(a(3), b), key reverse_idx(b, a(3)))`)
+	tk.MustExec(`insert into t values
+		(1, 'ab', 1, 11), (2, 'abc', 2, 12), (3, 'abcd', 3, 13),
+		(4, 'ab ', 4, 14), (5, '你好', 5, 15), (6, '你好呀', 6, 16),
+		(7, '你好呀啊', 7, 17), (8, '', 8, 18), (9, null, 9, 19),
+		(10, 'a ', 10, 20), (11, 'a  b', 11, 21)`)
+	for _, tt := range []struct {
+		where string
+		plan  string
+		rows  []string
+	}{
+		{"a = 'ab'", "IndexReader", []string{"1 ab 1"}},
+		{"'ab' = a", "IndexReader", []string{"1 ab 1"}},
+		{"a = 'abc'", "IndexLookUp", []string{"2 abc 2"}},
+		{"a = 'abcd'", "IndexLookUp", []string{"3 abcd 3"}},
+		{"a = 'a '", "IndexReader", []string{"10 a  10"}},
+		{"a = '你好'", "IndexReader", []string{"5 你好 5"}},
+		{"a = '你好呀'", "IndexLookUp", []string{"6 你好呀 6"}},
+		{"a = ''", "IndexReader", []string{"8  8"}},
+		{"a = 'ab' and b = 1", "IndexReader", []string{"1 ab 1"}},
+		{"a = 'ab' and extra = 11", "IndexLookUp", []string{"1 ab 1"}},
+		{"a = 'ab' or b = 3", "IndexLookUp", []string{"1 ab 1", "3 abcd 3"}},
+		{"a = _utf8mb4'ab' collate utf8mb4_0900_ai_ci", "IndexLookUp", []string{"1 ab 1"}},
+	} {
+		sql := "select id, a, b from t force index(idx) where " + tt.where
+		tk.MustHavePlan(sql, tt.plan)
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(tt.rows...))
+	}
+
+	// Filtering must remain exact even without a usable leading-column range.
+	sql := "select id, a, b from t force index(reverse_idx) where a = 'ab'"
+	tk.MustHavePlan(sql, "IndexReader")
+	tk.MustHavePlan(sql, "IndexFullScan")
+	tk.MustQuery(sql).Check(testkit.Rows("1 ab 1"))
+	tk.MustExec("set tidb_opt_range_max_size = 1")
+	sql = "select id, a, b from t force index(idx) where a = 'ab'"
+	tk.MustHavePlan(sql, "IndexReader")
+	tk.MustHavePlan(sql, "IndexFullScan")
+	tk.MustQuery(sql).Check(testkit.Rows("1 ab 1"))
+	tk.MustExec("set tidb_opt_range_max_size = default")
+	tk.MustExec("set tidb_opt_prefix_index_single_scan = off")
+	tk.MustHavePlan(sql, "IndexLookUp")
+	tk.MustExec("set tidb_opt_prefix_index_single_scan = on")
+
+	// PAD SPACE loses trailing spaces; NO PAD case/accent insensitive keys can
+	// also lose information. Binary strings use byte lengths (6, 7, 8 below).
+	for _, tt := range []struct {
+		columnType, value, plan string
+		rows                    []string
+	}{
+		{"varchar(40) collate utf8mb4_bin", "'Durban'", "IndexLookUp", []string{"2 Durban"}},
+		{"varchar(40) collate utf8mb4_0900_ai_ci", "'Durban'", "IndexLookUp", []string{"2 Durban", "3 durban", "4 Dúrban"}},
+		{"varchar(40) collate utf8mb4_0900_bin", "'Durban'", "IndexReader", []string{"2 Durban"}},
+		{"varchar(40) collate utf8mb4_bin", "_utf8mb4'Durban' collate utf8mb4_0900_bin", "IndexLookUp", []string{"2 Durban"}},
+		{"varbinary(40)", "'你好'", "IndexReader", []string{"5 你好"}},
+		{"varbinary(40)", "'你好a'", "IndexLookUp", []string{"6 你好a"}},
+		{"varbinary(40)", "'你好ab'", "IndexLookUp", []string{"7 你好ab"}},
+	} {
+		tk.MustExec("create table strings(id int, s " + tt.columnType + ", key idx(s(7), id))")
+		tk.MustExec("insert into strings values (1, 'Durban North'), (2, 'Durban'), (3, 'durban'), (4, 'Dúrban'), (5, '你好'), (6, '你好a'), (7, '你好ab')")
+		sql := "select id, s from strings force index(idx) where s = " + tt.value
+		tk.MustHavePlan(sql, tt.plan)
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(tt.rows...))
+		tk.MustExec("drop table strings")
+	}
+
+	// Prefix range rebuilding can reject cache reuse; a non-leading prefix filter
+	// exercises an actual cached plan. Neither may depend on the parameter length.
+	tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+	for _, index := range []string{"idx", "reverse_idx"} {
+		tk.MustExec(fmt.Sprintf("prepare stmt from 'select a from t force index(%s) where a = ?'", index))
+		for i, value := range []string{"ab", "abcd", "abc", "ab"} {
+			tk.MustExec(fmt.Sprintf("set @a = '%s'", value))
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows(value))
+			if i > 0 && index == "reverse_idx" {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+		}
+		tk.MustExec("deallocate prepare stmt")
+	}
+
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache = on")
+	for i, value := range []string{"ab", "abcd", "abc", "ab"} {
+		sql = fmt.Sprintf("select a from t force index(reverse_idx) where a = '%s'", value)
+		tk.MustQuery(sql).Check(testkit.Rows(value))
+		if i > 0 {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
+	}
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache = off")
+
+	// A secondary index also covers the columns of a composite clustered primary key.
+	tk.MustExec(`create table urls (
+		username varchar(64), name varchar(64), url varchar(512), timestamp bigint,
+		description varchar(512), primary key(username, name) clustered,
+		key url_idx(url(255), timestamp)) collate utf8mb4_0900_bin`)
+	tk.MustExec("insert into urls values ('alice', 'home', 'http://example.com', 42, 'example')")
+	sql = "select username, name, url, timestamp from urls force index(url_idx) where url = 'http://example.com'"
+	tk.MustHavePlan(sql, "IndexReader")
+	tk.MustQuery(sql).Check(testkit.Rows("alice home http://example.com 42"))
+	sql = "select description from urls force index(url_idx) where url = 'http://example.com'"
+	tk.MustHavePlan(sql, "IndexLookUp")
+	tk.MustQuery(sql).Check(testkit.Rows("example"))
+
+	tk.MustExec("create table handles(a varchar(40), b int, primary key(a(3)) clustered, key idx(b)) collate utf8mb4_0900_bin")
+	tk.MustExec("insert into handles values ('ab', 1), ('abcd', 1)")
+	sql = "select a, b from handles force index(idx) where a = 'ab' and b = 1"
+	tk.MustHavePlan(sql, "IndexReader")
+	tk.MustQuery(sql).Check(testkit.Rows("ab 1"))
+}
+
 func TestInvisibleIndex(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
