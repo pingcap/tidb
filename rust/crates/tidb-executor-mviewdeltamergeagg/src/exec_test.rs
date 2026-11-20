@@ -1332,3 +1332,57 @@ fn test_min_max_bit_merge() {
         }
     }
 }
+
+#[test]
+fn test_min_max_fallback_to_count_star_without_final_count_dependency() {
+    // Delete all rows in this group. MAX should short-circuit to NULL using fallback COUNT(*),
+    // and must not trigger recompute.
+    let chk = int_chunk(&max_schema(), &[&[Some(-3), None, Some(0), Some(10), Some(1), Some(1), Some(3), Some(10)]]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut exec = Exec::new(new_mock_source(&max_schema(), vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[6], &[0]),
+        Mapping {
+            min_max_recompute: Some(MinMaxRecomputeSpec {
+                strategy: MinMaxRecomputeStrategy::SingleRow,
+                single_row: Some(MinMaxRecomputeSingleRowExec { workers: vec![single_row_worker(&[(1, vec![9])], &calls)] }),
+                ..MinMaxRecomputeSpec::default()
+            }),
+            ..mapping(agg_desc(names::MAX, vec![not_null_int_arg(1)]), &[7], &[1, 2, 3, 4])
+        },
+    ];
+    exec.delta_agg_col_count = 6;
+    exec.worker_cnt = 1;
+    exec.min_max_recompute =
+        Some(MinMaxRecomputeExec { key_input_col_ids: vec![5], key_result_col_idxes: vec![0], batch_builder: None });
+    let results = run(exec).unwrap();
+    assert_eq!(0, calls.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Delete], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    assert!(res.computed_cols[7].as_ref().unwrap().is_null(0));
+}
+
+#[test]
+fn test_min_max_fallback_to_count_star_for_nullable_expr() {
+    let chk = int_chunk(&max_schema(), &[&FALLBACK_KEY1]);
+    let builder = MockBatchRecomputeBuilder { null_keys: [1].into(), ..MockBatchRecomputeBuilder::default() };
+    let calls = Arc::clone(&builder.calls);
+    let mut exec = max_batch_exec(chk, builder);
+    // RetType without NotNullFlag means nullable expression.
+    exec.agg_mappings[1].agg_func = Some(agg_desc(names::MAX, vec![col_arg(1, ft(FieldTypeCode::LongLong))]));
+    let results = run(exec).unwrap();
+    assert_eq!(1, calls.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(vec![RowOpType::Update], res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>());
+    assert!(res.computed_cols[7].as_ref().unwrap().is_null(0));
+}
+
+#[test]
+fn test_reject_min_max_final_count_for_non_nullable_expr() {
+    let mut exec = max_batch_exec(int_chunk(&max_schema(), &[]), MockBatchRecomputeBuilder::default());
+    exec.agg_mappings[1].dependency_col_id = vec![1, 2, 3, 4, 6];
+    let got = open_err(exec);
+    assert!(got.contains("max(non-nullable expr) must not set final-count dependency"), "{got}");
+}
