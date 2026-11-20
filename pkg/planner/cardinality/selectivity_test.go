@@ -783,6 +783,10 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c > 5").CheckContain("idxab(a, b)")
 	// New index idxab should NOT win because idxca has the same number of equals and has statistics
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
+	// The missing-statistics rules do not depend on tidb_opt_prefer_range_scan.
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
 }
 
 func TestIssue57948(t *testing.T) {
@@ -797,10 +801,35 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
-	testKit.MustExec("analyze table t")
+	// Leave column b without statistics, so the new index has no statistics to estimate from.
+	testKit.MustExec("analyze table t columns a, c")
 	testKit.MustExec("create index idxb on t(b)")
-	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen because it has statistics
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen even though it is missing statistics
 	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
+}
+
+func TestMissingStatsIndexUsesColumnStats(t *testing.T) {
+	// An index without statistics, whose access columns all have column statistics, is compared on its
+	// estimates instead of by the missing-statistics heuristics. It should behave as if it was analyzed.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, d int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// a, b and c are fully correlated with 2 distinct values each. d is unique.
+	testKit.MustExec("insert into t select mod(a,2), mod(a,2), mod(a,2), a from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	testKit.MustExec("create index idx_d on t(d)")
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		// Half of the table matches. The extra equal predicates of idx_abc must not prune the full table scan.
+		testKit.MustQuery("explain format='brief' select * from t where a = 1 and b = 1 and c = 1").CheckContain("TableFullScan")
+		// A selective index is still chosen.
+		testKit.MustQuery("explain format='brief' select * from t where d = 5").CheckContain("idx_d(d)")
+	}
 }
 
 func TestVirtualColumnIndexEstimation(t *testing.T) {
@@ -955,6 +984,82 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
 	require.InDelta(t, trueRowCnt, rowCnt1, 0.1)
 	require.NotEqual(t, rowCnt1, rowCnt2)
+}
+
+func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
+	// An index without statistics, whose columns each have a low NDV, is estimated from column statistics.
+	// The columns are fully correlated, so assuming independence would underestimate badly. Exponential
+	// backoff must be used instead.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,10), mod(a,10), mod(a,10) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	rows := testKit.MustQuery("explain format='brief' select * from t use index(idx_abc) where a = 1 and b = 1 and c = 1").Rows()
+	var estRows float64
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			var err error
+			estRows, err = strconv.ParseFloat(row[1].(string), 64)
+			require.NoError(t, err)
+		}
+	}
+	// Actual row count is 100. Independence would estimate 1000 * 0.1^3 = 1, while exponential
+	// backoff estimates 1000 * 0.1 * 0.1^(1/2) * 0.1^(1/4) ~= 17.8.
+	require.Greater(t, estRows, 10.0)
+}
+
+func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
+	// An index without statistics on a virtual column (which has no column statistics) and a column with
+	// statistics must still account for the virtual column, and report its statistics as missing.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(int_col int, string_col varchar(255))")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec(`insert into t values (-1, "foo"), (1, "bar")`)
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index combined_index on t((int_col + int_col), string_col)")
+	testKit.MustQuery(`explain format='brief' select * from t where int_col + int_col = 2 and string_col = "bar"`).
+		CheckContain("stats:partial[combined_index:missing, _v$_combined_index_0:missing]")
+}
+
+func TestIssue71999(t *testing.T) {
+	// An index without statistics must not prune an index with statistics via the prefer-range
+	// skyline rule unless its access columns cover the other index's access columns.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
+	// so it must not prune idx_id, which has statistics and is far more selective.
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+
+	// Same, but without column statistics on a, b and c, so idx_abc has nothing to estimate from.
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t columns id")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	}
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
