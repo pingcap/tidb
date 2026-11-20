@@ -591,3 +591,118 @@ fn test_mv_service_maybe_gcmv_history_reports_metrics() {
     wait(&|| failed(&helper));
     wait(&|| !svc.history_gc_running.load(SeqCst));
 }
+
+/// Go `TestMVServiceMLogAnalyzeScanSubmitsTasks`.
+#[test]
+fn test_mv_service_m_log_analyze_scan_submits_tasks() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().fetch_analyze_tasks = HashMap::from([(
+        101,
+        crate::task_handler::MlogAnalyzeTask {
+            schema_name: "test".to_owned(),
+            mlog_name: "$mlog$t".to_owned(),
+            ..Default::default()
+        },
+    )]);
+    let mut cfg = default_mv_service_config();
+    cfg.server_consistent_hash_replicas = 1;
+    let svc = new_service(helper.clone(), cfg);
+    crate::mvservice_test::set_service_hash_overrides_for_test(
+        &svc,
+        &[(crate::server_maintainer::int64_key_to_binary_bytes(101).to_vec(), 5)],
+    );
+    svc.mlog_analyze_executor.run();
+
+    let now = mvs_now();
+    svc.maybe_scan_mlog_analyze(&now);
+    eventually(
+        || helper.analyze_mlog_calls.load(SeqCst) == 1 && svc.metrics.mv_log_analyze_task_count.load(SeqCst) == 0,
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    assert_eq!(101, helper.last_analyze_id.load(SeqCst));
+    assert_eq!(0, svc.metrics.mv_log_analyze_task_count.load(SeqCst));
+    assert_eq!(unix_milli(&now.add(MLOG_ANALYZE_SCAN_INTERVAL)), svc.next_mlog_analyze_scan_millis.load(SeqCst));
+    eventually(|| !svc.mlog_analyze_scan_running.load(SeqCst), TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+    assert_eq!(1, helper.task_duration_count(MV_FETCH_TYPE_MLOG_ANALYZE, MV_DURATION_RESULT_SUCCESS));
+
+    svc.maybe_scan_mlog_analyze(&now.add(MLOG_ANALYZE_SCAN_INTERVAL - SECOND));
+    assert_eq!(1, helper.fetch_analyze_task_calls.load(SeqCst));
+    svc.mlog_analyze_executor.close();
+}
+
+/// Go `TestMVServiceMLogAnalyzeScanFailureWaitsUntilNextInterval`.
+#[test]
+fn test_mv_service_m_log_analyze_scan_failure_waits_until_next_interval() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().fetch_analyze_tasks_err = Some(MvsError::Other("mock mlog analyze scan failed".to_owned()));
+    let mut cfg = default_mv_service_config();
+    cfg.server_consistent_hash_replicas = 1;
+    let svc = new_service(helper.clone(), cfg);
+
+    let now = mvs_now();
+    svc.maybe_scan_mlog_analyze(&now);
+    eventually(|| !svc.mlog_analyze_scan_running.load(SeqCst), TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+    assert_eq!(1, helper.fetch_analyze_task_calls.load(SeqCst));
+    assert_eq!(0, helper.analyze_mlog_calls.load(SeqCst));
+    assert_eq!(unix_milli(&now.add(MLOG_ANALYZE_SCAN_INTERVAL)), svc.next_mlog_analyze_scan_millis.load(SeqCst));
+    assert_eq!(1, helper.task_duration_count(MV_FETCH_TYPE_MLOG_ANALYZE, MV_DURATION_RESULT_FAILED));
+
+    svc.maybe_scan_mlog_analyze(&now.add(MLOG_ANALYZE_SCAN_INTERVAL - SECOND));
+    assert_eq!(1, helper.fetch_analyze_task_calls.load(SeqCst));
+}
+
+/// Go `TestMVServiceMLogAnalyzeTaskDedupAndNoImmediateRetry`.
+#[test]
+fn test_mv_service_m_log_analyze_task_dedup_and_no_immediate_retry() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let (entered_tx, entered) = crossbeam_channel::bounded::<()>(1);
+    let (block_tx, block) = crossbeam_channel::bounded::<()>(0);
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.analyze_mlog_err = Some(MvsError::Other("analyze failed".to_owned()));
+        knobs.analyze_mlog_entered = Some(entered_tx);
+        knobs.block_analyze_mlog = Some(block);
+    }
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    svc.mlog_analyze_executor.run();
+
+    svc.analyze_mv_log(vec![101, 101]);
+    eventually(|| helper.analyze_mlog_calls.load(SeqCst) == 1, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+    entered.recv_timeout(TEST_EVENTUALLY_WAIT).expect("the analyze task starts");
+    assert_eq!(1, svc.metrics.mv_log_analyze_task_count.load(SeqCst));
+    assert_eq!(0, svc.mlog_analyze_executor.metrics.counters.failed_count.load(SeqCst));
+
+    block_tx.send(()).unwrap();
+    eventually(|| svc.metrics.mv_log_analyze_task_count.load(SeqCst) == 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+    assert_eq!(1, helper.analyze_mlog_calls.load(SeqCst));
+    eventually(
+        || svc.mlog_analyze_executor.metrics.counters.failed_count.load(SeqCst) == 1,
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    drop(block_tx);
+    svc.mlog_analyze_executor.close();
+}
+
+/// Go `TestMVServiceMLogAnalyzeSubmitRejectedCleansDedupState`.
+#[test]
+fn test_mv_service_m_log_analyze_submit_rejected_cleans_dedup_state() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    assert!(svc.mlog_analyze_executor.close());
+
+    svc.analyze_mv_log(vec![101]);
+
+    assert_eq!(0, svc.metrics.mv_log_analyze_task_count.load(SeqCst));
+    assert_eq!(0, helper.analyze_mlog_calls.load(SeqCst));
+    assert_eq!(1, svc.mlog_analyze_executor.metrics.counters.rejected_count.load(SeqCst));
+}

@@ -423,8 +423,8 @@ pub struct MVService {
     pub(crate) history_gc_retry_count: AtomicI64,
     pub(crate) history_gc_running: AtomicBool,
     pub(crate) mv_log_accumulation_scan_running: AtomicBool,
-    next_mlog_analyze_scan_millis: AtomicI64,
-    mlog_analyze_scan_running: AtomicBool,
+    pub(crate) next_mlog_analyze_scan_millis: AtomicI64,
+    pub(crate) mlog_analyze_scan_running: AtomicBool,
 
     pub(crate) retry_base_delay_millis: AtomicI64,
     pub(crate) retry_max_delay_millis: AtomicI64,

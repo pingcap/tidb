@@ -60,6 +60,13 @@ pub(crate) struct MockKnobs {
     pub(crate) sync_refresh_alert_err: Option<MvsError>,
     pub(crate) cleanup_stale_refresh_alert_err: Option<MvsError>,
     pub(crate) last_refresh_alert_sync: Vec<RefreshAlertTask>,
+    /// Go `fetchAnalyzeTasks` / `fetchAnalyzeTasksErr` / `analyzeMLogErr`.
+    pub(crate) fetch_analyze_tasks: HashMap<i64, MlogAnalyzeTask>,
+    pub(crate) fetch_analyze_tasks_err: Option<MvsError>,
+    pub(crate) analyze_mlog_err: Option<MvsError>,
+    /// Go `analyzeMLogEntered` / `blockAnalyzeMLog`.
+    pub(crate) analyze_mlog_entered: Option<Sender<()>>,
+    pub(crate) block_analyze_mlog: Option<Receiver<()>>,
     /// Go `currentTSO` / `currentTSOErr` / `historyGCErr` / `historyGCPanic`.
     pub(crate) current_tso: u64,
     pub(crate) current_tso_err: Option<MvsError>,
@@ -100,6 +107,10 @@ pub(crate) struct MockMVServiceHelper {
     pub(crate) sync_refresh_alert_calls: AtomicI32,
     pub(crate) cleanup_stale_refresh_alert_calls: AtomicI32,
     pub(crate) server_refresh_calls: AtomicI32,
+    /// Go `fetchAnalyzeTaskCalls` / `analyzeMLogCalls` / `lastAnalyzeID`.
+    pub(crate) fetch_analyze_task_calls: AtomicI32,
+    pub(crate) analyze_mlog_calls: AtomicI32,
+    pub(crate) last_analyze_id: std::sync::atomic::AtomicI64,
     /// Go `historyGCCalls` and the last call's arguments.
     pub(crate) history_gc_calls: AtomicI32,
     pub(crate) last_history_gc_current_tso: std::sync::atomic::AtomicU64,
@@ -270,11 +281,28 @@ impl MVTaskHandler for MockMVServiceHelper {
     }
 
     fn load_all_tidb_mv_log_analyze_tasks(&self, _: &Context, _: &dyn SessionPool) -> Result<HashMap<i64, MlogAnalyzeTask>, MvsError> {
-        Ok(HashMap::new())
+        self.fetch_analyze_task_calls.fetch_add(1, SeqCst);
+        let knobs = self.knobs.lock().unwrap();
+        if let Some(err) = &knobs.fetch_analyze_tasks_err {
+            return Err(err.clone());
+        }
+        Ok(knobs.fetch_analyze_tasks.clone())
     }
 
-    fn analyze_mv_log(&self, _: &Context, _: &dyn SessionPool, _: i64) -> Result<(), MvsError> {
-        Ok(())
+    fn analyze_mv_log(&self, _: &Context, _: &dyn SessionPool, mlog_id: i64) -> Result<(), MvsError> {
+        self.last_analyze_id.store(mlog_id, SeqCst);
+        self.analyze_mlog_calls.fetch_add(1, SeqCst);
+        let (entered, block, err) = {
+            let knobs = self.knobs.lock().unwrap();
+            (knobs.analyze_mlog_entered.clone(), knobs.block_analyze_mlog.clone(), knobs.analyze_mlog_err.clone())
+        };
+        if let Some(entered) = entered {
+            let _ = entered.try_send(());
+        }
+        if let Some(block) = block {
+            let _ = block.recv();
+        }
+        err.map_or(Ok(()), Err)
     }
 
     fn load_all_tidb_mv_refresh(&self, _: &Context, _: &dyn SessionPool) -> Result<HashMap<i64, Arc<MViewTask>>, MvsError> {
