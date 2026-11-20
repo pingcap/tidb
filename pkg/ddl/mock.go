@@ -24,9 +24,15 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
+// DefaultBatchInsertDeleteRangeSize is the batch insert/delete range size used outside tests.
+const DefaultBatchInsertDeleteRangeSize = defaultBatchInsertDeleteRangeSize
+
 // SetBatchInsertDeleteRangeSize sets the batch insert/delete range size in the test
-func SetBatchInsertDeleteRangeSize(i int) {
+// and returns the previous size.
+func SetBatchInsertDeleteRangeSize(i int) int {
+	origin := batchInsertDeleteRangeSize
 	batchInsertDeleteRangeSize = i
+	return origin
 }
 
 type mockDelRange struct {

@@ -16,10 +16,12 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -103,4 +105,43 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 		}
 	}
 	require.NoError(b, err)
+}
+
+// BenchmarkDropSchema measures DROP DATABASE of a schema with many partitions. With the mock
+// store it covers the meta changes and the delete-range inserts, but not the PD requests.
+func BenchmarkDropSchema(b *testing.B) {
+	for _, tc := range []struct{ tables, partitions int }{
+		{tables: 1000, partitions: 0},
+		{tables: 4, partitions: 8192},
+		{tables: 16, partitions: 8192},
+	} {
+		b.Run(fmt.Sprintf("tables=%d/partitions=%d", tc.tables, tc.partitions), func(b *testing.B) {
+			store := testkit.CreateMockStore(b)
+			tk := testkit.NewTestKit(b, store)
+			originBatchSize := ddl.SetBatchInsertDeleteRangeSize(ddl.DefaultBatchInsertDeleteRangeSize)
+			originGC := ddlutil.IsEmulatorGCEnable()
+			ddlutil.EmulatorGCDisable()
+			defer func() {
+				ddl.SetBatchInsertDeleteRangeSize(originBatchSize)
+				if originGC {
+					ddlutil.EmulatorGCEnable()
+				}
+			}()
+
+			b.ResetTimer()
+			for range b.N {
+				b.StopTimer()
+				tk.MustExec("create database bench_drop")
+				for i := range tc.tables {
+					sql := fmt.Sprintf("create table bench_drop.t%d (a int primary key, b int, key(b))", i)
+					if tc.partitions > 0 {
+						sql += fmt.Sprintf(" partition by hash(a) partitions %d", tc.partitions)
+					}
+					tk.MustExec(sql)
+				}
+				b.StartTimer()
+				tk.MustExec("drop database bench_drop")
+			}
+		})
+	}
 }

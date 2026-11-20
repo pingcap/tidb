@@ -18,15 +18,19 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -372,6 +376,71 @@ PARTITION BY RANGE (c) (
 
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	require.Len(t, rows, 0)
+}
+
+func TestDropSchema(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database drop_db")
+	tk.MustExec("use drop_db")
+	for _, tbl := range []string{"t1", "t2"} {
+		tk.MustExec(fmt.Sprintf(`create table %s (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`, tbl))
+	}
+	tk.MustExec("create table t3 (c int)")
+	tk.MustExec("create table t4 (c int)")
+	// The attributes PD acts on are used: merge_option for a whole table, with another
+	// value for one of its partitions, and for a non-partitioned table.
+	tk.MustExec(`alter table t1 attributes="merge_option=allow";`)
+	tk.MustExec(`alter table t1 partition p0 attributes="merge_option=deny";`)
+	tk.MustExec(`alter table t3 attributes="merge_option=deny";`)
+	expectedRuleIDs := []string{"schema/drop_db/t1", "schema/drop_db/t1/p0", "schema/drop_db/t3"}
+	// The existing rules are looked up in batches of 10000 tables and partitions, so use
+	// enough partitions for two batches, with rules at the start, on both sides of the
+	// batch boundary and at the end.
+	const partitionCnt = 8192
+	// Cleaning up after that many partitions is slow with the delete-range settings of the tests.
+	originGC := util.IsEmulatorGCEnable()
+	util.EmulatorGCDisable()
+	originBatchSize := ddl.SetBatchInsertDeleteRangeSize(ddl.DefaultBatchInsertDeleteRangeSize)
+	defer func() {
+		ddl.SetBatchInsertDeleteRangeSize(originBatchSize)
+		if originGC {
+			util.EmulatorGCEnable()
+		}
+	}()
+	for _, tbl := range []string{"big1", "big2"} {
+		tk.MustExec(fmt.Sprintf("create table %s (c int) partition by hash(c) partitions %d", tbl, partitionCnt))
+	}
+	// A rule of a partitioned table covers all its partitions.
+	tk.MustExec(`alter table big1 attributes="merge_option=allow";`)
+	expectedRuleIDs = append(expectedRuleIDs, "schema/drop_db/big1")
+	for _, partition := range []string{"big1/p0", "big2/p1798", "big2/p1799", "big2/p8191"} {
+		tbl, partitionName, _ := strings.Cut(partition, "/")
+		tk.MustExec(fmt.Sprintf(`alter table %s partition %s attributes="merge_option=deny";`, tbl, partitionName))
+		expectedRuleIDs = append(expectedRuleIDs, "schema/drop_db/"+partition)
+	}
+	// A rule of another schema must be kept.
+	tk.MustExec("create table test.t1 (c int)")
+	tk.MustExec(`alter table test.t1 attributes="merge_option=deny";`)
+	require.Len(t, tk.MustQuery(`select * from information_schema.attributes;`).Rows(), len(expectedRuleIDs)+1)
+
+	// Only the label rules that exist should be deleted from PD, since deleting
+	// a rule for every table and partition is slow when there are many of them.
+	var deletedRuleIDs atomic.Pointer[[]string]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/dropSchemaDeleteLabelRules", func(ruleIDs []string) {
+		deletedRuleIDs.Store(&ruleIDs)
+	})
+	tk.MustExec("drop database drop_db")
+	require.NotNil(t, deletedRuleIDs.Load())
+	require.ElementsMatch(t, expectedRuleIDs, *deletedRuleIDs.Load())
+	tk.MustQuery(`select id from information_schema.attributes;`).Check(testkit.Rows("schema/test/t1"))
 }
 
 func TestCreateWithSameName(t *testing.T) {

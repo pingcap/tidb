@@ -17,13 +17,16 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -289,6 +293,59 @@ func TestSchema(t *testing.T) {
 	job = testDropSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
+}
+
+func TestDropSchemaWithManyPartitions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database many_parts")
+	tk.MustExec("use many_parts")
+	const tableCnt = 2
+	for i := range tableCnt {
+		tk.MustExec(fmt.Sprintf("create table t%d (a int) partition by hash(a) partitions %d", i, mysql.PartitionCountLimit))
+	}
+
+	// Keep the delete ranges so they can be counted below.
+	originGC := ddlutil.IsEmulatorGCEnable()
+	ddlutil.EmulatorGCDisable()
+	originBatchSize := ddl.SetBatchInsertDeleteRangeSize(ddl.DefaultBatchInsertDeleteRangeSize)
+	// The schema change event of all the tables together is larger than this limit,
+	// so the tables must be split into several events by their size.
+	originLimit := kv.TxnEntrySizeLimit.Load()
+	kv.TxnEntrySizeLimit.Store(600 * 1024)
+	defer func() {
+		kv.TxnEntrySizeLimit.Store(originLimit)
+		ddl.SetBatchInsertDeleteRangeSize(originBatchSize)
+		if originGC {
+			ddlutil.EmulatorGCEnable()
+		}
+	}()
+
+	// Report the first failed step instead of waiting for the statement to return.
+	var stepErr atomic.Pointer[terror.Error]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropSchema && job.Error != nil {
+			stepErr.CompareAndSwap(nil, job.Error)
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Exec("drop database many_parts")
+		done <- err
+	}()
+	for finished := false; !finished; {
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+			finished = true
+		case <-time.After(10 * time.Millisecond):
+			if jobErr := stepErr.Load(); jobErr != nil {
+				require.FailNow(t, "drop database step failed", jobErr.Error())
+			}
+		}
+	}
+	tk.MustQuery("select count(*) from mysql.gc_delete_range").Check(testkit.Rows(
+		strconv.Itoa(tableCnt * (mysql.PartitionCountLimit + 1))))
 }
 
 func TestSchemaWaitJob(t *testing.T) {

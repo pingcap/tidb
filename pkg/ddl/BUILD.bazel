@@ -357,6 +357,7 @@ go_test(
         "//pkg/ddl/label",
         "//pkg/ddl/logutil",
         "//pkg/ddl/mock",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/schemaver",

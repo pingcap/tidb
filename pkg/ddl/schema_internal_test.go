@@ -16,9 +16,14 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -206,4 +211,95 @@ func TestRemovePartitionIndexes(t *testing.T) {
 	for offset, col := range tblInfo.Columns {
 		require.Equal(t, offset, col.Offset)
 	}
+}
+
+func TestDropSchemaEventBatchEnd(t *testing.T) {
+	// Tables are named by their number of partitions.
+	newTable := func(partitionCnt int) *notifier.MiniTableInfoForSchemaEvent {
+		tbl := &notifier.MiniTableInfoForSchemaEvent{ID: 1, Name: ast.NewCIStr("t")}
+		for range partitionCnt {
+			tbl.Partitions = append(tbl.Partitions, &notifier.MiniPartitionInfoForSchemaEvent{ID: 1, Name: ast.NewCIStr("p")})
+		}
+		return tbl
+	}
+	sizeOf := func(partitionCnt int) int {
+		data, err := json.Marshal(newTable(partitionCnt))
+		require.NoError(t, err)
+		return len(data)
+	}
+	batchSizes := func(maxTables, maxSize int, partitionCounts ...int) []int {
+		tables := make([]*notifier.MiniTableInfoForSchemaEvent, 0, len(partitionCounts))
+		for _, cnt := range partitionCounts {
+			tables = append(tables, newTable(cnt))
+		}
+		var sizes []int
+		for start := 0; start < len(tables); {
+			end, err := dropSchemaEventBatchEnd(tables, start, maxTables, maxSize)
+			require.NoError(t, err)
+			require.Greater(t, end, start)
+			sizes = append(sizes, end-start)
+			start = end
+		}
+		return sizes
+	}
+
+	require.Nil(t, batchSizes(100, 1000))
+	// Only the number of tables limits the batches of small tables.
+	require.Equal(t, []int{3, 3, 1}, batchSizes(3, 100*sizeOf(0), 0, 0, 0, 0, 0, 0, 0))
+	// The partitions add to the size of a table.
+	maxSize := sizeOf(4) + sizeOf(5)
+	require.Equal(t, []int{2, 1, 2}, batchSizes(100, maxSize, 4, 5, 9, 3, 5))
+	require.Equal(t, []int{1, 1}, batchSizes(100, maxSize, 5, 5))
+	// A table exceeding the limit on its own still gets a batch.
+	require.Equal(t, []int{1, 1, 1, 2}, batchSizes(100, maxSize, 0, 20, 30, 0, 0))
+}
+
+// TestDropSchemaEventSize checks that the drop schema events with several tables stay small,
+// also with many partitions and the longest names, whatever characters the names use.
+// Only an event with a single table can be larger.
+func TestDropSchemaEventSize(t *testing.T) {
+	// Tables per schema event, larger than the number of tables below.
+	const tablesPerEvent = 500
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr(strings.Repeat("d", mysql.MaxDatabaseNameLength))}
+	// Characters of 1 and 4 bytes, and one that is escaped when encoded.
+	for _, char := range []string{"P", "\U0001F600", "<"} {
+		var tables []*notifier.MiniTableInfoForSchemaEvent
+		for i, partitionCnt := range []int{mysql.PartitionCountLimit, mysql.PartitionCountLimit, 100, 100, 100, mysql.PartitionCountLimit / 4, 0, 0} {
+			tblInfo := &model.TableInfo{
+				ID:        int64(1) << 40,
+				Name:      ast.NewCIStr(strings.Repeat(char, mysql.MaxTableNameLength)),
+				Partition: &model.PartitionInfo{},
+			}
+			for j := range partitionCnt {
+				prefix := fmt.Sprintf("P%d_%d_", i, j)
+				// Partition names have the same length limit as table names.
+				name := prefix + strings.Repeat(char, mysql.MaxTableNameLength-len(prefix))
+				tblInfo.Partition.Definitions = append(tblInfo.Partition.Definitions, model.PartitionDefinition{
+					ID:   int64(1)<<40 + int64(j),
+					Name: ast.NewCIStr(name),
+				})
+			}
+			tables = append(tables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
+		}
+
+		var batches []int
+		for start := 0; start < len(tables); {
+			end, err := dropSchemaEventBatchEnd(tables, start, tablesPerEvent, maxDropSchemaEventSize)
+			require.NoError(t, err)
+			require.Greater(t, end, start)
+			if end-start > 1 {
+				data, err := json.Marshal(notifier.NewDropSchemaEvent(dbInfo, tables[start:end]))
+				require.NoError(t, err)
+				// The event has a little more than the tables, like the schema name.
+				require.Less(t, len(data), maxDropSchemaEventSize+4096, "char %q", char)
+			}
+			batches = append(batches, end-start)
+			start = end
+		}
+		// The two tables with the maximum number of partitions do not fit in one event,
+		// while the smaller tables share events.
+		require.Greater(t, len(batches), 1, "char %q", char)
+		require.Less(t, len(batches), len(tables), "char %q", char)
+	}
+	require.Less(t, maxDropSchemaEventSize, config.DefTxnEntrySizeLimit/2)
 }

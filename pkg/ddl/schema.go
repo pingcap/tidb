@@ -16,8 +16,11 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -31,6 +34,15 @@ import (
 )
 
 const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registrations_failed"
+
+const (
+	// labelRuleLookupBatchSize is the number of label rule IDs sent to PD in one lookup request.
+	labelRuleLookupBatchSize = 10000
+	// maxDropSchemaEventSize is the size in bytes of the encoded tables and partitions above
+	// which a drop schema event is split, to keep the events small since each one is stored
+	// as a single row. An event with a single table can still be larger.
+	maxDropSchemaEventSize = 2 * 1024 * 1024
+)
 
 type dropSchemaTTLTableInfo struct {
 	id      int64
@@ -207,6 +219,11 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		ruleIDs, err = existingLabelRuleIDs(jobCtx.stepCtx, ruleIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		if jobCtx.oldDDLCtx != nil {
 			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, ttlTables); err != nil {
 				return ver, err
@@ -217,6 +234,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		failpoint.InjectCall("dropSchemaDeleteLabelRules", ruleIDs)
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 		if err != nil {
@@ -312,13 +330,24 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if len(miniTables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
-		for i := 0; i < len(miniTables); i += tablesPerJob {
-			end := min(i+tablesPerJob, len(miniTables))
-			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[i:end])
-			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
+		maxEventSize := maxDropSchemaEventSize
+		// Zero means that the size of an entry is not limited.
+		if entrySizeLimit := kv.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+			maxEventSize = min(maxEventSize, int(entrySizeLimit/2))
+		}
+		subJobID := int64(0)
+		for start := 0; start < len(miniTables); {
+			end, err := dropSchemaEventBatchEnd(miniTables, start, tablesPerJob, maxEventSize)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[start:end])
+			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, subJobID, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			start = end
+			subJobID++
 		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{
@@ -485,6 +514,49 @@ func (w *worker) dropSchemaTTLTablesFromExternalWorkload(
 		}
 	}
 	return nil
+}
+
+// existingLabelRuleIDs returns the IDs in ruleIDs that have a label rule in PD.
+// PD persists the deletion of every rule ID in a patch whether or not the rule exists,
+// which takes seconds for a schema with many partitions, while label rules are rare.
+// So look up the existing rules first, to only delete those.
+func existingLabelRuleIDs(ctx context.Context, ruleIDs []string) ([]string, error) {
+	var existing []string
+	for batch := range slices.Chunk(ruleIDs, labelRuleLookupBatchSize) {
+		rules, err := infosync.GetLabelRules(ctx, batch)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Go through the requested IDs instead of the returned rules, to keep the order
+		// of the IDs and to never delete a rule that was not asked for.
+		for _, ruleID := range batch {
+			if _, ok := rules[ruleID]; ok {
+				existing = append(existing, ruleID)
+			}
+		}
+	}
+	return existing, nil
+}
+
+// dropSchemaEventBatchEnd returns the end (exclusive) of the batch of tables starting at
+// start that goes into one drop schema event. A batch has at most maxTables tables and at
+// most maxSize bytes of encoded tables, but always at least one table.
+func dropSchemaEventBatchEnd(tables []*notifier.MiniTableInfoForSchemaEvent, start, maxTables, maxSize int) (int, error) {
+	end, size := start, 0
+	for end < len(tables) && end-start < maxTables {
+		// The size depends on the number of partitions and on the names, which
+		// can take several bytes per character, so measure the encoded table.
+		data, err := json.Marshal(tables[end])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		size += len(data)
+		if end > start && size > maxSize {
+			break
+		}
+		end++
+	}
+	return end, nil
 }
 
 func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {

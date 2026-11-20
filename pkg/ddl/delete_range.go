@@ -50,9 +50,15 @@ const (
 	BRInsertDeleteRangeSQLValue  = insertDeleteRangeSQLValue
 )
 
+// defaultBatchInsertDeleteRangeSize is the default of batchInsertDeleteRangeSize.
+// Every batch is a statement and a transaction of its own, so small batches make dropping a schema
+// with many tables or partitions slow. Dropping a table already inserts all its partitions, up to
+// 8192, in one statement.
+const defaultBatchInsertDeleteRangeSize = 8192
+
 var (
 	// batchInsertDeleteRangeSize is the maximum size for each batch insert statement in the delete-range.
-	batchInsertDeleteRangeSize = 256
+	batchInsertDeleteRangeSize = defaultBatchInsertDeleteRangeSize
 )
 
 type delRangeManager interface {
