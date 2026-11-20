@@ -322,6 +322,7 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestCollectColumnStats", SubTestCollectColumnStats(s))
 	t.Run("SubTestMergeSampleCollector", SubTestMergeSampleCollector(s))
 	t.Run("SubTestCollectorProtoConversion", SubTestCollectorProtoConversion(s))
+	t.Run("SubTestSortSampleItems", SubTestSortSampleItems)
 }
 
 func createTestSampleSuite() *testSampleSuite {
@@ -435,4 +436,17 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 			require.Equal(t, len(s.Samples), len(collector.Samples))
 		}
 	}
+}
+
+func SubTestSortSampleItems(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// The first compare fails and the later compares succeed. The sort keeps
+	// only the error of the last compare, so the error is lost.
+	items := []*SampleItem{
+		{Value: types.NewStringDatum("abc"), Ordinal: 0},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(1)), Ordinal: 1},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(2)), Ordinal: 2},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(3)), Ordinal: 3},
+	}
+	require.NoError(t, sortSampleItems(sc, items))
 }
