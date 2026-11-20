@@ -648,9 +648,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
-		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue.Load() {
-			// Ignore DDL sessions.
-			continue
+		// StatementContext.Reset overwrites even atomic fields. Hold a reference
+		// while reading the flag; if resetting, conservatively keep the txn TS.
+		if info.StmtCtx != nil && info.RefCountOfStmtCtx != nil && info.RefCountOfStmtCtx.TryIncrease() {
+			isDDL := info.StmtCtx.IsDDLJobInQueue.Load()
+			info.RefCountOfStmtCtx.Decrease()
+			if isDDL {
+				continue
+			}
 		}
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
