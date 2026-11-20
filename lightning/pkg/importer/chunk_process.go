@@ -310,8 +310,9 @@ func (cr *chunkProcessor) encodeLoop(
 	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
 	// so this should be ok.
 	var (
-		filteredColumns []string
-		extendVals      []types.Datum
+		filteredColumns   []string
+		extendVals        []types.Datum
+		columnPermutation []int
 	)
 	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
 	if err1 != nil {
@@ -378,6 +379,12 @@ func (cr *chunkProcessor) encodeLoop(
 						filteredColumns, extendVals = filterColumns(columnNames, cr.chunk.FileMeta.ExtendData, ignoreColsMap, t.tableInfo.Core)
 					}
 					lastRow := cr.parser.LastRow()
+					columnPermutation = cr.chunk.ColumnPermutation
+					if len(cr.chunk.FileMeta.ExtendData.Columns) > 0 {
+						// Checkpoints describe source columns; appended values exist only
+						// in the encoded row and must not become parser columns on resume.
+						columnPermutation = append([]int(nil), columnPermutation...)
+					}
 					lastRowLen := len(lastRow.Row)
 					extendColsMap := make(map[string]int)
 					for i, c := range cr.chunk.FileMeta.ExtendData.Columns {
@@ -385,7 +392,7 @@ func (cr *chunkProcessor) encodeLoop(
 					}
 					for i, col := range t.tableInfo.Core.Columns {
 						if p, ok := extendColsMap[col.Name.O]; ok {
-							cr.chunk.ColumnPermutation[i] = p
+							columnPermutation[i] = p
 						}
 					}
 					initializedColumns = true
@@ -440,10 +447,11 @@ func (cr *chunkProcessor) encodeLoop(
 						lastRow,
 						lastOffset,
 						dupIgnoreRowsIter.UnsafeValue(),
+						columnPermutation,
 						t.tableInfo.Desired,
 						logger,
 					)
-					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, columnPermutation)
 					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
@@ -462,12 +470,12 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, columnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
 					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
@@ -533,6 +541,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	lastRow parsedef.Row,
 	lastOffset int64,
 	encodedIdxID []byte,
+	columnPermutation []int,
 	tableInfo *model.TableInfo,
 	logger log.Logger,
 ) string {
@@ -540,7 +549,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	if err != nil {
 		return err.Error()
 	}
-	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
+	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, lastOffset)
 	if err != nil {
 		return err.Error()
 	}

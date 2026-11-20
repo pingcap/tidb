@@ -298,65 +298,60 @@ func (s *chunkRestoreSuite) TestEncodeLoop() {
 
 func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 	ctx := context.Background()
-	kvsCh := make(chan []deliveredKVs, 2)
-	deliverCompleteCh := make(chan deliverResult)
-
-	p := parser.New()
-	se := tmock.NewContext()
-
-	lastTi := s.tr.tableInfo
-	defer func() {
-		s.tr.tableInfo = lastTi
-	}()
-
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL, `c_table` varchar(5), `c_schema` varchar(5), `c_source` varchar(5))", "utf8mb4", "utf8mb4_bin")
+	node, err := parser.New().ParseOneStmt("CREATE TABLE t1(c1 varchar(5) NOT NULL, c_table varchar(5), c_schema varchar(5), c_source varchar(5))", "utf8mb4", "utf8mb4_bin")
 	require.NoError(s.T(), err)
-	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	tableInfo, err := ddl.MockTableInfo(tmock.NewContext(), node.(*ast.CreateTableStmt), int64(1))
 	require.NoError(s.T(), err)
 	tableInfo.State = model.StatePublic
-
-	schema := "test_1"
-	tb := "t1"
-	ti := &importdef.TableInfo{
-		ID:   tableInfo.ID,
-		DB:   schema,
-		Name: tb,
-		Core: tableInfo,
-	}
-	s.tr.tableInfo = ti
-	s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
-		Columns: []string{"c_table", "c_schema", "c_source"},
-		Values:  []string{"1", "1", "01"},
-	}
-	defer func() {
-		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
-	}()
-
-	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
-		Table: s.tr.encTable,
-		SessionOptions: encode.SessionOptions{
-			SQLMode:   s.cfg.TiDB.SQLMode,
-			Timestamp: 1234567895,
-		},
-		Logger: log.L(),
-	}, nil)
+	ti := &importdef.TableInfo{ID: tableInfo.ID, DB: "test_1", Name: "t1", Core: tableInfo}
+	tr, err := NewTableImporter("`test_1`.`t1`", s.tr.tableMeta, s.tr.dbInfo, ti, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(s.T(), err)
+	const data = "INSERT INTO t1(c1) VALUES ('a'),('b');"
+	const path = "extend-columns.sql"
+	require.NoError(s.T(), s.store.WriteFile(ctx, path, []byte(data)))
+	cp := &checkpoints.ChunkCheckpoint{
+		Key: checkpoints.ChunkCheckpointKey{Path: path},
+		FileMeta: mydump.SourceFileMeta{Path: path, Type: mydump.SourceTypeSQL, FileSize: int64(len(data)),
+			ExtendData: mydump.ExtendColumnData{Columns: []string{"c_table", "c_schema", "c_source"}, Values: []string{"1", "1", "01"}}},
+		Chunk: mydump.Chunk{EndOffset: int64(len(data)), RowIDMax: 2},
+	}
 	cfg := config.NewConfig()
-	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
-	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	pool := worker.NewPool(ctx, 1, "io")
+	cr, err := newChunkProcessor(ctx, 1, cfg, cp, pool, s.store, tableInfo)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), kvsCh, 2)
-
-	kvs := <-kvsCh
-	require.Len(s.T(), kvs, 1)
-	require.Equal(s.T(), int64(19), kvs[0].rowID)
-	require.Equal(s.T(), int64(36), kvs[0].offset)
-	require.Equal(s.T(), []string{"c1", "c_table", "c_schema", "c_source"}, kvs[0].columns)
-
-	kvs = <-kvsCh
-	require.Equal(s.T(), 1, len(kvs))
-	require.Nil(s.T(), kvs[0].kvs)
-	require.Equal(s.T(), s.cr.chunk.Chunk.EndOffset, kvs[0].offset)
+	require.NoError(s.T(), cr.parser.ReadRow())
+	firstEnd, _ := cr.parser.Pos()
+	cr.close()
+	cp.Chunk.EndOffset = firstEnd
+	encoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{Table: tr.encTable,
+		SessionOptions: encode.SessionOptions{SQLMode: cfg.TiDB.SQLMode, Timestamp: 1234567895}, Logger: log.L()}, nil)
+	require.NoError(s.T(), err)
+	defer encoder.Close()
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	for i, value := range []string{"a", "b"} {
+		cr, err = newChunkProcessor(ctx, 1, cfg, cp, pool, s.store, tableInfo)
+		require.NoError(s.T(), err)
+		kvsCh := make(chan []deliveredKVs, 3)
+		_, _, err = cr.encodeLoop(ctx, kvsCh, tr, tr.logger, encoder, make(chan deliverResult), rc)
+		cr.close()
+		require.NoError(s.T(), err)
+		require.Len(s.T(), kvsCh, 2)
+		packet := <-kvsCh
+		require.Len(s.T(), packet, 1)
+		require.Equal(s.T(), []string{"c1", "c_table", "c_schema", "c_source"}, packet[0].columns)
+		require.Equal(s.T(), int64(i+1), packet[0].rowID)
+		row := []types.Datum{types.NewStringDatum(value), types.NewStringDatum("1"), types.NewStringDatum("1"), types.NewStringDatum("01")}
+		expected, err := encoder.Encode(row, int64(i+1), []int{0, 1, 2, 3, -1}, packet[0].offset)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), expected, packet[0].kvs)
+		// Persist only source columns, then reopen at the saved row boundary.
+		require.Equal(s.T(), []string{"c1"}, getColumnNames(tableInfo, cp.ColumnPermutation))
+		cp.Chunk.Offset = packet[0].offset
+		cp.Chunk.PrevRowIDMax = packet[0].rowID
+		eof := <-kvsCh
+		require.Nil(s.T(), eof[0].kvs)
+		cp.Chunk.EndOffset = int64(len(data))
+	}
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopCanceled() {
