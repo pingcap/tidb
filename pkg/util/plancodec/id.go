@@ -151,6 +151,8 @@ const (
 	TypePhysicalCTESource = "PhysicalCTESource"
 	// TypeAnalyze is the type of Analyze.
 	TypeAnalyze = "Analyze"
+	// TypeCalcFoundRows returns a page and obtains its unlimited row count.
+	TypeCalcFoundRows = "CalcFoundRows"
 )
 
 // plan id.
@@ -222,6 +224,7 @@ const (
 	typeAnalyzeID                 int = 64
 	typeMViewDeltaMergeID         int = 65
 	typeMViewCompleteDeltaApplyID int = 66
+	typeCalcFoundRowsID           int = 67
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -359,6 +362,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typePhysicalCTESourceID
 	case TypeAnalyze:
 		return typeAnalyzeID
+	case TypeCalcFoundRows:
+		return typeCalcFoundRowsID
 	}
 	// Should never reach here.
 	return 0
@@ -499,6 +504,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypePhysicalCTESource
 	case typeAnalyzeID:
 		return TypeAnalyze
+	case typeCalcFoundRowsID:
+		return TypeCalcFoundRows
 	}
 
 	// Should never reach here.
