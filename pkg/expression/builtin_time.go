@@ -6446,8 +6446,9 @@ func (c *timeFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.SetFlen((args[1].GetType(ctx.GetEvalCtx()).GetFlen() + 1) / 2 * 11)
+	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters,
+	// plus one leading '-' for a negative TIME
+	bf.tp.SetFlen((args[1].GetType(ctx.GetEvalCtx()).GetFlen()+1)/2*11 + 1)
 	sig := &builtinTimeFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimeFormat)
 	return sig, nil
