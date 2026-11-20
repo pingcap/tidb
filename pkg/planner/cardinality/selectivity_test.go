@@ -1618,6 +1618,93 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	require.Equal(t, int64(1), usedSets[0].ID)
 }
 
+func TestConstantOnlyPredicateDoesNotFavorShortIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(
+		useridx bigint,
+		site_code varchar(16) collate utf8mb4_bin,
+		to_delete tinyint,
+		member_useridx bigint,
+		direct tinyint,
+		agent_index int,
+		key idx_short(site_code, to_delete, member_useridx, useridx),
+		key idx_long(useridx, site_code, to_delete, direct, agent_index, member_useridx))`)
+	tk.MustExec(`create table parent_info(
+		parent_useridx bigint,
+		useridx bigint,
+		site_code varchar(16) collate utf8mb4_bin,
+		key idx_parent_site_user(parent_useridx, site_code, useridx))`)
+	tk.MustExec(`create table account_basic(
+		useridx bigint,
+		site_code varchar(16) collate utf8mb4_bin,
+		unique key idx_user_site(useridx, site_code))`)
+	tk.MustExec(`create table bet_summary(
+		useridx bigint,
+		game_category_id bigint,
+		site_code varchar(16) collate utf8mb4_bin,
+		settle_day bigint,
+		profit_total bigint,
+		valid_bet_total bigint,
+		betitem_num bigint,
+		key idx_user_site_day(useridx, site_code, settle_day))`)
+	tk.MustExec(`insert into t
+		select n, '871960', 0, n, 0, 1
+		from (with recursive cte as (
+			select 1 n union all select n + 1 from cte where n < 1000
+		) select n from cte) x`)
+	tk.MustExec("insert into parent_info select member_useridx, useridx, site_code from t")
+	tk.MustExec("insert into account_basic select useridx, site_code from t")
+	tk.MustExec("insert into bet_summary select useridx, 1, site_code, 20260806, 1, 1, 1 from t")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table parent_info all columns")
+	tk.MustExec("analyze table account_basic all columns")
+	tk.MustExec("analyze table bet_summary all columns")
+	tk.MustExec("set tidb_enable_prepared_plan_cache=on")
+	tk.MustExec(`prepare stmt from 'explain format="brief"
+		select count(*) from (
+			select childs.useridx from (
+				select /*+ INL_JOIN(d) */ d.useridx, d.site_code
+				from t o join parent_info d
+					on d.parent_useridx = o.member_useridx and d.site_code = o.site_code
+				where o.to_delete = 0 and o.useridx = ? and o.agent_index < ? and o.site_code = ?
+				union
+				select useridx, site_code from parent_info
+				where parent_useridx = ? and site_code = ?
+			) childs
+			join account_basic a on a.useridx = childs.useridx and a.site_code = childs.site_code
+			join (
+				select useridx, game_category_id, site_code,
+					sum(valid_bet_total), sum(betitem_num), sum(profit_total)
+				from bet_summary
+				where settle_day >= ? and settle_day <= ? and profit_total != 0 and site_code = ?
+				group by useridx, game_category_id, site_code
+			) r on r.useridx = childs.useridx and r.site_code = childs.site_code
+			where childs.site_code = ?
+		) result'`)
+	tk.MustExec(`set @useridx=500, @agent_index=998,
+		@site_code=_utf8mb4'871960' collate utf8mb4_bin,
+		@settle_from=20260806, @settle_to=20261103`)
+
+	rows := tk.MustQuery(`execute stmt using @useridx, @agent_index, @site_code,
+		@useridx, @site_code, @settle_from, @settle_to, @site_code, @site_code`).Rows()
+	var foundOuterIndexScan bool
+	for _, row := range rows {
+		planRow := fmt.Sprint(row)
+		if !strings.Contains(planRow, "IndexRangeScan") || !strings.Contains(planRow, "table:o") {
+			continue
+		}
+		foundOuterIndexScan = true
+		require.Contains(t, planRow, "idx_long")
+		require.NotContains(t, planRow, "idx_short")
+		estRows, err := strconv.ParseFloat(row[1].(string), 64)
+		require.NoError(t, err)
+		require.Less(t, estRows, 10.0)
+	}
+	require.True(t, foundOuterIndexScan)
+}
+
 func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	collate.SetNewCollationEnabledForTest(false)
