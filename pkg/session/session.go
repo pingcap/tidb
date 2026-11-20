@@ -3505,6 +3505,9 @@ func initBootstrapDependentTables(store kv.Storage, ver int64) error {
 	if ver <= notBootstrapped || ver >= version234 || currentBootstrapVersion < version234 {
 		return nil
 	}
+	failpoint.Inject("mockInitBootstrapDependentTablesError", func() {
+		failpoint.Return(errors.New("mock init bootstrap dependent tables error"))
+	})
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
@@ -3702,6 +3705,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
 		if err = runInBootstrapSession(store, ver); err != nil {
+			// Reading the version above cached the store as bootstrapped.
+			// Forget that, or a retry in this process would skip the upgrade
+			// that did not happen.
+			unsetStoreBootstrapped(store.UUID())
 			return nil, err
 		}
 		// Another node may have completed fresh bootstrap while this node waited.

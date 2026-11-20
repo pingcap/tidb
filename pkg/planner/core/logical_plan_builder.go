@@ -503,7 +503,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 
 		// A derived table, view or CTE used by UPDATE is a SELECT source too.
 		// Plain target-table reads keep their ordinary UPDATE semantics.
-		if _, baseTable := p.(*logicalop.DataSource); b.inUpdateStmt && (!isTableName || !baseTable) {
+		// A table that is dirty in the transaction, or a cached table, is read
+		// through a LogicalUnionScan over its DataSource: still a base table.
+		source := p
+		if us, ok := source.(*logicalop.LogicalUnionScan); ok && len(us.Children()) == 1 {
+			source = us.Children()[0]
+		}
+		if _, baseTable := source.(*logicalop.DataSource); b.inUpdateStmt && (!isTableName || !baseTable) {
 			if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, ast.MaskingPolicyRestrictOpUpdateSelect); err != nil {
 				return nil, err
 			}
@@ -8056,8 +8062,12 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
+	// Building the CTE body marks b.isCTE. A body without a FROM clause never
+	// resets it, so the enclosing query would skip AT RESULT masking.
+	saveIsCTE := b.isCTE
 	defer func() {
 		b.buildingCTE = saveBuildingCTE
+		b.isCTE = saveIsCTE
 	}()
 
 	if isRecursive {

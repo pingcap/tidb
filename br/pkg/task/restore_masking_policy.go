@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -36,7 +37,63 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
+
+// fenceTakeover is a fence whose recorded owner is no longer registered.
+type fenceTakeover struct {
+	tableID int64
+	owner   uint64
+	table   string
+}
+
+// takeOverFences makes restoreID the owner of the given fences in one
+// transaction. Each record must still name the owner that was found
+// unregistered; otherwise nothing is changed.
+func takeOverFences(ctx context.Context, se glue.Session, takeovers []fenceTakeover, restoreID uint64) (err error) {
+	if len(takeovers) == 0 {
+		return nil
+	}
+	if err := se.Execute(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err != nil {
+			if rollbackErr := se.Execute(ctx, "ROLLBACK"); rollbackErr != nil {
+				log.Warn("cannot roll back the takeover of masking policy fences", zap.Error(rollbackErr))
+			}
+		}
+	}()
+	exec := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	for _, t := range takeovers {
+		rows, _, err := exec.ExecRestrictedSQL(internalCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"SELECT restore_id FROM %n.%n WHERE table_id = %? FOR UPDATE",
+			snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName, t.tableID)
+		if err != nil {
+			return errors.Annotate(err, "cannot take over a fence left by an unregistered restore task")
+		}
+		if len(rows) != 1 || rows[0].GetUint64(0) != t.owner {
+			return errors.Errorf("the masking policy fence of table %s changed owner while being taken over from restore task %d", t.table, t.owner)
+		}
+	}
+	fenceRecord := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
+	for _, t := range takeovers {
+		if err := se.Execute(ctx, fmt.Sprintf("UPDATE %s SET restore_id = %d WHERE table_id = %d AND restore_id = %d",
+			fenceRecord, restoreID, t.tableID, t.owner)); err != nil {
+			return errors.Annotate(err, "cannot take over a fence left by an unregistered restore task")
+		}
+	}
+	if err := se.Execute(ctx, "COMMIT"); err != nil {
+		return errors.Annotate(err, "cannot take over a fence left by an unregistered restore task")
+	}
+	for _, t := range takeovers {
+		log.Info("took over the masking policy fence of an unregistered restore task",
+			zap.String("table", t.table), zap.Uint64("previous restore task", t.owner), zap.Uint64("restore task", restoreID))
+	}
+	return nil
+}
 
 // restoredMaskingPolicy is a target-time policy bound to the restored table.
 type restoredMaskingPolicy struct {
@@ -207,9 +264,14 @@ func addMaskingPolicyRewriteRules(schemas *stream.SchemasReplace, rules map[int6
 // the tables that the restore task restoreID has fenced, in this attempt or in
 // a failed one before it. A restore without a task ID (restoreID 0) cannot be
 // told from another one, so it is refused before it has to fence a table.
+//
+// A task that failed without a persisted checkpoint is unregistered, and its
+// rerun gets a new ID. isRegistered lets this task take over the fences of
+// such a task, which can never come back to lower them itself. Without it,
+// every fence of another task is left alone.
 func restoreMaskingPoliciesAfterLogReplay(
 	ctx context.Context, dom *domain.Domain, se glue.Session, schemas *stream.SchemasReplace,
-	reopensTables bool, restoreID uint64,
+	reopensTables bool, restoreID uint64, isRegistered func(context.Context, uint64) (bool, error),
 ) error {
 	if err := dom.Reload(); err != nil {
 		return errors.Trace(err)
@@ -406,16 +468,38 @@ func restoreMaskingPoliciesAfterLogReplay(
 			return err
 		}
 		var foreign []string
+		var takeovers []fenceTakeover
 		for tableID, owner := range owners {
 			tbl, selected := targetTables[tableID]
-			if selected && tbl.Mode == model.TableModeRestore && (restoreID == 0 || owner != restoreID) {
-				foreign = append(foreign, fmt.Sprintf("%s (restore task %d)", tbl.Name.O, owner))
+			if !selected || tbl.Mode != model.TableModeRestore || (restoreID != 0 && owner == restoreID) {
+				continue
 			}
+			// The record says the table is fenced only because a policy swap
+			// was interrupted. When its owner is gone for good, this task
+			// rebuilds the policies of the table anyway and may take the
+			// fence over.
+			if restoreID != 0 && isRegistered != nil {
+				registered, err := isRegistered(ctx, owner)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !registered {
+					takeovers = append(takeovers, fenceTakeover{tableID: tableID, owner: owner, table: tbl.Name.O})
+					continue
+				}
+			}
+			foreign = append(foreign, fmt.Sprintf("%s (restore task %d)", tbl.Name.O, owner))
 		}
 		if len(foreign) > 0 {
 			sort.Strings(foreign)
 			return errors.Errorf("cannot rebuild masking policies: these tables are in Restore mode because "+
 				"another restore task was replacing their policies and did not finish: %s", strings.Join(foreign, ", "))
+		}
+		// Only now that every fence is known to be attributable: record the
+		// takeovers first, so a failure of this task leaves fences that its
+		// own retry can lower. All of them change owner, or none does.
+		if err := takeOverFences(ctx, se, takeovers, restoreID); err != nil {
+			return err
 		}
 		if restoreID == 0 {
 			for i, d := range desired {
@@ -472,7 +556,6 @@ func restoreMaskingPoliciesAfterLogReplay(
 		return err
 	}
 	is = dom.InfoSchema()
-	remaining := len(owners)
 	for tableID, owner := range owners {
 		// A table that exists but cannot be loaded says nothing about its
 		// mode: keep its record.
@@ -493,14 +576,12 @@ func restoreMaskingPoliciesAfterLogReplay(
 				}
 			}
 		}
-		// The table is readable again or dropped: the record has no use.
+		// The table is readable again or dropped: the record has no use. The
+		// record table itself is kept: another restore task may be writing its
+		// own fences to it, and dropping it could lose them.
 		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d", fenceRecord, tableID)); err != nil {
 			return errors.Trace(err)
 		}
-		remaining--
-	}
-	if remaining == 0 {
-		return errors.Trace(se.Execute(ctx, "DROP TABLE IF EXISTS "+fenceRecord))
 	}
 	return nil
 }

@@ -2637,6 +2637,16 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
 		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
 	})
+	// A job can match more than one restored object, for example a table by
+	// its ID and another table by the name the first one used to have. Emit it
+	// once: replaying a DDL twice fails or repeats its effect.
+	emitted := make(map[*model.Job]struct{})
+	emit := func(job *model.Job) {
+		if _, ok := emitted[job]; !ok {
+			emitted[job] = struct{}{}
+			ddlJobs = append(ddlJobs, job)
+		}
+	}
 	dbs := getDatabases(tables)
 	for _, db := range dbs {
 		// These maps is for solving some corner case.
@@ -2651,7 +2661,7 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		for _, job := range allDDLJobs {
 			if job.BinlogInfo.DBInfo != nil {
 				if dbIDs[job.SchemaID] || dbNames[job.BinlogInfo.DBInfo.Name.String()] {
-					ddlJobs = append(ddlJobs, job)
+					emit(job)
 					// The the jobs executed with the old id, like the step 2 in the example above.
 					dbIDs[job.SchemaID] = true
 					// For the jobs executed after rename, like the step 3 in the example above.
@@ -2678,7 +2688,7 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 			}
 			name = restore.UniqueTableName{DB: job.SchemaName, Table: jobTableName}
 			if (job.TableID != 0 && tableIDs[job.TableID]) || (jobTableName != "" && tableNames[name]) {
-				ddlJobs = append(ddlJobs, job)
+				emit(job)
 				if job.TableID != 0 {
 					tableIDs[job.TableID] = true
 				}

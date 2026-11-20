@@ -62,24 +62,37 @@ func (b *PlanBuilder) maskingEnabled(ctx context.Context, plans ...base.LogicalP
 	if b.is == nil || b.ctx.GetSessionVars().InRestrictedSQL {
 		return false, nil
 	}
-	if !slices.ContainsFunc(plans, planHasMaskingSource) && !slices.ContainsFunc(b.maskingOuterPlans, planHasMaskingSource) {
+	// References to one CTE share its seed plan: visit each plan only once.
+	visited := make(map[int]struct{})
+	hasSource := func(p base.LogicalPlan) bool { return planHasMaskingSource(p, visited) }
+	if !slices.ContainsFunc(plans, hasSource) && !slices.ContainsFunc(b.maskingOuterPlans, hasSource) {
 		return false, nil
 	}
 	return b.is.HasMaskingPolicies(ctx)
 }
 
 // Local temporary tables cannot have policies and must remain usable without TiKV.
-func planHasMaskingSource(p base.LogicalPlan) bool {
+// A plan in visited has already been searched without finding a source.
+func planHasMaskingSource(p base.LogicalPlan, visited map[int]struct{}) bool {
 	if p == nil {
 		return false
 	}
+	if _, ok := visited[p.ID()]; ok {
+		return false
+	}
+	visited[p.ID()] = struct{}{}
 	if ds, ok := p.(*logicalop.DataSource); ok {
 		return ds.TableInfo != nil && ds.TableInfo.TempTableType == model.TempTableNone
 	}
 	if cte, ok := p.(*logicalop.LogicalCTE); ok {
-		return planHasMaskingSource(cte.Cte.SeedPartLogicalPlan) || planHasMaskingSource(cte.Cte.RecursivePartLogicalPlan)
+		return planHasMaskingSource(cte.Cte.SeedPartLogicalPlan, visited) || planHasMaskingSource(cte.Cte.RecursivePartLogicalPlan, visited)
 	}
-	return slices.ContainsFunc(p.Children(), planHasMaskingSource)
+	for _, child := range p.Children() {
+		if planHasMaskingSource(child, visited) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildFinalProjectionWithMasking keeps all relational expressions on raw
@@ -534,7 +547,12 @@ func (m *maskingResultBuilder) predicateUnion(p *logicalop.LogicalUnionAll, idx 
 func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	idx := p.Schema().ColumnIndex(col)
 	if idx < 0 {
-		return nil, nil, nil, nil
+		// USING/NATURAL joins retain table-qualified common columns only in
+		// FullSchema. Their source is still available in the join's children.
+		if full, _ := findJoinFullSchema(p); full == nil || !full.Contains(col) {
+			return nil, nil, nil, nil
+		}
+		return m.predicatePolicySourceFromChildren(p, []*expression.Column{col})
 	}
 	var inputs []*expression.Column
 	switch x := p.(type) {
@@ -586,10 +604,19 @@ func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *ex
 	default:
 		inputs = []*expression.Column{col}
 	}
+	return m.predicatePolicySourceFromChildren(p, inputs)
+}
+
+// predicatePolicySourceFromChildren continues the search for each input in
+// the children of p that provide it, in their schema or in the full schema of
+// a USING/NATURAL join.
+func (m *maskingResultBuilder) predicatePolicySourceFromChildren(p base.LogicalPlan, inputs []*expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
 	for _, input := range inputs {
 		for _, child := range p.Children() {
 			if !child.Schema().Contains(input) {
-				continue
+				if full, _ := findJoinFullSchema(child); full == nil || !full.Contains(input) {
+					continue
+				}
 			}
 			policy, tblInfo, colInfo, err := m.predicatePolicySource(child, input)
 			if err != nil || policy != nil {

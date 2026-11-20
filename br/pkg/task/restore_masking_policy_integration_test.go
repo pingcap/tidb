@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -107,12 +108,12 @@ func TestRestoreMaskingPoliciesFailureKeepsTablesProtected(t *testing.T) {
 				interrupted.failAt = 0
 				interrupted.cancel = cancel
 			}
-			require.Error(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, interrupted, schemas, false, 0))
+			require.Error(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, interrupted, schemas, false, 0, nil))
 			tk.MustGetErrCode("select c from replay_target", errno.ErrProtectedTableMode)
 			tk.MustGetErrCode("execute cached_read", errno.ErrProtectedTableMode)
 			tk.MustQuery("select c from unrelated").Check(testkit.Rows("public"))
 			require.False(t, tk.Session().GetSessionVars().InMaskingPolicyRestore)
-			require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(context.Background(), dom, se, schemas, false, 0))
+			require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(context.Background(), dom, se, schemas, false, 0, nil))
 			tk.MustGetErrCode("select c from replay_target", errno.ErrProtectedTableMode)
 			require.NoError(t, se.AlterTableMode(context.Background(), target.Meta().DBID, target.Meta().ID, model.TableModeNormal))
 			tk.MustQuery("select c from replay_target").Check(testkit.Rows("XXXXXX"))
@@ -164,7 +165,7 @@ func TestRestoreMaskingPoliciesAfterLogReplay(t *testing.T) {
 	// The target-time stage enables a baseline-disabled policy and rebinds it
 	// by source IDs even when the target database and table names differ.
 	for range 2 { // Rebuilding after a checkpoint retry must be idempotent.
-		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 		tk.MustQuery("select c from routed").Check(testkit.Rows("target"))
 		tk.MustQuery("select c from unrelated").Check(testkit.Rows("untouched"))
 		tk.MustQuery("select table_id,column_id,restrict_on from mysql.tidb_masking_policy where table_name='routed'").Check(testkit.Rows(fmt.Sprintf("%d 1 INSERT_INTO_SELECT", target.Meta().ID)))
@@ -172,15 +173,15 @@ func TestRestoreMaskingPoliciesAfterLogReplay(t *testing.T) {
 	}
 	// Disables and drops must replace the previous policy set as well.
 	tk.MustExec("update " + stageName + " set status='DISABLED'")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 	tk.MustQuery("select c from routed").Check(testkit.Rows("secret"))
 	tk.MustExec("delete from " + stageName)
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 	tk.MustQuery("show masking policies for routed").Check(testkit.Rows())
 	tk.MustQuery("select c from unrelated").Check(testkit.Rows("untouched"))
 	// New policies created entirely after the baseline are also rebuilt.
 	tk.MustExec("insert into " + stageName + " (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (322,'new_policy','upstream','original',42,'c',1,'MASK_FULL(`upstream`.`original`.`c`)','ENABLED','MASK_FULL',now(),now(),'root')")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 	tk.MustQuery("select c from routed").Check(testkit.Rows("XXXXXX"))
 
 	tk.MustExec("drop table " + stageName)
@@ -322,7 +323,7 @@ func TestRestoreMaskingPoliciesInRestoreMode(t *testing.T) {
 	se, err := g.CreateSession(store)
 	require.NoError(t, err)
 	for range 2 {
-		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 		require.False(t, tk.Session().GetSessionVars().InMaskingPolicyRestore)
 		tk.MustGetErrCode("select c from protected", errno.ErrProtectedTableMode)
 		tk.MustGetErrCode("create masking policy other on protected(c) as c", errno.ErrProtectedTableMode)
@@ -358,6 +359,13 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	}
 	tk.MustExec("insert into "+qualified+" (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (100,'p','upstream','bystander',43,'a',1,?,'ENABLED','CUSTOM',now(),now(),'root')", "'kept'")
 	const fenceRecord = "select table_id, restore_id from mysql.tidb_pitr_masking_policy_fence"
+	// The record table is kept once created; only its rows come and go.
+	fenceRecords := func() int {
+		if len(tk.MustQuery("show tables in mysql like 'tidb_pitr_masking_policy_fence'").Rows()) == 0 {
+			return 0
+		}
+		return len(tk.MustQuery(fenceRecord).Rows())
+	}
 	ctx := context.Background()
 	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("protected"))
 	require.NoError(t, err)
@@ -386,7 +394,7 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	stagePolicy(1, "p_a", "a", 1, "'target_a'")
 	stagePolicy(2, "p_b", "b", 2, "'target_b'")
 	stagePolicy(3, "a_broken", "c", 3, "no_such_function(c)")
-	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7), "cannot rebuild masking policy after PiTR log replay")
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil), "cannot rebuild masking policy after PiTR log replay")
 	rows := tk.MustQuery("select a, b from protected").Rows()
 	require.Contains(t, []string{"baseline_a", "target_a"}, rows[0][0])
 	require.Contains(t, []string{"baseline_b", "target_b"}, rows[0][1])
@@ -397,7 +405,7 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	tk.MustExec("delete from " + qualified + " where table_id = 42")
 	stagePolicy(1, "p_a", "a", 1, "'target_a'")
 	stagePolicy(4, "p_b_renamed", "b", 2, "no_such_function(b)")
-	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7), "cannot rebuild masking policy after PiTR log replay")
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil), "cannot rebuild masking policy after PiTR log replay")
 	tk.MustQuery("select policy_name from mysql.tidb_masking_policy where table_name='protected'").Check(testkit.Rows("p_a"))
 	tk.MustGetErrCode("select a, b from protected", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("insert into protected values ('x', 'y', 'z')", errno.ErrProtectedTableMode)
@@ -412,7 +420,7 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	stagePolicy(1, "p_a", "a", 1, "'target_a'")
 	stagePolicy(4, "p_b_renamed", "b", 2, "'target_b'")
 	for _, otherTask := range []uint64{8, 0} {
-		require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, otherTask),
+		require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, otherTask, nil),
 			"another restore task was replacing their policies and did not finish: protected (restore task 7)")
 		tk.MustQuery("select policy_name from mysql.tidb_masking_policy where table_name='protected'").Check(testkit.Rows("p_a"))
 	}
@@ -427,45 +435,92 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	stagePolicy(1, "p_a", "a", 1, "'target_a'")
 	stagePolicy(4, "p_b_renamed", "b", 2, "'target_b'")
 	stagePolicy(5, "p_c", "c", 3, "'target_c'")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 	tk.MustGetErrCode("select a, b, c from protected", errno.ErrProtectedTableMode)
 	// Otherwise the rebuild reopens the table it fenced in the failed attempt,
 	// and not the table somebody else put in Restore mode.
 	for range 2 {
-		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7))
+		require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil))
 		tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("target_a target_b target_c"))
 		tk.MustQuery("select policy_name from mysql.tidb_masking_policy where table_name='protected' order by policy_name").
 			Check(testkit.Rows("p_a", "p_b_renamed", "p_c"))
 		tk.MustGetErrCode("select a from bystander", errno.ErrProtectedTableMode)
-		tk.MustQuery("show tables in mysql like 'tidb_pitr_masking_policy_fence'").Check(testkit.Rows())
+		require.Zero(t, fenceRecords())
 	}
 
 	// Without a task ID the fence could not be attributed afterwards, so a swap
 	// that needs one is refused while the old policies are still in place.
 	tk.MustExec("delete from " + qualified + " where table_id = 42")
 	stagePolicy(6, "p_a", "c", 3, "'moved'")
-	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 0), "needs a restore task ID")
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 0, nil), "needs a restore task ID")
 	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("target_a target_b target_c"))
-	tk.MustQuery("show tables in mysql like 'tidb_pitr_masking_policy_fence'").Check(testkit.Rows())
+	require.Zero(t, fenceRecords())
 
 	// A policy name that moves to another column, and a column that loses its
 	// policy at the target time. The fence of a successful swap is lowered by
 	// the rebuild that owns it.
 	tk.MustExec("delete from " + qualified + " where table_id = 42")
 	stagePolicy(6, "p_a", "c", 3, "'moved'")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil))
 	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("secret_a secret_b moved"))
 	tk.MustQuery("select policy_name, column_name from mysql.tidb_masking_policy where table_name='protected'").Check(testkit.Rows("p_a c"))
-	tk.MustQuery("show tables in mysql like 'tidb_pitr_masking_policy_fence'").Check(testkit.Rows())
+	require.Zero(t, fenceRecords())
+	tk.MustGetErrCode("select a from bystander", errno.ErrProtectedTableMode)
+
+	// A task that failed without a checkpoint is unregistered and its rerun
+	// gets a new ID. The rerun takes over the fence only when the registry
+	// confirms that the owner is gone; a task that is still registered keeps it.
+	tk.MustExec("delete from " + qualified + " where table_id = 42")
+	stagePolicy(8, "p_c_swapped", "c", 3, "no_such_function(c)")
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil), "cannot rebuild masking policy after PiTR log replay")
+	tk.MustQuery(fenceRecord).Check(testkit.Rows(fmt.Sprintf("%d 7", tbl.Meta().ID)))
+	tk.MustExec("delete from " + qualified + " where table_id = 42")
+	stagePolicy(8, "p_c_swapped", "c", 3, "'swapped'")
+	// The real registry decides: task 7 is still there, paused.
+	restoreRegistry, err := registry.NewRestoreRegistry(ctx, g, dom)
+	require.NoError(t, err)
+	defer restoreRegistry.Close()
+	tk.MustExec("insert into mysql.tidb_restore_registry (id, filter_strings, filter_hash, start_ts, restored_ts, status) values (7, '', 'h', 1, 2, 'paused')")
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 9, restoreRegistry.IsRegistered),
+		"another restore task was replacing their policies and did not finish: protected (restore task 7)")
+	tk.MustGetErrCode("select c from protected", errno.ErrProtectedTableMode)
+	lookupFailed := func(context.Context, uint64) (bool, error) { return false, errors.New("registry unavailable") }
+	require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 9, lookupFailed), "registry unavailable")
+	tk.MustQuery(fenceRecord).Check(testkit.Rows(fmt.Sprintf("%d 7", tbl.Meta().ID)))
+	// Once task 7 is unregistered, task 9 may take its fence over. But all
+	// fences change owner or none does: another selected table is fenced by
+	// task 6, which is still registered, so the record of task 7 stays as it
+	// is when the call is refused.
+	tk.MustExec("delete from mysql.tidb_restore_registry where id = 7")
+	tk.MustExec("insert into mysql.tidb_restore_registry (id, filter_strings, filter_hash, start_ts, restored_ts, status) values (6, '', 'h6', 1, 2, 'paused')")
+	tk.MustExec("create table protected2(a varchar(20))")
+	protected2, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("protected2"))
+	require.NoError(t, err)
+	setMode(protected2.Meta().ID, model.TableModeRestore)
+	tk.MustExec("insert into mysql.tidb_pitr_masking_policy_fence values (?, 6)", protected2.Meta().ID)
+	userDB.TableMap[45] = stream.NewTableReplace("protected2", protected2.Meta().ID)
+	for range 3 { // The order in which the records are examined varies.
+		require.ErrorContains(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 9, restoreRegistry.IsRegistered),
+			"another restore task was replacing their policies and did not finish: protected2 (restore task 6)")
+		tk.MustQuery(fenceRecord + " order by restore_id").Check(testkit.Rows(
+			fmt.Sprintf("%d 6", protected2.Meta().ID), fmt.Sprintf("%d 7", tbl.Meta().ID)))
+	}
+	delete(userDB.TableMap, 45)
+	tk.MustExec("delete from mysql.tidb_pitr_masking_policy_fence where restore_id = 6")
+	tk.MustExec("delete from mysql.tidb_restore_registry where id = 6")
+	setMode(protected2.Meta().ID, model.TableModeNormal)
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 9, restoreRegistry.IsRegistered))
+	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("secret_a secret_b swapped"))
+	require.Zero(t, fenceRecords())
 	tk.MustGetErrCode("select a from bystander", errno.ErrProtectedTableMode)
 
 	// In a filtered restore a table fenced by a successful swap stays fenced
 	// until the caller reopens the selected tables, and nothing is recorded.
 	tk.MustExec("delete from " + qualified + " where table_id = 42")
 	stagePolicy(7, "p_c_renamed", "c", 3, "'filtered'")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
 	tk.MustGetErrCode("select a, b, c from protected", errno.ErrProtectedTableMode)
-	tk.MustQuery("show tables in mysql like 'tidb_pitr_masking_policy_fence'").Check(testkit.Rows())
+	require.Zero(t, fenceRecords())
 	setMode(tbl.Meta().ID, model.TableModeNormal)
 	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("secret_a secret_b filtered"))
 	setMode(bystander.Meta().ID, model.TableModeNormal)

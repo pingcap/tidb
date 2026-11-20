@@ -1461,3 +1461,32 @@ func TestMaskingPolicyUpgrade(t *testing.T) {
 		})
 	}
 }
+
+func TestBootstrapRetriesUpgradeAfterInitFailure(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	tk := testkit.NewTestKit(t, store)
+	revertVersionAndVariables(t, tk.Session(), 233)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(233))
+	require.NoError(t, txn.Commit(context.Background()))
+	session.UnsetStoreBootstrapped(store.UUID())
+	tk.Session().Close()
+	dom.Close()
+
+	// The first attempt fails before the upgrade runs. The store must not stay
+	// cached as bootstrapped, or the retry would skip the upgrade.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockInitBootstrapDependentTablesError", "return(true)"))
+	_, err = session.BootstrapSession(store)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockInitBootstrapDependentTablesError"))
+	require.ErrorContains(t, err, "mock init bootstrap dependent tables error")
+
+	upgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer upgraded.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	ver, err := session.GetBootstrapVersion(se)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+}

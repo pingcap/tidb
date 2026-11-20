@@ -1798,8 +1798,12 @@ func restoreStream(
 	}
 
 	if cfg.WithSysTable {
+		var isRegistered func(context.Context, uint64) (bool, error)
+		if cfg.RestoreRegistry != nil {
+			isRegistered = cfg.RestoreRegistry.IsRegistered
+		}
 		if err := restoreMaskingPoliciesAfterLogReplay(ctx, client.GetDomain(), client.UnsafeSession(), schemasReplace,
-			!cfg.isPartialRestore(), cfg.RestoreID); err != nil {
+			!cfg.isPartialRestore(), cfg.RestoreID, isRegistered); err != nil {
 			return errors.Trace(err)
 		}
 	}

@@ -30,7 +30,7 @@ id	masked
 SELECT MASK_PARTIAL('中文测试数据', 2, 2, '*') AS masked;
 masked
 中文**数据
-## Verify signature: col (string/date/datetime/numeric)
+## Verify signature: col (string, temporal, floating-point or DECIMAL; ordinary INT/BIGINT are rejected)
 SELECT id, MASK_FULL(str_col) AS masked
 FROM issue5_test_masking
 WHERE id = 1;
@@ -51,9 +51,16 @@ FROM issue5_test_masking
 WHERE id = 2;
 id	masked
 2	1970-01-01 00:00:00
+SELECT id, MASK_FULL(num_col) AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	0
+SELECT MASK_FULL(id) FROM issue5_test_masking;
+Error 1210 (HY000): Incorrect arguments to mask_full
 SELECT MASK_FULL('secret', '*');
 Error 1582 (42000): Incorrect parameter count in the call to native function 'mask_full'
-## Verify signature: col (date/datetime), date_literal (YYYY-MM-DD format)
+## Verify signature: col (date/datetime), date_or_template (a date string such as '1970-01-01', leading zeroes optional; Y, M or D keeps that component of the input)
 SELECT id, MASK_DATE(date_col, '2000-01-01') AS masked
 FROM issue5_test_masking
 WHERE id = 1;
@@ -69,6 +76,21 @@ FROM issue5_test_masking
 WHERE id = 1;
 id	masked
 1	1970-01-01
+SELECT id, MASK_DATE(date_col, 'Y-01-01') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	1990-01-01
+SELECT id, MASK_DATE(datetime_col, 'Y-M-1') AS masked
+FROM issue5_test_masking
+WHERE id = 2;
+id	masked
+2	1985-03-01 00:00:00
+SELECT id, MASK_DATE(date_col, '2000-1-1') AS masked
+FROM issue5_test_masking
+WHERE id = 1;
+id	masked
+1	2000-01-01
 ## Verify signature: col (any type)
 SELECT id, MASK_NULL(str_col) IS NULL AS is_null
 FROM issue5_test_masking

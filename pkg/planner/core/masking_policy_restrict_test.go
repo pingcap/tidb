@@ -421,6 +421,10 @@ func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
 	} {
 		for _, planCache := range []string{"1", "0"} {
 			t.Run(tc.sql+"/plan_cache="+planCache, func(t *testing.T) {
+				// Bound to the subtest, so a failure does not stop the other subtests.
+				root := testkit.NewTestKit(t, store)
+				require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+				root.MustExec("use test")
 				root.MustExec("alter table src_tighten modify masking policy p_tighten set restrict on none")
 				user := testkit.NewTestKit(t, store)
 				require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "u_tighten", Hostname: "%"}, nil, nil, nil))
@@ -440,4 +444,40 @@ func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestMaskingPolicyUpdateRestrictOnDirtyAndCachedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create user union_scan_user")
+	root.MustExec("grant select,insert,update on test.* to union_scan_user")
+	for _, table := range []string{"t_dirty_update", "t_cached_update"} {
+		root.MustExec("create table " + table + "(id int primary key, c varchar(20), n varchar(20))")
+		root.MustExec("insert into " + table + " values (1,'secret','x')")
+		root.MustExec("create masking policy p on " + table + "(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (update_select)")
+	}
+	root.MustExec("alter table t_cached_update cache")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "union_scan_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	const update = "update %s set n = 'y' where c = 'secret'"
+	// A plain target-table read keeps ordinary UPDATE semantics. That must not
+	// depend on the table being read through a union scan, as a table that is
+	// dirty in the transaction or cached is.
+	user.MustExec(fmt.Sprintf(update, "t_dirty_update"))
+	user.MustExec("begin")
+	user.MustExec("insert into t_dirty_update values (2,'other','x')")
+	user.MustExec(fmt.Sprintf(update, "t_dirty_update"))
+	user.MustExec("rollback")
+	for range 3 {
+		user.MustQuery("select id from t_cached_update").Check(testkit.Rows("1"))
+	}
+	user.MustExec(fmt.Sprintf(update, "t_cached_update"))
+	// A derived table over the same dirty table is still a SELECT source.
+	user.MustExec("begin")
+	user.MustExec("insert into t_dirty_update values (3,'other','x')")
+	user.MustGetErrCode("update t_cached_update d join (select id, c from t_dirty_update) s on d.id = s.id set d.n = s.c", errno.ErrAccessDeniedToMaskedColumn)
+	user.MustExec("rollback")
 }

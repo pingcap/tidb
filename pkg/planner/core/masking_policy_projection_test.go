@@ -916,3 +916,50 @@ func TestMaskingPolicyViewWithShadowingTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table t_shadow(c varchar(20), id int primary key)")
 	check()
 }
+
+func TestMaskingPolicyAfterCTEWithoutFrom(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cte_flag(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_cte_flag values (1,'secret')")
+	tk.MustExec("create masking policy p on t_cte_flag(c) as mask_full(c)")
+	// A WITH clause whose body has no FROM clause must not leave the builder in
+	// "building a CTE" state: the enclosing query still masks its result.
+	for _, sql := range []string{
+		"select c, (with x as (select 1) select 1) from t_cte_flag",
+		"select c, (with x as (select 1) select * from x) from t_cte_flag",
+		"select c, (with x as (select 1), y as (select 2) select 1) from t_cte_flag",
+		"select c, (with recursive x as (select 1 union all select 1 from x where false) select 1) from t_cte_flag",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("XXXXXX 1"))
+	}
+	tk.MustQuery("select c from t_cte_flag where id in (with x as (select 1) select 1)").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select c from t_cte_flag where exists (with x as (select 1) select 1)").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("with x as (select 1) select c from t_cte_flag").Check(testkit.Rows("XXXXXX"))
+}
+
+func TestMaskingPolicyPredicateUsingJoinRedundantColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_using_a(id int primary key, c varchar(20))")
+	tk.MustExec("create table t_using_b(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_using_a values (1,'secret')")
+	tk.MustExec("insert into t_using_b values (1,'secret')")
+	tk.MustExec("create table t_using_probe(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_using_probe values (1,'secret'),(2,'XXXXXX')")
+	tk.MustExec("create masking policy p on t_using_b(c) as mask_full(c)")
+	// The UNION branch projects the side of the common column that the join
+	// keeps only in its full schema. The predicate still compares the masked
+	// value, as it does without the UNION.
+	for _, sql := range []string{
+		"select id from t_using_probe where c in (select b.c from t_using_a a join t_using_b b using (c)) order by id",
+		"select id from t_using_probe where c in (select b.c from t_using_a a join t_using_b b using (c) union all select 'public') order by id",
+		"select id from t_using_probe where c in (select b.c from t_using_a a natural join t_using_b b union all select 'public') order by id",
+		"select id from t_using_probe where c in (select 'public' union all select b.c from t_using_a a join t_using_b b using (id, c) where a.id > 0) order by id",
+		"select id from t_using_probe where c in (select b.c from t_using_a a join t_using_b b using (id) union all select 'public') order by id",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("2"))
+	}
+}

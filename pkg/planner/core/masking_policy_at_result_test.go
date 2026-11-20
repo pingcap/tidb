@@ -25,11 +25,12 @@ import (
 // HAVING, ORDER BY, and set operators use original values, not masked values.
 func TestMaskingPolicyAtResult(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 
 	// Test HAVING uses original values
 	t.Run("HAVING uses original values", func(t *testing.T) {
+		// Bound to the subtest, so a failure does not stop the other subtests.
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_having")
 		tk.MustExec("create table t_having(id int, val varchar(100))")
 		tk.MustExec("insert into t_having values (1, 'apple'), (2, 'banana'), (3, 'cherry')")
@@ -46,6 +47,9 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 
 	// Test ORDER BY uses original values
 	t.Run("ORDER BY uses original values", func(t *testing.T) {
+		// Bound to the subtest, so a failure does not stop the other subtests.
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_orderby")
 		tk.MustExec("create table t_orderby(id int, val varchar(100))")
 		tk.MustExec("insert into t_orderby values (1, 'az'), (2, 'ba')")
@@ -63,6 +67,9 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 
 	// Test UNION DISTINCT uses original values for deduplication
 	t.Run("UNION DISTINCT uses original values", func(t *testing.T) {
+		// Bound to the subtest, so a failure does not stop the other subtests.
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_union")
 		tk.MustExec("create table t_union(id int, val varchar(100))")
 		tk.MustExec("insert into t_union values (1, 'value1'), (2, 'value2')")
@@ -77,6 +84,9 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 
 	// Test aggregate with HAVING
 	t.Run("Aggregate with HAVING uses original values", func(t *testing.T) {
+		// Bound to the subtest, so a failure does not stop the other subtests.
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_agg")
 		tk.MustExec("create table t_agg(category varchar(50), amount int)")
 		tk.MustExec("insert into t_agg values ('A', 100), ('B', 200), ('C', 300)")
@@ -95,6 +105,9 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 
 	// Test derived table: outer WHERE uses original values, output is masked
 	t.Run("derived table outer filter uses original values", func(t *testing.T) {
+		// Bound to the subtest, so a failure does not stop the other subtests.
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_derived")
 		tk.MustExec("create table t_derived(id int, val varchar(100))")
 		tk.MustExec("insert into t_derived values (1, 'apple'), (2, 'banana'), (3, 'cherry')")

@@ -701,6 +701,19 @@ func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 		[]TaskStatus{TaskStatusRunning, TaskStatusResetting}, TaskStatusPaused)
 }
 
+// IsRegistered tells whether the restore task is still in the registry, in any
+// status. A task that failed without a persisted checkpoint is unregistered and
+// can never be resumed under the same ID.
+func (r *Registry) IsRegistered(ctx context.Context, restoreID uint64) (bool, error) {
+	rows, _, err := r.se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil,
+		"SELECT 1 FROM %n.%n WHERE id = %? LIMIT 1", RestoreRegistryDBName, RestoreRegistryTableName, restoreID)
+	if err != nil {
+		return false, errors.Annotatef(err, "failed to look up restore task %d", restoreID)
+	}
+	return len(rows) > 0, nil
+}
+
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
 func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([]RegistrationInfoWithID, error) {
 	selectTemplate := selectRegistrationsByMaxIDSQLTemplate
