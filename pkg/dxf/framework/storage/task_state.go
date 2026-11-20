@@ -85,16 +85,16 @@ func cancelTaskInTxn(ctx context.Context, se sessionctx.Context, taskID int64) e
 	if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 		return nil
 	}
-	// Cancel non-running subtasks in the same transaction so paused/pending subtasks
-	// do not stall reversion; running subtasks are cancelled by their executors.
+	// Cancel paused subtasks in the same transaction so they do not stall reversion;
+	// pending/running subtasks are handled by executors and onReverting.
 	_, err = sqlexec.ExecSQL(ctx, exec,
 		`update mysql.tidb_background_subtask
 		 set state = %?,
 			 state_update_time = unix_timestamp(),
 			 end_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?)`,
+		 where task_key = %? and state = %?`,
 		proto.SubtaskStateCanceled, TaskIDToKey(taskID),
-		proto.SubtaskStatePending, proto.SubtaskStatePaused,
+		proto.SubtaskStatePaused,
 	)
 	return err
 }

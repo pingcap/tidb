@@ -444,7 +444,7 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 		for _, st := range subtasks {
 			statesByID[st.ID] = st.State
 		}
-		require.Equal(t, proto.SubtaskStateCanceled, statesByID[pendingID])
+		require.Equal(t, proto.SubtaskStatePending, statesByID[pendingID])
 		require.Equal(t, proto.SubtaskStateCanceled, statesByID[pausedID])
 		require.Equal(t, proto.SubtaskStateRunning, statesByID[runningID])
 	}
