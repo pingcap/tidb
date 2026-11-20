@@ -551,6 +551,10 @@ func TestTxnContextForStaleRead(t *testing.T) {
 	// txn begin ... as of ...
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("start transaction read only as of timestamp @a")
+	// Reading metadata should use the historical schema and keep the transaction open.
+	tk.MustQuery("select column_name from information_schema.columns " +
+		"where table_schema='test' and table_name='t2' order by ordinal_position").Check(testkit.Rows("id"))
+	require.True(t, se.GetSessionVars().InTxn())
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
