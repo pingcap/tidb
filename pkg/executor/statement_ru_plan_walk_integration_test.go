@@ -1033,7 +1033,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		require.True(t, observation.owner.ConsumedForTest())
 	})
 
-	t.Run("execution returns result set and error", func(t *testing.T) {
+	t.Run("execution error closes result set", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -1056,9 +1056,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 
 		rs, err := tk.Exec("select v from t")
 		require.Error(t, err)
-		require.NotNil(t, rs)
+		require.True(t, rs == nil, "expected a nil RecordSet interface")
 		require.NotNil(t, observation)
-		require.NoError(t, rs.Close())
 		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.RecordStatementRUFinalOutcome(true)
@@ -1095,6 +1094,71 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 
 		observation.stmt.FinishExecuteStmt(0, nil, false)
 		require.True(t, observation.owner.ConsumedForTest())
+	})
+}
+
+func TestExecuteClosesFailedResults(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+	se := tk.Session()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	executions := []struct {
+		name string
+		exec func(string) (sqlexec.RecordSet, error)
+	}{
+		{"ExecuteInternal", func(sql string) (sqlexec.RecordSet, error) {
+			return se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+		}},
+		{"ExecuteStmt", func(sql string) (sqlexec.RecordSet, error) {
+			stmts, err := se.Parse(ctx, sql)
+			if err != nil {
+				return nil, err
+			}
+			return se.GetSQLExecutor().ExecuteStmt(ctx, stmts[0])
+		}},
+	}
+	for _, sql := range []string{
+		"select v from t",
+		"explain analyze update t set v = 2 where id = 1",
+	} {
+		for _, execution := range executions {
+			t.Run(execution.name+"/"+sql, func(t *testing.T) {
+				var closeErrors []error
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeCloseRecordSetForTest", func(stmt *executor.ExecStmt, err *error) {
+					if stmt.Ctx == se {
+						closeErrors = append(closeErrors, *err)
+					}
+				})
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/statementRUResultSetErrorForTest",
+					fmt.Sprintf("return(%d)", se.GetSessionVars().ConnectionID))
+
+				rs, err := execution.exec(sql)
+				require.ErrorContains(t, err, "statement RU result-set test error")
+				require.True(t, rs == nil, "expected a nil RecordSet interface")
+				require.Len(t, closeErrors, 1)
+				require.ErrorIs(t, closeErrors[0], err)
+			})
+			tk.MustQuery("select v from t").Check(testkit.Rows("1"))
+		}
+	}
+
+	t.Run("PointGet failure returns a nil result", func(t *testing.T) {
+		tk.MustExec("prepare point_read from 'select v from t where id = ?'")
+		tk.MustExec("set @id = 1")
+		tk.MustQuery("execute point_read using @id").Check(testkit.Rows("1"))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/statementRUPointGetErrorForTest",
+			fmt.Sprintf("return(%d)", se.GetSessionVars().ConnectionID))
+
+		for _, execution := range executions {
+			t.Run(execution.name, func(t *testing.T) {
+				rs, err := execution.exec("execute point_read using @id")
+				require.ErrorContains(t, err, "statement RU PointGet test error")
+				require.True(t, rs == nil, "expected a nil RecordSet interface")
+			})
+		}
 	})
 }
 

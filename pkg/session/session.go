@@ -1935,12 +1935,10 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
 		return nil, err
 	}
 
-	return rs, err
+	return rs, nil
 }
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
@@ -2836,7 +2834,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -3169,6 +3167,13 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if err != nil {
 			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+			if finisher, ok := rs.(interface{ Finish() error }); ok {
+				terror.Log(finisher.Finish())
+			}
+			// Pass the execution error to finalization before EXPLAIN ANALYZE DML can commit.
+			_ = finishStmt(ctx, se, err, s)
+			terror.Log(executor.CloseRecordSetWithError(rs, err))
+			return nil, err
 		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
@@ -3187,7 +3192,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
-		}, err
+		}, nil
 	}
 
 	err = finishStmt(ctx, se, err, s)

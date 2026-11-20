@@ -67,6 +67,14 @@ func TestDXFAPI(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	t.Run("active jobs across keyspaces", func(t *testing.T) {
+		runAndCheckReqFn(t, http.StatusBadRequest, "keyspaces", func() (*http.Response, error) {
+			return ts.PostStatus("/keyspaces/jobs/active", "application/json", bytes.NewBufferString(`{"keyspaces":[]}`))
+		})
+		runAndCheckReqFn(t, http.StatusMethodNotAllowed, "", func() (*http.Response, error) {
+			return ts.FetchStatus("/keyspaces/jobs/active")
+		})
+	})
 	setupTaskManager := func(t *testing.T) (*storage.TaskManager, context.Context) {
 		t.Helper()
 		tm, err := storage.GetTaskManager()
@@ -610,7 +618,13 @@ func TestDXFAPI(t *testing.T) {
 
 func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 	if kerneltype.IsClassic() {
-		t.Skip("DXF maintenance APIs are only supported in the SYSTEM keyspace of the nextgen kernel")
+		ts := createBasicHTTPHandlerTestSuite()
+		ts.startServer(t)
+		defer ts.stopServer(t)
+		runAndCheckReqFn(t, http.StatusNotFound, "", func() (*http.Response, error) {
+			return ts.PostStatus("/keyspaces/jobs/active", "application/json", bytes.NewBufferString(`{"keyspaces":["ks1"]}`))
+		})
+		return
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	const (
@@ -657,6 +671,7 @@ func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
 	ts.StatusPort = testutil.GetPortFromTCPAddr(ts.server.StatusListenerAddr())
 
 	for _, path := range []string{
+		"/keyspaces/jobs/active",
 		"/dxf/nodes",
 		"/dxf/schedule/task_cleanup_batch_size",
 		"/dxf/schedule/max_concurrent_task",
