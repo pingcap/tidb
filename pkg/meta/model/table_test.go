@@ -313,19 +313,29 @@ func TestTTLDefaultJobInterval(t *testing.T) {
 }
 
 func TestPartitionIDsInDDLToIgnore(t *testing.T) {
+	dropPI := &PartitionInfo{
+		DDLAction:           ActionDropTablePartition,
+		DroppingDefinitions: []PartitionDefinition{{ID: 101}, {ID: 102}},
+	}
+	require.Equal(t, []int64{101, 102}, dropPI.IDsInDDLToIgnore())
+
 	for _, action := range []ActionType{
-		ActionDropTablePartition,
 		ActionReorganizePartition,
 		ActionRemovePartitioning,
 		ActionAlterTablePartitioning,
 	} {
+		// Before visibility switch (e.g. StateWriteReorganization), DroppingDefinitions are still live.
 		pi := &PartitionInfo{
-			DDLAction: action,
-			DroppingDefinitions: []PartitionDefinition{
-				{ID: 101},
-				{ID: 102},
-			},
+			DDLAction:           action,
+			DDLState:            StateWriteReorganization,
+			DroppingDefinitions: []PartitionDefinition{{ID: 101}, {ID: 102}},
 		}
+		require.Nil(t, pi.IDsInDDLToIgnore())
+
+		pi.DDLState = StateDeleteOnly
+		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
+
+		pi.DDLState = StateDeleteReorganization
 		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
 	}
 }

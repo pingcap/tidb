@@ -332,26 +332,27 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
-			// For global indexes, check partition visibility before acquiring a pessimistic
-			// lock on e.idxKey so invisible/dropping partitions do not leak locks.
-			if e.idxInfo.Global && e.lock {
+			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
+			lockNonExistIdxKey := !e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
+			// Under RR, avoid acquiring a pessimistic lock on a global-index key whose
+			// snapshot entry already belongs to a DDL-ignored (dropping) partition.
+			// Under RC, always perform the locking current read so concurrent partition
+			// moves into requested partitions are not missed.
+			if e.idxInfo.Global && e.lock && lockNonExistIdxKey {
 				preVal, preErr := e.get(ctx, e.idxKey)
 				if preErr != nil && !kv.ErrNotExist.Equal(preErr) {
 					return preErr
 				}
 				if len(preVal) > 0 {
-					_, visible, visErr := e.checkGlobalIndexPartition(preVal)
+					pid, _, visErr := e.checkGlobalIndexPartition(preVal)
 					if visErr != nil {
 						return visErr
 					}
-					if !visible {
+					if slices.Contains(e.tblInfo.GetPartitionInfo().IDsInDDLToIgnore(), pid) {
 						return nil
 					}
 				}
 			}
-
-			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
-			lockNonExistIdxKey := !e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 			// Non-exist keys are also locked if the isolation level is not read consistency,
 			// lock it before read here, then it's able to read from pessimistic lock cache.
 			if lockNonExistIdxKey {
