@@ -75,7 +75,8 @@ func TestShowTableRegion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
-	tk.MustExec("set global tidb_scatter_region = 'table'")
+	// Wait for table splitting in this session before checking region boundaries.
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 	tk.MustGetErrMsg(
