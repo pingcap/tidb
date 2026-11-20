@@ -89,6 +89,25 @@ func (s *SubstituteSources) Set(sf *ScalarFunction, args []Expression, build fun
 	sf.source = substituteSourceRef{owner: s, idx: len(s.entries) - 1}
 }
 
+// Wrap makes the function built from the source of sf go through wrap, which
+// returns the expression to use instead. It reports whether sf has a source.
+// It is for what the caller applied to sf after it was built.
+func (s *SubstituteSources) Wrap(sf *ScalarFunction, wrap func(ctx BuildContext, built Expression) (Expression, error)) bool {
+	source := sf.source.get()
+	if source == nil || sf.source.owner != s {
+		return false
+	}
+	build := source.build
+	s.Set(sf, source.args, func(ctx BuildContext, args []Expression) (Expression, error) {
+		built, err := build(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		return wrap(ctx, built)
+	})
+	return true
+}
+
 // Release drops all the recorded sources. Functions that had one are then
 // substituted like any other function.
 func (s *SubstituteSources) Release() {

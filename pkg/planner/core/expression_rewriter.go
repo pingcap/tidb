@@ -1767,21 +1767,25 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
+		source := er.maskingSource([]expression.Expression{arg})
+		castType, sourceType := v.Tp, v.Tp
+		if source != nil {
+			// Building the cast completes its type, for example with the
+			// length of its argument. Keep the type as written, also for
+			// the next time this statement is planned.
+			sourceType = v.Tp.Clone()
+			castType = sourceType.Clone()
+		}
+		castFunction, err := buildExplicitCast(er.sctx, arg, castType, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
 		}
-		if v.Tp.EvalType() == types.ETString {
-			castFunction.SetCoercibility(expression.CoercibilityImplicit)
-			if v.Tp.GetCharset() == charset.CharsetASCII {
-				castFunction.SetRepertoire(expression.ASCII)
-			} else {
-				castFunction.SetRepertoire(expression.UNICODE)
-			}
-		} else {
-			castFunction.SetCoercibility(expression.CoercibilityNumeric)
-			castFunction.SetRepertoire(expression.ASCII)
+		if source != nil {
+			explicitCharset := v.ExplicitCharSet
+			er.setMaskingSource(castFunction, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return buildExplicitCast(ctx, args[0], sourceType.Clone(), explicitCharset)
+			})
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
@@ -1846,6 +1850,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				break
 			}
 		}
+		// A masking policy may replace the argument: the collation is then
+		// applied again to what the expression becomes.
+		collation := v.Collate
+		reapply := func(ctx expression.BuildContext, arg expression.Expression) (expression.Expression, error) {
+			return applyExplicitCollation(ctx, arg, collation)
+		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok || arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeJSON {
 			if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeEnum || arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeSet {
@@ -1860,13 +1870,22 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				exprType.SetCharset(mysql.UTF8MB4Charset)
 			}
 			exprType.SetCollate(v.Collate)
+			source := er.maskingSource([]expression.Expression{arg})
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
+			// The cast is built for the length of the original argument.
+			er.setMaskingSource(casted, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return reapply(ctx, args[0])
+			})
 			arg = casted
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
 			// For constant and scalar function, we can set its collate directly.
 			arg.GetType(er.sctx.GetEvalCtx()).SetCollate(v.Collate)
+			if sf, ok := arg.(*expression.ScalarFunction); ok && er.preserveMaskingDependencies {
+				// Building the function again derives its collation from its arguments.
+				er.planCtx.builder.maskingSources.Wrap(sf, reapply)
+			}
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
@@ -1889,6 +1908,61 @@ func (er *expressionRewriter) buildCtx() expression.BuildContext {
 		return maskingProjectionBuildContext{er.sctx}
 	}
 	return er.sctx
+}
+
+// buildExplicitCast builds CAST(arg AS tp) as written in the statement.
+func buildExplicitCast(ctx expression.BuildContext, arg expression.Expression, tp *types.FieldType, explicitCharset bool) (expression.Expression, error) {
+	castFunction, err := expression.BuildCastFunctionWithCheck(ctx, arg, tp, false, explicitCharset)
+	if err != nil {
+		return nil, err
+	}
+	if tp.EvalType() == types.ETString {
+		castFunction.SetCoercibility(expression.CoercibilityImplicit)
+		if tp.GetCharset() == charset.CharsetASCII {
+			castFunction.SetRepertoire(expression.ASCII)
+		} else {
+			castFunction.SetRepertoire(expression.UNICODE)
+		}
+	} else {
+		castFunction.SetCoercibility(expression.CoercibilityNumeric)
+		castFunction.SetRepertoire(expression.ASCII)
+	}
+	return castFunction, nil
+}
+
+// applyExplicitCollation builds `arg COLLATE collation` for an argument that
+// replaced the one of the statement. The argument may be shared with other
+// expressions, so it is always wrapped rather than changed. The cast keeps the
+// type of the argument, and with it its length.
+func applyExplicitCollation(ctx expression.BuildContext, arg expression.Expression, collation string) (expression.Expression, error) {
+	argType := arg.GetType(ctx.GetEvalCtx())
+	isJSON := argType.GetType() == mysql.TypeJSON
+	if collate.NewCollationEnabled() {
+		collInfo, err := collate.GetCollationByName(collation)
+		if err != nil {
+			return nil, err
+		}
+		chs := argType.GetCharset()
+		if isJSON {
+			chs = mysql.UTF8MB4Charset
+		}
+		if chs != "" && collInfo.CharsetName != chs {
+			return nil, charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+		}
+	}
+	if _, ok := arg.(*expression.Column); ok && (argType.GetType() == mysql.TypeEnum || argType.GetType() == mysql.TypeSet) {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
+	}
+	exprType := argType.Clone()
+	if isJSON {
+		exprType = types.NewFieldType(mysql.TypeLongBlob)
+		exprType.SetCharset(mysql.UTF8MB4Charset)
+	}
+	exprType.SetCollate(collation)
+	casted := expression.BuildCastFunction(ctx, arg, exprType)
+	casted.SetCoercibility(expression.CoercibilityExplicit)
+	casted.SetCharsetAndCollation(exprType.GetCharset(), exprType.GetCollate())
+	return casted, nil
 }
 
 // maskingSource returns the arguments a result expression is about to be built

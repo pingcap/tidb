@@ -469,19 +469,23 @@ func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newE
 // @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
 // @return Expression, the original expr or the changed expr, it depends on the first @return bool.
 func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
-	return columnSubstituteImpl(ctx, expr, schema, newExprs, fail1Return, false)
+	return columnSubstituteImpl(ctx, expr, schema, newExprs, fail1Return, nil)
 }
 
 // ColumnSubstituteAllFromSource is ColumnSubstituteAll for new expressions whose
 // types may differ from the columns they replace. A function that recorded its
-// source with SetSubstituteSource is built again from it, so that its type
-// inference, implicit casts and constant refinement follow the new types.
-func ColumnSubstituteAllFromSource(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
-	_, hasFail, resExpr := columnSubstituteImpl(ctx, expr, schema, newExprs, true, true)
-	return hasFail, resExpr
+// source in a SubstituteSources is built again from it, so that its type
+// inference, implicit casts and constant refinement follow the new types. The
+// error is the one of building such a function from the new expressions, as an
+// ordinary expression over them would report it.
+func ColumnSubstituteAllFromSource(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression, error) {
+	var buildErr error
+	_, hasFail, resExpr := columnSubstituteImpl(ctx, expr, schema, newExprs, true, &buildErr)
+	return hasFail, resExpr, buildErr
 }
 
-func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return, fromSource bool) (bool, bool, Expression) {
+// columnSubstituteImpl uses the sources of functions when buildErr is not nil.
+func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool, buildErr *error) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -496,10 +500,10 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *ScalarFunction:
 		substituted := false
 		hasFail := false
-		if source := v.source.get(); fromSource && source.matches(v) {
+		if source := v.source.get(); buildErr != nil && source.matches(v) {
 			args := CloneConstants(source.args)
 			for i, arg := range args {
-				changed, failed, newArg := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, fromSource)
+				changed, failed, newArg := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, buildErr)
 				if failed {
 					return changed, true, v
 				}
@@ -513,13 +517,16 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 			newFunc, err := source.build(ctx, args)
 			if err != nil {
+				if *buildErr == nil {
+					*buildErr = err
+				}
 				return true, true, v
 			}
 			return true, false, newFunc
 		}
 		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.Grouping {
 			var newArg Expression
-			substituted, hasFail, newArg = columnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return, fromSource)
+			substituted, hasFail, newArg = columnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return, buildErr)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -591,7 +598,7 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, fromSource)
+			changed, failed, newFuncExpr := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, buildErr)
 			if fail1Return && failed {
 				return changed, failed, v
 			}

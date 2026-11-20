@@ -1274,6 +1274,117 @@ func TestMaskingPolicyRollupNestedExpressionWithoutPolicy(t *testing.T) {
 		Check(testkit.Rows("1.5 3.5 0 1", "1.5 <nil> 0 1", "2.5 4.5 0 1", "2.5 <nil> 0 1", "<nil> <nil> <nil> 2"))
 }
 
+func TestMaskingPolicyExplicitCollationAndLength(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	// The policies return a value longer than their columns, with another
+	// collation for c. The original values are NULL or one character.
+	tk.MustExec("create table collate_masked(id int primary key, c varchar(1) collate utf8mb4_bin, k char(1))")
+	tk.MustExec("insert into collate_masked values (1, null, null), (2, null, null), (3, 'z', 'z')")
+	tk.MustExec("create table collate_plain(id int primary key)")
+	tk.MustExec("insert into collate_plain values (1), (2), (3)")
+	policies := map[string]string{"c": "_utf8mb4'Alphabet' collate utf8mb4_general_ci", "k": "'Alphabet'"}
+	for col, policy := range policies {
+		tk.MustExec("create masking policy p_" + col + " on collate_masked(" + col + ") as " + policy)
+	}
+	// X is the masked column, or the value of its policy over the plain table:
+	// every expression must give the same result, type and error for both.
+	exprs := []string{
+		"X", "collation(X)", "coercibility(X)", "length(X)", "charset(X)",
+		"X collate utf8mb4_bin", "collation(X collate utf8mb4_bin)", "coercibility(X collate utf8mb4_bin)",
+		"length(X collate utf8mb4_bin)", "charset(X collate utf8mb4_bin)",
+		"X collate utf8mb4_bin = 'Alphabet'", "X collate utf8mb4_bin = 'ALPHABET'", "X collate utf8mb4_general_ci = 'ALPHABET'",
+		"X = 'ALPHABET'", "X = 'Alphabet  '", "X like 'alpha%'",
+		"concat(X, '') collate utf8mb4_bin = 'ALPHABET'", "concat(X, '') collate utf8mb4_general_ci = 'ALPHABET'",
+		"upper(concat(X, '') collate utf8mb4_bin) = 'ALPHABET'", "lower(concat(X, '') collate utf8mb4_bin) = 'ALPHABET'",
+		"collation(concat(X, '') collate utf8mb4_bin)", "coercibility(concat(X, '') collate utf8mb4_bin)",
+		"length(concat(X, '') collate utf8mb4_bin)", "collation(upper(X collate utf8mb4_bin))",
+		"ifnull(X, 'n') collate utf8mb4_bin = 'ALPHABET'", "lower(X collate utf8mb4_bin) = 'ALPHABET'",
+		"concat(X collate utf8mb4_bin, '!') = 'ALPHABET!'", "strcmp(X collate utf8mb4_bin, 'ALPHABET')",
+		"X collate utf8mb4_bin in ('ALPHABET', 'x')", "X collate utf8mb4_general_ci in ('ALPHABET', 'x')",
+		"X collate utf8mb4_bin between 'ALPHABET' and 'ALPHABET'", "X collate utf8mb4_bin like 'ALPHA%'",
+		"X collate utf8mb4_bin <=> 'ALPHABET'", "(X collate utf8mb4_bin, 1) = ('ALPHABET', 1)",
+		"if(X collate utf8mb4_bin = 'ALPHABET', 'y', 'n')", "case X collate utf8mb4_bin when 'ALPHABET' then 'y' else 'n' end",
+		// An explicit collation on the other operand, and conflicting ones.
+		"X = 'ALPHABET' collate utf8mb4_bin", "X = _utf8mb4'ALPHABET' collate utf8mb4_general_ci",
+		"X in ('x', 'ALPHABET' collate utf8mb4_bin)", "X collate utf8mb4_bin = 'a' collate utf8mb4_general_ci",
+		"X collate utf8mb4_unicode_ci = concat(X, '') collate utf8mb4_bin",
+		// Explicit conversions are kept as written.
+		"binary X = 'ALPHABET'", "cast(X as binary) = 'ALPHABET'", "cast(X as char)", "length(cast(X as char))",
+		"cast(X as char(3))", "cast(X as char) collate utf8mb4_general_ci = 'ALPHABET'",
+		"convert(X using utf8mb4) = 'ALPHABET'", "collation(convert(X using utf8mb4))",
+		// The length of the column does not limit what its policy returns.
+		"concat(X, '')", "substr(X, 2, 3)", "left(X, 3)", "right(X, 3)", "lpad(X, 10, '*')", "rpad(X, 10, '*')",
+		"length(concat(X, '!'))", "repeat(X, 2)", "reverse(X)", "insert(X, 2, 1, '--')",
+	}
+	type outcome struct {
+		rows   [][]any
+		fields []string
+		err    string
+	}
+	run := func(sql string) (o outcome) {
+		rs, err := tk.Exec(sql)
+		if err != nil {
+			o.err = err.Error()
+			return o
+		}
+		if rs == nil {
+			return o
+		}
+		for _, field := range rs.Fields() {
+			tp := &field.Column.FieldType
+			o.fields = append(o.fields, fmt.Sprint(tp.GetType(), tp.GetFlen(), tp.GetCharset(), tp.GetCollate()))
+		}
+		o.rows = tk.ResultSetToResult(rs, sql).Rows()
+		return o
+	}
+	shapes := []string{
+		"select E from T order by id",
+		"select x from (select E as x, id from T) s order by id",
+		"with w as (select E as x, id from T) select x from w order by id",
+		"select x from V order by id",
+	}
+	for col, policy := range policies {
+		for _, expr := range exprs {
+			masked := strings.ReplaceAll(expr, "X", col)
+			plain := strings.ReplaceAll(expr, "X", "("+policy+")")
+			// An expression that is invalid for the policy's value is rejected
+			// with the error of the plain one, also when creating a view.
+			maskedView := run("create or replace view collate_masked_v as select " + masked + " as x, id from collate_masked")
+			plainView := run("create or replace view collate_plain_v as select " + plain + " as x, id from collate_plain")
+			require.Equal(t, plainView, maskedView, expr)
+			for _, shape := range shapes {
+				if maskedView.err != "" && strings.Contains(shape, " V ") {
+					continue
+				}
+				got := run(strings.NewReplacer("E", masked, "T", "collate_masked", "V", "collate_masked_v").Replace(shape))
+				want := run(strings.NewReplacer("E", plain, "T", "collate_plain", "V", "collate_plain_v").Replace(shape))
+				require.Equal(t, want, got, "%s over %s in %s", expr, col, shape)
+			}
+		}
+	}
+	// A predicate compares the original value with the column's collation.
+	tk.MustQuery("select id from collate_masked where c collate utf8mb4_general_ci = 'Z' and k = 'z'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from collate_masked where c collate utf8mb4_bin = 'Alphabet' or c = 'Z'").Check(testkit.Rows("0"))
+
+	// A prepared statement is planned once and then served from the plan cache.
+	for _, stmt := range []string{
+		"select X collate utf8mb4_bin = ?, concat(X, '') collate utf8mb4_bin = ?, length(X collate utf8mb4_bin), cast(X as char) from T order by id",
+		"select x from (select X collate utf8mb4_bin in (?, ?) as x, id from T) s order by id",
+	} {
+		tk.MustExec("prepare masked_stmt from \"" + strings.NewReplacer("X", "c", "T", "collate_masked").Replace(stmt) + "\"")
+		tk.MustExec("prepare plain_stmt from \"" + strings.NewReplacer("X", "("+policies["c"]+")", "T", "collate_plain").Replace(stmt) + "\"")
+		for i, param := range []string{"Alphabet", "ALPHABET", "Alphabet", "A"} {
+			tk.MustExec("set @p = '" + param + "'")
+			want := tk.MustQuery("execute plain_stmt using @p, @p").Rows()
+			tk.MustQuery("execute masked_stmt using @p, @p").Check(want)
+			if i > 0 {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			}
+		}
+	}
+}
+
 func TestMaskingPolicyDerivedRollup(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")

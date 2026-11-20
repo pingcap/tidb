@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -169,7 +170,9 @@ func TestSubstituteSource(t *testing.T) {
 		schema, replacements := NewSchema(col), []Expression{other}
 		failed, result := ColumnSubstituteAll(ctx, f, schema, replacements)
 		if fromSource {
-			failed, result = ColumnSubstituteAllFromSource(ctx, f, schema, replacements)
+			var err error
+			failed, result, err = ColumnSubstituteAllFromSource(ctx, f, schema, replacements)
+			require.NoError(t, err)
 		}
 		require.False(t, failed)
 		require.Equal(t, []*Column{other}, ExtractColumns(result))
@@ -214,6 +217,24 @@ func TestSubstituteSource(t *testing.T) {
 	requireSame(plain, clone)
 	require.Equal(t, ast.LT, substitute(clone, true))
 	require.Equal(t, ast.GT, substitute(sourced, true))
+
+	// Wrap applies to what the source builds. The error of building a
+	// function from its source is returned as it is.
+	wrapped, twin := newLT(), newLT()
+	require.False(t, sources.Wrap(wrapped, nil))
+	sources.Set(wrapped, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+		return NewFunction(ctx, ast.GT, tp, args...)
+	})
+	require.True(t, sources.Wrap(wrapped, func(ctx BuildContext, built Expression) (Expression, error) {
+		return NewFunction(ctx, ast.UnaryNot, tp, built)
+	}))
+	requireSame(twin, wrapped)
+	require.Equal(t, ast.UnaryNot, substitute(wrapped, true))
+	buildErr := errors.New("cannot build")
+	require.True(t, sources.Wrap(wrapped, func(BuildContext, Expression) (Expression, error) { return nil, buildErr }))
+	failed, _, err := ColumnSubstituteAllFromSource(ctx, wrapped, NewSchema(col), []Expression{other})
+	require.True(t, failed)
+	require.ErrorIs(t, err, buildErr)
 
 	sources.Release()
 	requireSame(plain, sourced)
@@ -271,7 +292,8 @@ func TestSubstituteSourceInPlaceTransform(t *testing.T) {
 		require.Same(t, other, c)
 	}
 	// The sources follow the arguments, so they are still used.
-	failed, result := ColumnSubstituteAllFromSource(ctx, expr, NewSchema(other), []Expression{third})
+	failed, result, err := ColumnSubstituteAllFromSource(ctx, expr, NewSchema(other), []Expression{third})
+	require.NoError(t, err)
 	require.False(t, failed)
 	require.Equal(t, ast.Minus, result.(*ScalarFunction).FuncName.L)
 	for _, c := range ExtractColumns(result) {
