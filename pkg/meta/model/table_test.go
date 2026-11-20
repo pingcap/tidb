@@ -311,3 +311,21 @@ func TestTTLDefaultJobInterval(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.Hour, d)
 }
+
+func TestPartitionIDsInDDLToIgnore(t *testing.T) {
+	for _, action := range []ActionType{
+		ActionDropTablePartition,
+		ActionReorganizePartition,
+		ActionRemovePartitioning,
+		ActionAlterTablePartitioning,
+	} {
+		pi := &PartitionInfo{
+			DDLAction: action,
+			DroppingDefinitions: []PartitionDefinition{
+				{ID: 101},
+				{ID: 102},
+			},
+		}
+		require.Equal(t, []int64{101, 102}, pi.IDsInDDLToIgnore())
+	}
+}

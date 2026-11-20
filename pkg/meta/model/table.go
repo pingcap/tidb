@@ -1358,7 +1358,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			}
 			return ids
 		}
-	case ActionDropTablePartition:
+	case ActionDropTablePartition, ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
 		if len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {

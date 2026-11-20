@@ -332,6 +332,24 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
+			// For global indexes, check partition visibility before acquiring a pessimistic
+			// lock on e.idxKey so invisible/dropping partitions do not leak locks.
+			if e.idxInfo.Global && e.lock {
+				preVal, preErr := e.get(ctx, e.idxKey)
+				if preErr != nil && !kv.ErrNotExist.Equal(preErr) {
+					return preErr
+				}
+				if len(preVal) > 0 {
+					_, visible, visErr := e.checkGlobalIndexPartition(preVal)
+					if visErr != nil {
+						return visErr
+					}
+					if !visible {
+						return nil
+					}
+				}
+			}
+
 			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
 			lockNonExistIdxKey := !e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 			// Non-exist keys are also locked if the isolation level is not read consistency,
@@ -388,20 +406,18 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
 			if e.idxInfo.Global {
-				_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(e.handleVal).PartitionID)
+				pid, visible, err := e.checkGlobalIndexPartition(e.handleVal)
 				if err != nil {
 					return err
 				}
+				if !visible {
+					return nil
+				}
 				tblID = pid
-				pi := e.tblInfo.GetPartitionInfo()
-				if !matchPartitionNames(tblID, e.partitionNames, pi) {
-					return nil
-				}
-				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
-					return nil
-				}
 			}
 		}
+	} else if pi := e.tblInfo.GetPartitionInfo(); pi != nil && slices.Contains(pi.IDsInDDLToIgnore(), tblID) {
+		return nil
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
@@ -588,6 +604,18 @@ func (e *PointGetExecutor) getAndLock(ctx context.Context, key kv.Key) (val []by
 		return nil, nil
 	}
 	return val, nil
+}
+
+func (e *PointGetExecutor) checkGlobalIndexPartition(handleVal []byte) (int64, bool, error) {
+	_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(handleVal).PartitionID)
+	if err != nil {
+		return 0, false, err
+	}
+	pi := e.tblInfo.GetPartitionInfo()
+	if !matchPartitionNames(pid, e.partitionNames, pi) || slices.Contains(pi.IDsInDDLToIgnore(), pid) {
+		return pid, false, nil
+	}
+	return pid, true, nil
 }
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
