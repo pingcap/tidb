@@ -272,6 +272,9 @@ func TestAnalyzeRestrict(t *testing.T) {
 
 func TestAnalyzeParameters(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// The maximum-width sketch exceeds the default 5 MB quota. Allow room for
+	// both large snapshots during asynchronous cache replacement.
+	dom.StatsHandle().SetStatsCacheCapacity(10 << 20)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
