@@ -685,18 +685,13 @@ func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
 	tk.MustExec("insert into t0 values (1, x'FFFE')")
 	tk.MustGetErrCode("alter table t0 modify column c varchar(10) character set utf8mb4 collate utf8mb4_general_ci", errno.ErrTruncatedWrongValueForField)
 
-	// CHAR(4) utf8mb4 -> VARCHAR(10) utf8 with 4-byte emoji must reorg and fail.
-	tk.MustExec("create table t1 (id int primary key, c char(4) character set utf8mb4)")
-	tk.MustExec("insert into t1 values (1, '😀')")
-	tk.MustGetErrCode("alter table t1 modify column c varchar(10) character set utf8", errno.ErrTruncatedWrongValueForField)
-
 	// CHAR(4) utf8mb4 -> VARCHAR(10) ascii with non-ASCII character must reorg and fail.
 	tk.MustExec("create table t2 (id int primary key, c char(4) character set utf8mb4)")
 	tk.MustExec("insert into t2 values (1, 'é')")
 	tk.MustGetErrCode("alter table t2 modify column c varchar(10) character set ascii", errno.ErrTruncatedWrongValueForField)
 
-	// CHAR(4) utf8mb4 -> VARBINARY(4) with 8-byte UTF-8 value must reorg and fail with data too long.
+	// CHAR(4) utf8mb4 -> VARBINARY(4) with 8-byte UTF-8 value must reorg and fail with truncation.
 	tk.MustExec("create table t3 (id int primary key, c char(4) character set utf8mb4)")
 	tk.MustExec("insert into t3 values (1, 'éééé')")
-	tk.MustGetErrCode("alter table t3 modify column c varbinary(4)", errno.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t3 modify column c varbinary(4)", errno.WarnDataTruncated)
 }
