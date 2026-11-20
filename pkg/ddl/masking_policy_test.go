@@ -982,6 +982,21 @@ func TestMaskingPolicyAlterExpressionAfterConcurrentRename(t *testing.T) {
 	require.NoError(t, <-done)
 	tk.MustQuery("select d from t_rename_expr").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_rename_expr'").Check(testkit.Rows("d MASK_NULL(`d`)"))
+
+	// BR replays the history query after the rename.
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter")
+	query := lastDDLJobQuery(tk)
+	t.Logf("history query: %s", query)
+	tk.MustExec("drop table t_rename_expr")
+	tk.MustExec("create table t_rename_expr(d varchar(20))")
+	tk.MustExec("create masking policy p on t_rename_expr(d) as mask_full(d)")
+	tk.MustExec(query)
+	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_rename_expr'").Check(testkit.Rows("d MASK_NULL(`d`)"))
+}
+
+// lastDDLJobQuery returns the history SQL of the most recent DDL job.
+func lastDDLJobQuery(tk *testkit.TestKit) string {
+	return tk.MustQuery("admin show ddl job queries limit 1").Rows()[0][1].(string)
 }
 
 func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
@@ -1000,17 +1015,31 @@ func TestMaskingPolicyConcurrentCreateRename(t *testing.T) {
 			prepared, release := make(chan struct{}), make(chan struct{})
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate", func() { close(prepared); <-release })
 			done := make(chan error, 1)
-			sql := "create masking policy p on t_create_rename(c) as mask_full(c)"
+			sql := "create masking policy if not exists p on t_create_rename(c) as mask_full(c) restrict on (insert_into_select, ctas) enable"
 			if replace {
-				sql = "create or replace masking policy p on t_create_rename(c) as mask_full(c)"
+				sql = "create or replace masking policy p on t_create_rename(c) as mask_full(c) restrict on (insert_into_select, ctas) enable"
 			}
 			go func() { done <- other.ExecToErr(sql) }()
 			<-prepared
 			tk.MustExec("alter table t_create_rename rename column c to d")
 			close(release)
 			require.NoError(t, <-done)
-			tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_create_rename'").Check(testkit.Rows("d MASK_FULL(`d`)"))
+			policySQL := "select column_name,expression,status,restrict_on from mysql.tidb_masking_policy where table_name='t_create_rename'"
+			policy := testkit.Rows("d MASK_FULL(`d`) ENABLED INSERT_INTO_SELECT,CTAS")
+			tk.MustQuery(policySQL).Check(policy)
 			tk.MustQuery("select d from t_create_rename").Check(testkit.Rows("XXXXXX"))
+
+			// BR replays the history query after the rename.
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate")
+			query := lastDDLJobQuery(tk)
+			t.Logf("history query: %s", query)
+			tk.MustExec("drop table t_create_rename")
+			tk.MustExec("create table t_create_rename(d varchar(20))")
+			if replace {
+				tk.MustExec("create masking policy p on t_create_rename(d) as mask_null(d)")
+			}
+			tk.MustExec(query)
+			tk.MustQuery(policySQL).Check(policy)
 		})
 	}
 }

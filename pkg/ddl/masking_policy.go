@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -52,7 +54,7 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	}
 	policyInfo, replaceOnExist := args.Policy, args.ReplaceOnExist
 	policyInfo.State = model.StateNone
-	submittedColumn := policyInfo.ColumnName
+	submittedDB, submittedTable, submittedColumn := policyInfo.DBName, policyInfo.TableName, policyInfo.ColumnName
 
 	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, policyInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -72,6 +74,9 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if submittedDB.L != policyInfo.DBName.L || submittedTable.L != policyInfo.TableName.L || submittedColumn.L != policyInfo.ColumnName.L {
+		rewriteMaskingPolicyJobQuery(job, policyInfo)
 	}
 
 	existPolicy, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, policyInfo.TableID)
@@ -209,6 +214,9 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		if err := validateMaskingPolicyExpression(w.sess.Context, tbl.Meta(), col, newPolicy.Expression); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
+		}
+		if args.Policy.ColumnName.L != newPolicy.ColumnName.L {
+			rewriteMaskingPolicyJobQuery(job, newPolicy)
 		}
 	}
 	newPolicy.UpdatedAt = args.Policy.UpdatedAt
@@ -889,6 +897,68 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 		return "", errors.New("failed to rewrite masking policy expression")
 	}
 	return restoreMaskingExpression(rewritten.(ast.ExprNode))
+}
+
+// rewriteMaskingPolicyJobQuery replaces the submitted names and expression in
+// job.Query with the ones the worker bound, keeping the other options. The
+// submitted text names a table or column that no longer exists, so replaying
+// it from DDL history, as BR incremental restore does, would fail.
+func rewriteMaskingPolicyJobQuery(job *model.Job, policy *model.MaskingPolicyInfo) {
+	if job.Query == "" {
+		return
+	}
+	query, err := buildReboundMaskingPolicyQuery(job, policy)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to rewrite masking policy job query",
+			zap.Int64("jobID", job.ID), zap.String("query", job.Query), zap.Error(err))
+		return
+	}
+	job.Query = query
+}
+
+func buildReboundMaskingPolicyQuery(job *model.Job, policy *model.MaskingPolicyInfo) (string, error) {
+	p := parser.New()
+	p.SetSQLMode(job.SQLMode)
+	stmt, err := p.ParseOneStmt(job.Query, job.Charset, job.Collate)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	// #nosec G202: expression here is parsed as SQL AST for rewrite, not executed against storage.
+	exprStmt, err := parser.New().ParseOneStmt("SELECT "+policy.Expression, "", "")
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	selectStmt, ok := exprStmt.(*ast.SelectStmt)
+	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
+		return "", errors.New("invalid masking policy expression")
+	}
+	expr := selectStmt.Fields.Fields[0].Expr
+
+	switch s := stmt.(type) {
+	case *ast.CreateMaskingPolicyStmt:
+		s.Table.Schema, s.Table.Name = policy.DBName, policy.TableName
+		s.Column = &ast.ColumnName{Name: policy.ColumnName}
+		s.Expr = expr
+	case *ast.AlterTableStmt:
+		if len(s.Specs) != 1 {
+			return "", errors.New("unexpected masking policy statement")
+		}
+		s.Table.Schema, s.Table.Name = policy.DBName, policy.TableName
+		switch spec := s.Specs[0]; spec.Tp {
+		case ast.AlterTableAddMaskingPolicy:
+			spec.MaskingPolicyColumn = &ast.ColumnName{Name: policy.ColumnName}
+			spec.MaskingPolicyExpr = expr
+		case ast.AlterTableModifyMaskingPolicyExpression:
+			spec.MaskingPolicyExpr = expr
+		}
+	default:
+		return "", errors.New("unexpected masking policy statement")
+	}
+	var sb strings.Builder
+	if err := stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+		return "", errors.Trace(err)
+	}
+	return sb.String(), nil
 }
 
 func maskingPolicyFromSysTableRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
