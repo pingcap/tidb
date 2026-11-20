@@ -137,10 +137,29 @@ func TestBuildRawStats(t *testing.T) {
 	require.Nil(t, stats.CurrentStep)
 	require.Equal(t, int64(1735689600), stats.UpdateTimeUnix)
 
-	info.Status = "failed"
-	info.ErrorMessage = "load failed"
-	stats, err = buildRawJobStats(loc, info, nil)
-	require.NoError(t, err)
-	require.NotNil(t, stats.Error)
-	require.Equal(t, "load failed", stats.Error.Message)
+	for _, tt := range []struct {
+		name          string
+		status        string
+		message       string
+		expectedError string
+	}{
+		{"failed", "failed", "load failed", `{"message":"load failed"}`},
+		{"cancelled", "cancelled", "job cancelled", `{"message":"job cancelled"}`},
+		{"failed without message", "failed", "", `{}`},
+		{"cancelled without message", "cancelled", "", `{}`},
+		{"awaiting resolution", "awaiting-resolution", "conflicts found", `{"message":"conflicts found","user_action_required":true}`},
+		{"running", "running", "", `null`},
+		{"unknown with message", "unknown", "diagnostic", `{"message":"diagnostic"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			info.Status = tt.status
+			info.ErrorMessage = tt.message
+			stats, err := buildRawJobStats(loc, info, nil)
+			require.NoError(t, err)
+			// Do not advertise retryability without a reliable classification.
+			rawError, err := json.Marshal(stats.Error)
+			require.NoError(t, err)
+			require.JSONEq(t, tt.expectedError, string(rawError))
+		})
+	}
 }

@@ -2714,20 +2714,11 @@ func isImportConflictStep(step proto.Step) bool {
 	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
 }
 
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 func buildRawJobError(status, message string) *jobstats.RawError {
 	switch status {
-	case "failed":
+	case "failed", "cancelled":
 		return &jobstats.RawError{
 			Message: message,
-		}
-	case "cancelled":
-		return &jobstats.RawError{
-			Message:   message,
-			Retryable: boolPtr(false),
 		}
 	case string(proto.TaskStateAwaitingResolution):
 		return &jobstats.RawError{

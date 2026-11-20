@@ -83,7 +83,6 @@ type RawStats struct {
 // RawError contains one canonical diagnostic message plus actionable metadata.
 type RawError struct {
 	Message            string `json:"message,omitempty"`
-	Retryable          *bool  `json:"retryable,omitempty"`
 	UserActionRequired bool   `json:"user_action_required,omitempty"`
 }
 
