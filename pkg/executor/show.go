@@ -1106,6 +1106,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
 		return nil
 	}
+	tableInfo, hypoIndexes := ctx.GetSessionVars().GetHypoIndexTableInfo(dbName.L, tableInfo)
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
@@ -1252,22 +1253,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, 
 		}
 	}
 
-	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
-	if hypoIndexes != nil {
-		schemaName := dbName.L
-		tblName := tableInfo.Name.L
-		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
-			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
-			for _, index := range hypoIndexes[schemaName][tblName] {
-				hypoIndexList = append(hypoIndexList, index)
-			}
-			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
-				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
-			})
-			publicIndices = append(publicIndices, hypoIndexList...)
-		}
-	}
+	publicIndices = append(publicIndices, hypoIndexes...)
 	if len(publicIndices) > 0 {
 		buf.WriteString(",\n")
 	}
