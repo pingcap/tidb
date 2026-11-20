@@ -263,7 +263,7 @@ func SplitPoint(
 		}
 		// traverse to the first region overlapped with the range
 		for ; regionIndex < len(regions); regionIndex++ {
-			if bytes.Compare(vStartKey, regions[regionIndex].Region.EndKey) < 0 {
+			if len(regions[regionIndex].Region.EndKey) == 0 || bytes.Compare(vStartKey, regions[regionIndex].Region.EndKey) < 0 {
 				break
 			}
 		}
@@ -297,7 +297,8 @@ func SplitPoint(
 			// the region is the last one overlapped with the range,
 			// should split the last recorded region,
 			// and then record this region as the region to be split
-			if bytes.Compare(vEndKey, region.Region.EndKey) < 0 {
+			// An empty region end key denotes infinity, not the smallest key.
+			if len(region.Region.EndKey) == 0 || bytes.Compare(vEndKey, region.Region.EndKey) < 0 {
 				endLength := v.Value.Size / regionOverCount
 				endNumber := v.Value.Number / int64(regionOverCount)
 				if len(regionValueds) > 0 && regionInfo != region {
