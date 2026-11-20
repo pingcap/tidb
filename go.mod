@@ -369,6 +369,8 @@ replace (
 	cloud.google.com/go/storage => cloud.google.com/go/storage v1.39.1
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+	// TODO: Remove after tikv/client-go#2176 is merged.
+	github.com/tikv/client-go/v2 => github.com/cfzjywxk/client-go/v2 v2.0.0-20261117015358-9ec5e2ea0bd2
 	// etcd 3.5 uses the interceptors removed in otelgrpc v0.60.0.
 	// Remove this compatibility pin when etcd is upgraded to v3.6.1 or later.
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0

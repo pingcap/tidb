@@ -497,6 +497,45 @@ timezone.*
      curl http://{TiDBIP}:10080/settings
      ```
 
+     To hot-update outbound KV server certificate CN checks for this TiDB instance,
+     POST both parameters together, without other settings:
+
+     ```shell
+     curl -X POST --data-urlencode 'kv_server_verify_cn_mode=enforce' \
+       --data-urlencode 'kv_server_verify_cn=["trusted-tikv"]' \
+       http://{TiDBIP}:10080/settings
+     ```
+
+     `kv_server_verify_cn_mode` accepts `off` (the default) or `enforce`.
+     `kv_server_verify_cn` is a JSON array of exact server leaf common names.
+     Enforce requires `security.cluster-ssl-ca` and a nonempty list. Normal CA
+     chain and hostname/IP SAN checks remain enabled. Startup TOML equivalents
+     are `security.kv-server-verify-cn-mode` and `security.kv-server-verify-cn`.
+     These settings do not change `cluster-verify-cn`, status listener, PD, or etcd TLS.
+
+     An `enforce` update prepares fresh gRPC connections to all currently active KV RPC
+     addresses, verifies their handshakes, and atomically switches new requests
+     to those pools. Requests already admitted, including long streams, finish on
+     the previous pools before they close. HTTP 200 confirms that admission has
+     switched; it does not mean every previous stream has finished. The response
+     contains `kv_server_verify_cn_mode` and `kv_server_verify_cn`.
+     If preparation fails or exceeds 10 seconds, the request returns an error
+     without publishing that candidate policy. Previously unused addresses are checked
+     when first connected. The update applies to this process and is not persisted
+     to its TOML file. Use HTTPS and the configured client certificate when status
+     TLS is enabled.
+
+     To disable the extra CN check, send `off` and `[]` together. This is a local
+     switch: it cancels in-progress preflight, invalidates older queued updates,
+     and removes the old pools from admission without waiting for handshakes or
+     reading TLS files. New requests create connections lazily with CN checks off;
+     existing requests drain on their previous pools. Normal CA/SAN checks remain
+     enabled. A superseded update returns an error and cannot overwrite the off
+     configuration, even if its result arrives late. HTTP 200 confirms the policy
+     switch, not network recovery or completion of old requests. Subsequent explicit
+     `enforce` updates remain supported. CA/certificate/key paths cannot be changed
+     through either mode.
+
 18. Get TiDB server information.
 
      ```shell
