@@ -183,7 +183,7 @@ func TestMaskingPolicySnapshotTargetIsolation(t *testing.T) {
 	}
 	router, err := nameroute.Parse(nil)
 	require.NoError(t, err)
-	var targets []string
+	targets := make([]string, 0, 3)
 	for _, restoreID := range []uint64{123, 456, 123} {
 		plan, err := buildRestoreNamePlan(router, []*metautil.Database{sourceDB}, []*metautil.Table{source}, nil)
 		require.NoError(t, err)

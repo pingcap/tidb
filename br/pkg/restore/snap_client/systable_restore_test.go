@@ -949,7 +949,7 @@ func TestRestoreMaskingPolicySnapshotIsolation(t *testing.T) {
 	defer cluster.Stop()
 	tk := testkit.NewTestKit(t, cluster.Storage)
 	ctx := context.Background()
-	var clients []*snapclient.SnapClient
+	clients := make([]*snapclient.SnapClient, 0, 2)
 	for i, dbName := range []string{"independent_a", "independent_b"} {
 		tk.MustExec("create database " + dbName)
 		tk.MustExec("create table " + dbName + ".t(c varchar(20))")
