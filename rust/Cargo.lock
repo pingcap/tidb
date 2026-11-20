@@ -7015,6 +7015,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-executor-internal-util"
+version = "0.0.0"
+dependencies = [
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-driver-error",
+ "tidb-mysql",
+]
+
+[[package]]
 name = "tidb-executor-internal-vecgroupchecker"
 version = "0.0.0"
 dependencies = [
@@ -7081,6 +7091,22 @@ dependencies = [
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-types",
  "tidb-table",
+]
+
+[[package]]
+name = "tidb-executor-mviewdeltamergeagg"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-driver-error",
+ "tidb-execdetails",
+ "tidb-executor-internal-exec",
+ "tidb-executor-internal-util",
+ "tidb-expr",
+ "tidb-expression-aggregation",
+ "tidb-mysql",
 ]
 
 [[package]]

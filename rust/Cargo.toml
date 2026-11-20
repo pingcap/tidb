@@ -180,6 +180,8 @@ members = [
     "crates/tidb-executor-sortexec",
     "crates/tidb-executor-join",
     "crates/tidb-executor-internal-exec",
+    "crates/tidb-executor-internal-util",
+    "crates/tidb-executor-mviewdeltamergeagg",
     "crates/tidb-executor-aggfuncs",
     "crates/tidb-executor-internal-applycache",
     "crates/tidb-executor-join-joinversion",

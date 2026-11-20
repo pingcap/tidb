@@ -1,0 +1,17 @@
+[package]
+name = "tidb-executor-internal-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/internal/util (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-mysql = { path = "../tidb-mysql" }

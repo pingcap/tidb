@@ -1,0 +1,23 @@
+[package]
+name = "tidb-executor-mviewdeltamergeagg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/executor/mviewdeltamergeagg (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-mysql = { path = "../tidb-mysql" }
+crossbeam-channel = "0.5"
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-executor-internal-util = { path = "../tidb-executor-internal-util" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
