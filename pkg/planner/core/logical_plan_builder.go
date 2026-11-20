@@ -1787,53 +1787,30 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	return nil
 }
 
-type resolveGroupingTraverseAction struct {
-	CurrentBlockExpand *logicalop.LogicalExpand
-}
-
-func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (res expression.Expression) {
-	switch x := expr.(type) {
-	case *expression.Column:
-		// when meeting a column, judge whether it's a relate grouping set col.
-		// eg: select a, b from t group by a, c with rollup, here a is, while b is not.
-		// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-	case *expression.CorrelatedColumn:
-		// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
-		// in this case: group by item has correlated column t2.a, and it's select list contains t2.a as well.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-	case *expression.Constant:
-		// constant just keep it real: select 1 from t group by a, b with rollup.
-		res = x
-	case *expression.ScalarFunction:
-		// scalar function just try to resolve itself first, then if not changed, trying resolve its children.
-		var substituted bool
-		res, substituted = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-		if !substituted {
-			// if not changed, try to resolve it children.
-			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
-			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
-			newArgs := x.GetArgs()
-			for i, arg := range newArgs {
-				newArgs[i] = r.Transform(arg)
-			}
-			x.TransformSubstituteSource(r.Transform)
-			res = x
-		}
-	default:
-		res = expr
-	}
-	return res
-}
-
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
-	if b.currentBlockExpand == nil {
+	expand := b.currentBlockExpand
+	if expand == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
-	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
-	return expr.Traverse(traverseAction)
+	return expression.NewInPlaceTransformer(func(expr expression.Expression) (expression.Expression, bool) {
+		switch expr.(type) {
+		case *expression.Column, *expression.CorrelatedColumn, *expression.ScalarFunction:
+			// A column is resolved to its grouping set col when it is one:
+			// select a, b from t group by a, c with rollup, here a is, while b is not.
+			// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
+			// A correlated column can be a group by item as well:
+			// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
+			// A scalar function tries to resolve itself first. When it is not
+			// changed, its children are resolved:
+			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
+			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
+			return expand.TrySubstituteExprWithGroupingSetCol(expr)
+		}
+		// constant just keep it real: select 1 from t group by a, b with rollup.
+		return expr, false
+	}).Transform(expr)
 }
 
 func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {

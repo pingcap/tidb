@@ -1241,6 +1241,39 @@ func TestMaskingPolicyTypeChangingPlanCache(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyRollupNestedExpressionWithoutPolicy(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table rollup_plain(a int, b int, s varchar(10))")
+	tk.MustExec("insert into rollup_plain values (1, 2, 'x'), (1, 3, 'y'), (2, 2, 'z')")
+	// Nested over the grouping columns: with rollup replaces them in place at
+	// every level of the built expression.
+	nested := "a + b"
+	for range 12 {
+		nested = "(" + nested + ") + if(a < b, a, b) * 1.5"
+	}
+	queries := []string{
+		"select " + nested + ", count(*) from rollup_plain group by a, b with rollup",
+		"select concat(a, '-', ifnull(b, 'all')), a between 1 and b, a in (b, 1.0), grouping(a), count(*) " +
+			"from rollup_plain group by a, b with rollup",
+		"select x, n from (select " + nested + " as x, count(*) as n from rollup_plain group by a, b with rollup) z",
+	}
+	var ordinary [][][]any
+	for _, query := range queries {
+		ordinary = append(ordinary, tk.MustQuery(query).Sort().Rows())
+	}
+	require.Len(t, ordinary[0], 6)
+	tk.MustExec("create table rollup_masked(c int)")
+	tk.MustExec("create masking policy p on rollup_masked(c) as mask_null(c)")
+	for i, query := range queries {
+		require.Equal(t, ordinary[i], tk.MustQuery(query).Sort().Rows(), query)
+	}
+	// The same expression over a masked grouping column is built for its policy.
+	tk.MustExec("create masking policy p on rollup_plain(a) as a + 0.5")
+	tk.MustQuery("select a, a + b, a < 1.3, count(*) from rollup_plain where b = 2 group by a, b with rollup").Sort().
+		Check(testkit.Rows("1.5 3.5 0 1", "1.5 <nil> 0 1", "2.5 4.5 0 1", "2.5 <nil> 0 1", "<nil> <nil> <nil> 2"))
+}
+
 func TestMaskingPolicyDerivedRollup(t *testing.T) {
 	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
 	tk.MustExec("use test")

@@ -97,20 +97,64 @@ func (s *SubstituteSources) Release() {
 	}
 }
 
-// TransformSubstituteSource applies fn to the arguments recorded as the source
-// of sf. Code that replaces the arguments of a built function in place must
-// replace them in its source as well.
-func (sf *ScalarFunction) TransformSubstituteSource(fn func(Expression) Expression) {
+// transformSubstituteSource applies fn to the arguments recorded as the source
+// of sf. The recorded source is shared with the clones of sf, so sf gets a new
+// one when an argument changes.
+func (sf *ScalarFunction) transformSubstituteSource(fn func(Expression) Expression) {
 	source := sf.source.get()
 	if source == nil {
 		return
 	}
-	// The recorded source is shared with the clones of this function.
-	args := make([]Expression, len(source.args))
+	var args []Expression
 	for i, arg := range source.args {
-		args[i] = fn(arg)
+		newArg := fn(arg)
+		if newArg == arg {
+			continue
+		}
+		if args == nil {
+			args = slices.Clone(source.args)
+		}
+		args[i] = newArg
 	}
-	sf.source.owner.Set(sf, args, source.build)
+	if args != nil {
+		sf.source.owner.Set(sf, args, source.build)
+	}
+}
+
+// InPlaceTransformer replaces sub-expressions of built expressions in place,
+// as the planner does to refer to the grouping columns of WITH ROLLUP. The
+// source of a function is kept in step with its arguments. A function and its
+// source usually share their argument objects, and an expression may hold one
+// object several times: each object is transformed once per transformer.
+type InPlaceTransformer struct {
+	replace func(Expression) (Expression, bool)
+	done    map[Expression]Expression
+}
+
+// NewInPlaceTransformer returns a transformer for one round of replacement.
+// replace returns the expression to use instead of its argument, and whether
+// it is another one. The arguments of a function that is not replaced are
+// transformed in turn.
+func NewInPlaceTransformer(replace func(Expression) (Expression, bool)) *InPlaceTransformer {
+	return &InPlaceTransformer{replace: replace, done: make(map[Expression]Expression)}
+}
+
+// Transform returns the expression to use instead of expr.
+func (t *InPlaceTransformer) Transform(expr Expression) Expression {
+	if res, ok := t.done[expr]; ok {
+		return res
+	}
+	res, replaced := t.replace(expr)
+	if sf, ok := expr.(*ScalarFunction); ok && !replaced {
+		args := sf.GetArgs()
+		for i, arg := range args {
+			args[i] = t.Transform(arg)
+		}
+		sf.transformSubstituteSource(t.Transform)
+		res = sf
+	}
+	t.done[expr] = res
+	return res
 }
 
 // matches reports whether the source still describes sf: both must depend on

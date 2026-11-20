@@ -205,7 +205,7 @@ func TestSubstituteSource(t *testing.T) {
 
 	// Changing the source of a clone does not change the one it was cloned
 	// from. A source over other columns than the function is not used.
-	clone.TransformSubstituteSource(func(e Expression) Expression {
+	clone.transformSubstituteSource(func(e Expression) Expression {
 		if e == col {
 			return other
 		}
@@ -219,8 +219,73 @@ func TestSubstituteSource(t *testing.T) {
 	requireSame(plain, sourced)
 	require.Equal(t, ast.LT, substitute(sourced, true))
 	require.Equal(t, ast.LT, substitute(sourced.Clone().(*ScalarFunction), true))
-	clone.TransformSubstituteSource(func(e Expression) Expression { return e })
+	clone.transformSubstituteSource(func(e Expression) Expression { return e })
 	require.Equal(t, ast.LT, substitute(clone, true))
+}
+
+func TestSubstituteSourceInPlaceTransform(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	col := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	other := &Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	third := &Column{UniqueID: 3, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	sources := &SubstituteSources{}
+	// Each level is a function of the level below, held twice as the same
+	// object by both the arguments and the source of the function.
+	const depth = 6
+	var expr Expression = col
+	nodes := []Expression{col}
+	for range depth {
+		f, err := NewFunction(ctx, ast.Plus, tp, expr, expr)
+		require.NoError(t, err)
+		sf := f.(*ScalarFunction)
+		require.Same(t, expr, sf.GetArgs()[0])
+		require.Same(t, expr, sf.GetArgs()[1])
+		sources.Set(sf, []Expression{expr, expr}, func(ctx BuildContext, args []Expression) (Expression, error) {
+			return NewFunction(ctx, ast.Minus, tp, args...)
+		})
+		expr = sf
+		nodes = append(nodes, sf)
+	}
+	clone := nodes[1].Clone().(*ScalarFunction)
+	require.Len(t, sources.entries, depth)
+
+	visits := make(map[Expression]int)
+	replace := func(e Expression) (Expression, bool) {
+		visits[e]++
+		if e == col {
+			return other, true
+		}
+		return e, false
+	}
+	require.Same(t, expr, NewInPlaceTransformer(replace).Transform(expr))
+	// Every node is transformed once, however many times it is referenced.
+	require.Len(t, visits, len(nodes))
+	for _, node := range nodes {
+		require.Equal(t, 1, visits[node])
+	}
+	// Only the function whose source held the column gets a new source.
+	require.Len(t, sources.entries, depth+1)
+	require.Equal(t, []*Column{other}, ExtractColumns(expr)[:1])
+	for _, c := range ExtractColumns(expr) {
+		require.Same(t, other, c)
+	}
+	// The sources follow the arguments, so they are still used.
+	failed, result := ColumnSubstituteAllFromSource(ctx, expr, NewSchema(other), []Expression{third})
+	require.False(t, failed)
+	require.Equal(t, ast.Minus, result.(*ScalarFunction).FuncName.L)
+	for _, c := range ExtractColumns(result) {
+		require.Same(t, third, c)
+	}
+	// A clone taken before keeps the source recorded for it.
+	require.Same(t, col, clone.source.get().args[0])
+	require.Same(t, other, nodes[1].(*ScalarFunction).source.get().args[0])
+
+	// Another round over the transformed expression changes nothing.
+	clear(visits)
+	NewInPlaceTransformer(replace).Transform(expr)
+	require.Len(t, visits, len(nodes))
+	require.Len(t, sources.entries, depth+1)
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
