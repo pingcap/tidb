@@ -78,6 +78,9 @@ const (
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 
 	defaultRegion = "us-east-1"
+	gcsProvider   = "gcs"
+	// GCS XML API endpoint for S3-compatible tools.
+	gcsEndpoint = "storage.googleapis.com"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -468,6 +471,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid S3 endpoint URL")
 	}
 	qs := *backend
+	gcsS3Compatible := isGCSS3Compatible(&qs)
 
 	// Start with default configuration loading
 	var configOpts []func(*config.LoadOptions) error
@@ -539,6 +543,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		// These logs will be printed when log level is `DEBUG`.
 		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
 	})
+
+	if gcsS3Compatible {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.HTTPSignerV4 = newGCSS3CompatibleSigner()
+		})
+	}
 
 	// ⚠️ Do NOT set a global endpoint in the AWS config.
 	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
@@ -620,7 +630,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 
 	// Perform region detection and validation
 	var detectedRegion string
-	officialS3 := len(qs.Provider) == 0 || qs.Provider == "aws"
+	awsProvider := len(qs.Provider) == 0 || qs.Provider == "aws"
+	// GCS endpoints must skip AWS bucket-region discovery, which can fail
+	// before object access; the configured region is only used for signing.
+	officialS3 := awsProvider && !gcsS3Compatible
 	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
@@ -1621,4 +1634,19 @@ func isHTTP2ConnAborted(err error) bool {
 		}
 	}
 	return false
+}
+
+func isGCSS3Compatible(qs *backuppb.S3) bool {
+	if strings.EqualFold(qs.Provider, gcsProvider) {
+		return true
+	}
+	if qs.Endpoint == "" {
+		return false
+	}
+	u, err := url.Parse(qs.Endpoint)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == gcsEndpoint || strings.HasSuffix(host, "."+gcsEndpoint)
 }
