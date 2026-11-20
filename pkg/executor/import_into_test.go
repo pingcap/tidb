@@ -716,6 +716,51 @@ func TestNewImportPlanMatchesResolvedInput(t *testing.T) {
 	}
 }
 
+func TestSubmitImportTaskRecovery(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.recoverable(a int primary key)")
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), db.Name, ast.NewCIStr("recoverable"))
+	require.NoError(t, err)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return testkit.NewTestKit(t, store).Session(), nil
+	}, 3, 3, time.Second)
+	defer pool.Close()
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	require.NoError(t, manager.InitMeta(ctx, "tidb", "dxf_service"))
+	var claimedJob int64
+	var durable bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportTableModeClaimed", func(id int64, claimErr *error) {
+		require.NoError(t, *claimErr)
+		claimedJob = id
+		durable = len(tk.MustQuery("select id from mysql.tidb_import_jobs where id = ?", id).Rows()) == 1
+		*claimErr = context.Canceled
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeImportCancelCleanup", func(cleanupErr *error) {
+		*cleanupErr = context.Canceled
+	})
+	_, _, err = executor.SubmitImportTask(ctx, &importer.Plan{
+		DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: store.GetKeyspace(), Parameters: &importer.ImportParameters{},
+	}, "import into test.recoverable from '/path/to/file'")
+	require.ErrorIs(t, err, context.Canceled)
+	require.True(t, durable, "a committed mode claim must have a durable recovery job")
+	tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, tbl.Meta().Name)
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
+	require.Equal(t, claimedJob, tbl.Meta().ImportJobID)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/executor/beforeImportCancelCleanup")
+	recovery := testkit.NewTestKit(t, store)
+	recovery.MustExec(fmt.Sprintf("cancel import job %d", claimedJob))
+	tbl, err = dom.InfoSchema().TableByName(ctx, db.Name, tbl.Meta().Name)
+	require.NoError(t, err)
+	require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+}
+
 func TestSubmitImportTaskNextgen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("This test is only for nextgen")
@@ -838,6 +883,23 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
 		userKSTK.MustQuery("select count(*) from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Check(testkit.Rows("0"))
 	})
+	t.Run("assumed SYSTEM entries cannot establish lifecycle support", func(t *testing.T) {
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		plan := newSubmissionPlan(userKSTK)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterGetImportLifecycleServers", func(component string, servers map[string]*serverinfo.ServerInfo) {
+			if component == "SYSTEM/DXF" {
+				clear(servers)
+				servers["assumed"] = &serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{AssumedKeyspace: keyspace.System, SchemaReadOnly: true}}
+			}
+		})
+		_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
+		require.ErrorContains(t, err, "cannot determine SYSTEM/DXF")
+		tbl, err := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr("test"), plan.TableInfo.Name)
+		require.NoError(t, err)
+		require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
+		userKSTK.MustQuery("select count(*) from mysql.tidb_import_jobs where table_id = ?", plan.TableInfo.ID).Check(testkit.Rows("0"))
+	})
 	t.Run("mode claim has a durable recoverable job", func(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
 		manuallyInitFn(t, userKSStore, sysKSStore)
@@ -859,6 +921,10 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 		_, _, err := executor.SubmitImportTask(ctx, plan, "import into t from '/path/to/file'")
 		require.Error(t, err)
 		require.True(t, durable, "mode ownership must never outlive its durable import job")
+		claimedTable, lookupErr := domain.GetDomain(userKSTK.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr(plan.DBName), plan.TableInfo.Name)
+		require.NoError(t, lookupErr)
+		require.Equal(t, model.TableModeImport, claimedTable.Meta().Mode)
+		require.Equal(t, claimedJob, claimedTable.Meta().ImportJobID)
 		cleanupFails = false
 		// A fresh session uses the ordinary recovery entrypoint, with no submitter state.
 		recovery := testkit.NewTestKit(t, userKSStore)
@@ -1049,9 +1115,7 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 			jobID, createErr := importer.CreateJob(ctx, userKSTK.Session().GetSQLExecutor(), "test", plan.TableInfo.Name.L,
 				plan.TableInfo.ID, userKSTK.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{}, 1)
 			require.NoError(t, createErr)
-			args := &model.AlterTableModeArgs{}
-			require.NoError(t, json.Unmarshal(fmt.Appendf(nil,
-				`{"schema_id":%d,"table_id":%d,"table_mode":%d,"import_job_id":%d}`, plan.DBID, plan.TableInfo.ID, model.TableModeImport, jobID), args))
+			args := &model.AlterTableModeArgs{SchemaID: plan.DBID, TableID: plan.TableInfo.ID, TableMode: model.TableModeImport, ImportJobID: jobID}
 			require.NoError(t, domain.GetDomain(userKSTK.Session()).DDLExecutor().AlterTableMode(userKSTK.Session(), args))
 			failCleanup := true
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/"+failurePoint, func(err *error) {
@@ -1067,7 +1131,6 @@ func TestSubmitImportTaskNextgen(t *testing.T) {
 			require.NoError(t, lookupErr)
 			require.Equal(t, model.TableModeNormal, tbl.Meta().Mode)
 		})
-
 	}
 
 	t.Run("cancel dangling user keyspace job without DXF task", func(t *testing.T) {

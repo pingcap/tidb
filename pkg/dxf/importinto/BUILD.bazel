@@ -59,6 +59,7 @@ go_library(
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
+        "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/metrics",
@@ -116,7 +117,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 34,
+    shard_count = 35,
     deps = [
         "//br/pkg/utils",
         "//pkg/config",

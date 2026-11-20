@@ -312,7 +312,8 @@ func TestBRIECreateTable(t *testing.T) {
 		// Error paths must restore an existing, differently scoped authorization.
 		restore := privilege.WithInternalSchemaReadOnlyBypass(tk.Session(), "other_ro")
 		defer restore()
-		err = executor.BRIECreateTable(tk.Session(), ast.NewCIStr("missing_restore_db"), one, "")
+		missing := mockTableInfo(t, tk.Session(), "create table missing_restore_db.restored_missing(a int)")
+		err = executor.BRIECreateTable(tk.Session(), ast.NewCIStr("missing_restore_db"), missing, "")
 		require.Error(t, err)
 		require.True(t, privilege.CanWriteReadOnlySchema(tk.Session(), "other_ro"))
 		require.False(t, privilege.CanWriteReadOnlySchema(tk.Session(), "restore_ro"))

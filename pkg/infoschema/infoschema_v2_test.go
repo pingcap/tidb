@@ -316,6 +316,7 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 				oldIS := is
 				previous, ok := oldIS.SchemaByID(db.ID)
 				require.True(t, ok)
+				previousCharset, previousCollate := previous.Charset, previous.Collate
 				db = previous.Clone()
 				db.ReadOnly = readOnly
 				if i == 2 && action == model.ActionRefreshMeta {
@@ -339,8 +340,8 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 				require.NotEqual(t, updated.ReadOnly, oldDB.ReadOnly, "older schema snapshots must stay immutable")
 				require.Equal(t, db.Charset, updated.Charset)
 				require.Equal(t, db.Collate, updated.Collate)
-				require.Equal(t, previous.Charset, oldDB.Charset)
-				require.Equal(t, previous.Collate, oldDB.Collate)
+				require.Equal(t, previousCharset, oldDB.Charset)
+				require.Equal(t, previousCollate, oldDB.Collate)
 				for _, snapshot := range []InfoSchema{oldIS, is} {
 					got, err := snapshot.TableByName(context.Background(), db.Name, tbl.Name)
 					require.NoError(t, err)

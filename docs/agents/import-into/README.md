@@ -74,16 +74,20 @@ when only reading one package at a time.
 - Table mode in Classic and NextGen:
   - Distributed task submission sets import mode before physical ingestion. Database
     read-only transitions reject tables in that mode.
-  - NextGen user-keyspace submissions commit the pending import job before the
-    independent mode DDL. A pessimistic lock on that pending job serializes mode
-    claiming with cancellation. A lost submitter therefore leaves a discoverable
+  - All submissions commit the pending import job before the independent mode
+    DDL, including Classic and NextGen SYSTEM imports. A pessimistic lock on
+    that pending job serializes mode claiming with cancellation. A lost submitter therefore leaves a discoverable
     job for CANCEL IMPORT JOB; a cancelled job cannot acquire mode later.
   - New submissions persist the import job ID as the table-mode owner. The DDL
     worker checks ownership in the same metadata transaction as a mode change.
     Another job cannot claim an owned table; stale completion or cleanup skips
     an owner mismatch. Legacy task cleanup uses owner zero and cannot release a
     new owned import. NextGen passes the owner through cross-keyspace cleanup.
-  - Ignores `infoschema.ErrTableNotExists` during cleanup.
+  - Completion and cleanup resolve current names from the stable schema/table
+    IDs before cross-keyspace mode reset. A rename after early mode reset must
+    not block task cleanup or archival; dropped or moved targets can be skipped.
+  - Ignores `infoschema.ErrTableNotExists` and `infoschema.ErrDatabaseNotExists`
+    during cleanup.
 - Classic `IMPORT FROM SELECT` uses its outer statement transaction to register
   the target for read-only draining until ingestion and post-processing finish.
   Its precheck session is insufficient because precheck SQL commits separately.
@@ -92,6 +96,9 @@ when only reading one package at a time.
   checks the SYSTEM registry for completion and cleanup support before changing
   the user table's mode. Both the user and SYSTEM keyspaces must finish upgrading;
   neither keyspace's upgrade state establishes the other's compatibility.
+  Assumed cross-keyspace registry members do not establish that a native SYSTEM
+  node supports the lifecycle. This capability gate does not guarantee worker
+  capacity.
 - An allocated DXF task ID is not evidence of commit. Definite submission
   failures check active/history tasks before cancelling an unregistered user job
   and releasing its table mode. Indeterminate outcomes retain protection;
@@ -101,9 +108,10 @@ when only reading one package at a time.
   owner checks prevent a retry from releasing a later import's mode.
 - Enabling database read-only also checks unfinished import job rows for existing
   target tables. This covers jobs submitted before NextGen used import mode;
-  upgrading every node does not remove those jobs.
+  upgrading every node does not remove those jobs. Match their stable table IDs
+  to current database membership instead of filtering by historical database names.
 - Global-sort artifact cleanup:
-  - Deletes task-scoped files via `external.CleanUpFiles(..., <task-id>)`.
+  - Deletes task-scoped files via `globalsort.CleanUpFiles(..., <task-id>)`.
   - Does not delete `conflicted-rows/...` files by design.
 - Nextgen metering:
   - On succeed state, cleanup tries to send metering data based on post-process
@@ -115,6 +123,9 @@ when only reading one package at a time.
 
 - Scheduler updates import job state through task-keyspace task manager
   (`getTaskMgrForAccessingImportJob`).
+- A cancelled job cannot advance into an import step: after an idempotent start
+  update, a zero-row result is checked against durable job state. Already-running
+  retries remain valid; cancelled jobs stop planning before writable subtasks exist.
 - On user keyspace tasks, cross-keyspace session-pool retrieval failures are
   wrapped as `errGetCrossKSSessionPool`, and treated as retryable.
 
@@ -135,4 +146,5 @@ when only reading one package at a time.
 - `pkg/dxf/importinto/collect_conflicts_test.go`
 - `pkg/dxf/importinto/task_executor_test.go`
 - `pkg/dxf/importinto/scheduler_test.go`
-- `pkg/dxf/importinto/job_testkit_test.go`
+- `pkg/dxf/importinto/scheduler_testkit_test.go`
+- `pkg/dxf/importinto/clean_up_nextgen_test.go`

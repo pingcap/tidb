@@ -16,8 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -382,9 +380,7 @@ func TestImportTableModeOwnership(t *testing.T) {
 			require.True(t, ok)
 			tbl := getClonedTableInfoFromDomain(t, "test", "owned", dom)
 			alter := func(mode model.TableMode, owner int64) error {
-				args := &model.AlterTableModeArgs{}
-				require.NoError(t, json.Unmarshal(fmt.Appendf(nil,
-					`{"schema_id":%d,"table_id":%d,"table_mode":%d,"import_job_id":%d}`, db.ID, tbl.ID, mode, owner), args))
+				args := &model.AlterTableModeArgs{SchemaID: db.ID, TableID: tbl.ID, TableMode: mode, ImportJobID: owner}
 				return dom.DDLExecutor().AlterTableMode(tk.Session(), args)
 			}
 			require.NoError(t, alter(model.TableModeImport, 101))

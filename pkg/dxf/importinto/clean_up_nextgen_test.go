@@ -142,6 +142,26 @@ func TestImportCleanerNextgen(t *testing.T) {
 		fullTask, err := sysTaskMgr.GetTaskByID(ctx, task.ID)
 		require.NoError(t, err)
 		require.NoError(t, (&importinto.ImportCleaner{}).Clean(ctx, fullTask))
+		userKSTK.MustExec("rename table read_only_import.t to read_only_import.renamed")
+		peerID, err := sysTaskMgr.CreateTask(ctx, "rename-cleanup-peer", proto.ImportInto, "ks", 1, "dxf_service", 1, proto.ExtraParams{}, []byte("{}"))
+		require.NoError(t, err)
+		sysKSTK.MustExec("update mysql.tidb_global_task set state = 'reverted' where id in (?, ?)", task.ID, peerID)
+		fullTask.State = proto.TaskStateReverted
+		peer, err := sysTaskMgr.GetTaskByID(ctx, peerID)
+		require.NoError(t, err)
+		batch := []*proto.Task{fullTask, peer}
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = keyspace.System })
+		manuallyInitFn(t, sysKSStore, sysKSStore)
+		cleanupErr := (&importinto.ImportCleaner{}).BatchClean(ctx, batch)
+		if cleanupErr == nil {
+			cleanupErr = sysTaskMgr.TransferTasks2History(ctx, batch)
+		}
+		config.UpdateGlobal(func(conf *config.Config) { conf.KeyspaceName = "ks" })
+		manuallyInitFn(t, userKSStore, sysKSStore)
+		require.NoError(t, cleanupErr, "cleanup must resolve the current name by table ID")
+		sysKSTK.MustQuery("select count(*) from mysql.tidb_global_task_history where id in (?, ?)", task.ID, peerID).Check(testkit.Rows("2"))
+		sysKSTK.MustQuery("select count(*) from mysql.tidb_global_task where id in (?, ?)", task.ID, peerID).Check(testkit.Rows("0"))
+		userKSTK.MustExec("rename table read_only_import.renamed to read_only_import.t")
 		userKSTK.MustExec("update mysql.tidb_import_jobs set status = 'cancelled' where table_id = ?", tbl.Meta().ID)
 		_, nextTask, err := executor.SubmitImportTask(ctx, &importer.Plan{
 			DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(), Keyspace: "ks", Parameters: &importer.ImportParameters{},
@@ -215,20 +235,26 @@ func TestImportCleanerNextgen(t *testing.T) {
 		defer storage.SetTaskManager(previous)
 
 		server.EXPECT().AcquireKSRuntime("ks", "DXF/import-cleaner/42").Return(runtime, nil)
+		userKSTK.MustExec("create table test.cleanup_error(a int)")
+		dom := domain.GetDomain(userKSTK.Session())
+		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		tbl, err := dom.InfoSchema().TableByName(ctx, db.Name, ast.NewCIStr("cleanup_error"))
+		require.NoError(t, err)
 		target := model.AlterTableModeTarget{
-			SchemaID: 1, SchemaName: ast.NewCIStr("test"),
-			TableID: 2, TableName: ast.NewCIStr("t"), TargetMode: model.TableModeNormal,
+			SchemaID: db.ID, SchemaName: db.Name,
+			TableID: tbl.Meta().ID, TableName: tbl.Meta().Name, TargetMode: model.TableModeNormal,
 		}
 		cleanupErr := fmt.Errorf("injected table mode cleanup failure")
+		runtime.EXPECT().Store().Return(userKSStore)
 		runtime.EXPECT().AlterTableMode(gomock.Any(), target).Return(cleanupErr)
 		runtime.EXPECT().Release()
 		metadata, err := json.Marshal(taskinfo.TaskMeta{Plan: importer.Plan{
-			DBID: 1, DBName: "test", TableInfo: &model.TableInfo{ID: 2, Name: ast.NewCIStr("t")},
+			DBID: db.ID, DBName: db.Name.O, TableInfo: tbl.Meta(),
 		}})
 		require.NoError(t, err)
 		require.ErrorIs(t, (&importinto.ImportCleaner{}).Clean(ctx, &proto.Task{
 			TaskBase: proto.TaskBase{ID: 42, Keyspace: "ks"}, Meta: metadata,
 		}), cleanupErr)
 	})
-
 }

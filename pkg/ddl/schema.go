@@ -373,8 +373,8 @@ func (w *worker) checkUnfinishedSchemaImports(jobCtx *jobContext, db *model.DBIn
 	}
 	defer w.sessPool.Put(sctx)
 	rows, err := sess.NewSession(sctx).Execute(jobCtx.stepCtx,
-		"SELECT id, table_id FROM mysql.tidb_import_jobs WHERE table_schema = %? AND status IN ('pending', 'running')",
-		"check unfinished schema imports", db.Name.L)
+		"SELECT id, table_id FROM mysql.tidb_import_jobs WHERE status IN ('pending', 'running')",
+		"check unfinished schema imports")
 	if err != nil {
 		return errors.Trace(err)
 	}

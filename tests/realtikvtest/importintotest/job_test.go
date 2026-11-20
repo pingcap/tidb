@@ -727,15 +727,17 @@ func (s *mockGCSSuite) TestCancelJob() {
 		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 500*time.Millisecond)
 
-	// cancel again, should fail
-	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
+	// A durable cancellation can retry cleanup without changing terminal state.
+	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID1))
+	s.compareJobInfoWithoutTime(jobInfo, s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()[0])
 
 	// cancel a job created by test_cancel_job1 using test_cancel_job2, should fail
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), plannererrors.ErrSpecificAccessDenied)
 	// cancel by root, should pass privilege check
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
+	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID1))
+	s.compareJobInfoWithoutTime(jobInfo, s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()[0])
 
 	// cancel job in post-process phase, using test_cancel_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))

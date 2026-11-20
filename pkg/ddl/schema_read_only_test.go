@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -43,6 +44,38 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
+
+func querySchemaReadOnlyTest(ctx context.Context, tk *testkit.TestKit, sql string) ([][]string, error) {
+	rs, err := tk.ExecWithContext(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return nil, fmt.Errorf("query returned no result set: %s", sql)
+	}
+	rows, err := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	return rows, errors.Join(err, rs.Close())
+}
+
+func waitSchemaReadOnlyJobs(t *testing.T, tk *testkit.TestKit, sql string, ready func([][]string) bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		rows, err := querySchemaReadOnlyTest(ctx, tk, sql)
+		require.NoError(t, err)
+		if ready(rows) {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal("DDL job was not observed before the deadline")
+		}
+	}
+}
 
 func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 	t.Run("ImportModeTransition", func(t *testing.T) {
@@ -83,7 +116,10 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		admin.MustExec("alter database ro read only = 1")
 	})
 	t.Run("SequenceWriteDraining", func(t *testing.T) {
-		for _, sql := range []string{"select nextval(ro.s)", "select setval(ro.s, 100)"} {
+		for _, sql := range []string{
+			"select nextval(ro.s)", "select setval(ro.s, 100)",
+			"select nextval(ro.s) from ro.t where id = 1", "select setval(ro.s, 100) from ro.t where id = 1",
+		} {
 			t.Run(sql, func(t *testing.T) {
 				enableReadOnlyDDLFp(t)
 				store := testkit.CreateMockStore(t)
@@ -91,6 +127,10 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 				alter := testkit.NewTestKit(t, store)
 				alter.MustExec("create database ro")
 				alter.MustExec("create sequence ro.s nocache")
+				alter.MustExec("create table ro.t(id int primary key)")
+				alter.MustExec("insert into ro.t values (1)")
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
 				checked := make(chan struct{})
 				resume := make(chan struct{})
 				release := sync.OnceFunc(func() { close(resume) })
@@ -106,7 +146,11 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 				writeDone := make(chan error, 1)
 				alterDone := make(chan error, 1)
 				wg.Add(1)
-				go func() { defer wg.Done(); writeDone <- writer.QueryToErr(sql) }()
+				go func() {
+					defer wg.Done()
+					_, err := querySchemaReadOnlyTest(ctx, writer, sql)
+					writeDone <- err
+				}()
 				select {
 				case <-checked:
 				case <-time.After(5 * time.Second):
@@ -181,9 +225,15 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			}
 		})
 		done := make(chan error, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go func() { defer wg.Done(); done <- writer.QueryToErr("select nextval(ro.s)") }()
+		go func() {
+			defer wg.Done()
+			_, err := querySchemaReadOnlyTest(ctx, writer, "select nextval(ro.s)")
+			done <- err
+		}()
 		defer func() { release(); wg.Wait() }()
 		select {
 		case <-started:
@@ -564,9 +614,9 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 				}
 				wg.Add(1)
 				go func() { defer wg.Done(); createDone <- create.ExecToErr("create table ro.late(a int)") }()
-				require.Eventually(t, func() bool {
-					return len(admin.MustQuery("admin show ddl jobs where db_name = 'ro' and job_type = 'create table'").Rows()) != 0
-				}, 5*time.Second, 10*time.Millisecond)
+				waitSchemaReadOnlyJobs(t, admin, "admin show ddl jobs where db_name = 'ro' and job_type = 'create table'", func(rows [][]string) bool {
+					return len(rows) != 0
+				})
 				release()
 				require.NoError(t, <-alterDone)
 				if bypass {
@@ -721,17 +771,41 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		txn.MustExec("begin optimistic")
 		txn.MustExec("insert into ro.t values (1)")
 		defer txn.MustExec("rollback")
+		txnID := txn.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		observed := make(chan struct{})
+		var once sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+			for id := range ids {
+				if fmt.Sprint(id) == txnID {
+					once.Do(func() { close(observed) })
+				}
+			}
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		done := make(chan error, 1)
-		go func() { done <- other.ExecToErr("alter database ro read only = 1") }()
+		var wg sync.WaitGroup
+		defer func() { txn.Session().RollbackTxn(context.Background()); cancel(); wg.Wait() }()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := other.ExecWithContext(ctx, "alter database ro read only = 1")
+			done <- err
+		}()
+		select {
+		case <-observed:
+		case err := <-done:
+			t.Fatalf("ALTER returned before observing the existing write: %v", err)
+		case <-ctx.Done():
+			t.Fatal("ALTER did not observe the existing write before the deadline")
+		}
+		txn.MustExec("commit")
 		select {
 		case err := <-done:
 			require.NoError(t, err)
-			t.Error("ALTER returned before the existing write committed")
-		case <-time.After(2 * time.Second):
-			txn.MustExec("commit")
-			require.NoError(t, <-done)
+		case <-ctx.Done():
+			t.Fatal("ALTER did not finish after COMMIT")
 		}
-		txn.MustExec("commit")
 		other.MustQuery("select * from ro.t").Check(testkit.Rows("1"))
 	})
 	t.Run("MDLOffLateAccess", func(t *testing.T) {
@@ -898,15 +972,20 @@ func TestSchemaReadOnlyReplicaWriterSequence(t *testing.T) {
 	writer := testkit.NewTestKit(t, store)
 	admin.MustExec("create database ro")
 	admin.MustExec("create sequence ro.s nocache")
+	admin.MustExec("create table ro.t(id int primary key)")
+	admin.MustExec("insert into ro.t values (1)")
 	admin.MustExec("create user 'repl_writer'@'%'")
 	admin.MustExec("grant all on ro.* to 'repl_writer'@'%'")
 	require.NoError(t, writer.Session().Auth(&auth.UserIdentity{Username: "repl_writer", Hostname: "%"}, nil, nil, nil))
 	writer.MustExec("prepare seq_stmt from 'select nextval(ro.s)'")
+	writer.MustExec("prepare seq_point_get from 'select nextval(ro.s) from ro.t where id = 1'")
 	admin.MustExec("alter database ro read only = 1")
 	require.ErrorContains(t, writer.QueryToErr("select nextval(ro.s)"), "[schema:3989]")
 	require.ErrorContains(t, writer.QueryToErr("execute seq_stmt"), "[schema:3989]")
+	require.ErrorContains(t, writer.QueryToErr("execute seq_point_get"), "[schema:3989]")
 	admin.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'repl_writer'@'%'")
 	writer.MustQuery("execute seq_stmt").Check(testkit.Rows("1"))
+	writer.MustQuery("execute seq_point_get").Check(testkit.Rows("2"))
 	writer.MustQuery("select setval(ro.s, 100)").Check(testkit.Rows("100"))
 	writer.MustQuery("select nextval(ro.s)").Check(testkit.Rows("101"))
 }
@@ -943,8 +1022,7 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 		wg.Add(1)
 		go func() { defer wg.Done(); secondDone <- second.ExecToErr("alter database ro read only = 1") }()
 		var secondID string
-		require.Eventually(t, func() bool {
-			rows := admin.MustQuery("admin show ddl jobs where db_name = 'ro' and job_type = 'modify schema read only'").Rows()
+		waitSchemaReadOnlyJobs(t, admin, "admin show ddl jobs where db_name = 'ro' and job_type = 'modify schema read only'", func(rows [][]string) bool {
 			for _, row := range rows {
 				if fmt.Sprint(row[0]) != fmt.Sprint(firstID.Load()) {
 					secondID = fmt.Sprint(row[0])
@@ -952,7 +1030,7 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 				}
 			}
 			return false
-		}, 5*time.Second, 10*time.Millisecond)
+		})
 		admin.MustQuery("admin cancel ddl jobs " + secondID).Check(testkit.Rows(secondID + " successful"))
 		release()
 		require.NoError(t, <-firstDone)
@@ -1120,8 +1198,12 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		tk.MustExec("alter database other read only = 1")
 		tk.MustExec("update mysql.tidb_import_jobs set status = 'running', step = 'global-sorting'")
 		require.ErrorContains(t, tk.ExecToErr("alter database ro read only = 1"), "unfinished import")
-		tk.MustExec("update mysql.tidb_import_jobs set status = 'finished'")
+		tk.MustExec("alter database other read only = 0")
+		tk.MustExec("rename table ro.t to other.t")
+		require.ErrorContains(t, tk.ExecToErr("alter database other read only = 1"), "unfinished import")
 		tk.MustExec("alter database ro read only = 1")
+		tk.MustExec("update mysql.tidb_import_jobs set status = 'finished'")
+		tk.MustExec("alter database other read only = 1")
 	})
 	t.Run("MixedVersion", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)

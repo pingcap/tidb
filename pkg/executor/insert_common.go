@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -615,7 +616,13 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	failpoint.InjectCall("afterBatchInsertNewTxn", e.Ctx())
-	return activateSchemaReadOnlyWrite(e.Ctx(), e.Table.Meta())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.Table.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	return nil
 }
 
 // getRow gets the row which from `insert into select from` or `load data`.

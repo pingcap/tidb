@@ -595,11 +595,11 @@ func (sch *importScheduler) switchTableMode2NormalMode(ctx context.Context, task
 	}
 	var err error
 	if kerneltype.IsNextGen() {
-		err = sch.TaskRuntime.AlterTableMode(ctx, model.AlterTableModeTarget{
-			SchemaID: taskMeta.Plan.DBID, SchemaName: ast.NewCIStr(taskMeta.Plan.DBName),
-			TableID: taskMeta.Plan.TableInfo.ID, TableName: taskMeta.Plan.TableInfo.Name,
-			TargetMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
-		})
+		var target model.AlterTableModeTarget
+		target, err = tableModeResetTarget(ctx, sch.TaskRuntime.Store(), taskMeta)
+		if err == nil {
+			err = sch.TaskRuntime.AlterTableMode(ctx, target)
+		}
 	} else {
 		err = sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			return domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
@@ -789,16 +789,39 @@ func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, ta
 		return err
 	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	// we consider all errors as retryable errors, except context done.
+	// Retry storage errors; terminal job states below stop retries immediately.
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err = handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			retryable := true
+			err := taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
+				if err := importer.StartJob(ctx, exec, taskMeta.JobID, jobStep); err != nil {
+					return err
+				}
+				if se.GetSessionVars().StmtCtx.AffectedRows() != 0 {
+					return nil
+				}
+				// A cancel can win after the earlier check. Already-running jobs
+				// still permit idempotent planning after an uncertain update.
+				job, err := importer.GetJob(ctx, exec, taskMeta.JobID, "", true)
+				if err != nil {
+					retryable = !goerrors.Is(err, exeerrors.ErrLoadDataJobNotFound)
+					return err
+				}
+				if job.IsCancelled() {
+					retryable = false
+					return errors.Errorf("import job %d cancelled by user", job.ID)
+				}
+				if job.Status != importer.JobStatusRunning {
+					retryable = false
+					return errors.Errorf("cannot start import job %d in status %s", job.ID, job.Status)
+				}
+				return nil
 			})
+			return retryable, err
 		},
 	)
 	failpoint.InjectCall("syncAfterJobStarted")
@@ -829,12 +852,6 @@ func (sch *importScheduler) checkImportJobNotCancelled(
 	logger *zap.Logger,
 	taskMeta *taskinfo.TaskMeta,
 ) error {
-	if kerneltype.IsClassic() {
-		// Classic creates the import job and DXF task in the same transaction, so
-		// there is no dangling import job to catch here. CANCEL IMPORT JOB moves
-		// the DXF task to cancelling, and the framework cancellation path handles it.
-		return nil
-	}
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
@@ -853,7 +870,7 @@ func (sch *importScheduler) checkImportJobNotCancelled(
 					}
 					return err
 				}
-				// in next-gen, the import job might be taken as a dangling job
+				// The import job might be taken as a dangling job
 				// and canceled directly as DXF task might be submitted in another
 				// transaction.
 				if job.IsCancelled() {

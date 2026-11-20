@@ -471,7 +471,7 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 	return errors.Trace(err)
 }
 
-func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
+func (e *executor) modifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
 	dbName := stmt.Name
 	if metadef.IsMemOrSysDB(dbName.L) {
 		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
@@ -867,7 +867,7 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 		}
 	}
 	if modifyReadOnlyOption {
-		if err = e.ModifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
+		if err = e.modifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
 			return err
 		}
 	}

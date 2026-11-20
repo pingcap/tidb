@@ -757,39 +757,50 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 					scanOnce.Do(func() { close(scanned) })
 				}
 			})
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			alterDone := make(chan error, 1)
 			var wg sync.WaitGroup
-			defer func() { cancel(); wg.Wait() }()
-			commitDone := make(chan error, 1)
-			observationDone := make(chan bool, 1)
+			defer func() {
+				tk1.Session().RollbackTxn(context.Background())
+				cancel()
+				wg.Wait()
+			}()
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				select {
-				case <-scanned:
-				case <-ctx.Done():
-				}
-				wait := 5 * time.Second
-				if !observe {
-					wait = 10 * time.Millisecond
-				}
-				timer := time.NewTimer(wait)
-				defer timer.Stop()
-				observationSucceeded := false
-				select {
-				case <-observed:
-					observationSucceeded = true
-				case <-timer.C:
-				case <-ctx.Done():
-				}
-				// Always release the transaction, then report background failures
-				// to the test goroutine after the ALTER has unblocked.
-				commitDone <- tk1.ExecToErr("commit")
-				observationDone <- observationSucceeded
+				_, err := tk2.ExecWithContext(ctx, "alter database test_db read only = 1")
+				alterDone <- err
 			}()
-			tk2.MustExec("alter database test_db read only = 1")
-			require.NoError(t, <-commitDone)
-			require.Equal(t, observe, <-observationDone)
+			select {
+			case <-scanned:
+			case err := <-alterDone:
+				t.Fatalf("ALTER completed before observing the open transaction: %v", err)
+			case <-ctx.Done():
+				t.Fatal("transaction scan did not observe the open transaction before the deadline")
+			}
+			wait := 10 * time.Millisecond
+			if observe {
+				wait = time.Second
+			}
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			observationSucceeded := false
+			select {
+			case <-observed:
+				observationSucceeded = true
+			case <-timer.C:
+			case <-ctx.Done():
+				t.Fatal("transaction observation exceeded the deadline")
+			}
+			tk1.MustExec("commit")
+			select {
+			case err := <-alterDone:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("ALTER did not finish after COMMIT")
+			}
+			require.Equal(t, observe, observationSucceeded)
 			tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
 		})
 	}
@@ -851,26 +862,43 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 	tk1.MustExec("create table test_db.t(a int)")
 	tk1.MustExec("begin;use test_db;")
 	tk1.MustExec("select * from t")
-	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	alterDone := make(chan error, 1)
+	observed := make(chan struct{})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+		if len(ids) == 1 {
+			once.Do(func() { close(observed) })
+		}
+	})
+	var wg sync.WaitGroup
+	defer func() { tk1.Session().RollbackTxn(context.Background()); cancel(); wg.Wait() }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		tk2.MustExec("alter database test_db read only = 1")
+		_, err := tk2.ExecWithContext(ctx, "alter database test_db read only = 1")
+		alterDone <- err
 	}()
-	var txnObserved atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		txnObserved.Store(len(ids) == 1)
-	})
-	require.Eventually(t, func() bool {
-		return txnObserved.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	select {
+	case <-observed:
+	case err := <-alterDone:
+		t.Fatalf("ALTER returned before transaction observation: %v", err)
+	case <-ctx.Done():
+		t.Fatal("ALTER did not observe the transaction before the deadline")
+	}
 	is := sessiontxn.GetTxnManager(tk3.Session()).GetTxnInfoSchema()
 	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test_db"))
 	require.True(t, ok)
 	require.True(t, dbInfo.ReadOnly)
 	tk3.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")
 	tk1.MustExec("commit")
-	wg.Wait()
+	select {
+	case err := <-alterDone:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("ALTER did not finish after transaction release")
+	}
 }
 
 func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
@@ -892,22 +920,39 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.MustQuery("select * from t;")
 
-	wg := &sync.WaitGroup{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	alterDone := make(chan error, 1)
+	observed := make(chan struct{})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+		if len(ids) == 1 {
+			once.Do(func() { close(observed) })
+		}
+	})
+	var wg sync.WaitGroup
+	release := sync.OnceFunc(conn1.Close)
+	defer func() { release(); cancel(); wg.Wait() }()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		tk2.MustExec("alter schema test read only = 1")
+		_, err := tk2.ExecWithContext(ctx, "alter schema test read only = 1")
+		alterDone <- err
 	}()
-	var txnObserved atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		txnObserved.Store(len(ids) == 1)
-	})
-	require.Eventually(t, func() bool {
-		return txnObserved.Load()
-	}, 5*time.Second, 100*time.Millisecond)
-
-	conn1.Close()
-	wg.Wait()
+	select {
+	case <-observed:
+	case err := <-alterDone:
+		t.Fatalf("ALTER returned before transaction observation: %v", err)
+	case <-ctx.Done():
+		t.Fatal("ALTER did not observe the transaction before the deadline")
+	}
+	release()
+	select {
+	case err := <-alterDone:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("ALTER did not finish after transaction release")
+	}
 }
 
 func TestAlterSchemaReadOnlyDDLRollback(t *testing.T) {
