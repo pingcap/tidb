@@ -1320,6 +1320,57 @@ func (er *expressionRewriter) buildInSubqueryConditions(left expression.Expressi
 	return onConds, nil
 }
 
+// inSubqueryDistinctKeys returns the keys the DISTINCT of the inner join rewrite
+// groups by, one per IN column, and whether such keys exist. The DISTINCT must
+// group by the values the join compares: if "=" casts an inner column, or compares
+// it in another collation, distinct inner values can be equal for the join and
+// multiply outer rows.
+func (er *expressionRewriter) inSubqueryDistinctKeys(left expression.Expression, onConds []expression.Expression, innerCols []*expression.Column) ([]expression.Expression, bool) {
+	evalCtx := er.sctx.GetEvalCtx()
+	keys := make([]expression.Expression, len(innerCols))
+	for i, col := range innerCols {
+		keys[i] = col
+		eq, ok := onConds[i].(*expression.ScalarFunction)
+		if !ok || eq.FuncName.L != ast.EQ || !isInnerColumnOrCastOf(eq.GetArgs()[1], col) {
+			lhs := left
+			if len(innerCols) > 1 {
+				lhs = expression.GetFuncArg(left, i)
+			}
+			if !collate.CompatibleCollate(lhs.GetType(evalCtx).GetCollate(), col.GetType(evalCtx).GetCollate()) {
+				return nil, false
+			}
+			continue
+		}
+		key := eq.GetArgs()[1]
+		keyTp := key.GetType(evalCtx)
+		chs, coll := eq.CharsetAndCollation()
+		if keyTp.EvalType() == types.ETString && !collate.CompatibleCollate(keyTp.GetCollate(), coll) {
+			if keyTp.Hybrid() || !canCastCharsetLosslessly(keyTp.GetCharset(), chs) {
+				return nil, false
+			}
+			key = expression.BuildCastCollationFunction(er.sctx, key, &expression.ExprCollation{Charset: chs, Collation: coll}, false)
+		}
+		keys[i] = key
+	}
+	return keys, true
+}
+
+func isInnerColumnOrCastOf(expr expression.Expression, col *expression.Column) bool {
+	if c, ok := expr.(*expression.Column); ok {
+		return c.EqualColumn(col)
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.Cast {
+		return false
+	}
+	c, ok := sf.GetArgs()[0].(*expression.Column)
+	return ok && c.EqualColumn(col)
+}
+
+func canCastCharsetLosslessly(from, to string) bool {
+	return from == to || to == charset.CharsetBin || (from == charset.CharsetUTF8 && to == charset.CharsetUTF8MB4)
+}
+
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.PatternInExpr) bool {
 	intest.AssertNotNil(planCtx)
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
@@ -1355,15 +1406,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		return true
 	}
 
-	// The inner join rewrite adds a DISTINCT that groups by the inner key's
-	// collation. If that groups values differently from the join comparison,
-	// the rewrite can change the result. See TestCollateSubQuery.
-	rhsCollation := np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()).GetCollate()
-	if lLen > 1 {
-		// Preserve the row-level check: the former RHS ROW used the connection collation.
-		_, rhsCollation = er.sctx.GetCharsetInfo()
-	}
-	collFlag := collate.CompatibleCollate(lexpr.GetType(er.sctx.GetEvalCtx()).GetCollate(), rhsCollation)
+	gbyKeys, canDedup := er.inSubqueryDistinctKeys(lexpr, onConds, np.Schema().Columns)
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
@@ -1385,7 +1428,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round), skip the
 	// InnerJoin+Agg rewrite so that a SemiJoin is built instead; the CorrelateSolver rule can
 	// then convert it to a correlated Apply with index lookups.
-	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag
+	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && canDedup
 	if canRewriteToJoinAgg {
 		// Record that the alternative logical plans variable is relevant — toggling it
 		// changes whether we take the InnerJoin+Agg path or the SemiApply path.
@@ -1401,51 +1444,11 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
 		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
-		distinctChild := np
-		distinctLen := np.Schema().Len()
 		// IN-subquery rewrite turns:
 		//   outer_col IN (SELECT inner_col ...)
 		// into:
 		//   outer JOIN DISTINCT(inner_col) ON outer_col = inner_col
-		//
-		// DISTINCT must be applied on the same comparison domain as the join predicate.
-		// If "=" injects an implicit cast on the RHS (e.g. blob/string -> number), deduplicating
-		// raw inner values is insufficient: different raw values may become equal after cast and
-		// multiply outer rows in the rewritten inner join.
-		//
-		// To keep semantics equivalent to IN, we project the RHS comparison expression first,
-		// then distinct on that projected key.
-		if lLen == 1 {
-			if eqCond, ok := onConds[0].(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
-				rhs := eqCond.GetArgs()[1]
-				if expression.ExprFromSchema(rhs, np.Schema()) {
-					if _, isCol := rhs.(*expression.Column); !isCol {
-						// rhs is computed from inner columns (typically with an implicit cast generated
-						// by type coercion rules). Materialize it as an inner projection column so both
-						// DISTINCT and JOIN use exactly this coerced key.
-						proj := logicalop.LogicalProjection{Exprs: []expression.Expression{rhs}}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-						projCol := &expression.Column{
-							UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
-							RetType:  rhs.GetType(er.sctx.GetEvalCtx()).Clone(),
-						}
-						proj.SetChildren(np)
-						proj.SetSchema(expression.NewSchema(projCol))
-						proj.SetOutputNames([]*types.FieldName{types.EmptyName})
-						distinctChild = proj
-						distinctLen = 1
-						// Rebuild join condition against the projected key; this preserves
-						// the same coercion behavior while preventing duplicate matches.
-						onConds[0], err = er.constructBinaryOpFunction(lexpr, projCol, ast.EQ)
-						if err != nil {
-							er.err = err
-							return true
-						}
-					}
-				}
-			}
-		}
-		// Build distinct for the inner query.
-		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
+		agg, err := planCtx.builder.buildDistinctWithGbyKey(np, gbyKeys)
 		if err != nil {
 			er.err = err
 			return true

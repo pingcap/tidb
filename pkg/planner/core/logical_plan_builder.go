@@ -2074,6 +2074,12 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 }
 
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
+	return b.buildDistinctWithGbyKey(child, expression.Column2Exprs(child.Schema().Clone().Columns[:length]))
+}
+
+// buildDistinctWithGbyKey builds a DISTINCT over child that groups by gbyKeys and
+// outputs the first row of every child column.
+func (b *PlanBuilder) buildDistinctWithGbyKey(child base.LogicalPlan, gbyKeys []expression.Expression) (*logicalop.LogicalAggregation, error) {
 	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
 	b.optFlag = b.optFlag | rule.FlagPushDownAgg
 	// flag it if cte contain distinct
@@ -2082,7 +2088,7 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	}
 	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
-		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
+		GroupByItems: gbyKeys,
 	}.Init(b.ctx, child.QueryBlockOffset())
 	if hintinfo := b.TableHints(); hintinfo != nil {
 		plan4Agg.PreferAggType = hintinfo.PreferAggType
