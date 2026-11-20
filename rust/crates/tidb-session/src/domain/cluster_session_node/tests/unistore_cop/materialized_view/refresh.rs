@@ -29,6 +29,15 @@ pub(super) fn rows(rows: &[&str]) -> String {
     format!("RS:{}", serde_json::to_string(&rows).unwrap())
 }
 
+/// Go `tk.MustQuery(sql).Check(testkit.Rows(...))`: each row's cells
+/// joined by spaces (`<nil>` for NULL), which is what Go compares.
+pub(super) fn go_check(tk: &mut Session, sql: &str) -> Vec<String> {
+    rows_of(tk, sql)
+        .into_iter()
+        .map(|row| row.into_iter().map(|cell| cell.unwrap_or_else(|| "<nil>".to_owned())).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
 pub(super) fn rows_of(tk: &mut Session, sql: &str) -> Vec<Vec<Option<String>>> {
     let rows = answer(tk, sql);
     serde_json::from_str(rows.strip_prefix("RS:").unwrap_or_else(|| panic!("{sql}: {rows}"))).unwrap()
@@ -851,5 +860,1353 @@ fn test_materialized_view_refresh_fast_as_of_timestamp() {
             ),
             rows(&["failed 1 1 1 1 1 1"])
         );
+    }
+}
+
+#[test]
+fn test_materialized_view_fast_refresh_rejects_hazardous_purge_hist() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t_refresh_purge_guard (a int not null, b int not null)",
+        "create materialized view log on t_refresh_purge_guard (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_refresh_purge_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_purge_guard group by a",
+        "insert into t_refresh_purge_guard values (1, 10), (2, 20)",
+        "refresh materialized view mv_refresh_purge_guard fast",
+        "insert into t_refresh_purge_guard values (3, 30)",
+    ]);
+    let mv_id = table_id(&mut tk, "mv_refresh_purge_guard");
+    let mlog_id = table_id(&mut tk, "$mlog$t_refresh_purge_guard");
+    let last_success = last_success_read_tso_of(&mut tk, mv_id);
+    let running_purge = |job_id: u64| {
+        format!(
+            "insert into mysql.tidb_mlog_purge_hist (PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD, PURGE_START_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_TIME) values ({job_id}, {mlog_id}, 'test', 't_refresh_purge_guard', 'manual', now(6), 0, 'running', {}, now(6))",
+            last_success + 1
+        )
+    };
+    must_exec_all(&mut tk, &[
+        &format!("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = {last_success} where MLOG_ID = {mlog_id}"),
+        &running_purge(last_success + 1000),
+    ]);
+    exec_err_contains(&mut tk, "refresh materialized view mv_refresh_purge_guard fast", "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO");
+    assert_eq!(last_success_read_tso_of(&mut tk, mv_id), last_success);
+
+    let (hit, pause) = (Latch::default(), Latch::default());
+    let _after_begin = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin", {
+        let (hit, pause) = (hit.clone(), pause.clone());
+        move |_| {
+            hit.open();
+            pause.wait();
+        }
+    });
+    struct Release(Latch);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.open();
+        }
+    }
+    let pause = Release(pause);
+    must_exec_all(&mut tk, &[
+        &format!("delete from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id}"),
+        &format!("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = {last_success} where MLOG_ID = {mlog_id}"),
+    ]);
+    let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3501);
+    let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv_refresh_purge_guard fast"));
+    hit.wait_for("the refresh at its failpoint");
+    let mut tk_concurrent = super::create::new_mview_test_kit(&stack, 3502);
+    must_exec_all(&mut tk_concurrent, &[&running_purge(last_success + 2000)]);
+    drop(pause);
+    let error = refresh.join().unwrap();
+    assert!(error.contains("materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO"), "{error}");
+}
+
+#[test]
+fn test_materialized_view_refresh_failed_alert_by_attribute() {
+    let (_stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "set time_zone = '+00:00'",
+        "create table t_mv_refresh_failed_alert (a int not null, b int not null)",
+        "insert into t_mv_refresh_failed_alert values (1, 10), (2, 20)",
+        "create materialized view log on t_mv_refresh_failed_alert (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_refresh_failed_yes (a, s, cnt) refresh fast attributes='mview_alert_refresh_failed=yes' as select a, sum(b), count(1) from t_mv_refresh_failed_alert group by a",
+        "create materialized view mv_refresh_failed_no (a, s, cnt) refresh fast attributes='mview_alert_refresh_failed=no' as select a, sum(b), count(1) from t_mv_refresh_failed_alert group by a",
+    ]);
+    let yes_id = table_id(&mut tk, "mv_refresh_failed_yes");
+    let no_id = table_id(&mut tk, "mv_refresh_failed_no");
+    {
+        let _fail = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist",
+            r#"return("mock refresh failed alert")"#,
+        );
+        exec_err_contains(&mut tk, "refresh materialized view mv_refresh_failed_yes fast", "mock refresh failed alert");
+        exec_err_contains(&mut tk, "refresh materialized view mv_refresh_failed_no fast", "mock refresh failed alert");
+        assert_eq!(
+            answer(&mut tk, &format!("select REFRESH_FAILED, ALERT_LEVEL is null from mysql.tidb_mview_refresh_alert where MVIEW_ID = {yes_id}")),
+            r#"RS:[["YES","1"]]"#
+        );
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {no_id}")), "0");
+    }
+    must_exec_all(&mut tk, &[
+        &format!("update mysql.tidb_mview_refresh_alert set ALERT_LEVEL = 'warning' where MVIEW_ID = {yes_id}"),
+        "refresh materialized view mv_refresh_failed_yes fast",
+    ]);
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {yes_id}")), "0");
+}
+
+#[test]
+fn test_materialized_view_refresh_fallback_reports_alert_before_insert_hist_failure() {
+    let (_stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t_mv_refresh_failed_alert_fallback (a int not null, b int not null)",
+        "insert into t_mv_refresh_failed_alert_fallback values (1, 10), (2, 20)",
+        "create materialized view log on t_mv_refresh_failed_alert_fallback (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_refresh_failed_alert_fallback (a, s, cnt) refresh fast attributes='mview_alert_refresh_failed=yes' as select a, sum(b), count(1) from t_mv_refresh_failed_alert_fallback group by a",
+    ]);
+    let id = table_id(&mut tk, "mv_refresh_failed_alert_fallback");
+    let _early = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist",
+        r#"return("mock fallback refresh failed alert")"#,
+    );
+    let _insert = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockInsertRefreshHistFailedError", "return(true)");
+    let error = exec_to_err(&mut tk, "refresh materialized view mv_refresh_failed_alert_fallback fast");
+    assert!(error.contains("failed to insert failed refresh history after error"), "{error}");
+    assert!(error.contains("mock fallback refresh failed alert"), "{error}");
+    assert_eq!(
+        answer(&mut tk, &format!("select REFRESH_FAILED, ALERT_LEVEL is null from mysql.tidb_mview_refresh_alert where MVIEW_ID = {id}")),
+        r#"RS:[["YES","1"]]"#
+    );
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")), "0");
+}
+
+#[test]
+fn test_materialized_view_refresh_fast_as_of_timestamp_gc_safe_point() {
+    for min_max in [false, true] {
+        for dry_run in [false, true] {
+            // t.Run(fmt.Sprintf("minmax=%t/dry_run=%t", minMax, dryRun))
+            let (_stack, _users, mut tk) = mview_test_kit();
+            must_exec_all(&mut tk, &["set time_zone = '+00:00'"]);
+            if min_max {
+                must_exec_all(&mut tk, &["create table t_mv_refresh_asof_gc (a int not null, b int not null, key idx_a(a))"]);
+            } else {
+                must_exec_all(&mut tk, &["create table t_mv_refresh_asof_gc (a int not null, b int not null)"]);
+            }
+            must_exec_all(&mut tk, &["create materialized view log on t_mv_refresh_asof_gc (a, b) purge next date_add(now(), interval 1 hour)"]);
+            if min_max {
+                must_exec_all(&mut tk, &[
+                    "create materialized view mv_refresh_asof_gc (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_gc group by a",
+                ]);
+            } else {
+                must_exec_all(&mut tk, &[
+                    "create materialized view mv_refresh_asof_gc (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_refresh_asof_gc group by a",
+                ]);
+            }
+            let id = table_id(&mut tk, "mv_refresh_asof_gc");
+            let from = now_millis(-chrono::Duration::hours(1));
+            let from_tso = go_time_to_ts(from);
+            must_exec_all(&mut tk, &[
+                &format!("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = {from_tso} where MVIEW_ID = {id}"),
+                "insert into t_mv_refresh_asof_gc values (1, 10)",
+            ]);
+            let target = next_refresh_target();
+            let target_tso = go_time_to_ts(target);
+            must_set_mock_gc_safe_point(&mut tk, target + chrono::Duration::seconds(1));
+            let mut refresh = format!("refresh materialized view mv_refresh_asof_gc fast as of timestamp '{}'", as_of(target));
+            let label = format!("minmax={min_max}/dry_run={dry_run}");
+            // Go `variable.ErrSnapshotTooOld` (8055).
+            let snapshot_too_old = |answer: &str| assert!(answer.starts_with("ERR 8055 "), "{label}: {answer}");
+            if dry_run {
+                refresh += " dry run";
+                if min_max {
+                    snapshot_too_old(&answer(&mut tk, &refresh));
+                } else {
+                    let dry = rows_of(&mut tk, &refresh);
+                    require_rows_contain_substring(&dry, "_tidb_commit_ts");
+                    require_rows_contain_substring(&dry, &from_tso.to_string());
+                    require_rows_contain_substring(&dry, &target_tso.to_string());
+                }
+                continue;
+            }
+            if min_max {
+                snapshot_too_old(&answer(&mut tk, &refresh));
+                assert_eq!(answer(&mut tk, "select * from mv_refresh_asof_gc"), "RS:[]");
+                assert_eq!(last_success_read_tso_of(&mut tk, id), from_tso);
+                assert_eq!(
+                    answer(
+                        &mut tk,
+                        &format!(
+                            "select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = {target_tso}, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"
+                        )
+                    ),
+                    r#"RS:[["failed","bounded fast manual","1","1"]]"#
+                );
+            } else {
+                must_exec_all(&mut tk, &[&refresh]);
+                assert_eq!(answer(&mut tk, "select a, s, cnt from mv_refresh_asof_gc"), rows(&["1 10 1"]));
+                assert_eq!(last_success_read_tso_of(&mut tk, id), target_tso);
+                assert_eq!(
+                    answer(
+                        &mut tk,
+                        &format!(
+                            "select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO = {target_tso} from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"
+                        )
+                    ),
+                    r#"RS:[["success","bounded fast manual","1"]]"#
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_materialized_view_refresh_fast_min_max() {
+    // t.Run("bit", testMaterializedViewRefreshFastMinMaxBit)
+    for width in [8_u32, 16, 64] {
+        for nullable in [false, true] {
+            let (_stack, _users, mut tk) = mview_test_kit();
+            let not_null = if nullable { "" } else { "not null" };
+            must_exec_all(&mut tk, &[
+                &format!("create table t_mv_bit (id int primary key, g int not null, b bit({width}) {not_null}, key(g, b))"),
+                "create materialized view log on t_mv_bit (g, b)",
+            ]);
+            let high: u64 = 1 << (width - 1);
+            let (low, max_value) = (high - 1, high | (high - 1));
+            must_exec_all(&mut tk, &[
+                &format!("insert into t_mv_bit values (1, 1, {low}), (2, 1, {high}), (3, 2, {low})"),
+                "create materialized view mv_bit (g, cnt, bcnt, mn, mx) refresh fast as select g, count(1), count(b), min(b), max(b) from t_mv_bit group by g",
+            ]);
+            let label = format!("bit{width}/nullable={nullable}");
+            let check = |tk: &mut Session| {
+                assert_eq!(
+                    answer(tk, "select g, cnt, bcnt, cast(mn as unsigned), cast(mx as unsigned) from mv_bit order by g"),
+                    answer(tk, "select g, count(1), count(b), cast(min(b) as unsigned), cast(max(b) as unsigned) from t_mv_bit group by g order by g"),
+                    "{label}"
+                );
+            };
+            check(&mut tk);
+            assert_eq!(answer(&mut tk, "select cast(mn as unsigned), cast(mx as unsigned) from mv_bit where g = 1"), rows(&[&format!("{low} {high}")]));
+            // "Update an existing group and insert new groups, including an
+            // all-NULL group."
+            must_exec_all(&mut tk, &[&format!("insert into t_mv_bit values (4, 1, {max_value}), (5, 3, {high})")]);
+            if nullable {
+                must_exec_all(&mut tk, &["insert into t_mv_bit values (6, 4, null), (7, 1, null)"]);
+            } else {
+                must_exec_all(&mut tk, &[&format!("insert into t_mv_bit values (6, 4, 0), (7, 1, {low})")]);
+            }
+            must_exec_all(&mut tk, &["refresh materialized view mv_bit fast"]);
+            check(&mut tk);
+            // "Removing extrema forces recomputation alongside a group with a
+            // fast-path update."
+            must_exec_all(&mut tk, &[
+                &format!("update t_mv_bit set b = {low} where id = 4"),
+                &format!("update t_mv_bit set b = {max_value} where id = 3"),
+                &format!("insert into t_mv_bit values (8, 3, {max_value})"),
+                "refresh materialized view mv_bit fast",
+            ]);
+            check(&mut tk);
+            must_exec_all(&mut tk, &["delete from t_mv_bit where id in (1, 2, 3, 5)", "refresh materialized view mv_bit fast"]);
+            check(&mut tk);
+            if nullable {
+                must_exec_all(&mut tk, &["update t_mv_bit set b = null where g = 1"]);
+            } else {
+                must_exec_all(&mut tk, &["update t_mv_bit set b = 0 where g = 1"]);
+            }
+            must_exec_all(&mut tk, &[&format!("update t_mv_bit set b = {high} where id = 6"), "refresh materialized view mv_bit fast"]);
+            check(&mut tk);
+            must_exec_all(&mut tk, &["delete from t_mv_bit", "refresh materialized view mv_bit fast"]);
+            check(&mut tk);
+            must_exec_all(&mut tk, &[
+                &format!("insert into t_mv_bit values (9, 1, {low}), (10, 1, {max_value}), (11, 2, {high}), (12, 2, 0)"),
+                "refresh materialized view mv_bit fast",
+            ]);
+            check(&mut tk);
+            must_exec_all(&mut tk, &["refresh materialized view mv_bit fast"]);
+            check(&mut tk);
+        }
+    }
+    // t.Run("basic")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_fast_minmax (a int not null, b int not null, key idx_a(a))",
+            "create materialized view log on t_mv_fast_minmax (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_fast_minmax (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_mv_fast_minmax group by a",
+            "insert into t_mv_fast_minmax values (1, 10), (1, 20), (1, 30), (2, 5), (2, 8)",
+            "refresh materialized view mv_fast_minmax complete delta apply",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv_fast_minmax order by a"), rows(&["1 3 30 10", "2 2 8 5"]));
+        must_exec_all(&mut tk, &[
+            "delete from t_mv_fast_minmax where a = 1 and b = 30",
+            "delete from t_mv_fast_minmax where a = 2 and b = 5",
+            "insert into t_mv_fast_minmax values (2, 12)",
+            "refresh materialized view mv_fast_minmax fast",
+        ]);
+        assert_eq!(answer(&mut tk, "select * from mv_fast_minmax order by a"), rows(&["1 2 20 10", "2 2 12 8"]));
+    }
+    // t.Run("supporting_index")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "CREATE TABLE t_mv_fast_minmax_hint (id BIGINT NOT NULL, c01 VARCHAR(32) NOT NULL DEFAULT '', c02 VARCHAR(64) NOT NULL DEFAULT '', c03 INT NOT NULL DEFAULT 0, c04 INT NOT NULL DEFAULT 0, c05 INT NOT NULL DEFAULT 0, c06 VARCHAR(16) NOT NULL DEFAULT '', c07 DATE NOT NULL, c08 INT NOT NULL DEFAULT 0, c09 DATETIME NOT NULL, c10 DATETIME DEFAULT '2100-01-01 00:00:00', m01 DECIMAL(19,6) NOT NULL DEFAULT 0, m02 DECIMAL(19,6) NOT NULL DEFAULT 0, m03 DECIMAL(19,6) NOT NULL DEFAULT 0, PRIMARY KEY (id), KEY idx_c02_c09 (c02, c09), KEY idx_mv_minmax (c07, c02, c06, c05, c04, c03, c01, c08, m02, m03))",
+            "CREATE MATERIALIZED VIEW LOG ON t_mv_fast_minmax_hint(c04, c03, c01, c02, m01, m02, m03, c08, c05, c06, c07)",
+            "CREATE MATERIALIZED VIEW mv_fast_minmax_hint (c01, c02, c03, c04, c05, c06, c07, cnt, sum_m01, sum_m02, sum_m03, max_m02, max_m03, min_m03) REFRESH FAST AS SELECT t.c01, t.c02, t.c03, t.c04, t.c05, t.c06, t.c07, COUNT(1), SUM(t.m01), SUM(t.m02), SUM(t.m03), MAX(t.m02), MAX(t.m03), MIN(t.m03) FROM t_mv_fast_minmax_hint AS t WHERE t.c08 = 2 AND t.c01 != 0 AND t.c01 != '' AND t.c02 != '' AND t.c06 != '0' AND t.c06 != '' AND t.c05 != 0 AND t.c03 != 0 AND t.c04 != 0 AND t.c01 = 'sample' GROUP BY t.c01, t.c02, t.c03, t.c04, t.c05, t.c06, t.c07",
+            "INSERT INTO t_mv_fast_minmax_hint VALUES (1, 'sample', 'k-1', 20, 10, 30, 'X', '2026-06-26', 2, '2026-06-26 10:00:00', '2026-06-26 10:05:00', 100.000000, 80.000000, -5.000000)",
+            "REFRESH MATERIALIZED VIEW mv_fast_minmax_hint FAST",
+        ]);
+        require_refresh_mv_statement_result(&mut tk, 0, 0, 0);
+        assert_eq!(answer(&mut tk, "SELECT * FROM mv_fast_minmax_hint"), "RS:[]");
+        require_refresh_info_snapshot_matches_latest_success_hist(&mut tk, "test", "mv_fast_minmax_hint");
+        // "Repeated empty refreshes still advance the refresh watermark and
+        // commit history."
+        must_exec_all(&mut tk, &["REFRESH MATERIALIZED VIEW mv_fast_minmax_hint FAST"]);
+        require_refresh_mv_statement_result(&mut tk, 0, 0, 0);
+        require_refresh_info_snapshot_matches_latest_success_hist(&mut tk, "test", "mv_fast_minmax_hint");
+    }
+    // t.Run("missing_index")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_fast_minmax_noidx (id int not null primary key, a int not null, b int not null, key idx_a(a))",
+            "create materialized view log on t_mv_fast_minmax_noidx (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_fast_minmax_noidx (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_mv_fast_minmax_noidx group by a",
+            "insert into t_mv_fast_minmax_noidx values (1, 1, 10), (2, 1, 20)",
+            "refresh materialized view mv_fast_minmax_noidx complete delta apply",
+        ]);
+        exec_err_contains(
+            &mut tk,
+            "alter table t_mv_fast_minmax_noidx alter index idx_a invisible",
+            "Unsupported ALTER INDEX INVISIBLE on base table index idx_a required by materialized view mv_fast_minmax_noidx for MIN/MAX fast refresh",
+        );
+    }
+    // t.Run("nullable_duplicate_count")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_fast_nullable_dup_count (a int not null, b int, key idx_ab(a, b))",
+            "create materialized view log on t_mv_fast_nullable_dup_count (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_fast_nullable_dup_count (a, cnt, cnt_b1, cnt_b2, s, mx, mn) refresh fast as select a, count(1), count(b) as cnt_b1, count(b) as cnt_b2, sum(b), max(b), min(b) from t_mv_fast_nullable_dup_count group by a",
+            "insert into t_mv_fast_nullable_dup_count values (1, 10), (1, null), (1, 5), (2, null)",
+            "refresh materialized view mv_fast_nullable_dup_count complete delta apply",
+        ]);
+        let view = "select a, cnt, cnt_b1, cnt_b2, s, mx, mn from mv_fast_nullable_dup_count order by a";
+        assert_eq!(answer(&mut tk, view), r#"RS:[["1","3","2","2","15","10","5"],["2","1","0","0",null,null,null]]"#);
+        must_exec_all(&mut tk, &[
+            "delete from t_mv_fast_nullable_dup_count where a = 1 and b = 10",
+            "insert into t_mv_fast_nullable_dup_count values (1, 20), (1, null), (2, 7), (3, null), (3, 4)",
+            "refresh materialized view mv_fast_nullable_dup_count fast",
+        ]);
+        assert_eq!(answer(&mut tk, view), rows(&["1 4 2 2 25 20 5", "2 2 1 1 7 7 7", "3 2 1 1 4 4 4"]));
+        must_exec_all(&mut tk, &[
+            "delete from t_mv_fast_nullable_dup_count where a = 1 and b in (5, 20)",
+            "delete from t_mv_fast_nullable_dup_count where a = 2 and b = 7",
+            "refresh materialized view mv_fast_nullable_dup_count fast",
+        ]);
+        assert_eq!(
+            answer(&mut tk, view),
+            r#"RS:[["1","2","0","0",null,null,null],["2","1","0","0",null,null,null],["3","2","1","1","4","4","4"]]"#
+        );
+    }
+    // t.Run("where_separate_indexes")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_fast_minmax_where (id bigint not null primary key, g1 int not null, v1 bigint not null, v2 decimal(10,2) not null, c1 int not null, f1 int not null, key idx_g1(g1), key idx_f1(f1))",
+            "create materialized view log on t_mv_fast_minmax_where (id, g1, v1, v2, c1, f1) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_fast_minmax_where (g1, cnt, s_v1, min_v2, max_v2, cnt_c1) refresh fast next date_add(now(), interval 1 hour) as select g1, count(*), sum(v1), min(v2), max(v2), count(c1) from t_mv_fast_minmax_where where f1 = 1 group by g1",
+            "insert into t_mv_fast_minmax_where values (19001, 1, 1, 1.00, 1, 1), (19002, 2, 2, 2.00, 1, 1)",
+            "refresh materialized view mv_fast_minmax_where fast",
+        ]);
+        let view = "select * from mv_fast_minmax_where order by g1";
+        assert_eq!(answer(&mut tk, view), rows(&["1 1 1 1.00 1.00 1", "2 1 2 2.00 2.00 1"]));
+        must_exec_all(&mut tk, &[
+            "update t_mv_fast_minmax_where set g1 = 2, v1 = 10, f1 = 2, v2 = 9.00, c1 = 1 where id = 19001",
+            "refresh materialized view mv_fast_minmax_where fast",
+        ]);
+        assert_eq!(answer(&mut tk, view), rows(&["2 1 2 2.00 2.00 1"]));
+        must_exec_all(&mut tk, &["update t_mv_fast_minmax_where set f1 = 1 where id = 19001", "refresh materialized view mv_fast_minmax_where fast"]);
+        assert_eq!(answer(&mut tk, view), rows(&["2 2 12 2.00 9.00 2"]));
+    }
+}
+
+/// The refresh-history fixture: `t (a, b)` with its log and `mv`, made
+/// stale; the view's ID.
+fn refresh_history_fixture() -> (UnistoreClusterStack, Session, i64) {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    let id = latest_table(&stack, "mv").id;
+    must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)"]);
+    (stack, tk, id)
+}
+
+#[test]
+fn test_materialized_view_refresh_history() {
+    let last_hist = |tk: &mut Session, id: i64, columns: &str| {
+        answer(tk, &format!("select {columns} from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"))
+    };
+    // t.Run("finalize_retry")
+    {
+        let (_stack, mut tk, id) = refresh_history_fixture();
+        let _finalize = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError", "1*return(true)");
+        must_exec_all(&mut tk, &["refresh materialized view mv complete delta apply"]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+        assert_eq!(
+            last_hist(&mut tk, id, "REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null"),
+            r#"RS:[["success","complete delta apply manual","1","1","1"]]"#
+        );
+        assert_eq!(
+            single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'")),
+            "0"
+        );
+    }
+    // t.Run("finalize_and_cleanup_failure")
+    {
+        let (_stack, mut tk, id) = refresh_history_fixture();
+        let _finalize = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError", "return(true)");
+        let _release =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockReleaseMVRefreshAdvisoryLockFullyCount", "return(0)");
+        exec_err_contains(&mut tk, "refresh materialized view mv complete delta apply", "advisory lock cleanup invariant violated");
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+        assert_eq!(
+            last_hist(&mut tk, id, "REFRESH_STATUS, REFRESH_END_TIME is null, REFRESH_FAILED_REASON is null"),
+            r#"RS:[["running","1","1"]]"#
+        );
+        assert_eq!(
+            single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'failed'")),
+            "0"
+        );
+    }
+    // t.Run("running_lifecycle")
+    {
+        let (stack, mut tk, id) = refresh_history_fixture();
+        let (hit, pause) = (Latch::default(), Latch::default());
+        let _after_running = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning",
+            {
+                let (hit, pause) = (hit.clone(), pause.clone());
+                move |_| {
+                    hit.open();
+                    pause.wait();
+                }
+            },
+        );
+        struct Release(Latch);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.open();
+            }
+        }
+        let release = Release(pause);
+        let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3601);
+        let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv complete delta apply"));
+        hit.wait_for("the running history row");
+        assert_eq!(
+            last_hist(
+                &mut tk,
+                id,
+                "REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is null, LAST_HEARTBEAT_TIME is not null"
+            ),
+            r#"RS:[["running","complete delta apply manual","1","1","1","1"]]"#
+        );
+        drop(release);
+        assert_eq!(refresh.join().unwrap(), "OK");
+        assert_eq!(
+            last_hist(&mut tk, id, "REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null"),
+            r#"RS:[["success","complete delta apply manual","1","1","1"]]"#
+        );
+    }
+    // t.Run("heartbeat")
+    {
+        let (stack, mut tk, id) = refresh_history_fixture();
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        let _heartbeat = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskHistHeartbeatInterval", "return(50)");
+        let pause =
+            tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", "pause");
+        let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3602);
+        let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv complete delta apply"));
+        let heartbeat_sql = format!(
+            "select cast(LAST_HEARTBEAT_TIME as char) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running' order by REFRESH_JOB_ID desc limit 1"
+        );
+        let heartbeat = |tk: &mut Session| rows_of(tk, &heartbeat_sql).first().and_then(|row| row[0].clone()).filter(|value| !value.is_empty());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let first = loop {
+            if let Some(first) = heartbeat(&mut tk) {
+                break first;
+            }
+            assert!(std::time::Instant::now() < deadline, "no running heartbeat");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while heartbeat(&mut tk).is_none_or(|current| current == first) {
+            assert!(std::time::Instant::now() < deadline, "the heartbeat never moved");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        drop(pause);
+        assert_eq!(refresh.join().unwrap(), "OK");
+        assert_eq!(last_hist(&mut tk, id, "REFRESH_STATUS, LAST_HEARTBEAT_TIME is not null"), r#"RS:[["success","1"]]"#);
+    }
+}
+
+/// Go's `refreshMaterializedViewAfterBegin` pause: (hit, release guard).
+fn pause_after_begin() -> (Latch, Latch, tidb_failpoint::Guard) {
+    let (hit, pause) = (Latch::default(), Latch::default());
+    let guard = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin", {
+        let (hit, pause) = (hit.clone(), pause.clone());
+        move |_| {
+            hit.open();
+            pause.wait();
+        }
+    });
+    (hit, pause, guard)
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_read_tso_snapshot_matches_mv() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    // "For mocktikv, safe point is not initialized, we manually insert it
+    // for snapshot to use."
+    must_exec_all(&mut tk, &[
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20160102-15:04:05 -0700', 'All versions after safe point can be accessed. (DO NOT EDIT)') ON DUPLICATE KEY UPDATE variable_value = '20160102-15:04:05 -0700', comment = 'All versions after safe point can be accessed. (DO NOT EDIT)'",
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2"]));
+    let id = latest_table(&stack, "mv").id;
+    // "Make MV stale by changing base table."
+    must_exec_all(&mut tk, &["insert into t values (1, 1)"]);
+    let (hit, pause, _after_begin) = pause_after_begin();
+    let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3701);
+    let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv complete delta apply"));
+    hit.wait_for("the refresh after BEGIN");
+    // "Commit new base table data after refresh txn start_ts but before
+    // refresh reads with for_update_ts."
+    must_exec_all(&mut super::create::new_mview_test_kit(&stack, 3702), &["insert into t values (2, 7)"]);
+    pause.open();
+    assert_eq!(refresh.join().unwrap(), "OK");
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 16 3", "2 7 1"]));
+    let read_tso = last_success_read_tso_of(&mut tk, id);
+    assert_ne!(read_tso, 0);
+    must_exec_all(&mut tk, &[&format!("set @@tidb_snapshot = '{read_tso}'")]);
+    assert_eq!(answer(&mut tk, "select a, sum(b), count(1) from t group by a order by a"), rows(&["1 16 3", "2 7 1"]));
+    must_exec_all(&mut tk, &["set @@tidb_snapshot = ''"]);
+    assert_eq!(
+        answer(
+            &mut tk,
+            &format!(
+                "select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO = {read_tso}, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"
+            )
+        ),
+        r#"RS:[["success","complete delta apply manual","1","1","1"]]"#
+    );
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_refresh_info_cas_update_after_concurrent_pre_update() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        // "Make MV stale by changing base table."
+        "insert into t values (2, 3)",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    let id = latest_table(&stack, "mv").id;
+    let old_ts = last_success_read_tso_of(&mut tk, id);
+    assert_ne!(old_ts, 0);
+    let (hit, pause, _after_begin) = pause_after_begin();
+    let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3703);
+    let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv complete delta apply"));
+    hit.wait_for("the refresh after BEGIN");
+    // "Update refresh info row after refresh txn start_ts but before it does
+    // the locking read."
+    let injected = old_ts + 1000;
+    must_exec_all(&mut super::create::new_mview_test_kit(&stack, 3704), &[&format!(
+        "update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = {injected} where MVIEW_ID = {id}"
+    )]);
+    pause.open();
+    assert_eq!(refresh.join().unwrap(), "OK");
+    // "Refresh should succeed and must override LAST_SUCCESS_READ_TSO by
+    // this refresh's read tso."
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2"]));
+    let new_ts = last_success_read_tso_of(&mut tk, id);
+    assert!(new_ts != 0 && new_ts != injected, "{new_ts}");
+    assert_eq!(
+        answer(
+            &mut tk,
+            &format!(
+                "select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO = {new_ts}, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"
+            )
+        ),
+        r#"RS:[["success","complete delta apply manual","1","1","1"]]"#
+    );
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_concurrent_nowait() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    let mv = latest_table(&stack, "mv");
+    let schema_id = stack.factory.catalog.get_latest().schema_by_name("test").unwrap().read().id;
+    let mut tk_locker = super::create::new_mview_test_kit(&stack, 3705);
+    let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3706);
+    let lock_name = format!("mv_refresh_{schema_id}_{}", mv.id);
+    assert_eq!(single_value(&mut tk_locker, &format!("select get_lock('{lock_name}', 1)")), "1");
+    for method in ["fast", "complete delta apply", "complete in place", "complete out of place"] {
+        // Go `exeerrors.ErrMVAdvisoryLockConflict` (8182).
+        let refused = answer(&mut tk_refresh, &format!("refresh materialized view mv {method}"));
+        assert!(refused.starts_with("ERR 8182 "), "{method}: {refused}");
+    }
+    assert_eq!(single_value(&mut tk_locker, &format!("select release_lock('{lock_name}')")), "1");
+    must_exec_all(&mut tk_locker, &["begin pessimistic"]);
+    answer(&mut tk_locker, &format!("select MVIEW_ID from mysql.tidb_mview_refresh_info where MVIEW_ID = {} for update", mv.id));
+    exec_err_contains(&mut tk_refresh, "refresh materialized view mv complete delta apply", "NOWAIT");
+    must_exec_all(&mut tk_locker, &["rollback"]);
+    // "After releasing the lock, refresh should succeed."
+    must_exec_all(&mut tk_refresh, &["refresh materialized view mv complete delta apply"]);
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_missing_refresh_info_row() {
+    let (_stack, mut tk, id) = refresh_history_fixture();
+    must_exec_all(&mut tk, &[&format!("delete from mysql.tidb_mview_refresh_info where MVIEW_ID = {id}")]);
+    exec_err_contains(&mut tk, "refresh materialized view mv complete delta apply", "tidb_mview_refresh_info");
+}
+
+#[test]
+fn test_materialized_view_refresh_with_async_mode_complete() {
+    let (_stack, mut tk, _id) = refresh_history_fixture();
+    exec_err_contains(&mut tk, "refresh materialized view mv with async mode complete delta apply", "WITH ASYNC MODE is not supported yet");
+}
+
+/// Go `mustExecCompleteDeltaApplyImplementStmt`: the COMPLETE DELTA APPLY
+/// implement statement run as materialized view maintenance's restricted SQL.
+fn must_exec_complete_delta_apply_implement_stmt(tk: &mut Session, schema: &str, view: &str) {
+    let stmt = tidb_ast::RefreshMaterializedViewImplementStmt {
+        refresh_stmt: tidb_ast::RefreshMaterializedViewStmt {
+            view_name: vec![schema.to_owned(), view.to_owned()],
+            with_async_mode: false,
+            mode: tidb_ast::RefreshMaterializedViewMode::CompleteDeltaApply,
+            observe_type: tidb_ast::RefreshMaterializedViewObserveType::None,
+            as_of: None,
+        },
+        last_successful_refresh_read_tso: 0,
+        target_refresh_read_tso: 0,
+        mlog_retained_lower_tso: 0,
+        registered_mlog_ids: Vec::new(),
+    };
+    let implement = tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::RefreshMaterializedViewImplement(Box::new(stmt))));
+    let sql = implement.restore();
+    let original = (tk.vars.in_mview_maintenance, tk.vars.restricted_sql);
+    (tk.vars.in_mview_maintenance, tk.vars.restricted_sql) = (true, true);
+    let result = tk.node_conn().run_ordinary_write(&sql, &implement);
+    (tk.vars.in_mview_maintenance, tk.vars.restricted_sql) = original;
+    result.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+}
+
+/// The CompleteDeltaApply fixture: `t (a, b)` with its log and `mv`.
+fn complete_delta_apply_fixture() -> (UnistoreClusterStack, Session, i64) {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    let id = latest_table(&stack, "mv").id;
+    (stack, tk, id)
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_delta_apply() {
+    // t.Run("basic")
+    {
+        let (_stack, mut tk, id) = complete_delta_apply_fixture();
+        let old_ts = last_success_read_tso_of(&mut tk, id);
+        assert_ne!(old_ts, 0);
+        must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)", "refresh materialized view mv complete delta apply"]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+        assert_ne!(last_success_read_tso_of(&mut tk, id), old_ts);
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")), "1");
+        assert_eq!(
+            answer(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")),
+            r#"RS:[["success","complete delta apply manual","1","1","1","1"]]"#
+        );
+        must_exec_all(&mut tk, &["insert into t values (4, 8)"]);
+        must_exec_refresh_internal(&mut tk, "refresh materialized view mv complete delta apply");
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1", "4 8 1"]));
+        assert_eq!(
+            single_value(&mut tk, &format!("select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+            "complete delta apply auto"
+        );
+    }
+    // t.Run("in_place")
+    {
+        let (_stack, mut tk, id) = complete_delta_apply_fixture();
+        must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)", "refresh materialized view mv complete in place"]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+        assert_eq!(
+            answer(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")),
+            r#"RS:[["success","complete in place manual","1","1","1","1"]]"#
+        );
+    }
+    // t.Run("implement_stmt")
+    let cases: [(&str, &[&str], &[&str]); 5] = [
+        ("insert-only", &["insert into t values (2, 3), (3, 4)"], &["1 15 2", "2 10 2", "3 4 1"]),
+        ("delete-only", &["delete from t where a = 1 and b = 5"], &["1 10 1", "2 7 1"]),
+        ("update-only", &["update t set b = 8 where a = 2 and b = 7"], &["1 15 2", "2 8 1"]),
+        (
+            "mixed",
+            &["update t set b = 11 where a = 1 and b = 10", "delete from t where a = 2 and b = 7", "insert into t values (3, 4)"],
+            &["1 16 2", "3 4 1"],
+        ),
+        ("noop", &[], &["1 15 2", "2 7 1"]),
+    ];
+    for (name, prepare, expected) in cases {
+        let (_stack, mut tk, _id) = complete_delta_apply_fixture();
+        must_exec_all(&mut tk, prepare);
+        must_exec_complete_delta_apply_implement_stmt(&mut tk, "test", "mv");
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(expected), "{name}");
+    }
+    // t.Run("for_update_ts")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10), (1, 5)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        ]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2"]));
+        let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3711);
+        must_exec_all(&mut tk_refresh, &["begin pessimistic"]);
+        must_exec_all(&mut super::create::new_mview_test_kit(&stack, 3712), &["insert into t values (2, 7)"]);
+        must_exec_complete_delta_apply_implement_stmt(&mut tk_refresh, "test", "mv");
+        assert_eq!(answer(&mut tk_refresh, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+        must_exec_all(&mut tk_refresh, &["commit"]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    }
+    // t.Run("rollback")
+    {
+        let (_stack, mut tk, id) = complete_delta_apply_fixture();
+        must_exec_all(&mut tk, &["create materialized view log on mv (a, s, cnt)"]);
+        let old_ts = last_success_read_tso_of(&mut tk, id);
+        assert_ne!(old_ts, 0);
+        must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
+        let _fp = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges",
+            r#"return("mock refresh data change failure")"#,
+        );
+        exec_err_contains(&mut tk, "refresh materialized view mv complete delta apply", "mock refresh data change failure");
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+        assert_eq!(answer(&mut tk, "select * from `$mlog$mv`"), "RS:[]");
+        assert_eq!(single_value(&mut tk, &format!("select LAST_SUCCESS_READ_TSO = {old_ts} from mysql.tidb_mview_refresh_info where MVIEW_ID = {id}")), "1");
+        assert_eq!(
+            answer(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+            r#"RS:[["failed","complete delta apply manual","1","1","1"]]"#
+        );
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'")), "0");
+        let reason = single_value(&mut tk, &format!("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"));
+        assert!(reason.contains("mock refresh data change failure"), "{reason}");
+    }
+}
+
+#[test]
+fn test_materialized_view_refresh_early_failure_writes_hist() {
+    let (_stack, mut tk, id) = complete_delta_apply_fixture();
+    let before: i64 = single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")).parse().unwrap();
+    let _fp = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist",
+        r#"return("mock early refresh failure")"#,
+    );
+    exec_err_contains(&mut tk, "refresh materialized view mv complete delta apply", "mock early refresh failure");
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id}")), (before + 1).to_string());
+    assert_eq!(
+        answer(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+        r#"RS:[["failed","complete delta apply manual","1","1","1"]]"#
+    );
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'")), "0");
+    let reason = single_value(&mut tk, &format!("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"));
+    assert!(reason.contains("mock early refresh failure"), "{reason}");
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_cutover_basic() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    let old_id = latest_table(&stack, "mv").id;
+    must_exec_all(&mut tk, &[&format!(
+        "insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, LAST_SUCCESS_SNAPSHOT_TIME, UPDATE_TIME) values ({old_id}, 'test', 'mv', 'warning', UTC_TIMESTAMP(), UTC_TIMESTAMP())"
+    )]);
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "1");
+    let next_refresh = answer(&mut tk, &format!("select NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info where MVIEW_ID = {old_id}"));
+
+    must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)", "refresh materialized view mv complete out of place"]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+    let new_id = latest_table(&stack, "mv").id;
+    assert_ne!(old_id, new_id);
+    let base = latest_table(&stack, "t");
+    assert!(base.materialized_view_base.is_some());
+    let ids = mview_ids(&base);
+    assert!(ids.contains(&new_id) && !ids.contains(&old_id), "{ids:?}");
+    assert_eq!(answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info"), rows(&[&format!("{new_id} {}", mlog_id(&base))]));
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {old_id}")), "0");
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "0");
+    assert_eq!(single_value(&mut tk, &format!("select LAST_SUCCESS_READ_TSO > 0 from mysql.tidb_mview_refresh_info where MVIEW_ID = {new_id}")), "1");
+    assert_eq!(answer(&mut tk, &format!("select NEXT_REFRESH_UNIX_SECONDS from mysql.tidb_mview_refresh_info where MVIEW_ID = {new_id}")), next_refresh);
+    assert_eq!(
+        go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {old_id} order by REFRESH_JOB_ID desc limit 1")),
+        vec!["success complete out of place manual 1 1"]
+    );
+    assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+    let job_id = first_cell(&mut tk, "admin show ddl jobs where JOB_TYPE='refresh materialized view complete out-of-place cutover'");
+    assert_eq!(
+        single_value(&mut tk, &format!("select ((select count(*) from mysql.gc_delete_range where job_id={job_id}) + (select count(*) from mysql.gc_delete_range_done where job_id={job_id})) > 0")),
+        "1"
+    );
+}
+
+/// The first cell of a non-empty result (Go `rows[0][0]`).
+fn first_cell(tk: &mut Session, sql: &str) -> String {
+    let answer = answer(tk, sql);
+    let parsed: serde_json::Value = serde_json::from_str(answer.strip_prefix("RS:").unwrap_or_else(|| panic!("{sql}: {answer}"))).unwrap();
+    match &parsed[0][0] {
+        serde_json::Value::String(text) => text.clone(),
+        other => panic!("{sql}: {other} in {answer}"),
+    }
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_updates_mlog_dependencies() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t_dep (a int not null, b int not null)",
+        "create materialized view log on t_dep (a, b)",
+        "create materialized view mv_dep (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_dep group by a",
+    ]);
+    let old_id = latest_table(&stack, "mv_dep").id;
+    must_exec_all(&mut tk, &["refresh materialized view mv_dep complete out of place"]);
+    let new_id = latest_table(&stack, "mv_dep").id;
+    assert_ne!(old_id, new_id);
+    let mlog = latest_table(&stack, "$mlog$t_dep");
+    assert!(mlog.materialized_view_log.is_some());
+    let dependents = dependent_mview_ids(&mlog);
+    assert!(dependents.contains(&new_id) && !dependents.contains(&old_id), "{dependents:?}");
+    must_exec_all(&mut tk, &["drop materialized view mv_dep", "drop materialized view log on t_dep"]);
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_cutover_failure() {
+    let shadow_tables = r"show tables like '\_\_mv\_shadow\_%'";
+    // t.Run("refresh_info_rollback")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a",
+            "set global tidb_ddl_error_count_limit = 0",
+        ]);
+        let old_id = latest_table(&stack, "mv").id;
+        let _fp = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", "1*return()");
+        must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)"]);
+        exec_to_err(&mut tk, "refresh materialized view mv complete out of place");
+        assert_eq!(latest_table(&stack, "mv").id, old_id);
+        let mlog = latest_table(&stack, "$mlog$t");
+        assert!(mlog.materialized_view_log.is_some());
+        assert_eq!(dependent_mview_ids(&mlog), vec![old_id]);
+        assert_eq!(answer(&mut tk, "select MVIEW_ID from mysql.tidb_mview_refresh_info"), rows(&[&old_id.to_string()]));
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    }
+    // t.Run("publish_event")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_cutover_publish_error (a int not null, b int not null)",
+            "create materialized view log on t_cutover_publish_error (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_cutover_publish_error (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_cutover_publish_error group by a",
+        ]);
+        let old_id = latest_table(&stack, "mv_cutover_publish_error").id;
+        must_exec_all(&mut tk, &[
+            &format!("insert into mysql.tidb_mview_refresh_alert (MVIEW_ID, MVIEW_SCHEMA, MVIEW_NAME, ALERT_LEVEL, UPDATE_TIME) values ({old_id}, 'test', 'mv_cutover_publish_error', 'warning', UTC_TIMESTAMP())"),
+            "set global tidb_ddl_error_count_limit = 0",
+        ]);
+        {
+            let _fp = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "1*return()");
+            must_exec_all(&mut tk, &["insert into t_cutover_publish_error values (1, 10)"]);
+            let error = exec_to_err(&mut tk, "refresh materialized view mv_cutover_publish_error complete out of place");
+            assert!(error.contains("mock publish event error"), "{error}");
+        }
+        assert_eq!(latest_table(&stack, "mv_cutover_publish_error").id, old_id);
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {old_id}")), "1");
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "1");
+        must_exec_all(&mut tk, &["refresh materialized view mv_cutover_publish_error complete out of place"]);
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "0");
+    }
+    // t.Run("watermark_cas")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        ]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+        let id = latest_table(&stack, "mv").id;
+        let tk_concurrent = std::sync::Arc::new(std::sync::Mutex::new(super::create::new_mview_test_kit(&stack, 3721)));
+        let _fp = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", {
+            let tk_concurrent = tk_concurrent.clone();
+            move |_| {
+                must_exec_all(&mut tk_concurrent.lock().unwrap(), &[&format!(
+                    "update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = LAST_SUCCESS_READ_TSO + 1 where MVIEW_ID = {id}"
+                )]);
+            }
+        });
+        must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)"]);
+        let error = exec_to_err(&mut tk, "refresh materialized view mv complete out of place");
+        assert!(error.contains("stale LAST_SUCCESS_READ_TSO"), "{error}");
+        assert_eq!(latest_table(&stack, "mv").id, id);
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {id}")), "1");
+        assert_eq!(
+            go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+            vec!["failed complete out of place manual 1 1"]
+        );
+        assert_eq!(answer(&mut tk, shadow_tables), "RS:[]");
+        // "Cutover CAS mismatch should keep old MV serving table unchanged."
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    }
+    // t.Run("revision_cas")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a",
+        ]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+        let mv = latest_table(&stack, "mv");
+        must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)"]);
+        let pause = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", "pause");
+        let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3722);
+        let refresh = std::thread::spawn(move || exec_to_err(&mut tk_refresh, "refresh materialized view mv complete out of place"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while answer(&mut tk, shadow_tables) == "RS:[]" {
+            assert!(std::time::Instant::now() < deadline, "the shadow table never appeared");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        must_exec_all(&mut super::create::new_mview_test_kit(&stack, 3723), &["create index idx_mv_s_refresh_ddl on mv (s)"]);
+        drop(pause);
+        let error = refresh.join().unwrap();
+        assert!(error.contains("stale old materialized view revision detected before cutover"), "{error}");
+        assert!(!error.contains("%!(EXTRA"), "{error}");
+        let current = latest_table(&stack, "mv");
+        assert_eq!(current.id, mv.id);
+        assert!(error.contains(&format!("expected {} but got {}", mv.revision, current.revision)), "{error}");
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {}", mv.id)), "1");
+        assert_eq!(
+            go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {} order by REFRESH_JOB_ID desc limit 1", mv.id)),
+            vec!["failed complete out of place manual 1 1"]
+        );
+        assert_eq!(answer(&mut tk, shadow_tables), "RS:[]");
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+        assert_ne!(answer(&mut tk, "show index from mv where Key_name = 'idx_mv_s_refresh_ddl'"), "RS:[]");
+    }
+}
+
+/// Waits for the one `__mv_shadow_%` table a paused out-of-place refresh
+/// created (Go `require.Eventually` over `show tables like ...`).
+fn eventually_shadow_table(tk: &mut Session) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let shown = answer(tk, r"show tables like '\_\_mv\_shadow\_%'");
+        if shown != "RS:[]" {
+            return first_cell(tk, r"show tables like '\_\_mv\_shadow\_%'");
+        }
+        assert!(std::time::Instant::now() < deadline, "the shadow table never appeared");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_shadow_table_protected() {
+    let (stack, users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t_shadow_guard (a int not null, b int not null)",
+        "insert into t_shadow_guard values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t_shadow_guard (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv_shadow_guard (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_shadow_guard group by a",
+        "insert into t_shadow_guard values (2, 3), (3, 4)",
+        // Go sets the session user `test`@`%` directly without `Auth`, so
+        // its privilege manager passes every check (`RequestVerification`'s
+        // `p.user == "" && p.host == ""`) and only the shadow-table guards
+        // see the user. A Rust session logs in: the user exists and holds
+        // every privilege.
+        "create user 'test'@'%' identified by 'abc'",
+        "grant all privileges on *.* to 'test'@'%'",
+    ]);
+    let pause = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", "pause");
+    let mut tk_refresh = super::create::new_mview_test_kit(&stack, 3731);
+    let refresh = std::thread::spawn(move || answer(&mut tk_refresh, "refresh materialized view mv_shadow_guard complete out of place"));
+    let shadow = eventually_shadow_table(&mut tk);
+    assert_eq!(
+        exec_to_err(&mut tk, &format!("create materialized view log on `{shadow}` (a)")),
+        format!("[ddl:1347]'test.{shadow}' is not BASE TABLE")
+    );
+    let mut tk_user = stack
+        .factory
+        .open_session(super::super::super::node_fixture::session_context_with_identity(3732, log_in(&users, "test")))
+        .unwrap();
+    must_exec_all(&mut tk_user, &["set tidb_mview_enable = on", "use test"]);
+    for (sql, expected) in [
+        (format!("insert into `{shadow}` values (9, 9, 9)"), "not updatable"),
+        (format!("alter table `{shadow}` add column x int"), "ALTER TABLE on materialized view shadow table"),
+        (format!("drop table `{shadow}`"), "DROP TABLE on materialized view shadow table"),
+        (format!("update t_shadow_guard n join `{shadow}` s on n.a = s.a set n.b = s.s"), "SELECT command denied"),
+        (format!("delete n from t_shadow_guard n join `{shadow}` s on n.a = s.a"), "SELECT command denied"),
+    ] {
+        let error = exec_to_err(&mut tk_user, &sql);
+        assert!(error.contains(expected), "{sql}: {error}");
+    }
+    drop(pause);
+    assert_eq!(refresh.join().unwrap(), "OK");
+    assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv_shadow_guard order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_cutover_with_unsigned_build_read_tso() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    let old_id = latest_table(&stack, "mv").id;
+    // "Exercise unsigned SQL persistence without using the synthetic TSO as
+    // a storage snapshot."
+    let build_read_tso = (1u64 << 63) + 12345;
+    let _fp = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlacePersistReadTSO",
+        &format!(r#"return("{build_read_tso}")"#),
+    );
+    must_exec_all(&mut tk, &["insert into t values (2, 3), (3, 4)", "refresh materialized view mv complete out of place"]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+    let new_id = latest_table(&stack, "mv").id;
+    assert_ne!(old_id, new_id);
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {old_id}")), "0");
+    assert_eq!(last_success_read_tso_of(&mut tk, new_id), build_read_tso);
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_out_of_place_build_failure_cleans_shadow() {
+    let (_stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+    ]);
+    let id = single_value(&mut tk, "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'");
+    must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
+    let _fp = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow",
+        r#"return("mock out-of-place shadow load failure")"#,
+    );
+    let error = exec_to_err(&mut tk, "refresh materialized view mv complete out of place");
+    assert!(error.contains("mock out-of-place shadow load failure"), "{error}");
+    assert_eq!(
+        go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+        vec!["failed complete out of place manual 1 1"]
+    );
+    assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+    // Go scans the last 20 history jobs for ActionDropMaterializedViewShadow.
+    let cleanup_job_id = first_cell(&mut tk, "admin show ddl jobs 20 where JOB_TYPE = 'drop materialized view shadow table'");
+    assert_eq!(
+        single_value(&mut tk, &format!("select ((select count(*) from mysql.gc_delete_range where job_id={cleanup_job_id}) + (select count(*) from mysql.gc_delete_range_done where job_id={cleanup_job_id})) > 0")),
+        "1"
+    );
+    // "Out-of-place build failure should not modify old MV serving table."
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_failure_keeps_refresh_info_read_tso() {
+    let (_stack, mut tk, id) = complete_delta_apply_fixture();
+    let old_ts = last_success_read_tso_of(&mut tk, id);
+    assert_ne!(old_ts, 0);
+    must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
+    let _refresh = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges",
+        r#"return("mock refresh data change failure")"#,
+    );
+    let _finalize = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError", "1*return(true)");
+    let error = exec_to_err(&mut tk, "refresh materialized view mv complete delta apply");
+    assert!(error.contains("mock refresh data change failure"), "{error}");
+    // "MV data should remain unchanged due to transactional refresh."
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    assert_eq!(single_value(&mut tk, &format!("select LAST_SUCCESS_READ_TSO = {old_ts} from mysql.tidb_mview_refresh_info where MVIEW_ID = {id}")), "1");
+    assert_eq!(
+        go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+        vec!["failed complete delta apply manual 1 1 1"]
+    );
+    assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'")), "0");
+    let reason = single_value(&mut tk, &format!("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"));
+    assert!(reason.contains("mock refresh data change failure"), "{reason}");
+}
+
+#[test]
+fn test_materialized_view_refresh_failure_reports_alert_before_finalize_hist_failure() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) attributes='mview_alert_refresh_failed=yes' as select a, sum(b), count(1) from t group by a",
+    ]);
+    let id = latest_table(&stack, "mv").id;
+    must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
+    let _refresh = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges",
+        r#"return("mock refresh data change failure")"#,
+    );
+    let _finalize = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockFinalizeRefreshHistError", "return(true)");
+    let error = exec_to_err(&mut tk, "refresh materialized view mv complete delta apply");
+    assert!(error.contains("failed to finalize refresh history after error"), "{error}");
+    assert!(error.contains("mock refresh data change failure"), "{error}");
+    assert_eq!(
+        go_check(&mut tk, &format!("select REFRESH_FAILED, ALERT_LEVEL is null from mysql.tidb_mview_refresh_alert where MVIEW_ID = {id}")),
+        vec!["YES 1"]
+    );
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_with_constraint_check_in_place_pessimistic_off() {
+    let (_stack, mut tk, _id) = complete_delta_apply_fixture();
+    // "Turn off in-place constraint check for pessimistic txn. Refresh
+    // should still succeed."
+    must_exec_all(&mut tk, &[
+        "set session tidb_constraint_check_in_place_pessimistic = off",
+        "insert into t values (2, 3), (3, 4)",
+        "refresh materialized view mv complete in place",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 10 2", "3 4 1"]));
+    assert_eq!(single_value(&mut tk, "select @@tidb_constraint_check_in_place_pessimistic"), "0");
+}
+
+#[test]
+fn test_materialized_view_refresh_requires_operate_view_privilege() {
+    let (stack, users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "create table t (a int not null, b int not null)",
+        "insert into t values (1, 10), (1, 5), (2, 7)",
+        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        // Go creates the user with an empty password; a Rust session logs in
+        // with the fixture's.
+        "create user 'mv_refresh_u'@'%' identified by 'abc'",
+    ]);
+    let mut tk_user = stack
+        .factory
+        .open_session(super::super::super::node_fixture::session_context_with_identity(3741, log_in(&users, "mv_refresh_u")))
+        .unwrap();
+    must_exec_all(&mut tk_user, &["set tidb_mview_enable = on"]);
+    let error = exec_to_err(&mut tk_user, "refresh materialized view test.mv complete delta apply");
+    assert!(error.contains("OPERATE VIEW command denied"), "{error}");
+    must_exec_all(&mut tk, &["grant operate view on test.mv to 'mv_refresh_u'@'%'"]);
+    let error = exec_to_err(&mut tk_user, "refresh materialized view test.mv complete delta apply");
+    assert!(error.contains("SELECT command denied"), "{error}");
+    must_exec_all(&mut tk, &["grant select on test.t to 'mv_refresh_u'@'%'"]);
+    must_exec_all(&mut tk_user, &["refresh materialized view test.mv complete delta apply"]);
+    let error = exec_to_err(&mut tk_user, "refresh materialized view test.mv complete delta apply dry run");
+    assert!(error.contains("SHOW VIEW command denied"), "{error}");
+    must_exec_all(&mut tk, &["grant show view on test.mv to 'mv_refresh_u'@'%'"]);
+    let dry_run = answer(&mut tk_user, "refresh materialized view test.mv complete delta apply dry run");
+    assert!(dry_run.contains("INSERT_HIST_RUNNING") && dry_run.contains("FINALIZE_HIST"), "{dry_run}");
+    must_exec_all(&mut tk, &["drop user 'mv_refresh_u'@'%'"]);
+}
+
+/// Go's `require.Eventually` over the view's one running history row.
+fn eventually_refresh_running(tk: &mut Session, id: i64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let sql = format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'");
+    while single_value(tk, &sql) != "1" {
+        assert!(std::time::Instant::now() < deadline, "the refresh never wrote its running history row");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// The cancellation fixture: `<table>` with its log and `<view>`, the
+/// monitor polling every 50 ms, and the refresh `<mode>` started in the
+/// background and paused after its running history row.
+fn paused_refresh(
+    stack: &UnistoreClusterStack,
+    tk: &mut Session,
+    table: &str,
+    view: &str,
+    mode: &str,
+    conn_id: u64,
+) -> (i64, tidb_failpoint::Guard, std::thread::JoinHandle<String>) {
+    must_exec_all(tk, &[
+        &format!("create table {table} (a int not null, b int not null)"),
+        &format!("insert into {table} values (1, 10), (1, 5), (2, 7)"),
+        &format!("create materialized view log on {table} (a, b) purge next date_add(now(), interval 1 hour)"),
+        &format!("create materialized view {view} (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from {table} group by a"),
+    ]);
+    let id = latest_table(stack, view).id;
+    let pause = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", "pause");
+    let mut tk_refresh = super::create::new_mview_test_kit(stack, conn_id);
+    let sql = format!("refresh materialized view {view} {mode}");
+    let refresh = std::thread::spawn(move || exec_to_err(&mut tk_refresh, &sql));
+    eventually_refresh_running(tk, id);
+    (id, pause, refresh)
+}
+
+fn request_cancel_by_hist(tk: &mut Session, id: i64, requester: &str) {
+    must_exec_all(tk, &[&format!(
+        "UPDATE mysql.tidb_mview_refresh_hist SET CANCEL_REQUEST_TIME = NOW(6), CANCEL_REQUESTED_BY = '{}' WHERE MVIEW_ID = {id} AND REFRESH_STATUS = 'running' AND CANCEL_REQUEST_TIME IS NULL",
+        requester.replace('\'', "''")
+    )]);
+}
+
+#[test]
+fn test_materialized_view_refresh_cancellation() {
+    let ten_seconds = std::time::Duration::from_secs(10);
+    let last_hist = |tk: &mut Session, id: i64| {
+        go_check(tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_END_TIME is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"))
+    };
+    let last_reason = |tk: &mut Session, id: i64| {
+        single_value(tk, &format!("select REFRESH_FAILED_REASON from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1"))
+    };
+    let running = |tk: &mut Session, id: i64| {
+        single_value(tk, &format!("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running'"))
+    };
+    // t.Run("watcher_hist_request")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        let (id, pause, refresh) =
+            paused_refresh(&stack, &mut tk, "t_refresh_cancel_watch", "mv_refresh_cancel_watch", "complete delta apply", 3751);
+        let requester = "'refresh_watcher_req'@'stage-c'";
+        let (requested, _watch) = wait_cancel_watcher_requested("refresh-");
+        request_cancel_by_hist(&mut tk, id, requester);
+        requested.recv_timeout(ten_seconds).expect("timeout waiting for refresh cancel watcher to observe request");
+        drop(pause);
+        let error = refresh.join().unwrap();
+        assert!(error.contains("materialized view task canceled manually"), "{error}");
+        assert_eq!(last_hist(&mut tk, id), vec!["failed complete delta apply manual 1"]);
+        assert_eq!(running(&mut tk, id), "0");
+        assert_eq!(last_reason(&mut tk, id), format!("cancelled manually by {requester}"));
+    }
+    // t.Run("cancel_job")
+    {
+        let (stack, users, mut tk) = mview_test_kit();
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        let (id, pause, refresh) =
+            paused_refresh(&stack, &mut tk, "t_refresh_cancel_job", "mv_refresh_cancel_job", "complete delta apply", 3752);
+        let job_id = single_value(
+            &mut tk,
+            &format!("select REFRESH_JOB_ID from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} and REFRESH_STATUS = 'running' order by REFRESH_JOB_ID desc limit 1"),
+        );
+        // Go creates the user with an empty password; a Rust session logs
+        // in with the fixture's.
+        must_exec_all(&mut tk, &["create user 'mv_refresh_cancel_u'@'%' identified by 'abc'"]);
+        let mut tk_cancel = stack
+            .factory
+            .open_session(super::super::super::node_fixture::session_context_with_identity(3753, log_in(&users, "mv_refresh_cancel_u")))
+            .unwrap();
+        must_exec_all(&mut tk_cancel, &["set tidb_mview_enable = on"]);
+        let error = exec_to_err(&mut tk_cancel, &format!("cancel materialized view refresh job {job_id}"));
+        assert!(error.contains("OPERATE VIEW command denied"), "{error}");
+        must_exec_all(&mut tk, &["grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'"]);
+        let (requested, _watch) = wait_cancel_watcher_requested("refresh-");
+        answer(&mut tk_cancel, &format!("cancel materialized view refresh job {job_id}"));
+        requested.recv_timeout(ten_seconds).expect("timeout waiting for refresh cancel watcher to observe request");
+        drop(pause);
+        let error = refresh.join().unwrap();
+        assert!(error.contains("materialized view task canceled manually"), "{error}");
+        assert_eq!(last_hist(&mut tk, id), vec!["failed complete delta apply manual 1"]);
+        assert_eq!(last_reason(&mut tk, id), "cancelled manually by 'mv_refresh_cancel_u'@'%'");
+        must_exec_all(&mut tk, &["drop user 'mv_refresh_cancel_u'@'%'"]);
+    }
+    // t.Run("job_not_running")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        let error = exec_to_err(&mut tk, "cancel materialized view refresh job 1");
+        assert!(error.contains("cannot cancel materialized view refresh job 1"), "{error}");
+        let error = exec_to_err(&mut tk, "cancel materialized view log purge job 1");
+        assert!(error.contains("cannot cancel materialized view log purge job 1"), "{error}");
+    }
+    // t.Run("watcher_stops_after_finish")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_refresh_cancel_watch_stop (a int not null, b int not null)",
+            "insert into t_refresh_cancel_watch_stop values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t_refresh_cancel_watch_stop (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_refresh_cancel_watch_stop (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_cancel_watch_stop group by a",
+        ]);
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        let poll_count = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+        let _polled = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvTaskMonitorPolled", {
+            let poll_count = poll_count.clone();
+            move |name: &mut dyn std::any::Any| {
+                if name.downcast_ref::<String>().is_some_and(|name| name.starts_with("refresh-")) {
+                    poll_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
+        must_exec_all(&mut tk, &[
+            "insert into t_refresh_cancel_watch_stop values (2, 3), (3, 4)",
+            "refresh materialized view mv_refresh_cancel_watch_stop complete delta apply",
+        ]);
+        let count_after_return = poll_count.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(count_after_return > 0);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(poll_count.load(std::sync::atomic::Ordering::SeqCst), count_after_return);
+    }
+    // t.Run("watcher_stops_before_shadow")
+    {
+        let (stack, _users, mut tk) = mview_test_kit();
+        let _poll = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval", "return(50)");
+        let create_shadow_hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _create_shadow = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow", {
+            let hit = create_shadow_hit.clone();
+            move |_| hit.store(true, std::sync::atomic::Ordering::SeqCst)
+        });
+        let (id, pause, refresh) =
+            paused_refresh(&stack, &mut tk, "t_oop_cancel_watch", "mv_oop_cancel_watch", "complete out of place", 3754);
+        let requester = "'oop_watcher_req'@'stage-c'";
+        let (requested, _watch) = wait_cancel_watcher_requested("refresh-");
+        request_cancel_by_hist(&mut tk, id, requester);
+        requested.recv_timeout(ten_seconds).expect("timeout waiting for refresh cancel watcher to observe request");
+        drop(pause);
+        let error = refresh.join().unwrap();
+        assert!(error.contains("materialized view task canceled manually"), "{error}");
+        assert!(!create_shadow_hit.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(last_hist(&mut tk, id), vec!["failed complete out of place manual 1"]);
+        assert_eq!(running(&mut tk, id), "0");
+        assert_eq!(last_reason(&mut tk, id), format!("cancelled manually by {requester}"));
+        assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
     }
 }

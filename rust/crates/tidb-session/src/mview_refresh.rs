@@ -328,6 +328,9 @@ fn insert_refresh_hist_failed(
     read_tso: Option<u64>,
     reason: &str,
 ) -> Result<(), DriverError> {
+    if tidb_failpoint::eval(&format!("{FP}mockInsertRefreshHistFailedError")).is_some_and(|value| value.as_bool() == Some(true)) {
+        return Err(plain("mock insert failed refresh history error"));
+    }
     let (start_text, end_text) = (hist_time(start), hist_time(end));
     let duration = format_duration_seconds_between(start, end);
     sys_sql(
@@ -367,6 +370,9 @@ fn finalize_refresh_hist(
     schedule_duration: Option<std::time::Duration>,
     failed_reason: Option<&str>,
 ) -> Result<(), DriverError> {
+    if tidb_failpoint::eval(&format!("{FP}mockFinalizeRefreshHistError")).is_some_and(|value| value.as_bool() == Some(true)) {
+        return Err(plain("mock finalize refresh history error"));
+    }
     let end_text = hist_time(end);
     // Go `formatDurationSeconds`.
     let schedule_duration = schedule_duration.map(|duration| {
@@ -477,6 +483,23 @@ fn report_mv_refresh_failed(session: &mut Session, report: bool, mview_id: i64, 
     );
 }
 
+/// Go master `releaseMVRefreshAdvisoryLockFully`: how many times the lock
+/// was released.
+fn release_mv_refresh_advisory_lock_fully(refresh: &mut Session, lock_name: &str) -> i64 {
+    if let Some(count) = tidb_failpoint::eval(&format!("{FP}mockReleaseMVRefreshAdvisoryLockFullyCount")).and_then(|value| value.as_int()) {
+        return count;
+    }
+    let mut released = 0;
+    while sys_sql(refresh, "SELECT RELEASE_LOCK(%?)", &[SqlArg::String(lock_name.as_bytes())])
+        .ok()
+        .and_then(|rows| rows.first().and_then(|row| row.first()).and_then(datum_i64))
+        == Some(1)
+    {
+        released += 1;
+    }
+    released
+}
+
 /// Go master `deleteRefreshAlertState`.
 fn delete_refresh_alert_state(session: &mut Session, mview_id: i64) -> Result<(), DriverError> {
     sys_sql(session, "DELETE FROM mysql.tidb_mview_refresh_alert\nWHERE MVIEW_ID = %?", &[SqlArg::Signed(mview_id)])
@@ -514,6 +537,17 @@ fn replace_refresh_source_ids(session: &mut Session, mview_id: i64, mlog_ids: &[
     let arguments: Vec<SqlArg<'_>> =
         mlog_ids.iter().flat_map(|&mlog_id| [SqlArg::Signed(mview_id), SqlArg::Signed(mlog_id)]).collect();
     sys_sql(session, &format!("INSERT INTO mysql.{table} (MVIEW_ID, MLOG_ID) VALUES {values}"), &arguments).map(|_| ())
+}
+
+/// Go master `getRefreshReadTSOForSuccess`: MV refresh executes in a
+/// pessimistic transaction and reads data at `for_update_ts`, which the
+/// refresh metadata persists (`TxnCtx.GetForUpdateTS()` as the data-change
+/// statement left it).
+fn get_refresh_read_tso_for_success(refresh: &Session) -> Result<u64, DriverError> {
+    match u64::try_from(refresh.current_for_update_ts().value()).unwrap_or(0) {
+        0 => Err(plain("refresh materialized view: invalid refresh read tso")),
+        read_tso => Ok(read_tso),
+    }
 }
 
 /// The last statement's answer of `@@tidb_last_query_info` / `@@tidb_last_txn_info`.
@@ -917,14 +951,7 @@ impl Session {
             refresh_watch.reset();
             // Go master `releaseMVRefreshAdvisoryLockFully`: the lock is held
             // exactly once.
-            let mut released = 0;
-            while sys_sql(&mut refresh, "SELECT RELEASE_LOCK(%?)", &[SqlArg::String(lock_name.as_bytes())])
-                .ok()
-                .and_then(|rows| rows.first().and_then(|row| row.first()).and_then(datum_i64))
-                == Some(1)
-            {
-                released += 1;
-            }
+            let released = release_mv_refresh_advisory_lock_fully(&mut refresh, &lock_name);
             if released != 1 {
                 let invariant = format!(
                     "refresh materialized view: advisory lock cleanup invariant violated (lock={lock_name} released={released})"
@@ -1002,6 +1029,8 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         self.observe_mv_refresh_step("TXN_BEGIN", || sys_sql(refresh, "BEGIN PESSIMISTIC", &[]))?;
         let mut txn_finished = false;
+        tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterBegin"), &mut ());
+        tidb_failpoint::inject(&format!("{FP}pauseRefreshMaterializedViewAfterBegin"), |_| {});
         let (name, mview_id) = (info.name.original(), info.id);
         let fast = mode == RefreshMaterializedViewMode::Fast;
         let result = (|| {
@@ -1157,8 +1186,7 @@ impl Session {
                 // Go `captureMVRefreshStmtResult`, before the next statement
                 // resets the statement context.
                 let message = refresh.statement_message().to_owned();
-                let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
-                    .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
+                let read_tso = get_refresh_read_tso_for_success(refresh)?;
                 Ok::<_, DriverError>((affected_rows, message, read_tso, refresh_rows))
             });
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
@@ -1175,8 +1203,7 @@ impl Session {
                 })?;
                 let insert_rows = i64::try_from(refresh.affected_rows()).unwrap_or(i64::MAX);
                 self.emit_mv_refresh_step_plan_rows("DATA_CHANGE_COMPLETE_INSERT", refresh);
-                let read_tso = session_json_u64(refresh, "tidb_last_query_info", "for_update_ts")
-                    .ok_or_else(|| plain("refresh materialized view: invalid refresh read tso"))?;
+                let read_tso = get_refresh_read_tso_for_success(refresh)?;
                 // Go `newMVRefreshStmtResultFromWriteCounts`.
                 Ok::<_, DriverError>((
                     u64::try_from(insert_rows + delete_rows).unwrap_or_default(),
@@ -1724,6 +1751,16 @@ pub(crate) fn session_current_tso(session: &mut Session) -> Result<u64, DriverEr
 }
 
 impl Session {
+    /// The statement context of the refresh session's internal
+    /// `RefreshMaterializedViewImplementStmt`: Go's `ResetContextOfStmt`
+    /// gives it the `default` branch's type flags (`WithIgnoreTruncateErr(true)`),
+    /// not an INSERT / UPDATE / DELETE's, so a truncation in the view's
+    /// predicates (`varchar_col != 0`) neither errors nor warns.
+    fn refresh_implement_statement_context(&self) -> tidb_sessionctx::StmtContext {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        self.statement_context_ignoring(true, false).with_truncate_level(tidb_exprctx::ErrorLevel::Ignore)
+    }
+
     /// Go master `MViewCompleteDeltaApplyExec` for the refresh session's
     /// internal `RefreshMaterializedViewImplementStmt`: the view's diff rows
     /// applied, the statement's affected rows and message set.
@@ -1733,7 +1770,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
         let current_db = self.current_database().to_owned();
-        let ctx = self.statement_context_ignoring(true, false);
+        let ctx = self.refresh_implement_statement_context();
         let stats = self.with_staged_catalog(|catalog| {
             tidb_executor::driver::mview_delta_apply::run_mview_complete_delta_apply(apply, catalog, &current_db, &ctx)
         })?;
@@ -1751,7 +1788,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
         let current_db = self.current_database().to_owned();
-        let ctx = self.statement_context_ignoring(true, false);
+        let ctx = self.refresh_implement_statement_context();
         let build = self.with_staged_catalog(|catalog| {
             tidb_executor::driver::mview_delta_merge::build_merge_source(merge, catalog, &ctx)
         })?;

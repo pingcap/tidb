@@ -138,9 +138,10 @@ pub(crate) fn driver_cause(error: &SqlQueryError) -> Option<&DriverError> {
 /// `errors.Cause`) kept when it has one.
 pub(crate) fn driver_error_of(error: SqlQueryError) -> DriverError {
     if let Some(cause) = driver_cause(&error) {
-        return match (cause.clone(), &error.annotation) {
-            (DriverError::Mysql(mysql), Some(annotation)) => DriverError::Mysql(mysql.annotate(annotation)),
-            (cause, _) => cause,
+        // The carrier keeps every annotation, the cause's own included.
+        return match cause.clone() {
+            DriverError::Mysql(mysql) => DriverError::Mysql(mysql.with_annotation(error.annotation)),
+            cause => cause,
         };
     }
     DriverError::Mysql(error.into())

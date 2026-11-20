@@ -178,6 +178,21 @@ impl MysqlError {
         self
     }
 
+    /// The `errors.Annotate` messages in front of this failure, outermost
+    /// first, when it has any.
+    #[must_use]
+    pub fn annotation(&self) -> Option<&str> {
+        self.annotation.as_deref()
+    }
+
+    /// Replaces the `errors.Annotate` messages in front of this failure: a
+    /// carrier that kept them beside the cause hands them back.
+    #[must_use]
+    pub fn with_annotation(mut self, annotation: Option<String>) -> Self {
+        self.annotation = annotation;
+        self
+    }
+
     /// `Error()` of the cause alone (Go `errors.Cause(err).Error()`).
     fn cause_error_string(&self) -> String {
         match self.identity {

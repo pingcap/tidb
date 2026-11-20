@@ -73,6 +73,7 @@ impl From<tidb_terror::MysqlError> for SqlQueryError {
     fn from(error: tidb_terror::MysqlError) -> Self {
         Self {
             identity: error.identity,
+            annotation: error.annotation().map(str::to_owned),
             ..Self::new(error.code, error.state, error.message)
         }
     }
@@ -81,12 +82,9 @@ impl From<tidb_terror::MysqlError> for SqlQueryError {
 /// The statement's failure as the `*terror.Error` it was raised as.
 impl From<SqlQueryError> for tidb_terror::MysqlError {
     fn from(error: SqlQueryError) -> Self {
-        let mysql = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
-            .with_identity_opt(error.identity);
-        match error.annotation {
-            Some(annotation) => mysql.annotate(&annotation),
-            None => mysql,
-        }
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity)
+            .with_annotation(error.annotation)
     }
 }
 
@@ -165,9 +163,18 @@ impl SqlQueryError {
     }
 
     /// Go `err.Error()`: `[<class>:<code>]<message>` for a `*terror.Error`,
-    /// the bare message for a plain error.
+    /// the bare message for a plain error, behind any `errors.Annotate`
+    /// messages (`annotation: cause`).
     #[must_use]
     pub fn error_string(&self) -> String {
+        match &self.annotation {
+            Some(annotation) => format!("{annotation}: {}", self.cause_error_string()),
+            None => self.cause_error_string(),
+        }
+    }
+
+    /// `Error()` of the cause alone (Go `errors.Cause(err).Error()`).
+    fn cause_error_string(&self) -> String {
         match self.identity {
             Some(identity) if identity.class().description().is_empty() => {
                 format!("[{}]{}", identity.code().value(), self.message)

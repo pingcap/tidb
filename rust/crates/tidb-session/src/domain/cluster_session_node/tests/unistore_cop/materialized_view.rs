@@ -2407,6 +2407,15 @@ fn must_exec_all(session: &mut Session, statements: &[&str]) {
     }
 }
 
+/// Go `tk.ExecToErr(sql).Error()`: the failure's full `Error()` text,
+/// annotations included (the client sees only `errors.Cause`).
+fn exec_to_err(session: &mut Session, sql: &str) -> String {
+    match session.node_conn().execute(sql) {
+        Ok(_) => panic!("{sql}: expected an error"),
+        Err(error) => error.error_string(),
+    }
+}
+
 fn exec_err_contains(session: &mut Session, sql: &str, expected: &str) {
     let answer = answer(session, sql);
     assert!(answer.starts_with("ERR") && answer.contains(expected), "{sql}: {answer}");

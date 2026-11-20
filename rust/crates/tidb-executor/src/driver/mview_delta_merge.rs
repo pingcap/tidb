@@ -287,8 +287,11 @@ fn mlog_is_empty(plan: &PhysicalPlan) -> bool {
         let children = plan.children();
         match plan {
             PhysicalPlan::TableDual(dual) => return dual.row_count == 0,
-            PhysicalPlan::HashJoin(join) => {
-                if join.join_type != tidb_planner_core_base::LogicalJoinType::LeftOuter || children.len() != 2 {
+            // Go `base.PhysicalJoin`: every join operator, not only a hash
+            // join (a log side folded to a dual can make the planner pick an
+            // index or merge join).
+            _ if plan.join_type().is_some() => {
+                if plan.join_type() != Some(tidb_planner_core_base::LogicalJoinType::LeftOuter) || children.len() != 2 {
                     return false;
                 }
                 plan = &children[0];

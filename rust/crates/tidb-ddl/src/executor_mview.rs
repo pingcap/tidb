@@ -624,7 +624,7 @@ pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_with_ef
         return Ok(());
     }
     let Some(mlog) = table_by_id(base_info.mlog_id).filter(|mlog| mlog.materialized_view_log.is_some()) else {
-        return Err(general_unsupported(format!("{op} on base table with invalid materialized view log metadata")));
+        return Err(general_unsupported_by_args(format!("{op} on base table with invalid materialized view log metadata")));
     };
     let mlog_columns: Vec<String> = mlog
         .materialized_view_log
@@ -637,13 +637,13 @@ pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_with_ef
         .collect();
     for &mview_id in base_info.mview_ids.iter() {
         let Some(mview) = table_by_id(mview_id).filter(|mview| mview.materialized_view.is_some()) else {
-            return Err(general_unsupported(format!(
+            return Err(general_unsupported_by_args(format!(
                 "{op} on base table with invalid dependent materialized view metadata"
             )));
         };
         let sql = mview.materialized_view.as_ref().expect("checked above").read().sql_content.clone();
         let Ok(analysis) = analyze_stored_materialized_view_query(context, schema_name, base, &mlog_columns, &sql) else {
-            return Err(general_unsupported(format!(
+            return Err(general_unsupported_by_args(format!(
                 "{op} on base table with invalid dependent materialized view {} metadata",
                 mview.name.original()
             )));
@@ -659,7 +659,7 @@ pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_with_ef
         ) {
             continue;
         }
-        return Err(general_unsupported(format!(
+        return Err(general_unsupported_by_args(format!(
             "{op} on base table index {index_name_for_err} required by materialized view {} for MIN/MAX fast refresh",
             mview.name.original()
         )));
@@ -667,6 +667,14 @@ pub(crate) fn check_base_table_dependent_mview_min_max_index_constraints_with_ef
     Ok(())
 }
 
+/// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(message)`:
+/// `Unsupported <message>`.
+fn general_unsupported_by_args(message: String) -> MysqlError {
+    MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[message.into()]))
+}
+
+/// Go `dbterror.ErrGeneralUnsupportedDDL.GenWithStack(message)`: `message`
+/// in place of the template.
 fn general_unsupported(message: impl Into<String>) -> MysqlError {
     MysqlError::from_terror(&tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack(message.into()))
 }

@@ -943,11 +943,9 @@ pub fn build(
             strip_column_qualifiers_and_parentheses(&mut mv_where);
             format!(" WHERE {}", mv_where.restore())
         });
-        let group_key_expr = |mv_offset: usize| match mv_select.fields.fields().get(mv_offset) {
-            Some(SelectField::Expr { expr: expr @ Expr::Column(_), .. }) => Ok(expr.restore()),
-            Some(_) => Err(format!("mv field at offset {mv_offset} is not a group key column")),
-            None => Err(format!("invalid mv offset {mv_offset}")),
-        };
+        // Go `groupKeyBaseColExprAtOffset`: the stripped (unqualified)
+        // column, as the template reads the base table by its own name.
+        let group_key_expr = |mv_offset: usize| group_key_base_col(mv_offset).map(|column| escape(&column));
         // Go `buildFullUpdateLookupOuterSelect`.
         let mut outer_fields = Vec::with_capacity(group_key_offsets.len());
         for &mv_offset in &group_key_offsets {
