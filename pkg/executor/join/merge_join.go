@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -53,6 +54,12 @@ type MergeJoinExec struct {
 
 	hasMatch bool
 	hasNull  bool
+
+	// outerPrefetched is set once the first outer chunk fetch has been started, see startOuterPrefetch.
+	outerPrefetched bool
+	// outerPrefetch receives the result of the first outer chunk fetch running in the background.
+	// It is nil when no fetch is in flight.
+	outerPrefetch chan error
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -247,21 +254,26 @@ fetchNext:
 }
 
 func (t *MergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoinExec, requiredRows int) error {
+	prefetched := exec.outerPrefetch != nil
+	if prefetched {
+		// The first outer chunk was fetched in the background, see startOuterPrefetch.
+		if err := exec.waitOuterPrefetch(); err != nil {
+			return err
+		}
+	}
 	if t.executed && t.groupChecker.IsExhausted() {
 		return nil
 	}
 
 	if !t.executed && t.groupChecker.IsExhausted() {
-		// It's hard to calculate selectivity if there is any filter or it's inner join,
-		// so we just push the requiredRows down when it's outer join and has no filter.
-		if exec.IsOuterJoin && len(t.Filters) == 0 {
-			t.childChunk.SetRequiredRows(requiredRows, exec.MaxChunkSize())
-		}
-		err := t.fetchNextChunk(ctx, exec)
-		if err != nil || t.executed {
-			return err
+		if !prefetched {
+			t.setOuterRequiredRows(exec, requiredRows)
+			if err := t.fetchNextChunk(ctx, exec); err != nil || t.executed {
+				return err
+			}
 		}
 
+		var err error
 		t.childChunkIter.Begin()
 		t.filtersSelected, err = expression.VectorizedFilter(exec.Ctx().GetExprCtx().GetEvalCtx(), exec.Ctx().GetSessionVars().EnableVectorizedExpression, t.Filters, t.childChunkIter, t.filtersSelected)
 		if err != nil {
@@ -279,6 +291,42 @@ func (t *MergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoi
 	return nil
 }
 
+// setOuterRequiredRows pushes requiredRows down to the outer child.
+// It's hard to calculate selectivity if there is any filter or it's inner join,
+// so we just push the requiredRows down when it's outer join and has no filter.
+func (t *MergeJoinTable) setOuterRequiredRows(exec *MergeJoinExec, requiredRows int) {
+	if exec.IsOuterJoin && len(t.Filters) == 0 {
+		t.childChunk.SetRequiredRows(requiredRows, exec.MaxChunkSize())
+	}
+}
+
+// startOuterPrefetch fetches the first outer chunk in the background while Next reads the first inner group.
+// Next always reads both before it can return a row, so this does no extra work. When both children are
+// independent remote reads, such as point gets or index lookups bound by constants, it overlaps their RPCs
+// instead of running them back to back. Only the first chunk is prefetched; later chunks are fetched on demand.
+func (e *MergeJoinExec) startOuterPrefetch(ctx context.Context, requiredRows int) {
+	e.outerPrefetched = true
+	t := e.OuterTable
+	t.setOuterRequiredRows(e, requiredRows)
+	ch := make(chan error, 1)
+	e.outerPrefetch = ch
+	go util.WithRecovery(func() {
+		failpoint.InjectCall("mergeJoinOuterPrefetch")
+		ch <- t.fetchNextChunk(ctx, e)
+	}, func(r any) {
+		if r != nil {
+			ch <- util.GetRecoverError(r)
+		}
+	})
+}
+
+// waitOuterPrefetch waits for the background fetch started by startOuterPrefetch and returns its error.
+func (e *MergeJoinExec) waitOuterPrefetch() error {
+	err := <-e.outerPrefetch
+	e.outerPrefetch = nil
+	return err
+}
+
 func (t *MergeJoinTable) hasNullInJoinKey(row chunk.Row) bool {
 	for _, col := range t.JoinKeys {
 		ordinal := col.Index
@@ -294,6 +342,12 @@ func (e *MergeJoinExec) Close() error {
 	defer func() {
 		e.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
 	}()
+	if e.outerPrefetch != nil {
+		// Next returned before consuming the prefetched chunk, e.g. on an inner side error.
+		// Wait for the background fetch so that the outer child is not used concurrently with its Close.
+		_ = e.waitOuterPrefetch()
+	}
+	e.outerPrefetched = false
 	if err := e.InnerTable.finish(); err != nil {
 		return err
 	}
@@ -331,11 +385,16 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 
+	if !e.outerPrefetched {
+		e.startOuterPrefetch(ctx, req.RequiredRows())
+	}
+
 	innerIter := e.InnerTable.groupRowsIter
 	outerIter := e.OuterTable.groupRowsIter
 	for !req.IsFull() {
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if innerIter.Current() == innerIter.End() {
+			failpoint.InjectCall("mergeJoinFetchInner")
 			if err := e.InnerTable.fetchNextInnerGroup(ctx, e); err != nil {
 				return err
 			}
