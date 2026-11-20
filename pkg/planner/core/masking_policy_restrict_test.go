@@ -552,3 +552,85 @@ func TestMaskingPolicyScalarSemiJoinLineage(t *testing.T) {
 	tk.MustExec("insert into semi_target select c in(select 'secret') from semi_source")
 	tk.MustQuery("select * from semi_target").Check(testkit.Rows("1"))
 }
+
+func TestMaskingPolicyRestrictOnJoinOnSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table on_src(c varchar(20))")
+	root.MustExec("create table on_dst(c varchar(20), n int)")
+	root.MustExec("create table on_dummy(id int)")
+	root.MustExec("insert into on_src values ('secret')")
+	root.MustExec("insert into on_dst values ('secret', 0)")
+	root.MustExec("insert into on_dummy values (1)")
+	root.MustExec("create masking policy p on on_src(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (update_select, delete_select)")
+	root.MustExec("create user join_on_user")
+	root.MustExec("grant select,update,delete on test.* to join_on_user")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "join_on_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+
+	// Uncorrelated subqueries are evaluated while the ON clause is rewritten;
+	// correlated ones are not supported there and must not leak either.
+	subqueries := []string{
+		"d.c = (select max(c) from on_src)",
+		"d.c = (select min(c) from on_src)",
+		"d.c = (select (select max(c) from on_src))",
+		"d.c in (select c from on_src)",
+		"d.c in (select s.c from on_src s where s.c = d.c)",
+		"d.c = (select max(s.c) from on_src s where s.c = d.c)",
+	}
+	updates := make([]string, 0, len(subqueries)+2)
+	deletes := make([]string, 0, len(subqueries)+2)
+	for _, cond := range subqueries {
+		updates = append(updates, "update on_dst d join on_dummy x on "+cond+" set d.n = 1")
+		deletes = append(deletes, "delete d from on_dst d join on_dummy x on "+cond)
+	}
+	// The other clauses of a write statement that can run a subquery.
+	updates = append(updates,
+		"update on_dst d set d.n = 1 where d.c = (select max(c) from on_src)",
+		"update on_dst d set d.n = 1 order by d.c = (select max(c) from on_src) limit 1")
+	deletes = append(deletes,
+		"delete from on_dst where c = (select max(c) from on_src)",
+		"delete from on_dst order by c = (select max(c) from on_src) limit 1")
+	// A restricted statement is denied before it runs. An unrestricted one
+	// either runs or, for an unsupported form, fails for that other reason.
+	check := func(sqls []string, denied bool) {
+		for _, sql := range sqls {
+			err := user.ExecToErr(sql)
+			if denied {
+				require.ErrorContains(t, err, "Access to masked column", sql)
+				root.MustQuery("select * from on_dst").Check(testkit.Rows("secret 0"))
+				continue
+			}
+			if err != nil {
+				require.ErrorContains(t, err, "ON condition doesn't support subqueries yet", sql)
+			}
+			root.MustExec("delete from on_dst")
+			root.MustExec("insert into on_dst values ('secret', 0)")
+		}
+	}
+	check(updates, true)
+	check(deletes, true)
+	// A user the policy does not mask is not restricted.
+	root.MustExec(updates[0])
+	root.MustQuery("select * from on_dst").Check(testkit.Rows("secret 1"))
+	root.MustExec("update on_dst set n = 0")
+
+	// Each option restricts only its own statement type.
+	root.MustExec("alter table on_src modify masking policy p set restrict on (update_select)")
+	check(updates, true)
+	check(deletes, false)
+	root.MustExec("alter table on_src modify masking policy p set restrict on (delete_select)")
+	check(deletes, true)
+	check(updates, false)
+
+	// A disabled policy restricts nothing.
+	root.MustExec("alter table on_src modify masking policy p set restrict on (update_select, delete_select)")
+	root.MustExec("alter table on_src disable masking policy p")
+	user.MustExec("update on_dst d join on_dummy x on d.c = (select max(c) from on_src) set d.n = 1")
+	root.MustQuery("select * from on_dst").Check(testkit.Rows("secret 1"))
+	user.MustExec("delete d from on_dst d join on_dummy x on d.c = (select max(c) from on_src)")
+	root.MustQuery("select * from on_dst").Check(testkit.Rows())
+}
