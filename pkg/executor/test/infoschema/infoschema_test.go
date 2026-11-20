@@ -627,32 +627,32 @@ func TestIndexUsageTable(t *testing.T) {
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test';`).Sort().Check(
 		testkit.RowsWithSep("|",
+			"test|idt1|PRIMARY",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
 			"test|idt1|idx_3",
-			"test|idt1|primary",
+			"test|idt2|PRIMARY",
 			"test|idt2|idx_1",
 			"test|idt2|idx_2",
 			"test|idt2|idx_4",
-			"test|idt2|primary",
-			"test|idt3|primary",
-			"test|idt4|primary"))
+			"test|idt3|PRIMARY",
+			"test|idt4|PRIMARY"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Sort().Check(
 		testkit.RowsWithSep("|",
+			"test|idt1|PRIMARY",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
-			"test|idt1|idx_3",
-			"test|idt1|primary"))
+			"test|idt1|idx_3"))
 	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
 		testkit.RowsWithSep("|",
 			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Sort().Check(
 		testkit.RowsWithSep("|",
+			"test|idt1|PRIMARY",
 			"test|idt1|idx_1",
 			"test|idt1|idx_2",
-			"test|idt1|idx_3",
-			"test|idt1|primary"))
+			"test|idt1|idx_3"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Sort().Check(
 		testkit.RowsWithSep("|",
@@ -673,7 +673,7 @@ func TestIndexUsageTable(t *testing.T) {
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
-				where TABLE_NAME = 'idt3';`).Check(testkit.Rows("test idt3 primary"))
+				where TABLE_NAME = 'idt3';`).Check(testkit.Rows("test idt3 PRIMARY"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where INDEX_NAME = 'IDX_5';`).Check(testkit.Rows())
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
@@ -1242,7 +1242,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		defer tk.MustExec("drop table t")
 
 		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+			"test t PRIMARY 0 0 0 0 0 0 0 0 0 0 <nil>",
 		))
 
 		startQuery := time.Now()
@@ -1258,7 +1258,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		defer tk.MustExec("drop table t")
 
 		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+			"test t PRIMARY 0 0 0 0 0 0 0 0 0 0 <nil>",
 		))
 
 		startQuery := time.Now()
@@ -1274,7 +1274,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		defer tk.MustExec("drop table t")
 
 		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+			"test t PRIMARY 0 0 0 0 0 0 0 0 0 0 <nil>",
 		))
 
 		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
@@ -1299,7 +1299,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		defer tk.MustExec("drop table t")
 
 		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
+			"test t PRIMARY 0 0 0 0 0 0 0 0 0 0 <nil>",
 		))
 
 		startQuery := time.Now()

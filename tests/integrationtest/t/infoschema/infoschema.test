@@ -168,6 +168,7 @@ create database indexusage;
 use indexusage;
 create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));
 create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));
+select index_name from sys.schema_unused_indexes where object_schema='indexusage' and object_name='idt1' order by index_name;
 -- sorted_result
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage';
 -- sorted_result

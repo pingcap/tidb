@@ -1937,6 +1937,14 @@ func TestUnusedIndexView(t *testing.T) {
 		expectedResult := testkit.Rows("test t id2")
 		return result.Equal(expectedResult)
 	}, 5*time.Second, 100*time.Millisecond)
+	tk.MustExec("use test")
+	for _, primary := range []string{"primary key(id) clustered", "primary key(id) nonclustered", "primary key(id, b) clustered"} {
+		tk.MustExec("create table unused_primary(id int,b int,col int,unique key idx_col(col)," + primary + ")")
+		tk.MustQuery("select index_name from sys.schema_unused_indexes where object_schema='test' and object_name='unused_primary'").Check(testkit.Rows("idx_col"))
+		tk.MustQuery("select index_name from information_schema.tidb_index_usage where table_schema='test' and table_name='unused_primary' and index_name='PRIMARY'").Check(testkit.Rows("PRIMARY"))
+		tk.MustQuery("select index_name from information_schema.tidb_index_usage where table_schema='test' and table_name='unused_primary' and index_name='primary'").Check(testkit.Rows("PRIMARY"))
+		tk.MustExec("drop table unused_primary")
+	}
 }
 
 func TestMDLViewIDConflict(t *testing.T) {
