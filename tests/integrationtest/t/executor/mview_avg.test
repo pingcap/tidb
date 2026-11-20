@@ -196,15 +196,27 @@ drop materialized view mv_avg_dpi;
 drop materialized view log on t_mv_avg_dpi;
 drop table t_mv_avg_dpi;
 
-# Preserve 50 integer digits for DECIMAL(60,10) even at the highest DPI.
-# 10^35 exposes the narrowed physical column, and 10^40 also stresses division.
+# Ordinary AVG retains its fractional digits even at the DECIMAL precision limit.
+set div_precision_increment = 4;
+create table t_avg_precision (b decimal(65,3));
+insert into t_avg_precision values (1.000), (1.001);
+select avg(b), avg(distinct b), avg(b) > 1.0006 as above_threshold from t_avg_precision;
+drop table t_avg_precision;
+
+# Reject an AVG result that cannot fit in a physical column, even on an empty table.
 set div_precision_increment = 30;
 create table t_mv_avg_wide (id int primary key, a int not null, b decimal(60,10) not null);
+create materialized view log on t_mv_avg_wide (id, a, b);
+--error 8200
+create materialized view mv_avg_wide (a, av, s, n) refresh fast as
+select a, avg(b), sum(b), count(*) from t_mv_avg_wide group by a;
+
+# At DPI 5, DECIMAL(65,15) fits both the 50 integer digits and the AVG scale.
+set div_precision_increment = 5;
 insert into t_mv_avg_wide values
     (1, 1, 100000000000000000000000000000000000),
     (2, 2, 10000000000000000000000000000000000000000);
 select a, avg(b), avg(distinct b) from t_mv_avg_wide group by a order by a;
-create materialized view log on t_mv_avg_wide (id, a, b);
 create materialized view mv_avg_wide (a, av, s, n) refresh fast as
 select a, avg(b), sum(b), count(*) from t_mv_avg_wide group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_wide' and column_name='av';
@@ -216,6 +228,7 @@ refresh materialized view mv_avg_wide fast;
 select a, av from mv_avg_wide order by a;
 refresh materialized view mv_avg_wide complete in place;
 select a, av from mv_avg_wide order by a;
+select a, avg(b) from t_mv_avg_wide group by a order by a;
 drop materialized view mv_avg_wide;
 drop materialized view log on t_mv_avg_wide;
 drop table t_mv_avg_wide;

@@ -270,8 +270,20 @@ a	av	s	c	n
 drop materialized view mv_avg_dpi;
 drop materialized view log on t_mv_avg_dpi;
 drop table t_mv_avg_dpi;
+set div_precision_increment = 4;
+create table t_avg_precision (b decimal(65,3));
+insert into t_avg_precision values (1.000), (1.001);
+select avg(b), avg(distinct b), avg(b) > 1.0006 as above_threshold from t_avg_precision;
+avg(b)	avg(distinct b)	above_threshold
+1.0005000	1.0005000	0
+drop table t_avg_precision;
 set div_precision_increment = 30;
 create table t_mv_avg_wide (id int primary key, a int not null, b decimal(60,10) not null);
+create materialized view log on t_mv_avg_wide (id, a, b);
+create materialized view mv_avg_wide (a, av, s, n) refresh fast as
+select a, avg(b), sum(b), count(*) from t_mv_avg_wide group by a;
+Error 8200 (HY000): Unsupported CREATE MATERIALIZED VIEW AVG output column av requires DECIMAL(80,30), exceeding the maximum precision 65; reduce div_precision_increment or use a narrower input column
+set div_precision_increment = 5;
 insert into t_mv_avg_wide values
 (1, 1, 100000000000000000000000000000000000),
 (2, 2, 10000000000000000000000000000000000000000);
@@ -279,7 +291,6 @@ select a, avg(b), avg(distinct b) from t_mv_avg_wide group by a order by a;
 a	avg(b)	avg(distinct b)
 1	100000000000000000000000000000000000.000000000000000	100000000000000000000000000000000000.000000000000000
 2	10000000000000000000000000000000000000000.000000000000000	10000000000000000000000000000000000000000.000000000000000
-create materialized view log on t_mv_avg_wide (id, a, b);
 create materialized view mv_avg_wide (a, av, s, n) refresh fast as
 select a, avg(b), sum(b), count(*) from t_mv_avg_wide group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_wide' and column_name='av';
@@ -300,6 +311,10 @@ a	av
 refresh materialized view mv_avg_wide complete in place;
 select a, av from mv_avg_wide order by a;
 a	av
+1	100000000000000000000000000000000000.000000000000000
+2	10000000000000000000000000000000000000000.000000000066667
+select a, avg(b) from t_mv_avg_wide group by a order by a;
+a	avg(b)
 1	100000000000000000000000000000000000.000000000000000
 2	10000000000000000000000000000000000000000.000000000066667
 drop materialized view mv_avg_wide;

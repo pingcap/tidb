@@ -312,12 +312,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.UpdateFlenAndDecimalUnderLimit(argTp, divPrecIncre, divPrecIncre)
-		scale := a.RetTp.GetDecimal()
-		if precision, argScale := argTp.GetFlen(), argTp.GetDecimal(); argScale >= 0 && precision >= argScale {
-			// Reserve the input's integer digits when the precision limit is reached.
-			scale = min(scale, max(0, a.RetTp.GetFlen()-(precision-argScale)))
-		}
-		a.RetTp.SetDecimalUnderLimit(scale)
+		a.RetTp.SetDecimalUnderLimit(a.RetTp.GetDecimal())
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

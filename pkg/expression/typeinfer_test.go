@@ -868,8 +868,7 @@ func (s *InferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
 		{"avg(c_float_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"avg(c_double_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"avg(c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 7},
-		// Keep all 62 integer digits when the result reaches the DECIMAL precision limit.
-		{"avg(cast(c_decimal as decimal(65,3)))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 65, 3},
+		{"avg(cast(c_decimal as decimal(65,3)))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 65, 7},
 		{"avg(1.0)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 8, 5},
 		{"avg(1.2e2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"avg(c_char)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
