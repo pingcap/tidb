@@ -46,6 +46,7 @@ var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeNull:       {0, 0},
 	TypeSet:        {-1, 0},
 	TypeEnum:       {-1, 0},
+	TypeGeometry:   {-1, 0},
 }
 
 // IsIntegerType indicate whether tp is an integer type.

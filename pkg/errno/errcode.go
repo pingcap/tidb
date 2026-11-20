@@ -866,6 +866,7 @@ const (
 	ErrPKIndexCantBeInvisible                                = 3522
 	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
+	ErrSRSNotFound                                           = 3548
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
 	ErrCTERecursiveRequiresUnion                             = 3573
 	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574

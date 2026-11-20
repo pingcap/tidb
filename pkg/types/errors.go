@@ -101,4 +101,6 @@ var (
 	// ErrTimestampInDSTTransition is returned if the converted timestamp is in the Daylight Saving Time
 	// transition when time leaps forward (normally skips one hour).
 	ErrTimestampInDSTTransition = dbterror.ClassExecutor.NewStd(mysql.ErrTimeStampInDSTTransition)
+	// ErrSRSNotFound is returned when an SRID is not in the spatial reference system catalog.
+	ErrSRSNotFound = dbterror.ClassTypes.NewStd(mysql.ErrSRSNotFound)
 )

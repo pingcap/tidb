@@ -388,6 +388,8 @@ var (
 	ErrInvalidAttributesSpec = ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
 	// ErrFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
 	ErrFunctionalIndexOnJSONOrGeometryFunction = ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	// ErrSpatialFunctionalIndex returns when creating expression index and the type of the expression is geometry.
+	ErrSpatialFunctionalIndex = ClassDDL.NewStd(mysql.ErrSpatialFunctionalIndex)
 	// ErrDependentByFunctionalIndex returns when the dropped column depends by expression index.
 	ErrDependentByFunctionalIndex = ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// ErrFunctionalIndexOnBlob when the expression of expression index returns blob or text.
@@ -434,6 +436,8 @@ var (
 	ErrUnsupportedTiFlashOperationForSysOrMemTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for system table and memory table"), nil))
 	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
 	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains %s charset"), nil))
+	// ErrUnsupportedTiFlashOperationForGeometryTable is used when alter tiflash related action(e.g. set tiflash mode, set tiflash replica) on a table with a geometry column.
+	ErrUnsupportedTiFlashOperationForGeometryTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` settings for table contains geometry column '%s'"), nil))
 	// ErrTiFlashColumnarStorageCheckFailed is returned when the Columnar Storage flag cannot be read (fail-closed).
 	ErrTiFlashColumnarStorageCheckFailed = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "`set TiFlash replica` because the Columnar Storage status of cluster %s cannot be verified, please retry later"), nil))
 	// ErrTiFlashColumnarStorageNotEnabled is returned when SET TIFLASH REPLICA n (n>0) is rejected because Columnar Storage is off.
