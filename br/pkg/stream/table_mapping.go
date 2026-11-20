@@ -172,7 +172,8 @@ func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot
 	// Bootstrap-created system tables have no CREATE TABLE history. Their
 	// immutable creation timestamp is carried by committed TableInfo versions;
 	// later metadata updates cannot turn an old table into a new empty baseline.
-	createdInInterval = createdInInterval || (source.bootstrapCreatedTS != 0 && source.bootstrapCreatedTS >= intervalStartTS && source.bootstrapCreatedTS <= event.ts)
+	createdInInterval = createdInInterval || (source.bootstrapCreatedTS != 0 &&
+		source.bootstrapCreatedTS >= intervalStartTS && source.bootstrapCreatedTS <= event.ts)
 	return observed && committed && !event.deleted && createdInInterval
 }
 
@@ -697,7 +698,10 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 			tm.latestTableSources = make(map[UpstreamID]sourceTableLocation)
 		}
 		if previous, ok := tm.latestTableSources[tableId]; !ok || commitTs >= previous.ts {
-			tm.latestTableSources[tableId] = sourceTableLocation{dbID: dbId, name: tableSimpleInfo.Name, ts: commitTs, bootstrapCreatedTS: tableSimpleInfo.BootstrapCreatedTS}
+			tm.latestTableSources[tableId] = sourceTableLocation{
+				dbID: dbId, name: tableSimpleInfo.Name, ts: commitTs,
+				bootstrapCreatedTS: tableSimpleInfo.BootstrapCreatedTS,
+			}
 		}
 	}
 	// Keep the union across all table-info versions in the restore interval. A
