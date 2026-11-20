@@ -1035,3 +1035,28 @@ func TestIssue56825(t *testing.T) {
 		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }
+
+func TestHashJoinVectorKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hash_join_version = 'optimized'")
+	tk.MustExec("create table t1 (id int primary key, v vector(3), tag varchar(10))")
+	tk.MustExec("create table t2 (id int primary key, v vector(3), tag varchar(10))")
+	tk.MustExec("insert into t1 values (1, '[1,2,3]', 'a'), (2, '[4,5,6]', 'b'), (3, null, 'a'), (4, '[7,8,9]', 'c'), (5, '[1,2,3]', 'b'), (6, '[-0,0,0]', 'z')")
+	tk.MustExec("insert into t2 values (11, '[1,2,3]', 'a'), (12, '[4,5,6]', 'b'), (13, null, 'a'), (14, '[9,8,7]', 'c'), (16, '[0,0,0]', 'z')")
+
+	query := "select /*+ HASH_JOIN(a, b) */ a.id, b.id from t1 a join t2 b on a.v = b.v"
+	tk.MustQuery("explain format = 'brief' " + query).CheckContain("HashJoin")
+	tk.MustQuery(query).Sort().Check(testkit.Rows("1 11", "2 12", "5 11", "6 16"))
+	tk.MustQuery(query + " and a.tag = b.tag").Sort().Check(testkit.Rows("1 11", "2 12", "6 16"))
+	tk.MustQuery("select /*+ HASH_JOIN(a, b) */ a.id, b.id from t1 a left join t2 b on a.v = b.v").Sort().Check(testkit.Rows("1 11", "2 12", "3 <nil>", "4 <nil>", "5 11", "6 16"))
+	tk.MustQuery("select /*+ HASH_JOIN(a, b) */ a.id from t1 a where exists (select 1 from t2 b where a.v = b.v)").Sort().Check(testkit.Rows("1", "2", "5", "6"))
+
+	tk.MustExec("prepare stmt from 'select /*+ HASH_JOIN(a, b) */ a.id, b.id from t1 a join t2 b on a.v = b.v and a.tag = ?'")
+	tk.MustExec("set @tag = 'a'")
+	tk.MustQuery("execute stmt using @tag").Check(testkit.Rows("1 11"))
+	tk.MustExec("set @tag = 'b'")
+	tk.MustQuery("execute stmt using @tag").Sort().Check(testkit.Rows("2 12", "5 11"))
+	tk.MustExec("deallocate prepare stmt")
+}

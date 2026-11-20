@@ -1350,3 +1350,49 @@ func TestDatumHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, tests[len(tests)-1].d1.Equals(tests[len(tests)-1].d2))
 }
+
+func TestSerializeVectorFloat32Keys(t *testing.T) {
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeTiDBVectorFloat32)}
+	chk := chunk.NewChunkWithCapacity(fieldTypes, 7)
+	for _, value := range []string{"[0,2,3]", "[-0,2,3]", "[1,2,4]", "[]"} {
+		vector, err := types.ParseVectorFloat32(value)
+		require.NoError(t, err)
+		chk.AppendVectorFloat32(0, vector)
+	}
+	chk.AppendNull(0)
+	for range 2 {
+		chk.AppendVectorFloat32(0, types.ZeroVectorFloat32)
+	}
+
+	for _, mode := range []SerializeMode{Normal, KeepVarColumnLength} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			usedRows := []int{3, 0, 1, 2, 4, 5, 6}
+			keys := make([][]byte, len(usedRows))
+			keyLengths := make([]int, len(usedRows))
+			filter := []bool{true, true, true, true, true, true, false}
+			// A preceding join key can already have rejected a row as NULL.
+			nulls := []bool{false, false, false, false, false, true, false}
+			_, err := SerializeKeys(types.DefaultStmtNoWarningContext, chk, fieldTypes,
+				[]int{0}, usedRows, filter, nulls, []SerializeMode{mode}, keys, keyLengths, nil)
+			require.NoError(t, err)
+			require.Equal(t, keys[1], keys[2]) // Positive and negative zero compare equal.
+			require.True(t, math.Signbit(float64(chk.Column(0).GetVectorFloat32(1).Elements()[0])))
+			require.NotEqual(t, keys[1], keys[3])
+			require.NotEmpty(t, keys[0]) // An empty vector is a valid, non-NULL key.
+			require.NotEqual(t, keys[0], keys[1])
+			require.True(t, nulls[4])
+			require.True(t, nulls[5])
+			for _, i := range []int{4, 5, 6} {
+				require.Empty(t, keys[i])
+			}
+			for i, row := range usedRows[:4] {
+				expectedLen := chk.Column(0).GetVectorFloat32(row).SerializedSize()
+				if mode == KeepVarColumnLength {
+					expectedLen += 4
+				}
+				require.Len(t, keys[i], expectedLen)
+				require.Equal(t, expectedLen, keyLengths[i])
+			}
+		})
+	}
+}
