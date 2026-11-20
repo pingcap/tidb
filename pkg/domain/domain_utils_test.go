@@ -15,7 +15,10 @@
 package domain
 
 import (
+	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -29,4 +32,43 @@ func TestErrorCode(t *testing.T) {
 
 func TestServerIDConstant(t *testing.T) {
 	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
+}
+
+func TestIndexUsageSnapshotWorkerBoundedShutdown(t *testing.T) {
+	stop := make(chan struct{})
+	stopWorker := sync.OnceFunc(func() { close(stop) })
+	t.Cleanup(stopWorker)
+	release := make(chan struct{})
+	releasePublisher := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(releasePublisher)
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	publisherReturned := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runIndexUsageSnapshots(stop, time.Millisecond, 10*time.Millisecond, func(ctx context.Context) error {
+			defer close(publisherReturned)
+			close(entered)
+			<-ctx.Done()
+			close(cancelled)
+			// Model an in-flight filesystem operation that ignores cancellation.
+			<-release
+			return ctx.Err()
+		})
+	}()
+	wait := func(ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for snapshot worker")
+		}
+	}
+	wait(entered)
+	stopWorker()
+	wait(cancelled)
+	wait(done)
+	releasePublisher()
+	wait(publisherReturned)
 }
