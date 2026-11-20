@@ -2177,15 +2177,20 @@ func TestUnixTimestamp(t *testing.T) {
 	f, err := fc.getFunction(ctx, nil)
 	require.NoError(t, err)
 	resetStmtContext(ctx)
+	// Bound the captured time without assuming how quickly the test is scheduled.
+	before := time.Now().Unix()
 	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	after := time.Now().Unix()
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, d.GetInt64()-time.Now().Unix(), int64(-1))
-	require.LessOrEqual(t, d.GetInt64()-time.Now().Unix(), int64(1))
+	require.GreaterOrEqual(t, d.GetInt64(), before)
+	require.LessOrEqual(t, d.GetInt64(), after)
 
 	// https://github.com/pingcap/tidb/issues/2496
 	// Test UNIX_TIMESTAMP(NOW()).
 	resetStmtContext(ctx)
+	before = time.Now().Unix()
 	now, isNull, err := evalNowWithFsp(ctx, 0)
+	after = time.Now().Unix()
 	require.NoError(t, err)
 	require.False(t, isNull)
 	n := types.Datum{}
@@ -2197,8 +2202,8 @@ func TestUnixTimestamp(t *testing.T) {
 	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	val, _ := d.GetMysqlDecimal().ToInt()
-	require.GreaterOrEqual(t, val-time.Now().Unix(), int64(-1))
-	require.LessOrEqual(t, val-time.Now().Unix(), int64(1))
+	require.GreaterOrEqual(t, val, before)
+	require.LessOrEqual(t, val, after)
 
 	// https://github.com/pingcap/tidb/issues/2852
 	// Test UNIX_TIMESTAMP(NULL).
