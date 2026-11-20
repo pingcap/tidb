@@ -350,3 +350,194 @@ fn test_reject_nullable_sum_count_dependency_from_delta() {
     exec.delta_agg_col_count = 3;
     assert!(open_err(exec).contains("must come from previously computed columns"));
 }
+
+/// One cell of a test chunk row.
+enum Cell {
+    I(i64),
+    U(u64),
+    N,
+}
+
+/// Appends one row of `cells` to `chk`.
+fn push_row(chk: &mut Chunk, cells: &[Cell]) {
+    for (col, cell) in cells.iter().enumerate() {
+        match cell {
+            Cell::I(v) => chk.append_int64(col, *v),
+            Cell::U(v) => chk.append_uint64(col, *v),
+            Cell::N => chk.append_null(col),
+        }
+    }
+}
+
+fn sum_not_null_int() -> AggFuncDesc {
+    agg_desc(names::SUM, vec![col_arg(1, ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::NOT_NULL))])
+}
+
+#[test]
+fn test_count_and_non_null_sum_unsigned_int() {
+    use Cell::{I, N, U};
+    // Schema: [0] delta_count(*), [1] delta_sum(x), [2] mv_count(*), [3] mv_sum(x unsigned).
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let ft_uint = ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::UNSIGNED);
+    let fts = vec![ft_int.clone(), ft_int.clone(), ft_int.clone(), ft_uint];
+    let mut chk = Chunk::new_chunk_with_capacity(&fts, 3);
+    push_row(&mut chk, &[I(0), I(-3), I(1), U(10)]);
+    push_row(&mut chk, &[I(1), I(5), N, N]);
+    push_row(&mut chk, &[I(-1), I(-2), I(1), U(2)]);
+    let mut exec = Exec::new(new_mock_source(&fts, vec![chk]));
+    exec.agg_mappings = vec![mapping(count_star(), &[2], &[0]), mapping(sum_not_null_int(), &[3], &[1])];
+    exec.delta_agg_col_count = 2;
+    exec.worker_cnt = 2;
+    let results = run(exec).unwrap();
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(
+        vec![RowOpType::Update, RowOpType::Insert, RowOpType::Delete],
+        res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>()
+    );
+    let sum_col = res.computed_cols[3].as_ref().unwrap();
+    assert_eq!([7, 5, 0], [0, 1, 2].map(|row| sum_col.get_uint64(row)));
+}
+
+#[test]
+fn test_count_and_nullable_sum_unsigned_int() {
+    use Cell::{I, N, U};
+    // Schema: [0] delta_count(*), [1] delta_sum(b), [2] delta_count(b), [3] group_key,
+    // [4] mv_count(*), [5] mv_sum(b unsigned), [6] mv_count(b).
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let ft_uint = ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::UNSIGNED);
+    let fts = vec![ft_int.clone(), ft_int.clone(), ft_int.clone(), ft_int.clone(), ft_int.clone(), ft_uint, ft_int.clone()];
+    let mut chk = Chunk::new_chunk_with_capacity(&fts, 3);
+    push_row(&mut chk, &[I(0), I(-3), I(-1), I(1), I(1), U(10), I(2)]);
+    push_row(&mut chk, &[I(0), I(0), I(-1), I(2), I(1), U(5), I(1)]);
+    push_row(&mut chk, &[I(1), I(5), I(2), I(3), N, N, N]);
+    let mut exec = Exec::new(new_mock_source(&fts, vec![chk]));
+    exec.agg_mappings = vec![
+        mapping(count_star(), &[4], &[0]),
+        mapping(agg_desc(names::COUNT, vec![col_arg(0, ft_int.clone())]), &[6], &[2]),
+        mapping(agg_desc(names::SUM, vec![col_arg(1, ft_int)]), &[5], &[1, 6]),
+    ];
+    exec.delta_agg_col_count = 3;
+    exec.worker_cnt = 2;
+    let results = run(exec).unwrap();
+    assert_eq!(1, results.len());
+    let res = &results[0];
+    assert_eq!(
+        vec![RowOpType::Update, RowOpType::Update, RowOpType::Insert],
+        res.row_ops.iter().map(|op| op.tp).collect::<Vec<_>>()
+    );
+    let sum_col = res.computed_cols[5].as_ref().unwrap();
+    assert_eq!(7, sum_col.get_uint64(0));
+    assert!(sum_col.is_null(1));
+    assert_eq!(5, sum_col.get_uint64(2));
+}
+
+/// The four-column `count(*)` / `sum` schema the rejection tests open over.
+fn open_err_with(fts: Vec<FieldType>, mappings: Vec<Mapping>, delta_agg_col_count: i64) -> String {
+    let mut exec = Exec::new(new_mock_source(&fts, Vec::new()));
+    exec.agg_mappings = mappings;
+    exec.delta_agg_col_count = delta_agg_col_count;
+    open_err(exec)
+}
+
+#[test]
+fn test_reject_sum_delta_dependency_from_computed() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(); 4],
+        vec![mapping(count_star(), &[2], &[0]), mapping(agg_desc(names::SUM, vec![col_arg(1, ft_int)]), &[3], &[2])],
+        2,
+    );
+    assert!(got.contains("SUM mapping delta dependency col 2: must come from delta aggregation input"), "{got}");
+}
+
+#[test]
+fn test_reject_sum_type_mismatch() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(), ft_int.clone(), ft_int.clone(), ft(FieldTypeCode::Double)],
+        vec![mapping(count_star(), &[2], &[0]), mapping(agg_desc(names::SUM, vec![col_arg(1, ft_int)]), &[3], &[1])],
+        2,
+    );
+    assert!(got.contains("SUM mapping type mismatch"), "{got}");
+}
+
+#[test]
+fn test_reject_count_type_mismatch() {
+    let got = open_err_with(
+        vec![ft(FieldTypeCode::Double), ft(FieldTypeCode::LongLong)],
+        vec![mapping(count_star(), &[1], &[0])],
+        1,
+    );
+    assert!(got.contains("COUNT mapping dependency: eval type must be int"), "{got}");
+}
+
+#[test]
+fn test_reject_count_unsigned_type() {
+    let got = open_err_with(
+        vec![ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::UNSIGNED), ft(FieldTypeCode::LongLong)],
+        vec![mapping(count_star(), &[1], &[0])],
+        1,
+    );
+    assert!(got.contains("COUNT mapping dependency: type must be signed integer"), "{got}");
+}
+
+#[test]
+fn test_reject_count_dependency_from_computed() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(); 4],
+        vec![mapping(count_star(), &[2], &[0]), mapping(agg_desc(names::COUNT, vec![col_arg(1, ft_int)]), &[3], &[2])],
+        2,
+    );
+    assert!(got.contains("COUNT mapping dependency col 2: must come from delta aggregation input"), "{got}");
+}
+
+#[test]
+fn test_reject_nil_agg_func() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(), ft_int],
+        vec![Mapping { agg_func: None, col_id: vec![1], dependency_col_id: vec![0] }],
+        0,
+    );
+    assert!(got.contains("requires AggFunc"), "{got}");
+}
+
+#[test]
+fn test_reject_first_count_not_all_rows() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(), ft_int.clone()],
+        vec![mapping(agg_desc(names::COUNT, vec![col_arg(0, ft_int)]), &[1], &[0])],
+        0,
+    );
+    assert!(got.contains("must be COUNT(*)/COUNT(non-NULL constant)"), "{got}");
+}
+
+#[test]
+fn test_allow_first_count_const_two() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let fts = vec![ft_int.clone(), ft_int.clone()];
+    let count_two = agg_desc(
+        names::COUNT,
+        vec![Expression::Constant(Constant::new(tidb_datatype::Datum::Int(2), ft_int))],
+    );
+    let mut exec = Exec::new(new_mock_source(&fts, Vec::new()));
+    exec.agg_mappings = vec![mapping(count_two, &[1], &[0])];
+    exec.delta_agg_col_count = 1;
+    exec.open(2).unwrap();
+    exec.close().unwrap();
+}
+
+#[test]
+fn test_reject_dependency_from_mv_side() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let got = open_err_with(
+        vec![ft_int.clone(); 3],
+        // Dependency col 2 is on MView side (DeltaAggColCount = 1).
+        vec![mapping(count_star(), &[1], &[0]), mapping(sum_not_null_int(), &[2], &[2])],
+        1,
+    );
+    assert!(got.contains("expect delta agg range"), "{got}");
+}
