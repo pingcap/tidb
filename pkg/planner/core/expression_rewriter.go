@@ -1981,7 +1981,8 @@ func (er *expressionRewriter) useCache() bool {
 // state to the number of those leading arguments. SETVAR is what a user
 // variable assignment is rewritten to, and can also be called by name: it
 // keeps its value under its name, which is evaluated for every row as well.
-var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 2, ast.LastInsertId: 1}
+// GET_LOCK keeps the lock name in the session and in the lock it holds.
+var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 2, ast.LastInsertId: 1, ast.GetLock: 1}
 
 // enterMaskingStateWrite enters (delta 1) or leaves (delta -1) an expression
 // that keeps its argument in session state. A scalar subquery in the argument

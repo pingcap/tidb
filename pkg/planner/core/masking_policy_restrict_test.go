@@ -828,9 +828,32 @@ func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
 	user.MustQuery("select @secret, @x").Check(testkit.Rows("5 secret"))
 	user.MustExec("set @secret = null, @x = null")
 
-	// A statement with SETVAR is planned for every execution, so neither a
-	// policy enabled later, nor a change of the session's roles, nor another
-	// session can reuse a plan built when the column was not masked.
+	// GET_LOCK keeps its name; the other lock functions and ordinary names
+	// are unaffected.
+	user.MustExec("set role none")
+	for _, sql := range []string{
+		"select get_lock(c, 0) from sv_src",
+		"select get_lock(concat('k', c), 0) from sv_src",
+		"select 1 from sv_src where get_lock(c, 0) = 1",
+		"select 1 from (select get_lock(c, 0) from sv_src) d",
+		"select 1 from (select c from sv_src) d where get_lock(d.c, 0) = 1",
+	} {
+		require.ErrorContains(t, user.ExecToErr(sql), "masking policy cannot be preserved through GET_LOCK", sql)
+	}
+	other.MustQuery("select is_free_lock('secret'), is_free_lock('ksecret')").Check(testkit.Rows("1 1"))
+	user.MustQuery("select get_lock('sv_const', 0), get_lock(k, 0), get_lock(concat('k', k), 0) from sv_src where get_lock('sv_where', 0) = 1").Check(testkit.Rows("1 1 1"))
+	other.MustQuery("select is_free_lock('sv_const'), is_free_lock('pub'), is_free_lock('kpub'), is_free_lock('sv_where')").Check(testkit.Rows("0 0 0 0"))
+	user.MustQuery("select release_lock('sv_const'), release_lock(k), release_lock(concat('k', k)), release_lock('sv_where') from sv_src").Check(testkit.Rows("1 1 1 1"))
+	other.MustQuery("select is_free_lock('sv_const'), is_free_lock('pub'), is_free_lock('kpub'), is_free_lock('sv_where')").Check(testkit.Rows("1 1 1 1"))
+	user.MustExec("set role all")
+	user.MustQuery("select get_lock(c, 0) from sv_src").Check(testkit.Rows("1"))
+	other.MustQuery("select is_free_lock('secret')").Check(testkit.Rows("0"))
+	user.MustQuery("select release_lock(c) from sv_src").Check(testkit.Rows("1"))
+	user.MustExec("set role none")
+
+	// A statement with SETVAR or GET_LOCK is planned for every execution, so
+	// neither a policy enabled later, nor a change of the session's roles, nor
+	// another session can reuse a plan built when the column was not masked.
 	same := testkit.NewTestKit(t, store)
 	require.NoError(t, same.Session().Auth(&auth.UserIdentity{Username: "sv_user", Hostname: "%"}, nil, nil, nil))
 	same.MustExec("use test")
@@ -851,9 +874,14 @@ func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
 			tk.MustExecWithContext(ctx, "prepare plain from 'select 1 from sv_src where setvar(''x'', id) is not null'")
 			tk.MustExecWithContext(ctx, "prepare st from 'select 1 from sv_src where setvar(''x'', c) is not null'")
 			tk.MustExecWithContext(ctx, "prepare stname from 'select 1 from sv_src where setvar(c, 1) is not null'")
+			tk.MustExecWithContext(ctx, "prepare lkplain from 'select get_lock(k, 0) from sv_src'")
+			tk.MustExecWithContext(ctx, "prepare lk from 'select get_lock(c, 0) from sv_src'")
 			executeTwice(tk, "plain")
 			executeTwice(tk, "st")
 			executeTwice(tk, "stname")
+			executeTwice(tk, "lkplain")
+			executeTwice(tk, "lk")
+			tk.MustQuery("select release_all_locks()").Check(testkit.Rows("4"))
 			tk.MustQuery("select @x, @secret").Check(testkit.Rows("secret 1"))
 			tk.MustExec("set @secret = null, @x = null")
 		}
@@ -861,16 +889,19 @@ func TestMaskingPolicyUserVarSetVarFunction(t *testing.T) {
 		user.MustExec("set role all")
 		executeTwice(user, "st")
 		executeTwice(user, "stname")
-		user.MustQuery("select @x, @secret").Check(testkit.Rows("secret 1"))
+		executeTwice(user, "lk")
+		user.MustQuery("select @x, @secret, release_all_locks()").Check(testkit.Rows("secret 1 2"))
 		user.MustExec("set role none")
 		user.MustExec("set @secret = null, @x = null")
 		for _, tk := range sessions {
-			for _, name := range []string{"st", "stname"} {
+			for _, name := range []string{"st", "stname", "lk"} {
 				_, err := tk.ExecWithContext(ctx, "execute "+name)
-				require.ErrorContains(t, err, notPreserved)
+				require.ErrorContains(t, err, "masking policy cannot be preserved through ")
 			}
-			tk.MustQuery("select @x, @secret").Check(testkit.Rows("<nil> <nil>"))
+			tk.MustQuery("select @x, @secret, release_all_locks()").Check(testkit.Rows("<nil> <nil> 0"))
 			executeTwice(tk, "plain")
+			executeTwice(tk, "lkplain")
+			tk.MustQuery("select release_all_locks()").Check(testkit.Rows("2"))
 		}
 	}
 }
