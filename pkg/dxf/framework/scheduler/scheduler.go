@@ -716,6 +716,8 @@ func (s *BaseScheduler) keepExistingStepNodes(
 		return adjustedEligibleNodes, nil
 	}
 
+	// Preserving eligibleNodes order is enough here: previous batches already
+	// respected MaxNodeCount and distributed subtasks round-robin.
 	res := make([]string, 0, len(eligibleNodes))
 	for _, node := range eligibleNodes {
 		if _, ok := existing[node]; ok {
