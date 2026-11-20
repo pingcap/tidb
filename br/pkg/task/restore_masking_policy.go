@@ -304,8 +304,16 @@ func isSourceMaskingPolicyTable(db *stream.DBReplace, tbl *stream.TableReplace) 
 	if tableName == "" {
 		tableName = tbl.Name
 	}
-	return (strings.EqualFold(dbName, mysql.SystemDB) || strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)) &&
-		strings.EqualFold(tableName, "tidb_masking_policy")
+	if !strings.EqualFold(dbName, mysql.SystemDB) && !strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O) {
+		return false
+	}
+	// The persisted PiTR ID map keeps the target name of a table only. A stage
+	// that the snapshot phase created under its task-owned name is therefore
+	// known by that name once the map is loaded back on a retry. Missing it
+	// there would end the restore without installing the policies or
+	// reopening the tables it protects.
+	return strings.EqualFold(tableName, "tidb_masking_policy") ||
+		(tbl.SourceName == "" && snapclient.IsMaskingPolicySnapshotTable(mysql.SystemDB, tableName))
 }
 
 // prepareMaskingPolicyStaging preserves the source policy IDs in a private

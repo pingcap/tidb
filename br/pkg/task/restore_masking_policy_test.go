@@ -7,6 +7,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -192,4 +194,33 @@ func TestMaskingPolicySnapshotTargetIsolation(t *testing.T) {
 	}
 	require.NotEqual(t, targets[0], targets[1])
 	require.Equal(t, targets[0], targets[2])
+}
+
+func TestMaskingPolicyStageSurvivesIDMapReload(t *testing.T) {
+	// The snapshot phase stages the policy table under a task-owned name.
+	stage := &stream.TableReplace{
+		Name:       snapclient.MaskingPolicySnapshotTableName(7),
+		SourceName: "tidb_masking_policy",
+		TableID:    100,
+	}
+	db := stream.NewDBReplace(mysql.SystemDB, 1)
+	db.SourceName = utils.TemporaryDBName(mysql.SystemDB).O
+	db.TableMap[9] = stage
+	user := stream.NewDBReplace("test", 2)
+	user.TableMap[20] = stream.NewTableReplace(snapclient.MaskingPolicySnapshotTableName(7), 200)
+	manager := stream.NewTableMappingManager()
+	require.NoError(t, manager.FromDBReplaceMap(map[stream.UpstreamID]*stream.DBReplace{1: db, 2: user}))
+	require.True(t, hasMaskingPolicySource(manager))
+
+	// A retry loads the ID map back from its persisted form, which does not
+	// carry the source name of a table. The stage must still be found, or the
+	// log phase neither installs the policies nor reopens the tables.
+	reloaded := stream.NewTableMappingManager()
+	require.NoError(t, reloaded.FromDBReplaceMap(stream.FromDBMapProto(manager.ToProto())))
+	loadedDB, loadedStage := reloaded.DBReplaceMap[1], reloaded.DBReplaceMap[1].TableMap[9]
+	require.Empty(t, loadedStage.SourceName)
+	require.True(t, isSourceMaskingPolicyTable(loadedDB, loadedStage))
+	require.True(t, hasMaskingPolicySource(reloaded))
+	// A user table of that name is not a stage.
+	require.False(t, isSourceMaskingPolicyTable(reloaded.DBReplaceMap[2], reloaded.DBReplaceMap[2].TableMap[20]))
 }
