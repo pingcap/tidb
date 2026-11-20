@@ -139,6 +139,27 @@ func rebuildRange(p base.Plan) error {
 		}
 		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
 		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
+	case *physicalop.PhysicalCTEStorage:
+		return rebuildRange((*physicalop.PhysicalCTE)(x))
+	case *physicalop.PhysicalCTE:
+		// CTE definition plans are not ordinary children of their consumers.
+		// Rebuild their ranges too, otherwise a cached materialized CTE keeps
+		// scan boundaries from the previous parameter values.
+		if x.SeedPlan != nil {
+			if err = rebuildRange(x.SeedPlan); err != nil {
+				return err
+			}
+		}
+		if x.RecurPlan != nil {
+			if err = rebuildRange(x.RecurPlan); err != nil {
+				return err
+			}
+		}
+		for _, child := range x.Children() {
+			if err = rebuildRange(child); err != nil {
+				return err
+			}
+		}
 	case base.PhysicalPlan:
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
