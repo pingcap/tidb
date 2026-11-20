@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -327,86 +328,89 @@ func TestJobOrchestratorSubmissionErrorStillCancelsRunningCheckpointJobs(t *test
 }
 
 func TestJobOrchestratorSubmitGraceStartsAfterContextCancel(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("50ms")`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout"))
-	})
+	// Keep scheduler delays from consuming the submission and checkpoint grace periods.
+	synctest.Test(t, func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("50ms")`))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout"))
+		})
 
-	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
-	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
-	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
-	mockSDK := sdkmock.NewMockSDK(ctrl)
+		mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+		mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+		mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+		mockSDK := sdkmock.NewMockSDK(ctrl)
 
-	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
-		Submitter:         mockSubmitter,
-		CheckpointMgr:     mockCpMgr,
-		SDK:               mockSDK,
-		Monitor:           mockMonitor,
-		SubmitConcurrency: 1,
-		PollInterval:      time.Millisecond,
-		Logger:            log.L(),
-	})
+		orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+			Submitter:         mockSubmitter,
+			CheckpointMgr:     mockCpMgr,
+			SDK:               mockSDK,
+			Monitor:           mockMonitor,
+			SubmitConcurrency: 1,
+			PollInterval:      time.Millisecond,
+			Logger:            log.L(),
+		})
 
-	tables := []*importsdk.TableMeta{
-		{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
-	}
-
-	mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(nil, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	submitStarted := make(chan struct{})
-	parentCanceled := make(chan struct{})
-	submitCheckedAfterCancel := make(chan struct{})
-	allowSubmitReturn := make(chan struct{})
-	var submitCtxDone <-chan struct{}
-	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(submitCtx context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
-		submitCtxDone = observeContextDone(submitCtx)
-		close(submitStarted)
-		<-parentCanceled
-		select {
-		case <-submitCtx.Done():
-			return nil, submitCtx.Err()
-		default:
+		tables := []*importsdk.TableMeta{
+			{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
 		}
-		close(submitCheckedAfterCancel)
-		<-allowSubmitReturn
-		return &importinto.ImportJob{
-			JobID:     1,
-			TableMeta: tableMeta,
-			GroupKey:  "group1",
-		}, nil
+
+		mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(nil, nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		submitStarted := make(chan struct{})
+		parentCanceled := make(chan struct{})
+		submitCheckedAfterCancel := make(chan struct{})
+		allowSubmitReturn := make(chan struct{})
+		var submitCtxDone <-chan struct{}
+		mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(submitCtx context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
+			submitCtxDone = observeContextDone(submitCtx)
+			close(submitStarted)
+			<-parentCanceled
+			select {
+			case <-submitCtx.Done():
+				return nil, submitCtx.Err()
+			default:
+			}
+			close(submitCheckedAfterCancel)
+			<-allowSubmitReturn
+			return &importinto.ImportJob{
+				JobID:     1,
+				TableMeta: tableMeta,
+				GroupKey:  "group1",
+			}, nil
+		})
+
+		mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(updateCtx context.Context, cp *importinto.TableCheckpoint) error {
+			require.NoError(t, updateCtx.Err())
+			require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+			require.Equal(t, int64(1), cp.JobID)
+			require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)
+			require.Equal(t, "group1", cp.GroupKey)
+			return nil
+		})
+		mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(context.Canceled)
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- orchestrator.SubmitAndWait(ctx, tables)
+		}()
+
+		<-submitStarted
+		require.Never(t, func() bool {
+			return channelClosed(submitCtxDone)
+		}, 80*time.Millisecond, 10*time.Millisecond)
+		cancel()
+		close(parentCanceled)
+		<-submitCheckedAfterCancel
+		close(allowSubmitReturn)
+
+		err := <-errCh
+		require.ErrorIs(t, err, context.Canceled)
 	})
-
-	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(updateCtx context.Context, cp *importinto.TableCheckpoint) error {
-		require.NoError(t, updateCtx.Err())
-		require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
-		require.Equal(t, int64(1), cp.JobID)
-		require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)
-		require.Equal(t, "group1", cp.GroupKey)
-		return nil
-	})
-	mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(context.Canceled)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- orchestrator.SubmitAndWait(ctx, tables)
-	}()
-
-	<-submitStarted
-	require.Never(t, func() bool {
-		return channelClosed(submitCtxDone)
-	}, 80*time.Millisecond, 10*time.Millisecond)
-	cancel()
-	close(parentCanceled)
-	<-submitCheckedAfterCancel
-	close(allowSubmitReturn)
-
-	err := <-errCh
-	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestJobOrchestratorRecordSubmissionGetsFreshGraceTimeout(t *testing.T) {
