@@ -163,13 +163,6 @@ func enumeratePhysicalPlans4TaskHelper(
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
-	// Strict StreamAgg candidates are enumerated before ordinary ones.
-	type skipAlternativeKey struct {
-		scan streamAggScanKey
-		prop string
-	}
-	var attachedSkipScans map[skipAlternativeKey]struct{}
-
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := baseLP.Self().(type) {
@@ -190,24 +183,10 @@ func enumeratePhysicalPlans4TaskHelper(
 			continue
 		}
 
-		var skipKey skipAlternativeKey
-		var skip bool
-		if _, ok := pp.(*physicalop.PhysicalStreamAgg); ok {
-			req := pp.GetChildReqProps(0)
-			if req.SkipScanInfo != nil || len(attachedSkipScans) != 0 {
-				scan, marked := streamAggScan(childTasks[0])
-				skip = req.SkipScanInfo != nil
-				if skip && !marked {
-					continue
-				}
-				if scan != (streamAggScanKey{}) {
-					normal := req.CloneEssentialFields()
-					normal.SkipScanInfo = nil
-					skipKey = skipAlternativeKey{scan: scan, prop: string(normal.HashCode())}
-					if _, replaced := attachedSkipScans[skipKey]; !skip && replaced {
-						continue
-					}
-				}
+		if _, ok := pp.(*physicalop.PhysicalStreamAgg); ok && pp.GetChildReqProps(0).SkipScanInfo != nil {
+			cop, ok := childTasks[0].(*physicalop.CopTask)
+			if !ok || !cop.SkipScan {
+				continue
 			}
 		}
 
@@ -215,12 +194,6 @@ func enumeratePhysicalPlans4TaskHelper(
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
 			continue
-		}
-		if skip {
-			if attachedSkipScans == nil {
-				attachedSkipScans = make(map[skipAlternativeKey]struct{})
-			}
-			attachedSkipScans[skipKey] = struct{}{}
 		}
 
 		// An optimal task could not satisfy the property, so it should be converted here.
