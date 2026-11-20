@@ -389,7 +389,7 @@ func mockWorkerReadJob(
 ) []*regionJob {
 	ret := make([]*regionJob, len(jobs))
 	jobToWorkerCh <- jobs[0]
-	ret[0] = <-b.innerJobToWorkerCh
+	// Keep the sender blocked on the first job until the remaining jobs are queued.
 	require.Eventually(t, func() bool {
 		for _, p := range jobs[0].region.Region.GetPeers() {
 			v, ok := b.storeLoadMap.Load(p.StoreId)
@@ -403,7 +403,10 @@ func mockWorkerReadJob(
 	for _, job := range jobs[1:] {
 		jobToWorkerCh <- job
 	}
-	for i := 1; i < len(ret); i++ {
+	require.Eventually(t, func() bool {
+		return b.jobLen() == len(jobs)-1
+	}, time.Second, 10*time.Millisecond)
+	for i := range ret {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got
 	}
