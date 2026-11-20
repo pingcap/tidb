@@ -2167,6 +2167,11 @@ func (n *KillStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
 	}
+	if n.Expr != nil {
+		if !n.Expr.AcceptInPlace(v) {
+			return false
+		}
+	}
 	return v.Leave(n)
 }
 
