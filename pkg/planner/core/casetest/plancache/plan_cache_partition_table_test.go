@@ -84,7 +84,7 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 			if useStringPK {
 				id = randString(seededRand, 1, 20)
 			} else {
-				id = seededRand.Intn(maxID)
+				id = seededRand.Intn(maxID-1) + 1
 			}
 			lc = id
 			if !isCaseSensitive {
