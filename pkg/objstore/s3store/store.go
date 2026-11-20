@@ -67,6 +67,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 	qs := *backend
 	gcsS3Compatible := isGCSS3Compatible(&qs)
+	volcengineTOS := normalizeVolcengineTOS(&qs)
 
 	// Start with default configuration loading
 	var configOpts []func(*config.LoadOptions) error
@@ -256,10 +257,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	// Perform region detection and validation
 	var detectedRegion string
 	awsProvider := len(qs.Provider) == 0 || qs.Provider == "aws"
-	// GCS S3-compatible endpoints must skip AWS bucket-region discovery:
-	// GCS interoperability can reject the HeadBucket request before normal
-	// object access starts, and the configured region is only used for signing.
-	officialS3 := awsProvider && !gcsS3Compatible
+	// GCS and Volcengine TOS S3-compatible endpoints must skip AWS bucket-region discovery:
+	// these providers can reject HeadBucket or omit the AWS region header, and the configured
+	// region is used directly for signing.
+	officialS3 := awsProvider && !gcsS3Compatible && !volcengineTOS
 	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
@@ -391,15 +392,19 @@ func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.A
 	)
 }
 
-// autoNewCred returns credentials explicitly configured in the backend or
-// Tencent CVM role credentials for COS endpoints. Other credentials are
-// resolved by the AWS SDK's default credential chain.
+// autoNewCred returns credentials explicitly configured in the backend,
+// Tencent CVM role credentials for COS endpoints, or Volcengine VKE OIDC
+// credentials for TOS endpoints. Other credentials are resolved by the AWS
+// SDK's default credential chain.
 func autoNewCred(qs *backuppb.S3) (cred aws.CredentialsProvider, err error) {
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
 		return credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken), nil
 	}
 	if isTencentCOSEndpoint(qs.Endpoint) {
 		return createTencentCOSCred()
+	}
+	if isVolcengineTOS(qs) {
+		return createVolcengineTOSCred(qs)
 	}
 	return nil, nil
 }

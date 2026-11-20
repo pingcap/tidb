@@ -282,6 +282,21 @@ func TestApplyUpdate(t *testing.T) {
 			},
 		},
 		{
+			name: "volcengine provider",
+			options: S3BackendOptions{
+				Region:         "us-west-2",
+				ForcePathStyle: true,
+				Provider:       "volcengine",
+			},
+			s3: &backuppb.S3{
+				Region:         "us-west-2",
+				ForcePathStyle: false,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				Provider:       "volcengine",
+			},
+		},
+		{
 			name: "useAccelerateEndpoint",
 			options: S3BackendOptions{
 				Region:                "us-west-2",
