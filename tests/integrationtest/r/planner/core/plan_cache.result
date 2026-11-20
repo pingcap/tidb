@@ -2835,3 +2835,20 @@ PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
 EXECUTE stmt;
 a
 1
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t (c float);
+insert into t values (100000030);
+set @p = false;
+prepare stmt from 'select c, case when false then ? else c end, c not like case when false then ? else c end, if(false, ?, c), ifnull(null, ?) from t';
+execute stmt using @p, @p, @p, @p;
+c	case when false then ? else c end	c not like case when false then ? else c end	if(false, ?, c)	ifnull(null, ?)
+100000030	100000030	0	100000030	0
+set @q = 5;
+execute stmt using @q, @q, @q, @q;
+c	case when false then ? else c end	c not like case when false then ? else c end	if(false, ?, c)	ifnull(null, ?)
+100000030	100000030	0	100000030	5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
