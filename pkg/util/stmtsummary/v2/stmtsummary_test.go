@@ -71,6 +71,136 @@ func TestStmtWindow(t *testing.T) {
 	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
 	require.Equal(t, int64(0), ss.window.evictedCount.Load())
 
+	t.Run("evicted timestamp merge order", func(t *testing.T) {
+		begin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		records := []*StmtRecord{
+			{ExecCount: 2, FirstSeen: begin, LastSeen: begin.Add(time.Minute)},
+			{ExecCount: 3, FirstSeen: begin.Add(4 * time.Minute), LastSeen: begin.Add(5 * time.Minute)},
+			{ExecCount: 1, FirstSeen: begin.Add(2 * time.Minute), LastSeen: begin.Add(3 * time.Minute)},
+		}
+		for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			aggregate := newEvictedAggregateRecord()
+			// Empty aggregates must not contribute timestamps, even when their
+			// initialization times lie outside every actual execution.
+			aggregate.FirstSeen = begin.Add(-time.Hour)
+			aggregate.LastSeen = begin.Add(time.Hour)
+			// A sampled record can exist before Add increments its execution count.
+			info := GenerateStmtExecInfo4Test("empty")
+			info.StmtCtx.OriginalSQL = "select 1"
+			empty := NewStmtRecord(info)
+			require.NotEmpty(t, empty.SampleSQL)
+			require.Zero(t, empty.ExecCount)
+			empty.FirstSeen = begin.Add(-2 * time.Hour)
+			empty.LastSeen = begin.Add(2 * time.Hour)
+			aggregate.Merge(empty)
+			var count int64
+			first, last := records[order[0]].FirstSeen, records[order[0]].LastSeen
+			for _, index := range order {
+				record := records[index]
+				aggregate.Merge(record)
+				count += record.ExecCount
+				if record.FirstSeen.Before(first) {
+					first = record.FirstSeen
+				}
+				if record.LastSeen.After(last) {
+					last = record.LastSeen
+				}
+				aggregate.Merge(empty)
+				require.Equal(t, count, aggregate.ExecCount, "order %v", order)
+				require.Equal(t, first, aggregate.FirstSeen, "order %v", order)
+				require.Equal(t, last, aggregate.LastSeen, "order %v", order)
+				data, err := marshalStmtRecord(aggregate)
+				require.NoError(t, err)
+				var restored StmtRecord
+				require.NoError(t, json.Unmarshal(data, &restored))
+				require.Equal(t, count, restored.ExecCount)
+				require.Equal(t, first, restored.FirstSeen)
+				require.Equal(t, last, restored.LastSeen)
+				// Continue merging after JSON restoration; initialization must
+				// depend on the persisted execution count, not transient state.
+				aggregate = &restored
+			}
+		}
+	})
+
+	t.Run("evicted timestamps after clear and rotate", func(t *testing.T) {
+		ss := NewStmtSummary4Test(1)
+		defer ss.Close()
+		require.NoError(t, ss.SetMaxStmtCount(1)) // rotation uses the configured capacity
+		for _, reset := range []func(){ss.Clear, func() { ss.rotate(timeNow()) }} {
+			reset()
+			evicted := ss.window.evicted
+			require.Zero(t, evicted.other.ExecCount)
+			require.Zero(t, evicted.otherForPersist.ExecCount)
+			for _, record := range []*StmtRecord{evicted.other, evicted.otherForPersist} {
+				_, err := marshalStmtRecord(record)
+				require.NoError(t, err, "empty aggregate must remain JSON serializable")
+			}
+			// Set execution times relative to the freshly initialized aggregate,
+			// avoiding any dependency on wall-clock waits.
+			first := evicted.other.FirstSeen.Add(time.Hour).UTC()
+			add := func(digest string, start time.Time) {
+				info := GenerateStmtExecInfo4Test(digest)
+				info.StartTime = start
+				ss.Add(info)
+			}
+			add("digest1", first)
+			add("digest1", first.Add(time.Minute))
+			add("digest2", first.Add(2*time.Minute))
+			for _, record := range []*StmtRecord{evicted.other, evicted.otherForPersist} {
+				require.Equal(t, int64(2), record.ExecCount)
+				require.Equal(t, first, record.FirstSeen)
+				require.Equal(t, first.Add(time.Minute), record.LastSeen)
+			}
+			add("digest1", first.Add(3*time.Minute)) // evicts digest2
+			add("digest3", first.Add(4*time.Minute)) // evicts digest1 again
+			require.Equal(t, int64(3), ss.window.evictedCount.Load())
+			for _, record := range []*StmtRecord{evicted.other, evicted.otherForPersist} {
+				require.Equal(t, int64(4), record.ExecCount)
+				require.Equal(t, first, record.FirstSeen)
+				require.Equal(t, first.Add(3*time.Minute), record.LastSeen)
+			}
+		}
+	})
+
+	t.Run("persisted aggregate has independent timestamps", func(t *testing.T) {
+		var logBuf bytes.Buffer
+		storage := &stmtLogStorage{
+			logger: zap.New(zapcore.NewCore(&stmtLogEncoder{}, zapcore.AddSync(&logBuf), zapcore.InfoLevel)),
+		}
+		ss := NewStmtSummary4Test(1)
+		ss.storage = storage
+		defer ss.Close()
+		first := ss.window.evicted.other.FirstSeen.Add(time.Hour).UTC()
+		add := func(digest string, start time.Time) {
+			info := GenerateStmtExecInfo4Test(digest)
+			info.StartTime = start
+			ss.Add(info)
+		}
+		require.NoError(t, ss.SetPersistEvicted(true))
+		add("digest1", first)
+		add("digest2", first.Add(time.Minute)) // digest1 is logged individually
+		require.NoError(t, ss.SetPersistEvicted(false))
+		add("digest2", first.Add(2*time.Minute))
+		add("digest3", first.Add(3*time.Minute)) // digest2 is aggregated for persistence
+		require.Equal(t, first, ss.window.evicted.other.FirstSeen)
+		require.Equal(t, first.Add(time.Minute), ss.window.evicted.otherForPersist.FirstSeen)
+		ss.Close() // drains the async logger before inspecting JSON
+		var aggregate *StmtRecord
+		for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+			var record StmtRecord
+			require.NoError(t, json.Unmarshal([]byte(line), &record))
+			if record.Digest == "" {
+				require.Nil(t, aggregate, "only one aggregate should be persisted")
+				aggregate = &record
+			}
+		}
+		require.NotNil(t, aggregate)
+		require.Equal(t, int64(2), aggregate.ExecCount)
+		require.Equal(t, first.Add(time.Minute), aggregate.FirstSeen)
+		require.Equal(t, first.Add(2*time.Minute), aggregate.LastSeen)
+	})
+
 	t.Run("disabling internal query preserves LRU order", func(t *testing.T) {
 		ss := NewStmtSummary4Test(6)
 		defer ss.Close()
