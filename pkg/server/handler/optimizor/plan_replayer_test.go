@@ -387,6 +387,13 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 }
 
 func TestIssue43192(t *testing.T) {
+	// Keep other test processes from removing this test's plan replayer files.
+	originalPath := replayer.GetPlanReplayerDirName()
+	replayer.PlanReplayerPath = t.TempDir()
+	t.Cleanup(func() {
+		replayer.PlanReplayerPath = originalPath
+	})
+
 	store := testkit.CreateMockStore(t)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
