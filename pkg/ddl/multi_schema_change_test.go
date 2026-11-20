@@ -1110,3 +1110,25 @@ func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 	assert.NotNil(t, job.MultiSchemaInfo, job)
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }
+
+func TestMultiSchemaChangeRejectsChangingAutoRandomShardBits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = 1")
+
+	tk.MustExec("create table t (id bigint auto_increment primary key, v int)")
+	tk.MustContainErrMsg("alter table t modify id bigint auto_random(1), add unique index uv(v)",
+		"Unsupported multi schema change for changing auto_random shard bits")
+	tk.MustQuery("select count(*) from information_schema.statistics where table_schema = 'test' and table_name = 't' and index_name = 'uv'").Check(testkit.Rows("0"))
+	tk.MustExec("alter table t modify id bigint auto_random(1)")
+	tk.MustQuery("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("PK_AUTO_RANDOM_BITS=1"))
+
+	tk.MustExec("create table t2 (id bigint auto_random(3) primary key, v int)")
+	tk.MustContainErrMsg("alter table t2 modify id bigint auto_random(4), add column c int",
+		"Unsupported multi schema change for changing auto_random shard bits")
+	tk.MustExec("alter table t2 modify id bigint auto_random(3), add column c int")
+	tk.MustExec("alter table t2 modify v bigint, add column d int")
+	tk.MustQuery("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'test' and table_name = 't2'").Check(testkit.Rows("PK_AUTO_RANDOM_BITS=3"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = 't2' order by ordinal_position").Check(testkit.Rows("id", "v", "c", "d"))
+}
