@@ -27,7 +27,7 @@ func TestGenInitStatsHistogramsSQLAllRecords(t *testing.T) {
 
 	expected := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY " +
 		"table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, " +
-		"tot_col_size, stats_ver, correlation from mysql.stats_histograms order by table_id"
+		"tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms order by table_id"
 
 	require.Equal(t, expected, got)
 }
@@ -39,7 +39,7 @@ func TestGenInitStatsHistogramsSQLPaging(t *testing.T) {
 
 	expected := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY " +
 		"table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, " +
-		"tot_col_size, stats_ver, correlation from mysql.stats_histograms" +
+		"tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms" +
 		" where table_id >= 100 and table_id < 200 order by table_id"
 
 	require.Equal(t, expected, got)
@@ -54,7 +54,7 @@ func TestGenInitStatsHistogramsSQLTableIDs(t *testing.T) {
 
 	expected := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY " +
 		"table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, " +
-		"tot_col_size, stats_ver, correlation from mysql.stats_histograms" +
+		"tot_col_size, stats_ver, correlation, flag from mysql.stats_histograms" +
 		" where table_id in (5,2,7) order by table_id"
 
 	require.Equal(t, expected, got)
