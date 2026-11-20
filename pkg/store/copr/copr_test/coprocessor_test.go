@@ -33,6 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+>>>>>>> 48861f90048 (test: stabilize flaky TestQueryWithConcurrentSmallCop (#69246))
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -416,4 +420,68 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	assertCopWaves("select * from t1 where c < 10;", 0, 10)
 	// The ordered unsigned handle scan must read its two ranges in one wave.
 	assertCopWaves("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;", 0, 2)
+<<<<<<< HEAD
+=======
+}
+
+func TestDMLWithLiteCopWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id bigint auto_increment key, b int);")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for range 8 {
+		tk.MustExec("insert into t1 (b) select b from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
+	tk.MustExec("set @@tidb_enable_paging = off")
+	tk.MustExec("set @@tidb_session_alias = 'dml_lite_worker_fallback'")
+	var fallbackTriggered atomic.Bool
+	copr.SetLiteWorkerFallbackHookForTest(func() {
+		fallbackTriggered.Store(true)
+	})
+	defer copr.SetLiteWorkerFallbackHookForTest(nil)
+
+	// First run update before split, it should not trigger fallback.
+	tk.MustExec("update t1 set b=b+1 where id >= 0;")
+	require.False(t, fallbackTriggered.Load(), "unexpected lite worker fallback before split")
+
+	// Then split while the next update request is paused so fallback path is deterministically exercised.
+	fallbackTriggered.Store(false)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var blocked atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionAlias != "dml_lite_worker_fallback" {
+			return
+		}
+		if blocked.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Exec("update t1 set b=b+1 where id >= 0;")
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timeout waiting for cop request")
+	}
+	tkSplit := testkit.NewTestKit(t, store)
+	tkSplit.MustExec("use test")
+	tkSplit.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
+	close(release)
+	require.NoError(t, <-done)
+	require.True(t, fallbackTriggered.Load(), "lite worker fallback hook not triggered")
+
+	// Test select after split table.
+	tk.MustExec("truncate table t1;")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	tk.MustQuery("split table t1 by (3), (6), (9);").Check(testkit.Rows("3 1"))
+	tk.MustQuery("select b from t1 order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8"))
+>>>>>>> 48861f90048 (test: stabilize flaky TestQueryWithConcurrentSmallCop (#69246))
 }
