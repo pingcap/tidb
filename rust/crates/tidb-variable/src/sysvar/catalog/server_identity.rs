@@ -274,7 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_plugin_dir),
     },
     SysVarDef {
         name: "plugin_load",
@@ -292,7 +292,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_plugin_load),
     },
     SysVarDef {
         name: "protocol_version",
@@ -382,7 +382,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_config),
     },
     SysVarDef {
         name: "tidb_enable_legacy_instance_scope",
@@ -434,9 +434,9 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_noop_variables),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_noop_variables),
     },
     SysVarDef {
         name: "version",

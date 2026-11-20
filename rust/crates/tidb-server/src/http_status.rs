@@ -1058,6 +1058,10 @@ fn route_response_with_context(
     if let Some(response) = crate::ddl_check_handler::serve(path, request, routes.keyspace_domain.as_ref()) {
         return response;
     }
+    // Go `svr.StandbyController.Handler(svr)`, mounted in standby mode.
+    if let Some(response) = crate::standby_node::serve(path, request) {
+        return response;
+    }
     if let Some(response) = crate::dxf_handler::serve_with_context(path, request, routes.keyspace_domain.as_deref(),context) {
         return response;
     }

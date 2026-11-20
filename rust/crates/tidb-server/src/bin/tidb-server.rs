@@ -87,7 +87,35 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
-            runtime_exit_code(run_configured_node(config))
+            // Go `main`: the kernel-type checks, then in standby mode the
+            // wait for activation, which rewrites the configuration.
+            if let Err(message) = tidb_server::standby_node::check_kernel_config() {
+                eprintln!("{message}");
+                return ExitCode::SUCCESS;
+            }
+            let config = match tidb_server::standby_node::wait_for_activate_if_standby(
+                flags.starter_additional_params.as_deref().unwrap_or_default(),
+            ) {
+                Ok(false) => config,
+                Ok(true) => match tidb_server::standby_node::activated_node_config(&config) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        eprintln!("tidb-server configuration failure: {error}");
+                        return ExitCode::from(2);
+                    }
+                },
+                Err(error) => {
+                    eprintln!("tidb-server startup/runtime failure: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let result = run_configured_node(config);
+            // Go's deferred `standbyController.EndStandby(err)`: a failure
+            // before the server is created still answers the activate caller.
+            if let Some(controller) = tidb_server::standby_node::standby_controller() {
+                controller.end_standby(result.as_ref().err().map(ToString::to_string));
+            }
+            runtime_exit_code(result)
         }
         Err(NodeConfigError::HelpRequested) => {
             eprint!("{}", tidb_server::node_config_help_text());

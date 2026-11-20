@@ -614,7 +614,13 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             MysqlTlsManager::new(config).map_err(|error| SqlNodeError::Tls(error.to_string()))?;
         // Go's listener blocks in `Accept`; shutdown and a panicked serving
         // thread wake it (`AcceptWaker`).
-        let listener = TcpListener::bind((config.host, config.port)).map_err(SqlNodeError::Bind)?;
+        let bound = TcpListener::bind((config.host, config.port));
+        // Go `standbyController.PrepareForActivation(svr)`: the activation
+        // API answers once the listener is bound (or with its failure).
+        if let Some(controller) = crate::standby_node::standby_controller() {
+            controller.end_standby(bound.as_ref().err().map(ToString::to_string));
+        }
+        let listener = bound.map_err(SqlNodeError::Bind)?;
         let tls_variables = tls.variables();
         if tls.current().is_some() {
             // Go `NewServer`, once a TLS config is in place.

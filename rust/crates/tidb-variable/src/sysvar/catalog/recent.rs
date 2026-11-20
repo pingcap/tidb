@@ -43,8 +43,8 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_connection_event_log),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_connection_event_log),
     },
 ];

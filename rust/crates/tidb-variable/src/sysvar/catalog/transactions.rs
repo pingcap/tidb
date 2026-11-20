@@ -218,9 +218,9 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_local_txn),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_local_txn),
     },
     // Compatibility surface only: the live Rust DML path does not yet run
     // Go's table mutation consistency checker when this is enabled.
@@ -508,9 +508,9 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_rc_read_check_ts),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_rc_read_check_ts),
     },
     SysVarDef {
         name: "tidb_rc_write_check_ts",

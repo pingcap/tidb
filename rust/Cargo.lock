@@ -9550,6 +9550,7 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-sqlkiller",
+ "tidb-standby",
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-initstats",
@@ -9573,6 +9574,7 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-terror",
+ "tidb-tidbmanager",
  "tidb-tiflashcompute",
  "tidb-timeutil",
  "tidb-tls",
@@ -10096,6 +10098,22 @@ dependencies = [
  "tidb-mysql",
  "tidb-terror",
  "tracing",
+]
+
+[[package]]
+name = "tidb-standby"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "signal-hook",
+ "tidb-config",
+ "tidb-config-configtypes",
+ "tidb-config-deploymode",
+ "tidb-keyspace",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-tidbmanager",
 ]
 
 [[package]]
@@ -10947,6 +10965,13 @@ version = "0.0.0"
 dependencies = [
  "tidb-datatype",
  "tidb-goruntime",
+]
+
+[[package]]
+name = "tidb-tidbmanager"
+version = "0.0.0"
+dependencies = [
+ "reqwest 0.13.4",
 ]
 
 [[package]]

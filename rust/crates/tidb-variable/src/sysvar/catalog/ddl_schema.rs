@@ -92,9 +92,9 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_ddl_slow_threshold),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_ddl_slow_threshold),
     },
     SysVarDef {
         name: "foreign_key_checks",
@@ -326,9 +326,9 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         auto_convert_negative_bool: false,
         validation: Some(super::super::validation::tidb_enable_ddl),
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_enable_ddl),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_enable_ddl),
     },
     SysVarDef {
         name: "tidb_enable_exchange_partition",

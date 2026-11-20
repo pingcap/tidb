@@ -160,6 +160,17 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
     tidb_vardef::set_memory_usage_alarm_ratio(
         config.global_config.instance.memory_usage_alarm_ratio,
     );
+    // Go `setGlobalVars`: the process switches the instance config seeds.
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        let instance = &config.global_config.instance;
+        tidb_vardef::PROCESS_GENERAL_LOG.store(instance.tidb_general_log, SeqCst);
+        tidb_vardef::ENABLE_P_PROF_SQLCPU.store(instance.enable_pprof_sql_cpu, SeqCst);
+        tidb_vardef::ENABLE_RC_READ_CHECK_TS.store(instance.tidb_rc_read_check_ts, SeqCst);
+        tidb_vardef::DDL_SLOW_OPR_THRESHOLD.store(instance.ddl_slow_opr_threshold, SeqCst);
+        tidb_vardef::EXPENSIVE_QUERY_TIME_THRESHOLD.store(instance.expensive_query_time_threshold, SeqCst);
+        tidb_vardef::EXPENSIVE_TXN_TIME_THRESHOLD.store(instance.expensive_txn_time_threshold, SeqCst);
+    }
     // Go `main`'s `vardef.SetPlanReplayerGCLease(planReplayerGCLease)`.
     tidb_vardef::set_plan_replayer_gc_lease(
         i64::try_from(config.plan_replayer_gc_lease.as_nanos()).unwrap_or(i64::MAX),

@@ -30,6 +30,7 @@ mod brie_node;
 mod log_backup;
 mod import_store;
 mod process_shutdown;
+pub mod standby_node;
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;

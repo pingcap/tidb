@@ -64,6 +64,8 @@ tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-standby = { path = "../tidb-standby" }
+tidb-tidbmanager = { path = "../tidb-tidbmanager" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }

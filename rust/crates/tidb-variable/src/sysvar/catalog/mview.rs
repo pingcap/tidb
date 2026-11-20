@@ -44,9 +44,9 @@ pub(super) static ENTRIES: [SysVarDef; 17] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_mlog_log_slow_purge),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_mlog_log_slow_purge),
     },
     SysVarDef {
         name: "tidb_mlog_purge_batch_size",

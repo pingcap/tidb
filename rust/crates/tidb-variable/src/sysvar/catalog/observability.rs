@@ -202,7 +202,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_stmt_summary_enable_persistent),
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_backups",
@@ -220,7 +220,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_stmt_summary_file_max_backups),
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_days",
@@ -238,7 +238,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_stmt_summary_file_max_days),
     },
     SysVarDef {
         name: "tidb_stmt_summary_file_max_size",
@@ -256,7 +256,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_stmt_summary_file_max_size),
     },
     SysVarDef {
         name: "tidb_stmt_summary_filename",
@@ -274,7 +274,7 @@ pub(super) static ENTRIES: [SysVarDef; 27] = [
         set_session: None,
         set_global: None,
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_stmt_summary_filename),
     },
     SysVarDef {
         name: "tidb_stmt_summary_group_by_user",

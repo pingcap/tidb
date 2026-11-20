@@ -1,0 +1,14 @@
+[package]
+name = "tidb-tidbmanager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/tidbmanager: the client of the TiDB manager server (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest = { workspace = true, features = ["blocking"] }

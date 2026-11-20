@@ -524,3 +524,98 @@ impl OomAction {
         }
     }
 }
+
+/// Go `vardef.TiFlashEnablePipelineMode` (`tidb_enable_tiflash_pipeline_model`).
+pub static TI_FLASH_ENABLE_PIPELINE_MODE: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_TIFLASH_PIPELINE_MODE);
+
+/// Go `vardef.ProcessGeneralLog` (`tidb_general_log`).
+pub static PROCESS_GENERAL_LOG: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.EnableRCReadCheckTS` (`tidb_rc_read_check_ts`).
+pub static ENABLE_RC_READ_CHECK_TS: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.PersistAnalyzeOptions` (`tidb_persist_analyze_options`).
+pub static PERSIST_ANALYZE_OPTIONS: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_PERSIST_ANALYZE_OPTIONS);
+
+/// Go `vardef.StatsLoadPseudoTimeout` (`tidb_stats_load_pseudo_timeout`).
+pub static STATS_LOAD_PSEUDO_TIMEOUT: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT);
+
+/// Go `vardef.EnableBatchDML` (`tidb_enable_batch_dml`).
+pub static ENABLE_BATCH_DML: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.EnableNoopVariables` (`tidb_enable_noop_variables`).
+pub static ENABLE_NOOP_VARIABLES: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_NOOP_VARIABLES);
+
+/// Go `vardef.EnableTmpStorageOnOOM` (`tidb_enable_tmp_storage_on_oom`).
+pub static ENABLE_TMP_STORAGE_ON_OOM: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_TMP_STORAGE_ON_OOM);
+
+/// Go `vardef.EnableBindingUsage` (`tidb_enable_binding_usage`).
+pub static ENABLE_BINDING_USAGE: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_BINDING_USAGE);
+
+/// Go `vardef.MLogLogSlowPurge` (`tidb_mlog_log_slow_purge`).
+pub static M_LOG_LOG_SLOW_PURGE: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_MLOG_LOG_SLOW_PURGE);
+
+/// Go `vardef.IgnoreInlistPlanDigest` (`tidb_ignore_inlist_plan_digest`).
+pub static IGNORE_INLIST_PLAN_DIGEST: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST);
+
+/// Go `vardef.EnableConnectionEventLog` (`tidb_enable_connection_event_log`).
+pub static ENABLE_CONNECTION_EVENT_LOG: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_CONNECTION_EVENT_LOG);
+
+/// Go `vardef.EnableDistTask` (`tidb_enable_dist_task`).
+pub static ENABLE_DIST_TASK: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_DIST_TASK);
+
+/// Go `vardef.PasswordValidationLength` (`validate_password.length`).
+pub static PASSWORD_VALIDATION_LENGTH: AtomicI32 = AtomicI32::new(8);
+
+/// Go `vardef.PasswordValidationMixedCaseCount` (`validate_password.mixed_case_count`).
+pub static PASSWORD_VALIDATION_MIXED_CASE_COUNT: AtomicI32 = AtomicI32::new(1);
+
+/// Go `vardef.PasswordValidtaionNumberCount` (`validate_password.number_count`).
+pub static PASSWORD_VALIDTAION_NUMBER_COUNT: AtomicI32 = AtomicI32::new(1);
+
+/// Go `vardef.PasswordValidationSpecialCharCount` (`validate_password.special_char_count`).
+pub static PASSWORD_VALIDATION_SPECIAL_CHAR_COUNT: AtomicI32 = AtomicI32::new(1);
+
+/// Go `vardef.PasswordHistory` (`password_history`).
+pub static PASSWORD_HISTORY: AtomicI64 = AtomicI64::new(defaults::DEF_PASSWORD_REUSE_HISTORY);
+
+/// Go `vardef.PasswordReuseInterval` (`password_reuse_interval`).
+pub static PASSWORD_REUSE_INTERVAL: AtomicI64 = AtomicI64::new(defaults::DEF_PASSWORD_REUSE_TIME);
+
+/// Go `vardef.MemQuotaBindingCache` (`tidb_mem_quota_binding_cache`).
+pub static MEM_QUOTA_BINDING_CACHE: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_MEM_QUOTA_BINDING_CACHE);
+
+/// Go `vardef.StatsLoadSyncWait` (`tidb_stats_load_sync_wait`).
+pub static STATS_LOAD_SYNC_WAIT: AtomicI64 = AtomicI64::new(defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT);
+
+/// Go `vardef.QueryLogMaxLen` (`tidb_query_log_max_len`).
+pub static QUERY_LOG_MAX_LEN: AtomicI32 = AtomicI32::new(defaults::DEF_TIDB_QUERY_LOG_MAX_LEN as i32);
+
+/// Go `vardef.PagingSizeBytes` (`tidb_paging_size_bytes`).
+pub static PAGING_SIZE_BYTES: AtomicI64 = AtomicI64::new(defaults::DEF_PAGING_SIZE_BYTES);
+
+/// Go `vardef.ExpensiveQueryTimeThreshold` (`tidb_expensive_query_time_threshold`).
+pub static EXPENSIVE_QUERY_TIME_THRESHOLD: AtomicU64 = AtomicU64::new(defaults::DEF_TIDB_EXPENSIVE_QUERY_TIME_THRESHOLD as u64);
+
+/// Go `vardef.ExpensiveTxnTimeThreshold` (`tidb_expensive_txn_time_threshold`).
+pub static EXPENSIVE_TXN_TIME_THRESHOLD: AtomicU64 = AtomicU64::new(defaults::DEF_TIDB_EXPENSIVE_TXN_TIME_THRESHOLD as u64);
+
+/// Go `vardef.EnablePProfSQLCPU` (`tidb_pprof_sql_cpu`).
+pub static ENABLE_P_PROF_SQLCPU: AtomicBool = AtomicBool::new(false);
+
+/// Go `vardef.PreparedPlanCacheMemoryGuardRatio`, as its `f64` bits.
+pub static PREPARED_PLAN_CACHE_MEMORY_GUARD_RATIO: AtomicU64 =
+    AtomicU64::new(defaults::DEF_TIDB_PREP_PLAN_CACHE_MEMORY_GUARD_RATIO.to_bits());
+
+/// Go `vardef.AnalyzeColumnOptions`; empty reads as the default.
+pub static ANALYZE_COLUMN_OPTIONS: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Go `vardef.AdvancerCheckPointLagLimit`, in nanoseconds.
+pub static ADVANCER_CHECK_POINT_LAG_LIMIT: AtomicI64 =
+    AtomicI64::new(defaults::DEF_TIDB_ADVANCER_CHECK_POINT_LAG_LIMIT);
+
+/// Go `vardef.EnableLocalTxn`.
+pub static ENABLE_LOCAL_TXN: AtomicBool = AtomicBool::new(defaults::DEF_TIDB_ENABLE_LOCAL_TXN);
+
+/// Go `vardef.DDLSlowOprThreshold` (`ddl_slow_threshold`), in milliseconds.
+pub static DDL_SLOW_OPR_THRESHOLD: AtomicU32 = AtomicU32::new(300);

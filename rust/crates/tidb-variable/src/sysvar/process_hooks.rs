@@ -494,3 +494,183 @@ get_global! {
     // Go: `vardef.CloudStorageURI.Load()`, redacted (`ast.RedactURL`).
     get_tidb_cloud_storage_uri => crate::cloud_storage::get_cloud_storage_uri();
 }
+
+/// Go `tidbOptPositiveInt32`.
+fn opt_positive_int32(value: &str, default: i32) -> i32 {
+    value.parse::<i32>().ok().filter(|v| *v > 0).unwrap_or(default)
+}
+
+set_global! {
+    set_tidb_enable_tiflash_pipeline_model => |s| tidb_vardef::TI_FLASH_ENABLE_PIPELINE_MODE.store(on(s), SeqCst);
+    set_tidb_general_log => |s| tidb_vardef::PROCESS_GENERAL_LOG.store(on(s), SeqCst);
+    set_tidb_rc_read_check_ts => |s| tidb_vardef::ENABLE_RC_READ_CHECK_TS.store(on(s), SeqCst);
+    set_tidb_persist_analyze_options => |s| tidb_vardef::PERSIST_ANALYZE_OPTIONS.store(on(s), SeqCst);
+    set_tidb_stats_load_pseudo_timeout => |s| tidb_vardef::STATS_LOAD_PSEUDO_TIMEOUT.store(on(s), SeqCst);
+    set_tidb_enable_batch_dml => |s| tidb_vardef::ENABLE_BATCH_DML.store(on(s), SeqCst);
+    set_tidb_enable_noop_variables => |s| tidb_vardef::ENABLE_NOOP_VARIABLES.store(on(s), SeqCst);
+    set_tidb_enable_tmp_storage_on_oom => |s| tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.store(on(s), SeqCst);
+    set_tidb_enable_binding_usage => |s| tidb_vardef::ENABLE_BINDING_USAGE.store(on(s), SeqCst);
+    set_tidb_mlog_log_slow_purge => |s| tidb_vardef::M_LOG_LOG_SLOW_PURGE.store(on(s), SeqCst);
+    set_tidb_ignore_inlist_plan_digest => |s| tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.store(on(s), SeqCst);
+    set_tidb_enable_connection_event_log => |s| tidb_vardef::ENABLE_CONNECTION_EVENT_LOG.store(on(s), SeqCst);
+    set_tidb_enable_dist_task => |s| tidb_vardef::ENABLE_DIST_TASK.store(on(s), SeqCst);
+    set_validate_password_length => |s| tidb_vardef::PASSWORD_VALIDATION_LENGTH.store(crate::varsutil::tidb_opt_int64(s, 8 as i64) as i32, SeqCst);
+    set_validate_password_mixed_case_count => |s| tidb_vardef::PASSWORD_VALIDATION_MIXED_CASE_COUNT.store(crate::varsutil::tidb_opt_int64(s, 1 as i64) as i32, SeqCst);
+    set_validate_password_number_count => |s| tidb_vardef::PASSWORD_VALIDTAION_NUMBER_COUNT.store(crate::varsutil::tidb_opt_int64(s, 1 as i64) as i32, SeqCst);
+    set_validate_password_special_char_count => |s| tidb_vardef::PASSWORD_VALIDATION_SPECIAL_CHAR_COUNT.store(crate::varsutil::tidb_opt_int64(s, 1 as i64) as i32, SeqCst);
+    set_password_history => |s| tidb_vardef::PASSWORD_HISTORY.store(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_PASSWORD_REUSE_HISTORY as i64), SeqCst);
+    set_password_reuse_interval => |s| tidb_vardef::PASSWORD_REUSE_INTERVAL.store(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_PASSWORD_REUSE_TIME as i64), SeqCst);
+    set_tidb_mem_quota_binding_cache => |s| tidb_vardef::MEM_QUOTA_BINDING_CACHE.store(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_BINDING_CACHE as i64), SeqCst);
+    set_tidb_stats_load_sync_wait => |s| tidb_vardef::STATS_LOAD_SYNC_WAIT.store(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as i64), SeqCst);
+    set_tidb_query_log_max_len => |s| tidb_vardef::QUERY_LOG_MAX_LEN.store(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_QUERY_LOG_MAX_LEN as i64) as i32, SeqCst);
+    set_tidb_paging_size_bytes => |s| if let Ok(v) = s.parse::<i64>() {
+        tidb_vardef::PAGING_SIZE_BYTES.store(v, SeqCst);
+    };
+    set_tidb_expensive_query_time_threshold => |s| tidb_vardef::EXPENSIVE_QUERY_TIME_THRESHOLD.store(opt_positive_int32(s, tidb_vardef::defaults::DEF_TIDB_EXPENSIVE_QUERY_TIME_THRESHOLD as i32) as u64, SeqCst);
+    set_tidb_expensive_txn_time_threshold => |s| tidb_vardef::EXPENSIVE_TXN_TIME_THRESHOLD.store(opt_positive_int32(s, tidb_vardef::defaults::DEF_TIDB_EXPENSIVE_TXN_TIME_THRESHOLD as i32) as u64, SeqCst);
+    set_tidb_pprof_sql_cpu => |s| tidb_vardef::ENABLE_P_PROF_SQLCPU.store(opt_positive_int32(s, 0) > 0, SeqCst);
+}
+
+get_global! {
+    get_tidb_enable_tiflash_pipeline_model => on_off(tidb_vardef::TI_FLASH_ENABLE_PIPELINE_MODE.load(SeqCst));
+    get_tidb_general_log => on_off(tidb_vardef::PROCESS_GENERAL_LOG.load(SeqCst));
+    get_tidb_rc_read_check_ts => on_off(tidb_vardef::ENABLE_RC_READ_CHECK_TS.load(SeqCst));
+    get_tidb_persist_analyze_options => on_off(tidb_vardef::PERSIST_ANALYZE_OPTIONS.load(SeqCst));
+    get_tidb_stats_load_pseudo_timeout => on_off(tidb_vardef::STATS_LOAD_PSEUDO_TIMEOUT.load(SeqCst));
+    get_tidb_enable_batch_dml => on_off(tidb_vardef::ENABLE_BATCH_DML.load(SeqCst));
+    get_tidb_enable_noop_variables => on_off(tidb_vardef::ENABLE_NOOP_VARIABLES.load(SeqCst));
+    get_tidb_enable_tmp_storage_on_oom => on_off(tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.load(SeqCst));
+    get_tidb_enable_binding_usage => on_off(tidb_vardef::ENABLE_BINDING_USAGE.load(SeqCst));
+    get_tidb_mlog_log_slow_purge => on_off(tidb_vardef::M_LOG_LOG_SLOW_PURGE.load(SeqCst));
+    get_tidb_ignore_inlist_plan_digest => on_off(tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.load(SeqCst));
+    get_tidb_enable_connection_event_log => on_off(tidb_vardef::ENABLE_CONNECTION_EVENT_LOG.load(SeqCst));
+    get_tidb_enable_dist_task => on_off(tidb_vardef::ENABLE_DIST_TASK.load(SeqCst));
+    get_validate_password_length => tidb_vardef::PASSWORD_VALIDATION_LENGTH.load(SeqCst).to_string();
+    get_validate_password_mixed_case_count => tidb_vardef::PASSWORD_VALIDATION_MIXED_CASE_COUNT.load(SeqCst).to_string();
+    get_validate_password_number_count => tidb_vardef::PASSWORD_VALIDTAION_NUMBER_COUNT.load(SeqCst).to_string();
+    get_validate_password_special_char_count => tidb_vardef::PASSWORD_VALIDATION_SPECIAL_CHAR_COUNT.load(SeqCst).to_string();
+    get_password_history => tidb_vardef::PASSWORD_HISTORY.load(SeqCst).to_string();
+    get_password_reuse_interval => tidb_vardef::PASSWORD_REUSE_INTERVAL.load(SeqCst).to_string();
+    get_tidb_mem_quota_binding_cache => tidb_vardef::MEM_QUOTA_BINDING_CACHE.load(SeqCst).to_string();
+    get_tidb_stats_load_sync_wait => tidb_vardef::STATS_LOAD_SYNC_WAIT.load(SeqCst).to_string();
+    get_tidb_query_log_max_len => tidb_vardef::QUERY_LOG_MAX_LEN.load(SeqCst).to_string();
+    get_tidb_paging_size_bytes => tidb_vardef::PAGING_SIZE_BYTES.load(SeqCst).to_string();
+    get_tidb_expensive_query_time_threshold => tidb_vardef::EXPENSIVE_QUERY_TIME_THRESHOLD.load(SeqCst).to_string();
+    get_tidb_expensive_txn_time_threshold => tidb_vardef::EXPENSIVE_TXN_TIME_THRESHOLD.load(SeqCst).to_string();
+    get_tidb_pprof_sql_cpu => if tidb_vardef::ENABLE_P_PROF_SQLCPU.load(SeqCst) { "1" } else { "0" }.to_owned();
+}
+
+set_global! {
+    // Go: `strconv.ParseFloat`, stored when it parses.
+    set_tidb_prepared_plan_cache_memory_guard_ratio => |s| if let Ok(v) = s.parse::<f64>() {
+        tidb_vardef::PREPARED_PLAN_CACHE_MEMORY_GUARD_RATIO.store(v.to_bits(), SeqCst);
+    };
+    set_tidb_analyze_column_options => |s| {
+        *tidb_vardef::ANALYZE_COLUMN_OPTIONS.write().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            s.to_ascii_uppercase();
+    };
+    set_tidb_advancer_check_point_lag_limit => |s| if let Ok(d) = tidb_config_configtypes::parse_duration(s) {
+        tidb_vardef::ADVANCER_CHECK_POINT_LAG_LIMIT.store(d, SeqCst);
+    };
+    // Go also resets the session's `TxnScope` to global on ON -> OFF; this
+    // port has no local transaction scope.
+    set_tidb_enable_local_txn => |s| tidb_vardef::ENABLE_LOCAL_TXN.store(on(s), SeqCst);
+}
+
+get_global! {
+    get_tidb_prepared_plan_cache_memory_guard_ratio => tidb_goruntime::go_strconv::format_float(
+        f64::from_bits(tidb_vardef::PREPARED_PLAN_CACHE_MEMORY_GUARD_RATIO.load(SeqCst)),
+        b'f',
+        -1,
+        64,
+    );
+    get_tidb_analyze_column_options => {
+        let value = tidb_vardef::ANALYZE_COLUMN_OPTIONS.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if value.is_empty() { tidb_vardef::defaults::DEF_TIDB_ANALYZE_COLUMN_OPTIONS.to_owned() } else { value.clone() }
+    };
+    get_tidb_advancer_check_point_lag_limit => tidb_config_configtypes::format_go_duration(
+        tidb_vardef::ADVANCER_CHECK_POINT_LAG_LIMIT.load(SeqCst),
+    );
+    get_tidb_enable_local_txn => on_off(tidb_vardef::ENABLE_LOCAL_TXN.load(SeqCst));
+    // Go: `BoolToOnOff(true)` / `vardef.On` / `"1"`.
+    get_tidb_enable_column_tracking => on_off(true);
+    get_tidb_opt_index_join_build_v2 => on_off(true);
+    get_tidb_merge_partition_stats_concurrency => "1".to_owned();
+    get_disconnect_on_expired_password => on_off(!tidb_vardef::IS_SAND_BOX_MODE_ENABLED.load(SeqCst));
+}
+
+// Go's `GetGlobal` closures over the instance configuration
+// (`config.GetGlobalConfig().Instance`).
+get_global! {
+    get_max_connections => tidb_config::config_tree::config::get_global_config().instance.max_connections.to_string();
+    get_tidb_enable_ddl => on_off(tidb_config::config_tree::config::get_global_config().instance.tidb_enable_ddl.load());
+    get_tidb_enable_stats_owner => on_off(tidb_config::config_tree::config::get_global_config().instance.tidb_enable_stats_owner.load());
+    get_plugin_audit_log_buffer_size => tidb_config::config_tree::config::get_global_config().instance.plugin_audit_log_buffer_size.to_string();
+    get_plugin_audit_log_flush_interval => tidb_config::config_tree::config::get_global_config().instance.plugin_audit_log_flush_interval.to_string();
+    get_tidb_config => tidb_config::config_tree::config::get_global_config().get_json_config().unwrap_or_default();
+    get_tidb_slow_log_threshold => tidb_config::config_tree::config::get_global_config().instance.slow_threshold.to_string();
+    get_tidb_enable_slow_log => on_off(tidb_config::config_tree::config::get_global_config().instance.enable_slow_log.load());
+    get_tidb_record_plan_in_slow_log => on_off(tidb_config::config_tree::config::get_global_config().instance.record_plan_in_slow_log != 0);
+    get_tidb_enable_collect_execution_info => on_off(tidb_config::config_tree::config::get_global_config().instance.enable_collect_execution_info.load());
+    get_plugin_dir => tidb_config::config_tree::config::get_global_config().instance.plugin_dir.clone();
+    get_plugin_load => tidb_config::config_tree::config::get_global_config().instance.plugin_load.clone();
+    get_tidb_stmt_summary_enable_persistent => on_off(tidb_config::config_tree::config::get_global_config().instance.stmt_summary_enable_persistent);
+    get_tidb_stmt_summary_filename => tidb_config::config_tree::config::get_global_config().instance.stmt_summary_filename.clone();
+    get_tidb_stmt_summary_file_max_days => tidb_config::config_tree::config::get_global_config().instance.stmt_summary_file_max_days.to_string();
+    get_tidb_stmt_summary_file_max_size => tidb_config::config_tree::config::get_global_config().instance.stmt_summary_file_max_size.to_string();
+    get_tidb_stmt_summary_file_max_backups => tidb_config::config_tree::config::get_global_config().instance.stmt_summary_file_max_backups.to_string();
+    get_tidb_log_file_max_days => tidb_config::config_tree::config::get_global_config().log.file.max_days.to_string();
+}
+
+set_global! {
+    set_ddl_slow_threshold => |s| tidb_vardef::DDL_SLOW_OPR_THRESHOLD.store(opt_positive_int32(s, 300) as u32, SeqCst);
+}
+
+get_global! {
+    get_ddl_slow_threshold => tidb_vardef::DDL_SLOW_OPR_THRESHOLD.load(SeqCst).to_string();
+}
+
+// Go's `SetGlobal` closures over the instance configuration.
+set_global! {
+    set_tidb_slow_log_threshold => |s| {
+        let value = crate::varsutil::tidb_opt_int64(s, 300) as u64;
+        tidb_config::config_tree::config::update_global(|c| c.instance.slow_threshold = value);
+    };
+    set_tidb_record_plan_in_slow_log => |s| {
+        let value = crate::varsutil::tidb_opt_int64(s, 1) as u32;
+        tidb_config::config_tree::config::update_global(|c| c.instance.record_plan_in_slow_log = value);
+    };
+    set_tidb_enable_slow_log => |s| {
+        let value = on(s);
+        tidb_config::config_tree::config::update_global(|c| c.instance.enable_slow_log.0 = value);
+    };
+    // Go stores a copy of the configuration when the value changes.
+    set_tidb_enable_collect_execution_info => |s| {
+        let new_value = on(s);
+        if tidb_config::config_tree::config::get_global_config().instance.enable_collect_execution_info.load()
+            != new_value
+        {
+            tidb_config::config_tree::config::update_global(|c| {
+                c.instance.enable_collect_execution_info.0 = new_value;
+            });
+        }
+    };
+    set_max_connections => |s| {
+        let value = crate::varsutil::tidb_opt_int64(s, 0) as u32;
+        tidb_config::config_tree::config::update_global(|c| c.instance.max_connections = value);
+    };
+    // Go also switches the DDL / statistics owner (`switchDDL`,
+    // `switchStats`), which the node does where it reads the switch.
+    set_tidb_enable_ddl => |s| {
+        let value = on(s);
+        tidb_config::config_tree::config::update_global(|c| c.instance.tidb_enable_ddl.0 = value);
+    };
+    set_tidb_enable_stats_owner => |s| {
+        let value = on(s);
+        tidb_config::config_tree::config::update_global(|c| c.instance.tidb_enable_stats_owner.0 = value);
+    };
+    // Go also replaces the logger with the new file retention.
+    set_tidb_log_file_max_days => |s| if let Ok(max_age) = s.parse::<i32>() {
+        tidb_config::config_tree::config::update_global(|c| c.log.file.max_days = max_age as _);
+    };
+}
