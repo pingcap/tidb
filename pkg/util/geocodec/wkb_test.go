@@ -1,0 +1,296 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package geocodec
+
+import (
+	"encoding/binary"
+	"encoding/hex"
+	"math"
+	"math/rand/v2"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// This file writes WKB for the tests byte by byte, without a geometry model.
+
+func mustHex(t testing.TB, s string) []byte {
+	b, err := hex.DecodeString(strings.ReplaceAll(s, " ", ""))
+	require.NoError(t, err)
+	return b
+}
+
+// flagsOf returns the EWKB type-word flags for d.
+func flagsOf(d dims) uint32 {
+	var flags uint32
+	if d&dimsXYZ != 0 {
+		flags |= ewkbZ
+	}
+	if d&dimsXYM != 0 {
+		flags |= ewkbM
+	}
+	return flags
+}
+
+// le is a little-endian geometry of type typ with coordinates d, its body body.
+func le(typ Type, d dims, body ...[]byte) []byte {
+	b := []byte{byteOrderLittle}
+	b = binary.LittleEndian.AppendUint32(b, uint32(typ)|flagsOf(d))
+	for _, part := range body {
+		b = append(b, part...)
+	}
+	return b
+}
+
+// coords is the little-endian bytes of fs.
+func coords(fs ...float64) []byte {
+	var b []byte
+	for _, f := range fs {
+		b = binary.LittleEndian.AppendUint64(b, math.Float64bits(f))
+	}
+	return b
+}
+
+// count is a little-endian count.
+func count(n int) []byte { return binary.LittleEndian.AppendUint32(nil, uint32(n)) }
+
+// emptyPoint is POINT EMPTY with coordinates d, as EWKB writes it.
+func emptyPoint(d dims) []byte {
+	fs := make([]float64, d.size()/8)
+	for i := range fs {
+		fs[i] = math.Float64frombits(quietNaN)
+	}
+	return le(TypePoint, d, coords(fs...))
+}
+
+// collectionOf is a collection of type typ with coordinates d holding members.
+func collectionOf(typ Type, d dims, members ...[]byte) []byte {
+	return le(typ, d, append([][]byte{count(len(members))}, members...)...)
+}
+
+// stored makes a little-endian root geometry g a stored value at srid.
+func stored(srid uint32, g []byte) []byte {
+	b := []byte{Version1, byteOrderLittle}
+	b = binary.LittleEndian.AppendUint32(b, binary.LittleEndian.Uint32(g[1:])|ewkbSRID)
+	b = binary.LittleEndian.AppendUint32(b, srid)
+	return append(b, g[5:]...)
+}
+
+// mysqlOf makes a little-endian 2D root geometry g a value in MySQL's format at srid.
+func mysqlOf(srid uint32, g []byte) []byte {
+	return append(binary.LittleEndian.AppendUint32(nil, srid), g...)
+}
+
+// storedFromMySQL rewrites the root header of MySQL-format bytes into the stored format.
+func storedFromMySQL(m []byte) []byte { return stored(binary.LittleEndian.Uint32(m), m[4:]) }
+
+// nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
+// each holding the next, the innermost empty.
+func nestedCollections(depth int) []byte {
+	b := make([]byte, 0, depth*minGeometrySize)
+	for i := range depth {
+		b = append(b, byteOrderLittle)
+		b = binary.LittleEndian.AppendUint32(b, 7)
+		n := uint32(1)
+		if i == depth-1 {
+			n = 0
+		}
+		b = binary.LittleEndian.AppendUint32(b, n)
+	}
+	return b
+}
+
+// storedChain returns a stored value at SRID 0 of depth-1 GEOMETRYCOLLECTIONs, each
+// holding the next and the innermost holding leaf, a little-endian geometry without an
+// SRID, which so sits at depth. flags are set on every collection's type word.
+func storedChain(depth int, flags uint32, leaf []byte) []byte {
+	b := []byte{Version1, byteOrderLittle}
+	b = binary.LittleEndian.AppendUint32(b, 7|flags|ewkbSRID)
+	b = binary.LittleEndian.AppendUint32(b, 0)
+	b = binary.LittleEndian.AppendUint32(b, 1)
+	for range depth - 2 {
+		b = append(b, byteOrderLittle)
+		b = binary.LittleEndian.AppendUint32(b, 7|flags)
+		b = binary.LittleEndian.AppendUint32(b, 1)
+	}
+	return append(b, leaf...)
+}
+
+// mysqlChain is storedChain in MySQL's binary format, without flags.
+func mysqlChain(depth int, leaf []byte) []byte {
+	b := make([]byte, 4)
+	for range depth - 1 {
+		b = append(b, byteOrderLittle)
+		b = binary.LittleEndian.AppendUint32(b, 7)
+		b = binary.LittleEndian.AppendUint32(b, 1)
+	}
+	return append(b, leaf...)
+}
+
+func appendPointWKB(b []byte, order binary.AppendByteOrder, x, y float64) []byte {
+	if order == binary.BigEndian {
+		b = append(b, byteOrderBig)
+	} else {
+		b = append(b, byteOrderLittle)
+	}
+	b = order.AppendUint32(b, 1)
+	b = order.AppendUint64(b, math.Float64bits(x))
+	return order.AppendUint64(b, math.Float64bits(y))
+}
+
+// multiPointWKB returns little-endian WKB, without an SRID, for a MULTIPOINT of n points.
+func multiPointWKB(n int) []byte {
+	b := []byte{byteOrderLittle}
+	b = binary.LittleEndian.AppendUint32(b, 4)
+	b = binary.LittleEndian.AppendUint32(b, uint32(n))
+	for i := range n {
+		b = appendPointWKB(b, binary.LittleEndian, float64(i%360-180), float64(i%180-90))
+	}
+	return b
+}
+
+// hostileCounts returns a 1 MiB value in MySQL's format of collections nested to the
+// depth bound, each claiming as many members as the rest of the value could hold.
+func hostileCounts() []byte {
+	const size = 1 << 20
+	b := make([]byte, 4, size)
+	for range MaxDepth {
+		b = append(b, byteOrderLittle)
+		b = binary.LittleEndian.AppendUint32(b, 7)
+		b = binary.LittleEndian.AppendUint32(b, uint32((size-len(b)-4)/minGeometrySize))
+	}
+	return append(b, make([]byte, size-len(b))...)
+}
+
+// wkbGen generates random WKB of every type, byte by byte, and knows whether MySQL's
+// format can hold what it generates.
+type wkbGen struct {
+	rnd *rand.Rand
+	d   dims
+	// empty is the chance that a geometry other than a GEOMETRYCOLLECTION is empty.
+	empty float64
+	// big is the chance that a geometry below the root is big-endian.
+	big float64
+}
+
+// genMaxDepth bounds how deep generated collections nest.
+const genMaxDepth = 4
+
+var allTypes = []Type{
+	TypePoint, TypeLineString, TypePolygon, TypeMultiPoint, TypeMultiLineString,
+	TypeMultiPolygon, TypeGeometryCollection,
+}
+
+// quietNaN is the NaN PostGIS, GEOS and TiDB write for each coordinate of POINT EMPTY.
+const quietNaN uint64 = 0x7FF8000000000000
+
+// nanBits are NaNs a POINT EMPTY may be written with: the quiet NaN TiDB writes, Go's
+// math.NaN(), a negative quiet NaN, a signaling NaN and the largest NaN.
+var nanBits = []uint64{quietNaN, 0x7FF8000000000001, 0xFFF8000000000000, 0x7FF0000000000001, 0x7FFFFFFFFFFFFFFF}
+
+func (g *wkbGen) float() float64 {
+	switch g.rnd.IntN(6) {
+	case 0:
+		return 0
+	case 1:
+		return math.Copysign(0, -1)
+	case 2:
+		return math.SmallestNonzeroFloat64 * float64(1+g.rnd.IntN(1000))
+	case 3:
+		return math.Copysign(math.MaxFloat64, g.rnd.NormFloat64())
+	}
+	return g.rnd.NormFloat64() * 1000
+}
+
+// geometry returns random WKB of type typ, little-endian at the root, and whether MySQL's
+// format cannot hold it.
+func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
+	var order binary.AppendByteOrder = binary.LittleEndian
+	orderByte := byteOrderLittle
+	if depth > 1 && g.rnd.Float64() < g.big {
+		order, orderByte = binary.BigEndian, byteOrderBig
+	}
+	b = order.AppendUint32(append(b, orderByte), uint32(typ)|flagsOf(g.d))
+	notMySQL = g.d != dimsXY
+	isEmpty := typ != TypeGeometryCollection && g.rnd.Float64() < g.empty
+	positions := func(n int) {
+		b = order.AppendUint32(b, uint32(n))
+		for range n * g.d.size() / 8 {
+			b = order.AppendUint64(b, math.Float64bits(g.float()))
+		}
+	}
+	switch typ {
+	case TypePoint:
+		for range g.d.size() / 8 {
+			if isEmpty {
+				b = order.AppendUint64(b, nanBits[g.rnd.IntN(len(nanBits))])
+			} else {
+				b = order.AppendUint64(b, math.Float64bits(g.float()))
+			}
+		}
+	case TypeLineString:
+		if isEmpty {
+			positions(0)
+		} else {
+			positions(1 + g.rnd.IntN(5))
+		}
+	case TypePolygon:
+		if isEmpty {
+			b = order.AppendUint32(b, 0)
+		} else {
+			rings := 1 + g.rnd.IntN(3)
+			b = order.AppendUint32(b, uint32(rings))
+			for range rings {
+				positions(1 + g.rnd.IntN(5))
+			}
+		}
+	default:
+		n := 0
+		if typ == TypeGeometryCollection {
+			// A GEOMETRYCOLLECTION is expressible empty, so it is empty a quarter of the time.
+			n = g.rnd.IntN(4)
+		} else if !isEmpty {
+			n = 1 + g.rnd.IntN(3)
+		}
+		b = order.AppendUint32(b, uint32(n))
+		for range n {
+			member := memberTypeOf(typ)
+			if member == anyType {
+				types := allTypes
+				if depth >= genMaxDepth {
+					types = allTypes[:len(allTypes)-1]
+				}
+				member = types[g.rnd.IntN(len(types))]
+			}
+			m, memberNotMySQL := g.geometry(member, depth+1)
+			b = append(b, m...)
+			notMySQL = notMySQL || memberNotMySQL
+		}
+	}
+	return b, notMySQL || isEmpty
+}
+
+func (g *wkbGen) srid() uint32 {
+	switch g.rnd.IntN(4) {
+	case 0:
+		return 0
+	case 1:
+		return 4326
+	case 2:
+		return 3857
+	}
+	return g.rnd.Uint32()
+}
