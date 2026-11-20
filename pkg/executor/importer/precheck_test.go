@@ -37,11 +37,19 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	mockctx "github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -296,45 +304,104 @@ func TestCheckRequirements(t *testing.T) {
 }
 
 func TestCheckRequirementsTTL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+	se := &emptyTableSession{Context: mockctx.NewContext()}
 
-	tk.MustExec("create table test.t(id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY")
-	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-	tableObj, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	require.True(t, tableObj.Meta().TTLInfo.Enable)
+	c := newTTLCheckController(t, true)
+	err := c.CheckRequirements(ctx, se)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, se)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
 
-	c := &importer.LoadDataController{
+	c = newTTLCheckController(t, false)
+	require.NoError(t, c.CheckRequirements(ctx, se))
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, se))
+}
+
+func newTTLCheckController(t *testing.T, ttlEnabled bool) *importer.LoadDataController {
+	t.Helper()
+
+	tableInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("created_at"),
+				Offset:    1,
+				FieldType: *types.NewFieldType(mysql.TypeDatetime),
+				State:     model.StatePublic,
+			},
+		},
+		TTLInfo: &model.TTLInfo{
+			ColumnName:       ast.NewCIStr("created_at"),
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           ttlEnabled,
+			JobInterval:      model.DefaultTTLJobInterval,
+		},
+	}
+	tableObj := tables.MockTableFromMeta(tableInfo)
+	require.NotNil(t, tableObj)
+
+	return &importer.LoadDataController{
 		Plan: &importer.Plan{
 			DBName:          "test",
 			DataSourceType:  importer.DataSourceTypeQuery,
 			DisablePrecheck: true,
-			TableInfo:       tableObj.Meta(),
+			TableInfo:       tableInfo,
 		},
 		Table: tableObj,
 	}
-	err = c.CheckRequirements(ctx, tk.Session())
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
-	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
+}
 
-	tk.MustExec("alter table test.t ttl_enable = 'OFF'")
-	is = tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-	tableObj, err = is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	c = &importer.LoadDataController{
-		Plan: &importer.Plan{
-			DBName:          "test",
-			DataSourceType:  importer.DataSourceTypeQuery,
-			DisablePrecheck: true,
-			TableInfo:       tableObj.Meta(),
-		},
-		Table: tableObj,
-	}
-	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
-	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+type emptyTableSession struct {
+	*mockctx.Context
+}
+
+func (*emptyTableSession) GetSQLExecutor() sqlexec.SQLExecutor {
+	return emptyTableExecutor{}
+}
+
+type emptyTableExecutor struct{}
+
+func (emptyTableExecutor) Execute(context.Context, string) ([]sqlexec.RecordSet, error) {
+	return nil, errors.New("not supported")
+}
+
+func (emptyTableExecutor) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	return nil, errors.New("not supported")
+}
+
+func (emptyTableExecutor) ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error) {
+	return emptyRecordSet{}, nil
+}
+
+type emptyRecordSet struct{}
+
+func (emptyRecordSet) Fields() []*resolve.ResultField {
+	return nil
+}
+
+func (emptyRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return nil
+}
+
+func (emptyRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.NewChunkWithCapacity(nil, 1)
+}
+
+func (emptyRecordSet) Close() error {
+	return nil
 }
