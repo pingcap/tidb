@@ -1771,12 +1771,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		// Building the cast completes its type, for example with the length
 		// of its argument. A prepared statement is planned again from this
 		// AST, by then maybe for another argument type or masking policy,
-		// so the type must stay as written. CREATE VIEW keeps storing the
-		// completed type in the definition of a view.
-		castType, sourceType := v.Tp, v.Tp
-		if er.preserveMaskingDependencies || er.planCtx == nil || er.planCtx.builder == nil || !er.planCtx.builder.isCreateView {
-			castType = v.Tp.Clone()
-		}
+		// so the type must stay as written. So must the definition stored
+		// for a view, which is restored from this AST.
+		castType, sourceType := v.Tp.Clone(), v.Tp
 		if source != nil {
 			sourceType = v.Tp.Clone()
 		}

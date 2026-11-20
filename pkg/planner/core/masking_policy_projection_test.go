@@ -1410,6 +1410,32 @@ func runMaskingOutcome(ctx context.Context, tk *testkit.TestKit, sql string) (o 
 	return o
 }
 
+// TestMaskingPolicyViewCastBeforePolicy tests that a view created before the
+// policy keeps a cast as written: the length of the column when the view was
+// created is not stored in its definition.
+func TestMaskingPolicyViewCastBeforePolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_vc(id int primary key, c varchar(1))")
+	tk.MustExec("insert into t_vc values (1, null)")
+	tk.MustExec("create view v_before as select cast(c as char) a, cast(c as char(3)) b, convert(c, char) d from t_vc")
+	def := tk.MustQuery("show create view v_before").Rows()[0][1].(string)
+	require.Contains(t, def, "CAST(`c` AS CHAR) AS `a`")
+	require.Contains(t, def, "CAST(`c` AS CHAR(3)) AS `b`")
+	require.NotContains(t, def, "CHAR(1)")
+	tk.MustExec("create masking policy p on t_vc(c) as 'Alphabet' enable")
+	tk.MustExec("create view v_after as select cast(c as char) a, cast(c as char(3)) b, convert(c, char) d from t_vc")
+	for _, v := range []string{"v_before", "v_after"} {
+		tk.MustQuery("select a, b, d from " + v).Check(testkit.Rows("Alphabet Alp Alphabet"))
+	}
+	// Without a policy, the view follows a column that becomes longer.
+	tk.MustExec("alter table t_vc drop masking policy p")
+	tk.MustExec("alter table t_vc modify c varchar(12)")
+	tk.MustExec("update t_vc set c = 'Alphabet'")
+	tk.MustQuery("select a, b, d from v_before").Check(testkit.Rows("Alphabet Alp Alphabet"))
+}
+
 func TestMaskingPolicyPreparedCastBeforePolicy(t *testing.T) {
 	for _, mode := range []string{"session", "instance", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
