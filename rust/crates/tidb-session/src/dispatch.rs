@@ -2640,28 +2640,36 @@ impl Session {
 
 impl Session {
     /// Go `validateStatementInTxn`, which `ExecuteStmt` runs before
-    /// `validateStatementReadOnlyInStaleness`: IMPORT INTO (also as the
+    /// `validateStatementReadOnlyInStaleness`: IMPORT INTO, PURGE
+    /// MATERIALIZED VIEW LOG and REFRESH MATERIALIZED VIEW (also as the
     /// statement an EXECUTE names) cannot run in an explicit transaction.
-    /// Go's materialized-view statements are not ported.
     pub fn validate_statement_in_txn(&self, stmt: &Stmt, in_txn: bool) -> Result<(), DriverError> {
         if !in_txn {
             return Ok(());
         }
-        let is_import = |stmt: &Stmt| matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::ImportInto(_)));
-        let import = match stmt {
+        let refused = |stmt: &Stmt| match stmt {
+            Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::ImportInto(_)) => Some("IMPORT INTO"),
+            Stmt::Admin(admin) => match admin.as_ref() {
+                tidb_ast::AdminStmt::PurgeMaterializedViewLog(_) => Some("PURGE MATERIALIZED VIEW LOG"),
+                tidb_ast::AdminStmt::RefreshMaterializedView(_) => Some("REFRESH MATERIALIZED VIEW"),
+                _ => None,
+            },
+            _ => None,
+        };
+        let refused = match stmt {
             Stmt::Session(session) => match session.as_ref() {
                 tidb_ast::SessionStmt::Execute { name, .. } => self
                     .prepared_statement_sql(name)
                     .and_then(|sql| self.parse(sql).ok())
-                    .is_some_and(|inner| is_import(&inner)),
-                _ => false,
+                    .and_then(|inner| refused(&inner)),
+                _ => None,
             },
-            stmt => is_import(stmt),
+            stmt => refused(stmt),
         };
-        if import {
-            return Err(DriverError::from(tidb_terror::MysqlError::unknown(
-                "cannot run IMPORT INTO in explicit transaction",
-            )));
+        if let Some(statement) = refused {
+            return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!(
+                "cannot run {statement} in explicit transaction"
+            ))));
         }
         Ok(())
     }

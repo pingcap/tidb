@@ -70,6 +70,12 @@ impl DdlStmt {
             Self::DropTable(_) => "DropTable",
             Self::DropView { .. } => "DropView",
             Self::TruncateTable(_) => "TruncateTable",
+            Self::CreateMaterializedView(_) => "CreateMaterializedView",
+            Self::CreateMaterializedViewLog(_) => "CreateMaterializedViewLog",
+            Self::AlterMaterializedView(_) => "AlterMaterializedView",
+            Self::AlterMaterializedViewLog(_) => "AlterMaterializedViewLog",
+            Self::DropMaterializedView(_) => "DropMaterializedView",
+            Self::DropMaterializedViewLog(_) => "DropMaterializedViewLog",
             _ => "other",
         }
     }
@@ -107,6 +113,10 @@ impl AdminStmt {
             }
             Self::Explain(explain) if explain.analyze => "ExplainAnalyzeSQL",
             Self::Explain(_) => "ExplainSQL",
+            Self::PurgeMaterializedViewLog(_) => "PurgeMaterializedViewLog",
+            Self::CompareMaterializedView(_) => "CompareMaterializedView",
+            Self::RefreshMaterializedView(_) => "RefreshMaterializedView",
+            Self::CancelMaterializedViewJob(_) => "CancelMaterializedViewJob",
             statement if statement.is_show() => "Show",
             _ => "other",
         }

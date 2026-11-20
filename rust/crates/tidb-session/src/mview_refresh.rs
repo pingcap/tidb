@@ -119,13 +119,82 @@ pub(crate) fn sys_sql(session: &mut Session, sql: &str, arguments: &[SqlArg<'_>]
 pub(crate) struct RefreshInfoSnapshot {
     pub(crate) last_success_read_tso: u64,
     pub(crate) last_success_read_tso_null: bool,
+    /// Go `lastSuccessRefreshEndUnixSeconds` (`None` for its NULL).
+    pub(crate) last_success_refresh_end_unix_seconds: Option<i64>,
+}
+
+impl RefreshInfoSnapshot {
+    /// Go `refreshInfoSnapshot.previousSuccessTime`.
+    fn previous_success_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        if let Some(seconds) = self.last_success_refresh_end_unix_seconds {
+            return chrono::DateTime::from_timestamp(seconds, 0);
+        }
+        if !self.last_success_read_tso_null && self.last_success_read_tso > 0 {
+            return chrono::DateTime::from_timestamp_millis((self.last_success_read_tso >> 18) as i64);
+        }
+        None
+    }
+}
+
+/// Go master `buildRefreshScheduleDuration`: for an internal (scheduled)
+/// refresh, its start less the previous success.
+fn build_refresh_schedule_duration(
+    is_internal_sql: bool,
+    refresh_start: chrono::DateTime<chrono::Local>,
+    info: &RefreshInfoSnapshot,
+) -> Option<std::time::Duration> {
+    if !is_internal_sql {
+        return None;
+    }
+    let previous = info.previous_success_time()?;
+    // "Defined as current success time - previous success time - current
+    // refresh duration, which is equivalent to current refresh start time -
+    // previous success time."
+    (refresh_start.with_timezone(&chrono::Utc) - previous).to_std().ok()
+}
+
+/// Go master `observeMVRefreshScheduleDuration`.
+fn observe_mv_refresh_schedule_duration(duration: Option<std::time::Duration>) {
+    if let Some(duration) = duration {
+        tidb_metrics::materialized_view::MV_SERVICE_REFRESH_SCHEDULE_DURATION_HISTOGRAM.observe(duration.as_secs_f64());
+    }
+}
+
+/// Go master `deriveRuntimeMaterializedScheduleNextUnixSeconds`: an internal
+/// refresh re-derives NEXT_REFRESH_UNIX_SECONDS from the view's NEXT
+/// expression; a manual one keeps the schedule.
+fn derive_runtime_materialized_schedule_next_unix_seconds(
+    mview: &tidb_model::table::MaterializedViewInfo,
+    is_internal_sql: bool,
+) -> Result<(Option<i64>, bool), DriverError> {
+    if !is_internal_sql {
+        return Ok((None, false));
+    }
+    tidb_ddl_build::materialized_view::derive_materialized_schedule_next_unix_seconds(
+        "",
+        &mview.refresh_next,
+        mview.refresh_schedule_sql_mode,
+        chrono::Utc::now(),
+    )
+    .map_err(DriverError::Mysql)
+}
+
+/// Go master `refreshHistReadTSOOnFailure`: a failed AS OF refresh records
+/// its target.
+fn refresh_hist_read_tso_on_failure(s: &RefreshMaterializedViewStmt, target_refresh_read_tso: u64) -> Option<u64> {
+    (s.as_of.is_some() && target_refresh_read_tso != 0).then_some(target_refresh_read_tso)
 }
 
 /// Go master `decodeRefreshInfoSnapshot` (the read TSO column).
 fn decode_refresh_info_snapshot(row: &[Datum], read_tso_idx: usize) -> RefreshInfoSnapshot {
+    let last_success_refresh_end_unix_seconds = row.get(read_tso_idx + 1).and_then(datum_i64);
     match row.get(read_tso_idx).and_then(datum_u64) {
-        Some(read_tso) => RefreshInfoSnapshot { last_success_read_tso: read_tso, last_success_read_tso_null: false },
-        None => RefreshInfoSnapshot { last_success_read_tso: 0, last_success_read_tso_null: true },
+        Some(read_tso) => RefreshInfoSnapshot {
+            last_success_read_tso: read_tso,
+            last_success_read_tso_null: false,
+            last_success_refresh_end_unix_seconds,
+        },
+        None => RefreshInfoSnapshot { last_success_read_tso: 0, last_success_read_tso_null: true, last_success_refresh_end_unix_seconds },
     }
 }
 
@@ -161,28 +230,36 @@ pub(crate) fn read_refresh_info_snapshot(session: &mut Session, mview_id: i64) -
     Ok(decode_refresh_info_snapshot(row, 0))
 }
 
-/// Go master `persistRefreshSuccess` (a manual refresh leaves the schedule).
+/// Go master `persistRefreshSuccess`: an internal refresh also moves the
+/// schedule.
 fn persist_refresh_success(
     session: &mut Session,
     mview_id: i64,
     locked: RefreshInfoSnapshot,
     refresh_read_tso: u64,
     last_success_refresh_end_unix_seconds: i64,
+    (next_refresh_unix_seconds, should_update_next_refresh_unix_seconds): (Option<i64>, bool),
 ) -> Result<(), DriverError> {
     let locked_read_tso = if locked.last_success_read_tso_null {
         SqlArg::Null
     } else {
         SqlArg::Unsigned(locked.last_success_read_tso)
     };
+    let mut set_clauses = vec!["LAST_SUCCESS_READ_TSO = %?", "LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?"];
+    let mut args = vec![SqlArg::Unsigned(refresh_read_tso), SqlArg::Signed(last_success_refresh_end_unix_seconds)];
+    if should_update_next_refresh_unix_seconds {
+        set_clauses.push("NEXT_REFRESH_UNIX_SECONDS = %?");
+        args.push(next_refresh_unix_seconds.map_or(SqlArg::Null, SqlArg::Signed));
+    }
+    args.push(SqlArg::Signed(mview_id));
+    args.push(locked_read_tso);
     sys_sql(
         session,
-        "UPDATE mysql.tidb_mview_refresh_info\nSET\n\tLAST_SUCCESS_READ_TSO = %?,\n\tLAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?\nWHERE MVIEW_ID = %? AND LAST_SUCCESS_READ_TSO <=> %?",
-        &[
-            SqlArg::Unsigned(refresh_read_tso),
-            SqlArg::Signed(last_success_refresh_end_unix_seconds),
-            SqlArg::Signed(mview_id),
-            locked_read_tso,
-        ],
+        &format!(
+            "UPDATE mysql.tidb_mview_refresh_info\nSET\n\t{}\nWHERE MVIEW_ID = %? AND LAST_SUCCESS_READ_TSO <=> %?",
+            set_clauses.join(",\n\t")
+        ),
+        &args,
     )
     .map_err(|error| if is_table_not_exists(&error) { refresh_info_missing_table() } else { error })?;
     let persisted = read_refresh_info_snapshot(session, mview_id)?;
@@ -248,6 +325,7 @@ fn insert_refresh_hist_failed(
     method: &str,
     start: chrono::DateTime<chrono::Local>,
     end: chrono::DateTime<chrono::Local>,
+    read_tso: Option<u64>,
     reason: &str,
 ) -> Result<(), DriverError> {
     let (start_text, end_text) = (hist_time(start), hist_time(end));
@@ -265,7 +343,7 @@ fn insert_refresh_hist_failed(
             SqlArg::String(end_text.as_bytes()),
             SqlArg::String(duration.as_bytes()),
             SqlArg::String(REFRESH_HIST_STATUS_FAILED.as_bytes()),
-            SqlArg::Null,
+            read_tso.map_or(SqlArg::Null, SqlArg::Unsigned),
             SqlArg::String(reason.as_bytes()),
             SqlArg::String(end_text.as_bytes()),
         ],
@@ -286,9 +364,15 @@ fn finalize_refresh_hist(
     refresh_rows: Option<i64>,
     start: chrono::DateTime<chrono::Local>,
     end: chrono::DateTime<chrono::Local>,
+    schedule_duration: Option<std::time::Duration>,
     failed_reason: Option<&str>,
 ) -> Result<(), DriverError> {
     let end_text = hist_time(end);
+    // Go `formatDurationSeconds`.
+    let schedule_duration = schedule_duration.map(|duration| {
+        let micros = duration.as_micros();
+        format!("{}.{:06}", micros / 1_000_000, micros % 1_000_000)
+    });
     let duration = format_duration_seconds_between(start, end);
     sys_sql(
         session,
@@ -298,7 +382,7 @@ fn finalize_refresh_hist(
             SqlArg::String(status.as_bytes()),
             refresh_rows.map_or(SqlArg::Null, SqlArg::Signed),
             SqlArg::String(duration.as_bytes()),
-            SqlArg::Null,
+            schedule_duration.as_ref().map_or(SqlArg::Null, |duration| SqlArg::String(duration.as_bytes())),
             read_tso.map_or(SqlArg::Null, SqlArg::Unsigned),
             commit_tso.map_or(SqlArg::Null, SqlArg::Unsigned),
             failed_reason.map_or(SqlArg::Null, |reason| SqlArg::String(reason.as_bytes())),
@@ -322,13 +406,26 @@ fn finalize_refresh_hist_with_retry(
     refresh_rows: Option<i64>,
     start: chrono::DateTime<chrono::Local>,
     end: chrono::DateTime<chrono::Local>,
+    schedule_duration: Option<std::time::Duration>,
     failed_reason: Option<&str>,
 ) -> Result<(), DriverError> {
-    let first = match finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, refresh_rows, start, end, failed_reason) {
+    let first = match finalize_refresh_hist(
+        session,
+        refresh_job_id,
+        mview_id,
+        status,
+        read_tso,
+        commit_tso,
+        refresh_rows,
+        start,
+        end,
+        schedule_duration,
+        failed_reason,
+    ) {
         Ok(()) => return Ok(()),
         Err(error) => error,
     };
-    finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, refresh_rows, start, end, failed_reason)
+    finalize_refresh_hist(session, refresh_job_id, mview_id, status, read_tso, commit_tso, refresh_rows, start, end, schedule_duration, failed_reason)
         .map_err(|retry| annotate(&retry, &format!("first finalize attempt failed: {}", driver_message(&first))))
 }
 
@@ -463,14 +560,10 @@ pub(crate) fn refresh_execution_session_vars(user: &Session) -> Vec<(String, Str
 pub(crate) fn init_mview_session_vars(info: &tidb_model::table::MaterializedViewInfo) -> Vec<(String, String)> {
     let mut vars = vec![(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned())];
     vars.push(("sql_mode".to_owned(), tidb_ddl::cluster_ddl::materialized_view::format_sql_mode(info.definition_sql_mode)));
-    let zone = &info.definition_time_zone;
-    let zone_name = if zone.offset == 0 {
-        zone.name.to_string()
-    } else {
-        let sign = if zone.offset < 0 { '-' } else { '+' };
-        format!("{sign}{:02}:{:02}", zone.offset.abs() / 3600, zone.offset.abs() % 3600 / 60)
-    };
-    vars.push(("time_zone".to_owned(), zone_name));
+    vars.push((
+        "time_zone".to_owned(),
+        tidb_ddl::cluster_ddl::materialized_view::definition_time_zone_value(&info.definition_time_zone),
+    ));
     vars.push(("div_precision_increment".to_owned(), info.definition_div_precision_increment.to_string()));
     vars
 }
@@ -490,7 +583,10 @@ pub(crate) fn read_session_vars(session: &mut Session, names: &[String]) -> Resu
 
 /// Go master `validateRefreshMaterializedViewStmt`: the mode and the history
 /// row's `REFRESH_METHOD`.
-pub(crate) fn validate_refresh_materialized_view_stmt(s: &RefreshMaterializedViewStmt) -> Result<String, DriverError> {
+pub(crate) fn validate_refresh_materialized_view_stmt(
+    s: &RefreshMaterializedViewStmt,
+    is_internal_sql: bool,
+) -> Result<String, DriverError> {
     let method = match s.mode {
         RefreshMaterializedViewMode::Fast if s.as_of.is_some() => "bounded fast",
         RefreshMaterializedViewMode::Fast => "fast",
@@ -504,8 +600,8 @@ pub(crate) fn validate_refresh_materialized_view_stmt(s: &RefreshMaterializedVie
     if s.as_of.is_some() && s.mode != RefreshMaterializedViewMode::Fast {
         return Err(plain("refresh materialized view: AS OF TIMESTAMP is only supported for FAST refresh"));
     }
-    // A statement this node runs is never Go's internal (scheduled) SQL.
-    Ok(format!("{method} manual"))
+    let origin = if is_internal_sql { "auto" } else { "manual" };
+    Ok(format!("{method} {origin}"))
 }
 
 impl Session {
@@ -517,7 +613,9 @@ impl Session {
         s: &RefreshMaterializedViewStmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        let method = validate_refresh_materialized_view_stmt(s)?;
+        // Go master `isInternalSQL`: the MV service runs its refreshes as
+        // restricted SQL.
+        let method = validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
         if s.observe_type == RefreshMaterializedViewObserveType::DryRun {
             return self.refresh_materialized_view_dry_run(s);
         }
@@ -586,6 +684,7 @@ impl Session {
             &method,
             refresh_start,
             chrono::Local::now(),
+            refresh_hist_read_tso_on_failure(s, target_tso),
             &reason,
         )
         .map_err(|hist_error| {
@@ -907,6 +1006,7 @@ impl Session {
         let fast = mode == RefreshMaterializedViewMode::Fast;
         let result = (|| {
             let locked = self.observe_mv_refresh_step("LOCK_REFRESH_INFO", || lock_refresh_info_row(refresh, mview_id))?;
+            let schedule_duration = build_refresh_schedule_duration(self.vars.restricted_sql, refresh_start, &locked);
             if fast && locked.last_success_read_tso_null {
                 return Err(plain("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"));
             }
@@ -966,11 +1066,14 @@ impl Session {
                         start_ts,
                         mview_id,
                         REFRESH_HIST_STATUS_FAILED,
-                        None,
+                        // Go `refreshHistReadTSOOnFailure`: only an AS OF
+                        // refresh has a target.
+                        (target_tso != 0).then_some(target_tso),
                         None,
                         None,
                         refresh_start,
                         chrono::Local::now(),
+                        None,
                         Some(&reason),
                     )
                 });
@@ -1110,6 +1213,11 @@ impl Session {
                     .map_or_else(|| "mock refresh materialized view error after data changes".to_owned(), str::to_owned);
                 return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, plain(message)));
             }
+            // Go master `deriveRuntimeMaterializedScheduleNextUnixSeconds`.
+            let next_refresh = match derive_runtime_materialized_schedule_next_unix_seconds(mview, self.vars.restricted_sql) {
+                Ok(next) => next,
+                Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
+            };
             // Go master `resolveMVCompleteRefreshSources` and the source
             // baseline replaced when the logs changed.
             let persisted = (|| {
@@ -1129,7 +1237,7 @@ impl Session {
                     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewAfterReplaceSourceInfoError").is_some() {
                         return Err(plain("mock refresh error after replacing source info"));
                     }
-                    persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp())
+                    persist_refresh_success(refresh, mview_id, locked, read_tso, chrono::Utc::now().timestamp(), next_refresh)
                 })?;
                 self.observe_mv_refresh_step("TXN_COMMIT", || sys_sql(refresh, "COMMIT", &[]).map(|_| ()))
             })();
@@ -1159,6 +1267,7 @@ impl Session {
                     refresh_rows,
                     refresh_start,
                     chrono::Local::now(),
+                    schedule_duration,
                     None,
                 )
             }) {
@@ -1176,6 +1285,8 @@ impl Session {
             // Go `newMVRefreshStmtResultFromWriteCounts`.
             // Go `captureMVRefreshStmtResult`.
             self.statement_message = statement_message;
+            // Go `observeMVRefreshScheduleDuration`.
+            observe_mv_refresh_schedule_duration(schedule_duration);
             Ok(StmtOutput::Affected(affected_rows))
         })();
         if !txn_finished {
@@ -1203,6 +1314,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let (mview_id, name) = (info.id, info.name.original().to_owned());
         let expected = read_refresh_info_snapshot(refresh, mview_id)?;
+        let schedule_duration = build_refresh_schedule_duration(self.vars.restricted_sql, refresh_start, &expected);
         *refresh_job_id = session_current_tso(refresh)
             .map_err(|error| annotate(&error, "refresh materialized view: failed to allocate refresh job id"))?;
         let job_id = *refresh_job_id;
@@ -1241,6 +1353,7 @@ impl Session {
                         None,
                         refresh_start,
                         chrono::Local::now(),
+                        None,
                         Some(&reason),
                     )
                 }) {
@@ -1264,6 +1377,7 @@ impl Session {
                 None,
                 refresh_start,
                 chrono::Local::now(),
+                schedule_duration,
                 None,
             )
         }) {
@@ -1280,6 +1394,8 @@ impl Session {
         }
         // Go `newMVRefreshStmtResultFromWriteCounts(shadow load rows, 0, 0)`.
         self.statement_message = format!("Rows inserted: {inserted}  Updated: 0  Deleted: 0");
+        // Go `observeMVRefreshScheduleDuration`.
+        observe_mv_refresh_schedule_duration(schedule_duration);
         Ok(StmtOutput::Affected(u64::try_from(inserted).unwrap_or_default()))
     }
 
@@ -1437,9 +1553,11 @@ impl Session {
             if shadow_table_id == 0 {
                 return Err(plain("refresh materialized view complete OUT OF PLACE: invalid shadow table id"));
             }
-            // A manual refresh keeps the view's schedule
-            // (`deriveRuntimeMaterializedScheduleNextUnixSeconds` is for an
-            // internal one).
+            // Go: an internal refresh re-derives the schedule
+            // (`deriveRuntimeMaterializedScheduleNextUnixSeconds`); a manual
+            // one keeps it.
+            let (next_refresh_unix_seconds, should_update_next_refresh_unix_seconds) =
+                derive_runtime_materialized_schedule_next_unix_seconds(mview, self.vars.restricted_sql)?;
             // The DDL executor fills the output log's IDs (Go
             // `RefreshMaterializedViewCompleteOutOfPlaceCutover`, submit).
             let args = tidb_model::RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs {
@@ -1452,8 +1570,8 @@ impl Session {
                 expected_old_mview_revision: Some(info.revision),
                 expected_last_success_read_tso: expected.last_success_read_tso,
                 expected_last_success_read_tso_null: expected.last_success_read_tso_null,
-                next_refresh_unix_seconds: None,
-                should_update_next_refresh_unix_seconds: false,
+                next_refresh_unix_seconds,
+                should_update_next_refresh_unix_seconds,
             };
             let context = self.ddl_statement_context().with_ddl_query(sql);
             self.observe_mv_refresh_step("OUT_OF_PLACE_CUTOVER", || {

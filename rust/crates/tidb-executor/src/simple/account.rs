@@ -70,6 +70,67 @@ pub enum ScopeKind {
     Table,
 }
 
+/// Go master `materializedViewTablePrivs`.
+const MATERIALIZED_VIEW_TABLE_PRIVS: [tidb_mysql::PrivilegeType; 5] = [
+    tidb_mysql::SelectPriv,
+    tidb_mysql::ShowViewPriv,
+    tidb_mysql::AlterPriv,
+    tidb_mysql::DropPriv,
+    tidb_mysql::OperateViewPriv,
+];
+
+/// Go master `tablePrivsForGrantTarget`: the table and column privileges
+/// `GRANT ALL` stores for the target.
+fn table_privs_for_grant_target(
+    target: Option<&tidb_model::TableInfo>,
+) -> (Vec<tidb_mysql::PrivilegeType>, Vec<tidb_mysql::PrivilegeType>) {
+    match target {
+        Some(info) if info.materialized_view.is_some() || info.materialized_view_log.is_some() => {
+            (MATERIALIZED_VIEW_TABLE_PRIVS.to_vec(), Vec::new())
+        }
+        Some(info) if info.materialized_view_shadow.is_some() => (Vec::new(), Vec::new()),
+        _ => (tidb_mysql::ALL_TABLE_PRIVS.to_vec(), tidb_mysql::ALL_COLUMN_PRIVS.to_vec()),
+    }
+}
+
+/// Go master `validateGrantOnSpecialMViewObject`: a materialized view or its
+/// log takes only the privileges that cannot write it, and a shadow table
+/// none.
+fn validate_grant_on_special_mview_object(
+    info: &tidb_model::TableInfo,
+    privileges: &[tidb_ast::GrantPrivilege],
+) -> Result<(), DriverError> {
+    if info.materialized_view.is_none() && info.materialized_view_log.is_none() && info.materialized_view_shadow.is_none() {
+        return Ok(());
+    }
+    let name = info.name.original();
+    if info.materialized_view_shadow.is_some() {
+        return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!(
+            "cannot grant privileges on materialized view shadow table {name}"
+        ))));
+    }
+    let object_type = if info.materialized_view_log.is_some() { "materialized view log" } else { "materialized view" };
+    for privilege in privileges {
+        let Some(priv_) = tidb_mysql::privilege_from_grant_name(&privilege.name) else {
+            continue;
+        };
+        if !privilege.columns.is_empty() && priv_ != tidb_mysql::SelectPriv && priv_ != tidb_mysql::UsagePriv {
+            return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!(
+                "cannot grant {priv_} column privilege on {object_type} {name}"
+            ))));
+        }
+        // Go `isSafeMViewObjectGrantPriv`.
+        let safe = matches!(priv_, tidb_mysql::AllPriv | tidb_mysql::UsagePriv | tidb_mysql::GrantPriv)
+            || MATERIALIZED_VIEW_TABLE_PRIVS.contains(&priv_);
+        if privilege.columns.is_empty() && !safe {
+            return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!(
+                "cannot grant {priv_} privilege on {object_type} {name}"
+            ))));
+        }
+    }
+    Ok(())
+}
+
 /// A TABLE-scope `GRANT`/`REVOKE` privilege list split into the two kinds of
 /// row it writes: the `mysql.Tables_priv` privileges (those written without a
 /// column list) and the `mysql.Columns_priv` ones. One statement may carry
@@ -1371,6 +1432,11 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // normalises the spelling to the table's own: `GRANT SELECT
                 // (A)` prints back as `SELECT(a)`.
                 let columns = self.resolve_grant_columns(&database, table, &columns)?;
+                // Go `GrantExec.Next`'s `validateGrantOnSpecialMViewObject`.
+                let target = self.lock_catalog()?.table_info_by_name(&database, table).map(|(_, info)| info.read().clone_like_go());
+                if let Some(target) = &target {
+                    validate_grant_on_special_mview_object(target, &grant.privileges)?;
+                }
                 tls_policy = load_tls_policy()?;
                 // Go `GrantExec.Next` appends a GRANT element under `WITH
                 // GRANT OPTION`; `ALL` is told apart because Go's
@@ -1398,7 +1464,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         &database,
                         table,
                         &table_privs_written,
-                        table_all,
+                        table_all.then(|| table_privs_for_grant_target(target.as_ref())),
                         true,
                     )?;
                     self.mirror_column_privs(&user, &host, &database, table, &columns, true)?;
@@ -1629,7 +1695,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     let (user, host) = (user.to_owned(), host.to_owned());
-                    self.mirror_table_privs(&user, &host, &database, table, &privs, false, false)?;
+                    self.mirror_table_privs(&user, &host, &database, table, &privs, None, false)?;
                     self.mirror_column_privs(&user, &host, &database, table, &columns, false)?;
                 }
             }

@@ -1755,17 +1755,25 @@ fn create_materialized_view_build_session_vars(build: &MViewBuild) -> Result<Vec
     // Go `InitMViewSession`.
     vars.push((tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned()));
     vars.push(("sql_mode".to_owned(), format_sql_mode(info.definition_sql_mode)));
-    let zone = &info.definition_time_zone;
-    let zone_name = if zone.offset == 0 {
-        zone.name.to_string()
-    } else {
-        let offset = zone.offset;
-        let sign = if offset < 0 { '-' } else { '+' };
-        format!("{sign}{:02}:{:02}", offset.abs() / 3600, offset.abs() % 3600 / 60)
-    };
-    vars.push(("time_zone".to_owned(), zone_name));
+    vars.push(("time_zone".to_owned(), definition_time_zone_value(&info.definition_time_zone)));
     vars.push(("div_precision_increment".to_owned(), info.definition_div_precision_increment.to_string()));
     Ok(vars)
+}
+
+/// Go `TimeZoneLocation.GetLocation` as a `time_zone` value: a fixed offset,
+/// else the zone's name, where an empty name loads as UTC
+/// (`time.LoadLocation("")`).
+pub fn definition_time_zone_value(zone: &tidb_model::TimeZoneLocation) -> String {
+    if zone.offset != 0 {
+        let sign = if zone.offset < 0 { '-' } else { '+' };
+        return format!("{sign}{:02}:{:02}", zone.offset.abs() / 3600, zone.offset.abs() % 3600 / 60);
+    }
+    let name = zone.name.to_string();
+    if name.is_empty() {
+        "UTC".to_owned()
+    } else {
+        name
+    }
 }
 
 /// Go master `buildCreateMaterializedViewData` by INSERT (Go's non-TiKV

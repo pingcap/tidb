@@ -307,7 +307,7 @@ impl Session {
     /// Go master `Explain{Analyze: true, RuntimeStatsColl}.RenderResult` over
     /// this session's last statement plan (`StmtCtx.GetPlan()`), outside an
     /// EXPLAIN statement: the operator info keeps its plan ids.
-    fn last_statement_analyzed_plan_rows(&mut self) -> Option<Vec<Vec<String>>> {
+    pub(crate) fn last_statement_analyzed_plan_rows(&mut self) -> Option<Vec<Vec<String>>> {
         use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
         let (plan, runtime_stats_coll, statement_memory) = {
             let cell = self.process_plan_info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -340,7 +340,7 @@ impl Session {
         s: &RefreshMaterializedViewStmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        validate_refresh_materialized_view_stmt(s)?;
+        validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
         let steps = build_mv_refresh_observe_steps(s.mode);
         let mut refresh_stmt = s.clone();
         refresh_stmt.observe_type = tidb_ast::RefreshMaterializedViewObserveType::None;
@@ -363,7 +363,7 @@ impl Session {
 
     /// Go master `RefreshMaterializedViewDryRunExec.generateRows`.
     pub(crate) fn refresh_materialized_view_dry_run(&mut self, s: &RefreshMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
-        validate_refresh_materialized_view_stmt(s)?;
+        validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
         let (schema, info) = self.resolve_refresh_materialized_view_target(s)?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
         self.check_refresh_materialized_view_base_table_select(&self.refresh_latest_info_schema(), &mview)?;

@@ -25,6 +25,10 @@ mod log_basic;
 mod log_create;
 mod log_drop;
 mod log_output;
+mod refresh;
+mod refresh_entry;
+mod refresh_operator;
+mod show;
 
 /// One statement's answer as the capture script prints it: `OK`, `RS:` and
 /// the rows as JSON strings (`null` for NULL), or `ERR code message`.
@@ -1998,10 +2002,25 @@ fn eventually_answers(session: &mut Session, sql: &str, want: &str) {
     }
 }
 
+/// Go master `TestMaterializedViewServiceAutomaticMaintenance`: its
+/// `refresh_and_purge` and `mlog_analyze` subtests.
+#[test]
+fn test_materialized_view_service_automatic_maintenance() {
+    materialized_view_service_automatic_refresh_and_purge();
+    materialized_view_service_mlog_analyze();
+}
+
+/// Go master `TestMaterializedViewServiceMiscMaintenance`: its `history` and
+/// `freshness_and_accumulation` subtests.
+#[test]
+fn test_materialized_view_service_misc_maintenance() {
+    materialized_view_service_history_gc();
+    materialized_view_service_freshness_and_accumulation();
+}
+
 /// Go master `TestMaterializedViewServiceAutomaticMaintenance/refresh_and_purge`:
 /// the MV service refreshes a due view FAST and purges a due log on its
 /// own, and the `tidb_mview_task_*` globals reach it.
-#[test]
 fn materialized_view_service_automatic_refresh_and_purge() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
@@ -2042,7 +2061,6 @@ fn materialized_view_service_automatic_refresh_and_purge() {
 /// `*_hist_time` globals set, keeps a running row with a live heartbeat, and
 /// marks a running row whose heartbeat expired orphaned, in both history
 /// tables.
-#[test]
 fn materialized_view_service_history_gc() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &["use test", "set tidb_mview_enable = ON"]);
@@ -2101,7 +2119,6 @@ fn materialized_view_service_history_gc() {
 /// each view's last successful read, clears a recovered or disabled view's
 /// level while keeping its independent failure flag, removes a deleted
 /// view's row, and counts the MV logs past their accumulation threshold.
-#[test]
 fn materialized_view_service_freshness_and_accumulation() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
@@ -2167,7 +2184,6 @@ fn materialized_view_service_freshness_and_accumulation() {
 /// Go master `TestMaterializedViewServiceAutomaticMaintenance/mlog_analyze`:
 /// with auto-analyze on and the minimum row count lowered, the service
 /// analyzes an MV log whose statistics were never analyzed.
-#[test]
 fn materialized_view_service_mlog_analyze() {
     use std::sync::atomic::Ordering::SeqCst;
     let original_min_cnt = tidb_stats::AUTO_ANALYZE_MIN_CNT.swap(0, SeqCst);

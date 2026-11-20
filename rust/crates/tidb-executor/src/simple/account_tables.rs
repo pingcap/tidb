@@ -779,7 +779,7 @@ pub trait UserTableExec: AccountSession {
         db: &str,
         table: &str,
         privs: &[tidb_mysql::PrivilegeType],
-        all: bool,
+        all: Option<(Vec<tidb_mysql::PrivilegeType>, Vec<tidb_mysql::PrivilegeType>)>,
         grant: bool,
     ) -> Result<(), DriverError> {
         if !self.user_table_present() {
@@ -798,7 +798,7 @@ pub trait UserTableExec: AccountSession {
         // A statement naming only column privileges reaches
         // `checkAndInitTablePriv` (GRANT) but never `grantTableLevel` /
         // `revokeTablePriv`: the row exists, its sets and Grantor untouched.
-        if privs.is_empty() && !all {
+        if privs.is_empty() && all.is_none() {
             if grant && rows.is_empty() {
                 self.run_user_table_write(&format!(
                     "INSERT INTO mysql.tables_priv (Host, User, DB, Table_name, Table_priv, \
@@ -830,17 +830,17 @@ pub trait UserTableExec: AccountSession {
             None => return Ok(()),
         };
         if grant {
-            if all {
-                table_privs = tidb_mysql::ALL_TABLE_PRIVS
-                    .iter()
-                    .map(|priv_| priv_.set_name().to_owned())
-                    .collect();
-                column_privs = tidb_mysql::ALL_COLUMN_PRIVS
-                    .iter()
-                    .map(|priv_| priv_.set_name().to_owned())
-                    .collect();
+            // Go `tablePrivsForGrantTarget`: what ALL means on the target.
+            if let Some((all_table_privs, all_column_privs)) = &all {
+                table_privs = all_table_privs.iter().map(|priv_| priv_.set_name().to_owned()).collect();
+                column_privs = all_column_privs.iter().map(|priv_| priv_.set_name().to_owned()).collect();
             }
             for priv_ in privs {
+                // `ALL`'s own expansion is the target's set above; only what
+                // it does not cover (the GRANT OPTION) is added.
+                if all.is_some() && tidb_mysql::ALL_TABLE_PRIVS.contains(priv_) {
+                    continue;
+                }
                 add_to_set(&mut table_privs, priv_.set_name());
                 if tidb_mysql::ALL_COLUMN_PRIVS.contains(priv_) {
                     add_to_set(&mut column_privs, priv_.set_name());
