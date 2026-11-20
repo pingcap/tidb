@@ -123,6 +123,8 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
+	// Track connections before cmux can block reading their protocol prefix.
+	s.statusListener = newStatusListener(s.statusListener)
 	return nil
 }
 
