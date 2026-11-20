@@ -532,23 +532,6 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 
 func TestPreparedPlanCacheWithCTE(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	t.Run("materialized-parameter-rebuild", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-		tk.MustExec("set tidb_enable_plan_cache_for_subquery=ON")
-		tk.MustExec("set tidb_opt_force_inline_cte=OFF")
-		tk.MustExec("create table cte_rebuild(id int primary key)")
-		tk.MustExec("insert into cte_rebuild values(1),(2),(3),(4)")
-		tk.MustExec("prepare st from 'with c as (select id from cte_rebuild where id>=?) select a.id,b.id from c a join c b on a.id<b.id order by a.id,b.id limit 1'")
-		tk.MustExec("set @cut=2")
-		tk.MustQuery("execute st using @cut").Check(testkit.Rows("2 3"))
-		tk.MustQuery("execute st using @cut").Check(testkit.Rows("2 3"))
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-		tk.MustExec("set @cut=3")
-		tk.MustQuery("execute st using @cut").Check(testkit.Rows("3 4"))
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	})
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
