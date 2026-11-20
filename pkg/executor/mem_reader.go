@@ -624,18 +624,10 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 
 func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
 	var cacheIter, snapIter kv.Iterator
-	tempTableData := ctx.GetSessionVars().TemporaryTableData
-	if tempTableData != nil {
-		if !reverse {
-			snapIter, err = tempTableData.Iter(rg.StartKey, rg.EndKey)
-		} else {
-			snapIter, err = tempTableData.IterReverse(rg.EndKey, rg.StartKey)
-		}
-		if err != nil {
-			return nil, err
-		}
-		snapCacheIter = snapIter
-	} else if cacheTable != nil {
+	// Prefer cacheTable when present. TemporaryTableData is session-scoped and may be
+	// non-nil after CREATE TEMPORARY TABLE even though it only stores temporary-table
+	// keys; checking it first would miss cached-table rows (#73034).
+	if cacheTable != nil {
 		if !reverse {
 			cacheIter, err = cacheTable.Iter(rg.StartKey, rg.EndKey)
 		} else {
@@ -645,6 +637,16 @@ func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange
 			return nil, errors.Trace(err)
 		}
 		snapCacheIter = cacheIter
+	} else if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
+		if !reverse {
+			snapIter, err = tempTableData.Iter(rg.StartKey, rg.EndKey)
+		} else {
+			snapIter, err = tempTableData.IterReverse(rg.EndKey, rg.StartKey)
+		}
+		if err != nil {
+			return nil, err
+		}
+		snapCacheIter = snapIter
 	}
 	return snapCacheIter, nil
 }

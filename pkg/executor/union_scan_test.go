@@ -358,6 +358,27 @@ func TestIssue32422(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
 	tk.MustExec("rollback")
+
+	// Test issue 73034: creating a local temporary table in the session causes reads
+	// of cached tables served from table cache to return no rows. TemporaryTableData
+	// stays non-nil even after DROP TEMPORARY TABLE, so cover that path too.
+	tk.MustExec("create temporary table tmp_t (id int);")
+	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select id from t use index(id) where id = 4;").Check(testkit.Rows("4"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("3 3", "4 4", "5 5"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	tk.MustExec("drop temporary table tmp_t;")
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("3 3", "4 4", "5 5"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
+
+	// Ensure DELETE ... WHERE ... NOT IN (SELECT ...) does not unintentionally delete rows.
+	tk.MustExec("create table target_t (id int, item_id int);")
+	tk.MustExec("insert into target_t values (1, 4), (2, 99);")
+	tk.MustExec("delete from target_t where item_id not in (select id from t);")
+	tk.MustQuery("select * from target_t;").Check(testkit.Rows("1 4"))
 }
 
 func TestSnapshotWithConcurrentWrite(t *testing.T) {
