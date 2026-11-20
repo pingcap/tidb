@@ -87,6 +87,7 @@ func testReadAndCompare(
 			readRanges[1],
 			bufPool,
 			bufPool,
+			1,
 			loaded,
 		)
 		require.NoError(t, err)
