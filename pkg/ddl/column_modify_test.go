@@ -694,4 +694,9 @@ func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
 	tk.MustExec("create table t3 (id int primary key, c char(4) character set utf8mb4)")
 	tk.MustExec("insert into t3 values (1, 'éééé')")
 	tk.MustGetErrCode("alter table t3 modify column c varbinary(4)", errno.WarnDataTruncated)
+
+	// Same-charset collation change with multi-byte chars must check character length, not byte length.
+	tk.MustExec("create table t4 (id int primary key, c varchar(4) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t4 values (1, 'éééé')")
+	tk.MustExec("alter table t4 modify column c varchar(4) character set utf8mb4 collate utf8mb4_general_ci")
 }

@@ -1177,7 +1177,12 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	// We have checked charset before, only need to check binary string, which needs padding.
+	// Different charsets require row reorg to validate/convert encoded bytes.
+	if oldCol.GetCharset() != changingCol.GetCharset() {
+		return true
+	}
+
+	// Binary strings need padding reorg.
 	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
 }
 
@@ -1240,7 +1245,11 @@ func buildCheckSQLFromModifyColumn(
 			// Integer conversion
 			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
+			lenFn := "LENGTH"
+			if isCharChange(oldCol, changingCol) && !types.IsBinaryStr(&changingCol.FieldType) {
+				lenFn = "CHAR_LENGTH"
+			}
+			conditions = append(conditions, fmt.Sprintf("%s(%s) > %d", lenFn, checkColName, changingCol.FieldType.GetFlen()))
 			if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
 				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
 			}
