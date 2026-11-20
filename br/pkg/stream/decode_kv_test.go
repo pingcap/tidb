@@ -3,6 +3,8 @@
 package stream_test
 
 import (
+	"encoding/binary"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -56,4 +58,31 @@ func TestDecodeKVEntryError(t *testing.T) {
 
 	ei.Next()
 	require.Error(t, ei.GetError())
+}
+
+func TestDecodeKVEntryInvalidLengths(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		keyLen, valueLen uint32
+	}{
+		{"key overflow", math.MaxUint32, 0},
+		{"key header overflow", math.MaxUint32 - 7, 0},
+		{"value overflow", 0, math.MaxUint32},
+		{"value header overflow", 0, math.MaxUint32 - 7},
+		{"truncated key", 1, 0},
+		{"truncated value", 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buff := make([]byte, 8)
+			binary.LittleEndian.PutUint32(buff, tc.keyLen)
+			binary.LittleEndian.PutUint32(buff[4:], tc.valueLen)
+			require.NotPanics(t, func() {
+				k, v, n, err := stream.DecodeKVEntry(buff)
+				require.Error(t, err)
+				require.Nil(t, k)
+				require.Nil(t, v)
+				require.Zero(t, n)
+			})
+		})
+	}
 }
