@@ -941,7 +941,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 				return nil, nil, nil, false, -1, errors.Trace(err)
 			}
 			if rangeFallback {
-				d.sctx.RecordRangeFallback(d.rangeMaxSize)
 				return FullRange(), nil, nil, true, -1, nil
 			}
 			totalRanges = append(totalRanges, ranges...)
@@ -1027,8 +1026,8 @@ type DetachRangeResult struct {
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMaxSize limits the memory used by ranges; 0 disables only memory-limit fallback.
+// Conditions not represented by the returned ranges must still be applied as filters.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
@@ -1062,8 +1061,8 @@ func detachCondAndBuildRangeRecursive(sctx *rangerctx.RangerContext, conditions 
 }
 
 // DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMaxSize limits the memory used by ranges; 0 disables only memory-limit fallback.
+// Conditions not represented by the returned ranges must still be applied as filters.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForPartition(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
@@ -1110,8 +1109,8 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
 // It will find the point query column firstly and then extract the range query column.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
-// for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// rangeMaxSize limits the memory used by ranges; 0 disables only memory-limit fallback.
+// Conditions not represented by the returned ranges must still be applied as filters.
 // The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
 // collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
