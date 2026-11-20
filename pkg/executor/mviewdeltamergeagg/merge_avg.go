@@ -150,7 +150,7 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 	}
 	frac := m.retTp.GetDecimal()
 
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+	for rowIdx := range numRows {
 		countExpr := countExprVals[rowIdx]
 		countStar := countStarVals[rowIdx]
 		if countExpr < 0 || countStar < 0 {
