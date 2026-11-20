@@ -638,3 +638,153 @@ fn test_m_view_build_result_handle_cols() {
         }
     }
 }
+
+/// Go `oracle.ComposeTS(physical, 0)`.
+const fn compose_ts(physical: u64) -> u64 {
+    physical << 18
+}
+
+/// Go `requireMLogCommitTSSelectionEstRows`.
+fn require_m_log_commit_ts_selection_est_rows(rows: &[Vec<String>], commit_ts_info: &str, est_rows: &str) {
+    let row = rows.iter().find(|row| row[4].contains(commit_ts_info)).unwrap_or_else(|| {
+        panic!("mlog commit-ts selection not found: commitTSInfo={commit_ts_info} rows={rows:?}")
+    });
+    assert_eq!(est_rows, row[1], "{rows:?}");
+}
+
+/// Go `requireMLogCommitTSSelectionContains`.
+fn require_m_log_commit_ts_selection_contains(rows: &[Vec<String>], commit_ts_info: &str, contains: &[String]) {
+    let row = rows.iter().find(|row| row[4].contains(commit_ts_info)).unwrap_or_else(|| {
+        panic!("mlog commit-ts selection not found: commitTSInfo={commit_ts_info} rows={rows:?}")
+    });
+    for expected in contains {
+        assert!(row[4].contains(expected.as_str()), "{} lacks {expected}", row[4]);
+    }
+}
+
+/// The Go explain-selectivity cases' tables: `t(a, b)` NOT NULL, its log, and
+/// `select a, count(1) from t group by a`.
+fn commit_ts_estimation_tables() -> (TableInfo, TableInfo, TableInfo) {
+    let (base, mlog) = base_and_mlog(1, 2);
+    for table in [&base, &mlog] {
+        for i in 0..2 {
+            col_at(table, i).write().field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        }
+    }
+    let mv = mview_table(
+        3,
+        "mv",
+        vec![mk_col(1, "a", 0, FieldTypeCode::Long), mk_col(2, "cnt", 1, FieldTypeCode::LongLong)],
+        vec![1],
+        "select a, count(1) from t group by a",
+    );
+    (base, mlog, mv)
+}
+
+/// [`explain_fast_refresh`] with the statement's retained upper bound
+/// (Go `txnManager.GetStmtForUpdateTS()` / the transaction's start TS).
+fn explain_fast_refresh_at(
+    tables: &[&TableInfo],
+    view: &str,
+    options: BuildOptions,
+    mlog_retained_lower_tso: u64,
+    retained_upper_tso: u64,
+) -> Vec<Vec<String>> {
+    let is = mock_info_schema(tables);
+    let plan = MViewDeltaMerge {
+        database: "test".to_owned(),
+        name: view.to_owned(),
+        options,
+        mlog_retained_lower_tso,
+        registered_mlog_ids: Vec::new(),
+    };
+    let ctx = mview_test_context()
+        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+        panic!("the test reads no AS OF snapshot")
+    };
+    let (_, rows) = crate::explain_mview_delta_merge(
+        &plan,
+        &is,
+        "test",
+        &ctx,
+        ExplainFormat::Brief,
+        retained_upper_tso,
+        &no_snapshot,
+    )
+    .unwrap();
+    rows.iter().map(|row| row_cells(row)).collect()
+}
+
+/// Go's statement start (physical milliseconds) the window cases are built
+/// around.
+const START_PHYSICAL: u64 = 1_000_000;
+
+#[test]
+fn test_explain_refresh_mv_fast_plan_uses_m_log_commit_ts_window_selectivity() {
+    let (base, mlog, mv) = commit_ts_estimation_tables();
+    let retained_lower_tso = compose_ts(START_PHYSICAL - 10000);
+    let last_success_tso = compose_ts(START_PHYSICAL - 5000);
+    let target_tso = compose_ts(START_PHYSICAL - 1000);
+    let retained_upper_tso = compose_ts(START_PHYSICAL);
+    let expected_rows = format!(
+        "{:.2}",
+        10000.0 * (START_PHYSICAL - 1000 - (START_PHYSICAL - 5000)) as f64 / (START_PHYSICAL - (START_PHYSICAL - 10000)) as f64
+    );
+    let rows = explain_fast_refresh_at(
+        &[&base, &mlog, &mv],
+        "mv",
+        BuildOptions { from_ts: last_success_tso, to_ts: target_tso },
+        retained_lower_tso,
+        retained_upper_tso,
+    );
+    require_m_log_commit_ts_selection_est_rows(&rows, "test.$mlog$t._tidb_commit_ts", &expected_rows);
+}
+
+#[test]
+fn test_explain_refresh_mv_fast_plan_clamps_m_log_commit_ts_filter_to_retained_window() {
+    let (base, mlog, mv) = commit_ts_estimation_tables();
+    let retained_lower_tso = compose_ts(START_PHYSICAL - 10000);
+    let last_success_tso = compose_ts(START_PHYSICAL - 20000);
+    let target_tso = compose_ts(START_PHYSICAL + 10000);
+    let rows = explain_fast_refresh_at(
+        &[&base, &mlog, &mv],
+        "mv",
+        BuildOptions { from_ts: last_success_tso, to_ts: target_tso },
+        retained_lower_tso,
+        compose_ts(START_PHYSICAL),
+    );
+    require_m_log_commit_ts_selection_est_rows(&rows, "test.$mlog$t._tidb_commit_ts", "10000.00");
+    require_m_log_commit_ts_selection_contains(
+        &rows,
+        "test.$mlog$t._tidb_commit_ts",
+        &[
+            format!("gt(test.$mlog$t._tidb_commit_ts, {last_success_tso})"),
+            format!("le(test.$mlog$t._tidb_commit_ts, {target_tso})"),
+        ],
+    );
+}
+
+#[test]
+fn test_explain_refresh_mv_fast_plan_estimates_zero_rows_for_disjoint_m_log_commit_ts_filter() {
+    let (base, mlog, mv) = commit_ts_estimation_tables();
+    let retained_lower_tso = compose_ts(START_PHYSICAL - 10000);
+    let last_success_tso = compose_ts(START_PHYSICAL - 20000);
+    let target_tso = compose_ts(START_PHYSICAL - 15000);
+    let rows = explain_fast_refresh_at(
+        &[&base, &mlog, &mv],
+        "mv",
+        BuildOptions { from_ts: last_success_tso, to_ts: target_tso },
+        retained_lower_tso,
+        compose_ts(START_PHYSICAL),
+    );
+    require_m_log_commit_ts_selection_est_rows(&rows, "test.$mlog$t._tidb_commit_ts", "0.00");
+    require_m_log_commit_ts_selection_contains(
+        &rows,
+        "test.$mlog$t._tidb_commit_ts",
+        &[
+            format!("gt(test.$mlog$t._tidb_commit_ts, {last_success_tso})"),
+            format!("le(test.$mlog$t._tidb_commit_ts, {target_tso})"),
+        ],
+    );
+}
