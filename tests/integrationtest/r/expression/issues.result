@@ -3461,3 +3461,28 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
+drop table if exists t_time_cmp;
+create table t_time_cmp (id int primary key, trx_time time);
+insert into t_time_cmp values (1, '19:10:06');
+select id from t_time_cmp where trx_time = cast('1000-01-01 19:10:06' as datetime);
+id
+1
+select id from t_time_cmp where cast('1000-01-01 19:10:06' as datetime) = trx_time;
+id
+1
+select id from t_time_cmp where trx_time <=> timestamp'2999-12-31 19:10:06';
+id
+1
+select id from t_time_cmp where trx_time in (cast('1000-01-01 19:10:06' as datetime), cast('1000-01-01 19:10:07' as datetime));
+id
+1
+select id from t_time_cmp where trx_time > cast('2999-01-01 19:10:05' as datetime);
+id
+1
+explain format = 'brief' select id from t_time_cmp where trx_time = cast('1000-01-01 19:10:06' as datetime);
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Projection
+└─Projection	10.00	cop[tikv]		test.t_time_cmp.id
+  └─Selection	10.00	cop[tikv]		eq(test.t_time_cmp.trx_time, 19:10:06)
+    └─TableFullScan	10000.00	cop[tikv]	table:t_time_cmp	keep order:false, stats:pseudo
+drop table t_time_cmp;

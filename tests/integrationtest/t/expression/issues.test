@@ -2340,3 +2340,15 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue70751
+drop table if exists t_time_cmp;
+create table t_time_cmp (id int primary key, trx_time time);
+insert into t_time_cmp values (1, '19:10:06');
+select id from t_time_cmp where trx_time = cast('1000-01-01 19:10:06' as datetime);
+select id from t_time_cmp where cast('1000-01-01 19:10:06' as datetime) = trx_time;
+select id from t_time_cmp where trx_time <=> timestamp'2999-12-31 19:10:06';
+select id from t_time_cmp where trx_time in (cast('1000-01-01 19:10:06' as datetime), cast('1000-01-01 19:10:07' as datetime));
+select id from t_time_cmp where trx_time > cast('2999-01-01 19:10:05' as datetime);
+explain format = 'brief' select id from t_time_cmp where trx_time = cast('1000-01-01 19:10:06' as datetime);
+drop table t_time_cmp;
