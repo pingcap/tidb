@@ -452,6 +452,12 @@ func (rc *SnapClient) AllocTableIDs(
 	return userTableIDNotReusedWhenNeedCheck, nil
 }
 
+// GetPreallocatedTableID resolves the physical target ID before table creation,
+// so restore protection can be persisted before the table becomes visible.
+func (rc *SnapClient) GetPreallocatedTableID(sourceID int64) (int64, error) {
+	return rc.preallocedIDs.AllocID(sourceID)
+}
+
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
 	if rc.preallocedIDs == nil {
 		return [2]int64{}, errors.Errorf("No preAlloced IDs")

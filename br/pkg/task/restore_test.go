@@ -464,6 +464,9 @@ func TestFilterDDLJobsEmitsEachJobOnce(t *testing.T) {
 		{ID: 3, SchemaName: "db", TableID: 200, Type: model.ActionCreateTable, Query: "CREATE TABLE a (c INT)",
 			BinlogInfo: &model.HistoryInfo{SchemaVersion: 4, TableInfo: &model.TableInfo{ID: 200, Name: pmodel.NewCIStr("a")}}},
 	}
+	// Separate decoded copies of the same history job share its stable ID.
+	duplicate := *allDDLJobs[0]
+	allDDLJobs = append(allDDLJobs, &duplicate)
 	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
 	seen := make(map[int64]int)
 	for _, job := range ddlJobs {

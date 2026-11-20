@@ -735,6 +735,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		}
 	}
 	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
+		vars := rc.db.Session().GetSessionCtx().GetSessionVars()
+		previousRestore := vars.InMaskingPolicyRestore
+		vars.InMaskingPolicyRestore = true
+		defer func() { vars.InMaskingPolicyRestore = previousRestore }()
 		if err := restoreMaskingPoliciesFromTemporaryTable(
 			ctx,
 			rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor(),

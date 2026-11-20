@@ -494,6 +494,12 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// A substituted argument can become nullable (for example after
+					// result masking). Do not restore the old non-null guarantee or
+					// mutate the type shared with the original expression.
+					if !mysql.HasNotNullFlag(newArg.GetType(ctx.GetEvalCtx()).GetFlag()) {
+						flag &^= mysql.NotNullFlag
+					}
 					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
 					// So we need to deep copy RetType.
 					// TODO: Expression interface needs a deep copy method.
@@ -501,7 +507,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
 						newArg = newArgFunc
 					}
-					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType.Clone(), false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction

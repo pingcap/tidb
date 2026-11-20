@@ -146,7 +146,12 @@ table ID is persisted in the PiTR ID map; retain this table for checkpoint retri
 and subsequent log-only restores. Missing
 staging state makes those restores fail rather than silently omit policies.
 Unselected target tables keep their existing policies, and `--with-sys-table=false`
-continues to exclude policy restoration.
+continues to exclude policy restoration, including historical policy DDL in
+incremental snapshots. Bootstrap-created system tables carry an immutable
+`bootstrap_created_ts` in TableInfo, so log-only PiTR can distinguish a policy
+table created during an upgrade in the current interval from a lost baseline.
+Committed metadata and a creation timestamp within the interval are required;
+absence from a predecessor ID map alone is insufficient.
 
 Reason:
 
@@ -158,7 +163,7 @@ Design:
 
 1. Read source policy rows as logical policy definitions.
 2. Reconstruct canonical `CREATE MASKING POLICY ...` semantics from those definitions.
-3. For snapshot restores, execute reconstructed masking-policy DDL after data import and the restore pipeline, during system-schema restoration. For PiTR, rebuild policies after log replay: replace policies atomically when their names and columns are unchanged, protect tables in Restore mode before dropping policies that conflict with their successors, and drop stale policies only after all replacements succeed. A failed or cancelled replacement preserves the baseline policy or keeps the affected table protected for retry. Filtered restores release protection during finalization; full and log-only restores release only the protection recorded for their own restore task after the full replacement succeeds.
+3. When restoring policy metadata, protect selected user tables before data import. Persist the restore task's ownership before creating new tables in Restore mode or fencing existing tables. Snapshot restores install policies during system-schema restoration; PiTR keeps tables protected through log replay and policy reconstruction, including table metadata created or replaced by the logs. Only successful policy reconstruction releases protection. Errors and cancellation keep it in place for retry. A rerun may take over a recorded fence only after confirming its former owner is no longer registered; unrelated Restore-mode tables are not reopened. The shared fence table remains present so concurrent tasks cannot lose each other's records.
 4. Let target cluster generate correct target `table_id/column_id` bindings.
 5. Do not directly replay source physical rows for `mysql.tidb_masking_policy`.
 

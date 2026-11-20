@@ -414,10 +414,15 @@ func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
 	root.MustExec("create user 'u_tighten'@'%'")
 	root.MustExec("grant select, insert, update, delete on test.* to 'u_tighten'@'%'")
 
-	for _, tc := range []struct{ restrictOn, sql string }{
-		{"insert_into_select", "insert into dst_tighten select id + 10, c from src_tighten"},
-		{"update_select", "update dst_tighten set c = (select c from src_tighten where id = 1) where id = 1"},
-		{"delete_select", "delete from dst_tighten where c in (select c from src_tighten)"},
+	for _, tc := range []struct {
+		restrictOn, sql string
+		cacheable       bool
+	}{
+		{"insert_into_select", "insert into dst_tighten select id + 10, c from src_tighten", true},
+		// Keep the scalar form as an uncacheable control; the JOIN form must hit.
+		{"update_select", "update dst_tighten set c = (select c from src_tighten where id = 1) where id = 1", false},
+		{"update_select", "update dst_tighten d join (select id,c from src_tighten) s on d.id=s.id set d.c=s.c", true},
+		{"delete_select", "delete from dst_tighten where c in (select c from src_tighten)", true},
 	} {
 		for _, planCache := range []string{"1", "0"} {
 			t.Run(tc.sql+"/plan_cache="+planCache, func(t *testing.T) {
@@ -427,6 +432,7 @@ func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
 				root.MustExec("use test")
 				root.MustExec("alter table src_tighten modify masking policy p_tighten set restrict on none")
 				user := testkit.NewTestKit(t, store)
+				t.Cleanup(user.Session().Close)
 				require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "u_tighten", Hostname: "%"}, nil, nil, nil))
 				user.MustExec("use test")
 				user.MustExec("set tidb_enable_prepared_plan_cache = " + planCache)
@@ -434,6 +440,15 @@ func TestMaskingPolicyRestrictTightenedAfterPrepare(t *testing.T) {
 				user.MustExec("prepare st from '" + tc.sql + "'")
 				user.MustExec("execute st")
 				user.MustExec("rollback")
+				user.MustExec("begin")
+				user.MustExec("execute st")
+				cacheHit := user.MustQuery("select @@last_plan_from_cache")
+				user.MustExec("rollback")
+				expectedHit := "0"
+				if tc.cacheable {
+					expectedHit = planCache
+				}
+				cacheHit.Check(testkit.Rows(expectedHit))
 				// A statement prepared while the operation was permitted must
 				// observe a restriction added afterwards.
 				root.MustExec("alter table src_tighten modify masking policy p_tighten set restrict on (" + tc.restrictOn + ")")
@@ -480,4 +495,38 @@ func TestMaskingPolicyUpdateRestrictOnDirtyAndCachedTable(t *testing.T) {
 	user.MustExec("insert into t_dirty_update values (3,'other','x')")
 	user.MustGetErrCode("update t_cached_update d join (select id, c from t_dirty_update) s on d.id = s.id set d.n = s.c", errno.ErrAccessDeniedToMaskedColumn)
 	user.MustExec("rollback")
+}
+
+func TestMaskingPolicyDeleteRestrictOnFromSources(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table delete_src(c varchar(20))")
+	root.MustExec("create table delete_dst(c varchar(20))")
+	root.MustExec("insert into delete_src values ('secret')")
+	root.MustExec("insert into delete_dst values ('secret')")
+	root.MustExec("create view delete_view as select c from delete_src")
+	root.MustExec("create masking policy p on delete_src(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (delete_select)")
+	root.MustExec("create user delete_source_user")
+	root.MustExec("grant select,delete on test.* to delete_source_user")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "delete_source_user", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	for _, sql := range []string{
+		"delete d from delete_dst d join (select c from delete_src) s on d.c=s.c",
+		"delete d from delete_dst d join delete_view s on d.c=s.c",
+		"with s as (select c from delete_src) delete d from delete_dst d join s on d.c=s.c",
+		"with s as (select c from delete_src union all select c from delete_src) delete d from delete_dst d join s on d.c=s.c",
+	} {
+		user.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		root.MustQuery("select * from delete_dst").Check(testkit.Rows("secret"))
+		root.MustExec("begin")
+		root.MustExec(sql)
+		root.MustQuery("select * from delete_dst").Check(testkit.Rows())
+		root.MustExec("rollback")
+	}
+	user.MustExec("delete d from delete_dst d join (select 'secret' as c from delete_src) s on d.c=s.c")
+	root.MustQuery("select * from delete_dst").Check(testkit.Rows())
+	user.MustExec("delete from delete_src where c='secret'")
 }

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "masking",
@@ -10,5 +10,19 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/util/chunk",
         "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "masking_test",
+    timeout = "short",
+    srcs = ["codec_test.go"],
+    embed = [":masking"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "@com_github_stretchr_testify//require",
     ],
 )

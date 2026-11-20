@@ -852,3 +852,23 @@ func (m *MockExpr) Traverse(action TraverseAction) Expression {
 }
 func (m *MockExpr) Hash64(_ base.Hasher) {}
 func (m *MockExpr) Equals(_ any) bool    { return false }
+
+func TestColumnSubstituteNullableCastPreservesOriginalType(t *testing.T) {
+	ctx := mock.NewContext().GetExprCtx()
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.AddFlag(mysql.NotNullFlag)
+	col := &Column{UniqueID: 1, RetType: tp}
+	castType := types.NewFieldType(mysql.TypeDouble)
+	castType.AddFlag(mysql.NotNullFlag)
+	original := BuildCastFunction(ctx, col, castType)
+	replacement, err := NewFunction(ctx, ast.MaskNull, tp.Clone(), col)
+	require.NoError(t, err)
+	failed, result := ColumnSubstituteAll(ctx, original, NewSchema(col), []Expression{replacement})
+	require.False(t, failed)
+	require.False(t, mysql.HasNotNullFlag(result.GetType(ctx.GetEvalCtx()).GetFlag()))
+	require.True(t, mysql.HasNotNullFlag(original.GetType(ctx.GetEvalCtx()).GetFlag()))
+	require.True(t, mysql.HasNotNullFlag(col.GetType(ctx.GetEvalCtx()).GetFlag()))
+	value, err := result.Eval(ctx.GetEvalCtx(), chunk.MutRowFromValues("42").ToRow())
+	require.NoError(t, err)
+	require.True(t, value.IsNull())
+}

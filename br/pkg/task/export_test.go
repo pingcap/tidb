@@ -26,11 +26,13 @@ var (
 	RestoreMaskingPoliciesAfterLogReplayForTest = restoreMaskingPoliciesAfterLogReplay
 	AddMaskingPolicyRewriteRulesForTest         = addMaskingPolicyRewriteRules
 	BuildRewriteRulesForTest                    = buildRewriteRules
+	ProtectMaskingPolicyTablesForTest           = protectMaskingPolicyTables
+	ReopenMaskingPolicyTablesForTest            = reopenMaskingPolicyTables
 )
 
-func PrepareMaskingPolicyStagingForTest(ctx context.Context, dom *domain.Domain, se glue.Session, mapping *stream.TableMappingManager, withSysTable, canCreate, idMapPersisted bool) error {
+func PrepareMaskingPolicyStagingForTest(ctx context.Context, dom *domain.Domain, se glue.Session, mapping *stream.TableMappingManager, withSysTable, canCreate, idMapPersisted bool, startTS uint64) error {
 	cfg := &LogRestoreConfig{
-		RestoreConfig:       &RestoreConfig{RestoreCommonConfig: RestoreCommonConfig{WithSysTable: withSysTable}},
+		RestoreConfig:       &RestoreConfig{RestoreCommonConfig: RestoreCommonConfig{WithSysTable: withSysTable}, StartTS: startTS},
 		tableMappingManager: mapping,
 	}
 	return prepareMaskingPolicyStaging(ctx, dom, se, cfg, canCreate, idMapPersisted)

@@ -159,6 +159,8 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 
 	_, err := client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
 	require.NoError(t, err)
+	protectedID, err := client.GetPreallocatedTableID(source.Info.ID)
+	require.NoError(t, err)
 	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{
 		Source:     source,
 		TargetDB:   targetDB,
@@ -166,6 +168,7 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	}}, 0)
 	require.NoError(t, err)
 	require.Len(t, created, 1)
+	require.Equal(t, protectedID, created[0].Table.ID, "protection must use the physical ID visible at creation")
 	require.Same(t, source, created[0].OldTable)
 	require.Equal(t, "route_target", created[0].TargetDBName().O)
 	require.Equal(t, "target_table", created[0].Table.Name.O)

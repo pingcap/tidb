@@ -52,6 +52,7 @@ type tableMetaKey struct {
 
 type tableSimpleInfo struct {
 	Name                 string
+	BootstrapCreatedTS   uint64
 	PartitionIds         []int64
 	HasForeignKeys       bool
 	ForeignKeyReferences []ForeignKeyReference
@@ -81,9 +82,10 @@ type metadataEvent struct {
 }
 
 type sourceTableLocation struct {
-	dbID int64
-	name string
-	ts   uint64
+	dbID               int64
+	name               string
+	ts                 uint64
+	bootstrapCreatedTS uint64
 }
 
 type tableLocationKey struct {
@@ -166,7 +168,12 @@ func (tm *TableMappingManager) IsTableNewToBase(tableID UpstreamID, fullSnapshot
 	source, observed := tm.latestTableSources[tableID]
 	event, committed := tm.tableEvents[tableLocationKey{dbID: source.dbID, tableID: tableID}]
 	jobStartTS, created := tm.createdTableIDs[tableID]
-	return observed && committed && !event.deleted && created && jobStartTS >= intervalStartTS
+	createdInInterval := created && jobStartTS >= intervalStartTS
+	// Bootstrap-created system tables have no CREATE TABLE history. Their
+	// immutable creation timestamp is carried by committed TableInfo versions;
+	// later metadata updates cannot turn an old table into a new empty baseline.
+	createdInInterval = createdInInterval || (source.bootstrapCreatedTS != 0 && source.bootstrapCreatedTS >= intervalStartTS && source.bootstrapCreatedTS <= event.ts)
+	return observed && committed && !event.deleted && createdInInterval
 }
 
 // recordCreatedTablesFromJobHistory remembers the tables that a finished DDL
@@ -568,6 +575,7 @@ func extractTableSimpleInfo(value []byte) (int64, *tableSimpleInfo, error) {
 	}
 	return tableInfo.ID, &tableSimpleInfo{
 		Name:                 tableInfo.Name.O,
+		BootstrapCreatedTS:   tableInfo.BootstrapCreatedTS,
 		PartitionIds:         partitionIds,
 		HasForeignKeys:       len(tableInfo.ForeignKeys) > 0,
 		ForeignKeyReferences: fkRefs,
@@ -689,7 +697,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(
 			tm.latestTableSources = make(map[UpstreamID]sourceTableLocation)
 		}
 		if previous, ok := tm.latestTableSources[tableId]; !ok || commitTs >= previous.ts {
-			tm.latestTableSources[tableId] = sourceTableLocation{dbID: dbId, name: tableSimpleInfo.Name, ts: commitTs}
+			tm.latestTableSources[tableId] = sourceTableLocation{dbID: dbId, name: tableSimpleInfo.Name, ts: commitTs, bootstrapCreatedTS: tableSimpleInfo.BootstrapCreatedTS}
 		}
 	}
 	// Keep the union across all table-info versions in the restore interval. A

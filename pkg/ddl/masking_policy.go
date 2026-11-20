@@ -451,7 +451,7 @@ func buildMaskingPolicyInfo(
 
 	status := maskingPolicyStatusFromState(state)
 	maskingType := maskingPolicyTypeFromExpr(expr)
-	now := time.Now()
+	now := time.Now().UTC()
 	createdBy := ""
 	sessVars := ctx.GetSessionVars() //nolint:forbidigo
 	if user := sessVars.User; user != nil {
@@ -686,7 +686,7 @@ func (w *worker) updateMaskingPolicyTableID(jobCtx *jobContext, oldTableID, newT
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET table_id = %?, updated_at = %?
 		WHERE policy_id = %?`
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, policy := range policies {
 		failpoint.Inject("mockMaskingPolicyUpdateError", func(val failpoint.Value) {
 			if enabled, ok := val.(bool); ok && enabled {
@@ -736,7 +736,7 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 		newPolicy := policy.Clone()
 		newPolicy.DBName = newDBName
 		newPolicy.TableName = newTableName
-		newPolicy.UpdatedAt = time.Now()
+		newPolicy.UpdatedAt = time.Now().UTC()
 
 		newPolicy.Expression, err = normalizeMaskingPolicyExprColumnNames(policy.Expression)
 		if err != nil {
@@ -809,7 +809,7 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 			}
 			newPolicy.Expression = newExpr
 		}
-		newPolicy.UpdatedAt = time.Now()
+		newPolicy.UpdatedAt = time.Now().UTC()
 
 		if err := w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
 			return errors.Trace(err)

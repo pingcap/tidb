@@ -3230,3 +3230,31 @@ func TestTableNewToBaseAcrossPiTRBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestBootstrapCreatedTableNewToPiTRBase(t *testing.T) {
+	const startTS = uint64(1<<60) + 100
+	for _, createdTS := range []uint64{0, startTS - 1, startTS, startTS + 1, startTS + 3} {
+		tm := NewTableMappingManager()
+		tm.SetFromPiTRIDMap()
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{1: NewDBReplace("mysql", 1)})
+		info, err := json.Marshal(&model.TableInfo{ID: 99, Name: pmodel.NewCIStr("tidb_masking_policy"), BootstrapCreatedTS: createdTS})
+		require.NoError(t, err)
+		collector := NewMockMetaInfoCollector()
+		require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+			Key: utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(99), startTS+1), Value: info,
+		}, consts.DefaultCF, startTS+1, collector))
+		require.False(t, tm.IsTableNewToBase(99, false, startTS), "uncommitted metadata cannot prove creation")
+		require.NoError(t, tm.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+			Key: utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(99), startTS+2), Value: codec.EncodeUvarint([]byte{'P'}, startTS+1),
+		}, consts.WriteCF, startTS+2, collector))
+		require.Equal(t, createdTS >= startTS && createdTS <= startTS+2, tm.IsTableNewToBase(99, false, startTS))
+		// A later ALTER retains the original creation time, never the ALTER time.
+		require.NoError(t, tm.parseTableValueAndUpdateIdMapping(1, 99, startTS+10,
+			&tableSimpleInfo{Name: "tidb_masking_policy", BootstrapCreatedTS: createdTS}, collector))
+		require.False(t, tm.IsTableNewToBase(99, false, startTS+5))
+		base := NewDBReplace("mysql", 1)
+		base.TableMap[99] = NewTableReplace("tidb_masking_policy", 999)
+		tm.MergeBaseDBReplace(map[UpstreamID]*DBReplace{1: base})
+		require.False(t, tm.IsTableNewToBase(99, false, startTS), "a missing retained stage is not an empty baseline")
+	}
+}

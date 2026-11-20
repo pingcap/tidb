@@ -142,6 +142,10 @@ type TableInfo struct {
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
 	UpdateTS uint64 `json:"update_timestamp"`
+	// BootstrapCreatedTS records the creation transaction of system tables
+	// created directly in KV during bootstrap or upgrade, without a DDL job.
+	// BR uses this immutable timestamp to prove an empty pre-upgrade baseline.
+	BootstrapCreatedTS uint64 `json:"bootstrap_created_ts,omitempty"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged

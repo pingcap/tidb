@@ -29,6 +29,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -819,4 +820,45 @@ func TestRestoreMaskingPoliciesChecksActualTargetColumns(t *testing.T) {
 	tk.MustExec("alter table noschema_columns rename column renamed to c")
 	require.NoError(t, restore("test.noschema_columns"))
 	tk.MustQuery("select c from noschema_columns").Check(testkit.Rows("XXXXXX"))
+}
+
+func TestSnapshotPoliciesInstallWhileTableProtected(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("create table snapshot_guard(c varchar(20))")
+	tk.MustExec("insert into snapshot_guard values ('secret')")
+	target, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr("test"), pmodel.NewCIStr("snapshot_guard"))
+	require.NoError(t, err)
+	require.NoError(t, cluster.Domain.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
+		SchemaID: target.DBID, TableID: target.ID, TableMode: model.TableModeRestore,
+	}))
+	tk.MustGetErrCode("select c from snapshot_guard", errno.ErrProtectedTableMode)
+	tempDBName := utils.TemporaryDBName(mysql.SystemDB)
+	tk.MustExec("create database " + tempDBName.O)
+	tk.MustExec("create table " + tempDBName.O + ".tidb_masking_policy like mysql.tidb_masking_policy")
+	tk.MustExec("insert into " + tempDBName.O + ".tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (1,'snapshot_p','test','snapshot_guard',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')")
+	tempDB, ok := cluster.Domain.InfoSchema().SchemaByName(tempDBName)
+	require.True(t, ok)
+	userDB, ok := cluster.Domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, ok)
+	stage, err := restore.GetTableSchema(cluster.Domain, tempDBName, pmodel.NewCIStr("tidb_masking_policy"))
+	require.NoError(t, err)
+	client := snapclient.MockClient(map[string]*metautil.Database{
+		tempDBName.O: {Info: tempDB, Tables: []*metautil.Table{{DB: tempDB, Info: stage}}},
+		"test":       {Info: userDB, Tables: []*metautil.Table{{DB: userDB, Info: target}}},
+	})
+	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+	client.SetWithSysTable(true)
+	f, err := filter.Parse([]string{"test.*"})
+	require.NoError(t, err)
+	require.NoError(t, client.RestoreSystemSchemas(ctx, f, false))
+	// Snapshot system-schema restoration must not open the table itself.
+	tk.MustGetErrCode("select c from snapshot_guard", errno.ErrProtectedTableMode)
+	require.NoError(t, cluster.Domain.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
+		SchemaID: target.DBID, TableID: target.ID, TableMode: model.TableModeNormal,
+	}))
+	tk.MustQuery("select c from snapshot_guard").Check(testkit.Rows("XXXXXX"))
 }

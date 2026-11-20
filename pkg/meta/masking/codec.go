@@ -52,14 +52,16 @@ func DecodeMaskingPolicyRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
 
 	createdAt := time.Time{}
 	if !row.IsNull(11) {
-		createdAt, err = row.GetTime(11).GoTime(time.Local)
+		// DATETIME has no zone. A fixed zone also accepts wall times inside
+		// another node's DST gap without making the entire policy cache fail.
+		createdAt, err = row.GetTime(11).GoTime(time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	updatedAt := time.Time{}
 	if !row.IsNull(12) {
-		updatedAt, err = row.GetTime(12).GoTime(time.Local)
+		updatedAt, err = row.GetTime(12).GoTime(time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -41,6 +41,136 @@ import (
 	"go.uber.org/zap"
 )
 
+func isMaskingPolicyDDL(action model.ActionType) bool {
+	return action == model.ActionCreateMaskingPolicy || action == model.ActionAlterMaskingPolicy || action == model.ActionDropMaskingPolicy
+}
+
+// hasMaskingPolicySource reports whether this interval carries policy metadata.
+func hasMaskingPolicySource(mapping *stream.TableMappingManager) bool {
+	if mapping != nil {
+		for _, db := range mapping.DBReplaceMap {
+			for _, tbl := range db.TableMap {
+				if isSourceMaskingPolicyTable(db, tbl) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func readMaskingPolicyFenceOwners(ctx context.Context, dom *domain.Domain, se glue.Session) (map[int64]uint64, error) {
+	_, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(snapclient.MaskingPolicyFenceTableName))
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return map[int64]uint64{}, nil
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, "SELECT table_id, restore_id FROM %n.%n",
+		snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	owners := make(map[int64]uint64, len(rows))
+	for _, row := range rows {
+		owners[row.GetInt64(0)] = row.GetUint64(1)
+	}
+	return owners, nil
+}
+
+// protectMaskingPolicyTables records ownership before making any data visible.
+// Missing IDs are preallocated targets: their tables will be created in Restore
+// mode. An existing Restore-mode table without a record belongs to someone else.
+func protectMaskingPolicyTables(ctx context.Context, dom *domain.Domain, se glue.Session, tableIDs []int64, restoreID uint64, isRegistered func(context.Context, uint64) (bool, error)) error {
+	if len(tableIDs) == 0 {
+		return nil
+	}
+	if restoreID == 0 {
+		return errors.New("masking policy restore protection requires a restore task ID")
+	}
+	owners, err := readMaskingPolicyFenceOwners(ctx, dom, se)
+	if err != nil {
+		return err
+	}
+	var takeovers []fenceTakeover
+	for _, tableID := range tableIDs {
+		tbl, exists, err := loadTableByID(ctx, dom.InfoSchema(), tableID)
+		if err != nil {
+			return err
+		}
+		if exists && tbl.Meta().Mode != model.TableModeNormal && tbl.Meta().Mode != model.TableModeRestore {
+			return errors.Errorf("cannot protect table %s in %s mode for masking policy restore", tbl.Meta().Name.O, tbl.Meta().Mode.String())
+		}
+		owner, recorded := owners[tableID]
+		if exists && tbl.Meta().Mode == model.TableModeRestore && !recorded {
+			return errors.Errorf("cannot attribute Restore-mode table %s to masking policy restore", tbl.Meta().Name.O)
+		}
+		if recorded && owner != restoreID && (!exists || tbl.Meta().Mode == model.TableModeRestore) {
+			if isRegistered == nil {
+				return errors.Errorf("masking policy protection of table %d belongs to restore task %d", tableID, owner)
+			}
+			registered, err := isRegistered(ctx, owner)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if registered {
+				return errors.Errorf("masking policy protection of table %d belongs to registered restore task %d", tableID, owner)
+			}
+			takeovers = append(takeovers, fenceTakeover{tableID: tableID, owner: owner, table: fmt.Sprint(tableID)})
+		}
+	}
+	if err := takeOverFences(ctx, se, takeovers, restoreID); err != nil {
+		return err
+	}
+	fenceRecord := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
+	if err := se.Execute(ctx, "CREATE TABLE IF NOT EXISTS "+fenceRecord+" (table_id BIGINT PRIMARY KEY, restore_id BIGINT UNSIGNED NOT NULL)"); err != nil {
+		return errors.Trace(err)
+	}
+	for _, tableID := range tableIDs {
+		if err := se.Execute(ctx, fmt.Sprintf("REPLACE INTO %s VALUES (%d, %d)", fenceRecord, tableID, restoreID)); err != nil {
+			return errors.Trace(err)
+		}
+		tbl, exists, err := loadTableByID(ctx, dom.InfoSchema(), tableID)
+		if err != nil {
+			return err
+		}
+		if exists && tbl.Meta().Mode == model.TableModeNormal {
+			if err := se.AlterTableMode(ctx, tbl.Meta().DBID, tableID, model.TableModeRestore); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return errors.Trace(dom.Reload())
+}
+
+func reopenMaskingPolicyTables(ctx context.Context, dom *domain.Domain, se glue.Session, tableIDs []int64, restoreID uint64) error {
+	owners, err := readMaskingPolicyFenceOwners(ctx, dom, se)
+	if err != nil {
+		return err
+	}
+	for _, tableID := range tableIDs {
+		if owners[tableID] != restoreID || restoreID == 0 {
+			return errors.Errorf("masking policy restore does not own the protection of table %d", tableID)
+		}
+		tbl, exists, err := loadTableByID(ctx, dom.InfoSchema(), tableID)
+		if err != nil {
+			return err
+		}
+		if exists && tbl.Meta().Mode == model.TableModeRestore {
+			if err := se.AlterTableMode(ctx, tbl.Meta().DBID, tableID, model.TableModeNormal); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d AND restore_id = %d",
+			utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName), tableID, restoreID)); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return errors.Trace(dom.Reload())
+}
+
 // fenceTakeover is a fence whose recorded owner is no longer registered.
 type fenceTakeover struct {
 	tableID int64
@@ -387,29 +517,8 @@ func restoreMaskingPoliciesAfterLogReplay(
 	// with its restore task before it is raised whenever this function has to
 	// lower it again.
 	fenceRecord := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
-	readFenceOwners := func() (map[int64]uint64, error) {
-		// Only a table that is known to be absent means that nothing is
-		// fenced: failing to load it must not hide its records.
-		_, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB),
-			pmodel.NewCIStr(snapclient.MaskingPolicyFenceTableName))
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, errors.Annotate(err, "cannot load the record of tables fenced for masking policy rebuild")
-		}
-		rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
-			kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, "SELECT table_id, restore_id FROM %n.%n",
-			snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyFenceTableName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		owners := make(map[int64]uint64, len(rows))
-		for _, row := range rows {
-			owners[row.GetInt64(0)] = row.GetUint64(1)
-		}
-		return owners, nil
-	}
+	readFenceOwners := func() (map[int64]uint64, error) { return readMaskingPolicyFenceOwners(ctx, dom, se) }
+
 	fenced := make(map[int64]struct{})
 	fenceTable := func(tableID int64) error {
 		tbl := targetTables[tableID]
@@ -557,6 +666,12 @@ func restoreMaskingPoliciesAfterLogReplay(
 	}
 	is = dom.InfoSchema()
 	for tableID, owner := range owners {
+		// Another task can have recorded an ID before creating its table.
+		// Absence therefore does not authorize deleting somebody else's fence.
+		if owner != restoreID {
+			continue
+		}
+
 		// A table that exists but cannot be loaded says nothing about its
 		// mode: keep its record.
 		tbl, ok, err := loadTableByID(ctx, is, tableID)
@@ -579,7 +694,7 @@ func restoreMaskingPoliciesAfterLogReplay(
 		// The table is readable again or dropped: the record has no use. The
 		// record table itself is kept: another restore task may be writing its
 		// own fences to it, and dropping it could lose them.
-		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d", fenceRecord, tableID)); err != nil {
+		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d AND restore_id = %d", fenceRecord, tableID, owner)); err != nil {
 			return errors.Trace(err)
 		}
 	}

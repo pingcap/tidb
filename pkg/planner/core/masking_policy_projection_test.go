@@ -963,3 +963,21 @@ func TestMaskingPolicyPredicateUsingJoinRedundantColumn(t *testing.T) {
 		tk.MustQuery(sql).Check(testkit.Rows("2"))
 	}
 }
+
+func TestMaskingPolicyNullableCastSubstitution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table nullable_cast(c varchar(20) not null)")
+	tk.MustExec("insert into nullable_cast values ('42')")
+	tk.MustExec("create masking policy p on nullable_cast(c) as mask_null(c)")
+	for _, expr := range []string{"c + 1", "cast(c as signed)", "cast(c as decimal(10,2)) + 1", "cast(c as double) + 1"} {
+		tk.MustQuery("select " + expr + ", (" + expr + ") is null, (" + expr + ") is not null, if((" + expr + ") is null, 'yes', 'no'), case when (" + expr + ") is null then 'yes' else 'no' end from nullable_cast").Check(testkit.Rows("<nil> 1 0 yes yes"))
+	}
+	tk.MustQuery("select (c + 1) is null from nullable_cast where c + 1 = 43").Check(testkit.Rows("1"))
+	tk.MustQuery("select (v + 1) is null from (select c as v from nullable_cast) d").Check(testkit.Rows("1"))
+	tk.MustExec("prepare st from 'select c + 1, (c + 1) is null from nullable_cast'")
+	for range 2 {
+		tk.MustQuery("execute st").Check(testkit.Rows("<nil> 1"))
+	}
+}

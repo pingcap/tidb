@@ -1667,6 +1667,27 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	var maskingTableIDs []int64
+	if cfg.WithSysTable && hasMaskingPolicySource(cfg.tableMappingManager) {
+		for _, db := range schemasReplace.DbReplaceMap {
+			if db.FilteredOut {
+				continue
+			}
+			for _, tbl := range db.TableMap {
+				if !tbl.FilteredOut && !utils.IsSysOrTempSysDB(tbl.EffectiveDBName(db)) {
+					maskingTableIDs = append(maskingTableIDs, tbl.TableID)
+				}
+			}
+		}
+		var isRegistered func(context.Context, uint64) (bool, error)
+		if cfg.RestoreRegistry != nil {
+			isRegistered = cfg.RestoreRegistry.IsRegistered
+		}
+		if err := protectMaskingPolicyTables(ctx, client.GetDomain(), client.UnsafeSession(), maskingTableIDs, cfg.RestoreID, isRegistered); err != nil {
+			return err
+		}
+	}
+
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
 		cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	// set up scheduler pausing before meta kv restore starts
@@ -1815,6 +1836,11 @@ func restoreStream(
 
 		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
+		}
+		if len(maskingTableIDs) > 0 {
+			if err := reopenMaskingPolicyTables(ctx, client.GetDomain(), client.UnsafeSession(), maskingTableIDs, cfg.RestoreID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2282,7 +2308,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore())
+		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore() || (cfg.WithSysTable && hasMaskingPolicySource(cfg.tableMappingManager)))
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.

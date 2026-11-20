@@ -94,13 +94,7 @@ func TestMaskingPolicyAtResult(t *testing.T) {
 
 		// HAVING should compare original category values
 		result := tk.MustQuery("select category, sum(amount) from t_agg group by category having category > 'A'")
-		rows := result.Rows()
-		require.Len(t, rows, 2) // B and C
-
-		// All categories should be masked in output
-		require.Contains(t, []string{"_B", "_C"}, rows[0][0])
-		require.Contains(t, []string{"_B", "_C"}, rows[1][0])
-		require.NotEqual(t, rows[0][0], rows[1][0])
+		result.Sort().Check(testkit.Rows("_B 200", "_C 300"))
 	})
 
 	// Test derived table: outer WHERE uses original values, output is masked

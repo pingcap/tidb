@@ -155,7 +155,7 @@ func TestRestoreMaskingPoliciesAfterLogReplay(t *testing.T) {
 	g.SetSession(tk.Session())
 	se, err := g.CreateSession(store)
 	require.NoError(t, err)
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true, 0))
 	schemas := stream.NewSchemasReplace(mapping.DBReplaceMap, false, nil, 0, nil, false)
 	rules := task.BuildRewriteRulesForTest(schemas)
 	require.NotContains(t, rules, int64(99))
@@ -185,20 +185,20 @@ func TestRestoreMaskingPoliciesAfterLogReplay(t *testing.T) {
 	tk.MustQuery("select c from routed").Check(testkit.Rows("XXXXXX"))
 
 	tk.MustExec("drop table " + stageName)
-	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true), "staging table is missing")
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true, 0), "staging table is missing")
 	// A policy table introduced after the full snapshot has an empty baseline.
 	systemDB.TableMap[99].TableID = 888888
-	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, true, true), "staging table is missing")
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, true, false))
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, true, true, 0), "staging table is missing")
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, true, false, 0))
 	require.NotEqual(t, int64(888888), systemDB.TableMap[99].TableID)
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true, 0))
 	// Never rewrite source logs directly into the live policy table.
 	live, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
 	require.NoError(t, err)
 	systemDB.TableMap[99].TableID = live.Meta().ID
-	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true), "does not reference a retained staging table")
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true, 0), "does not reference a retained staging table")
 	withSysTable = false
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, withSysTable, false, true, 0))
 }
 
 func TestRestoreMaskingPolicyStagingCheckpointPhases(t *testing.T) {
@@ -223,12 +223,12 @@ func TestRestoreMaskingPolicyStagingCheckpointPhases(t *testing.T) {
 	se, err := g.CreateSession(store)
 	require.NoError(t, err)
 	// Until the ID map is saved, a retry must find the snapshot's original name.
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false, 0))
 	require.True(t, dom.InfoSchema().TableExists(tempDB, pmodel.NewCIStr("tidb_masking_policy")))
 	privateName := pmodel.NewCIStr(snapclient.MaskingPolicyStagingTableName(staged.Meta().ID))
 	require.False(t, dom.InfoSchema().TableExists(pmodel.NewCIStr(mysql.SystemDB), privateName))
 	for range 2 {
-		require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, true))
+		require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, true, 0))
 		retained, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(mysql.SystemDB), privateName)
 		require.NoError(t, err)
 		require.Equal(t, staged.Meta().ID, retained.Meta().ID, "do not replace the physical table or its MVCC versions")
@@ -266,17 +266,23 @@ func TestRestoreMaskingPolicyNewLogOnlyStage(t *testing.T) {
 	// Committed metadata alone may come from a DDL on a policy table that the
 	// previous restore left out. Without the job that created the table in
 	// this interval, an empty baseline is not proven.
-	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false), "staging table is missing")
-	createJob, err := (&model.Job{Version: model.JobVersion1, Type: model.ActionCreateTable, TableID: 99, State: model.JobStateSynced}).Encode(true)
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false, startTS), "staging table is missing")
+	createJob, err := (&model.Job{Version: model.JobVersion1, Type: model.ActionCreateTable, TableID: 99, StartTS: startTS - 1, State: model.JobStateSynced}).Encode(true)
 	require.NoError(t, err)
 	require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
 		Key: utils.EncodeTxnMetaKey([]byte("DDLJobHistory"), []byte("job"), startTS), Value: createJob,
 	}, consts.DefaultCF, startTS, collector))
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false))
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false, startTS), "staging table is missing")
+	createJob, err = (&model.Job{Version: model.JobVersion1, Type: model.ActionCreateTable, TableID: 99, StartTS: startTS, State: model.JobStateSynced}).Encode(true)
+	require.NoError(t, err)
+	require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+		Key: utils.EncodeTxnMetaKey([]byte("DDLJobHistory"), []byte("job"), startTS), Value: createJob,
+	}, consts.DefaultCF, startTS, collector))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, false, startTS))
 	stageName := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(888888))
 	tk.MustQuery("select count(*) from " + stageName).Check(testkit.Rows("0"))
 	stageID := source.TableID
-	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, true))
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, false, true, startTS))
 	require.Equal(t, stageID, source.TableID)
 	// Once saved, this source is part of the baseline. Losing its stage must
 	// never be repaired with an empty table, even on a subsequent fresh run.
@@ -286,12 +292,12 @@ func TestRestoreMaskingPolicyNewLogOnlyStage(t *testing.T) {
 	tk.MustExec("drop table " + stageName)
 	for _, saved := range []bool{false, true} {
 		for _, fullSnapshot := range []bool{false, true} {
-			require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, fullSnapshot, saved), "staging table is missing")
+			require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, mapping, true, fullSnapshot, saved, startTS), "staging table is missing")
 		}
 	}
 	unknown := stream.NewTableMappingManager()
 	unknown.DBReplaceMap = mapping.DBReplaceMap
-	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, unknown, true, false, false), "staging table is missing")
+	require.ErrorContains(t, task.PrepareMaskingPolicyStagingForTest(ctx, dom, se, unknown, true, false, false, startTS), "staging table is missing")
 }
 
 func TestRestoreMaskingPoliciesInRestoreMode(t *testing.T) {
@@ -445,8 +451,12 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 		tk.MustQuery("select policy_name from mysql.tidb_masking_policy where table_name='protected' order by policy_name").
 			Check(testkit.Rows("p_a", "p_b_renamed", "p_c"))
 		tk.MustGetErrCode("select a from bystander", errno.ErrProtectedTableMode)
-		require.Zero(t, fenceRecords())
+		tk.MustQuery(fenceRecord).Check(testkit.Rows("987654321 5"))
 	}
+
+	// Only task 5 can clean its pending record; this rebuild cannot infer
+	// whether the missing table was dropped or has not been created yet.
+	tk.MustExec("delete from mysql.tidb_pitr_masking_policy_fence where table_id = 987654321 and restore_id = 5")
 
 	// Without a task ID the fence could not be attributed afterwards, so a swap
 	// that needs one is refused while the old policies are still in place.
@@ -514,17 +524,19 @@ func TestRestoreMaskingPoliciesKeepsBaselineUntilReplaced(t *testing.T) {
 	require.Zero(t, fenceRecords())
 	tk.MustGetErrCode("select a from bystander", errno.ErrProtectedTableMode)
 
-	// In a filtered restore a table fenced by a successful swap stays fenced
-	// until the caller reopens the selected tables, and nothing is recorded.
+	// A filtered restore records protection before import. Its caller reopens
+	// tables after rebuilding policies, then removes only its own records.
 	tk.MustExec("delete from " + qualified + " where table_id = 42")
 	stagePolicy(7, "p_c_renamed", "c", 3, "'filtered'")
-	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 0, nil))
+	require.NoError(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, []int64{tbl.Meta().ID}, 9, nil))
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, false, 9, nil))
 	tk.MustGetErrCode("select a, b, c from protected", errno.ErrProtectedTableMode)
-	require.Zero(t, fenceRecords())
+	require.Equal(t, 1, fenceRecords())
 	setMode(tbl.Meta().ID, model.TableModeNormal)
+	require.NoError(t, task.ReopenMaskingPolicyTablesForTest(ctx, dom, se, []int64{tbl.Meta().ID}, 9))
+	require.Zero(t, fenceRecords())
 	tk.MustQuery("select a, b, c from protected").Check(testkit.Rows("secret_a secret_b filtered"))
 	setMode(bystander.Meta().ID, model.TableModeNormal)
-	tk.MustQuery("select a from bystander").Check(testkit.Rows())
 }
 
 // The proof that a table is new to a log-only restore is read from the history
@@ -590,4 +602,126 @@ func TestTableNewToBaseFromBatchCreateHistory(t *testing.T) {
 			require.False(t, mapping.IsTableNewToBase(tableID, false, history.StartTS+1))
 		}
 	}
+}
+
+func TestRestoreMaskingProtectionBeforeDataImport(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table guarded(c varchar(20))")
+	tk.MustExec("insert into guarded values ('secret')")
+	tk.MustExec("prepare cached from 'select c from guarded'")
+	tk.MustQuery("execute cached").Check(testkit.Rows("secret"))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	guarded, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("guarded"))
+	require.NoError(t, err)
+	var futureID int64
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		futureID, err = meta.NewMutator(txn).GenGlobalID()
+		return err
+	}))
+	g := &gluemock.MockGlue{}
+	g.SetSession(tk.Session())
+	se, err := g.CreateSession(store)
+	require.NoError(t, err)
+	tk.MustExec("create table active_import(c varchar(20))")
+	importing, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("active_import"))
+	require.NoError(t, err)
+	require.NoError(t, se.AlterTableMode(ctx, importing.Meta().DBID, importing.Meta().ID, model.TableModeImport))
+	require.ErrorContains(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, []int64{guarded.Meta().ID, importing.Meta().ID}, 7, nil), "Import mode")
+	tk.MustQuery("select c from guarded").Check(testkit.Rows("secret"))
+	require.NoError(t, se.AlterTableMode(ctx, importing.Meta().DBID, importing.Meta().ID, model.TableModeNormal))
+	ids := []int64{guarded.Meta().ID, futureID}
+	require.NoError(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, ids, 7, nil))
+	tk.MustGetErrCode("select c from guarded", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("execute cached", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("explain analyze select @restored_secret := c from guarded", errno.ErrProtectedTableMode)
+	tk.MustQuery("select @restored_secret").Check(testkit.Rows("<nil>"))
+
+	// The future table is protected at creation, before any SST import.
+	info := guarded.Meta().Clone()
+	info.ID, info.Name, info.Mode = futureID, pmodel.NewCIStr("future_guarded"), model.TableModeRestore
+	tk.Session().SetValue(sessionctx.QueryString, "create table future_guarded(c varchar(20))")
+	require.NoError(t, dom.DDLExecutor().CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), info, nil, ddl.WithIDAllocated(true)))
+	tk.MustGetErrCode("select c from future_guarded", errno.ErrProtectedTableMode)
+	// Cancellation and a failed log phase leave both normal and cached reads blocked.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Error(t, task.ProtectMaskingPolicyTablesForTest(cancelled, dom, se, ids, 7, nil))
+	tk.MustGetErrCode("execute cached", errno.ErrProtectedTableMode)
+	require.Error(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, ids, 8, func(context.Context, uint64) (bool, error) { return true, nil }))
+	// An unregistered failed owner may be taken over, but its protection stays up.
+	require.NoError(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, ids, 8, func(context.Context, uint64) (bool, error) { return false, nil }))
+	tk.MustGetErrCode("select c from guarded", errno.ErrProtectedTableMode)
+	vars := tk.Session().GetSessionVars()
+	vars.InMaskingPolicyRestore = true
+	require.NoError(t, se.Execute(ctx, "create masking policy p on test.guarded(c) as mask_full(c)"))
+	require.Error(t, se.Execute(ctx, "create masking policy bad on test.future_guarded(c) as no_such_function(c)"))
+	vars.InMaskingPolicyRestore = false
+	tk.MustGetErrCode("select c from guarded", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("select c from future_guarded", errno.ErrProtectedTableMode)
+	vars.InMaskingPolicyRestore = true
+	require.NoError(t, se.Execute(ctx, "create masking policy p on test.future_guarded(c) as mask_full(c)"))
+	vars.InMaskingPolicyRestore = false
+	require.NoError(t, task.ReopenMaskingPolicyTablesForTest(ctx, dom, se, ids, 8))
+	tk.MustQuery("execute cached").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select c from future_guarded").Check(testkit.Rows())
+}
+
+func TestRestoreBootstrapCreatedMaskingPolicyStage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	g := &gluemock.MockGlue{}
+	g.SetSession(tk.Session())
+	se, err := g.CreateSession(store)
+	require.NoError(t, err)
+	const startTS = uint64(1<<60) + 100
+	mapping := stream.NewTableMappingManager()
+	mapping.SetFromPiTRIDMap()
+	mapping.MergeBaseDBReplace(map[int64]*stream.DBReplace{1: stream.NewDBReplace(mysql.SystemDB, 1)})
+	info, err := json.Marshal(&model.TableInfo{ID: 99, Name: pmodel.NewCIStr("tidb_masking_policy"), BootstrapCreatedTS: startTS})
+	require.NoError(t, err)
+	collector := stream.NewTableHistoryManager()
+	require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+		Key: utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(99), startTS), Value: info,
+	}, consts.DefaultCF, startTS, collector))
+	require.NoError(t, mapping.ParseMetaKvAndUpdateIdMapping(&kv.Entry{
+		Key: utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(99), startTS+1), Value: codec.EncodeUvarint([]byte{'P'}, startTS),
+	}, consts.WriteCF, startTS+1, collector))
+	mapping.DBReplaceMap[1].TableMap[99].TableID = 999999
+	require.NoError(t, task.PrepareMaskingPolicyStagingForTest(context.Background(), dom, se, mapping, true, false, false, startTS))
+	tk.MustQuery("select count(*) from mysql.tidb_pitr_masking_policy_999999").Check(testkit.Rows("0"))
+}
+
+func TestRestoreMaskingRebuildPreservesPendingForeignFence(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table pending_guard(c varchar(20))")
+	tk.MustExec("insert into pending_guard values ('secret')")
+	ctx := context.Background()
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("pending_guard"))
+	require.NoError(t, err)
+	g := &gluemock.MockGlue{}
+	g.SetSession(tk.Session())
+	se, err := g.CreateSession(store)
+	require.NoError(t, err)
+	require.NoError(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, []int64{tbl.Meta().ID}, 7, nil))
+	// Task 8 has persisted protection for a table that it has not created yet.
+	tk.MustExec("insert into mysql.tidb_pitr_masking_policy_fence values (999999999, 8)")
+	stageName := snapclient.MaskingPolicyStagingTableName(123)
+	qualified := utils.EncloseDBAndTable(mysql.SystemDB, stageName)
+	tk.MustExec("create table " + qualified + " like mysql.tidb_masking_policy")
+	tk.MustExec("insert into " + qualified + " (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (1,'p','source','t',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')")
+	stage, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(mysql.SystemDB), pmodel.NewCIStr(stageName))
+	require.NoError(t, err)
+	userDB := stream.NewDBReplace("source", tbl.Meta().DBID)
+	userDB.TableMap[42] = stream.NewTableReplace("pending_guard", tbl.Meta().ID)
+	sysDB := stream.NewDBReplace(mysql.SystemDB, stage.Meta().DBID)
+	sysDB.TableMap[99] = stream.NewTableReplace("tidb_masking_policy", stage.Meta().ID)
+	schemas := stream.NewSchemasReplace(map[int64]*stream.DBReplace{1: userDB, 2: sysDB}, false, nil, 0, nil, false)
+	require.NoError(t, task.RestoreMaskingPoliciesAfterLogReplayForTest(ctx, dom, se, schemas, true, 7, nil))
+	tk.MustQuery("select c from pending_guard").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select table_id,restore_id from mysql.tidb_pitr_masking_policy_fence").Check(testkit.Rows("999999999 8"))
 }

@@ -16,10 +16,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"slices"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -237,7 +236,7 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 				return plain, err
 			}
 			if result.masked {
-				return plain, errors.New("masking policy cannot be preserved through window function")
+				return plain, &maskingNotPreservedError{shape: "window function"}
 			}
 		}
 		return plain, nil
@@ -330,14 +329,14 @@ func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expressi
 	for _, col := range expression.ExtractCorColumns(expr) {
 		outer := m.correlatedSource(&col.Column)
 		if outer == nil {
-			return maskingResult{}, errors.New("masking policy cannot be preserved through scalar subquery")
+			return maskingResult{}, &maskingNotPreservedError{shape: "scalar subquery"}
 		}
 		result, err := m.column(outer, &col.Column)
 		if err != nil {
 			return result, err
 		}
 		if result.masked {
-			return result, errors.New("masking policy cannot be preserved through scalar subquery")
+			return result, &maskingNotPreservedError{shape: "scalar subquery"}
 		}
 	}
 	if col, ok := expr.(*expression.Column); ok {
@@ -358,7 +357,7 @@ func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expressi
 		// Rebuilding a result must not evaluate RAND, variable assignments or
 		// other mutable expressions a second time after sorting/filtering.
 		if expression.IsMutableEffectsExpr(expr) {
-			return result, errors.New("masking policy cannot be preserved through mutable expression")
+			return result, &maskingNotPreservedError{shape: "mutable expression"}
 		}
 		var err error
 		result.expr, err = m.substitute(expr, expression.NewSchema(cols...), replacements)
@@ -393,7 +392,7 @@ func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, exp
 func (m *maskingResultBuilder) substitute(expr expression.Expression, schema *expression.Schema, replacements []expression.Expression) (expression.Expression, error) {
 	failed, result := expression.ColumnSubstituteAll(m.b.ctx.GetExprCtx(), expr, schema, replacements)
 	if failed {
-		return nil, errors.New("masking policy cannot be preserved through expression substitution")
+		return nil, &maskingNotPreservedError{shape: "expression substitution"}
 	}
 	return result, nil
 }
@@ -451,7 +450,7 @@ func (m *maskingResultBuilder) aggregate(p *logicalop.LogicalAggregation, idx in
 			result.expr, err = m.substitute(result.expr, expression.NewSchema(arg.(*expression.Column)), []expression.Expression{col})
 			return result, err
 		}
-		return plain, errors.New("masking policy cannot be preserved through aggregate")
+		return plain, &maskingNotPreservedError{shape: "aggregate"}
 	}
 	return plain, nil
 }
@@ -507,7 +506,7 @@ func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (mas
 		// Until operand provenance can be represented through de-duplication,
 		// only an unchanged column with the same policy in every branch is safe.
 		if i > 0 && (result.masked != branch.masked || result.policyID != branch.policyID) || branch.masked && branch.policyID == 0 {
-			return result, errors.New("masking policy cannot be preserved through UNION")
+			return result, &maskingNotPreservedError{shape: "UNION"}
 		}
 		if branch.masked {
 			branch.expr, err = m.substitute(branch.expr, expression.NewSchema(input), []expression.Expression{col})
@@ -515,7 +514,7 @@ func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (mas
 				return result, err
 			}
 			if i > 0 && !result.expr.Equal(m.b.ctx.GetExprCtx().GetEvalCtx(), branch.expr) {
-				return result, errors.New("masking policy cannot be preserved through UNION")
+				return result, &maskingNotPreservedError{shape: "UNION"}
 			}
 			result = branch
 		}
@@ -641,19 +640,26 @@ func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingRes
 			return result, err
 		}
 		if result.masked || branch.masked {
-			return result, errors.New("masking policy cannot be preserved through recursive CTE")
+			return result, &maskingNotPreservedError{shape: "recursive CTE"}
 		}
 	}
 	if !result.masked {
 		return maskingResult{expr: col}, nil
 	}
 	if result.policyID == 0 {
-		return result, errors.New("masking policy cannot be preserved through materialized CTE")
+		return result, &maskingNotPreservedError{shape: "materialized CTE"}
 	}
 	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
 	return result, err
 }
 
+type maskingNotPreservedError struct{ shape string }
+
+func (e *maskingNotPreservedError) Error() string {
+	return "masking policy cannot be preserved through " + e.shape
+}
+
 func isMaskingNotPreservedErr(err error) bool {
-	return strings.HasPrefix(err.Error(), "masking policy cannot be preserved")
+	var target *maskingNotPreservedError
+	return errors.As(err, &target)
 }

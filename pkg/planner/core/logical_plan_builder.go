@@ -501,16 +501,20 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		// A derived table, view or CTE used by UPDATE is a SELECT source too.
-		// Plain target-table reads keep their ordinary UPDATE semantics.
+		// Derived tables, views and CTEs are SELECT sources of write statements.
+		// Plain target-table reads keep their ordinary write semantics.
 		// A table that is dirty in the transaction, or a cached table, is read
 		// through a LogicalUnionScan over its DataSource: still a base table.
 		source := p
 		if us, ok := source.(*logicalop.LogicalUnionScan); ok && len(us.Children()) == 1 {
 			source = us.Children()[0]
 		}
-		if _, baseTable := source.(*logicalop.DataSource); b.inUpdateStmt && (!isTableName || !baseTable) {
-			if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, ast.MaskingPolicyRestrictOpUpdateSelect); err != nil {
+		if _, baseTable := source.(*logicalop.DataSource); (b.inUpdateStmt || b.inDeleteStmt) && (!isTableName || !baseTable) {
+			op := ast.MaskingPolicyRestrictOpUpdateSelect
+			if b.inDeleteStmt {
+				op = ast.MaskingPolicyRestrictOpDeleteSelect
+			}
+			if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, op); err != nil {
 				return nil, err
 			}
 		}
