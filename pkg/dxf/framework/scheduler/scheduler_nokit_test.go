@@ -561,6 +561,14 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	t.Run("test onResuming", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
+		// wait for running subtasks to drain before transitioning to running
+		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(map[proto.SubtaskState]int64{
+			proto.SubtaskStateRunning: 1,
+		}, nil)
+		require.NoError(t, scheduler.onResuming())
+		require.Equal(t, *scheduler.getTaskClone(), task)
+		require.True(t, ctrl.Satisfied())
+
 		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().ResumedTask(gomock.Any(), task.ID).Return(fmt.Errorf("resume err"))
 		require.ErrorContains(t, scheduler.onResuming(), "resume err")

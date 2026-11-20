@@ -406,3 +406,77 @@ func checkTaskAfterModify(
 		require.Equal(t, expected, gotSubtasks[i].Concurrency)
 	}
 }
+
+func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	cases := []struct {
+		key   string
+		state proto.TaskState
+	}{
+		{"cancel-pausing", proto.TaskStatePausing},
+		{"cancel-paused", proto.TaskStatePaused},
+		{"cancel-resuming", proto.TaskStateResuming},
+		{"cancel-modifying", proto.TaskStateModifying},
+	}
+
+	for _, tc := range cases {
+		id, err := gm.CreateTask(ctx, tc.key, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		require.NoError(t, err)
+		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+			_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`update mysql.tidb_global_task set state = %? where id = %?`, tc.state, id)
+			return execErr
+		}))
+		pendingID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+		pausedID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePaused, "test", 1)
+		runningID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStateRunning, "test", 1)
+
+		require.NoError(t, gm.CancelTask(ctx, id))
+		task, err := gm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, proto.TaskStateCancelling, task.State)
+
+		subtasks, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepOne)
+		require.NoError(t, err)
+		statesByID := make(map[int64]proto.SubtaskState, len(subtasks))
+		for _, st := range subtasks {
+			statesByID[st.ID] = st.State
+		}
+		require.Equal(t, proto.SubtaskStatePending, statesByID[pendingID])
+		require.Equal(t, proto.SubtaskStateCanceled, statesByID[pausedID])
+		require.Equal(t, proto.SubtaskStateRunning, statesByID[runningID])
+	}
+
+	// Verify CancelTaskByKeySession also cancels paused tasks and cascades paused subtasks.
+	id, err := gm.CreateTask(ctx, "cancel-key-paused", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`update mysql.tidb_global_task set state = %? where id = %?`, proto.TaskStatePaused, id)
+		return execErr
+	}))
+	pausedID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePaused, "test", 1)
+	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+		return gm.CancelTaskByKeySession(ctx, se, "cancel-key-paused")
+	}))
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateCancelling, task.State)
+	subtasks, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+	require.Equal(t, pausedID, subtasks[0].ID)
+	require.Equal(t, proto.SubtaskStateCanceled, subtasks[0].State)
+
+	// Verify StartSubtask is idempotent if already running for the same execID,
+	// and rejects subtasks that are no longer pending (e.g., canceled).
+	runningSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
+	pendingSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.CancelSubtask(ctx, ":4000", id))
+	require.ErrorIs(t, gm.StartSubtask(ctx, pendingSubtaskID, ":4000"), storage.ErrSubtaskNotFound)
+}

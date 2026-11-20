@@ -357,18 +357,22 @@ func (s *BaseScheduler) onResuming() error {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
-	if cntByStates[proto.SubtaskStatePaused] == 0 {
-		// Finish the resuming process.
-		s.logger.Info("all paused tasks converted to pending state, update the task to running state")
-		if err = s.taskMgr.ResumedTask(s.ctx, task.ID); err != nil {
-			return err
-		}
-		task.State = proto.TaskStateRunning
-		s.task.Store(task)
+	if cntByStates[proto.SubtaskStatePaused] > 0 {
+		return s.taskMgr.ResumeSubtasks(s.ctx, task.ID)
+	}
+	if cntByStates[proto.SubtaskStateRunning] > 0 {
+		s.sampleLogger.Info("on resuming state, waiting for running subtasks to finish",
+			zap.Int64("running", cntByStates[proto.SubtaskStateRunning]))
 		return nil
 	}
-
-	return s.taskMgr.ResumeSubtasks(s.ctx, task.ID)
+	// Finish the resuming process.
+	s.logger.Info("all paused tasks converted to pending state, update the task to running state")
+	if err = s.taskMgr.ResumedTask(s.ctx, task.ID); err != nil {
+		return err
+	}
+	task.State = proto.TaskStateRunning
+	s.task.Store(task)
+	return nil
 }
 
 // handle task in reverting state, check all revert subtasks finishes.
