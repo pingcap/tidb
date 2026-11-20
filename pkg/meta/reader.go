@@ -63,7 +63,13 @@ type Reader interface {
 	GetSystemDBID() (int64, error)
 	GetSchemaCacheSize() (size uint64, isNull bool, err error)
 	GetBootstrapVersion() (int64, error)
+	GetLegacyECDSASessionTokenDisabled() (bool, error)
 	GetStarterBootstrapVersion() (int64, error)
+	// IsLegacyNextGen reports whether a NextGen keyspace retains Classic
+	// system-table IDs, as existing Starter tier keyspaces do.
+	// Do not call it before initial system-schema bootstrap: an empty NextGen
+	// keyspace also returns true.
+	IsLegacyNextGen() (bool, error)
 }
 
 // NewReader creates a meta Reader in snapshot.

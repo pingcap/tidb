@@ -433,6 +433,12 @@ func JobNeedGC(job *model.Job) bool {
 			}
 			return false
 		}
+	} else if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+		// Placement and TiFlash PD rules can survive rollback of the replacement log's metadata.
+		// Return true to queue a delete-range record for NewMLogID: processing that
+		// record also removes those rules, even if the log contains no data.
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		return err == nil && args.NewMLogID != 0
 	}
 	return false
 }
@@ -923,6 +929,11 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 // countForError records the error count for DDL job.
 func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
 	job.Error = toTError(err)
+	// Refresh lock contention is an expected wait for an already-started
+	// MLog ADD COLUMN, including its multi-schema parent.
+	if isMLogAddColumnRefreshLockWait(job, err) {
+		return err
+	}
 	job.ErrorCount++
 
 	logger := jobCtx.logger

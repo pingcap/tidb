@@ -1097,8 +1097,8 @@ const (
 	ErrTimeStampInDSTTransition            = 8179
 	ErrQueryExecStopped                    = 8180
 	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
-	_                                      = 8182 // reserved for ErrMVAdvisoryLockConflict
-	_                                      = 8183 // reserved for ErrMVRefreshLogBaselineChanged
+	ErrMVAdvisoryLockConflict              = 8182
+	ErrMVRefreshLogBaselineChanged         = 8183
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1174,6 +1174,9 @@ const (
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
+
+	// Maintenance errors.
+	ErrMaintenanceMode = 8277
 
 	// Reserved for future use.
 	ErrEngineAttributeInvalidFormat             = 8270

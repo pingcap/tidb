@@ -54,6 +54,7 @@ require (
 	github.com/fatih/structtag v1.2.0
 	github.com/felixge/fgprof v0.9.5
 	github.com/fsouza/fake-gcs-server v1.44.0
+	github.com/go-asn1-ber/asn1-ber v1.5.4
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/go-sql-driver/mysql v1.7.1
@@ -91,6 +92,7 @@ require (
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.17.0
 	github.com/mitchellh/copystructure v1.2.0
+	github.com/ncw/directio v1.0.5
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
@@ -235,7 +237,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -291,7 +292,6 @@ require (
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
-	github.com/ncw/directio v1.0.5 // indirect
 	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect

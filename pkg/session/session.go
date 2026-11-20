@@ -4412,18 +4412,27 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-// initBootstrapDependentTables creates system tables that classic kernel upgrade
-// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+// initBootstrapDependentTables creates system tables that Classic and legacy
+// NextGen upgrade DDL may consult before reaching their ordinary creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
-	// This is only for classic upgrades from below version280. Fresh bootstrap and
-	// next-gen create the table elsewhere. After version280, the table may have been renamed.
-	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
+	// After version280, the table may have been renamed. Fresh bootstrap and
+	// native NextGen create the table elsewhere.
+	if ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
+		if kerneltype.IsNextGen() {
+			isLegacyNextGen, err := t.IsLegacyNextGen()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !isLegacyNextGen {
+				return nil
+			}
+		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
@@ -4539,6 +4548,34 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
+		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return BootstrapSessionWithExternalWorkloadManager(store, nil)
@@ -4567,6 +4604,10 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
 	if diagnosticmode.Enabled() {
 		return bootstrapSessionImplDiagnostic(ctx, store)
 	}
@@ -4596,7 +4637,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	if kerneltype.IsNextGen() {
-		if err := bootstrapSchemas(store); err != nil {
+		if err := bootstrapNextGenSchemas(store); err != nil {
 			return nil, err
 		}
 	}
@@ -4611,6 +4652,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
 		if err != nil {
+			return nil, err
+		}
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
 			return nil, err
 		}
 	} else {

@@ -2394,6 +2394,15 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 			},
 		},
 	}
+	// A failed repair must prevent PiTR from reporting success with the stale
+	// allocator. Once the transient failure is gone, retrying can repair it.
+	err = func() error {
+		const fp = "github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"
+		require.NoError(t, failpoint.Enable(fp, `return("no_retry")`))
+		defer func() { require.NoError(t, failpoint.Disable(fp)) }()
+		return client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace)
+	}()
+	require.ErrorContains(t, err, "mock commit error")
 	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
 
 	// After the fix: the service is synced to the persisted value, so the next
@@ -3494,9 +3503,9 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index", `return(true)`))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
 		}()
 		ingestRecorder := ingestrec.New()
 		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
@@ -3508,19 +3517,19 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index", `return(true)`))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index")
 		}()
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index", `return(true)`))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index")
 		}()
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index"))
 		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 
 		infoSchema = s.Mock.InfoSchema()

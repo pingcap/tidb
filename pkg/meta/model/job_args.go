@@ -793,6 +793,8 @@ type MViewRefreshSource struct {
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs contains the metadata
 // needed to atomically replace an MV with its freshly built shadow table.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
+	OldMLogID                          int64                `json:"old_mlog_id,omitempty"`
+	NewMLogID                          int64                `json:"new_mlog_id,omitempty"`
 	OldMViewID                         int64                `json:"old_mview_id,omitempty"`
 	ShadowTableID                      int64                `json:"shadow_table_id,omitempty"`
 	BuildReadTSO                       uint64               `json:"build_read_tso,omitempty"`
@@ -807,13 +809,13 @@ type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
 	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
 		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
-		a.ExpectedOldMViewRevision, a.BuildSources}
+		a.ExpectedOldMViewRevision, a.BuildSources, a.OldMLogID, a.NewMLogID}
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
 		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
-		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources))
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision, &a.BuildSources, &a.OldMLogID, &a.NewMLogID))
 }
 
 // GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.

@@ -1176,6 +1176,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
 	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
 	ErrMaxKeysReadExceeded:                      mysql.Message("tidb_max_keys_read limit exceeded", nil),
+	ErrMaintenanceMode:                          mysql.Message("During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
@@ -1214,4 +1215,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
 	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
+	ErrMVAdvisoryLockConflict:             mysql.Message("materialized view advisory lock conflict: %s", nil),
+	ErrMVRefreshLogBaselineChanged:        mysql.Message("refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it", nil),
 }

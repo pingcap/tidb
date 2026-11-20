@@ -2001,6 +2001,15 @@ func checkProtectedMaterializedViewShadowConstraint(
 	if allowInternalMViewShadowBypass(sv) {
 		return nil
 	}
+	if op == "DROP TABLE" {
+		// The DDL owner runs this check again before dropping the table.
+		if isMaterializedViewShadowTableExpired(tblInfo.Name.L, time.Now()) {
+			return nil
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"DROP TABLE on materialized view shadow table younger than 7 days or with an invalid creation timestamp",
+		)
+	}
 	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 		fmt.Sprintf("%s on materialized view shadow table", op),
 	)
@@ -2032,6 +2041,27 @@ func CheckIndexOperationMaterializedViewConstraints(sv *variable.SessionVars, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("%s on materialized view table", op))
 	}
 	return checkProtectedMaterializedViewShadowConstraint(sv, tblInfo, op)
+}
+
+func checkMaterializedViewGroupKeyIndexConstraints(tblInfo *model.TableInfo, indexName ast.CIStr, op string) error {
+	if tblInfo.MaterializedView == nil {
+		return nil
+	}
+	// Additional UNIQUE/PRIMARY indexes on MVs are disallowed, so the only such
+	// index is the auto-created group key. Integer clustered PKs have no IndexInfo.
+	if index := tblInfo.FindIndexByName(indexName.L); index != nil {
+		if !index.Unique && !index.Primary {
+			return nil
+		}
+		indexName = index.Name
+	} else if tblInfo.PKIsHandle && indexName.L == strings.ToLower(mysql.PrimaryKeyName) {
+		indexName = ast.NewCIStr(mysql.PrimaryKeyName)
+	} else {
+		return nil
+	}
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		fmt.Sprintf("%s on automatically created index %s of materialized view %s", op, indexName.O, tblInfo.Name.O),
+	)
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraints(
@@ -6308,6 +6338,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast
 		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
+	if err := checkMaterializedViewGroupKeyIndexConstraints(t.Meta(), indexName, "DROP INDEX"); err != nil {
+		return errors.Trace(err)
+	}
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
 	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
@@ -6617,6 +6650,10 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
+	}
+	// Check admission before recording provisional session locks.
+	if err := checkUserDDLJobAllowed(ctx, job.Type); err != nil {
+		return err
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
@@ -8024,10 +8061,27 @@ func isRetryableDDLCancelErr(err error) bool {
 		!dbterror.ErrDDLJobNotFound.Equal(err)
 }
 
+func checkUserDDLJobAllowed(ctx sessionctx.Context, jobType model.ActionType) error {
+	// Releasing existing locks, including session-close cleanup, must remain
+	// available during maintenance so other sessions are not left blocked.
+	if jobType == model.ActionUnlockTable {
+		return nil
+	}
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !ctx.GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("DDL")
+	}
+	return nil
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	// Check maintenance admission before submitting persistent DDL jobs. Local
+	// temporary-table DDL bypasses job submission and remains available.
+	if err := checkUserDDLJobAllowed(ctx, jobW.Type); err != nil {
+		return err
+	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()

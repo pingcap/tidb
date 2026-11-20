@@ -15,10 +15,45 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
+
+type captureWriterOptionsStorage struct {
+	storeapi.Storage
+	options []*storeapi.WriterOption
+}
+
+func (s *captureWriterOptionsStorage) Create(ctx context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
+	s.options = append(s.options, option)
+	return s.Storage.Create(ctx, name, option)
+}
+
+func TestWriteTableDataDirectIO(t *testing.T) {
+	for _, format := range []string{FileFormatSQLTextString, FileFormatCSVString, FileFormatParquetString} {
+		t.Run(format, func(t *testing.T) {
+			conf := defaultConfigForTest(t)
+			conf.OutputDirPath = t.TempDir()
+			conf.FileType = format
+			writer := createTestWriter(conf, t)
+			storage := &captureWriterOptionsStorage{Storage: writer.extStorage}
+			writer.extStorage = storage
+			tableIR := newMockTableIRWithColumnInfo("test", "t", [][]driver.Value{{"1"}}, nil,
+				[]*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}})
+			require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0))
+			require.Len(t, storage.options, 1)
+			require.NotNil(t, storage.options[0])
+			require.True(t, storage.options[0].DirectIO)
+			if format != FileFormatParquetString {
+				require.EqualValues(t, uploadPartSize, storage.options[0].PartSize)
+				require.Equal(t, uploadConcurrency, storage.options[0].Concurrency)
+			}
+		})
+	}
+}
 
 func TestWriteDatabaseMeta(t *testing.T) {
 	dir := t.TempDir()

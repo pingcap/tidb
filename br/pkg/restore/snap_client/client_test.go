@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -50,6 +52,12 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"go.uber.org/goleak"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 var mc *mock.Cluster
@@ -777,4 +785,98 @@ func TestGetMinUserTableID(t *testing.T) {
 		generateMetautilTable("test2", 5, 6),
 	})
 	require.Equal(t, int64(2), minUserTableID)
+}
+
+type mockImportPDClient struct {
+	pd.Client
+	stores []*metapb.Store
+}
+
+func (m *mockImportPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return m
+}
+
+func (m *mockImportPDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	return m.stores, nil
+}
+
+func (m *mockImportPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+	for _, store := range m.stores {
+		if store.GetId() == storeID {
+			return store, nil
+		}
+	}
+	return nil, errors.Errorf("store %d not found", storeID)
+}
+
+type fakeImportSSTServer struct {
+	import_sstpb.UnimplementedImportSSTServer
+}
+
+func (*fakeImportSSTServer) MultiIngest(context.Context, *import_sstpb.MultiIngestRequest) (*import_sstpb.IngestResponse, error) {
+	return &import_sstpb.IngestResponse{}, nil
+}
+
+func (*fakeImportSSTServer) BatchDownload(context.Context, *import_sstpb.DownloadRequest) (*import_sstpb.DownloadResponse, error) {
+	return &import_sstpb.DownloadResponse{}, nil
+}
+
+func TestSnapClientCloseClosesImporterWithoutRestorer(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	import_sstpb.RegisterImportSSTServer(srv, &fakeImportSSTServer{})
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		_ = srv.Serve(lis)
+	}()
+	defer func() {
+		srv.Stop()
+		<-serveDone
+	}()
+
+	baseline := goleak.IgnoreCurrent()
+
+	addr := lis.Addr().String()
+	pdCli := &mockImportPDClient{
+		Client: mc.PDClient,
+		stores: []*metapb.Store{
+			{Id: 1, Address: addr},
+			{Id: 2, Address: addr},
+			{Id: 3, Address: addr},
+		},
+	}
+
+	keepaliveCfg := keepalive.ClientParameters{
+		Time:                10 * time.Second,
+		Timeout:             3 * time.Second,
+		PermitWithoutStream: true,
+	}
+	client := snapclient.NewRestoreClient(pdCli, nil, nil, keepaliveCfg)
+	client.SetConcurrencyPerStore(1)
+
+	err = client.LoadSchemaIfNeededAndInitClient(
+		context.Background(),
+		&backuppb.BackupMeta{IsRawKv: true},
+		&backuppb.StorageBackend{},
+		nil,
+		false,
+		nil,
+		nil,
+		false,
+		true,
+		false,
+	)
+	require.NoError(t, err)
+
+	// Closing SnapClient before GetRestorer initializes rc.restorer must still close
+	// rc.importer and its cached gRPC connections (e.g., checkpoint resume jumping straight
+	// to index repair without restoring SST files). Calling Close again must also be safe.
+	client.Close()
+	client.Close()
+	srv.Stop()
+	<-serveDone
+
+	require.NoError(t, goleak.Find(baseline))
 }

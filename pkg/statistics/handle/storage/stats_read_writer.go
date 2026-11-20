@@ -228,21 +228,6 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	return
 }
 
-func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
-	var partitionStats *statistics.Table
-	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
-	if err != nil {
-		return nil, err
-	}
-	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
-	if partitionStats == nil {
-		errMsg := fmt.Sprintf("table `%s` partition `%s`", tableInfo.Name.L, partitionDef.Name.L)
-		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-		return nil, err
-	}
-	return partitionStats, nil
-}
-
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {

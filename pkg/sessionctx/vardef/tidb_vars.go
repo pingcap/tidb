@@ -1098,7 +1098,8 @@ const (
 	// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
 	// but no longer affects behavior. Global stats always use the combined merge algorithm.
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
-	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	// TiDBEnableAsyncMergeGlobalStats is deprecated. It is kept for backward compatibility
+	// but no longer affects behavior. Global stats are always merged asynchronously.
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
@@ -1889,7 +1890,6 @@ const (
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
-	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true

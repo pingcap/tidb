@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -43,6 +44,57 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSystemSchemaIDs(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		for _, layout := range []struct {
+			name                    string
+			mysqlID, sysID, tableID int64
+		}{
+			{name: "classic", mysqlID: 1, sysID: 2, tableID: 100},
+			{name: "nextgen", mysqlID: metadef.SystemDatabaseID, sysID: metadef.SysDatabaseID, tableID: metadef.TiDBTableID},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", useV2, layout.name), func(t *testing.T) {
+				mysqlDB := &model.DBInfo{ID: layout.mysqlID, Name: ast.NewCIStr(mysql.SystemDB), State: model.StatePublic}
+				mysqlDB.Deprecated.Tables = []*model.TableInfo{
+					{ID: layout.tableID, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic},
+					{ID: 10000, DBID: layout.mysqlID, Name: ast.NewCIStr("custom_table"), State: model.StatePublic},
+					{ID: 10001, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb_mdl_view"), State: model.StatePublic, View: &model.ViewInfo{}},
+				}
+				sysDB := &model.DBInfo{ID: layout.sysID, Name: ast.NewCIStr(mysql.SysDB), State: model.StatePublic}
+				sysDB.Deprecated.Tables = []*model.TableInfo{{ID: 10002, DBID: layout.sysID,
+					Name: ast.NewCIStr("schema_unused_indexes"), State: model.StatePublic, View: &model.ViewInfo{}}}
+				userDB := &model.DBInfo{ID: 3, Name: ast.NewCIStr("test"), State: model.StatePublic}
+				userTableID := metadef.ReservedGlobalIDLowerBound + 1
+				userDB.Deprecated.Tables = []*model.TableInfo{{ID: userTableID, DBID: userDB.ID, Name: ast.NewCIStr("user_table"), State: model.StatePublic}}
+				builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), useV2).WithCrossKS(true)
+				require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{mysqlDB, sysDB, userDB}, nil, nil, nil, 1))
+				is := builder.Build(0)
+				if v2, raw := infoschema.IsV2(is); v2 {
+					// The ID index must work even when table metadata is not cached;
+					// there is no backing store for this test to load it from.
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb"))
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("custom_table"))
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb_mdl_view"))
+					raw.EvictTable(sysDB.Name, ast.NewCIStr("schema_unused_indexes"))
+				}
+				isLegacyNextGen := layout.name == "classic"
+				require.Equal(t, kerneltype.IsNextGen(), infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, layout.tableID))
+				for _, id := range []int64{0, -1, 10000, 10001, 10002} {
+					require.False(t, infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, id), "id=%d", id)
+				}
+				// Fresh NextGen keyspaces classify reserved IDs without needing loaded
+				// metadata, including system tables newly created during an upgrade.
+				for _, id := range []int64{layout.mysqlID, layout.sysID, userTableID, metadef.ReservedGlobalIDLowerBound + 2} {
+					require.Equal(t, kerneltype.IsNextGen() && !isLegacyNextGen,
+						infoschema.IsSystemTableInNextGen(is, isLegacyNextGen, id), "id=%d", id)
+				}
+			})
+		}
+	}
+	require.False(t, infoschema.IsSystemTableInNextGen(nil, false, 100))
+	require.Equal(t, kerneltype.IsNextGen(), infoschema.IsSystemTableInNextGen(nil, false, metadef.GlobalPrivTableID))
+}
 
 func TestBasic(t *testing.T) {
 	re := internal.CreateAutoIDRequirement(t)
