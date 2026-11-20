@@ -295,7 +295,7 @@ func TestMViewBuildDDLControl(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newMViewTaskTest(t, nil)
-			key := taskkey.ForImportJob(f.importJobID)
+			key := taskkey.ForJob(f.importJobID)
 			id, err := f.mgr.CreateTask(f.ctx, key, proto.ImportInto, f.store.GetKeyspace(), 1, "", 1, proto.ExtraParams{}, f.meta)
 			require.NoError(t, err)
 			workerCtx, stopWorker := context.WithTimeout(f.ctx, 15*time.Second)
