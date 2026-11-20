@@ -17,6 +17,7 @@ package importsdk
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
@@ -101,19 +102,36 @@ type JobStatus struct {
 	Phase          string
 	Status         string
 	SourceFileSize string
-	ImportedRows   int64
-	ResultMessage  string
-	CreateTime     time.Time
-	StartTime      time.Time
-	EndTime        time.Time
-	CreatedBy      string
-	UpdateTime     time.Time
-	Step           string
-	ProcessedSize  string
-	TotalSize      string
-	Percent        string
-	Speed          string
-	ETA            string
+	// SourceFileSizeBytes is populated by SHOW RAW IMPORT JOB(S). SourceFileSize
+	// is kept for compatibility with the original human SHOW IMPORT JOB(S) parser.
+	SourceFileSizeBytes int64
+	ImportedRows        int64
+	ResultMessage       string
+	// ErrorMessage is populated by SHOW RAW IMPORT JOB(S). ResultMessage is kept
+	// for compatibility with the original human SHOW IMPORT JOB(S) parser.
+	ErrorMessage string
+	// ContractVersion is zero for a legacy SHOW response. In that case the
+	// structured fields below are unavailable and retain their zero values.
+	ContractVersion int
+	StatusCategory  string
+	Error           *jobstats.RawError
+	Summary         *jobstats.RawSummary
+	CreateTime      time.Time
+	StartTime       time.Time
+	EndTime         time.Time
+	CreatedBy       string
+	UpdateTime      time.Time
+	CreateTimeUnix  int64
+	StartTimeUnix   int64
+	EndTimeUnix     int64
+	UpdateTimeUnix  int64
+	CurrentStep     *jobstats.RawStepStats
+	Step            string
+	ProcessedSize   string
+	TotalSize       string
+	Percent         string
+	Speed           string
+	ETA             string
 }
 
 // IsFinished returns true if the job is finished successfully.
@@ -133,5 +151,8 @@ func (s *JobStatus) IsCancelled() bool {
 
 // IsCompleted returns true if the job is in a terminal state.
 func (s *JobStatus) IsCompleted() bool {
+	if s.ContractVersion > 0 {
+		return s.StatusCategory == jobstats.StatusCategoryTerminal
+	}
 	return s.IsFinished() || s.IsFailed() || s.IsCancelled()
 }
