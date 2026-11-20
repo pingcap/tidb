@@ -228,12 +228,17 @@ func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*peb
 	return db, errors.Trace(err)
 }
 
-// openEngine must be called with holding mutex of Engine.
-func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+// openEngine initializes a local engine before publishing it to the manager.
+func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) (errRet error) {
 	db, err := em.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if errRet != nil {
+			errRet = multierr.Append(errRet, db.Close())
+		}
+	}()
 
 	sstDir := engineSSTDir(em.LocalStoreDir, engineUUID)
 	if !cfg.KeepSortDir {
@@ -246,37 +251,56 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 			return errors.Trace(err)
 		}
 	}
-	engineCtx, cancel := context.WithCancel(ctx)
-
-	e, _ := em.engines.LoadOrStore(engineUUID, &Engine{
-		UUID:               engineUUID,
-		sstDir:             sstDir,
-		sstMetasChan:       make(chan metaOrFlush, 64),
-		ctx:                engineCtx,
-		cancel:             cancel,
-		config:             cfg.Local,
-		tableInfo:          cfg.TableInfo,
-		duplicateDetection: em.DupeDetectEnabled,
-		dupDetectOpt:       em.DuplicateDetectOpt,
-		duplicateDB:        em.duplicateDB,
-		keyAdapter:         em.keyAdapter,
-		logger:             log.Wrap(logutil.Logger(ctx)),
-	})
-	engine := e.(*Engine)
+	// Pebble holds an exclusive lock on this UUID's DB directory until db.Close.
+	// Other opens of this UUID fail before reaching here, so we can load now and
+	// publish a new engine with Store only after initialization succeeds.
+	e, loaded := em.engines.Load(engineUUID)
+	var engine *Engine
+	if loaded {
+		engine = e.(*Engine)
+	} else {
+		engine = &Engine{
+			UUID:               engineUUID,
+			sstDir:             sstDir,
+			sstMetasChan:       make(chan metaOrFlush, 64),
+			config:             cfg.Local,
+			tableInfo:          cfg.TableInfo,
+			duplicateDetection: em.DupeDetectEnabled,
+			dupDetectOpt:       em.DuplicateDetectOpt,
+			duplicateDB:        em.duplicateDB,
+			keyAdapter:         em.keyAdapter,
+			logger:             log.Wrap(logutil.Logger(ctx)),
+		}
+	}
 	engine.lock(importMutexStateOpen)
 	defer engine.unlock()
-	engine.db.Store(db)
-	engine.sstIngester = dbSSTIngester{e: engine}
-	if err = engine.loadEngineMeta(); err != nil {
+
+	// Decode and allocate against temporary state: decoding may partially change
+	// metadata before failing. Missing persisted metadata retains the old values.
+	initialized := &Engine{UUID: engineUUID, logger: engine.logger}
+	initialized.db.Store(db)
+	initialized.TS = engine.TS
+	initialized.Length.Store(engine.Length.Load())
+	initialized.TotalSize.Store(engine.TotalSize.Load())
+	if err = initialized.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}
-	if engine.TS == 0 && cfg.TS > 0 {
-		engine.TS = cfg.TS
+	if initialized.TS == 0 && cfg.TS > 0 {
+		initialized.TS = cfg.TS
 		// we don't saveEngineMeta here, we can rely on the caller use the same TS to
 		// open the engine again.
 	}
-	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
+	if err = em.allocateTSIfNotExists(ctx, initialized); err != nil {
 		return errors.Trace(err)
+	}
+	engine.TS = initialized.TS
+	engine.Length.Store(initialized.Length.Load())
+	engine.TotalSize.Store(initialized.TotalSize.Load())
+	engine.db.Store(db)
+	engine.sstIngester = dbSSTIngester{e: engine}
+	if !loaded {
+		engine.ctx, engine.cancel = context.WithCancel(ctx)
+		em.engines.Store(engineUUID, engine)
 	}
 	engine.wg.Add(1)
 	go engine.ingestSSTLoop()
@@ -298,6 +322,11 @@ func (em *engineManager) closeEngine(
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if errRet != nil {
+				errRet = multierr.Append(errRet, db.Close())
+			}
+		}()
 		engine := &Engine{
 			UUID:               engineUUID,
 			sstMetasChan:       make(chan metaOrFlush),

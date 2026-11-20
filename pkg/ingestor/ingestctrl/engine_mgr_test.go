@@ -23,6 +23,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -107,6 +108,129 @@ func TestEngineManager(t *testing.T) {
 
 	require.True(t, isEmptyDir(backendConfig.LocalStoreDir))
 	em.close()
+
+	t.Run("failed initialization releases DB", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			directoryErr bool
+			metadataErr  bool
+			recovery     bool
+			existing     bool
+		}{
+			{name: "SST directory", directoryErr: true},
+			{name: "metadata", metadataErr: true},
+			{name: "timestamp"},
+			{name: "recovery metadata", metadataErr: true, recovery: true},
+			{name: "existing engine metadata", metadataErr: true, existing: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				storeHelper := mocklocal.NewMockStoreHelper(ctrl)
+				cfg := getBackendConfig(t)
+				cfg.CheckpointEnabled = true
+				em, err := newEngineManager(cfg, storeHelper, log.L())
+				require.NoError(t, err)
+				t.Cleanup(em.close)
+				engineID := uuid.New()
+				sstDir := engineSSTDir(cfg.LocalStoreDir, engineID)
+				if tc.directoryErr {
+					// A file at the directory path makes Mkdir fail without relying on permissions.
+					require.NoError(t, os.WriteFile(sstDir, []byte("checkpoint"), 0o600))
+				} else {
+					require.NoError(t, os.Mkdir(sstDir, 0o750))
+					require.NoError(t, os.WriteFile(path.Join(sstDir, "checkpoint"), []byte("preserved"), 0o600))
+				}
+
+				db, err := em.openEngineDB(engineID, false)
+				require.NoError(t, err)
+				require.NoError(t, db.Set([]byte("checkpoint"), []byte("preserved"), pebble.NoSync))
+				badMeta := []byte(`{"ts":7,"length":"bad"}`)
+				if tc.metadataErr {
+					require.NoError(t, db.Set(engineMetaKey, badMeta, pebble.NoSync))
+				}
+				require.NoError(t, db.Flush())
+				require.NoError(t, db.Close())
+
+				var existing *Engine
+				if tc.existing {
+					existing = &Engine{
+						UUID:         engineID,
+						logger:       log.L(),
+						ctx:          ctx,
+						cancel:       func() {},
+						sstDir:       sstDir,
+						sstMetasChan: make(chan metaOrFlush, 64),
+					}
+					existing.TS = 88
+					existing.Length.Store(3)
+					existing.TotalSize.Store(4)
+					em.engines.Store(engineID, existing)
+				}
+				if !tc.directoryErr && !tc.metadataErr {
+					storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), errors.New("injected GetTS error"))
+				}
+				engineCfg := &backend.EngineConfig{KeepSortDir: true}
+				if tc.recovery {
+					err = em.closeEngine(ctx, engineCfg, engineID)
+				} else {
+					err = em.openEngine(ctx, engineCfg, engineID)
+				}
+				require.Error(t, err)
+				if tc.directoryErr {
+					require.ErrorIs(t, err, os.ErrExist)
+				} else if tc.metadataErr {
+					require.ErrorContains(t, err, "cannot unmarshal")
+				} else {
+					require.ErrorContains(t, err, "injected GetTS error")
+				}
+				registered, ok := em.engines.Load(engineID)
+				if tc.existing {
+					require.True(t, ok)
+					require.Same(t, existing, registered)
+					require.Nil(t, existing.getDB())
+					require.Equal(t, uint64(88), existing.TS)
+					require.EqualValues(t, 3, existing.Length.Load())
+					require.EqualValues(t, 4, existing.TotalSize.Load())
+				} else {
+					require.False(t, ok, "failed initialization must not publish an engine")
+				}
+
+				// Reopening the same path proves failure cleanup released Pebble's file lock.
+				db, err = em.openEngineDB(engineID, false)
+				require.NoError(t, err)
+				value, closer, err := db.Get([]byte("checkpoint"))
+				require.NoError(t, err)
+				require.Equal(t, []byte("preserved"), value)
+				require.NoError(t, closer.Close())
+				if tc.metadataErr {
+					value, closer, err = db.Get(engineMetaKey)
+					require.NoError(t, err)
+					require.Equal(t, badMeta, value)
+					require.NoError(t, closer.Close())
+				}
+				require.NoError(t, saveEngineMetaToDB(&engineMeta{TS: 99}, db))
+				require.NoError(t, db.Flush())
+				require.NoError(t, db.Close())
+				if tc.directoryErr {
+					value, err := os.ReadFile(sstDir)
+					require.NoError(t, err)
+					require.Equal(t, []byte("checkpoint"), value)
+					require.NoError(t, os.Remove(sstDir))
+				} else {
+					value, err := os.ReadFile(path.Join(sstDir, "checkpoint"))
+					require.NoError(t, err)
+					require.Equal(t, []byte("preserved"), value)
+				}
+				if !tc.recovery {
+					require.NoError(t, em.openEngine(ctx, engineCfg, engineID))
+				}
+				require.NoError(t, em.closeEngine(ctx, engineCfg, engineID))
+				registered, ok = em.engines.Load(engineID)
+				require.True(t, ok)
+				require.Equal(t, uint64(99), registered.(*Engine).TS)
+			})
+		}
+	})
 }
 
 func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {

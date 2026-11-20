@@ -31,7 +31,6 @@ const ratePerSecMultiplier = 1000
 // - limit the max ingest requests in flight.
 // - limit the ingest requests number per second.
 type ingestLimiter struct {
-	ctx            context.Context
 	maxReqInFlight int
 	maxReqPerSec   float64
 	limiters       sync.Map // storeID(uint64) -> *ingestLimiterPerStore
@@ -42,16 +41,15 @@ type ingestLimiterPerStore struct {
 	limiter *rate.Limiter
 }
 
-func newIngestLimiter(ctx context.Context, maxReqInFlight int, maxReqPerSec float64) *ingestLimiter {
+func newIngestLimiter(maxReqInFlight int, maxReqPerSec float64) *ingestLimiter {
 	return &ingestLimiter{
-		ctx:            ctx,
 		maxReqInFlight: maxReqInFlight,
 		maxReqPerSec:   maxReqPerSec,
 		limiters:       sync.Map{},
 	}
 }
 
-func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
+func (l *ingestLimiter) Acquire(ctx context.Context, storeID uint64, n uint) error {
 	if l.maxReqInFlight == 0 && l.maxReqPerSec == 0 {
 		return nil
 	}
@@ -66,12 +64,12 @@ func (l *ingestLimiter) Acquire(storeID uint64, n uint) error {
 	}
 	ilps := v.(*ingestLimiterPerStore)
 	if l.maxReqPerSec > 0 {
-		if err := ilps.limiter.WaitN(l.ctx, int(n*ratePerSecMultiplier)); err != nil {
+		if err := ilps.limiter.WaitN(ctx, int(n*ratePerSecMultiplier)); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if l.maxReqInFlight > 0 {
-		return ilps.sem.Acquire(l.ctx, int64(n))
+		return ilps.sem.Acquire(ctx, int64(n))
 	}
 	return nil
 }
