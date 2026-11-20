@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
@@ -350,13 +352,17 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+		if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverInfo.SnapshotTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		// check GC safe point
 		err = checkSafePoint(w, recoverInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
+		ver, err = w.recoverTable(jobCtx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -387,18 +393,25 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 }
 
 func (w *worker) recoverTable(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t *meta.Mutator,
 	job *model.Job,
 	recoverInfo *model.RecoverTableInfo,
 ) (ver int64, err error) {
+	ctx := jobCtx.stepCtx
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(w.store.GetCodec(), recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
-	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
+	// Remove dropped table DDL job from gc_delete_range table in the same metadata
+	// transaction so a rollback restores the delete-range entries.
+	if w.sess != nil {
+		jobCtx.mustRollbackTxnOnError = true
+		err = w.delRangeManager.removeFromGCDeleteRangeWithSession(ctx, w.sess.Session(), recoverInfo.DropJobID)
+	} else {
+		err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
+	}
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -502,6 +515,51 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	defer w.sessPool.Put(ctx)
 
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
+}
+
+const recoverGCBarrierTTL = 10 * time.Minute
+
+func recoverGCBarrierID(jobID int64) string {
+	return fmt.Sprintf("ddl-recover-%d", jobID)
+}
+
+func isGCBarrierUnimplementedErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Unimplemented")
+}
+
+// setRecoverGCBarrier pins PD's GC safe point at snapshotTS on NullKeyspaceID so
+// Unified GC (which ignores mysql.tidb tikv_gc_enable) cannot collect ranges
+// belonging to the table/schema being recovered.
+func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS uint64) error {
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return nil
+	}
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+	if _, err := gcClient.SetGCBarrier(ctx, recoverGCBarrierID(jobID), snapshotTS, recoverGCBarrierTTL); err != nil {
+		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
+			logutil.DDLLogger().Warn("PD does not support SetGCBarrier, skip setting recover GC barrier",
+				zap.Int64("jobID", jobID), zap.Error(err))
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func deleteRecoverGCBarrier(ctx context.Context, w *worker, jobID int64) error {
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return nil
+	}
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+	if _, err := gcClient.DeleteGCBarrier(ctx, recoverGCBarrierID(jobID)); err != nil {
+		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {

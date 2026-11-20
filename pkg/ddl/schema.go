@@ -372,6 +372,10 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+		if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 
 		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
@@ -429,7 +433,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
