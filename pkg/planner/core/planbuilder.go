@@ -213,6 +213,12 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
+	// buildDepth is the depth of the running Build calls.
+	buildDepth int
+	// maskingSources owns the sources recorded for the result expressions of
+	// the statement being built, see expressionRewriter.maskingSource.
+	maskingSources *expression.SubstituteSources
+
 	ctx          base.PlanContext
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
@@ -582,6 +588,17 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+	// Every masking projection of the statement is built when the outermost
+	// call returns: an outer query block substitutes into the expressions of
+	// its derived tables. Their sources must not stay in the plan after that.
+	b.buildDepth++
+	defer func() {
+		if b.buildDepth--; b.buildDepth <= 0 {
+			b.buildDepth = 0
+			b.maskingSources.Release()
+			b.maskingSources = nil
+		}
+	}()
 	// Build might be called recursively, right now they all share the same resolve
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()

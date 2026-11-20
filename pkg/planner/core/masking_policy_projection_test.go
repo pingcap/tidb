@@ -706,10 +706,21 @@ func TestMaskingPolicyCollationSubstitution(t *testing.T) {
 	tk.MustExec("insert into t_collation values ('secret')")
 	tk.MustExec("create masking policy p on t_collation(c) as _utf8mb4'X' collate utf8mb4_general_ci")
 	tk.MustQuery("select c from t_collation").Check(testkit.Rows("X"))
-	// An expression over the column is built for the collation its policy returns.
-	tk.MustQuery("select concat(c, '!'), collation(concat(c, '!')), c = 'x', concat(c, '!') = 'x!' from t_collation").
-		Check(testkit.Rows("X! utf8mb4_general_ci 1 1"))
+	// An expression over the column is built for the value its policy returns:
+	// the result has the policy's collation, and a comparison in the select
+	// list is case-insensitive as that collation is.
+	tk.MustQuery("select collation(c), concat(c, '!'), collation(concat(c, '!')) from t_collation").
+		Check(testkit.Rows("utf8mb4_general_ci X! utf8mb4_general_ci"))
+	tk.MustQuery("select c = 'x', c = 'X', concat(c, '!') = 'x!', c in ('x', 'y'), c between 'w' and 'x' from t_collation").
+		Check(testkit.Rows("1 1 1 1 1"))
+	tk.MustQuery("select x from (select c = 'x' as x from t_collation) s").Check(testkit.Rows("1"))
+	// A predicate compares the stored value with the column's binary collation.
+	tk.MustQuery("select count(*) from t_collation where c = 'secret'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t_collation where c = 'SECRET'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t_collation where c = 'x'").Check(testkit.Rows("0"))
+	// Without the policy the same select-list comparison is binary.
+	tk.MustExec("alter table t_collation disable masking policy p")
+	tk.MustQuery("select collation(c), c = 'SECRET', c = 'secret' from t_collation").Check(testkit.Rows("utf8mb4_bin 0 1"))
 }
 
 func TestMaskingBuiltinNullableParameters(t *testing.T) {
@@ -1149,6 +1160,12 @@ func TestMaskingPolicyTypeChangingResultExpressions(t *testing.T) {
 	tk.MustQuery("select a.ti < 1.3, b.c = 'x1', a.ti = b.dec2 from type_source a join type_source b on a.ti = b.c").
 		Check(testkit.Rows("0 1 1"))
 
+	// A view and a CTE are query blocks of their own.
+	tk.MustExec("create view type_view as select ti < 1.3 as lt, c = 'x1' as eq, d between '2023' and '2025' as bt from type_source")
+	tk.MustQuery("select lt, eq, bt, not lt from type_view").Check(testkit.Rows("0 1 1 1"))
+	tk.MustQuery("with w as (select ti in (1.5, 7) as x, c in ('x1') as y from type_source) select x, y, x + y from w").
+		Check(testkit.Rows("1 1 2"))
+
 	// The parameters of a cached plan are compared with the masked values too.
 	tk.MustExec("prepare cmp_cached from 'select ti < ?, ti + ? from type_source'")
 	tk.MustExec("prepare cmp_derived from 'select x from (select ti <= ? as x from type_source) z'")
@@ -1174,6 +1191,50 @@ func TestMaskingPolicyTypeChangingResultExpressions(t *testing.T) {
 	} {
 		tk.MustExec("set @lt = " + tc.lt + ", @eq = " + tc.eq)
 		tk.MustQuery("execute cmp_decimal using @lt, @eq, @eq, @lt, @eq").Check(testkit.Rows(tc.want))
+	}
+}
+
+func TestMaskingPolicyTypeChangingPlanCache(t *testing.T) {
+	for _, instance := range []bool{false, true} {
+		t.Run(fmt.Sprint("instance=", instance), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			root := testkit.NewTestKit(t, store)
+			root.MustExec("use test")
+			root.MustExec("create table type_cache(id int primary key, ti tinyint not null)")
+			root.MustExec("insert into type_cache values (1, 1)")
+			root.MustExec("create masking policy p on type_cache(ti) as ti + 0.5")
+			ctx := context.Background()
+			if instance {
+				ctx = context.WithValue(ctx, core.PlanCacheKeyEnableInstancePlanCache{}, true)
+			}
+			// The masked value is 1.5 and the stored one 1.
+			run := func(tk *testkit.TestKit, firstHit bool) {
+				tk.MustExecWithContext(ctx, "use test")
+				tk.MustExecWithContext(ctx, "prepare st from 'select ti in (?, ?), ti between ? and ?, x from "+
+					"(select ti not in (?, ?) as x from type_cache) s, type_cache'")
+				for i, tc := range []struct{ a, b, want string }{
+					{"1", "2", "0 1 1"}, {"0", "1", "0 0 1"}, {"2", "3", "0 0 1"}, {"1", "2", "0 1 1"},
+				} {
+					tk.MustExecWithContext(ctx, "set @a="+tc.a+", @b="+tc.b)
+					tk.MustQueryWithContext(ctx, "execute st using @a, @b, @a, @b, @a, @b").Check(testkit.Rows(tc.want))
+					hit := "0"
+					if i > 0 || firstHit {
+						hit = "1"
+					}
+					tk.MustQueryWithContext(ctx, "select @@last_plan_from_cache").Check(testkit.Rows(hit))
+				}
+				tk.MustQueryWithContext(ctx, "select count(*) from type_cache where ti in (1, 2) and ti between 1 and 2").
+					Check(testkit.Rows("1"))
+			}
+			first := testkit.NewTestKit(t, store)
+			run(first, false)
+			second := testkit.NewTestKit(t, store)
+			run(second, instance)
+			// A plan cached by a closed session is still used by the others.
+			first.Session().Close()
+			run(second, true)
+			run(testkit.NewTestKit(t, store), instance)
+		})
 	}
 }
 

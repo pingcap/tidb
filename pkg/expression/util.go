@@ -496,8 +496,8 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *ScalarFunction:
 		substituted := false
 		hasFail := false
-		if fromSource && v.source.matches(v) {
-			args := CloneConstants(v.source.args)
+		if source := v.source.get(); fromSource && source.matches(v) {
+			args := CloneConstants(source.args)
 			for i, arg := range args {
 				changed, failed, newArg := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, fromSource)
 				if failed {
@@ -511,7 +511,7 @@ func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if !substituted {
 				return false, false, v
 			}
-			newFunc, err := v.source.build(ctx, args)
+			newFunc, err := source.build(ctx, args)
 			if err != nil {
 				return true, true, v
 			}

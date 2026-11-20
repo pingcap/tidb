@@ -153,6 +153,76 @@ func TestClone(t *testing.T) {
 	}
 }
 
+func TestSubstituteSource(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeTiny)
+	col := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	other := &Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	newLT := func() *ScalarFunction {
+		f, err := NewFunction(ctx, ast.LT, tp, col, NewOne())
+		require.NoError(t, err)
+		return f.(*ScalarFunction)
+	}
+	// The name of the substituted function tells whether it was built from its
+	// source (gt) or from its current arguments (lt).
+	substitute := func(f *ScalarFunction, fromSource bool) string {
+		schema, replacements := NewSchema(col), []Expression{other}
+		failed, result := ColumnSubstituteAll(ctx, f, schema, replacements)
+		if fromSource {
+			failed, result = ColumnSubstituteAllFromSource(ctx, f, schema, replacements)
+		}
+		require.False(t, failed)
+		require.Equal(t, []*Column{other}, ExtractColumns(result))
+		return result.(*ScalarFunction).FuncName.L
+	}
+	hash64 := func(f *ScalarFunction) uint64 {
+		hasher := base.NewHashEqualer()
+		f.Hash64(hasher)
+		return hasher.Sum64()
+	}
+	requireSame := func(a, b *ScalarFunction) {
+		require.True(t, a.Equal(ctx, b))
+		require.True(t, a.Equals(b))
+		require.Equal(t, a.HashCode(), b.HashCode())
+		require.Equal(t, a.CanonicalHashCode(), b.CanonicalHashCode())
+		require.Equal(t, hash64(a), hash64(b))
+		require.Equal(t, a.MemoryUsage(), b.MemoryUsage())
+	}
+
+	plain, sourced := newLT(), newLT()
+	sources := &SubstituteSources{}
+	sources.Set(sourced, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+		return NewFunction(ctx, ast.GT, tp, args...)
+	})
+	clone := sourced.Clone().(*ScalarFunction)
+	requireSame(plain, sourced)
+	requireSame(plain, clone)
+	require.Equal(t, ast.LT, substitute(plain, true))
+	require.Equal(t, ast.GT, substitute(sourced, true))
+	require.Equal(t, ast.GT, substitute(clone, true))
+	// Only ColumnSubstituteAllFromSource uses the source.
+	require.Equal(t, ast.LT, substitute(sourced, false))
+
+	// Changing the source of a clone does not change the one it was cloned
+	// from. A source over other columns than the function is not used.
+	clone.TransformSubstituteSource(func(e Expression) Expression {
+		if e == col {
+			return other
+		}
+		return e
+	})
+	requireSame(plain, clone)
+	require.Equal(t, ast.LT, substitute(clone, true))
+	require.Equal(t, ast.GT, substitute(sourced, true))
+
+	sources.Release()
+	requireSame(plain, sourced)
+	require.Equal(t, ast.LT, substitute(sourced, true))
+	require.Equal(t, ast.LT, substitute(sourced.Clone().(*ScalarFunction), true))
+	clone.TransformSubstituteSource(func(e Expression) Expression { return e })
+	require.Equal(t, ast.LT, substitute(clone, true))
+}
+
 func TestGetUint64FromConstant(t *testing.T) {
 	ctx := mock.NewContext()
 	con := &Constant{

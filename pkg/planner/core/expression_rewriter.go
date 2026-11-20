@@ -1721,7 +1721,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
-		er.betweenToExpression(v)
+		er.betweenToExpression(v.Not, &v.Type)
 	case *ast.CaseExpr:
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
 			er.tryFoldCounter--
@@ -1883,23 +1883,31 @@ func (er *expressionRewriter) maskingSource(args []expression.Expression) []expr
 	return expression.CloneConstants(args)
 }
 
-func setMaskingSource(
+// setMaskingSource records the source of expr: the arguments returned by
+// maskingSource, and how to build expr from such arguments. build must not keep
+// anything of this statement or session: the plan holding expr may be cached.
+func (er *expressionRewriter) setMaskingSource(
 	expr expression.Expression, source []expression.Expression,
 	build func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error),
 ) {
-	if sf, ok := expr.(*expression.ScalarFunction); ok && source != nil {
-		sf.SetSubstituteSource(source, build)
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || source == nil {
+		return
 	}
+	b := er.planCtx.builder
+	if b.maskingSources == nil {
+		b.maskingSources = &expression.SubstituteSources{}
+	}
+	b.maskingSources.Set(sf, source, build)
 }
 
 // maskingRebuilder returns how to build an expression again from its source:
-// build runs as it does for an ordinary expression, with the source as stack.
-func (er *expressionRewriter) maskingRebuilder(build func(er *expressionRewriter)) func(expression.BuildContext, []expression.Expression) (expression.Expression, error) {
-	// The rewriter is pooled and may serve another expression by then.
-	sctx, ctx := er.sctx, er.ctx
-	return func(_ expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+// build runs as it does for an ordinary expression, with the source as stack
+// and the given context.
+func maskingRebuilder(build func(er *expressionRewriter)) func(expression.BuildContext, []expression.Expression) (expression.Expression, error) {
+	return func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
 		sub := &expressionRewriter{
-			sctx: sctx, ctx: ctx,
+			sctx:     ctx,
 			ctxStack: slices.Clone(args), ctxNameStk: make([]*types.FieldName, len(args)),
 		}
 		build(sub)
@@ -1925,9 +1933,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 		source := er.maskingSource(args)
 		ret, err = newFunc(buildCtx, funcName, retType, args...)
 		// Folding may return an argument, which keeps its own source.
-		if err == nil && !slices.Contains(args, ret) {
-			setMaskingSource(ret, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
-				return newFunc(ctx, funcName, retType, args...)
+		if err == nil && source != nil && !slices.Contains(args, ret) {
+			// The caller's type often belongs to the statement's AST.
+			sourceType := retType.Clone()
+			er.setMaskingSource(ret, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return newFunc(ctx, funcName, sourceType, args...)
 			})
 		}
 	}
@@ -2297,7 +2307,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			}
 		}
 	}
-	setMaskingSource(function, source, er.maskingRebuilder(func(sub *expressionRewriter) { sub.inToExpression(lLen, not, tp) }))
+	if source != nil {
+		sourceType := tp.Clone()
+		er.setMaskingSource(function, source, maskingRebuilder(func(sub *expressionRewriter) { sub.inToExpression(lLen, not, sourceType) }))
+	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
@@ -2529,7 +2542,7 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	return
 }
 
-func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
+func (er *expressionRewriter) betweenToExpression(not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-3:]...)
 	if er.err != nil {
@@ -2556,27 +2569,30 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	var l, r expression.Expression
 	buildCtx := er.buildCtx()
-	l, er.err = expression.NewFunction(buildCtx, ast.GE, &v.Type, expr, lexp)
+	l, er.err = expression.NewFunction(buildCtx, ast.GE, tp, expr, lexp)
 	if er.err != nil {
 		return
 	}
-	r, er.err = expression.NewFunction(buildCtx, ast.LE, &v.Type, expr, rexp)
+	r, er.err = expression.NewFunction(buildCtx, ast.LE, tp, expr, rexp)
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
+	function, err := er.newFunction(ast.LogicAnd, tp, l, r)
 	if err != nil {
 		er.err = err
 		return
 	}
-	if v.Not {
-		function, err = er.newFunction(ast.UnaryNot, &v.Type, function)
+	if not {
+		function, err = er.newFunction(ast.UnaryNot, tp, function)
 		if err != nil {
 			er.err = err
 			return
 		}
 	}
-	setMaskingSource(function, source, er.maskingRebuilder(func(sub *expressionRewriter) { sub.betweenToExpression(v) }))
+	if source != nil {
+		sourceType := tp.Clone()
+		er.setMaskingSource(function, source, maskingRebuilder(func(sub *expressionRewriter) { sub.betweenToExpression(not, sourceType) }))
+	}
 	er.ctxStackPop(3)
 	er.ctxStackAppend(function, types.EmptyName)
 }
