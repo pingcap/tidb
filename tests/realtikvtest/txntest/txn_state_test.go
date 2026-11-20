@@ -294,13 +294,17 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	ch := make(chan any)
+	defer func() { _ = failpoint.Disable("tikvclient/beforePessimisticLock") }()
+	ch := make(chan any, 1)
 	go func() {
 		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
 		ch <- nil
 	}()
 	_, s2Digest := parser.NormalizeDigest("update t set b = b + 1 where a = (select b from t where a = 1)")
-	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		info := tk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnLockAcquiring
+	}, 3*time.Second, 10*time.Millisecond)
 	info := tk.Session().TxnInfo()
 	require.Equal(t, s2Digest.String(), info.CurrentSQLDigest)
 	require.Equal(t, []string{beginDigest.String(), s1Digest.String(), s2Digest.String()}, info.AllSQLDigests)
