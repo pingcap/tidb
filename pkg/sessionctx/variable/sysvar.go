@@ -2378,7 +2378,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(DefTiDBEnableLocalMatchAgainst), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(DefTiDBEnableLocalMatchAgainst), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableLocalMatchAgainst))
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLocalMatchAgainst = TiDBOptOn(val)
 		return nil
 	}},

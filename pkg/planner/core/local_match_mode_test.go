@@ -29,13 +29,18 @@ func TestLocalMatchMode(t *testing.T) {
 	tk.MustExec("create table fts_mode (id int primary key, a text, fulltext index (a))")
 	tk.MustExec("insert into fts_mode values (1,'cat'),(2,'category'),(3,'dog'),(4,NULL)")
 	q := "select id from fts_mode where match(a) against('cat' in boolean mode) order by id"
+	tk.MustQuery("select @@global.tidb_enable_local_match_against, @@session.tidb_enable_local_match_against").Check(testkit.Rows("1 1"))
+	tk.MustQuery(q).Check(testkit.Rows("1"))
+	deprecatedWarning := testkit.Rows("Warning 1681 tidb_enable_local_match_against is deprecated and will be removed in a future release.")
 	for _, alternatives := range []string{"off", "on"} {
 		t.Run(alternatives, func(t *testing.T) {
 			tk.MustExec("set tidb_opt_enable_alternative_logical_plans=" + alternatives)
 			tk.MustExec("set tidb_enable_local_match_against=off")
+			tk.MustQuery("show warnings").Check(deprecatedWarning)
 			require.ErrorContains(t, tk.ExecToErr(q), "without tidb_enable_local_match_against")
 			require.ErrorContains(t, tk.ExecToErr(fmt.Sprintf("prepare disabled from %q", q)), "without tidb_enable_local_match_against")
 			tk.MustExec("set tidb_enable_local_match_against=on")
+			tk.MustQuery("show warnings").Check(deprecatedWarning)
 			tk.MustQuery(q).Check(testkit.Rows("1"))
 			plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + q).Rows())
 			require.Contains(t, plan, "match_against")
@@ -48,6 +53,14 @@ func TestLocalMatchMode(t *testing.T) {
 			tk.MustQuery("select id from fts_mode where a ilike '%CAT%' order by id").Check(testkit.Rows("1", "2"))
 		})
 	}
+	tk.MustExec("set global tidb_enable_local_match_against=off")
+	tk.MustQuery("show warnings").Check(deprecatedWarning)
+	other := testkit.NewTestKit(t, store)
+	other.MustQuery("select @@session.tidb_enable_local_match_against").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_local_match_against=default")
+	tk.MustQuery("show warnings").Check(deprecatedWarning)
+	other = testkit.NewTestKit(t, store)
+	other.MustQuery("select @@session.tidb_enable_local_match_against").Check(testkit.Rows("1"))
 	require.ErrorContains(t, tk.ExecToErr("set tidb_enable_fts_like_fallback=on"), "Unknown system variable")
 }
 
@@ -55,7 +68,7 @@ func TestLocalMatchPreparedMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_local_match_against=on, tidb_opt_enable_alternative_logical_plans=on")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=on")
 	tk.MustExec("create table fts_cache (id int primary key, a text, fulltext index (a))")
 	tk.MustExec("insert into fts_cache values (1,'cat'),(2,'category'),(3,'dog'),(4,NULL)")
 	tk.MustExec("prepare ps from 'select id from fts_cache where match(a) against(? in boolean mode) order by id'")
