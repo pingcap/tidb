@@ -541,3 +541,185 @@ fn test_reject_dependency_from_mv_side() {
     );
     assert!(got.contains("expect delta agg range"), "{got}");
 }
+
+/// Go `executil.MarkTouchedRowsByColumn(rows, bitmap, stride, bit, chk.Column(0), chk.Column(1), ft, notNull, ...)`.
+fn mark(chk: &Chunk, rows: &[usize], bitmap: &mut [u8], stride: usize, bit_pos: usize, tp: &FieldType, not_null: bool) {
+    tidb_executor_internal_util::mark_touched_rows_by_column(
+        rows,
+        bitmap,
+        stride,
+        bit_pos,
+        &chk.column(0),
+        &chk.column(1),
+        tp,
+        not_null,
+        "aggregate change",
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_mark_update_touched_rows_by_column_string_collation() {
+    let mut tp = ft(FieldTypeCode::VarString);
+    tp.set_charset_name("utf8mb4");
+    tp.set_collation_name("utf8mb4_general_ci");
+    let mut chk = Chunk::new_chunk_with_capacity(&[tp.clone(), tp.clone()], 4);
+    chk.append_string(0, "A");
+    chk.append_string(1, "a");
+    chk.append_string(0, "Ab");
+    chk.append_string(1, "ac");
+    chk.append_null(0);
+    chk.append_null(1);
+    chk.append_null(0);
+    chk.append_string(1, "x");
+    let mut bitmap = vec![0_u8; 4];
+    mark(&chk, &[0, 1, 2, 3], &mut bitmap, 1, 0, &tp, false);
+    assert_eq!(vec![1, 1, 0, 1], bitmap);
+}
+
+#[test]
+fn test_mark_update_touched_rows_by_column_decimal_value_comparison() {
+    let mut tp = ft(FieldTypeCode::NewDecimal);
+    tp.set_flen(32);
+    tp.set_decimal(0);
+    // Stored values and aggregate results can use different internal precisions.
+    let compact = MyDecimal::from_string(b"50").0;
+    let compact_dec = tidb_datatype::Decimal::from_my_decimal(&compact);
+    let (encoded, _) = compact_dec.to_bin(32, 0).unwrap();
+    let padded = tidb_datatype::Decimal::from_bin(&encoded, 32, 0).unwrap().0.to_my_decimal().unwrap();
+    assert_eq!(std::cmp::Ordering::Equal, padded.compare(&compact));
+    let fifty_one = MyDecimal::from_string(b"51").0;
+    let rows: Vec<[Option<&MyDecimal>; 2]> = vec![
+        [Some(&padded), Some(&compact)],
+        [Some(&compact), Some(&padded)],
+        [Some(&compact), Some(&compact)],
+        [Some(&padded), Some(&padded)],
+        [Some(&padded), Some(&fifty_one)],
+        [None, None],
+        [None, Some(&compact)],
+        [Some(&compact), None],
+    ];
+    let mut chk = Chunk::new_chunk_with_capacity(&[tp.clone(), tp.clone()], rows.len());
+    for row in &rows {
+        for (col, value) in row.iter().enumerate() {
+            match value {
+                Some(value) => chk.append_my_decimal(col, value),
+                None => chk.append_null(col),
+            }
+        }
+    }
+    let mut bitmap = vec![0_u8; rows.len()];
+    mark(&chk, &[0, 1, 2, 3, 4, 5, 6, 7], &mut bitmap, 1, 0, &tp, false);
+    assert_eq!(vec![0, 0, 0, 0, 1, 0, 1, 1], bitmap);
+}
+
+#[test]
+fn test_mark_update_touched_rows_by_column_float_value_comparison() {
+    let negative_zero = -0.0_f64;
+    // (old, new, old_null, new_null)
+    let rows = [
+        (0.0, negative_zero, false, false),
+        (1.0, 9.0, false, false),
+        (negative_zero, 0.0, false, false),
+        (2.0, 3.0, false, false),
+        (4.0, 4.0, false, false),
+        (5.0, 5.0, true, true),
+        (6.0, 7.0, true, false),
+        (7.0, 8.0, false, true),
+    ];
+    for code in [FieldTypeCode::Float, FieldTypeCode::Double] {
+        for not_null in [false, true] {
+            let tp = if not_null { ft_flags(code, FieldTypeFlags::NOT_NULL) } else { ft(code) };
+            let mut chk = Chunk::new_chunk_with_capacity(&[tp.clone(), tp.clone()], rows.len());
+            for &(old, new, old_null, new_null) in &rows {
+                for (col, value, is_null) in [(0, old, old_null), (1, new, new_null)] {
+                    if is_null && !not_null {
+                        chk.append_null(col);
+                    } else if code == FieldTypeCode::Float {
+                        chk.append_float32(col, value as f32);
+                    } else {
+                        chk.append_float64(col, value);
+                    }
+                }
+            }
+            for (stride, bit_pos, expected) in [
+                (1, 3, vec![0x48_u8, 0x40, 0x48, 0x40, 0x40, 0x48]),
+                (2, 11, vec![0x40, 0x48, 0x40, 0x40, 0x40, 0x48, 0x40, 0x40, 0x40, 0x40, 0x40, 0x48]),
+            ] {
+                let update_rows = [7, 0, 3, 2, 5, 6];
+                let mut bitmap = vec![0x40_u8; update_rows.len() * stride];
+                mark(&chk, &update_rows, &mut bitmap, stride, bit_pos, &tp, not_null);
+                assert_eq!(expected, bitmap, "{code:?} not_null={not_null} stride={stride}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_mark_update_touched_rows_by_column_bit_value_comparison() {
+    for (flen, old_value, new_value) in [
+        (8, vec![2_u8], vec![3_u8]),
+        (64, vec![0x80, 0, 0, 0, 0, 0, 0, 2], vec![0x80, 0, 0, 0, 0, 0, 0, 3]),
+    ] {
+        for not_null in [false, true] {
+            let mut tp = ft(FieldTypeCode::Bit);
+            tp.set_flen(flen);
+            let (old, new) = (Some(old_value.as_slice()), Some(new_value.as_slice()));
+            let (rows, want): (Vec<[Option<&[u8]>; 2]>, Vec<u8>) = if not_null {
+                tp.add_flags(FieldTypeFlags::NOT_NULL);
+                (vec![[old, new], [old, old], [new, new], [new, old]], vec![1, 0, 0, 1])
+            } else {
+                (vec![[None, None], [old, new], [old, old], [None, old], [old, None], [None, None], [old, new]], vec![0, 1, 0, 1, 1, 0, 1])
+            };
+            let mut chk = Chunk::new_chunk_with_capacity(&[tp.clone(), tp.clone()], rows.len());
+            for row in &rows {
+                for (col, value) in row.iter().enumerate() {
+                    match value {
+                        Some(value) => chk.append_bytes(col, value),
+                        None => chk.append_null(col),
+                    }
+                }
+            }
+            let update_rows: Vec<usize> = (0..rows.len()).collect();
+            let mut bitmap = vec![0_u8; rows.len()];
+            mark(&chk, &update_rows, &mut bitmap, 1, 0, &tp, not_null);
+            assert_eq!(want, bitmap, "bit{flen} not_null={not_null}");
+        }
+    }
+    // "fixed integer projection"
+    let mut tp = ft(FieldTypeCode::Bit);
+    tp.set_flen(64);
+    tp.add_flags(FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+    let physical = ft_flags(FieldTypeCode::LongLong, FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL);
+    let mut chk = Chunk::new_chunk_with_capacity(&[physical.clone(), physical], 3);
+    for [old, new] in [[0_u64, 0], [1 << 63, 1 << 63], [1 << 63, (1 << 63) + 1]] {
+        chk.append_uint64(0, old);
+        chk.append_uint64(1, new);
+    }
+    let mut bitmap = vec![0_u8; 3];
+    mark(&chk, &[0, 1, 2], &mut bitmap, 1, 0, &tp, true);
+    assert_eq!(vec![0, 0, 1], bitmap);
+}
+
+#[test]
+fn test_mark_update_touched_rows_by_column_enum_set_use_binary_name_compare() {
+    let mut enum_tp = ft(FieldTypeCode::Enum);
+    enum_tp.set_charset_name("utf8mb4");
+    enum_tp.set_collation_name("utf8mb4_general_ci");
+    let mut enum_chk = Chunk::new_chunk_with_capacity(&[enum_tp.clone(), enum_tp.clone()], 1);
+    enum_chk.append_enum(0, &tidb_datatype::MysqlEnum::new("x", 1));
+    enum_chk.append_enum(1, &tidb_datatype::MysqlEnum::new("x", 2));
+    let mut enum_bitmap = vec![0_u8; 1];
+    mark(&enum_chk, &[0], &mut enum_bitmap, 1, 0, &enum_tp, true);
+    assert_eq!(vec![0], enum_bitmap);
+
+    let mut set_tp = ft(FieldTypeCode::Set);
+    set_tp.set_charset_name("utf8mb4");
+    set_tp.set_collation_name("utf8mb4_general_ci");
+    let mut set_chk = Chunk::new_chunk_with_capacity(&[set_tp.clone(), set_tp.clone()], 1);
+    set_chk.append_set(0, &tidb_datatype::MysqlSet::new("a,b", 3));
+    set_chk.append_set(1, &tidb_datatype::MysqlSet::new("a,b", 7));
+    let mut set_bitmap = vec![0_u8; 1];
+    mark(&set_chk, &[0], &mut set_bitmap, 1, 0, &set_tp, true);
+    assert_eq!(vec![0], set_bitmap);
+}
