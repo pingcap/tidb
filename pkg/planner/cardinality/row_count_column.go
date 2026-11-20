@@ -322,11 +322,12 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 		for i := range indexRange.LowVal {
 			tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 			tmpRan[0].HighVal[0] = indexRange.HighVal[i]
-			tmpRan[0].Collators[0] = indexRange.Collators[0]
-			if i == len(indexRange.LowVal)-1 {
-				tmpRan[0].LowExclude = indexRange.LowExclude
-				tmpRan[0].HighExclude = indexRange.HighExclude
-			}
+			tmpRan[0].Collators[0] = indexRange.Collators[i]
+			// Only the last column of an index range can have an excluded endpoint. tmpRan is reused, so
+			// reset the flags for the other columns.
+			isLastCol := i == len(indexRange.LowVal)-1
+			tmpRan[0].LowExclude = isLastCol && indexRange.LowExclude
+			tmpRan[0].HighExclude = isLastCol && indexRange.HighExclude
 			colID = idxCols[i].UniqueID
 			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
 			var countEst statistics.RowEstimate
