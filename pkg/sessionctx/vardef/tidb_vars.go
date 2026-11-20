@@ -2371,6 +2371,21 @@ const (
 	IndexLookUpPushDownPolicyForce = "force"
 )
 
+// TSOClientRPCModeToConcurrency returns the PD client concurrency for a TSO RPC mode.
+// It returns zero for an unsupported mode.
+func TSOClientRPCModeToConcurrency(mode string) int {
+	switch mode {
+	case TSOClientRPCModeDefault:
+		return 1
+	case TSOClientRPCModeParallel:
+		return 2
+	case TSOClientRPCModeParallelFast:
+		return 4
+	default:
+		return 0
+	}
+}
+
 // Global config name list.
 const (
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
