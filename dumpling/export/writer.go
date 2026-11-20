@@ -243,8 +243,19 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel func(), meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel func(), meta TableMeta, ir TableDataIR, curChkIdx int) (retErr error) {
 	conf, format := w.conf, w.fileFmt
+	var attemptStats writeStats
+	defer func() {
+		if retErr != nil {
+			SubGauge(w.metrics.finishedRowsGauge, float64(attemptStats.rows))
+			SubGauge(w.metrics.finishedSizeGauge, float64(attemptStats.size))
+			return
+		}
+		// Credit the chunk only after every file has closed successfully.
+		attemptStats.collect()
+	}()
+
 	_, isKVData := ir.(*kvTableData)
 	namer := newOutputFileNamer(meta, curChkIdx, isKVData || conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileFmtExtension := format.Extension()
@@ -272,6 +283,7 @@ func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel fun
 	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)
+		fileWriter.chunkStats = &attemptStats
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
@@ -281,7 +293,7 @@ func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel fun
 			return tearDownErr
 		}
 
-		if w, ok := fileWriter.(*InterceptFileWriter); ok && !w.SomethingIsWritten {
+		if !fileWriter.SomethingIsWritten {
 			break
 		}
 

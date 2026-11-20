@@ -212,15 +212,15 @@ func TestWriterDecodeErrorAfterFileRotation(t *testing.T) {
 			}
 
 			require.ErrorContains(t, runWorkerTestTask(w, meta, data), sourceErr.Error())
-			// Next reached the second row successfully, so the preceding file and its
-			// metrics are committed before decoding the first row of the next file.
+			// The preceding file remains on disk, but the whole chunk's progress
+			// is rolled back because a retry would rewrite it.
 			firstFile := "\"first\"\n"
 			if format == FileFormatSQLTextString {
 				firstFile = "INSERT INTO `decode_boundary` VALUES\n('first');\n"
 			}
 			require.Equal(t, []string{firstFile}, workerTestOutput(t, conf.OutputDirPath))
-			require.Equal(t, float64(1), ReadGauge(w.metrics.finishedRowsGauge))
-			require.Equal(t, float64(len(firstFile)), ReadGauge(w.metrics.finishedSizeGauge))
+			require.Zero(t, ReadGauge(w.metrics.finishedRowsGauge))
+			require.Zero(t, ReadGauge(w.metrics.finishedSizeGauge))
 			require.True(t, data.iter.closed)
 		})
 	}

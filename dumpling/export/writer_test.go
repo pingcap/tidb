@@ -4,7 +4,9 @@ package export
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"os"
 	"path"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
@@ -19,8 +22,113 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type writerTestSummary struct {
+	summary.LogCollector
+	data map[string]uint64
+}
+
+func (s *writerTestSummary) CollectSuccessUnit(name string, _ int, value any) {
+	s.data[name] += value.(uint64)
+}
+
+type closeErrorWriter struct {
+	objectio.Writer
+	closeFn func() error
+}
+
+func (w *closeErrorWriter) Close(ctx context.Context) error {
+	if err := w.Writer.Close(ctx); err != nil {
+		return err
+	}
+	return w.closeFn()
+}
+
+func TestWriterCloseErrorAccounting(t *testing.T) {
+	for _, format := range []string{FileFormatCSVString, FileFormatSQLTextString, FileFormatParquetString} {
+		for _, tc := range []struct {
+			name      string
+			fileSize  uint64
+			failClose int
+		}{
+			{name: "first_file", failClose: 1},
+			{name: "later_file", fileSize: 1, failClose: 2},
+		} {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				conf := defaultConfigForTest(t)
+				conf.OutputDirPath = t.TempDir()
+				conf.FileType = format
+				conf.FileSize = tc.fileSize
+				conf.Consistency = ConsistencyTypeSnapshot
+				conf.NoHeader = true
+				w := createTestWriter(conf, t)
+				collector := &writerTestSummary{data: make(map[string]uint64)}
+				summary.SetLogCollector(collector)
+				t.Cleanup(func() { summary.SetLogCollector(summary.NewLogCollector(appLogger.Info)) })
+
+				// Preserve credits from another chunk while rolling back this attempt.
+				const previousRows, previousBytes = uint64(7), uint64(19)
+				collector.data["total rows"] = previousRows
+				collector.data[summary.TotalBytes] = previousBytes
+				AddGauge(w.metrics.finishedRowsGauge, float64(previousRows))
+				AddGauge(w.metrics.finishedSizeGauge, float64(previousBytes))
+				checkAccounting := func(rows, size uint64) {
+					t.Helper()
+					assert.Equal(t, rows, collector.data["total rows"], "summary rows")
+					assert.Equal(t, size, collector.data[summary.TotalBytes], "summary bytes")
+					assert.Equal(t, float64(rows), ReadGauge(w.metrics.finishedRowsGauge), "progress rows")
+					assert.Equal(t, float64(size), ReadGauge(w.metrics.finishedSizeGauge), "progress bytes")
+				}
+				rebuilds := 0
+				w.rebuildConnFn = func(conn *sql.Conn, _ bool) (*sql.Conn, error) {
+					rebuilds++
+					checkAccounting(previousRows, previousBytes)
+					return conn, nil
+				}
+				closes := 0
+				w.extStorage = &workerTestStorage{
+					Storage: w.extStorage,
+					wrap: func(output objectio.Writer) objectio.Writer {
+						return &closeErrorWriter{Writer: output, closeFn: func() error {
+							closes++
+							if closes == tc.failClose {
+								return errors.New("upload failed during close")
+							}
+							return nil
+						}}
+					},
+				}
+				meta := newMockTableIRWithColumnInfo("test", "retry", nil, nil,
+					[]*ColumnInfo{{Name: "value", DatabaseTypeName: "TEXT"}})
+				data := &workerTestTableData{
+					mockTableIR: meta,
+					newIter: func(_ int) *workerTestRowIter {
+						return &workerTestRowIter{values: [][]byte{[]byte("first"), []byte("second"), []byte("third")}}
+					},
+				}
+
+				require.NoError(t, runWorkerTestTask(w, meta, data))
+				require.Equal(t, 1, rebuilds)
+				require.Equal(t, 2, data.attempts)
+				contents := workerTestOutput(t, conf.OutputDirPath)
+				fileCount := 1
+				if tc.fileSize != UnspecifiedSize {
+					fileCount = 3
+				}
+				require.Len(t, contents, fileCount, "retry must overwrite the same object names")
+				require.Equal(t, fileCount+tc.failClose, closes)
+				var size uint64
+				for _, content := range contents {
+					size += uint64(len(content))
+				}
+				checkAccounting(previousRows+3, previousBytes+size)
+			})
+		}
+	}
+}
 
 type captureWriterOptionsStorage struct {
 	storeapi.Storage

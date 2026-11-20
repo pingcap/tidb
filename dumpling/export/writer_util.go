@@ -104,8 +104,7 @@ func WriteInsert(
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
 				zap.Uint64("finished size", finishedSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
-			summary.CollectSuccessUnit("total rows", 1, counter)
+			collectWriteStats(w, counter, finishedSize)
 		}
 	}()
 
@@ -261,8 +260,7 @@ func WriteInsertInCsv(
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
 				zap.Uint64("finished size", finishedSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
-			summary.CollectSuccessUnit("total rows", 1, counter)
+			collectWriteStats(w, counter, finishedSize)
 		}
 	}()
 
@@ -386,7 +384,7 @@ func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType, wo *storeapi.WriterOption) (objectio.Writer, func(context.Context) error) {
+func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType, wo *storeapi.WriterOption) (*InterceptFileWriter, func(context.Context) error) {
 	fileName += compressType.FileSuffix()
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
@@ -469,6 +467,27 @@ type InterceptFileWriter struct {
 
 	initRoutine func() error
 	err         error
+	chunkStats  *writeStats
+}
+
+type writeStats struct {
+	rows uint64
+	size uint64
+}
+
+func (s writeStats) collect() {
+	summary.CollectSuccessUnit(summary.TotalBytes, 1, s.size)
+	summary.CollectSuccessUnit("total rows", 1, s.rows)
+}
+
+func collectWriteStats(w objectio.Writer, rows, size uint64) {
+	if fileWriter, ok := w.(*InterceptFileWriter); ok && fileWriter.chunkStats != nil {
+		// The whole chunk is retried on a close error, including earlier files.
+		fileWriter.chunkStats.rows += rows
+		fileWriter.chunkStats.size += size
+		return
+	}
+	writeStats{rows: rows, size: size}.collect()
 }
 
 // Write implements objectio.Writer. It checks whether writer has written something and init a file at first time
@@ -549,8 +568,7 @@ func WriteInsertInParquet(
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", counter),
 				zap.Uint64("finished size", finishedSize))
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
-			summary.CollectSuccessUnit("total rows", 1, counter)
+			collectWriteStats(w, counter, finishedSize)
 		}
 	}()
 
