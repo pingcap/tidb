@@ -47,6 +47,9 @@ type balancer struct {
 	// a helper temporary map to record the used slots of each node during balance
 	// to avoid passing it around.
 	currUsedSlots map[string]int
+	// slots used by active subtasks of all tasks on each node, unlike currUsedSlots,
+	// it includes tasks of lower ranking. It's loaded lazily for each balance round.
+	actualUsedSlots map[string]int
 }
 
 func newBalancer(param Param) *balancer {
@@ -81,6 +84,7 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	for _, n := range managedNodes {
 		b.currUsedSlots[n.ID] = 0
 	}
+	b.actualUsedSlots = nil
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
@@ -106,19 +110,56 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
-func filterNodesByMaxNodeCnt(nodes []string, subtasks []*proto.SubtaskBase, maxNodeCnt int) []string {
-	if maxNodeCnt == 0 || len(nodes) <= maxNodeCnt {
-		return nodes
-	}
-	// Order nodes by subtask count.
-	nodeSubtaskCnt := make(map[string]int, len(nodes))
+// orderAndFilterNodes sorts nodes in place and limits their number to MaxNodeCount.
+// If nodes must be excluded, prefer those with more subtasks of this task,
+// then those that need no preemption. Otherwise, prefer nodes that need no preemption.
+// Ties keep their original order. Sorting alone does not move existing subtasks.
+func (b *balancer) orderAndFilterNodes(
+	task *proto.Task, nodes []string,
+	subtasks []*proto.SubtaskBase,
+	taskNodes map[string]struct{},
+) []string {
+	limitNodeCnt := task.MaxNodeCount > 0 && len(nodes) > task.MaxNodeCount
+	subtaskCnts := make(map[string]int, len(nodes))
 	for _, st := range subtasks {
-		nodeSubtaskCnt[st.ExecID]++
+		subtaskCnts[st.ExecID]++
 	}
 	sort.SliceStable(nodes, func(i, j int) bool {
-		return nodeSubtaskCnt[nodes[i]] > nodeSubtaskCnt[nodes[j]]
+		if limitNodeCnt && subtaskCnts[nodes[i]] != subtaskCnts[nodes[j]] {
+			return subtaskCnts[nodes[i]] > subtaskCnts[nodes[j]]
+		}
+		return b.canRunWithoutPreempt(task, taskNodes, nodes[i]) &&
+			!b.canRunWithoutPreempt(task, taskNodes, nodes[j])
 	})
-	return nodes[:maxNodeCnt]
+	if limitNodeCnt {
+		return nodes[:task.MaxNodeCount]
+	}
+	return nodes
+}
+
+func (b *balancer) canRunWithoutPreempt(task *proto.Task, taskNodes map[string]struct{}, node string) bool {
+	required := b.actualUsedSlots[node]
+	if _, ok := taskNodes[node]; !ok {
+		required += task.RequiredSlots
+	}
+	return required <= b.slotMgr.getCapacity()
+}
+
+func (b *balancer) updateActualUsedSlots(task *proto.Task, oldNodes, newNodes map[string]struct{}) {
+	for node := range oldNodes {
+		b.actualUsedSlots[node] -= task.RequiredSlots
+	}
+	for node := range newNodes {
+		b.actualUsedSlots[node] += task.RequiredSlots
+	}
+}
+
+func getNodesOfSubtasks(subtasks []*proto.SubtaskBase) map[string]struct{} {
+	nodes := make(map[string]struct{}, len(subtasks))
+	for _, st := range subtasks {
+		nodes[st.ExecID] = struct{}{}
+	}
+	return nodes
 }
 
 func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, eligibleNodes []string) (err error) {
@@ -137,12 +178,18 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
 		adjustedNodes = []string{}
 	})
-	adjustedNodes = filterNodesByMaxNodeCnt(adjustedNodes, subtasks, task.MaxNodeCount)
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.
 		return nil
 	}
+	if b.actualUsedSlots == nil {
+		if b.actualUsedSlots, err = b.taskMgr.GetUsedSlotsOnNodes(ctx); err != nil {
+			return err
+		}
+	}
+	oldTaskNodes := getNodesOfSubtasks(subtasks)
+	adjustedNodes = b.orderAndFilterNodes(task, adjustedNodes, subtasks, oldTaskNodes)
 	adjustedNodeMap := make(map[string]struct{}, len(adjustedNodes))
 	for _, n := range adjustedNodes {
 		adjustedNodeMap[n] = struct{}{}
@@ -235,6 +282,8 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, elig
 	if err = b.taskMgr.UpdateSubtasksExecIDs(ctx, subtasksNeedSchedule); err != nil {
 		return err
 	}
+	newTaskNodes := getNodesOfSubtasks(subtasks)
+	b.updateActualUsedSlots(task, oldTaskNodes, newTaskNodes)
 	b.logger.Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
 	return nil
 }
