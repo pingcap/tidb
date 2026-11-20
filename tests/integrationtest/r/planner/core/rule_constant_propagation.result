@@ -333,3 +333,133 @@ SELECT 1 FROM t3
 WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
 );
 k	b
+drop table if exists t, s, u, v;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+create table u (id int, name varchar(10) collate utf8mb4_general_ci);
+create table v (id int, name varchar(10) collate utf8mb4_general_ci);
+insert into t values (1, 'a'), (2, 'b'), (3, 'c'), (null, 'n');
+insert into s values (1, 'x'), (2, 'y'), (4, 'z'), (null, 'm');
+insert into u values (1, 'a'), (2, 'b'), (3, 'c');
+insert into v values (1, 'A'), (2, 'b'), (5, 'e');
+explain format='plan_tree' select * from t, (select * from s where s.id in (1, 2)) tmp where t.id=tmp.id; -- inner join, IN is propagated to the other child;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.s.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from t where t.id in (1, 2)) tmp left join s on tmp.id=s.id; -- left join, IN on the outer child reaches the inner child;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.s.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.id, 1, 2)
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t left join (select * from s where s.id in (1, 2)) tmp on t.id=tmp.id; -- can't, IN is on the inner child of left join;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.s.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from t where t.id in (1, 2)) tmp right join s on tmp.id=s.id; -- can't, IN is on the inner child of right join;
+id	task	access object	operator info
+HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.t.id))
+│   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select id as id1 from t where t.id in (1, 2)) tmp left join s on tmp.id1=s.id; -- IN passes through the projection;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.id, 1, 2)
+│   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.s.id, 1, 2), not(isnull(planner__core__rule_constant_propagation.s.id))
+    └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from u where u.name in ('a', 'b')) tmp left join v on tmp.name=v.name; -- string IN, the constants' collation (connection collation) matches the column's;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.u.name, planner__core__rule_constant_propagation.v.name)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.v.name, "a", "b"), not(isnull(planner__core__rule_constant_propagation.v.name))
+│   └─TableFullScan	cop[tikv]	table:v	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.u.name, "a", "b")
+    └─TableFullScan	cop[tikv]	table:u	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from t where t.name in ('a', 'b')) tmp left join s on tmp.name=s.name; -- can't, the column is utf8mb4_bin but the constants have the connection collation;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.name)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.name, "a", "b")
+│   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.s.name))
+    └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from t where t.id in (1, length(t.name))) tmp left join s on tmp.id=s.id; -- can't, IN list has a non-constant item;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		in(planner__core__rule_constant_propagation.t.id, 1, length(planner__core__rule_constant_propagation.t.name))
+│   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.s.id))
+    └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+explain format='plan_tree' select * from (select * from t where t.id not in (1, 2)) tmp left join s on tmp.id=s.id; -- can't, NOT IN;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(in(planner__core__rule_constant_propagation.t.id, 1, 2))
+│   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.s.id))
+    └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
+select * from (select * from t where t.id in (1, 2, 3)) tmp left join s on tmp.id=s.id order by tmp.id;
+id	name	id	name
+1	a	1	x
+2	b	2	y
+3	c	NULL	NULL
+select * from t, (select * from s where s.id in (1, 2, 4)) tmp where t.id=tmp.id order by t.id;
+id	name	id	name
+1	a	1	x
+2	b	2	y
+select * from (select * from u where u.name in ('a', 'b')) tmp left join v on tmp.name=v.name order by tmp.id;
+id	name	id	name
+1	a	1	A
+2	b	2	b
+drop table if exists t_mutable, s_mutable;
+create table t_mutable (k varbinary(2));
+create table s_mutable (k varbinary(2) not null, marker int);
+insert into t_mutable values (x'ffff');
+insert into s_mutable values (x'ffff', 1);
+set @old_prepare_cache = @@tidb_enable_prepared_plan_cache;
+set @@tidb_enable_prepared_plan_cache = on;
+set @enabled = 1;
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k in (random_bytes(1), x''ffff'')) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+1	1
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k = random_bytes(1)) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+0	0
+prepare st from 'select count(*), count(s_mutable.marker)
+from (select k from t_mutable where k > random_bytes(1)) x
+left join s_mutable on x.k = s_mutable.k where ? = 1';
+execute st using @enabled;
+count(*)	count(s_mutable.marker)
+1	1
+deallocate prepare st;
+set @@tidb_enable_prepared_plan_cache = @old_prepare_cache;
+drop table t_mutable, s_mutable;
