@@ -236,6 +236,10 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	default:
 		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Real")
 	}
+	if c.tp.GetType() == mysql.TypeFloat && (argTp == types.ETDecimal || argTp == types.ETJson || args[0].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeDouble) {
+		// The coprocessor signatures do not check the FLOAT range for these inputs.
+		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	}
 	return sig, nil
 }
 
@@ -1345,9 +1349,13 @@ func (b *builtinCastRealAsRealSig) Clone() builtinFunc {
 
 func (b *builtinCastRealAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res float64, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalReal(ctx, row)
+	if isNull || err != nil {
+		return
+	}
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 {
 		res = 0
 	}
+	err = b.checkFloatOverflow(res)
 	return
 }
 
@@ -1656,6 +1664,9 @@ func (b *builtinCastDecimalAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (
 		res = 0
 	} else {
 		res, err = val.ToFloat64()
+	}
+	if err == nil {
+		err = b.checkFloatOverflow(res)
 	}
 	return res, false, err
 }
@@ -2350,6 +2361,9 @@ func (b *builtinCastJSONAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res
 		return res, isNull, err
 	}
 	res, err = types.ConvertJSONToFloat(typeCtx(ctx), val)
+	if err == nil {
+		err = b.checkFloatOverflow(res)
+	}
 	return
 }
 
@@ -3001,4 +3015,28 @@ func decimalPrecisionToLength(ft *types.FieldType) int {
 		return 1
 	}
 	return ret
+}
+
+// checkFloatOverflow preserves finite-value precision while rejecting values
+// that cannot fit the FLOAT result type, as in the string-to-real cast.
+func (b *baseBuiltinCastFunc) checkFloatOverflow(value float64) error {
+	if b.tp.GetType() == mysql.TypeFloat && (value > math.MaxFloat32 || value < -math.MaxFloat32) {
+		_, err := types.ProduceFloatWithSpecifiedTp(value, b.tp)
+		return err
+	}
+	return nil
+}
+
+func (b *baseBuiltinCastFunc) checkFloatOverflowInChunk(result *chunk.Column) error {
+	if b.tp.GetType() != mysql.TypeFloat {
+		return nil
+	}
+	for i, value := range result.Float64s() {
+		if !result.IsNull(i) {
+			if err := b.checkFloatOverflow(value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
