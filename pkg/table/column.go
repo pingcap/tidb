@@ -365,6 +365,18 @@ func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.Co
 
 // castColumnValue casts a value based on column type.
 func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	if ft.GetType() == mysql.TypeDuration && (val.Kind() == types.KindString || val.Kind() == types.KindBytes) && len(val.GetBytes()) == 0 {
+		// MySQL stores an empty string into a TIME column as a zero duration, even
+		// in strict mode. ParseDuration still rejects an empty string, so it is
+		// only accepted here, where values are cast for a column (INSERT, UPDATE,
+		// generated columns, MODIFY COLUMN and import).
+		fsp := types.DefaultFsp
+		if ft.GetDecimal() != types.UnspecifiedLength {
+			fsp = ft.GetDecimal()
+		}
+		casted.SetMysqlDuration(types.Duration{Fsp: fsp})
+		return casted, nil
+	}
 	casted, err = val.ConvertTo(tc, ft)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
