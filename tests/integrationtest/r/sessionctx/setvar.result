@@ -103,21 +103,21 @@ select /*+ set_var(tidb_opt_fix_control="44262:ON") */ @@tidb_opt_fix_control;
 44262:ON
 select @@tidb_opt_fix_control;
 @@tidb_opt_fix_control
-
+65294:ON
 set @@tidb_opt_fix_control=default;
 select @@tidb_opt_fix_control;
 @@tidb_opt_fix_control
-
+65294:ON
 select /*+ set_var(tidb_opt_fix_control="44389:ON,44823:ON") */ @@tidb_opt_fix_control;
 @@tidb_opt_fix_control
 44389:ON,44823:ON
 select @@tidb_opt_fix_control;
 @@tidb_opt_fix_control
-
+65294:ON
 set @@tidb_opt_fix_control=default;
 select @@tidb_opt_fix_control;
 @@tidb_opt_fix_control
-
+65294:ON
 select /*+ set_var(tidb_runtime_filter_mode="OFF") */ @@tidb_runtime_filter_mode;
 @@tidb_runtime_filter_mode
 OFF

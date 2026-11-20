@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1046,6 +1047,9 @@ type OutOfRangeShape struct {
 	// compared against negative bounds) or invalid; the estimate is 0 except in
 	// determinate mode, which returns OneValue before examining the range.
 	Impossible bool
+	// ZeroWidth is set when the predicate's scalar bounds are equal. Distinct
+	// bounds can also compare equal after scalar conversion.
+	ZeroWidth bool
 	// OneValue is the average row count per distinct histogram value,
 	// NotNullCount/HistNDV, used as the estimate floor.
 	OneValue float64
@@ -1182,6 +1186,7 @@ func (hg *Histogram) OutOfRangeShape(lDatum, rDatum *types.Datum, histNDV int64)
 		shape.Impossible = true
 		return shape
 	} else if predWidth == 0 {
+		shape.ZeroWidth = true
 		// Set histWidth to 0 so that we can still return a minimum of oneValue,
 		// and return the max as worst case.
 		histWidth = 0
@@ -1229,6 +1234,13 @@ func (hg *Histogram) ScaleOutOfRangeShape(
 
 	if shape.Impossible {
 		return DefaultRowEst(0)
+	}
+	if shape.ZeroWidth {
+		sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix65294)
+		if !fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix65294, false) {
+			// Before #65888, equal scalar bounds had no out-of-range contribution.
+			return DefaultRowEst(0)
+		}
 	}
 
 	// Calculate the added rows
