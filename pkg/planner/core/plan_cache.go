@@ -183,19 +183,29 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	}
 	// A privilege revocation or SET ROLE does not change the schema version.
 	// Recheck the resolved targets on every execution, including cache misses.
-	readOnlyResolveCtx := resolve.NewContext()
-	for _, tableName := range stmt.ResolveCtx.GetTableNames() {
-		readOnlyResolveCtx.AddTableName(tableName)
+	// A statement that neither writes nor locks has no target to recheck, and
+	// that does not change between executions: do not walk it every time.
+	if stmt.schemaReadOnlyTarget == schemaReadOnlyTargetUnknown {
+		stmt.schemaReadOnlyTarget = schemaReadOnlyTargetAbsent
+		if stmtMayHaveSchemaReadOnlyTarget(stmtAst.Stmt) {
+			stmt.schemaReadOnlyTarget = schemaReadOnlyTargetPresent
+		}
 	}
-	readOnlyChecker := &schemaReadOnlyChecker{preprocessor: &preprocessor{
-		sctx:               sctx,
-		resolveCtx:         readOnlyResolveCtx,
-		readOnlyDefaultDB:  stmt.StmtDB,
-		PreprocessorReturn: &PreprocessorReturn{InfoSchema: is},
-	}}
-	ast.Walk(stmtAst.Stmt, readOnlyChecker)
-	if readOnlyChecker.err != nil {
-		return readOnlyChecker.err
+	if stmt.schemaReadOnlyTarget == schemaReadOnlyTargetPresent {
+		readOnlyResolveCtx := resolve.NewContext()
+		for _, tableName := range stmt.ResolveCtx.GetTableNames() {
+			readOnlyResolveCtx.AddTableName(tableName)
+		}
+		readOnlyChecker := &schemaReadOnlyChecker{preprocessor: &preprocessor{
+			sctx:               sctx,
+			resolveCtx:         readOnlyResolveCtx,
+			readOnlyDefaultDB:  stmt.StmtDB,
+			PreprocessorReturn: &PreprocessorReturn{InfoSchema: is},
+		}}
+		ast.Walk(stmtAst.Stmt, readOnlyChecker)
+		if readOnlyChecker.err != nil {
+			return readOnlyChecker.err
+		}
 	}
 
 	stmt.snapshotVersion = nil

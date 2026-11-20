@@ -426,8 +426,55 @@ func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIS
 	return dbNames
 }
 
+// mayHaveSchemaReadOnlyTarget reports whether extractSchema can return a schema
+// for the node. The answer depends only on the node itself, never on the
+// session, so it stays valid for every execution of a prepared statement.
+// extractSchema returns early for any other node: a statement kind added there
+// has to be added here as well.
+func mayHaveSchemaReadOnlyTarget(in ast.Node) bool {
+	switch node := in.(type) {
+	case *ast.SelectStmt:
+		// Whether a lock clause writes depends on its type and on the session.
+		return node.LockInfo != nil
+	case *ast.CreateTableStmt, *ast.CreateViewStmt, *ast.CreateMaterializedViewStmt,
+		*ast.CreateMaterializedViewLogStmt, *ast.DropMaterializedViewStmt, *ast.DropMaterializedViewLogStmt,
+		*ast.AlterMaterializedViewLogStmt, *ast.AlterMaterializedViewStmt, *ast.RefreshMaterializedViewStmt,
+		*ast.PurgeMaterializedViewLogStmt, *ast.AdminStmt, *ast.DropTableStmt, *ast.RenameTableStmt,
+		*ast.AlterDatabaseStmt, *ast.DropDatabaseStmt, *ast.CreateIndexStmt, *ast.AlterTableStmt,
+		*ast.ImportIntoStmt, *ast.TruncateTableStmt, *ast.DropIndexStmt, *ast.LoadDataStmt,
+		*ast.CreateSequenceStmt, *ast.AlterSequenceStmt, *ast.DropSequenceStmt,
+		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt:
+		return true
+	}
+	return false
+}
+
+// schemaReadOnlyTargetFinder looks for a node that may need a read-only check.
+type schemaReadOnlyTargetFinder struct {
+	found bool
+}
+
+func (f *schemaReadOnlyTargetFinder) Enter(in ast.Node) bool {
+	f.found = f.found || mayHaveSchemaReadOnlyTarget(in)
+	return f.found
+}
+
+func (f *schemaReadOnlyTargetFinder) Leave(ast.Node) bool { return !f.found }
+
+// stmtMayHaveSchemaReadOnlyTarget reports whether any node of the statement may
+// need a database read-only check.
+func stmtMayHaveSchemaReadOnlyTarget(stmt ast.Node) bool {
+	finder := &schemaReadOnlyTargetFinder{}
+	ast.Walk(stmt, finder)
+	return finder.found
+}
+
 // extractSchema extracts the schemas modified by the statement for database read-only checks.
 func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
+	// This runs for every node of every statement: return before allocating.
+	if !mayHaveSchemaReadOnlyTarget(in) {
+		return nil
+	}
 	dbNames := make([]ast.CIStr, 0, 1)
 
 	switch node := in.(type) {
