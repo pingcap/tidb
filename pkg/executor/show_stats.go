@@ -217,15 +217,15 @@ func (e *ShowExec) fetchShowStatsHistogram(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHistograms(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
+				e.appendTableForStatsHistograms(db.O, tbl, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+						e.appendTableForStatsHistograms(db.O, tbl, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+					e.appendTableForStatsHistograms(db.O, tbl, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 				}
 			}
 		}
@@ -233,15 +233,17 @@ func (e *ShowExec) fetchShowStatsHistogram(ctx context.Context) error {
 	return nil
 }
 
-func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
+func (e *ShowExec) appendTableForStatsHistograms(dbName string, tblInfo *model.TableInfo, partitionName string, statsTbl *statistics.Table) {
 	if statsTbl.Pseudo {
 		return
 	}
-	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		if !col.IsStatsInitialized() {
+	statsTbl.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
+		// Cached histograms can outlive dropped or replaced column IDs, even after GC.
+		colInfo := tblInfo.FindColumnByID(id)
+		if colInfo == nil || colInfo.State != model.StatePublic || !col.IsStatsInitialized() {
 			return false
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
+		e.histogramToRow(dbName, tblInfo.Name.O, partitionName, colInfo.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 		return false
 	})
@@ -249,7 +251,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !idx.IsStatsInitialized() {
 			return false
 		}
-		e.histogramToRow(dbName, tblName, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
+		e.histogramToRow(dbName, tblInfo.Name.O, partitionName, idx.Info.Name.O, 1, idx.Histogram, 0,
 			idx.StatsLoadedStatus.StatusToString(), idx.MemoryUsage())
 		return false
 	})

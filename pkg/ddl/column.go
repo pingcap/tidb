@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -217,6 +218,9 @@ func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if !job.IsRollingback() {
 			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
 				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
+			}
+			if err := asyncNotifyEvent(jobCtx, notifier.NewDropColumnEvent(tblInfo), job, noSubJob, w.sess); err != nil {
+				return ver, errors.Trace(err)
 			}
 		}
 

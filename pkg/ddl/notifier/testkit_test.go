@@ -259,12 +259,13 @@ func TestPubSub(t *testing.T) {
 	tk.MustExec("alter table t add index(b)")
 	tk.MustExec("create table t1(a int, b int key, FOREIGN KEY (b) REFERENCES t(b) ON DELETE CASCADE);") // ActionCreateTable with foreign key
 	tk.MustExec("alter table t1 add column c int, add index idx_a(a)")                                   // ActionAddColumn
+	tk.MustExec("alter table t1 drop column c")                                                          // ActionDropColumn
 	tk.MustExec("drop database test")                                                                    // ActionDropSchema
 
 	require.Eventually(t, func() bool {
 		tpsLock.Lock()
 		defer tpsLock.Unlock()
-		return len(tps) == 18
+		return len(tps) == 19
 	}, 5*time.Second, 500*time.Millisecond)
 
 	require.Equal(t, []model.ActionType{
@@ -285,6 +286,7 @@ func TestPubSub(t *testing.T) {
 		model.ActionCreateTable,
 		model.ActionAddColumn,
 		model.ActionAddIndex,
+		model.ActionDropColumn,
 		model.ActionDropSchema,
 	}, tps)
 }

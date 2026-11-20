@@ -245,6 +245,22 @@ func (s *SchemaChangeEvent) GetAddColumnInfo() (
 	return s.inner.TableInfo, s.inner.Columns
 }
 
+// NewDropColumnEvent creates an event with the table info after dropping a column.
+func NewDropColumnEvent(tableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp:        model.ActionDropColumn,
+			TableInfo: tableInfo,
+		},
+	}
+}
+
+// GetDropColumnInfo returns the table info after dropping a column.
+func (s *SchemaChangeEvent) GetDropColumnInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionDropColumn)
+	return s.inner.TableInfo
+}
+
 // NewModifyColumnEvent creates a SchemaChangeEvent whose type is
 // ActionModifyColumn.
 func NewModifyColumnEvent(

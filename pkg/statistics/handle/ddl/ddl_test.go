@@ -505,6 +505,107 @@ func TestDDLHistogram(t *testing.T) {
 		Check(testkit.Rows("0 0 0"))
 }
 
+func TestModifyColumnStats(t *testing.T) {
+	for _, columnDef := range []string{"int", "int default 42"} {
+		t.Run(columnDef, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			h := dom.StatsHandle()
+			getTable := func() *model.TableInfo {
+				tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_modify"))
+				require.NoError(t, err)
+				return tbl.Meta()
+			}
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_stats_update_during_ddl = off")
+			tk.MustExec("create table t_modify (a " + columnDef + ", b int)")
+			require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+			tk.MustExec("insert into t_modify values (1,10),(2,20),(3,30),(4,40),(5,50)")
+			tk.MustExec("analyze table t_modify all columns")
+			oldTable := getTable()
+			oldColumnID := oldTable.Columns[0].ID
+
+			tk.MustExec("alter table t_modify modify column a varchar(20)")
+			event := statstestutil.FindEvent(h.DDLEventCh(), model.ActionModifyColumn)
+			require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, event))
+			tbl := getTable()
+			columnID := tbl.FindPublicColumnByName("a").ID
+			require.NotEqual(t, oldColumnID, columnID)
+			tk.MustQuery("select count(*), sum(a is null), count(distinct a) from t_modify").Check(testkit.Rows("5 0 5"))
+			t.Run("no synthesized histogram", func(t *testing.T) {
+				rows := tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tbl.ID, columnID).Rows()
+				require.Empty(t, rows, "MODIFY COLUMN must not synthesize statistics from the column default")
+			})
+
+			tk.MustExec("analyze table t_modify all columns")
+			tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tbl.ID, columnID).Check(testkit.Rows("5 0"))
+			// A delayed or replayed event must preserve the newly analyzed statistics.
+			require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, event))
+			tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tbl.ID, columnID).Check(testkit.Rows("5 0"))
+		})
+	}
+}
+
+func TestDropColumnStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	getTable := func() *model.TableInfo {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_drop"))
+		require.NoError(t, err)
+		return tbl.Meta()
+	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t_drop (id int primary key, a int, b int, c int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_drop values (1,1,10,100),(2,2,20,200),(3,3,30,300),(4,4,40,400)")
+	tk.MustExec("analyze table t_drop all columns")
+	tbl := getTable()
+	oldColumnID := tbl.FindPublicColumnByName("b").ID
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	version := tk.MustQuery("select version from mysql.stats_meta where table_id = ?", tbl.ID).Rows()[0][0]
+	// Move the GC watermark past the original stats, so DROP must make them eligible again.
+	tk.MustExec("replace into mysql.tidb (variable_name, variable_value) values ('tidb_stats_gc_last_ts', ?)", version)
+	tk.MustExec("update mysql.tidb set variable_value = cast(variable_value as unsigned) + 1 where variable_name = 'tidb_stats_gc_last_ts'")
+	tk.MustExec("alter table t_drop drop column b")
+	for len(h.DDLEventCh()) > 0 {
+		require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	}
+	t.Run("version", func(t *testing.T) {
+		rows := tk.MustQuery("select version > ?, last_stats_histograms_version > ? from mysql.stats_meta where table_id = ?", version, version, tbl.ID).Rows()
+		require.Equal(t, testkit.Rows("1 1"), rows)
+	})
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	t.Run("show after drop", func(t *testing.T) {
+		require.Empty(t, tk.MustQuery("show stats_histograms where table_name = 't_drop' and column_name = 'b'").Rows())
+	})
+	t.Run("gc", func(t *testing.T) {
+		require.NoError(t, h.GCStats(dom.InfoSchema(), 0))
+		rows := tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tbl.ID, oldColumnID).Rows()
+		require.Empty(t, rows)
+	})
+
+	tk.MustExec("alter table t_drop add column b int default 999")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tbl = getTable()
+	newColumnID := tbl.FindPublicColumnByName("b").ID
+	require.NotEqual(t, oldColumnID, newColumnID)
+	tk.MustQuery("select count(distinct b) from t_drop").Check(testkit.Rows("1"))
+	for _, analyze := range []bool{false, true} {
+		t.Run(fmt.Sprintf("readded analyze=%t", analyze), func(t *testing.T) {
+			if analyze {
+				tk.MustExec("analyze table t_drop all columns")
+			}
+			require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+			tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where table_id = ? and is_index = 0 and hist_id = ?", tbl.ID, newColumnID).Check(testkit.Rows("1 0"))
+			rows := tk.MustQuery("show stats_histograms where table_name = 't_drop' and column_name = 'b'").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "1", rows[0][6])
+			require.Equal(t, "0", rows[0][7])
+		})
+	}
+}
+
 func TestDDLPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

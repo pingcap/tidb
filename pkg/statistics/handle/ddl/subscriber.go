@@ -92,17 +92,25 @@ func (h subscriber) handle(
 			}
 		}
 	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
-		// since tidb_stats_update_during_ddl will do analyze in ddl, skip col init here.
-		if analyzed {
-			return nil
-		}
+		newTableInfo, _, _ := change.GetModifyColumnInfo()
+		// MODIFY preserves row data, so the column default cannot describe its
+		// distribution. Leave new statistics to ANALYZE and make old IDs eligible for GC.
 		ids, err := getPhysicalIDs(sctx, newTableInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, id := range ids {
-			if err = h.insertStats4Col(ctx, sctx, id, modifiedColumnInfo); err != nil {
+			if err = h.delayedDeleteStats4PhysicalID(ctx, sctx, id); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	case model.ActionDropColumn:
+		ids, err := getPhysicalIDs(sctx, change.GetDropColumnInfo())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, id := range ids {
+			if err = h.delayedDeleteStats4PhysicalID(ctx, sctx, id); err != nil {
 				return errors.Trace(err)
 			}
 		}
