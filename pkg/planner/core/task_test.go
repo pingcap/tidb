@@ -107,6 +107,48 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	require.Equal(t, float64(100), stats.RowCount)
 	require.Equal(t, float64(50), stats.ColNDVs[2])
 
+	t.Run("same access path competes on cost", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.Store = &mock.Store{Client: &mock.Client{}}
+		ctx.GetSessionVars().CostModelVersion = modelVer1
+		table := &model.TableInfo{ID: 1}
+		index := &model.IndexInfo{ID: 1}
+		schema := expression.NewSchema(groupCol)
+		ds := (logicalop.DataSource{TableInfo: table}).Init(ctx, 0)
+		groups := []expression.Expression{groupCol}
+		agg := (logicalop.LogicalAggregation{GroupByItems: groups}).Init(ctx, 0)
+		agg.SetChildren(ds)
+
+		// Cache tasks for the exact same access path with controlled costs.
+		// Enumerate the strict candidate first to exercise the former pruning.
+		for _, skipWins := range []bool{false, true} {
+			var candidates []base.PhysicalPlan
+			for _, req := range []*property.PhysicalProperty{strict, normal} {
+				skip := req.SkipScanInfo != nil
+				scan := physicalop.PhysicalIndexScan{
+					Table: table, Index: index, KeepOrder: true, SkipScan: skip,
+					Ranges: ranger.FullRange(), TblColHists: &statistics.HistColl{},
+				}.Init(ctx, 0)
+				scan.SetSchema(schema)
+				scan.SetStats(&property.StatsInfo{RowCount: 5})
+				scan.PlanCostInit = true
+				scan.PlanCost = 1
+				if skip != skipWins {
+					scan.PlanCost = 10000
+				}
+				ds.StoreTask(req, &physicalop.CopTask{IndexPlan: scan, KeepOrder: true, SkipScan: skip})
+				candidate := physicalop.BasePhysicalAgg{GroupByItems: groups}
+				candidates = append(candidates, candidate.InitForStream(ctx, scan.StatsInfo(), 0, schema, req))
+			}
+			root := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: normal.SortItems}
+			best, _, err := enumeratePhysicalPlans4TaskHelper(agg, candidates, root, false)
+			require.NoError(t, err)
+			require.False(t, best.Invalid())
+			reader := best.Plan().Children()[0].(*physicalop.PhysicalIndexReader)
+			require.Equal(t, skipWins, reader.IndexPlans[0].(*physicalop.PhysicalIndexScan).SkipScan)
+		}
+	})
+
 	t.Run("table skip scan cost uses operator cardinality", func(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.GetSessionVars().CostModelVersion = modelVer2

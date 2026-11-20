@@ -113,7 +113,6 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
-	var skipAggs []base.PhysicalPlan
 	var enableSkipScan bool
 	// Enable only in planner tests until both scans can send the attributes to TiKV.
 	if intest.InTest {
@@ -167,7 +166,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 				}
 				req := copiedChildProperty.CloneEssentialFields()
 				req.SkipScanInfo = &property.SkipScanInfo{GroupByCols: cols}
-				skipAggs = append(skipAggs, makeStreamAgg(req))
+				streamAggs = append(streamAggs, makeStreamAgg(req))
 			}
 		}
 	}
@@ -176,12 +175,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if (la.PreferAggType & h.PreferStreamAgg) > 0 {
 		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
 	}
-	if len(skipAggs) == 0 {
-		return streamAggs
-	}
-	// Try the strict candidates first so a successfully attached skip plan
-	// can replace its ordinary counterpart during aggregation enumeration.
-	return append(skipAggs, streamAggs...)
+	return streamAggs
 }
 
 func skipScanAggregationSupported(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column) bool {
