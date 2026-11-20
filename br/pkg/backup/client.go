@@ -1405,13 +1405,18 @@ func (bc *Client) OnBackupResponse(
 					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
 					return nil, err
 				}
-				failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
-					msg, ok := val.(string)
-					if !ok || msg == "" {
-						msg = "failpoint: backup response error after checkpoint"
-					}
-					failpoint.Return(nil, errors.New(msg))
-				})
+				// The tests that interrupt here expect at least one file in the
+				// checkpoint. Ranges without data, such as an empty system
+				// table backed up first, answer with no file.
+				if len(resp.Files) > 0 {
+					failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
+						msg, ok := val.(string)
+						if !ok || msg == "" {
+							msg = "failpoint: backup response error after checkpoint"
+						}
+						failpoint.Return(nil, errors.New(msg))
+					})
+				}
 			}
 			pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 			apiVersion := resp.ApiVersion
