@@ -226,7 +226,9 @@ type PlanBuilder struct {
 	optFlag uint64
 	// foundRowsPlan counts the unlimited output of the top-level SELECT.
 	foundRowsPlan base.LogicalPlan
-	// buildingFoundRows applies counted-query checks to expanded views in both branches.
+	// buildingFoundRows is true while building the data and count plans for SQL_CALC_FOUND_ROWS.
+	// View definitions are unavailable during preprocessing, so check their expressions
+	// when expanding them to prevent the two plans from reading different rows.
 	buildingFoundRows bool
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
@@ -656,7 +658,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		if x.SelectIntoOpt != nil {
 			return b.buildSelectInto(ctx, x)
 		}
-		// Stored views may contain a legacy no-op modifier; only the outer query owns the count.
+		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
+		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
 		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
 			return b.buildSelectWithFoundRows(ctx, x)
 		}

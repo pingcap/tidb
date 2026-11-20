@@ -36,7 +36,10 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
-	// ORDER BY alone can make this an aggregate query, even when it returns a constant.
+	// Preserve the query's aggregation when it comes only from ORDER BY.
+	// For example, TiDB accepts SELECT 1 FROM t ORDER BY COUNT(*) in permissive mode.
+	// Removing ORDER BY changes its one-row result into one row per input row,
+	// causing the count branch to report the wrong total.
 	if b.detectSelectAgg(sel) && !b.detectSelectAgg(&countSel) {
 		countSel.OrderBy = sel.OrderBy
 	}
