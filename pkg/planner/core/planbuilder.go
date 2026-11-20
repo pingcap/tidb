@@ -320,7 +320,12 @@ type PlanBuilder struct {
 	// rewritingWindowKey is set while the PARTITION BY and ORDER BY items of
 	// a window are rewritten. They have no clause of their own in curClause.
 	rewritingWindowKey bool
-	maskingOuterPlans  []base.LogicalPlan
+	// scalarSubqueryClause is set while an expression is rewritten outside the
+	// clause that uses its value, such as the arguments of aggregate and window
+	// functions. curClause is left over from an earlier clause then, and scalar
+	// subqueries are classified by this clause instead.
+	scalarSubqueryClause clauseCode
+	maskingOuterPlans    []base.LogicalPlan
 	// Retain raw result dependencies for RESTRICT ON checks after masking has
 	// replaced an output expression with a constant.
 	maskingSourcePlans map[int]base.LogicalPlan
@@ -728,6 +733,14 @@ func (b *PlanBuilder) enterMaskedValueContext() func() {
 	return func() { b.maskScalarSubqueryValue-- }
 }
 
+// enterScalarSubqueryClause makes scalar subqueries built until the returned
+// function is called use clause instead of curClause to classify their result.
+func (b *PlanBuilder) enterScalarSubqueryClause(clause clauseCode) func() {
+	saved := b.scalarSubqueryClause
+	b.scalarSubqueryClause = clause
+	return func() { b.scalarSubqueryClause = saved }
+}
+
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
 	defer b.enterMaskedValueContext()()
 	var p base.LogicalPlan
@@ -759,7 +772,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 	}
 	if needBuildAgg {
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}

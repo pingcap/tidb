@@ -532,6 +532,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	savedWindowKey := b.rewritingWindowKey
 	b.rewritingWindowKey = false
 	defer func() { b.rewritingWindowKey = savedWindowKey }()
+	// Its own clauses decide how the scalar subqueries inside it are used.
+	defer b.enterScalarSubqueryClause(unknowClause)()
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
@@ -1456,6 +1458,13 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	intest.AssertNotNil(planCtx)
 	// In 8.5, UPDATE assignments also use fieldList; they are not displayed results.
 	resultField := planCtx.curClause == fieldList && !planCtx.builder.inUpdateStmt && !planCtx.builder.inDeleteStmt
+	clause := planCtx.curClause
+	if c := planCtx.builder.scalarSubqueryClause; c != unknowClause {
+		// Aggregate and window function arguments are rewritten while curClause
+		// still holds an earlier clause, such as WHERE. They only occur in SELECT
+		// query blocks, whose fields are results in UPDATE and DELETE as well.
+		clause, resultField = c, c == fieldList
+	}
 	// Outside the displayed fields, a scalar subquery masks its own result:
 	// SET, DO, UPDATE assignments and INSERT values store or return it without
 	// a final SELECT projection, and predicates compare against the masked
@@ -1467,7 +1476,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	// values. Masking the key first would merge the groups whose keys mask to
 	// the same value, and no final projection could tell them apart again.
 	relationalKey := planCtx.builder.rewritingWindowKey
-	switch planCtx.curClause {
+	switch clause {
 	case groupByClause, orderByClause, globalOrderByClause:
 		relationalKey = true
 	}

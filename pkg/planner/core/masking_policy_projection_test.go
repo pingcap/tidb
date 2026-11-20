@@ -1464,3 +1464,90 @@ func TestMaskingPolicyScalarSubqueryAsRelationalKey(t *testing.T) {
 	tk.MustQuery("select count(*) from t_key o where " + sub + " = 'a'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t_key o having max(" + sub + ") = 'X'").Check(testkit.Rows("3"))
 }
+
+func TestMaskingPolicyScalarSubqueryInFunctionArgs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_arg(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_arg values (1,'secret'),(2,'hidden')")
+	tk.MustExec("create table t_arg_plain(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_arg_plain values (1,'secret'),(2,'hidden')")
+	tk.MustExec("create table t_arg_dst(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_arg_dst values (1,'x')")
+	// Without a policy the arguments are ordinary values.
+	tk.MustQuery("select max((select max(i.c) from t_arg i)) from t_arg o where 1=1").Check(testkit.Rows("secret"))
+	tk.MustExec("prepare s from 'select max((select max(i.c) from t_arg i)) from t_arg o where o.id > ?'")
+	tk.MustExec("set @a = 0")
+	tk.MustQuery("execute s using @a").Check(testkit.Rows("secret"))
+	tk.MustExec("create masking policy p on t_arg(c) as mask_full(c) enable")
+	tk.MustQuery("select max((select max(i.c) from t_arg_plain i)) from t_arg_plain o where 1=1").Check(testkit.Rows("secret"))
+
+	// The arguments of an aggregate or window function in the select list are
+	// results, whichever clause was built before them.
+	const notPreserved = "masking policy cannot be preserved through scalar subquery"
+	for _, sub := range []string{
+		"(select max(i.c) from t_arg i)",
+		"(select i.c from t_arg i where i.id = o.id)",
+		"(select max(i.c) from t_arg i where i.id = o.id)",
+	} {
+		for _, sql := range []string{
+			"select max(" + sub + ") from t_arg o where 1=1",
+			"select max(" + sub + ") from t_arg o",
+			"select max(" + sub + ") from t_arg o group by o.id",
+			"select min(" + sub + ") from t_arg o where 1=1",
+			"select group_concat(" + sub + ") from t_arg o where 1=1",
+			"select count(distinct " + sub + ") from t_arg o where 1=1",
+			"select sum(cast(" + sub + " as signed)) from t_arg o where 1=1",
+			"select any_value(" + sub + ") from t_arg o where 1=1",
+			"select concat(max(" + sub + "), '!') from t_arg o where 1=1",
+			"select max(" + sub + ") from t_arg o where 1=1 having max(" + sub + ") = 'secret'",
+			"select max(" + sub + ") from t_arg o where 1=1 order by max(" + sub + ")",
+			"select * from (select max(" + sub + ") m from t_arg o where 1=1) d",
+			"with d as (select max(" + sub + ") m from t_arg o where 1=1) select * from d",
+			"select max(" + sub + ") from t_arg o where 1=1 union all select 'z'",
+			"select sum(length(max(" + sub + "))) over () from t_arg o where 1=1",
+			"insert into t_arg_dst select 5, max(" + sub + ") from t_arg o where 1=1",
+			"update t_arg_dst set c = (select max(" + sub + ") from t_arg o where 1=1)",
+			"set @v = (select max(" + sub + ") from t_arg o where 1=1)",
+		} {
+			require.ErrorContains(t, tk.ExecToErr(sql), notPreserved, sql)
+		}
+	}
+	for _, sql := range []string{
+		"select max((select max(i.c) from t_arg i)) over () from t_arg o",
+		"select max((select max(i.c) from t_arg i)) over () from t_arg o having 1=1",
+		"select * from (select max((select max(i.c) from t_arg i)) over () m from t_arg o having 1=1) d",
+		"select o.id from t_arg o having 1=1 order by max((select max(i.c) from t_arg i)) over (), o.id",
+	} {
+		require.ErrorContains(t, tk.ExecToErr(sql), notPreserved, sql)
+	}
+	tk.MustQuery("select c from t_arg_dst").Check(testkit.Rows("x"))
+	// A statement prepared before the policy existed is rejected as well.
+	require.ErrorContains(t, tk.ExecToErr("execute s using @a"), notPreserved)
+	require.ErrorContains(t, tk.ExecToErr("execute s using @a"), notPreserved)
+	require.ErrorContains(t, tk.ExecToErr("prepare s from 'select max((select max(i.c) from t_arg i)) from t_arg o where o.id > ?'"), notPreserved)
+
+	// An aggregate used only by HAVING is a predicate operand, as in WHERE: the
+	// value is compared as masked, and MIN/MAX of a subquery as original.
+	tk.MustQuery("select count(*) from t_arg o where o.c = (select max(i.c) from t_arg i)").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t_arg o where (select max(i.c) from t_arg i) = 'secret'").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from t_arg o where (select i.c from t_arg i where i.id = o.id) = 'secret'").Check(testkit.Rows("0"))
+	for _, where := range []string{"", " where 1=1"} {
+		tk.MustQuery("select count(*) from t_arg o" + where + " having max((select max(i.c) from t_arg i)) = 'secret'").Check(testkit.Rows("2"))
+		tk.MustQuery("select count(*) from t_arg o" + where + " having max((select max(i.c) from t_arg i)) = 'XXXXXX'").Check(testkit.Rows())
+		tk.MustQuery("select count(*) from t_arg o" + where + " having max((select i.c from t_arg i where i.id = o.id)) = 'XXXXXX'").Check(testkit.Rows("2"))
+		tk.MustQuery("select count(*) from t_arg o" + where + " having max((select i.c from t_arg i where i.id = o.id)) = 'secret'").Check(testkit.Rows())
+		// An aggregate used only by ORDER BY is a sort key, as are the ORDER BY
+		// items of GROUP_CONCAT: they work on the original values.
+		tk.MustQuery("select o.id from t_arg o" + where + " group by o.id order by max((select i.c from t_arg i where i.id = o.id))").Check(testkit.Rows("2", "1"))
+		tk.MustQuery("select o.id from t_arg o" + where + " group by o.id order by max((select max(i.c) from t_arg i)), o.id").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select group_concat(o.id order by (select i.c from t_arg i where i.id = o.id)) from t_arg o" + where).Check(testkit.Rows("2,1"))
+	}
+	// So is an ORDER BY item of a query block nested in a select list.
+	tk.MustQuery("select (select o.id from t_arg o order by (select i.c from t_arg i where i.id = o.id) limit 1)").Check(testkit.Rows("2"))
+	tk.MustExec("prepare s from 'select count(*) from t_arg o where o.id > ? having max((select max(i.c) from t_arg i)) = ?'")
+	tk.MustExec("set @b = 'secret'")
+	tk.MustQuery("execute s using @a, @b").Check(testkit.Rows("2"))
+	tk.MustQuery("execute s using @a, @b").Check(testkit.Rows("2"))
+}

@@ -248,7 +248,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
-	correlatedAggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
+	correlatedAggMap, havingMap, orderMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
 	b.optFlag |= rule.FlagBuildKeyInfo
 	b.optFlag |= rule.FlagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -291,8 +291,19 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	allAggsFirstRow := true
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
+		// curClause is left over from an earlier clause here. An aggregate only
+		// used by HAVING or ORDER BY takes the arguments as that clause does; the
+		// output of any other aggregate is a result of the query block.
+		argClause := fieldList
+		if _, ok := havingMap[aggFunc]; ok {
+			argClause = havingClause
+		} else if _, ok := orderMap[aggFunc]; ok {
+			argClause = orderByClause
+		}
 		for _, arg := range aggFunc.Args {
+			restoreClause := b.enterScalarSubqueryClause(argClause)
 			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
+			restoreClause()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -319,7 +330,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 				if resolver.err != nil {
 					return nil, nil, errors.Trace(resolver.err)
 				}
+				restoreClause := b.enterScalarSubqueryClause(orderByClause)
 				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+				restoreClause()
 				if err != nil {
 					return nil, nil, err
 				}
@@ -3058,7 +3071,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		for _, byItem := range sel.OrderBy.Items {
 			if _, ok := byItem.Expr.(*ast.SubqueryExpr); ok {
 				// correlated agg will be extracted completely latter.
+				restoreClause := b.enterScalarSubqueryClause(orderByClause)
 				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true)
+				restoreClause()
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -4713,7 +4728,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			}
 		}
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap, havingMap, orderMap)
 		if err != nil {
 			return nil, err
 		}
@@ -7117,7 +7132,10 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 
 	newArgList := make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
+		// curClause may be HAVING here, but a window function is a result.
+		restoreClause := b.enterScalarSubqueryClause(fieldList)
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		restoreClause()
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -7149,7 +7167,9 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 	// it's okay here because we only want to return the args used in window function
 	newColIndex := 0
 	for _, arg := range args {
+		restoreClause := b.enterScalarSubqueryClause(fieldList)
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		restoreClause()
 		if err != nil {
 			return nil, err
 		}
