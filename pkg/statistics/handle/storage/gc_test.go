@@ -124,12 +124,21 @@ func TestGCExtendedStats(t *testing.T) {
 		"s2 2 [2,3] 1.000000 1",
 	))
 	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats := func() {
+		// GC only considers versions older than its millisecond-resolution cutoff.
+		// Let preceding stats writes become eligible before starting each GC phase.
+		beforeGC := time.Now().UnixMilli()
+		require.Eventually(t, func() bool {
+			return time.Now().UnixMilli() > beforeGC
+		}, time.Second, time.Millisecond)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	}
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s1 2 [1,2] 1.000000 2",
 		"s2 2 [2,3] 1.000000 1",
 	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
@@ -140,11 +149,11 @@ func TestGCExtendedStats(t *testing.T) {
 	))
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",
 	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	gcStats()
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }
 
