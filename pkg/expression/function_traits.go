@@ -68,6 +68,13 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.LastVal:     {},
 	ast.SetVal:      {},
 	ast.AnyValue:    {},
+	// The advisory lock functions act on the session. Folding one would run
+	// it while the statement is planned, for instance when it is prepared.
+	ast.GetLock:         {},
+	ast.ReleaseLock:     {},
+	ast.ReleaseAllLocks: {},
+	ast.IsFreeLock:      {},
+	ast.IsUsedLock:      {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
