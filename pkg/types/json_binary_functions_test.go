@@ -159,3 +159,33 @@ func TestBinaryCompare(t *testing.T) {
 		require.Equal(t, test.result, CompareBinaryJSON(test.left, test.right), "%s should be %s %s", test.left.String(), compareMsg[test.result], test.right.String())
 	}
 }
+
+func TestKeepObjectKeys(t *testing.T) {
+	keep := map[string]struct{}{"c1": {}, "c3": {}}
+	testCases := []struct {
+		doc      string
+		path     string
+		expected string
+	}{
+		{`{"cells": {"c1": {"s": 1}, "c2": {"s": 2}, "c3": 3}, "x": 1}`, "$.cells", `{"cells": {"c1": {"s": 1}, "c3": 3}, "x": 1}`},
+		// Nothing to remove, path missing, or not an object: unchanged.
+		{`{"cells": {"c1": 1, "c3": 3}}`, "$.cells", `{"cells": {"c1": 1, "c3": 3}}`},
+		{`{"other": {"c2": 1}}`, "$.cells", `{"other": {"c2": 1}}`},
+		{`{"cells": [1, 2]}`, "$.cells", `{"cells": [1, 2]}`},
+		// All keys removed leaves an empty object; the root path works too.
+		{`{"cells": {"c2": 1, "c4": 2}}`, "$.cells", `{"cells": {}}`},
+		{`{"c1": 1, "c2": 2}`, "$", `{"c1": 1}`},
+		{`{"a": {"b": {"c1": 1, "c9": 9}}}`, "$.a.b", `{"a": {"b": {"c1": 1}}}`},
+	}
+	for _, tc := range testCases {
+		bj, err := ParseBinaryJSONFromString(tc.doc)
+		require.NoError(t, err)
+		path, err := ParseJSONPathExpr(tc.path)
+		require.NoError(t, err)
+		got, err := bj.KeepObjectKeys(path, keep)
+		require.NoError(t, err)
+		expected, err := ParseBinaryJSONFromString(tc.expected)
+		require.NoError(t, err)
+		require.Equal(t, 0, CompareBinaryJSON(expected, got), "doc %s path %s got %s", tc.doc, tc.path, got)
+	}
+}

@@ -361,6 +361,9 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// TiDBJSONKeepKeys is a TiDB extension that keeps only the listed keys of a JSON object.
+	TiDBJSONKeepKeys = "tidb_json_keep_keys"
+
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"
 	VecL1Distance           = "vec_l1_distance"
