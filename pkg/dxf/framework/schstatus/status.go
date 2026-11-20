@@ -46,7 +46,8 @@ type Node struct {
 	IsOwner bool `json:"is_owner,omitempty"`
 }
 
-// NodeGroup represents the resource status of TiDB or TiKV worker node group.
+// NodeGroup represents the resource status of a worker node group (TiDB, TiKV,
+// or coprocessor worker).
 type NodeGroup struct {
 	// CPUCount is the number of CPUs available for the node.
 	CPUCount int `json:"cpu_count,omitempty"`
@@ -95,6 +96,11 @@ type Status struct {
 	TaskQueue  TaskQueue `json:"task_queue,omitempty"`
 	TiDBWorker NodeGroup `json:"tidb_worker,omitempty"`
 	TiKVWorker NodeGroup `json:"tikv_worker,omitempty"`
+	// CoprocessorWorker reports the coprocessor worker requirement, used by tasks
+	// that scale coprocessor workers (together with TiDB workers) independently of
+	// TiKV workers. It is a placeholder for now and reports 0 until the control
+	// plane consumes it and per-task-type sizing lands.
+	CoprocessorWorker NodeGroup `json:"coprocessor_worker,omitempty"`
 	// Flags is a map of flags, we only have one type of flag right now.
 	// PauseScaleInFlag is the flag to notify the cluster controller to pause the
 	// scale-in action of the workers. as the schedule and scale-in/out operations
