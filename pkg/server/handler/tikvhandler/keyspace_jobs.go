@@ -19,8 +19,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/naming"
 )
@@ -39,6 +39,7 @@ import (
 const (
 	maxActiveJobsKeyspacesPerRequest = 1000
 	maxActiveJobsRequestBytes        = 256 << 10
+	activeJobsBatchTimeout           = 2 * time.Minute
 )
 
 type keyspaceJobCounts struct {
@@ -52,10 +53,9 @@ type keyspaceJobResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// KeyspaceActiveJobsHandler counts unfinished DDL and IMPORT INTO jobs in user keyspaces.
+// KeyspaceActiveJobsHandler counts DDL jobs in the queue and active IMPORT INTO jobs in user keyspaces.
 type KeyspaceActiveJobsHandler struct {
 	*handler.TikvHandlerTool
-	checkKeyspace  func(context.Context, string) (keyspaceJobCounts, error)
 	acquireRuntime func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error)
 }
 
@@ -106,35 +106,25 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		results = append(results, keyspaceJobResult{Keyspace: ks})
 	}
 	concurrency := min(max(input.Concurrency, 1), max(cpu.GetCPUCount(), 1), len(results))
-	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
+	ctx, cancel := context.WithTimeout(req.Context(), activeJobsBatchTimeout)
 	defer cancel()
-	check := h.checkKeyspace
-	if check == nil {
-		check = h.countKeyspace
-	}
 	var next atomic.Int64
-	var workers sync.WaitGroup
-	workers.Add(concurrency)
+	var workers util.WaitGroupWrapper
 	for range concurrency {
-		go func() {
-			defer workers.Done()
+		workers.Run(func() {
 			for {
 				i := int(next.Add(1) - 1)
 				if i >= len(results) {
 					return
 				}
-				if err := ctx.Err(); err != nil {
-					results[i].Error = err.Error()
-					continue
-				}
-				counts, err := check(ctx, results[i].Keyspace)
+				counts, err := h.countKeyspace(ctx, results[i].Keyspace)
 				if err != nil {
 					results[i].Error = err.Error()
 				} else {
 					results[i].keyspaceJobCounts = &counts
 				}
 			}
-		}()
+		})
 	}
 	workers.Wait()
 	handler.WriteData(w, struct {
@@ -143,6 +133,9 @@ func (h *KeyspaceActiveJobsHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 }
 
 func (h *KeyspaceActiveJobsHandler) countKeyspace(ctx context.Context, targetKS string) (_ keyspaceJobCounts, err error) {
+	if err := ctx.Err(); err != nil {
+		return keyspaceJobCounts{}, err
+	}
 	acquire := h.acquireRuntime
 	if acquire == nil {
 		// Opening a new store retries missing keyspaces during provisioning.
@@ -199,7 +192,7 @@ func countActiveKeyspaceJobs(ctx context.Context, se sessionctx.Context) (keyspa
 }
 
 func countActiveDDLJobs(ctx context.Context, se sessionctx.Context) (count int64, err error) {
-	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select job_meta from mysql.tidb_ddl_job")
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select count(1) from mysql.tidb_ddl_job")
 	if err != nil {
 		return 0, err
 	}
@@ -209,26 +202,9 @@ func countActiveDDLJobs(ctx context.Context, se sessionctx.Context) (count int64
 		}
 	}()
 
-	// Job metadata includes the query and DDL arguments. Request a small chunk
-	// and reuse it throughout the scan, including when the queue has a backlog.
 	chk := rs.NewChunk(nil)
-	chk.SetRequiredRows(8, chk.RequiredRows())
-	for {
-		if err := rs.Next(ctx, chk); err != nil {
-			return 0, err
-		}
-		if chk.NumRows() == 0 {
-			return count, nil
-		}
-		for i := range chk.NumRows() {
-			var job model.Job
-			if err := job.Decode(chk.GetRow(i).GetBytes(0)); err != nil {
-				return 0, err
-			}
-			// InFinalState also includes paused jobs, which remain active here.
-			if !job.IsFinished() && !job.IsSynced() {
-				count++
-			}
-		}
+	if err := rs.Next(ctx, chk); err != nil {
+		return 0, err
 	}
+	return chk.GetRow(0).GetInt64(0), nil
 }

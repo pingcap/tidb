@@ -1372,10 +1372,10 @@ Example `POST` response with `detail=1`:
 
 ## Active jobs across keyspaces
 
-`POST /keyspaces/jobs/active` counts unfinished DDL and IMPORT INTO jobs in a
-batch of user keyspaces. It is available only on a NextGen TiDB server running
-in the `SYSTEM` keyspace. Classic TiDB, user-keyspace servers, and diagnostic
-mode do not expose this endpoint.
+`POST /keyspaces/jobs/active` counts DDL jobs in the queue and active IMPORT INTO
+jobs in a batch of user keyspaces. It is available only on a NextGen TiDB server
+running in the `SYSTEM` keyspace. Classic TiDB, user-keyspace servers, and
+diagnostic mode do not expose this endpoint.
 
 Send a JSON object with these fields:
 
@@ -1409,18 +1409,18 @@ bodies or lists longer than 1,000 entries across requests. Oversized or
 malformed requests return HTTP 400 before any keyspace is checked. Methods
 other than POST return HTTP 405.
 
-DDL counts include queued, running, pausing, paused, cancelling, and
-rolling-back jobs. Done, synced, cancelled, and rollback-done jobs are excluded,
-even if they have not yet moved to history. IMPORT INTO counts include pending
-and running jobs in each user keyspace's import-job table. Pausing an underlying
+DDL counts include every row in `mysql.tidb_ddl_job`. A job counts until DDL
+removes it from the queue during finalization, including while a job marked
+`done` awaits schema synchronization. IMPORT INTO counts include pending and
+running jobs in each user keyspace's import-job table. Pausing an underlying
 DXF task keeps its import job active. Finished, failed, and cancelled imports are
 excluded. Counts are observations made during the request, not a cluster-wide
 atomic snapshot.
 
 PD keyspace lookups, SQL queries, waits for another caller to open or close a
-runtime, and storage-open retry delays honor request cancellation and share one
-10-second deadline across the batch. Individual runtime and session initialization
-operations and teardown can take longer.
+runtime, and storage-open retry delays honor request cancellation. They share
+one two-minute timeout across the batch, subject to any earlier request deadline.
+Individual runtime and session initialization operations and teardown can take longer.
 After each check, including a failed check, the handler returns or destroys
 the borrowed session and releases its runtime handle. If it was the last holder,
 the handler closes the runtime immediately. Other holders can continue using

@@ -31,17 +31,17 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestKeyspaceActiveJobs(t *testing.T) {
+	unavailable := errors.New("keyspace unavailable")
 	t.Run("validation before checks", func(t *testing.T) {
 		for _, body := range []string{
 			"", "null", "{}", `{"keyspaces":[]}`, `{"keyspaces":[""]}`,
@@ -52,9 +52,9 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 			`{"keyspaces":["ks"]} {}`, `{"keyspaces":["ks"]} trailing`,
 		} {
 			t.Run(body, func(t *testing.T) {
-				h := &KeyspaceActiveJobsHandler{checkKeyspace: func(context.Context, string) (keyspaceJobCounts, error) {
+				h := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
 					t.Error("invalid request must not check any keyspace")
-					return keyspaceJobCounts{}, nil
+					return nil, unavailable
 				}}
 				w := httptest.NewRecorder()
 				h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active", strings.NewReader(body)))
@@ -85,9 +85,9 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 			req.ContentLength = -1
 			w := httptest.NewRecorder()
 			var checked bool
-			h := &KeyspaceActiveJobsHandler{checkKeyspace: func(context.Context, string) (keyspaceJobCounts, error) {
+			h := &KeyspaceActiveJobsHandler{acquireRuntime: func(context.Context, string, string) (sqlsvrapi.KSRuntimeHandle, error) {
 				checked = true
-				return keyspaceJobCounts{}, nil
+				return nil, unavailable
 			}}
 			h.ServeHTTP(w, req)
 			require.Equal(t, tc.code, w.Code)
@@ -101,9 +101,13 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 			names[i] = "ks" + strconv.Itoa(i)
 		}
 		var checked []string
-		h := &KeyspaceActiveJobsHandler{checkKeyspace: func(_ context.Context, ks string) (keyspaceJobCounts, error) {
+		var deadline time.Time
+		h := &KeyspaceActiveJobsHandler{acquireRuntime: func(ctx context.Context, ks, _ string) (sqlsvrapi.KSRuntimeHandle, error) {
+			if len(checked) == 0 {
+				deadline, _ = ctx.Deadline()
+			}
 			checked = append(checked, ks)
-			return keyspaceJobCounts{}, nil
+			return nil, unavailable
 		}}
 		post := func(names []string) *httptest.ResponseRecorder {
 			body, err := json.Marshal(map[string][]string{"keyspaces": names})
@@ -113,8 +117,11 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 			return w
 		}
 
+		started := time.Now()
 		require.Equal(t, http.StatusOK, post(names).Code)
 		require.Equal(t, names, checked)
+		require.GreaterOrEqual(t, deadline.Sub(started), 2*time.Minute)
+		require.LessOrEqual(t, time.Until(deadline), 2*time.Minute)
 
 		checked = nil
 		w := post(append(names, names[0]))
@@ -123,33 +130,43 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 		require.Empty(t, checked)
 	})
 	t.Run("ordered deduplicated partial results", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		dom.DDL().OwnerManager().CampaignCancel()
+		tk := testkit.NewTestKit(t, store)
+		var events []string
+		runtime := &jobCountTestRuntime{
+			pool:   &jobCountTestPool{resource: tk.Session(), events: &events},
+			events: &events,
+		}
 		var calls []string
-		h := &KeyspaceActiveJobsHandler{checkKeyspace: func(_ context.Context, ks string) (keyspaceJobCounts, error) {
+		h := &KeyspaceActiveJobsHandler{acquireRuntime: func(_ context.Context, ks, _ string) (sqlsvrapi.KSRuntimeHandle, error) {
 			calls = append(calls, ks)
 			if ks == "unavailable" {
-				return keyspaceJobCounts{DDLJobs: 99}, errors.New("keyspace unavailable")
+				return nil, unavailable
 			}
-			return keyspaceJobCounts{DDLJobs: 2, ImportJobs: 0}, nil
+			return runtime, nil
 		}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/keyspaces/jobs/active",
 			strings.NewReader(`{"keyspaces":["ks2","unavailable","ks2","ks1"]}`)))
 		require.Equal(t, http.StatusOK, w.Code)
 		require.Equal(t, []string{"ks2", "unavailable", "ks1"}, calls)
-		require.JSONEq(t, `{"keyspaces":[{"keyspace":"ks2","ddl_jobs":2,"import_jobs":0},
+		require.JSONEq(t, `{"keyspaces":[{"keyspace":"ks2","ddl_jobs":0,"import_jobs":0},
             {"keyspace":"unavailable","error":"keyspace unavailable"},
-            {"keyspace":"ks1","ddl_jobs":2,"import_jobs":0}]}`, w.Body.String())
+            {"keyspace":"ks1","ddl_jobs":0,"import_jobs":0}]}`, w.Body.String())
 	})
 	t.Run("cancellation stops unchecked work", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var calls int
 		started := make(chan struct{})
-		h := &KeyspaceActiveJobsHandler{checkKeyspace: func(ctx context.Context, _ string) (keyspaceJobCounts, error) {
+		h := &KeyspaceActiveJobsHandler{acquireRuntime: func(ctx context.Context, _, _ string) (sqlsvrapi.KSRuntimeHandle, error) {
 			calls++
-			close(started)
+			if calls == 1 {
+				close(started)
+			}
 			<-ctx.Done()
-			return keyspaceJobCounts{}, ctx.Err()
+			return nil, ctx.Err()
 		}}
 		w := httptest.NewRecorder()
 		done := make(chan struct{})
@@ -186,6 +203,7 @@ func TestKeyspaceActiveJobs(t *testing.T) {
 
 func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(3)")
+	unavailable := errors.New("keyspace unavailable")
 	for _, tc := range []struct {
 		raw  string
 		want int
@@ -202,7 +220,7 @@ func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 				}
 			}()
 			var current, peak atomic.Int32
-			h := &KeyspaceActiveJobsHandler{checkKeyspace: func(ctx context.Context, _ string) (keyspaceJobCounts, error) {
+			h := &KeyspaceActiveJobsHandler{acquireRuntime: func(ctx context.Context, _, _ string) (sqlsvrapi.KSRuntimeHandle, error) {
 				n := current.Add(1)
 				defer current.Add(-1)
 				for old := peak.Load(); n > old; old = peak.Load() {
@@ -213,9 +231,9 @@ func TestKeyspaceActiveJobsConcurrency(t *testing.T) {
 				started <- struct{}{}
 				select {
 				case <-unblock:
-					return keyspaceJobCounts{}, nil
+					return nil, unavailable
 				case <-ctx.Done():
-					return keyspaceJobCounts{}, ctx.Err()
+					return nil, ctx.Err()
 				}
 			}}
 			w := httptest.NewRecorder()
@@ -249,31 +267,21 @@ func TestKeyspaceActiveJobsCounts(t *testing.T) {
 	counts, err := countActiveKeyspaceJobs(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, keyspaceJobCounts{}, counts)
-	for _, tc := range []struct {
-		state  model.JobState
-		active bool
-	}{
-		{model.JobStateNone, true}, {model.JobStateQueueing, true}, {model.JobStateRunning, true},
-		{model.JobStatePausing, true}, {model.JobStatePaused, true}, {model.JobStateCancelling, true},
-		{model.JobStateRollingback, true}, {model.JobStateDone, false}, {model.JobStateSynced, false},
-		{model.JobStateCancelled, false}, {model.JobStateRollbackDone, false},
-	} {
-		t.Run("ddl/"+tc.state.String(), func(t *testing.T) {
-			job := &model.Job{ID: 99999, Type: model.ActionCreateTable, State: tc.state}
-			data, err := job.Encode(true)
-			require.NoError(t, err)
-			tk.MustExec(`insert into mysql.tidb_ddl_job(job_id,reorg,schema_ids,table_ids,job_meta,type,processing)
+	t.Run("DDL job counts until it leaves the queue", func(t *testing.T) {
+		job := &model.Job{ID: 99999, Type: model.ActionCreateTable, State: model.JobStateDone}
+		data, err := job.Encode(true)
+		require.NoError(t, err)
+		tk.MustExec(`insert into mysql.tidb_ddl_job(job_id,reorg,schema_ids,table_ids,job_meta,type,processing)
                 values (99999,0,'1','1',?,1,0)`, data)
-			counts, err := countActiveKeyspaceJobs(context.Background(), tk.Session())
-			require.NoError(t, err)
-			want := int64(0)
-			if tc.active {
-				want = 1
-			}
-			require.Equal(t, want, counts.DDLJobs)
-			tk.MustExec("delete from mysql.tidb_ddl_job")
-		})
-	}
+		counts, err := countActiveKeyspaceJobs(context.Background(), tk.Session())
+		tk.MustExec("delete from mysql.tidb_ddl_job where job_id = 99999")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), counts.DDLJobs)
+
+		counts, err = countActiveKeyspaceJobs(context.Background(), tk.Session())
+		require.NoError(t, err)
+		require.Zero(t, counts.DDLJobs)
+	})
 	for _, tc := range []struct {
 		status string
 		active bool
@@ -294,47 +302,21 @@ func TestKeyspaceActiveJobsCounts(t *testing.T) {
 			tk.MustExec("delete from mysql.tidb_import_jobs")
 		})
 	}
-	tk.MustExec(`insert into mysql.tidb_ddl_job(job_id,reorg,schema_ids,table_ids,job_meta,type,processing)
-        values (99999,0,'1','1','invalid job meta',1,0)`)
-	t.Run("inspect each chunk before reading more", func(t *testing.T) {
-		se := &singleChunkJobSession{Context: tk.Session(), SQLExecutor: tk.Session().GetSQLExecutor()}
-		_, err := countActiveKeyspaceJobs(context.Background(), se)
-		require.ErrorContains(t, err, "invalid character")
-	})
-	tk.MustExec("delete from mysql.tidb_ddl_job")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = countActiveKeyspaceJobs(ctx, tk.Session())
 	require.Error(t, err)
 }
 
-// singleChunkJobSession returns an error if the caller fetches past a malformed job.
-type singleChunkJobSession struct {
-	sessionctx.Context
-	sqlexec.SQLExecutor
+type jobCountFailingSession struct {
+	sessionapi.Session
+	err error
 }
 
-func (s *singleChunkJobSession) GetSQLExecutor() sqlexec.SQLExecutor { return s }
+func (s *jobCountFailingSession) GetSQLExecutor() sqlexec.SQLExecutor { return s }
 
-func (s *singleChunkJobSession) ExecuteInternal(ctx context.Context, query string, args ...any) (sqlexec.RecordSet, error) {
-	rs, err := s.SQLExecutor.ExecuteInternal(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	return &singleChunkJobResult{RecordSet: rs}, nil
-}
-
-type singleChunkJobResult struct {
-	sqlexec.RecordSet
-	read bool
-}
-
-func (r *singleChunkJobResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if r.read {
-		return errors.New("fetched another chunk before inspecting the malformed job")
-	}
-	r.read = true
-	return r.RecordSet.Next(ctx, chk)
+func (s *jobCountFailingSession) ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error) {
+	return nil, s.err
 }
 
 type jobCountTestPool struct {
@@ -374,19 +356,22 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 		_, err := h.countKeyspace(context.Background(), "missing_ks")
 		require.ErrorContains(t, err, "ENTRY_NOT_FOUND")
 	})
+	queryErr := errors.New("job count query failed")
 	for _, tc := range []string{"success", "acquire error", "session error", "query error", "cancellation"} {
 		t.Run(tc, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			var events []string
 			pool := &jobCountTestPool{resource: tk.Session(), events: &events}
 			runtime := &jobCountTestRuntime{pool: pool, events: &events}
-			h := &KeyspaceActiveJobsHandler{acquireRuntime: func(ctx context.Context, ks, holder string) (sqlsvrapi.KSRuntimeHandle, error) {
+			h := &KeyspaceActiveJobsHandler{acquireRuntime: func(_ context.Context, ks, holder string) (sqlsvrapi.KSRuntimeHandle, error) {
 				require.Equal(t, "user_ks", ks)
 				require.NotEmpty(t, holder)
 				if tc == "acquire error" {
 					return nil, errors.New("acquire failed")
 				}
 				if tc == "cancellation" {
-					require.ErrorIs(t, ctx.Err(), context.Canceled)
+					cancel()
 				}
 				return runtime, nil
 			}}
@@ -394,14 +379,7 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 				pool.getErr = errors.New("pool unavailable")
 			}
 			if tc == "query error" {
-				tk.MustExec(`insert into mysql.tidb_ddl_job(job_id,reorg,schema_ids,table_ids,job_meta,type,processing)
-                    values (99999,0,'1','1','invalid job meta',1,0)`)
-				defer tk.MustExec("delete from mysql.tidb_ddl_job")
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if tc == "cancellation" {
-				cancel()
+				pool.resource = &jobCountFailingSession{Session: tk.Session(), err: queryErr}
 			}
 			_, err := h.countKeyspace(ctx, "user_ks")
 			switch tc {
@@ -411,11 +389,14 @@ func TestKeyspaceActiveJobsRuntimeCleanup(t *testing.T) {
 			case "acquire error":
 				require.Error(t, err)
 				require.Empty(t, events)
-			case "session error", "cancellation":
+			case "session error":
 				require.Error(t, err)
 				require.Equal(t, []string{"release(true)"}, events)
-			default:
-				require.Error(t, err)
+			case "cancellation":
+				require.ErrorIs(t, err, context.Canceled)
+				require.Equal(t, []string{"release(true)"}, events)
+			case "query error":
+				require.ErrorIs(t, err, queryErr)
 				require.Equal(t, []string{"destroy", "release(true)"}, events)
 			}
 		})
