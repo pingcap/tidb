@@ -1742,10 +1742,14 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *c
 			continue
 		}
 		val := strings.TrimSpace(buf.GetString(i))
-		isNegative := len(val) > 0 && val[0] == '-'
+		isNegative := len(val) > 1 && val[0] == '-'
 		dec := new(types.MyDecimal)
 		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && isNegative) {
-			if err := tc.HandleTruncate(dec.FromString([]byte(val))); err != nil {
+			err = dec.FromString([]byte(val))
+			if err == types.ErrTruncated {
+				err = types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", []byte(val))
+			}
+			if err = ec.HandleError(err); err != nil {
 				return err
 			}
 			dec, err := types.ProduceDecWithSpecifiedTp(tc, dec, b.tp)
