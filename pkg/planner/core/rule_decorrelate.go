@@ -224,6 +224,19 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (b
 	return s.optimize(ctx, p, nil)
 }
 
+func hasNestedSemiApplyCorrelatedToSchema(p base.LogicalPlan, schema *expression.Schema) bool {
+	if apply, ok := p.(*logicalop.LogicalApply); ok && apply.JoinType.IsSemiJoin() &&
+		len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], schema)) > 0 {
+		return true
+	}
+	for _, child := range p.Children() {
+		if hasNestedSemiApplyCorrelatedToSchema(child, schema) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, groupByColumn map[*expression.Column]struct{}) (base.LogicalPlan, bool, error) {
 	if groupByColumn == nil {
 		groupByColumn = make(map[*expression.Column]struct{})
@@ -268,6 +281,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
+			if apply.JoinType.IsSemiJoin() && hasNestedSemiApplyCorrelatedToSchema(sel, outerSchema) {
+				// A nested semi-apply still referencing this outer schema prevents full
+				// decorrelation. Keep the selection in the inner plan so its correlated
+				// equalities remain available to access-path selection.
+				goto NoOptimize
+			}
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))

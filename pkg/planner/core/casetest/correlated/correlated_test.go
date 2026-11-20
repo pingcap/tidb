@@ -168,6 +168,40 @@ func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
 }
 
 func TestWrongDecorrelate(t *testing.T) {
+	t.Run("NestedExistsIndexAccess", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table o1 (a int, b int, key(a))")
+		tk.MustExec("create table i1 (a int, b int, key(a))")
+		tk.MustExec("create table i2 (b int, c int, key(b))")
+		for _, hint := range []string{"/*+ NO_DECORRELATE() */", ""} {
+			sql := "select count(*) from o1 where exists (select " + hint + " 1 from i1 where i1.a = o1.a and exists (select 1 from i2 where i2.b = i1.b and i2.c = o1.b))"
+			plan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+			t.Logf("hint %q:\n%s", hint, strings.Join(plan, "\n"))
+			found := false
+			for _, row := range plan {
+				if strings.Contains(row, "IndexRangeScan") && strings.Contains(row, "table:i1") &&
+					strings.Contains(row, "range: decided by [eq(test.i1.a, test.o1.a)]") {
+					found = true
+				}
+			}
+			require.True(t, found, "expected correlated index access on i1:\n%s", strings.Join(plan, "\n"))
+		}
+		// Without a reference from i2 to o1, both subqueries can become joins.
+		plan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' select count(*) from o1 where exists (select 1 from i1 where i1.a = o1.a and exists (select 1 from i2 where i2.b = i1.b))").Rows())
+		require.False(t, planContainsText(plan, "Apply"), strings.Join(plan, "\n"))
+
+		// Check multiplicity and NULL handling after verifying the empty-table plan.
+		tk.MustExec("insert into o1 values (1,10),(1,10),(1,20),(2,10),(3,30),(null,10),(1,null)")
+		tk.MustExec("insert into i1 values (1,100),(1,100),(1,200),(2,300),(null,100),(3,null)")
+		tk.MustExec("insert into i2 values (100,10),(100,10),(200,20),(300,99),(null,30),(100,null)")
+		for _, hint := range []string{"/*+ NO_DECORRELATE() */", ""} {
+			predicate := "exists (select " + hint + " 1 from i1 where i1.a = o1.a and exists (select 1 from i2 where i2.b = i1.b and i2.c = o1.b))"
+			tk.MustQuery("select count(*) from o1 where " + predicate).Check(testkit.Rows("3"))
+			tk.MustQuery("select count(*) from o1 where not " + predicate).Check(testkit.Rows("4"))
+		}
+	})
 	t.Run("nested filtering apply", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
