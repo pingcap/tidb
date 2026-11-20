@@ -379,4 +379,6 @@ replace (
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
+	// Pin the head of tikv/client-go#2182 for the draft build.
+	github.com/tikv/client-go/v2 => github.com/ti-chi-bot/client-go/v2 v2.0.8-0.20261120071527-a55fd2a775de
 )
