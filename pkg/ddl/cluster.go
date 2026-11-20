@@ -196,6 +196,40 @@ func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string
 	return nil
 }
 
+// checkSystemSchemaDiff rejects a schema diff that modifies a system schema.
+func checkSystemSchemaDiff(t meta.Reader, diff *model.SchemaDiff, flashbackTSString string) error {
+	switch diff.Type {
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		// SchemaID of a masking policy diff is the policy ID, which is allocated
+		// independently of database IDs. Check the bound table instead.
+		return checkSystemSchemaTableID(t, diff.TableID, flashbackTSString)
+	}
+	return checkSystemSchemaID(t, diff.SchemaID, flashbackTSString)
+}
+
+// checkSystemSchemaTableID checks whether the table was in a system schema at
+// the flashback snapshot. A table that enters a system schema later does so by
+// a diff carrying that schema ID, which checkSystemSchemaID rejects.
+func checkSystemSchemaTableID(t meta.Reader, tableID int64, flashbackTSString string) error {
+	dbs, err := t.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, dbInfo := range dbs {
+		if !filter.IsSystemSchema(dbInfo.Name.L) {
+			continue
+		}
+		tblInfo, err := t.GetTable(dbInfo.ID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tblInfo != nil {
+			return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
+		}
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
@@ -267,7 +301,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		if !isFlashbackSupportedDDLAction(diff.Type) {
 			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
 		}
-		err = checkSystemSchemaID(flashbackSnapshotMeta, diff.SchemaID, flashbackTSString)
+		err = checkSystemSchemaDiff(flashbackSnapshotMeta, diff, flashbackTSString)
 		if err != nil {
 			return errors.Trace(err)
 		}

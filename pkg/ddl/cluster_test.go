@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -236,4 +238,62 @@ func TestCancelFlashbackCluster(t *testing.T) {
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+}
+
+func TestFlashbackClusterWithMaskingPolicyID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c varchar(20))")
+	tk.MustExec("create database flashback_policy_db")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	schemaID := func(name string) int64 {
+		db, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).SchemaByName(ast.NewCIStr(name))
+		require.True(t, ok)
+		return db.ID
+	}
+	// Policy IDs come from the AUTO_INCREMENT of mysql.tidb_masking_policy,
+	// so they can equal the ID of any database.
+	setNextPolicyID := func(id int64) {
+		tk.MustExec(fmt.Sprintf("alter table mysql.tidb_masking_policy force auto_increment = %d", id))
+	}
+	createPolicyWithID := func(id int64) {
+		tk.MustExec("create masking policy p on t(c) as mask_full(c)")
+		tk.MustQuery("select policy_id from mysql.tidb_masking_policy").Check(testkit.Rows(fmt.Sprint(id)))
+	}
+	// flashback runs ddl and then flashes back to the timestamp before it.
+	flashback := func(ddl func()) error {
+		time.Sleep(10 * time.Millisecond)
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(10*time.Second))))
+		ddl()
+		return tk.ExecToErr(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
+	}
+
+	mysqlID := schemaID("mysql")
+	setNextPolicyID(mysqlID)
+	require.NoError(t, flashback(func() { createPolicyWithID(mysqlID) }))
+	require.NoError(t, flashback(func() { tk.MustExec("alter table t modify masking policy p set expression = mask_null(c)") }))
+	require.NoError(t, flashback(func() { tk.MustExec("alter table t disable masking policy p") }))
+	require.NoError(t, flashback(func() { tk.MustExec("alter table t drop masking policy p") }))
+
+	// A policy ID that equals the ID of a user database is not special either.
+	userDBID := schemaID("flashback_policy_db")
+	setNextPolicyID(userDBID)
+	require.NoError(t, flashback(func() { createPolicyWithID(userDBID) }))
+
+	// DDL on a system schema is still rejected, including a policy change on
+	// a table that was renamed into a system schema.
+	err := flashback(func() { tk.MustExec("create table mysql.flashback_policy_sys(a int)") })
+	require.ErrorContains(t, err, "Detected modified system table")
+	tk.MustExec("rename table t to mysql.flashback_policy_t")
+	err = flashback(func() { tk.MustExec("alter table mysql.flashback_policy_t drop masking policy p") })
+	require.ErrorContains(t, err, "Detected modified system table")
 }
