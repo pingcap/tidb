@@ -1055,6 +1055,30 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
 }
 
+func TestBinaryDefaultValueNonUTF8(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, b binary(3) default x'00FF41', v varbinary(8) default x'00FF41')")
+	tk.MustExec("insert into t(id) values (1)")
+	tk.MustExec("alter table t add column c varbinary(8) default x'FF00FE'")
+	tk.MustExec("insert into t(id) values (2)")
+	tk.MustQuery("select id, hex(b), hex(v), hex(c) from t order by id").Check(testkit.Rows(
+		"1 00FF41 00FF41 FF00FE",
+		"2 00FF41 00FF41 FF00FE",
+	))
+
+	// A literal shorter than BINARY(n) must be padded in the raw-bytes copy too.
+	tk.MustExec("create table t2(a binary(3) default 'a')")
+	tk.MustQuery("select hex(column_default) from information_schema.columns where table_schema = 'test' and table_name = 't2' and column_name = 'a'").Check(testkit.Rows("610000"))
+
+	// Dropping the default must not resurrect the previous raw bytes.
+	tk.MustExec("alter table t alter column v set default null")
+	tk.MustExec("insert into t(id) values (3)")
+	tk.MustQuery("select v is null from t where id = 3").Check(testkit.Rows("1"))
+}
+
 func TestMDLTruncateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
