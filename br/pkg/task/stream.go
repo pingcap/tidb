@@ -2490,8 +2490,10 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return nil
 	}
 
-	// skip registration if target TiDB version doesn't support restore registry
-	if !restore.HasRestoreIDColumn(domain) {
+	// Registration depends on the registry itself. The PiTR ID-map table may
+	// be absent even on a supported target, in which case ID maps use storage.
+	if !domain.InfoSchema().TableExists(
+		pmodel.NewCIStr(registry.RestoreRegistryDBName), pmodel.NewCIStr(registry.RestoreRegistryTableName)) {
 		log.Info("skipping restore registration since target TiDB version doesn't support restore registry")
 		return nil
 	}

@@ -2032,6 +2032,29 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 		}
 	}
 
+	t.Run("registered restore resumes without the ID-map table", func(t *testing.T) {
+		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		first := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		first.SetRestoreID(101)
+		require.NoError(t, first.SetStorage(ctx, backend, nil))
+		require.NoError(t, first.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+
+		retry := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		retry.SetRestoreID(101)
+		require.NoError(t, retry.SetStorage(ctx, backend, nil))
+		loaded, err := retry.TEST_initSchemasMap(ctx, 2, nil)
+		require.NoError(t, err)
+		require.Len(t, loaded, len(baseTableMappingManager.DBReplaceMap))
+
+		other := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		other.SetRestoreID(102)
+		require.NoError(t, other.SetStorage(ctx, backend, nil))
+		loaded, err = other.TEST_initSchemasMap(ctx, 2, nil)
+		require.NoError(t, err)
+		require.Nil(t, loaded)
+	})
+
 	t.Run("reject newer backup schema version", func(t *testing.T) {
 		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
 		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)

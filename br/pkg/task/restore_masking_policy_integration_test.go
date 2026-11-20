@@ -51,6 +51,79 @@ type interruptedMaskingReplaySession struct {
 	cancel context.CancelFunc
 }
 
+func TestRestoreRegistrationWithoutPiTRIDMap(t *testing.T) {
+	for _, scenario := range []string{"current_schema", "missing_id_map", "missing_registry"} {
+		t.Run(scenario, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table registration_guard(c varchar(20))")
+			tk.MustExec("insert into registration_guard values ('secret')")
+			if scenario != "current_schema" {
+				tk.MustExec("drop table mysql.tidb_pitr_id_map")
+			}
+			if scenario == "missing_registry" {
+				tk.MustExec("drop table mysql.tidb_restore_registry")
+			}
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+			g := &gluemock.MockGlue{}
+			g.SetSession(tk.Session())
+			restoreRegistry, err := registry.NewRestoreRegistry(ctx, g, dom)
+			require.NoError(t, err)
+			t.Cleanup(restoreRegistry.Close)
+			newConfig := func() *task.RestoreConfig {
+				return &task.RestoreConfig{
+					Config:                    task.Config{FilterStr: []string{"test.*"}},
+					RestoreCommonConfig:       task.RestoreCommonConfig{WithSysTable: true},
+					RestoreRegistry:           restoreRegistry,
+					StartTS:                   1,
+					RestoreTS:                 2,
+					UpstreamClusterID:         3,
+					IsRestoredTSUserSpecified: true,
+				}
+			}
+			cfg := newConfig()
+			require.NoError(t, task.RegisterRestoreIfNeeded(ctx, cfg, task.PointRestoreCmd, dom))
+			// MockGlue shares this session with TestKit, so finish the initial
+			// heartbeat before issuing more SQL on it.
+			restoreRegistry.StopHeartbeatManager()
+			if scenario == "missing_registry" {
+				require.Zero(t, cfg.RestoreID)
+				return
+			}
+			require.NotZero(t, cfg.RestoreID)
+			registered, err := restoreRegistry.IsRegistered(ctx, cfg.RestoreID)
+			require.NoError(t, err)
+			require.True(t, registered)
+			target, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("registration_guard"))
+			require.NoError(t, err)
+			se, err := g.CreateSession(store)
+			require.NoError(t, err)
+			ids := []int64{target.Meta().ID}
+			require.NoError(t, task.ProtectMaskingPolicyTablesForTest(ctx, dom, se, ids, cfg.RestoreID, restoreRegistry.IsRegistered))
+			tk.MustGetErrCode("select c from registration_guard", errno.ErrProtectedTableMode)
+
+			// A checkpoint retry resumes the same owner even if ID maps must
+			// be stored in files because their system table is absent.
+			require.NoError(t, restoreRegistry.PauseTask(ctx, cfg.RestoreID))
+			retry := newConfig()
+			require.NoError(t, task.RegisterRestoreIfNeeded(ctx, retry, task.PointRestoreCmd, dom))
+			restoreRegistry.StopHeartbeatManager()
+			require.Equal(t, cfg.RestoreID, retry.RestoreID)
+			tk.MustGetErrCode("select c from registration_guard", errno.ErrProtectedTableMode)
+			vars := tk.Session().GetSessionVars()
+			vars.InMaskingPolicyRestore = true
+			require.NoError(t, se.Execute(ctx, "create masking policy p on test.registration_guard(c) as mask_full(c)"))
+			vars.InMaskingPolicyRestore = false
+			require.NoError(t, task.ReopenMaskingPolicyTablesForTest(ctx, dom, se, ids, retry.RestoreID))
+			tk.MustQuery("select c from registration_guard").Check(testkit.Rows("XXXXXX"))
+			if scenario == "missing_id_map" {
+				require.False(t, dom.InfoSchema().TableExists(pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_pitr_id_map")))
+			}
+		})
+	}
+}
+
 func (s *interruptedMaskingReplaySession) Execute(ctx context.Context, sql string) error {
 	if err := ctx.Err(); err != nil {
 		return err
