@@ -1929,7 +1929,7 @@ func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.Physic
 		}
 		// Full-key ranges on a unique index read at most one row each and can become a
 		// [Batch]PointGet; shortening them saves no meaningful work.
-		if path.Index.Unique && rangesCoverAllIndexColumns(path) {
+		if path.Index.Unique && rangesAreFullKeyPoints(ds, path) {
 			continue
 		}
 		for cutoff := max(1, path.EqCondCount); cutoff < path.EqOrInCondCount; cutoff++ {
@@ -1963,10 +1963,13 @@ func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.Physic
 	return candidates
 }
 
-// rangesCoverAllIndexColumns reports whether every range of path fixes all columns of its index.
-func rangesCoverAllIndexColumns(path *util.AccessPath) bool {
+// rangesAreFullKeyPoints reports whether every range of path is a non-null point on all columns
+// of its index. A range that has all index columns but is not a point, such as one ending in a
+// BETWEEN, cannot become a PointGet, so it does not qualify.
+func rangesAreFullKeyPoints(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
 	for _, ran := range path.Ranges {
-		if len(ran.LowVal) != len(path.Index.Columns) {
+		if len(ran.LowVal) != len(path.Index.Columns) || !ran.IsPointNonNullable(tc) {
 			return false
 		}
 	}
@@ -1978,15 +1981,16 @@ func logSkippedPrunedRangePath(path *util.AccessPath, cutoff int, err error) {
 	logutil.BgLogger().Debug("skip pruned-range alternative", zap.String("index", path.Index.Name.O), zap.Int("cutoff", cutoff), zap.Error(err))
 }
 
-// indexHasAnalyzedStats reports whether the path's index has analyzed stats. The row estimates
-// that decide between the original and the pruned ranges come from the index histogram, and are
-// not reliable enough to trade seeks for scanned rows without it.
+// indexHasAnalyzedStats reports whether the path's index has analyzed and fully loaded stats.
+// The row estimates that decide between the original and the pruned ranges come from the index
+// histogram, and are not reliable enough to trade seeks for scanned rows without it. An analyzed
+// index whose histogram/TopN were evicted falls back to cruder estimates, so it is rejected too.
 func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool {
 	if ds.StatisticTable == nil || ds.StatisticTable.Pseudo {
 		return false
 	}
 	idx := ds.StatisticTable.GetIdx(path.Index.ID)
-	return idx != nil && idx.IsAnalyzed()
+	return idx != nil && idx.IsAnalyzed() && idx.IsFullLoad()
 }
 
 func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
