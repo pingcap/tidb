@@ -18,6 +18,8 @@ use std::fmt;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
 use tidb_hack::GoToLower;
+use tidb_log::{Field, Value};
+use tidb_logutil::bg_logger;
 use tidb_vardef::option_values::tidb_opt_on;
 
 use tidb_datatype::{Datum, UNSPECIFIED_LENGTH};
@@ -94,6 +96,25 @@ pub trait StatsSessionContext: SessionContext {
     fn location(&self) -> String;
     /// Go `StmtCtx.SetTimeZone`.
     fn set_statement_time_zone(&self, value: &str);
+    /// Go `StmtCtx.TimeZone()`.
+    fn statement_time_zone(&self) -> String;
+    /// Go `SessionVars.GetSystemVar`: the session's value of `name`, `None`
+    /// when the session has not loaded it.
+    fn system_var(&self, name: &str) -> Option<String>;
+    /// Go `SessionVars.AnalyzeSkipColumnTypes`.
+    fn analyze_skip_column_types(&self) -> BTreeSet<String>;
+    /// Go `SessionVars.EnableAnalyzeSnapshot`.
+    fn enable_analyze_snapshot(&self) -> bool;
+    /// Go `SessionVars.SkipMissingPartitionStats`.
+    fn skip_missing_partition_stats(&self) -> bool;
+    /// Go `SessionVars.AnalyzePartitionConcurrency`.
+    fn analyze_partition_concurrency(&self) -> i64;
+    /// Go `SessionVars.AnalyzeVersion`.
+    fn analyze_version(&self) -> i64;
+    /// Go `SessionVars.AnalyzeStoreBatchSize`.
+    fn analyze_store_batch_size(&self) -> i64;
+    /// Go `SessionVars.LockWaitTimeout`, in milliseconds.
+    fn lock_wait_timeout(&self) -> i64;
     /// Go `Txn(true).StartTS`.
     fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError>;
     /// Go `GetStore().GetOracle().GetTimestamp`: a fresh timestamp.
@@ -124,7 +145,8 @@ fn error(message: impl Into<String>) -> SqlExecError {
     Box::new(StatsUtilError(message.into()))
 }
 
-fn parse_analyze_skip_column_types(value: &str) -> BTreeSet<String> {
+/// Go `variable.ParseAnalyzeSkipColumnTypes`.
+pub fn parse_analyze_skip_column_types(value: &str) -> BTreeSet<String> {
     const ALLOWED: [&str; 7] = [
         "json",
         "text",
@@ -148,20 +170,110 @@ fn parse_i64(name: &str, value: &str) -> Result<i64, SqlExecError> {
         .map_err(|parse_error| error(format!("parse {name}: {parse_error}")))
 }
 
-/// Go `UpdateSCtxVarsForStats`, preserving its read/mutation order and
-/// partial-update behavior on an intermediate error.
+/// Go `statsSessionVarsSnapshot`: the session's statistics settings before
+/// [`update_sctx_vars_for_stats`] replaced them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatsSessionVarsSnapshot {
+    analyze_skip_column_types: BTreeSet<String>,
+    stmt_time_zone: String,
+    partition_prune_mode: String,
+    time_zone_value: String,
+    analyze_store_batch_size_value: String,
+    lock_wait_timeout: i64,
+    analyze_version: i64,
+    analyze_partition_concurrency: i64,
+    skip_missing_partition_stats: bool,
+    enable_analyze_snapshot: bool,
+}
+
+impl StatsSessionVarsSnapshot {
+    fn restore<C: StatsSessionContext + ?Sized>(&self, context: &C) {
+        if let Err(err) = context.set_analyze_store_batch_size(&self.analyze_store_batch_size_value) {
+            bg_logger().warn(
+                "restore analyze store batch size failed",
+                &[Field::new("error", Value::Str(err.to_string()))],
+            );
+        }
+        if let Err(err) = context.set_time_zone(&self.time_zone_value) {
+            bg_logger().warn(
+                "restore statistics session time zone failed",
+                &[Field::new("error", Value::Str(err.to_string()))],
+            );
+        }
+        context.set_analyze_skip_column_types(self.analyze_skip_column_types.clone());
+        context.set_partition_prune_mode(&self.partition_prune_mode);
+        context.set_enable_analyze_snapshot(self.enable_analyze_snapshot);
+        context.set_skip_missing_partition_stats(self.skip_missing_partition_stats);
+        context.set_analyze_partition_concurrency(self.analyze_partition_concurrency);
+        context.set_analyze_version(self.analyze_version);
+        context.set_lock_wait_timeout(self.lock_wait_timeout);
+        context.set_statement_time_zone(&self.stmt_time_zone);
+    }
+}
+
+/// Go `UpdateSCtxVarsForStats`'s returned restore function: [`Self::restore`]
+/// or dropping it (Go `defer restoreStatsVars()`) puts the snapshot back.
+#[must_use = "dropping the guard restores the session's statistics settings at once"]
+pub struct RestoreStatsVars<'a, C: StatsSessionContext + ?Sized> {
+    context: &'a C,
+    snapshot: Option<StatsSessionVarsSnapshot>,
+}
+
+impl<C: StatsSessionContext + ?Sized> RestoreStatsVars<'_, C> {
+    /// Go `restore()`.
+    pub fn restore(mut self) {
+        self.restore_now();
+    }
+
+    fn restore_now(&mut self) {
+        if let Some(snapshot) = self.snapshot.take() {
+            snapshot.restore(self.context);
+        }
+    }
+}
+
+impl<C: StatsSessionContext + ?Sized> Drop for RestoreStatsVars<'_, C> {
+    fn drop(&mut self) {
+        self.restore_now();
+    }
+}
+
+/// Go `UpdateSCtxVarsForStats`: updates every variable that may affect the
+/// behavior of statistics. It restores the original settings on failure and
+/// returns the guard that restores them after use on success.
 pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     context: &C,
-) -> Result<(), SqlExecError> {
+) -> Result<RestoreStatsVars<'_, C>, SqlExecError> {
+    // These setters update both cached system variables and typed fields. Unloaded
+    // session variables must retain the session's original values, not current globals.
+    let snapshot = StatsSessionVarsSnapshot {
+        analyze_skip_column_types: context.analyze_skip_column_types(),
+        stmt_time_zone: context.statement_time_zone(),
+        partition_prune_mode: context.partition_prune_mode(),
+        time_zone_value: context.system_var(TIME_ZONE).unwrap_or_else(|| context.location()),
+        analyze_store_batch_size_value: context
+            .system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE)
+            .unwrap_or_else(|| context.analyze_store_batch_size().to_string()),
+        lock_wait_timeout: context.lock_wait_timeout(),
+        analyze_version: context.analyze_version(),
+        analyze_partition_concurrency: context.analyze_partition_concurrency(),
+        skip_missing_partition_stats: context.skip_missing_partition_stats(),
+        enable_analyze_snapshot: context.enable_analyze_snapshot(),
+    };
+    // On an error the guard drops here: Go `restoreOnErr`.
+    let restore = RestoreStatsVars { context, snapshot: Some(snapshot) };
+
     let value = context.global_system_var(tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS)?;
     context.set_enable_async_merge_global_stats(tidb_opt_on(&value));
 
+    // concurrency of save stats to storage
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY)?;
     context.set_analyze_partition_concurrency(parse_i64(
         tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
         &value,
     )?);
 
+    // analyzer version
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_VERSION)?;
     context.set_analyze_version(parse_i64(tidb_vars::TIDB_ANALYZE_VERSION, &value)?);
 
@@ -173,26 +285,32 @@ pub fn update_sctx_vars_for_stats<C: StatsSessionContext + ?Sized>(
     let value = context.global_system_var(tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)?;
     context.set_enable_historical_stats(tidb_opt_on(&value));
 
+    // partition mode
     let value = context.global_system_var(tidb_vars::TIDB_PARTITION_PRUNE_MODE)?;
     context.set_partition_prune_mode(&value);
 
+    // enable analyze snapshot
     let value = context.global_system_var(tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT)?;
     context.set_enable_analyze_snapshot(tidb_opt_on(&value));
 
+    // enable skip column types
     let value = context.global_system_var(tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)?;
     context.set_analyze_skip_column_types(parse_analyze_skip_column_types(&value));
 
+    // skip missing partition stats
     let value = context.global_system_var(tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS)?;
     context.set_skip_missing_partition_stats(tidb_opt_on(&value));
 
+    // sync innodb_lock_wait_timeout
     let value = context.global_system_var(INNODB_LOCK_WAIT_TIMEOUT)?;
     context.set_lock_wait_timeout(parse_i64(INNODB_LOCK_WAIT_TIMEOUT, &value)?.wrapping_mul(1_000));
 
+    // timezone used to datetime/timestamp conversion when collecting stats.
     let value = context.global_system_var(TIME_ZONE)?;
     context.set_time_zone(&value)?;
     let location = context.location();
     context.set_statement_time_zone(&location);
-    Ok(())
+    Ok(restore)
 }
 
 fn panic_text(payload: &(dyn Any + Send)) -> String {
@@ -220,7 +338,8 @@ where
     let result = catch_unwind(AssertUnwindSafe(|| {
         pool.with_session(&mut |session| {
             session.with_session_context(|context| {
-                update_sctx_vars_for_stats(context)?;
+                // update stats variables automatically
+                let _restore_stats_vars = update_sctx_vars_for_stats(context)?;
                 let callback = callback
                     .take()
                     .expect("CallWithSCtx callback called more than once");
@@ -506,13 +625,19 @@ mod tests {
         async_merge: bool,
         partition_concurrency: i64,
         analyze_version: i64,
+        /// The loaded `tidb_analyze_store_batch_size` (empty: not loaded).
         analyze_store_batch_size: String,
+        /// Go `AnalyzeStoreBatchSize`.
+        batch_size_typed: i64,
         historical: bool,
         prune_mode: String,
         snapshot: bool,
         skip_types: BTreeSet<String>,
         skip_missing: bool,
         lock_wait_ms: i64,
+        /// The loaded `time_zone` variable.
+        time_zone_var: Option<String>,
+        /// Go `TimeZone`'s name, `SYSTEM` for nil.
         location: String,
         statement_location: String,
     }
@@ -570,7 +695,13 @@ mod tests {
                     (TIME_ZONE.to_owned(), "UTC".to_owned()),
                 ])),
                 reads: Mutex::new(Vec::new()),
-                state: Mutex::new(StatsState::default()),
+                // Go `mock.NewContext`: a SYSTEM session zone, UTC statements.
+                state: Mutex::new(StatsState {
+                    batch_size_typed: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
+                    location: "SYSTEM".to_owned(),
+                    statement_location: "UTC".to_owned(),
+                    ..StatsState::default()
+                }),
                 executor: Arc::new(RecordingExecutor::default()),
                 mock: Mutex::new(None),
                 closed: AtomicUsize::new(0),
@@ -659,7 +790,11 @@ mod tests {
         }
 
         fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), SqlExecError> {
-            self.state.lock().unwrap().analyze_store_batch_size = value.to_owned();
+            // Go `SetSystemVar`'s integer validation.
+            let typed = parse_i64(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE, value)?;
+            let mut state = self.state.lock().unwrap();
+            state.analyze_store_batch_size = value.to_owned();
+            state.batch_size_typed = typed;
             Ok(())
         }
 
@@ -692,7 +827,17 @@ mod tests {
         }
 
         fn set_time_zone(&self, value: &str) -> Result<(), SqlExecError> {
-            self.state.lock().unwrap().location = value.to_owned();
+            // Go `SetSystemVar(time_zone)`'s validation, for the zones these
+            // tests use.
+            let offset = value.len() == 6
+                && (value.starts_with('+') || value.starts_with('-'))
+                && value.as_bytes()[3] == b':';
+            if !(offset || value == "SYSTEM" || value == "UTC" || value.contains('/')) {
+                return Err(error(format!("unknown or incorrect time zone: '{value}'")));
+            }
+            let mut state = self.state.lock().unwrap();
+            state.time_zone_var = Some(value.to_owned());
+            state.location = value.to_owned();
             Ok(())
         }
 
@@ -702,6 +847,49 @@ mod tests {
 
         fn set_statement_time_zone(&self, value: &str) {
             self.state.lock().unwrap().statement_location = value.to_owned();
+        }
+
+        fn statement_time_zone(&self) -> String {
+            self.state.lock().unwrap().statement_location.clone()
+        }
+
+        fn system_var(&self, name: &str) -> Option<String> {
+            let state = self.state.lock().unwrap();
+            match name {
+                tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE => {
+                    (!state.analyze_store_batch_size.is_empty()).then(|| state.analyze_store_batch_size.clone())
+                }
+                TIME_ZONE => state.time_zone_var.clone(),
+                _ => None,
+            }
+        }
+
+        fn analyze_skip_column_types(&self) -> BTreeSet<String> {
+            self.state.lock().unwrap().skip_types.clone()
+        }
+
+        fn enable_analyze_snapshot(&self) -> bool {
+            self.state.lock().unwrap().snapshot
+        }
+
+        fn skip_missing_partition_stats(&self) -> bool {
+            self.state.lock().unwrap().skip_missing
+        }
+
+        fn analyze_partition_concurrency(&self) -> i64 {
+            self.state.lock().unwrap().partition_concurrency
+        }
+
+        fn analyze_version(&self) -> i64 {
+            self.state.lock().unwrap().analyze_version
+        }
+
+        fn analyze_store_batch_size(&self) -> i64 {
+            self.state.lock().unwrap().batch_size_typed
+        }
+
+        fn lock_wait_timeout(&self) -> i64 {
+            self.state.lock().unwrap().lock_wait_ms
         }
 
         fn transaction_start_ts(&self, active: bool) -> Result<u64, SqlExecError> {
@@ -721,7 +909,7 @@ mod tests {
     #[test]
     fn session_variables_are_synchronized_in_source_order() {
         let context = MockContext::new();
-        update_sctx_vars_for_stats(&context).unwrap();
+        let _restore = update_sctx_vars_for_stats(&context).unwrap();
         assert_eq!(
             *context.reads.lock().unwrap(),
             [
@@ -759,7 +947,7 @@ mod tests {
     #[test]
     fn analyze_store_batch_size_is_loaded_before_historical_stats() {
         let context = MockContext::new();
-        update_sctx_vars_for_stats(&context).unwrap();
+        let _restore = update_sctx_vars_for_stats(&context).unwrap();
         let reads = context.reads.lock().unwrap();
         let version = reads
             .iter()
@@ -887,6 +1075,205 @@ mod tests {
         mock.verify();
     }
 
+    /// Go `newStatsSessionContextForRestoreTest`: each setting's GLOBAL and
+    /// session values.
+    fn new_stats_session_context_for_restore_test() -> MockContext {
+        let context = MockContext::new();
+        let mut globals = context.globals.lock().unwrap();
+        for (name, global) in [
+            (tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY, "3"),
+            (tidb_vars::TIDB_ANALYZE_VERSION, "2"),
+            (tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE, "6"),
+            (tidb_vars::TIDB_PARTITION_PRUNE_MODE, "dynamic"),
+            (tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT, "ON"),
+            (tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES, "blob"),
+            (tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS, "ON"),
+            (INNODB_LOCK_WAIT_TIMEOUT, "12"),
+            (TIME_ZONE, "+03:00"),
+        ] {
+            globals.insert(name.to_owned(), global.to_owned());
+        }
+        drop(globals);
+        *context.state.lock().unwrap() = StatsState {
+            partition_concurrency: 1,
+            // Go `vars.AnalyzeVersion = 1` after its session settings.
+            analyze_version: 1,
+            analyze_store_batch_size: "7".to_owned(),
+            batch_size_typed: 7,
+            prune_mode: "static".to_owned(),
+            snapshot: false,
+            skip_types: BTreeSet::from(["json".to_owned()]),
+            skip_missing: false,
+            lock_wait_ms: 45_000,
+            time_zone_var: Some("+08:00".to_owned()),
+            location: "+08:00".to_owned(),
+            statement_location: "UTC".to_owned(),
+            ..StatsState::default()
+        };
+        context
+    }
+
+    /// Go `checkRestoredStatsSessionVars`.
+    fn check_restored_stats_session_vars(context: &MockContext) {
+        assert_eq!(1, context.analyze_partition_concurrency());
+        assert_eq!(1, context.analyze_version());
+        assert_eq!(7, context.analyze_store_batch_size());
+        assert_eq!("static", context.partition_prune_mode());
+        assert!(!context.enable_analyze_snapshot());
+        assert_eq!(BTreeSet::from(["json".to_owned()]), context.analyze_skip_column_types());
+        assert!(!context.skip_missing_partition_stats());
+        assert_eq!(45_000, context.lock_wait_timeout());
+        assert_eq!("+08:00", context.location());
+        assert_eq!("UTC", context.statement_time_zone());
+        assert_eq!(Some("7".to_owned()), context.system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE));
+        assert_eq!(Some("+08:00".to_owned()), context.system_var(TIME_ZONE));
+    }
+
+    /// Go master `TestUpdateSCtxVarsForStatsRestore`.
+    #[test]
+    fn test_update_sctx_vars_for_stats_restore() {
+        for fail_on in [
+            "",
+            tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
+            tidb_vars::TIDB_ANALYZE_VERSION,
+            tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
+            tidb_vars::TIDB_PARTITION_PRUNE_MODE,
+            tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT,
+            tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES,
+            tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
+            INNODB_LOCK_WAIT_TIMEOUT,
+            TIME_ZONE,
+        ] {
+            let context = new_stats_session_context_for_restore_test();
+            if !fail_on.is_empty() {
+                // Go `failingStatsGlobalAccessor`: the read of `fail_on` fails.
+                context.globals.lock().unwrap().remove(fail_on);
+            }
+            match update_sctx_vars_for_stats(&context) {
+                Err(err) => {
+                    assert!(!fail_on.is_empty(), "{err}");
+                    assert!(err.to_string().contains(fail_on), "{fail_on}: {err}");
+                }
+                Ok(restore) => {
+                    assert!(fail_on.is_empty());
+                    assert_eq!(3, context.analyze_partition_concurrency());
+                    assert_eq!(2, context.analyze_version());
+                    assert_eq!(6, context.analyze_store_batch_size());
+                    assert_eq!("dynamic", context.partition_prune_mode());
+                    assert!(context.enable_analyze_snapshot());
+                    assert_eq!(BTreeSet::from(["blob".to_owned()]), context.analyze_skip_column_types());
+                    assert!(context.skip_missing_partition_stats());
+                    assert_eq!(12_000, context.lock_wait_timeout());
+                    assert_eq!("+03:00", context.location());
+                    assert_eq!(context.location(), context.statement_time_zone());
+                    restore.restore();
+                }
+            }
+            check_restored_stats_session_vars(&context);
+        }
+        for name in [
+            tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY,
+            tidb_vars::TIDB_ANALYZE_VERSION,
+            tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
+            INNODB_LOCK_WAIT_TIMEOUT,
+            TIME_ZONE,
+        ] {
+            // "invalid_<name>"
+            let context = new_stats_session_context_for_restore_test();
+            context.globals.lock().unwrap().insert(name.to_owned(), "invalid".to_owned());
+            assert!(update_sctx_vars_for_stats(&context).is_err(), "{name}");
+            check_restored_stats_session_vars(&context);
+        }
+        for (name, zone, value) in [("system", "SYSTEM", "SYSTEM"), ("utc", "UTC", "UTC"), ("fixed offset", "+08:00", "+08:00")] {
+            // "unloaded/<name>": neither variable is loaded in the session.
+            let context = MockContext::new();
+            {
+                let mut globals = context.globals.lock().unwrap();
+                globals.insert(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE.to_owned(), "6".to_owned());
+                globals.insert(TIME_ZONE.to_owned(), "+03:00".to_owned());
+            }
+            // Go `vars.TimeZone = tc.zone`.
+            context.state.lock().unwrap().location = zone.to_owned();
+            assert_eq!(None, context.system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE), "{name}");
+            assert_eq!(None, context.system_var(TIME_ZONE), "{name}");
+            let restore = update_sctx_vars_for_stats(&context).unwrap();
+            assert_eq!(6, context.analyze_store_batch_size(), "{name}");
+            restore.restore();
+            let default = tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE;
+            assert_eq!(Some(default.to_string()), context.system_var(tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE), "{name}");
+            assert_eq!(default, context.analyze_store_batch_size(), "{name}");
+            assert_eq!(Some(value.to_owned()), context.system_var(TIME_ZONE), "{name}");
+            assert_eq!(zone, context.location(), "{name}");
+            assert_eq!("UTC", context.statement_time_zone(), "{name}");
+        }
+    }
+
+    /// Go master `TestCallWithSCtxRestoresStatsSessionVars`.
+    #[test]
+    fn test_call_with_sctx_restores_stats_session_vars() {
+        for fail_callback in [false, true] {
+            // "callback_error=<fail_callback>"
+            let context = Arc::new(new_stats_session_context_for_restore_test());
+            let created = Arc::new(AtomicUsize::new(0));
+            let (factory_context, factory_created) = (Arc::clone(&context), Arc::clone(&created));
+            let pool = AdvancedSessionPool::new(1, move || {
+                factory_created.fetch_add(1, Ordering::SeqCst);
+                Ok(Arc::clone(&factory_context))
+            });
+            let result = call_with_sctx(
+                &pool,
+                |ctx| {
+                    assert!(std::ptr::eq(ctx, Arc::as_ptr(&context)));
+                    assert_eq!(3, ctx.analyze_partition_concurrency());
+                    assert_eq!(6, ctx.analyze_store_batch_size());
+                    assert_eq!(12_000, ctx.lock_wait_timeout());
+                    assert_eq!("+03:00", ctx.location());
+                    assert_eq!(ctx.location(), ctx.statement_time_zone());
+                    if fail_callback {
+                        return Err(error("statistics callback failed"));
+                    }
+                    Ok(())
+                },
+                &[],
+            );
+            if fail_callback {
+                assert!(result.unwrap_err().to_string().contains("statistics callback failed"));
+            } else {
+                result.unwrap();
+            }
+            check_restored_stats_session_vars(&context);
+            if !fail_callback {
+                AdvancedSessionPool::with_session(&pool, |session| {
+                    session.with_session_context(|ctx: &MockContext| {
+                        assert!(std::ptr::eq(ctx, Arc::as_ptr(&context)));
+                        check_restored_stats_session_vars(ctx);
+                        Ok(())
+                    })
+                })
+                .unwrap();
+                assert_eq!(1, created.load(Ordering::SeqCst));
+            }
+        }
+        // "setup_error"
+        let context = Arc::new(new_stats_session_context_for_restore_test());
+        context.globals.lock().unwrap().remove(TIME_ZONE);
+        let factory_context = Arc::clone(&context);
+        let pool = AdvancedSessionPool::new(1, move || Ok(Arc::clone(&factory_context)));
+        let mut called = false;
+        let err = call_with_sctx(
+            &pool,
+            |_| {
+                called = true;
+                Ok(())
+            },
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains(TIME_ZONE), "{err}");
+        assert!(!called);
+        check_restored_stats_session_vars(&context);
+    }
+
     #[test]
     fn call_with_sctx_releases_failed_session_and_synchronizes_timezone() {
         let context = Arc::new(MockContext::new());
@@ -897,13 +1284,27 @@ mod tests {
             .insert(TIME_ZONE.to_owned(), "Asia/Shanghai".to_owned());
         let factory_context = Arc::clone(&context);
         let pool = AdvancedSessionPool::new(1, move || Ok(Arc::clone(&factory_context)));
-        let returned = call_with_sctx(&pool, |_| Err(error("simulated error")), &[]).unwrap_err();
+        let synced = Mutex::new((String::new(), String::new()));
+        let returned = call_with_sctx(
+            &pool,
+            |context| {
+                *synced.lock().unwrap() = (context.location(), context.statement_time_zone());
+                Err(error("simulated error"))
+            },
+            &[],
+        )
+        .unwrap_err();
         assert_eq!(returned.to_string(), "simulated error");
         assert_eq!(pool.size(), 0);
         assert_eq!(context.closed.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            ("Asia/Shanghai".to_owned(), "Asia/Shanghai".to_owned()),
+            *synced.lock().unwrap()
+        );
+        // Go `defer restoreStatsVars()`: the session's own zones come back.
         let state = context.state.lock().unwrap();
-        assert_eq!(state.location, "Asia/Shanghai");
-        assert_eq!(state.statement_location, "Asia/Shanghai");
+        assert_eq!(state.location, "SYSTEM");
+        assert_eq!(state.statement_location, "UTC");
     }
 
     #[test]

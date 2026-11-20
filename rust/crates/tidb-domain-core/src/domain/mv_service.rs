@@ -436,7 +436,7 @@ impl tidb_mvservice::MVServiceAnalyzer for DomainMvAnalyzer {
             return Ok(());
         }
         Self::with_session(&domain, |sctx| {
-            tidb_stats_handle_util::update_sctx_vars_for_stats(sctx).map_err(sql_exec_error)?;
+            let _restore_stats_vars = tidb_stats_handle_util::update_sctx_vars_for_stats(sctx).map_err(sql_exec_error)?;
             let mv_sctx = sctx.mv_service_session();
             let Some((schema_name, mlog_name)) = tidb_mvservice::resolve_mv_log_identity_by_id(mv_sctx, mlog_id)? else {
                 return Ok(());

@@ -869,6 +869,11 @@ impl ClusterStatsSessionContext {
         self.state.with_session(callback)
     }
 
+    /// The session's value of `name` (empty when unreadable).
+    fn var_text(&self, name: &str) -> String {
+        <Self as tidb_stats_handle_util::StatsSessionContext>::system_var(self, name).unwrap_or_default()
+    }
+
     pub(super) fn set_var(&self, name: &str, value: impl Into<String>) {
         let value = value.into();
         self.with_session(
@@ -1114,6 +1119,52 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     fn set_statement_time_zone(&self, _value: &str) {
         // Rust constructs its statement context from SessionVars at every
         // statement boundary, so set_time_zone above updates both authorities.
+    }
+
+    fn statement_time_zone(&self) -> String {
+        // The statement context's zone is the session's (see above).
+        <Self as tidb_stats_handle_util::StatsSessionContext>::location(self)
+    }
+
+    fn system_var(&self, name: &str) -> Option<String> {
+        self.with_session(|session| {
+            session
+                .session
+                .vars()
+                .get_system(name)
+                .map_err(|error| stats_session_error(format!("{error:?}")))
+        })
+        .ok()
+    }
+
+    fn analyze_skip_column_types(&self) -> std::collections::BTreeSet<String> {
+        tidb_stats_handle_util::parse_analyze_skip_column_types(
+            &self.var_text(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES),
+        )
+    }
+
+    fn enable_analyze_snapshot(&self) -> bool {
+        tidb_vardef::option_values::tidb_opt_on(&self.var_text(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT))
+    }
+
+    fn skip_missing_partition_stats(&self) -> bool {
+        tidb_vardef::option_values::tidb_opt_on(&self.var_text(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS))
+    }
+
+    fn analyze_partition_concurrency(&self) -> i64 {
+        self.var_text(tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY).parse().unwrap_or_default()
+    }
+
+    fn analyze_version(&self) -> i64 {
+        self.var_text(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION).parse().unwrap_or_default()
+    }
+
+    fn analyze_store_batch_size(&self) -> i64 {
+        self.var_text(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE).parse().unwrap_or_default()
+    }
+
+    fn lock_wait_timeout(&self) -> i64 {
+        self.var_text("innodb_lock_wait_timeout").parse::<i64>().unwrap_or_default().wrapping_mul(1_000)
     }
 
     fn transaction_start_ts(&self, active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {

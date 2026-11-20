@@ -21,6 +21,8 @@ tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-failpoint = { path = "../tidb-failpoint", optional = true }
 tidb-hack = { path = "../tidb-hack" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }

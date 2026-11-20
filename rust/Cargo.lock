@@ -10506,6 +10506,8 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-intest",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-model",
  "tidb-resolve",
  "tidb-sqlescape",
