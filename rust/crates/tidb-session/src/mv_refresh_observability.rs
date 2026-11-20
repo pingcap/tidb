@@ -23,7 +23,10 @@ use tidb_driver_error::DriverError;
 use tidb_executor::sessionctx::StmtOutput;
 use tidb_sqlescape::SqlArg;
 
-use crate::mview_refresh::{plain, refresh_execution_session_vars, set_session_vars, sys_sql, validate_refresh_materialized_view_stmt};
+use crate::mview_refresh::{
+    annotate, apply_refresh_execution_session_vars, capture_refresh_execution_session_vars, plain, set_session_vars, sys_sql,
+    validate_refresh_materialized_view_stmt,
+};
 use crate::Session;
 
 /// Go master `mvRefreshObserveStepKind`.
@@ -424,9 +427,9 @@ impl Session {
     /// views on, maintenance in restricted SQL, and the user's redaction.
     fn open_mv_refresh_observe_internal_session(&self) -> Result<Session, DriverError> {
         let mut sys = self.open_refresh_system_session()?;
-        let mut vars = refresh_execution_session_vars(self);
-        vars.push((tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned()));
-        set_session_vars(&mut sys, &vars)?;
+        apply_refresh_execution_session_vars(&mut sys, &capture_refresh_execution_session_vars(self), false)?;
+        set_session_vars(&mut sys, &[(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned())])
+            .map_err(|error| annotate(&error, "dry run refresh materialized view: failed to enable materialized view support"))?;
         // Go `setMVRefreshObserveRedaction`: plans follow the caller's mode.
         sys.vars.set_enable_redact_log(self.vars.enable_redact_log().to_owned());
         sys.vars.in_mview_maintenance = true;

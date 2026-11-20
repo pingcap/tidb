@@ -587,28 +587,17 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
     use tidb_datatype::SessionTimeZone;
 
     if !written.eq_ignore_ascii_case("SYSTEM") {
-        if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
-            return SessionTimeZone::Named(zone);
-        }
-        if let Some(rest) = written.strip_prefix(['+', '-']) {
-            let negative = written.starts_with('-');
-            let mut parts = rest.split(':');
-            let hours: i32 = parts.next().unwrap_or_default().parse().unwrap_or(-1);
-            let minutes: i32 = parts.next().unwrap_or("0").parse().unwrap_or(-1);
-            if hours >= 0 && (0..60).contains(&minutes) {
-                let offset = hours * 3600 + minutes * 60;
-                let bounded = if negative {
-                    offset <= 12 * 3600 + 59 * 60
-                } else {
-                    offset <= 14 * 3600
+        // Go `timeutil.ParseTimeZone`: an IANA name, else a `+HH:MM[:SS]`
+        // offset in Go's duration grammar (seconds kept, `+00:00:30`).
+        match tidb_timeutil::parse_time_zone(written) {
+            Ok(tidb_timeutil::TimeZone::Named(zone)) => return SessionTimeZone::Named(zone),
+            Ok(tidb_timeutil::TimeZone::Fixed { offset_secs, .. }) => {
+                return SessionTimeZone::Fixed {
+                    name: written.to_owned(),
+                    offset_secs,
                 };
-                if bounded {
-                    return SessionTimeZone::Fixed {
-                        name: written.to_owned(),
-                        offset_secs: if negative { -offset } else { offset },
-                    };
-                }
             }
+            Ok(tidb_timeutil::TimeZone::Local) | Err(_) => {}
         }
     }
 

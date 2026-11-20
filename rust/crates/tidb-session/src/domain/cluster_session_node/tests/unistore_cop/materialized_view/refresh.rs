@@ -1733,6 +1733,7 @@ fn test_materialized_view_refresh_complete_out_of_place_cutover_failure() {
         let mlog = latest_table(&stack, "$mlog$t");
         assert!(mlog.materialized_view_log.is_some());
         assert_eq!(dependent_mview_ids(&mlog), vec![old_id]);
+        assert_eq!(answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info"), rows(&[&format!("{old_id} {}", mlog.id)]));
         assert_eq!(answer(&mut tk, "select MVIEW_ID from mysql.tidb_mview_refresh_info"), rows(&[&old_id.to_string()]));
         assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
     }
@@ -1757,6 +1758,7 @@ fn test_materialized_view_refresh_complete_out_of_place_cutover_failure() {
         }
         assert_eq!(latest_table(&stack, "mv_cutover_publish_error").id, old_id);
         assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_info where MVIEW_ID = {old_id}")), "1");
+        assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = {old_id}")), "1");
         assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "1");
         must_exec_all(&mut tk, &["refresh materialized view mv_cutover_publish_error complete out of place"]);
         assert_eq!(single_value(&mut tk, &format!("select count(*) from mysql.tidb_mview_refresh_alert where MVIEW_ID = {old_id}")), "0");
@@ -1920,34 +1922,59 @@ fn test_materialized_view_refresh_complete_out_of_place_cutover_with_unsigned_bu
 
 #[test]
 fn test_materialized_view_refresh_complete_out_of_place_build_failure_cleans_shadow() {
-    let (_stack, _users, mut tk) = mview_test_kit();
-    must_exec_all(&mut tk, &[
-        "create table t (a int not null, b int not null)",
-        "insert into t values (1, 10), (1, 5), (2, 7)",
-        "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
-        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
-    ]);
-    let id = single_value(&mut tk, "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'");
-    must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
-    let _fp = tidb_failpoint::enable_for_test(
-        "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow",
-        r#"return("mock out-of-place shadow load failure")"#,
-    );
-    let error = exec_to_err(&mut tk, "refresh materialized view mv complete out of place");
-    assert!(error.contains("mock out-of-place shadow load failure"), "{error}");
-    assert_eq!(
-        go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
-        vec!["failed complete out of place manual 1 1"]
-    );
-    assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
-    // Go scans the last 20 history jobs for ActionDropMaterializedViewShadow.
-    let cleanup_job_id = first_cell(&mut tk, "admin show ddl jobs 20 where JOB_TYPE = 'drop materialized view shadow table'");
-    assert_eq!(
-        single_value(&mut tk, &format!("select ((select count(*) from mysql.gc_delete_range where job_id={cleanup_job_id}) + (select count(*) from mysql.gc_delete_range_done where job_id={cleanup_job_id})) > 0")),
-        "1"
-    );
-    // "Out-of-place build failure should not modify old MV serving table."
-    assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]));
+    enum Failure {
+        ErrorAfterLoad,
+        PanicAfterCreate,
+        PanicAfterLoad,
+    }
+    for (name, failure, want_err, check_failed_history) in [
+        ("error_after_load", Failure::ErrorAfterLoad, "mock out-of-place shadow load failure", true),
+        ("panic_after_create", Failure::PanicAfterCreate, "mock shadow build panic", false),
+        ("panic_after_load", Failure::PanicAfterLoad, "mock shadow build panic", false),
+    ] {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t (a int not null, b int not null)",
+            "insert into t values (1, 10), (1, 5), (2, 7)",
+            "create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a",
+        ]);
+        let id = single_value(&mut tk, "select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv'");
+        must_exec_all(&mut tk, &["insert into t values (2, 8)"]);
+        let _failure = match failure {
+            Failure::ErrorAfterLoad => tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow",
+                r#"return("mock out-of-place shadow load failure")"#,
+            ),
+            Failure::PanicAfterCreate => tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterCreateShadow",
+                |_| panic!("mock shadow build panic"),
+            ),
+            Failure::PanicAfterLoad => tidb_failpoint::enable_call_for_test(
+                "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceAfterBuildDataLoad",
+                |_| panic!("mock shadow build panic"),
+            ),
+        };
+        let error = exec_to_err(&mut tk, "refresh materialized view mv complete out of place");
+        assert!(error.contains(want_err), "{name}: {error}");
+        if check_failed_history {
+            assert_eq!(
+                go_check(&mut tk, &format!("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = {id} order by REFRESH_JOB_ID desc limit 1")),
+                vec!["failed complete out of place manual 1 1"],
+                "{name}"
+            );
+        }
+        assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]", "{name}");
+        // Go scans the last 20 history jobs for ActionDropMaterializedViewShadow.
+        let cleanup_job_id = first_cell(&mut tk, "admin show ddl jobs 20 where JOB_TYPE = 'drop materialized view shadow table'");
+        assert_eq!(
+            single_value(&mut tk, &format!("select ((select count(*) from mysql.gc_delete_range where job_id={cleanup_job_id}) + (select count(*) from mysql.gc_delete_range_done where job_id={cleanup_job_id})) > 0")),
+            "1",
+            "{name}"
+        );
+        // "Out-of-place build failure should not modify old MV serving table."
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv order by a"), rows(&["1 15 2", "2 7 1"]), "{name}");
+    }
 }
 
 #[test]
@@ -2208,5 +2235,395 @@ fn test_materialized_view_refresh_cancellation() {
         assert_eq!(running(&mut tk, id), "0");
         assert_eq!(last_reason(&mut tk, id), format!("cancelled manually by {requester}"));
         assert_eq!(answer(&mut tk, r"show tables like '\_\_mv\_shadow\_%'"), "RS:[]");
+    }
+}
+
+/// Go `prepareRefreshTiFlashSessionVarsForTest`: global values the
+/// maintenance must NOT see, and the session values it must.
+fn prepare_refresh_tiflash_session_vars_for_test(tk: &mut Session) {
+    must_exec_all(tk, &[
+        "set @@global.tidb_max_tiflash_threads = 2",
+        "set @@global.tidb_max_bytes_before_tiflash_external_join = 111",
+        "set @@global.tidb_max_bytes_before_tiflash_external_group_by = 222",
+        "set @@global.tidb_max_bytes_before_tiflash_external_sort = 333",
+        "set @@global.tiflash_mem_quota_query_per_node = 444",
+        "set @@global.tiflash_query_spill_ratio = 0.25",
+        "set @@global.tiflash_fine_grained_shuffle_stream_count = 4",
+        "set @@global.tiflash_fine_grained_shuffle_batch_size = 1024",
+        "set @@global.tidb_mview_maintain_import_threads = 3",
+        "set @@global.tidb_mview_maintain_import_disk_quota = '32gib'",
+        "set @@session.tidb_max_tiflash_threads = 8",
+        "set @@session.tidb_max_bytes_before_tiflash_external_join = 101",
+        "set @@session.tidb_max_bytes_before_tiflash_external_group_by = 202",
+        "set @@session.tidb_max_bytes_before_tiflash_external_sort = 303",
+        "set @@session.tiflash_mem_quota_query_per_node = 404",
+        "set @@session.tiflash_query_spill_ratio = 0.75",
+        "set @@session.tiflash_fine_grained_shuffle_stream_count = 16",
+        "set @@session.tiflash_fine_grained_shuffle_batch_size = 4096",
+        "set @@session.tidb_mview_maintain_import_threads = 12",
+        "set @@session.tidb_mview_maintain_import_disk_quota = '64gib'",
+    ]);
+}
+
+/// Go `requireCurrentSessionTiFlashSessionVarsRestored`.
+fn require_current_session_tiflash_session_vars_restored(tk: &mut Session) {
+    assert_eq!(
+        go_check(
+            tk,
+            "select @@session.tidb_max_tiflash_threads, @@session.tidb_max_bytes_before_tiflash_external_join, @@session.tidb_max_bytes_before_tiflash_external_group_by, @@session.tidb_max_bytes_before_tiflash_external_sort, @@session.tiflash_mem_quota_query_per_node, @@session.tiflash_query_spill_ratio, @@session.tiflash_fine_grained_shuffle_stream_count, @@session.tiflash_fine_grained_shuffle_batch_size, @@session.tidb_mview_maintain_import_threads, @@session.tidb_mview_maintain_import_disk_quota"
+        ),
+        vec!["8 101 202 303 404 0.75 16 4096 12 64gib"]
+    );
+}
+
+type TiFlashVars = (i64, i64, u64);
+type TiFlashSpillVars = (i64, i64, i64, i64, f64);
+
+/// Go `requireTiFlashSessionVarsAppliedWithFailpoint`.
+fn require_tiflash_session_vars_applied_with_failpoint(
+    vars_failpoint: &str,
+    spill_failpoint: &str,
+    refresh: impl FnOnce(),
+    expected_vars: TiFlashVars,
+    expected_spill: TiFlashSpillVars,
+) {
+    let got_vars = Arc::new(std::sync::Mutex::new(None::<TiFlashVars>));
+    let got_spill = Arc::new(std::sync::Mutex::new(None::<TiFlashSpillVars>));
+    let _vars = tidb_failpoint::enable_call_for_test(vars_failpoint, {
+        let got = got_vars.clone();
+        move |arg: &mut dyn std::any::Any| *got.lock().unwrap() = arg.downcast_ref::<TiFlashVars>().copied()
+    });
+    let _spill = tidb_failpoint::enable_call_for_test(spill_failpoint, {
+        let got = got_spill.clone();
+        move |arg: &mut dyn std::any::Any| *got.lock().unwrap() = arg.downcast_ref::<TiFlashSpillVars>().copied()
+    });
+    refresh();
+    assert_eq!(*got_vars.lock().unwrap(), Some(expected_vars), "{vars_failpoint}");
+    assert_eq!(*got_spill.lock().unwrap(), Some(expected_spill), "{spill_failpoint}");
+}
+
+/// Go `requireImportSessionVarsAppliedWithFailpoint`.
+fn require_import_session_vars_applied_with_failpoint(failpoint: &str, run: impl FnOnce(), expected: (i64, &str)) {
+    let got = Arc::new(std::sync::Mutex::new(None::<(i64, String)>));
+    let _import = tidb_failpoint::enable_call_for_test(failpoint, {
+        let got = got.clone();
+        move |arg: &mut dyn std::any::Any| *got.lock().unwrap() = arg.downcast_ref::<(i64, String)>().cloned()
+    });
+    run();
+    assert_eq!(*got.lock().unwrap(), Some((expected.0, expected.1.to_owned())), "{failpoint}");
+}
+
+/// Captures a two-value InjectCall's last arguments.
+fn capture_call<T: Clone + Send + 'static>(failpoint: &str) -> (Arc<std::sync::Mutex<Option<T>>>, tidb_failpoint::Guard) {
+    let got = Arc::new(std::sync::Mutex::new(None::<T>));
+    let guard = tidb_failpoint::enable_call_for_test(failpoint, {
+        let got = got.clone();
+        move |arg: &mut dyn std::any::Any| *got.lock().unwrap() = arg.downcast_ref::<T>().cloned()
+    });
+    (got, guard)
+}
+
+const EXECUTOR_FP: &str = "github.com/pingcap/tidb/pkg/executor/";
+const SESSION_TIFLASH: (TiFlashVars, TiFlashSpillVars) = ((8, 16, 4096), (101, 202, 303, 404, 0.75));
+
+#[test]
+fn test_materialized_view_refresh_session_vars() {
+    // t.Run("maintain_mem_quota")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_quota_refresh (a int not null, b int not null)",
+            "insert into t_mv_quota_refresh values (1, 10), (2, 20)",
+            "create materialized view log on t_mv_quota_refresh (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_mv_quota_refresh (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_quota_refresh group by a",
+            "set @@session.tidb_mem_quota_query = 1073741824",
+            "set @@global.tidb_mview_maintain_mem_quota = 536870912",
+            "set @@session.tidb_mview_maintain_mem_quota = 268435456",
+        ]);
+        for internal in [false, true] {
+            let (got, _fp) = capture_call::<(i64, i64)>(&format!("{EXECUTOR_FP}mvMaintainMemQuotaAppliedOnRefreshSession"));
+            let sql = "refresh materialized view mv_mv_quota_refresh complete delta apply";
+            if internal {
+                must_exec_refresh_internal(&mut tk, sql);
+            } else {
+                must_exec_all(&mut tk, &[sql]);
+            }
+            assert_eq!(*got.lock().unwrap(), Some((268435456, 268435456)), "internal={internal}");
+        }
+        for (internal, row) in [(false, "(3, 30)"), (true, "(4, 40)")] {
+            let (got, _fp) = capture_call::<(i64, i64)>(&format!("{EXECUTOR_FP}mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession"));
+            must_exec_all(&mut tk, &[&format!("insert into t_mv_quota_refresh values {row}")]);
+            let sql = "refresh materialized view mv_mv_quota_refresh complete out of place";
+            if internal {
+                must_exec_refresh_internal(&mut tk, sql);
+            } else {
+                must_exec_all(&mut tk, &[sql]);
+            }
+            assert_eq!(*got.lock().unwrap(), Some((268435456, 268435456)), "out of place internal={internal}");
+        }
+        must_exec_all(&mut tk, &[&format!("set @@global.tidb_mview_maintain_mem_quota = {}", 2i64 * 1024 * 1024 * 1024)]);
+    }
+    // t.Run("isolation_read_engines")
+    for use_default in [false, true] {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_refresh_isolation (a int not null, b int not null)",
+            "insert into t_mv_refresh_isolation values (1, 10), (2, 20)",
+            "create materialized view log on t_mv_refresh_isolation (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_mv_refresh_isolation (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_isolation group by a",
+        ]);
+        let (maintain_engines, current_engines) = if use_default {
+            let maintain = single_value(&mut tk, "select @@global.tidb_mview_maintain_isolation_read_engines");
+            // Go `differentIsolationReadEnginesForTest`.
+            let current = ["tikv", "tiflash", "tidb", "tikv,tidb", "tikv,tiflash", "tikv,tiflash,tidb"]
+                .into_iter()
+                .find(|candidate| *candidate != maintain)
+                .unwrap_or("tikv")
+                .to_owned();
+            (maintain, current)
+        } else {
+            must_exec_all(&mut tk, &["set @@session.tidb_mview_maintain_isolation_read_engines = 'tikv'"]);
+            ("tikv".to_owned(), "tikv,tiflash,tidb".to_owned())
+        };
+        must_exec_all(&mut tk, &[&format!("set @@session.tidb_isolation_read_engines = '{current_engines}'")]);
+        for mode in ["complete in place", "complete out of place"] {
+            let failpoint = if mode == "complete out of place" {
+                must_exec_all(&mut tk, &["insert into t_mv_refresh_isolation values (3, 30)"]);
+                "refreshMaterializedViewOutOfPlaceBuildIsolationReadEnginesApplied"
+            } else {
+                "refreshMaterializedViewIsolationReadEnginesApplied"
+            };
+            // Go `requireRefreshIsolationReadEnginesApplied`.
+            let (got, _fp) = capture_call::<(String, String)>(&format!("{EXECUTOR_FP}{failpoint}"));
+            must_exec_all(&mut tk, &[&format!("refresh materialized view mv_mv_refresh_isolation {mode}")]);
+            assert_eq!(*got.lock().unwrap(), Some((maintain_engines.clone(), maintain_engines.clone())), "default={use_default} {mode}");
+            assert_eq!(single_value(&mut tk, "select @@session.tidb_isolation_read_engines"), current_engines);
+        }
+    }
+    // t.Run("tiflash_session_vars")
+    for (name, mode, internal) in [
+        ("manual", "complete delta apply", false),
+        ("internal", "complete delta apply", true),
+        ("out_of_place_manual", "complete out of place", false),
+        ("out_of_place_internal", "complete out of place", true),
+        ("dry_run", "complete delta apply dry run", false),
+    ] {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_refresh_tiflash_vars (a int not null, b int not null)",
+            "insert into t_mv_refresh_tiflash_vars values (1, 10), (2, 20)",
+            "create materialized view log on t_mv_refresh_tiflash_vars (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_mv_refresh_tiflash_vars (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_refresh_tiflash_vars group by a",
+        ]);
+        prepare_refresh_tiflash_session_vars_for_test(&mut tk);
+        if internal && mode == "complete out of place" {
+            must_exec_all(&mut tk, &["insert into t_mv_refresh_tiflash_vars values (3, 30)"]);
+        }
+        let sql = format!("refresh materialized view mv_mv_refresh_tiflash_vars {mode}");
+        {
+            let tk = &mut tk;
+            let refresh = || {
+                if internal {
+                    must_exec_refresh_internal(tk, &sql);
+                } else if mode == "complete delta apply dry run" {
+                    rows_of(tk, &sql);
+                } else {
+                    must_exec_all(tk, &[&sql]);
+                }
+            };
+            if mode == "complete out of place" {
+                require_import_session_vars_applied_with_failpoint(
+                    &format!("{EXECUTOR_FP}refreshMaterializedViewOutOfPlaceBuildImportSessionVarsApplied"),
+                    || {
+                        require_tiflash_session_vars_applied_with_failpoint(
+                            &format!("{EXECUTOR_FP}refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied"),
+                            &format!("{EXECUTOR_FP}refreshMaterializedViewOutOfPlaceBuildTiFlashSpillSessionVarsApplied"),
+                            refresh,
+                            SESSION_TIFLASH.0,
+                            SESSION_TIFLASH.1,
+                        );
+                    },
+                    (12, "64gib"),
+                );
+            } else {
+                require_tiflash_session_vars_applied_with_failpoint(
+                    &format!("{EXECUTOR_FP}refreshMaterializedViewTiFlashSessionVarsApplied"),
+                    &format!("{EXECUTOR_FP}refreshMaterializedViewTiFlashSpillSessionVarsApplied"),
+                    refresh,
+                    SESSION_TIFLASH.0,
+                    SESSION_TIFLASH.1,
+                );
+            }
+        }
+        require_current_session_tiflash_session_vars_restored(&mut tk);
+        let _ = name;
+    }
+    // t.Run("apply_failure")
+    for (name, mode, internal, single_var) in [
+        ("manual_all", "complete delta apply", false, false),
+        ("internal_all", "complete delta apply", true, false),
+        ("manual_single", "complete delta apply", false, true),
+        ("internal_single", "complete delta apply", true, true),
+        ("internal_out_of_place_all", "complete out of place", true, false),
+        ("internal_out_of_place_single", "complete out of place", true, true),
+    ] {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_refresh_apply_vars (a int not null, b int not null)",
+            "insert into t_mv_refresh_apply_vars values (1, 10), (2, 20)",
+            "create materialized view log on t_mv_refresh_apply_vars (a, b) purge next date_add(now(), interval 1 hour)",
+            "create materialized view mv_mv_refresh_apply_vars (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_apply_vars group by a",
+        ]);
+        let _fp = if single_var {
+            prepare_refresh_tiflash_session_vars_for_test(&mut tk);
+            tidb_failpoint::enable_for_test(
+                "github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError",
+                r#"return("tidb_max_tiflash_threads")"#,
+            )
+        } else {
+            tidb_failpoint::enable_for_test(&format!("{EXECUTOR_FP}mockRefreshExecutionSessionVarsApplyError"), "return(true)")
+        };
+        let sql = format!("refresh materialized view mv_mv_refresh_apply_vars {mode}");
+        if !internal {
+            let error = exec_to_err(&mut tk, &sql);
+            let expected = if single_var { "tidb_max_tiflash_threads" } else { "mock refresh execution session vars apply error" };
+            assert!(error.contains(expected), "{name}: {error}");
+            continue;
+        }
+        must_exec_all(&mut tk, &["insert into t_mv_refresh_apply_vars values (3, 30)"]);
+        if single_var {
+            let (vars, spill) = if mode == "complete out of place" {
+                ("refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied", "refreshMaterializedViewOutOfPlaceBuildTiFlashSpillSessionVarsApplied")
+            } else {
+                ("refreshMaterializedViewTiFlashSessionVarsApplied", "refreshMaterializedViewTiFlashSpillSessionVarsApplied")
+            };
+            let tk = &mut tk;
+            require_tiflash_session_vars_applied_with_failpoint(
+                &format!("{EXECUTOR_FP}{vars}"),
+                &format!("{EXECUTOR_FP}{spill}"),
+                || must_exec_refresh_internal(tk, &sql),
+                // The failed `tidb_max_tiflash_threads` keeps the internal
+                // session's default.
+                (tidb_vardef::defaults::DEF_TIFLASH_MAX_THREADS, 16, 4096),
+                SESSION_TIFLASH.1,
+            );
+        } else {
+            must_exec_refresh_internal(&mut tk, &sql);
+        }
+        assert_eq!(answer(&mut tk, "select * from mv_mv_refresh_apply_vars order by a"), rows(&["1 10 1", "2 20 1", "3 30 1"]), "{name}");
+        if single_var {
+            require_current_session_tiflash_session_vars_restored(&mut tk);
+        }
+    }
+    // t.Run("initial_build")
+    {
+        let (_stack, _users, mut tk) = mview_test_kit();
+        must_exec_all(&mut tk, &[
+            "create table t_mv_create_build_vars (a int not null, b int not null)",
+            "insert into t_mv_create_build_vars values (1, 10), (2, 20)",
+            "create materialized view log on t_mv_create_build_vars (a, b)",
+        ]);
+        prepare_refresh_tiflash_session_vars_for_test(&mut tk);
+        must_exec_all(&mut tk, &[
+            "set @@session.tidb_mem_quota_query = 1073741824",
+            "set @@global.tidb_mview_maintain_mem_quota = 536870912",
+            "set @@session.tidb_mview_maintain_mem_quota = 268435456",
+        ]);
+        let (mem_quota, _mem_quota_fp) = capture_call::<i64>("github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildMaintainMemQuotaApplied");
+        {
+            let tk = &mut tk;
+            require_import_session_vars_applied_with_failpoint(
+                "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildImportSessionVarsApplied",
+                || {
+                    require_tiflash_session_vars_applied_with_failpoint(
+                        "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildTiFlashSessionVarsApplied",
+                        "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildTiFlashSpillSessionVarsApplied",
+                        || must_exec_all(tk, &["create materialized view mv_mv_create_build_vars (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_create_build_vars group by a"]),
+                        SESSION_TIFLASH.0,
+                        SESSION_TIFLASH.1,
+                    );
+                },
+                (12, "64gib"),
+            );
+        }
+        assert_eq!(*mem_quota.lock().unwrap(), Some(268435456));
+        require_current_session_tiflash_session_vars_restored(&mut tk);
+        assert_eq!(single_value(&mut tk, "select @@session.tidb_mview_maintain_mem_quota"), "268435456");
+        assert_eq!(single_value(&mut tk, "select @@session.tidb_mem_quota_query"), "1073741824");
+        assert_eq!(answer(&mut tk, "select * from mv_mv_create_build_vars order by a"), rows(&["1 10 1", "2 20 1"]));
+        must_exec_all(&mut tk, &[&format!("set @@global.tidb_mview_maintain_mem_quota = {}", 2i64 * 1024 * 1024 * 1024)]);
+    }
+}
+
+#[test]
+fn test_materialized_view_refresh_complete_uses_definition_session_semantics() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    must_exec_all(&mut tk, &[
+        "set @@session.sql_mode = 'NO_UNSIGNED_SUBTRACTION'",
+        "set @@session.time_zone = '+00:00'",
+        "set @@session.div_precision_increment = 9",
+        "create table t (a int not null, b int not null, ts timestamp not null)",
+        "insert into t values (1, 10, '2019-12-31 23:59:45'), (2, 20, '2019-12-31 23:59:15')",
+        "create materialized view log on t (a, b, ts) purge next date_add(now(), interval 1 hour)",
+        "set @@session.time_zone = '+00:00:30'",
+        "create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t where ts >= '2020-01-01 00:00:00' group by a",
+    ]);
+    assert_eq!(answer(&mut tk, "select a, s, cnt from mv"), rows(&["1 10 1"]));
+    let info = latest_table(&stack, "mv").materialized_view.as_ref().unwrap().read().clone();
+    let expected_sql_mode = tidb_ddl::cluster_ddl::materialized_view::format_sql_mode(info.definition_sql_mode);
+    let expected_time_zone = tidb_ddl::cluster_ddl::materialized_view::definition_time_zone_value(&info.definition_time_zone);
+    let worker = Arc::new(std::sync::Mutex::new(super::create::new_mview_test_kit(&stack, 3801)));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let _hook = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInitSession", {
+        let (worker, seen) = (worker.clone(), seen.clone());
+        move |session: &mut dyn std::any::Any| {
+            let session = session.downcast_mut::<Session>().expect("the refresh session");
+            let mut seen = seen.lock().unwrap();
+            let get = |name: &str| session.vars.get_system(name).unwrap_or_default();
+            seen.push(format!(
+                "{} | {} | {} | {} {}",
+                get("sql_mode"),
+                get("time_zone"),
+                session.current_database(),
+                session.current_resource_group(),
+                session.active_resource_group()
+            ));
+            let captured = session.encode_session_states().expect("the refresh session's states");
+            seen.push(captured.resource_group_name.clone());
+            let mut worker = worker.lock().unwrap();
+            let mut states = tidb_sessionstates::SessionStates {
+                status: worker.encode_session_states().unwrap().status,
+                ..Default::default()
+            };
+            for name in ["sql_mode", "time_zone", "div_precision_increment"] {
+                states.system_vars.insert(name.to_owned(), captured.system_vars.get(name).cloned().expect(name));
+            }
+            worker.decode_session_states(&serde_json::to_string(&states).unwrap()).unwrap();
+            seen.push(answer(&mut worker, "select @@div_precision_increment, 1 / 7, cast(0 as unsigned) - 1"));
+            seen.push(answer(&mut worker, "select unix_timestamp('2020-01-01 00:00:00')"));
+        }
+    });
+    // "Keep creator/session semantics and refresh caller semantics
+    // different."
+    must_exec_all(&mut tk, &[
+        "set @@session.sql_mode = ''",
+        "set @@session.time_zone = '-01:00'",
+        "set @@session.div_precision_increment = 2",
+        "create resource group mv_refresh ru_per_sec = 1000000",
+        "set resource group mv_refresh",
+    ]);
+    for mode in ["complete delta apply", "complete out of place"] {
+        must_exec_all(&mut tk, &[&format!("refresh materialized view mv {mode}")]);
+        assert_eq!(answer(&mut tk, "select a, s, cnt from mv"), rows(&["1 10 1"]), "{mode}");
+        let seen = std::mem::take(&mut *seen.lock().unwrap());
+        let once = vec![
+            format!("{expected_sql_mode} | {expected_time_zone} | test | mv_refresh mv_refresh"),
+            "mv_refresh".to_owned(),
+            rows(&["9 0.142857142 -1"]),
+            rows(&["1577836770"]),
+        ];
+        // OUT OF PLACE initializes its build session too.
+        let sessions = if mode == "complete out of place" { 2 } else { 1 };
+        assert_eq!(seen, std::iter::repeat_n(once, sessions).flatten().collect::<Vec<_>>(), "{mode}");
     }
 }

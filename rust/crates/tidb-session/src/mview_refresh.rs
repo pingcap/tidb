@@ -513,30 +513,21 @@ fn delete_refresh_alert_state(session: &mut Session, mview_id: i64) -> Result<()
         })
 }
 
+/// `session` as Go's `sctx.GetSQLExecutor()` for `mviewutil`.
+pub(crate) fn session_sql_exec(
+    session: &mut Session,
+) -> impl FnMut(&str, &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, DriverError> + '_ {
+    move |sql, args| sys_sql(session, sql, args)
+}
+
 /// Go master `mviewutil.ReadRefreshSourceIDs`.
 fn read_refresh_source_ids(session: &mut Session, mview_id: i64) -> Result<Vec<i64>, DriverError> {
-    let rows = sys_sql(
-        session,
-        &format!(
-            "SELECT MLOG_ID FROM mysql.{} WHERE MVIEW_ID = %? ORDER BY MLOG_ID",
-            tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
-        ),
-        &[SqlArg::Signed(mview_id)],
-    )?;
-    Ok(rows.iter().filter_map(|row| row.first().and_then(datum_i64)).collect())
+    tidb_mviewutil::refresh_source::read_refresh_source_ids(&mut session_sql_exec(session), mview_id)
 }
 
 /// Go master `mviewutil.ReplaceRefreshSourceIDs`.
 fn replace_refresh_source_ids(session: &mut Session, mview_id: i64, mlog_ids: &[i64]) -> Result<(), DriverError> {
-    let table = tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME;
-    sys_sql(session, &format!("DELETE FROM mysql.{table} WHERE MVIEW_ID IN (%?)"), &[SqlArg::Signed(mview_id)])?;
-    if mlog_ids.is_empty() {
-        return Ok(());
-    }
-    let values = mlog_ids.iter().map(|_| "(%?, %?)").collect::<Vec<_>>().join(",");
-    let arguments: Vec<SqlArg<'_>> =
-        mlog_ids.iter().flat_map(|&mlog_id| [SqlArg::Signed(mview_id), SqlArg::Signed(mlog_id)]).collect();
-    sys_sql(session, &format!("INSERT INTO mysql.{table} (MVIEW_ID, MLOG_ID) VALUES {values}"), &arguments).map(|_| ())
+    tidb_mviewutil::refresh_source::replace_refresh_source_ids(&mut session_sql_exec(session), mview_id, mlog_ids)
 }
 
 /// Go master `getRefreshReadTSOForSuccess`: MV refresh executes in a
@@ -558,35 +549,196 @@ fn session_json_u64(session: &mut Session, variable: &str, key: &str) -> Option<
     value.get(key).and_then(serde_json::Value::as_u64).filter(|&ts| ts != 0)
 }
 
-/// What the refresh session runs under (Go master
-/// `applyRefreshExecutionSessionVars` then `ddl.InitMViewSession`): every
-/// variable, and the session's own value to restore.
-fn refresh_session_vars(
-    user: &Session,
-    info: &tidb_model::table::MaterializedViewInfo,
-) -> Vec<(String, String)> {
-    let mut vars = refresh_execution_session_vars(user);
-    vars.extend(init_mview_session_vars(info));
-    vars
+use tidb_variable::mview_execution::MViewExecutionSessionVars;
+
+/// Go `recover()` with `util.GetRecoverError`: a panic in `f` becomes its
+/// error, the panic's value as text.
+fn recover_refresh_panic<T>(f: impl FnOnce() -> Result<T, DriverError>) -> Result<T, DriverError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(panic) => Err(plain(
+            panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "panic".to_owned()),
+        )),
+    }
 }
 
-/// Go master `applyRefreshExecutionSessionVars(captureRefreshExecutionSessionVars(user))`:
-/// the user session's materialized view execution variables, by the names
-/// the maintenance session reads them under.
-pub(crate) fn refresh_execution_session_vars(user: &Session) -> Vec<(String, String)> {
-    let execution = tidb_variable::mview_execution::MViewExecutionSessionVars::capture(|name| {
-        user.vars.get_system(name).ok()
-    });
-    let mut vars: Vec<(String, String)> = Vec::new();
-    for (name, value) in execution.job_system_vars() {
-        let name = match name {
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA => "tidb_mem_quota_query",
-            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES => "tidb_isolation_read_engines",
-            other => other,
+/// Go master `captureRefreshExecutionSessionVars`: the caller's
+/// materialized view execution settings.
+pub(crate) fn capture_refresh_execution_session_vars(user: &Session) -> MViewExecutionSessionVars {
+    MViewExecutionSessionVars::capture(|name| user.vars.get_system(name).ok())
+}
+
+/// The settings `session` currently runs under (Go master
+/// `CaptureAppliedMViewExecutionSessionVars`).
+fn applied_execution_session_vars(session: &Session) -> MViewExecutionSessionVars {
+    MViewExecutionSessionVars::capture_applied(|name| session.vars.get_system(name).ok())
+}
+
+/// Go master `ddl.applyMViewExecutionSessionVars`
+/// (`variable.ApplyMViewExecutionSessionVarsWithConfig`): every setting of
+/// `target` set on `session`, the maintenance memory quota and read engines
+/// as its `tidb_mem_quota_query` / `tidb_isolation_read_engines`. A failure
+/// restores the session and fails, or -- best effort -- keeps the session's
+/// value. Answers the values to restore.
+fn apply_mview_execution_session_vars(
+    session: &mut Session,
+    target: &MViewExecutionSessionVars,
+    best_effort: bool,
+) -> Result<Vec<(String, String)>, DriverError> {
+    use tidb_vardef::tidb_vars;
+    let assignments = target.assignments(tidb_vars::TIDB_MEM_QUOTA_QUERY, tidb_vars::TIDB_ISOLATION_READ_ENGINES);
+    let names: Vec<String> = assignments.iter().map(|assignment| assignment.name.to_owned()).collect();
+    let origin = read_session_vars(session, &names)?;
+    let restore: Vec<(String, String)> = names.into_iter().zip(origin).collect();
+    for assignment in &assignments {
+        let error = match tidb_ddl::cluster_ddl::materialized_view::maybe_mock_mview_execution_session_var_apply_error(assignment.name) {
+            Some(message) => Some(plain(message)),
+            None => set_session_vars(session, &[(assignment.name.to_owned(), assignment.value.clone())]).err(),
         };
-        vars.push((name.to_owned(), value));
+        let Some(error) = error else { continue };
+        if !best_effort {
+            restore_mview_execution_session_vars(session, &restore);
+            return Err(annotate(&error, assignment.failure_message));
+        }
+        tidb_logutil::bg_logger().warn(
+            "mv execution: failed to apply session var, fallback to current session value",
+            &[
+                tidb_log::Field::new("var", tidb_log::Value::Str(assignment.name.to_owned())),
+                tidb_log::Field::new("value", tidb_log::Value::Str(assignment.value.clone())),
+                tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error))),
+            ],
+        );
     }
-    vars
+    Ok(restore)
+}
+
+/// Go master `restoreMViewExecutionSessionVars`: every setting back to its
+/// origin, a failure logged.
+fn restore_mview_execution_session_vars(session: &mut Session, origin: &[(String, String)]) {
+    for (name, value) in origin {
+        if let Err(error) = set_session_vars(session, &[(name.clone(), value.clone())]) {
+            tidb_logutil::bg_logger().warn(
+                "mv execution: failed to restore session var",
+                &[
+                    tidb_log::Field::new("var", tidb_log::Value::Str(name.clone())),
+                    tidb_log::Field::new("origin", tidb_log::Value::Str(value.clone())),
+                    tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error))),
+                ],
+            );
+        }
+    }
+}
+
+/// Go master `applyRefreshExecutionSessionVars`: `target` applied to the
+/// maintenance session -- best effort for an internal refresh, whose failure
+/// falls back to the session's defaults -- then the applied TiFlash settings
+/// reported. Answers the values to restore.
+pub(crate) fn apply_refresh_execution_session_vars(
+    session: &mut Session,
+    target: &MViewExecutionSessionVars,
+    best_effort: bool,
+) -> Result<Vec<(String, String)>, DriverError> {
+    let applied = if tidb_failpoint::eval(&format!("{FP}mockRefreshExecutionSessionVarsApplyError")).is_some() {
+        Err(plain("mock refresh execution session vars apply error"))
+    } else {
+        apply_mview_execution_session_vars(session, target, best_effort)
+    };
+    let restore = match applied {
+        Ok(restore) => restore,
+        Err(error) if best_effort => {
+            tidb_logutil::bg_logger().warn(
+                "refresh materialized view: failed to apply execution session vars, fallback to internal session defaults",
+                &[tidb_log::Field::new("error", tidb_log::Value::Str(driver_message(&error)))],
+            );
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
+    let applied = applied_execution_session_vars(session);
+    inject_tiflash_session_vars_applied(
+        "refreshMaterializedViewTiFlashSessionVarsApplied",
+        "refreshMaterializedViewTiFlashSpillSessionVarsApplied",
+        &applied,
+    );
+    Ok(restore)
+}
+
+/// Go's paired `...TiFlashSessionVarsApplied` / `...TiFlashSpillSessionVarsApplied`
+/// InjectCalls with the session's applied settings.
+pub(crate) fn inject_tiflash_session_vars_applied(vars_failpoint: &str, spill_failpoint: &str, applied: &MViewExecutionSessionVars) {
+    tidb_failpoint::inject_call(
+        &format!("{FP}{vars_failpoint}"),
+        &mut (applied.tiflash_max_threads, applied.fine_grained_stream_count, applied.fine_grained_batch_size),
+    );
+    tidb_failpoint::inject_call(
+        &format!("{FP}{spill_failpoint}"),
+        &mut (
+            applied.tiflash_max_bytes_before_ext_join,
+            applied.tiflash_max_bytes_before_ext_agg,
+            applied.tiflash_max_bytes_before_ext_sort,
+            applied.tiflash_mem_quota_query_per_node,
+            applied.tiflash_query_spill_ratio,
+        ),
+    );
+}
+
+/// Go master's refresh and out-of-place build session setup:
+/// `applyRefreshExecutionSessionVars` of the caller's settings, the
+/// applied-settings InjectCalls, then `ddl.InitMViewSession`: the
+/// definition's variables, the view's schema and the caller's statement
+/// resource group. Every variable's previous value lands in `restore` as it
+/// is set; the session itself is discarded afterwards.
+#[allow(clippy::too_many_arguments)]
+fn init_refresh_session(
+    session: &mut Session,
+    target: &MViewExecutionSessionVars,
+    is_internal_sql: bool,
+    mview: &tidb_model::table::MaterializedViewInfo,
+    schema: &str,
+    resource_group: &str,
+    out_of_place_build: bool,
+    restore: &mut Vec<(String, String)>,
+) -> Result<(), DriverError> {
+    restore.extend(apply_refresh_execution_session_vars(session, target, is_internal_sql)?);
+    let applied = applied_execution_session_vars(session);
+    let (mem_quota, engines) = if out_of_place_build {
+        ("mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", "refreshMaterializedViewOutOfPlaceBuildIsolationReadEnginesApplied")
+    } else {
+        ("mvMaintainMemQuotaAppliedOnRefreshSession", "refreshMaterializedViewIsolationReadEnginesApplied")
+    };
+    tidb_failpoint::inject_call(&format!("{FP}{mem_quota}"), &mut (applied.maintain_mem_quota, target.maintain_mem_quota));
+    tidb_failpoint::inject_call(
+        &format!("{FP}{engines}"),
+        &mut (applied.isolation_read_engines.clone(), target.isolation_read_engines.clone()),
+    );
+    if out_of_place_build {
+        inject_tiflash_session_vars_applied(
+            "refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied",
+            "refreshMaterializedViewOutOfPlaceBuildTiFlashSpillSessionVarsApplied",
+            &applied,
+        );
+        tidb_failpoint::inject_call(
+            &format!("{FP}refreshMaterializedViewOutOfPlaceBuildImportSessionVarsApplied"),
+            &mut (applied.import_threads, applied.import_disk_quota.clone()),
+        );
+    }
+    // Go `ddl.InitMViewSession`.
+    let init = init_mview_session_vars(mview);
+    let names: Vec<String> = init.iter().map(|(name, _)| name.clone()).collect();
+    let original = read_session_vars(session, &names)?;
+    restore.extend(names.into_iter().zip(original));
+    set_session_vars(session, &init)?;
+    sys_sql(session, "USE %n", &[SqlArg::String(schema.as_bytes())])?;
+    if !resource_group.is_empty() {
+        session.vars.resource_group = resource_group.to_owned();
+    }
+    session.active_resource_group.clone_from(&session.vars.resource_group);
+    tidb_failpoint::inject_call(&format!("{FP}refreshMaterializedViewAfterInitSession"), session);
+    Ok(())
 }
 
 /// Go master `ddl.InitMViewSession`'s variables: materialized views on,
@@ -682,19 +834,22 @@ impl Session {
         let mut refresh_job_id = 0u64;
         let mut hist_inserted = false;
         let controller = std::sync::Arc::new(MvTaskCancelController::default());
-        let result = self.refresh_complete(
-            &controller,
-            s.mode,
-            target_tso,
-            sql,
-            &schema,
-            &info,
-            &mview,
-            &method,
-            refresh_start,
-            &mut refresh_job_id,
-            &mut hist_inserted,
-        );
+        // Go's deferred `recover()`: a panic fails the refresh with its value.
+        let result = recover_refresh_panic(|| {
+            self.refresh_complete(
+                &controller,
+                s.mode,
+                target_tso,
+                sql,
+                &schema,
+                &info,
+                &mview,
+                &method,
+                refresh_start,
+                &mut refresh_job_id,
+                &mut hist_inserted,
+            )
+        });
         let Err(error) = result else {
             return result;
         };
@@ -882,14 +1037,13 @@ impl Session {
         }
         // Go: the refresh session runs under the task's cancelable context.
         let refresh_watch = controller.watch_guard(&refresh);
-        let vars = refresh_session_vars(self, mview);
-        let names: Vec<String> = vars.iter().map(|(name, _)| name.clone()).collect();
-        let original = read_session_vars(&mut refresh, &names)?;
+        let target = capture_refresh_execution_session_vars(self);
+        let is_internal_sql = self.vars.restricted_sql;
+        let resource_group = self.active_resource_group().to_owned();
         let original_db = refresh.current_database().to_owned();
-        let restore: Vec<(String, String)> = names.into_iter().zip(original).collect();
+        let mut restore: Vec<(String, String)> = Vec::new();
         let outcome = (|| {
-            set_session_vars(&mut refresh, &vars)?;
-            sys_sql(&mut refresh, "USE %n", &[SqlArg::String(schema.as_bytes())])?;
+            init_refresh_session(&mut refresh, &target, is_internal_sql, mview, schema, &resource_group, false, &mut restore)?;
             // Go master `acquireMVRefreshAdvisoryLock`.
             let lock_name = tidb_mviewutil::refresh_advisory_lock_name(info.db_id, mview_id);
             let got = sys_sql(
@@ -1252,7 +1406,7 @@ impl Session {
                     // FAST keeps its registered logs; a COMPLETE refresh
                     // re-registers the ones its read confirmed.
                     if !fast {
-                        let confirmed = refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
+                        let confirmed = tidb_mviewutil::refresh_source::refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
                         if registered_logs != confirmed {
                             replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
                         }
@@ -1456,10 +1610,10 @@ impl Session {
             .domain_services()
             .map(|services| std::sync::Arc::clone(&services.ddl))
             .ok_or_else(|| DriverError::unsupported("the session has no DDL to refresh out of place with"))?;
-        let vars = refresh_session_vars(self, mview);
-        let names: Vec<String> = vars.iter().map(|(name, _)| name.clone()).collect();
-        let original = read_session_vars(&mut build, &names)?;
-        let restore: Vec<(String, String)> = names.into_iter().zip(original).collect();
+        let target = capture_refresh_execution_session_vars(self);
+        let is_internal_sql = self.vars.restricted_sql;
+        let resource_group = self.active_resource_group().to_owned();
+        let mut restore: Vec<(String, String)> = Vec::new();
         let shadow_name = format!(
             "{MV_REFRESH_SHADOW_TABLE_PREFIX}{}_{}",
             info.id,
@@ -1468,9 +1622,10 @@ impl Session {
         let mut shadow_needs_cleanup = false;
         // Go master: the build session runs in materialized view maintenance.
         let original_maintenance = std::mem::replace(&mut build.vars.in_mview_maintenance, true);
-        let outcome = (|| {
-            set_session_vars(&mut build, &vars)?;
-            sys_sql(&mut build, "USE %n", &[SqlArg::String(schema.as_bytes())])?;
+        // Go: a panic unwinding the build still drops the shadow (the deferred
+        // cleanup), and the refresh reports it (`util.GetRecoverError`).
+        let outcome = recover_refresh_panic(|| {
+            init_refresh_session(&mut build, &target, is_internal_sql, mview, schema, &resource_group, true, &mut restore)?;
             // Go `buildMVRefreshOutOfPlaceShadowTableInfo`.
             let mut shadow = tidb_ddl_build::table_info_build::build_table_info_with_like(
                 schema,
@@ -1612,7 +1767,7 @@ impl Session {
             })?;
             shadow_needs_cleanup = false;
             Ok((build_read_tso, inserted))
-        })();
+        });
         let outcome = match outcome {
             Err(error) if shadow_needs_cleanup => {
                 let query = tidb_sqlescape::escape_sql_text(
@@ -1730,14 +1885,6 @@ pub(crate) fn resolve_refresh_sources(
         return Err(plain("refresh materialized view: source set is empty"));
     }
     Ok(sources)
-}
-
-/// Go master `mviewutil.RefreshSourceLogIDs`: the sorted, distinct log set.
-fn refresh_source_log_ids(sources: &[tidb_model::MViewRefreshSource]) -> Vec<i64> {
-    let mut ids: Vec<i64> = sources.iter().map(|source| source.mlog_id).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
 }
 
 /// Go master `allocJobID`: the store's current version, read as a fresh
@@ -1927,7 +2074,7 @@ fn check_mv_refresh_log_baseline(
             &names(),
         ))));
     }
-    if refresh_source_log_ids(sources) != registered {
+    if tidb_mviewutil::refresh_source::refresh_source_log_ids(sources) != registered {
         return Err(DriverError::Mysql(MysqlError::from_terror(
             &tidb_exeerrors::ERR_MV_REFRESH_LOG_BASELINE_CHANGED.fast_gen_by_args(&names()),
         )));

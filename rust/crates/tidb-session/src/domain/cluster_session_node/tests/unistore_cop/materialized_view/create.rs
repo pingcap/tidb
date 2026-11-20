@@ -668,3 +668,25 @@ fn test_create_materialized_view_if_not_exists() {
         }
     }
 }
+
+/// Go master `TestCreateMaterializedViewBuildReadTSQueryTypeAlignment`: the
+/// initial build's read-TS query (`mview_worker.go`) answers the previous
+/// statement's start TS as an unsigned value on the session it runs on.
+#[test]
+fn test_create_materialized_view_build_read_ts_query_type_alignment() {
+    let (_stack, _users, mut tk) = go_master_mview_stack();
+    must_exec_all(&mut tk, &["set tidb_mview_enable = on", "use test", "create table t (a int)", "insert into t values (1)"]);
+    answer(&mut tk, "select * from t");
+    // Go `GetSessionVars().LastQueryInfo.StartTS` (a SELECT of the variable
+    // would record its own).
+    let expected = tk.vars.last_query_info.start_ts;
+    assert_ne!(expected, 0);
+    let rows = crate::mview_refresh::sys_sql(
+        &mut tk,
+        "SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], tidb_datatype::Datum::UInt(expected));
+}

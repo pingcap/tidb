@@ -113,26 +113,120 @@ impl MViewExecutionSessionVars {
         }
     }
 
+    /// Go master `CaptureAppliedMViewExecutionSessionVars`: the values a
+    /// session currently runs under, the maintenance memory quota and read
+    /// engines being its own `tidb_mem_quota_query` and
+    /// `tidb_isolation_read_engines`.
+    #[must_use]
+    pub fn capture_applied(get: impl Fn(&str) -> Option<String>) -> Self {
+        Self::capture(|name| match name {
+            tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA => get(tidb_vars::TIDB_MEM_QUOTA_QUERY),
+            tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES => get(tidb_vars::TIDB_ISOLATION_READ_ENGINES),
+            other => get(other),
+        })
+    }
+
+    /// Go master `buildMViewExecutionSessionVarAssignments`: each variable
+    /// these settings set, its value, and the message a failure to set it is
+    /// annotated with -- the maintenance memory quota and read engines under
+    /// the names the caller applies them as.
+    #[must_use]
+    pub fn assignments(
+        &self,
+        maintain_mem_quota_var_name: &'static str,
+        maintain_isolation_read_engines_var_name: &'static str,
+    ) -> Vec<MViewExecutionSessionVarAssignment> {
+        let on_off = |value: bool| if value { "ON" } else { "OFF" }.to_owned();
+        let assignment = |name: &'static str, value: String, failure_message: &'static str| MViewExecutionSessionVarAssignment {
+            name,
+            value,
+            failure_message,
+        };
+        vec![
+            assignment(maintain_mem_quota_var_name, self.maintain_mem_quota.to_string(), "mv execution: failed to apply maintain mem quota"),
+            assignment(
+                maintain_isolation_read_engines_var_name,
+                self.isolation_read_engines.clone(),
+                "mv execution: failed to apply tidb_isolation_read_engines",
+            ),
+            assignment(
+                tidb_vars::TIDB_MAX_TIFLASH_THREADS,
+                self.tiflash_max_threads.to_string(),
+                "mv execution: failed to apply tidb_max_tiflash_threads",
+            ),
+            assignment(
+                tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN,
+                self.tiflash_max_bytes_before_ext_join.to_string(),
+                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_join",
+            ),
+            assignment(
+                tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY,
+                self.tiflash_max_bytes_before_ext_agg.to_string(),
+                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_group_by",
+            ),
+            assignment(
+                tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT,
+                self.tiflash_max_bytes_before_ext_sort.to_string(),
+                "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_sort",
+            ),
+            assignment(
+                tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE,
+                self.tiflash_mem_quota_query_per_node.to_string(),
+                "mv execution: failed to apply tiflash_mem_quota_query_per_node",
+            ),
+            assignment(
+                tidb_vars::TIFLASH_QUERY_SPILL_RATIO,
+                tidb_goruntime::go_strconv::format_float(self.tiflash_query_spill_ratio, b'f', -1, 64),
+                "mv execution: failed to apply tiflash_query_spill_ratio",
+            ),
+            assignment(
+                tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT,
+                self.fine_grained_stream_count.to_string(),
+                "mv execution: failed to apply tiflash_fine_grained_shuffle_stream_count",
+            ),
+            assignment(
+                tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE,
+                self.fine_grained_batch_size.to_string(),
+                "mv execution: failed to apply tiflash_fine_grained_shuffle_batch_size",
+            ),
+            assignment(
+                tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS,
+                self.import_threads.to_string(),
+                "mv execution: failed to apply tidb_mview_maintain_import_threads",
+            ),
+            assignment(
+                tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA,
+                self.import_disk_quota.clone(),
+                "mv execution: failed to apply tidb_mview_maintain_import_disk_quota",
+            ),
+            assignment(
+                tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+                on_off(self.track_aggregate_memory_usage),
+                "mv execution: failed to apply tidb_track_aggregate_memory_usage",
+            ),
+            assignment(
+                tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+                on_off(self.enable_parallel_hashagg_spill),
+                "mv execution: failed to apply tidb_enable_parallel_hashagg_spill",
+            ),
+        ]
+    }
+
     /// Go master `AddMViewExecutionSessionVarsToJob`'s entries, in Go's order:
     /// the job's `SessionVars` that carry these settings.
     #[must_use]
     pub fn job_system_vars(&self) -> Vec<(&'static str, String)> {
-        let on_off = |value: bool| if value { "ON" } else { "OFF" }.to_owned();
-        vec![
-            (tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, self.maintain_mem_quota.to_string()),
-            (tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, self.isolation_read_engines.clone()),
-            (tidb_vars::TIDB_MAX_TIFLASH_THREADS, self.tiflash_max_threads.to_string()),
-            (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, self.tiflash_max_bytes_before_ext_join.to_string()),
-            (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, self.tiflash_max_bytes_before_ext_agg.to_string()),
-            (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, self.tiflash_max_bytes_before_ext_sort.to_string()),
-            (tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, self.tiflash_mem_quota_query_per_node.to_string()),
-            (tidb_vars::TIFLASH_QUERY_SPILL_RATIO, tidb_goruntime::go_strconv::format_float(self.tiflash_query_spill_ratio, b'f', -1, 64)),
-            (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, self.fine_grained_stream_count.to_string()),
-            (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, self.fine_grained_batch_size.to_string()),
-            (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, self.import_threads.to_string()),
-            (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, self.import_disk_quota.clone()),
-            (tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE, on_off(self.track_aggregate_memory_usage)),
-            (tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, on_off(self.enable_parallel_hashagg_spill)),
-        ]
+        self.assignments(tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES)
+            .into_iter()
+            .map(|assignment| (assignment.name, assignment.value))
+            .collect()
     }
+}
+
+/// Go master `mViewExecutionSessionVarAssignment`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MViewExecutionSessionVarAssignment {
+    pub name: &'static str,
+    pub value: String,
+    pub failure_message: &'static str,
 }

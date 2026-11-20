@@ -2037,6 +2037,11 @@ impl Session {
         dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
         self.set_statement_arbitration_key(sql);
+        // Go `ResetContextOfStmt`: every statement's `StmtCtx.ResourceGroupName`
+        // starts as the session's group (a RESOURCE_GROUP hint replaces it
+        // after binding selection, below).
+        self.active_resource_group.clone_from(&self.vars.resource_group);
+        self.publish_statement_resource_group();
         // Go `ResetContextOfStmt` sets the `In*Stmt` bits before any
         // statement-specific door -- an EXPLAIN by its target -- so a
         // statement that FAILS still classifies itself for the next

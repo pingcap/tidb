@@ -1395,9 +1395,39 @@ fn log_in(users: &ConfiguredUserStore, user: &str) -> crate::domain::configured_
         .unwrap_or_else(|_| panic!("{user} logs in"))
 }
 
-/// Go master `testCompareMaterializedViewPrivilegeSkeleton`.
+/// Go master `TestCompareMaterializedView`
+/// (`pkg/executor/test/materializedview/materialized_view_compare_test.go`):
+/// its subtests in Go's order.
 #[test]
-fn compare_materialized_view_privileges_as_go_master() {
+fn test_compare_materialized_view() {
+    // t.Run("PrivilegeSkeleton")
+    test_compare_materialized_view_privilege_skeleton();
+    // t.Run("PrivilegeCheckBeforeSnapshotResolution")
+    test_compare_materialized_view_privilege_check_before_snapshot_resolution();
+    // t.Run("SummaryAndOutput")
+    test_compare_materialized_view_summary_and_output();
+    // t.Run("StaleReadOnlyTransaction")
+    test_compare_materialized_view_stale_read_only_transaction();
+    // t.Run("UsesSnapshotMetadataAfterOutOfPlaceCutover")
+    test_compare_materialized_view_uses_snapshot_metadata_after_out_of_place_cutover();
+    // t.Run("OutputWriterBatchesByTxnSize")
+    test_compare_materialized_view_output_writer_batches_by_txn_size();
+    // t.Run("DropsOutputTableOnWriteFailure")
+    test_compare_materialized_view_drops_output_table_on_write_failure();
+    // t.Run("UsesDefinitionTimeZone")
+    test_compare_materialized_view_uses_definition_time_zone();
+    // t.Run("OutputTimestampUsesDefinitionTimeZone")
+    test_compare_materialized_view_output_timestamp_uses_definition_time_zone();
+    // t.Run("NullableGroupKeyMinMax")
+    test_compare_materialized_view_nullable_group_key_min_max();
+    // t.Run("EmptyInputs")
+    test_compare_materialized_view_empty_inputs();
+    // t.Run("RejectsReadTSOAfterSnapshot")
+    test_compare_materialized_view_rejects_read_tso_after_snapshot();
+}
+
+/// Go master `testCompareMaterializedViewPrivilegeSkeleton`.
+fn test_compare_materialized_view_privilege_skeleton() {
     let (stack, users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1431,8 +1461,7 @@ fn compare_materialized_view_privileges_as_go_master() {
 /// Go master `testCompareMaterializedViewPrivilegeCheckBeforeSnapshotResolution`:
 /// the current schema's privilege check runs before the snapshot schema,
 /// which has no such database yet, is read.
-#[test]
-fn compare_materialized_view_checks_privileges_before_the_snapshot_as_go_master() {
+fn test_compare_materialized_view_privilege_check_before_snapshot_resolution() {
     let (stack, users, mut root) = go_master_mview_stack();
     let compare_ts = next_compare_timestamp(&mut root);
     mv_setup(&mut root, &[
@@ -1455,8 +1484,7 @@ fn compare_materialized_view_checks_privileges_before_the_snapshot_as_go_master(
 /// Go master `testCompareMaterializedViewSummaryAndOutput`: a view edited
 /// by maintenance SQL differs from its definition in one updated, one
 /// deleted and one inserted row.
-#[test]
-fn compare_materialized_view_summary_and_output_as_go_master() {
+fn test_compare_materialized_view_summary_and_output() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1496,8 +1524,7 @@ fn compare_materialized_view_summary_and_output_as_go_master() {
 /// Go master `testCompareMaterializedViewStaleReadOnlyTransaction`: the
 /// summary reads in a read-only staleness transaction, the OUTPUT form is
 /// refused there and leaves the transaction as it was.
-#[test]
-fn compare_materialized_view_in_a_stale_read_only_transaction_as_go_master() {
+fn test_compare_materialized_view_stale_read_only_transaction() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1540,8 +1567,7 @@ fn compare_materialized_view_in_a_stale_read_only_transaction_as_go_master() {
 /// Go master `testCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover`:
 /// the view as of the snapshot is the one compared, and the OUTPUT table
 /// takes no index from the current one.
-#[test]
-fn compare_materialized_view_reads_the_snapshot_view_after_cutover_as_go_master() {
+fn test_compare_materialized_view_uses_snapshot_metadata_after_out_of_place_cutover() {
     let (stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1569,8 +1595,7 @@ fn compare_materialized_view_reads_the_snapshot_view_after_cutover_as_go_master(
 
 /// Go master `testCompareMaterializedViewOutputWriterBatchesByTxnSize`: 900
 /// rows of 1.5 KB under a 1 MB transaction limit are written in batches.
-#[test]
-fn compare_materialized_view_output_writes_in_batches_as_go_master() {
+fn test_compare_materialized_view_output_writer_batches_by_txn_size() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1600,8 +1625,7 @@ fn compare_materialized_view_output_writes_in_batches_as_go_master() {
 }
 
 /// Go master `testCompareMaterializedViewDropsOutputTableOnWriteFailure`.
-#[test]
-fn compare_materialized_view_drops_the_output_table_on_a_write_failure_as_go_master() {
+fn test_compare_materialized_view_drops_output_table_on_write_failure() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1630,8 +1654,7 @@ fn compare_materialized_view_drops_the_output_table_on_a_write_failure_as_go_mas
 
 /// Go master `testCompareMaterializedViewUsesDefinitionTimeZone`: the
 /// definition's `+00:00` decides which rows the recomputed query reads.
-#[test]
-fn compare_materialized_view_recomputes_in_the_definition_time_zone_as_go_master() {
+fn test_compare_materialized_view_uses_definition_time_zone() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1651,8 +1674,7 @@ fn compare_materialized_view_recomputes_in_the_definition_time_zone_as_go_master
 
 /// Go master `testCompareMaterializedViewOutputTimestampUsesDefinitionTimeZone`:
 /// both images keep their TIMESTAMP instants in the OUTPUT table.
-#[test]
-fn compare_materialized_view_output_keeps_timestamp_instants_as_go_master() {
+fn test_compare_materialized_view_output_timestamp_uses_definition_time_zone() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1686,8 +1708,7 @@ fn compare_materialized_view_output_keeps_timestamp_instants_as_go_master() {
 
 /// Go master `testCompareMaterializedViewNullableGroupKeyMinMax`: a NULL
 /// group key joins its recomputed row (`IsNullEQ`).
-#[test]
-fn compare_materialized_view_joins_a_null_group_key_as_go_master() {
+fn test_compare_materialized_view_nullable_group_key_min_max() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1710,8 +1731,7 @@ fn compare_materialized_view_joins_a_null_group_key_as_go_master() {
 }
 
 /// Go master `testCompareMaterializedViewEmptyInputs`.
-#[test]
-fn compare_materialized_view_of_empty_inputs_as_go_master() {
+fn test_compare_materialized_view_empty_inputs() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",
@@ -1728,8 +1748,7 @@ fn compare_materialized_view_of_empty_inputs_as_go_master() {
 }
 
 /// Go master `testCompareMaterializedViewRejectsReadTSOAfterSnapshot`.
-#[test]
-fn compare_materialized_view_refuses_a_read_tso_after_the_snapshot_as_go_master() {
+fn test_compare_materialized_view_rejects_read_tso_after_snapshot() {
     let (_stack, _users, mut root) = go_master_mview_stack();
     mv_setup(&mut root, &[
         "use test",

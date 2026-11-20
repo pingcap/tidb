@@ -1715,6 +1715,13 @@ fn ddl_session_sql<C: tidb_ddl_session::SessionContext + ?Sized>(
     }
 }
 
+/// Go master `maybeMockMViewExecutionSessionVarApplyError`: the injected
+/// failure to set `var_name`.
+pub fn maybe_mock_mview_execution_session_var_apply_error(var_name: &str) -> Option<String> {
+    let value = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError")?;
+    (value.as_string() == Some(var_name)).then(|| format!("mock mv execution session var apply error: {var_name}"))
+}
+
 /// Go master `initCreateMaterializedViewBuildSession`
 /// (`ApplyMViewExecutionSessionVars` then `InitMViewSession`) on a session
 /// of the pool: the settings it applies, the session's own values to
@@ -1764,16 +1771,17 @@ fn create_materialized_view_build_session_vars(build: &MViewBuild) -> Result<Vec
 /// else the zone's name, where an empty name loads as UTC
 /// (`time.LoadLocation("")`).
 pub fn definition_time_zone_value(zone: &tidb_model::TimeZoneLocation) -> String {
-    if zone.offset != 0 {
-        let sign = if zone.offset < 0 { '-' } else { '+' };
-        return format!("{sign}{:02}:{:02}", zone.offset.abs() / 3600, zone.offset.abs() % 3600 / 60);
-    }
     let name = zone.name.to_string();
-    if name.is_empty() {
-        "UTC".to_owned()
-    } else {
-        name
+    // Go `GetLocation`: `time.LoadLocation(Name)` without an offset (whose
+    // `String()` is the name, `UTC` for the empty one), else
+    // `time.FixedZone(Name, Offset)`; then `timeutil.ZoneName`.
+    if zone.offset == 0 {
+        return if name.is_empty() { "UTC".to_owned() } else { name };
     }
+    tidb_timeutil::zone_name(&tidb_timeutil::TimeZone::Fixed {
+        name,
+        offset_secs: i32::try_from(zone.offset).unwrap_or_default(),
+    })
 }
 
 /// Go master `buildCreateMaterializedViewData` by INSERT (Go's non-TiKV
@@ -1829,7 +1837,50 @@ pub fn build_create_materialized_view_data(
             }
             Ok(())
         };
+        // Go `ApplyMViewExecutionSessionVars` (not best effort): an execution
+        // setting that fails to apply fails the build, annotated with its
+        // assignment's message.
+        let assignments = tidb_variable::mview_execution::MViewExecutionSessionVars::default()
+            .assignments(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY, tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES);
+        for (name, _) in &vars {
+            let Some(assignment) = assignments.iter().find(|assignment| assignment.name == name) else { continue };
+            if let Some(message) = maybe_mock_mview_execution_session_var_apply_error(name) {
+                return Err(tidb_terror::MysqlError::unknown(message).annotate(assignment.failure_message));
+            }
+        }
         set(&vars)?;
+        // Go `initCreateMaterializedViewBuildSession`'s InjectCalls with the
+        // settings the build session now runs under.
+        let applied_names: Vec<&str> = assignments.iter().map(|assignment| assignment.name).collect();
+        let applied_row = ddl_session_sql(
+            &*session,
+            &format!("SELECT {}", applied_names.iter().map(|name| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", ")),
+            &[],
+        )?;
+        let applied_values: Vec<String> = applied_row.first().map(|row| row.iter().map(datum_as_text).collect()).unwrap_or_default();
+        let applied = tidb_variable::mview_execution::MViewExecutionSessionVars::capture_applied(|name| {
+            applied_names.iter().position(|applied| *applied == name).and_then(|index| applied_values.get(index).cloned())
+        });
+        const DDL_FP: &str = "github.com/pingcap/tidb/pkg/ddl/";
+        tidb_failpoint::inject_call(&format!("{DDL_FP}createMaterializedViewBuildMaintainMemQuotaApplied"), &mut applied.maintain_mem_quota.clone());
+        tidb_failpoint::inject_call(
+            &format!("{DDL_FP}createMaterializedViewBuildTiFlashSessionVarsApplied"),
+            &mut (applied.tiflash_max_threads, applied.fine_grained_stream_count, applied.fine_grained_batch_size),
+        );
+        tidb_failpoint::inject_call(
+            &format!("{DDL_FP}createMaterializedViewBuildTiFlashSpillSessionVarsApplied"),
+            &mut (
+                applied.tiflash_max_bytes_before_ext_join,
+                applied.tiflash_max_bytes_before_ext_agg,
+                applied.tiflash_max_bytes_before_ext_sort,
+                applied.tiflash_mem_quota_query_per_node,
+                applied.tiflash_query_spill_ratio,
+            ),
+        );
+        tidb_failpoint::inject_call(
+            &format!("{DDL_FP}createMaterializedViewBuildImportSessionVarsApplied"),
+            &mut (applied.import_threads, applied.import_disk_quota.clone()),
+        );
         // Go master `InitMViewSession`: the build runs in materialized view
         // maintenance.
         let original_maintenance = session.swap_in_mview_maintenance(true);
@@ -2174,27 +2225,24 @@ fn prewrite_create_materialized_view_refresh_info(
 /// view's whole input log set.
 fn insert_mview_refresh_source_info(txn: &JobTxn<'_>, mview_id: i64, mlog_ids: &[i64]) -> Result<(), DdlPlanError> {
     txn.set_must_rollback_txn_on_error();
-    if mlog_ids.is_empty() {
-        return Ok(());
-    }
-    let values = mlog_ids.iter().map(|mlog_id| format!("({mview_id}, {mlog_id})")).collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "INSERT INTO mysql.{} (MVIEW_ID, MLOG_ID) VALUES {values}",
-        tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
-    );
-    execute_job_sql(txn, &sql).map_err(DdlPlanError::from_mysql_error)
+    tidb_mviewutil::refresh_source::insert_refresh_source_ids(&mut job_sql_exec(txn), mview_id, mlog_ids)
+        .map_err(DdlPlanError::from_mysql_error)
+}
+
+/// The step session as Go's `w.sess.GetSQLExecutor()` for `mviewutil`.
+fn job_sql_exec<'t, 's>(
+    txn: &'t JobTxn<'s>,
+) -> impl FnMut(&str, &[tidb_sqlescape::SqlArg<'_>]) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> + use<'t, 's> {
+    move |sql, args| job_sql_rows(txn, sql, args)
 }
 
 /// Go master `deleteCreateMaterializedViewRefreshInfos` (with
 /// `deleteMViewRefreshSourceInfos` first): a missing info table deletes
 /// nothing.
 pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mview_id: i64) -> Result<(), DdlPlanError> {
-    let source = format!(
-        "DELETE FROM mysql.{} WHERE MVIEW_ID IN ({mview_id})",
-        tidb_metadef::system_tables_def::TIDB_MVIEW_FAST_REFRESH_SOURCE_INFO_TABLE_NAME
-    );
     txn.set_must_rollback_txn_on_error();
-    execute_job_sql(txn, &source).map_err(DdlPlanError::from_mysql_error)?;
+    tidb_mviewutil::refresh_source::delete_refresh_source_info(&mut job_sql_exec(txn), &[mview_id])
+        .map_err(DdlPlanError::from_mysql_error)?;
     txn.set_must_rollback_txn_on_error();
     let mut result = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})"))
         .map(|_| ());
@@ -2922,20 +2970,8 @@ fn migrate_mview_refresh_source_info(
     // handling."
     txn.set_must_rollback_txn_on_error();
     let read = |mview_id: i64| -> Result<Vec<i64>, DdlPlanError> {
-        let rows = job_sql_rows(
-            txn,
-            &format!("SELECT MLOG_ID FROM mysql.{table} WHERE MVIEW_ID = %? ORDER BY MLOG_ID"),
-            &[SqlArg::Signed(mview_id)],
-        )
-        .map_err(DdlPlanError::from_mysql_error)?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| match row.first() {
-                Some(tidb_datatype::Datum::Int(id)) => Some(*id),
-                Some(tidb_datatype::Datum::UInt(id)) => i64::try_from(*id).ok(),
-                _ => None,
-            })
-            .collect())
+        tidb_mviewutil::refresh_source::read_refresh_source_ids(&mut job_sql_exec(txn), mview_id)
+            .map_err(DdlPlanError::from_mysql_error)
     };
     let invalid = |message: &str| {
         DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_JOB.gen_with_stack_by_args(&[format!(
@@ -2950,10 +2986,7 @@ fn migrate_mview_refresh_source_info(
     if !read(new_mview_id)?.is_empty() {
         return Err(invalid("shadow already has input log records"));
     }
-    // Go `mviewutil.RefreshSourceLogIDs`: sorted, deduplicated.
-    let mut build_log_ids: Vec<i64> = build_sources.iter().map(|source| source.mlog_id).collect();
-    build_log_ids.sort_unstable();
-    build_log_ids.dedup();
+    let build_log_ids = tidb_mviewutil::refresh_source::refresh_source_log_ids(build_sources);
     if mlog_ids == build_log_ids {
         return job_sql_rows(
             txn,
@@ -2963,9 +2996,10 @@ fn migrate_mview_refresh_source_info(
         .map(|_| ())
         .map_err(DdlPlanError::from_mysql_error);
     }
-    job_sql_rows(txn, &format!("DELETE FROM mysql.{table} WHERE MVIEW_ID IN (%?)"), &[SqlArg::Signed(old_mview_id)])
+    tidb_mviewutil::refresh_source::delete_refresh_source_info(&mut job_sql_exec(txn), &[old_mview_id])
         .map_err(DdlPlanError::from_mysql_error)?;
-    insert_mview_refresh_source_info(txn, new_mview_id, &build_log_ids)
+    tidb_mviewutil::refresh_source::insert_refresh_source_ids(&mut job_sql_exec(txn), new_mview_id, &build_log_ids)
+        .map_err(DdlPlanError::from_mysql_error)
 }
 
 /// Go master `(*worker).onRefreshMaterializedViewCompleteOutOfPlaceCutover`:

@@ -15,6 +15,8 @@
 //! Go master `pkg/util/mviewutil` (`util.go`): the checks and key-layout
 //! lookups the planner and the DDL share for materialized views.
 
+pub mod refresh_source;
+
 use tidb_ast::{JoinNode, QueryStmt};
 use tidb_model::{SchemaState, TableInfo};
 use tidb_terror::MysqlError;

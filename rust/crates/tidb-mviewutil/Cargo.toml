@@ -17,3 +17,6 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-hack = { path = "../tidb-hack" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }

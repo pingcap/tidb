@@ -258,8 +258,9 @@ pub fn zone(loc: &TimeZone) -> (String, i64) {
 }
 
 /// Returns the zone name, or `"+08:00"`-style offset text when the name is
-/// empty (Go `ZoneName`). As in the source, a *named* fixed zone returns its
-/// name directly, which may not be re-parsable by [`parse_time_zone`].
+/// empty, "including seconds when nonzero" (Go master `ZoneName`). As in the
+/// source, a *named* fixed zone returns its name directly, which may not be
+/// re-parsable by [`parse_time_zone`].
 pub fn zone_name(loc: &TimeZone) -> String {
     let (name, offset) = zone(loc);
     if !name.is_empty() {
@@ -272,6 +273,10 @@ pub fn zone_name(loc: &TimeZone) -> String {
     };
     let hours = offset / 3600;
     let minutes = offset % 3600 / 60;
+    let seconds = offset % 60;
+    if seconds != 0 {
+        return format!("{sign}{hours:02}:{minutes:02}:{seconds:02}");
+    }
     format!("{sign}{hours:02}:{minutes:02}")
 }
 
@@ -513,6 +518,16 @@ mod tests {
             }),
             "+00:00"
         );
+        for (offset_secs, expected) in [
+            (30, "+00:00:30"),
+            (-30, "-00:00:30"),
+            (8 * 3600 + 30 * 60 + 45, "+08:30:45"),
+            (-(6 * 3600 + 15 * 60 + 45), "-06:15:45"),
+        ] {
+            assert_eq!(zone_name(&TimeZone::Fixed { name: String::new(), offset_secs }), expected);
+            // Go: an unnamed zone's name parses back to its offset.
+            assert_eq!(zone(&parse_time_zone(expected).unwrap()).1, i64::from(offset_secs), "{expected}");
+        }
         assert_eq!(
             zone_name(&TimeZone::Fixed {
                 name: "UTC+8".to_string(),

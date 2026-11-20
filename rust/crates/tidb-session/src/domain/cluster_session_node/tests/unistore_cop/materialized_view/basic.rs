@@ -1001,3 +1001,63 @@ fn test_materialized_view_related_tables_ddl_rejected() {
         exec_err_contains(&mut tk, sql, err);
     }
 }
+
+/// Go master `TestMViewRefreshSourceInfoLogSets`
+/// (`pkg/ddl/tests/materializedview/mview_refresh_source_test.go`):
+/// `mviewutil`'s refresh-source SQL over several logs and the missing-log
+/// placeholder, on the bootstrap layout and on one with other column
+/// offsets and a non-clustered handle.
+#[test]
+fn test_mview_refresh_source_info_log_sets() {
+    use tidb_mviewutil::refresh_source::{delete_refresh_source_info, insert_refresh_source_ids, read_refresh_source_ids};
+    let all_rows = "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog) order by MVIEW_ID, MLOG_ID";
+    for layout in ["bootstrap", "nonclustered_with_extra_column"] {
+        let (_stack, mut tk) = mview_test_kit();
+        if layout != "bootstrap" {
+            // "SQL access must not depend on column offsets or physical
+            // handle encoding." (Go's next-gen reserved-object failpoint has
+            // nothing to skip on this store.)
+            must_exec_all(&mut tk, &[
+                "drop table mysql.tidb_mview_fast_refresh_source_info",
+                "create table mysql.tidb_mview_fast_refresh_source_info (MLOG_ID bigint not null, EXTRA int default 7, MVIEW_ID bigint not null, primary key (MVIEW_ID, MLOG_ID) nonclustered, key idx_mlog (MLOG_ID, MVIEW_ID))",
+            ]);
+        }
+        // "Exercise multiple logs and the missing-log placeholder
+        // independently of the SQL validator's current single-source
+        // restriction."
+        must_exec_all(&mut tk, &["begin optimistic"]);
+        {
+            let mut exec = crate::mview_refresh::session_sql_exec(&mut tk);
+            insert_refresh_source_ids(&mut exec, 1001, &[0, 10, 11]).unwrap();
+            insert_refresh_source_ids(&mut exec, 1002, &[10]).unwrap();
+            assert_eq!(read_refresh_source_ids(&mut exec, 1001).unwrap(), vec![0, 10, 11]);
+        }
+        must_exec_all(&mut tk, &["commit"]);
+        assert_eq!(
+            answer(&mut tk, all_rows),
+            r#"RS:[["1001","0"],["1001","10"],["1001","11"],["1002","10"]]"#,
+            "{layout}"
+        );
+
+        must_exec_all(&mut tk, &["begin optimistic"]);
+        let inserted = insert_refresh_source_ids(&mut crate::mview_refresh::session_sql_exec(&mut tk), 1002, &[9, 10, 12]);
+        // "Optimistic SQL can defer duplicate-key checks until commit."
+        let code = match inserted {
+            Ok(()) => answer(&mut tk, "commit"),
+            Err(error) => format!("ERR {}", error.to_mysql_error().code),
+        };
+        // Go `kv.ErrKeyExists`.
+        assert!(code.starts_with("ERR 1062"), "{layout}: {code}");
+        must_exec_all(&mut tk, &["rollback"]);
+        assert_eq!(answer(&mut tk, "select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = 1002"), r#"RS:[["10"]]"#);
+
+        must_exec_all(&mut tk, &["begin optimistic"]);
+        delete_refresh_source_info(&mut crate::mview_refresh::session_sql_exec(&mut tk), &[1001]).unwrap();
+        must_exec_all(&mut tk, &["commit"]);
+        assert_eq!(
+            answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog)"),
+            r#"RS:[["1002","10"]]"#,
+            "{layout}"
+        );
+    }
+}
