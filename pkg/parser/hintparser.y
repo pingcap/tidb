@@ -147,7 +147,6 @@ import (
 	hintFirstMatch      "FIRSTMATCH"
 	hintLooseScan       "LOOSESCAN"
 	hintMaterialization "MATERIALIZATION"
-	hintPreferSkipScan  "PREFER_SKIP_SCAN"
 
 %type	<ident>
 	Identifier                             "identifier (including keywords)"
@@ -728,8 +727,6 @@ UnsupportedIndexLevelOptimizerHintName:
 |	"NO_MRR"
 |	"NO_ICP"
 |	"NO_RANGE_OPTIMIZATION"
-|	"SKIP_SCAN"
-|	"NO_SKIP_SCAN"
 
 SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
@@ -741,7 +738,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"TIFLASH_LM_FILTER"
-|	"PREFER_SKIP_SCAN"
+|	"SKIP_SCAN"
+|	"NO_SKIP_SCAN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
