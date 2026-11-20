@@ -187,9 +187,7 @@ SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_
 
 SELECT DATE_ADD(ts, INTERVAL 1 HOUR) FROM t;
 SELECT DATE_SUB(ts, INTERVAL 1 HOUR) FROM t;
-# If not error, his returns NULL, but MySQL returns 02:59:59.
-# TODO: issue#61567, also understand when it returns NULL and when it gives error!
---error 8179
+# TIMESTAMPADD returns DATETIME, including local times in the DST gap (#61567).
 SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t;
 SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts) FROM t;
 SELECT UNIX_TIMESTAMP(ts) FROM t;
