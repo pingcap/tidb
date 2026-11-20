@@ -183,6 +183,9 @@ type tableScanExec struct {
 	ndvs          []int64
 	rowCnt        int64
 	scanStats     kvrpcpb.ScanDetailV2
+	// consumedRowCnt counts rows handed to the parent. rowCnt can be larger,
+	// since the scan goroutine reads ahead of the page.
+	consumedRowCnt int64
 
 	chk      *chunk.Chunk
 	result   chan scanResult
@@ -197,6 +200,8 @@ type tableScanExec struct {
 	physTblIDColIdx *int
 	// This is used to update the paging range result, updated in next().
 	paging *coprocessor.KeyRange
+	// keysBudget emulates TiKV's tidb_max_keys_read early stop; nil if unset.
+	keysBudget *maxKeysReadState
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
@@ -236,7 +241,9 @@ func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 }
 
 func (e *tableScanExec) scanDetail() *kvrpcpb.ScanDetailV2 {
-	return &e.scanStats
+	detail := e.scanStats
+	detail.ProcessedVersions = uint64(e.processedRowCnt())
+	return &detail
 }
 
 func (e *tableScanExec) open() error {
@@ -310,8 +317,22 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 	if result.chk == nil || result.err != nil {
 		return nil, result.err
 	}
+	e.consumedRowCnt += int64(result.chk.NumRows())
+	// Charge rows handed to the parent, not in Process, which reads ahead.
+	if e.keysBudget.onRows(result.chk.NumRows()) {
+		return nil, nil
+	}
 	e.execSummary.updateOnlyRows(result.chk.NumRows())
 	return result.chk, nil
+}
+
+// processedRowCnt returns the keys to report as processed: for a paging
+// request only the rows in the page, like TiKV.
+func (e *tableScanExec) processedRowCnt() int64 {
+	if e.paging != nil {
+		return e.consumedRowCnt
+	}
+	return e.rowCnt
 }
 
 func (e *tableScanExec) stop() error {
@@ -341,9 +362,12 @@ type indexScanExec struct {
 	rowCnt        int64
 	ndvCnt        int64
 	scanStats     kvrpcpb.ScanDetailV2
-	chk           *chunk.Chunk
-	chkIdx        int
-	chunks        []*chunk.Chunk
+	// consumedRowCnt counts rows handed to the parent. rowCnt can be larger,
+	// since open() scans the whole range.
+	consumedRowCnt int64
+	chk            *chunk.Chunk
+	chkIdx         int
+	chunks         []*chunk.Chunk
 
 	colInfos   []rowcodec.ColInfo
 	numIdxCols int
@@ -356,6 +380,8 @@ type indexScanExec struct {
 	// This is used to update the paging range result, updated in next().
 	paging                 *coprocessor.KeyRange
 	chunkLastProcessedKeys []kv.Key
+	// keysBudget emulates TiKV's tidb_max_keys_read early stop; nil if unset.
+	keysBudget *maxKeysReadState
 }
 
 func (e *indexScanExec) SkipValue() bool { return false }
@@ -436,7 +462,9 @@ func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 }
 
 func (e *indexScanExec) scanDetail() *kvrpcpb.ScanDetailV2 {
-	return &e.scanStats
+	detail := e.scanStats
+	detail.ProcessedVersions = uint64(e.processedRowCnt())
+	return &detail
 }
 
 func (e *indexScanExec) open() error {
@@ -473,7 +501,13 @@ func (e *indexScanExec) open() error {
 func (e *indexScanExec) next() (*chunk.Chunk, error) {
 	if e.chkIdx < len(e.chunks) {
 		e.chkIdx++
-		e.execSummary.updateOnlyRows(e.chunks[e.chkIdx-1].NumRows())
+		rows := e.chunks[e.chkIdx-1].NumRows()
+		e.consumedRowCnt += int64(rows)
+		// Charge rows handed to the parent; open() scans the whole range.
+		if e.keysBudget.onRows(rows) {
+			return nil, nil
+		}
+		e.execSummary.updateOnlyRows(rows)
 		if e.paging != nil {
 			if e.desc {
 				if e.chkIdx == len(e.chunks) {
@@ -500,6 +534,15 @@ func (e *indexScanExec) next() (*chunk.Chunk, error) {
 		}
 	}
 	return nil, nil
+}
+
+// processedRowCnt returns the keys to report as processed: for a paging
+// request only the rows in the page, like TiKV.
+func (e *indexScanExec) processedRowCnt() int64 {
+	if e.paging != nil {
+		return e.consumedRowCnt
+	}
+	return e.rowCnt
 }
 
 type indexLookUpExec struct {

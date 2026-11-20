@@ -427,8 +427,8 @@ func newPlanCacheKeyWithMatchedBinding(
 	}
 	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
-	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
-	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks + maxKeysRead
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 3
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
@@ -494,6 +494,9 @@ func newPlanCacheKeyWithMatchedBinding(
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+
+	// tidb_max_keys_read disables index lookup push-down when the plan is built.
+	hash = append(hash, bool2Byte(vars.MaxKeysRead > 0))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
