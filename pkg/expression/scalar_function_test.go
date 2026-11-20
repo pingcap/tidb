@@ -28,6 +28,42 @@ import (
 )
 
 func TestExpressionSemanticEqual(t *testing.T) {
+	t.Run("cast target collation", func(t *testing.T) {
+		ctx := mock.NewContext()
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetCharset("utf8mb4")
+		tp.SetCollate("utf8mb4_bin")
+		col := &Column{UniqueID: 1, RetType: tp}
+		binaryCast := BuildCastFunction(ctx, col, tp.Clone())
+		ciType := tp.Clone()
+		ciType.SetCollate("utf8mb4_general_ci")
+		ciCast := BuildCastFunction(ctx, col, ciType)
+		require.False(t, ExpressionsSemanticEqual(binaryCast, ciCast))
+		distinct, positions := DeduplicateGbyExpression([]Expression{binaryCast, ciCast, binaryCast.Clone()})
+		require.Len(t, distinct, 2)
+		require.Equal(t, []int{0, 1, 0}, positions)
+		for name, change := range map[string]func(*types.FieldType){
+			"type":      func(tp *types.FieldType) { tp.SetType(mysql.TypeString) },
+			"flags":     func(tp *types.FieldType) { tp.AddFlag(mysql.UnsignedFlag) },
+			"length":    func(tp *types.FieldType) { tp.SetFlen(4) },
+			"decimal":   func(tp *types.FieldType) { tp.SetDecimal(2) },
+			"charset":   func(tp *types.FieldType) { tp.SetCharset("latin1") },
+			"collation": func(tp *types.FieldType) { tp.SetCollate("utf8mb4_general_ci") },
+			"array":     func(tp *types.FieldType) { tp.SetArray(true) },
+			"elements":  func(tp *types.FieldType) { tp.SetElems([]string{"a", "b"}) },
+		} {
+			t.Run(name, func(t *testing.T) {
+				// Exercise the key's metadata contract independently of evaluation.
+				variant := binaryCast.Clone().(*ScalarFunction)
+				variant.RetType = variant.RetType.Clone()
+				change(variant.RetType)
+				variant.CleanHashCode()
+				require.False(t, ExpressionsSemanticEqual(binaryCast, variant))
+				require.True(t, ExpressionsSemanticEqual(variant, variant.Clone()))
+			})
+		}
+	})
+
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
