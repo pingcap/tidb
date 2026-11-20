@@ -374,3 +374,92 @@ SET a.ALERT_LEVEL = NULL, a.UPDATE_TIME = NOW(6)
 WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NULL AND a.ALERT_LEVEL IS NOT NULL"
     );
 }
+
+/// Go `setupPurgeMVLogMetaForTest`.
+fn setup_purge_mv_log_meta_for_test(se: &RecordingSessionContext, next_time_rows: Vec<Vec<Datum>>) {
+    se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_FIND_PURGE_NEXT_TIME.to_owned(), next_time_rows);
+    let (mview_table, mvlog_table) = build_mock_mv_base_and_mv_log_tables(101, 201, &[101, 102]);
+    with_mock_info_schema(se, vec![mview_table, mvlog_table]);
+}
+
+fn canceled_manually() -> MvsError {
+    MvsError::Other("materialized view task canceled manually".to_owned())
+}
+
+#[test]
+fn test_server_helper_refresh_mv_manual_cancel_normalized() {
+    let (se, pool) = new_recording_session();
+    se.0.lock().unwrap().restricted_errs.insert(TEST_SQL_REFRESH_MV.to_owned(), canceled_manually());
+    with_mock_info_schema(&se, vec![table(101, "mv1")]);
+    let err = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap_err();
+    assert_eq!(crate::task_handler::err_mv_task_canceled_manually(), err);
+    assert_eq!(vec![TEST_SQL_REFRESH_MV.to_owned()], se.0.lock().unwrap().executed_restricted_sql);
+}
+
+#[test]
+fn test_server_helper_refresh_mv_deleted_when_next_time_not_found() {
+    let (se, pool) = new_recording_session();
+    with_mock_info_schema(&se, vec![table(101, "mv1")]);
+    se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_FIND_MV_NEXT_TIME.to_owned(), Vec::new());
+    let next_refresh = service_helper().refresh_mv(&Context::background(), &pool, 101).unwrap();
+    assert!(next_refresh.is_zero());
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_sql.is_empty());
+    assert_eq!(vec![TEST_SQL_REFRESH_MV.to_owned(), TEST_SQL_FIND_MV_NEXT_TIME.to_owned()], s.executed_restricted_sql);
+}
+
+#[test]
+fn test_server_helper_purge_mv_log_deleted_when_meta_not_found() {
+    let (se, pool) = new_recording_session();
+    let next_purge = service_helper().purge_mv_log(&Context::background(), &pool, 200).unwrap();
+    assert!(next_purge.is_zero());
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_sql.is_empty());
+    assert!(s.executed_restricted_sql.is_empty());
+}
+
+fn require_expected_purge_mv_log_sql(se: &RecordingSessionContext) {
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_sql.is_empty());
+    // Go `testExpectedPurgeMVLogSQL`.
+    assert_eq!(vec![TEST_SQL_PURGE_MV_LOG.to_owned(), TEST_SQL_FIND_PURGE_NEXT_TIME.to_owned()], s.executed_restricted_sql);
+    assert_eq!(s.executed_restricted_args.len(), 2);
+    assert_eq!(s.executed_restricted_args[0].len(), 2);
+    assert_eq!("mv_base", s.executed_restricted_args[0][1]);
+}
+
+#[test]
+fn test_server_helper_purge_mv_log_success() {
+    let (se, pool) = new_recording_session();
+    setup_purge_mv_log_meta_for_test(&se, vec![ints(&[Some(mvs_unix(1_700_000_000, 0).add(MINUTE).unix())])]);
+    let next_purge = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap();
+    assert!(!next_purge.is_zero());
+    assert!(next_purge.after(&mvs_unix(1_700_000_000, 0).add(-2 * tidb_timer::go_time::SECOND)));
+    require_expected_purge_mv_log_sql(&se);
+}
+
+#[test]
+fn test_server_helper_purge_mv_log_manual_cancel_normalized() {
+    let (se, pool) = new_recording_session();
+    setup_purge_mv_log_meta_for_test(&se, Vec::new());
+    se.0.lock().unwrap().restricted_errs.insert(TEST_SQL_PURGE_MV_LOG.to_owned(), canceled_manually());
+    let err = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap_err();
+    assert_eq!(crate::task_handler::err_mv_task_canceled_manually(), err);
+    assert_eq!(vec![TEST_SQL_PURGE_MV_LOG.to_owned()], se.0.lock().unwrap().executed_restricted_sql);
+}
+
+#[test]
+fn test_purge_mv_log_skip_when_auto_purge() {
+    let now = mvs_unix(1_700_000_000, 0);
+    let cases: [(&str, Vec<Vec<Datum>>, GoTime); 2] = [
+        ("next_time_null", vec![ints(&[None])], GoTime::zero()),
+        ("next_time_future", vec![ints(&[Some(now.add(MINUTE).unix())])], mvs_unix(now.add(MINUTE).unix(), 0)),
+    ];
+    for (name, next_rows, expected) in cases {
+        let (se, pool) = new_recording_session();
+        setup_purge_mv_log_meta_for_test(&se, next_rows);
+        let next_purge = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap();
+        assert_eq!(expected, next_purge, "{name}");
+        require_expected_purge_mv_log_sql(&se);
+    }
+}
