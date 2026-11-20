@@ -20,6 +20,9 @@ mod merge;
 mod merge_count;
 mod merge_sum;
 
+#[cfg(test)]
+mod exec_test;
+
 pub use exec::{
     ChunkResult, Exec, Mapping, MergeRuntimeStats, MergeWorkerData, MergeWriterStats, NoopWriter, ResultWriter, RowOp,
     RowOpType,
