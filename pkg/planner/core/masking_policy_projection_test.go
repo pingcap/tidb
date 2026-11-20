@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -25,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	core "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1550,4 +1553,138 @@ func TestMaskingPolicyScalarSubqueryInFunctionArgs(t *testing.T) {
 	tk.MustExec("set @b = 'secret'")
 	tk.MustQuery("execute s using @a, @b").Check(testkit.Rows("2"))
 	tk.MustQuery("execute s using @a, @b").Check(testkit.Rows("2"))
+}
+
+func TestMaskingPolicyNestedScalarSubqueryInWrites(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_w(id int primary key, c varchar(20))")
+	root.MustExec("create table t_wr(id int primary key, c varchar(20))")
+	root.MustExec("create table t_w_plain(id int primary key, c varchar(20))")
+	root.MustExec("create table t_w_dst(id int primary key, c varchar(20))")
+	root.MustExec("create table t_w_other(id int primary key)")
+	for _, tbl := range []string{"t_w", "t_wr", "t_w_plain"} {
+		root.MustExec("insert into " + tbl + " values (1,'secret'),(2,'hidden')")
+	}
+	root.MustExec("insert into t_w_dst values (1,'x')")
+	root.MustExec("insert into t_w_other values (1)")
+	root.MustExec("create masking policy p on t_w(c) as case when current_user()='root@%' then c else mask_full(c) end enable")
+	root.MustExec(`create masking policy pr on t_wr(c) as case when current_user()='root@%' then c else mask_full(c) end
+		restrict on (insert_into_select, update_select, delete_select) enable`)
+	root.MustExec("create user u_w")
+	root.MustExec("grant select, insert, update, delete on test.* to u_w")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_w", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	unchanged := func() {
+		root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 x"))
+	}
+
+	// The fields of a query block nested in a write are results, as in SELECT:
+	// a protected scalar subquery among them is rejected in every statement.
+	const notPreserved = "masking policy cannot be preserved through scalar subquery"
+	for _, tbl := range []string{"t_w", "t_wr"} {
+		for _, sub := range []string{
+			"(select max(i.c) from " + tbl + " i)",
+			"(select i.c from " + tbl + " i order by i.id limit 1)",
+			"(select max(i.c) from " + tbl + " i where i.id = d.id)",
+		} {
+			correlated := strings.Contains(sub, "d.id")
+			for _, sql := range []string{
+				"update t_w_dst d set c = (select " + sub + ")",
+				"update t_w_dst d set c = (select (select " + sub + "))",
+				"update t_w_dst d set c = (select " + sub + " from t_w_other)",
+				"update t_w_dst d set c = concat((select " + sub + "), '!')",
+				"update t_w_dst d, t_w_other o set d.c = (select " + sub + ") where d.id = o.id",
+				"update t_w_dst d, (select " + sub + " m) s set d.c = s.m",
+				"update t_w_dst d, (select (select " + sub + ") m) s set d.c = s.m",
+				"with s as (select " + sub + " m) update t_w_dst d, s set d.c = s.m",
+				"update t_w_dst d set c = (select 1 from (select " + sub + " m) s where s.m = 'secret')",
+				"insert into t_w_dst values (5, (select " + sub + "))",
+				"insert into t_w_dst select 5, " + sub,
+				"insert into t_w_dst select 5, (select " + sub + ") from t_w_other",
+				"insert into t_w_dst select 5, m from (select " + sub + " m) s",
+				"insert into t_w_dst set id = 5, c = (select " + sub + ")",
+				"replace into t_w_dst values (1, (select " + sub + "))",
+				"replace into t_w_dst select 1, " + sub,
+				"insert into t_w_dst values (1, 'z') on duplicate key update c = (select " + sub + ")",
+				"set @v = (select " + sub + ")",
+				"do (@v := (select " + sub + "))",
+			} {
+				if correlated && (strings.Contains(sql, " s set ") || !strings.Contains(sql, "t_w_dst d")) {
+					continue
+				}
+				err := tk.ExecToErr(sql)
+				// RESTRICT ON is checked first for the subqueries of UPDATE.
+				if tbl == "t_wr" && (strings.HasPrefix(sql, "update") || strings.HasPrefix(sql, "with")) {
+					require.True(t, terror.ErrorEqual(err, plannererrors.ErrAccessDeniedToMaskedColumn), "%s: %v", sql, err)
+				} else {
+					require.ErrorContains(t, err, notPreserved, sql)
+				}
+				unchanged()
+			}
+		}
+	}
+	tk.MustQuery("select @v").Check(testkit.Rows("<nil>"))
+	require.ErrorContains(t, tk.ExecToErr("prepare s from 'update t_w_dst set c = (select (select max(i.c) from t_w i)) where id > ?'"), notPreserved)
+	// Without RESTRICT ON the same shapes are still rejected.
+	root.MustExec("alter table t_wr modify masking policy pr set restrict on none")
+	require.ErrorContains(t, tk.ExecToErr("update t_w_dst set c = (select (select max(i.c) from t_wr i))"), notPreserved)
+	require.ErrorContains(t, tk.ExecToErr("update t_w_dst, (select (select max(i.c) from t_wr i) m) s set c = s.m"), notPreserved)
+	unchanged()
+
+	// A scalar subquery in the assignment itself stores its masked value.
+	for _, sub := range []string{
+		"(select max(i.c) from t_w i)",
+		"(select i.c from t_w i order by i.id limit 1)",
+		"(select i.c from t_w i where i.id = t_w_dst.id)",
+	} {
+		tk.MustExec("update t_w_dst set c = " + sub)
+		root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 XXXXXX"))
+		root.MustExec("update t_w_dst set c = 'x'")
+	}
+	// Predicates keep comparing masked values, and MIN/MAX of a subquery as
+	// original, in the statement and in the query blocks nested in it. A
+	// subquery that is only compared does not make its fields results.
+	for _, tc := range []struct{ cond, rows string }{
+		{"(select max(i.c) from t_w i) = 'secret'", "1 hit"},
+		{"(select max(i.c) from t_w i) = 'XXXXXX'", "1 x"},
+		{"(select i.c from t_w i where i.id = d.id) = 'secret'", "1 x"},
+		{"(select i.c from t_w i where i.id = d.id) = 'XXXXXX'", "1 hit"},
+	} {
+		for _, where := range []string{
+			tc.cond,
+			"(select " + tc.cond + ")",
+			"(select (select " + tc.cond + "))",
+			"(select m from (select " + tc.cond + " m) s)",
+			"d.id in (select d.id from t_w_other where " + tc.cond + ")",
+			"exists (select 1 from t_w_other having " + tc.cond + ")",
+		} {
+			tk.MustExec("update t_w_dst d set c = 'hit' where " + where)
+			root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows(tc.rows))
+			root.MustExec("update t_w_dst set c = 'x'")
+			tk.MustExec("delete d from t_w_dst d where " + where)
+			if tc.rows == "1 hit" {
+				root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows())
+				root.MustExec("insert into t_w_dst values (1,'x')")
+			}
+			unchanged()
+		}
+	}
+
+	// Tables without a policy are not affected.
+	tk.MustExec("update t_w_dst set c = (select (select max(i.c) from t_w_plain i))")
+	root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 secret"))
+	root.MustExec("update t_w_dst set c = 'x'")
+	tk.MustExec("prepare s from 'update t_w_dst set c = (select (select max(i.c) from t_w_plain i)) where id > ?'")
+	tk.MustExec("set @a = 0")
+	tk.MustExec("execute s using @a")
+	root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 secret"))
+	root.MustExec("update t_w_dst set c = 'x'")
+	// The shape is unsupported whoever runs it.
+	require.ErrorContains(t, root.ExecToErr("update t_w_dst set c = (select (select max(i.c) from t_w i))"), notPreserved)
+	root.MustExec("update t_w_dst set c = (select max(i.c) from t_w i)")
+	root.MustQuery("select id, c from t_w_dst").Check(testkit.Rows("1 secret"))
 }

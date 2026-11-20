@@ -532,6 +532,16 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	savedWindowKey := b.rewritingWindowKey
 	b.rewritingWindowKey = false
 	defer func() { b.rewritingWindowKey = savedWindowKey }()
+	// UPDATE and DELETE only compare or sort by the subqueries outside their
+	// assignments, so the fields of these, and of the query blocks whose fields
+	// make up their fields, are not results.
+	useClause := b.curClause
+	if b.scalarSubqueryClause != unknowClause {
+		useClause = b.scalarSubqueryClause
+	}
+	savedComparedSubquery := b.comparedSubquery
+	b.comparedSubquery = (b.inUpdateStmt || b.inDeleteStmt) && savedValueCtx == 0 && (useClause != fieldList || savedComparedSubquery)
+	defer func() { b.comparedSubquery = savedComparedSubquery }()
 	// Its own clauses decide how the scalar subqueries inside it are used.
 	defer b.enterScalarSubqueryClause(unknowClause)()
 	if er.schema != nil {
@@ -1456,15 +1466,16 @@ func maskPredicateSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanC
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)
-	// In 8.5, UPDATE assignments also use fieldList; they are not displayed results.
-	resultField := planCtx.curClause == fieldList && !planCtx.builder.inUpdateStmt && !planCtx.builder.inDeleteStmt
 	clause := planCtx.curClause
 	if c := planCtx.builder.scalarSubqueryClause; c != unknowClause {
 		// Aggregate and window function arguments are rewritten while curClause
-		// still holds an earlier clause, such as WHERE. They only occur in SELECT
-		// query blocks, whose fields are results in UPDATE and DELETE as well.
-		clause, resultField = c, c == fieldList
+		// still holds an earlier clause, such as WHERE.
+		clause = c
 	}
+	// The fields of a query block are its results, unless an UPDATE or DELETE
+	// only compares them. In 8.5, UPDATE assignments also use fieldList, but
+	// they are stored values, which take precedence below.
+	resultField := clause == fieldList && !planCtx.builder.comparedSubquery
 	// Outside the displayed fields, a scalar subquery masks its own result:
 	// SET, DO, UPDATE assignments and INSERT values store or return it without
 	// a final SELECT projection, and predicates compare against the masked

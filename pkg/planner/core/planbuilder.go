@@ -325,7 +325,11 @@ type PlanBuilder struct {
 	// functions. curClause is left over from an earlier clause then, and scalar
 	// subqueries are classified by this clause instead.
 	scalarSubqueryClause clauseCode
-	maskingOuterPlans    []base.LogicalPlan
+	// comparedSubquery is set while building a subquery that an UPDATE or
+	// DELETE statement uses outside its assignments, in a predicate or a sort
+	// key. Its fields are not results of the statement.
+	comparedSubquery  bool
+	maskingOuterPlans []base.LogicalPlan
 	// Retain raw result dependencies for RESTRICT ON checks after masking has
 	// replaced an output expression with a constant.
 	maskingSourcePlans map[int]base.LogicalPlan
