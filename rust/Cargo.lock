@@ -8253,6 +8253,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
+ "serde_json",
  "tidb-ast",
  "tidb-cpu",
  "tidb-datatype",
@@ -8265,9 +8266,18 @@ dependencies = [
  "tidb-metrics",
  "tidb-model",
  "tidb-murmur3",
+ "tidb-resolve",
  "tidb-sqlescape",
+ "tidb-sqlexec",
+ "tidb-stats",
+ "tidb-stats-handle-autoanalyze-exec",
+ "tidb-stats-handle-lockstats",
+ "tidb-stats-handle-util",
+ "tidb-syssession",
  "tidb-timer",
+ "tidb-timeutil",
  "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]

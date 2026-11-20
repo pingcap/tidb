@@ -25,8 +25,18 @@ tidb-metrics = { path = "../tidb-metrics" }
 tidb-model = { path = "../tidb-model" }
 tidb-murmur3 = { path = "../tidb-murmur3" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-timer = { path = "../tidb-timer" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+serde_json = { workspace = true }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-ast = { path = "../tidb-ast" }

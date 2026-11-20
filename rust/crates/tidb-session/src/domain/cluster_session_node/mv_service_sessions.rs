@@ -39,6 +39,10 @@ fn maintenance_context() -> tikv_client::trace::TraceContext {
 }
 
 impl MVServiceSessionContext for ClusterStatsSessionContext {
+    fn stats_session(&self) -> &dyn tidb_mvservice::MVServiceStatsSession {
+        self
+    }
+
     fn exec_restricted_sql(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, MvsError> {
         let options: [tidb_sqlexec::OptionFuncAlias; 1] = [std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session)];
         self.restricted_sql_executor()

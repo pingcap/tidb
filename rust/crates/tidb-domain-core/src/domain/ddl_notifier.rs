@@ -308,18 +308,9 @@ pub fn build_notifier(factory: &Arc<Domain>, stats_lease: Duration) -> Arc<DdlNo
     });
     notifier.register_handler(PRIORITY_QUEUE_HANDLER_ID, priority_handler);
 
-    // Go master `RegisterMVService`'s handler: it runs on the DDL owner;
-    // the domain fans the change out to the other servers.
-    let domain = Arc::downgrade(factory);
-    let mv_handler: Handler = Arc::new(move |_session, event| {
-        if tidb_mvservice::should_handle_mv_create_event(event) {
-            if let Some(domain) = domain.upgrade() {
-                domain.on_mv_ddl_handled();
-            }
-        }
-        Ok(())
-    });
-    notifier.register_handler(tidb_ddl_notifier::MV_SERVICE_HANDLER_ID, mv_handler);
+    // Go `RegisterMVService` registers its handler before the notifier starts.
+    let (mv_handler_id, mv_handler) = factory.mv_service_ddl_handler();
+    notifier.register_handler(mv_handler_id, mv_handler);
     notifier
 }
 

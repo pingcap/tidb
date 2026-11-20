@@ -58,6 +58,10 @@ const ER_NO_SUCH_TABLE: u16 = 1146;
 /// temporary tables, its variables and store.
 #[allow(clippy::missing_errors_doc)]
 pub trait MVServiceSessionContext: Send + Sync {
+    /// Go `se.(sessionctx.Context)` as the statistics packages read it
+    /// (`statsutil.UpdateSCtxVarsForStats`, `lockstats.QueryLockedTables`,
+    /// `statsautoanalyzeexec`): the same session.
+    fn stats_session(&self) -> &dyn MVServiceStatsSession;
     /// Go `GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
     /// ExecOptionUseCurSession, sql, args...)` under
     /// `kv.InternalTxnMViewMaintenance`.
@@ -89,28 +93,54 @@ pub trait MVServiceSessionPool: Send + Sync {
     fn with_session(&self, f: &mut dyn FnMut(&dyn MVServiceSessionContext) -> Result<(), MvsError>) -> Result<(), MvsError>;
 }
 
-/// Go `serviceHelper`'s environment: the local and cluster server views
-/// and the metrics sink. The analyze half (stats handle, process tracker)
-/// is the session layer's ([`MVServiceAnalyzer`]).
+/// The statistics session surface of a pooled system session.
+pub trait MVServiceStatsSession:
+    tidb_stats_handle_util::StatsSessionContext + tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext
+{
+}
+
+impl<T> MVServiceStatsSession for T where
+    T: tidb_stats_handle_util::StatsSessionContext + tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext + ?Sized
+{
+}
+
+/// The part of Go `statstypes.StatsHandle` the MV log analysis uses: the
+/// cached statistics and (Go `AutoAnalyzeProcIDGenerator`) the auto
+/// analyze process IDs.
+pub trait MVServiceStatsHandle: tidb_stats_handle_util::AutoAnalyzeProcIdGenerator {
+    /// Go `GetNonPseudoPhysicalTableStats`.
+    fn get_non_pseudo_physical_table_stats(&self, physical_table_id: i64) -> Option<MLogStats>;
+}
+
+/// Go `statsHandleGetter`.
+pub type StatsHandleGetter = Arc<dyn Fn() -> Option<Arc<dyn MVServiceStatsHandle>> + Send + Sync>;
+
+/// Go `sysproctrack.Tracker`: `Track` / `UnTrack` of the system process an
+/// `ANALYZE` runs as.
+#[derive(Clone)]
+pub struct SysProcTracker {
+    /// Go `Track`.
+    pub track: tidb_sqlexec::TrackSysProc,
+    /// Go `UnTrack`.
+    pub untrack: tidb_sqlexec::UnTrackSysProc,
+}
+
+/// Go `serviceHelper`: the local and cluster server views (Go reads them
+/// from `infosync`), the statistics seams of the MV log analysis and the
+/// metrics sink.
 pub struct ServiceHelper {
     /// Go `infosync.GetServerInfo`.
     pub local_server: Box<dyn Fn() -> Result<ServerInfo, String> + Send + Sync>,
     /// Go `infosync.GetAllServerInfo`, keyed by ID with Go's exec ID.
     pub all_servers: Box<dyn Fn() -> Result<Vec<(ServerInfo, String)>, String> + Send + Sync>,
-    /// Go `statsHandleGetter` / `sysProcTracker` / `isAutoAnalyzeStopped`.
-    pub analyzer: Option<Arc<dyn MVServiceAnalyzer>>,
+    /// Go `statsHandleGetter`.
+    pub stats_handle_getter: Option<StatsHandleGetter>,
+    /// Go `sysProcTracker`.
+    pub sys_proc_tracker: Option<SysProcTracker>,
+    /// Go `isAutoAnalyzeStopped`.
+    pub is_auto_analyze_stopped: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Go `reportMetrics` and its observers.
     pub metrics: Arc<dyn MVMetricsReporter>,
-}
-
-/// The MV log analyze half of Go's helper, which reads the statistics
-/// handle and runs `ANALYZE` through `statsautoanalyzeexec.RunAnalyzeStmt`.
-#[allow(clippy::missing_errors_doc)]
-pub trait MVServiceAnalyzer: Send + Sync {
-    /// Go `LoadAllTiDBMVLogAnalyzeTasks`.
-    fn load_all_tidb_mv_log_analyze_tasks(&self, ctx: &Context) -> Result<HashMap<i64, MlogAnalyzeTask>, MvsError>;
-    /// Go `AnalyzeMVLog`.
-    fn analyze_mv_log(&self, ctx: &Context, mlog_id: i64) -> Result<(), MvsError>;
 }
 
 /// The service's [`SessionPool`] over system sessions.
@@ -520,14 +550,63 @@ fn apply_mv_maintenance_session_vars_from_global(sctx: &dyn MVServiceSessionCont
     restores
 }
 
+/// A statistics package's error as the service reports it.
+fn sql_exec_error(err: tidb_sqlexec::SqlExecError) -> MvsError {
+    MvsError::Other(err.to_string())
+}
+
 impl ServiceHelper {
+    /// Go `getStatsHandle`.
+    fn get_stats_handle(&self) -> Result<Arc<dyn MVServiceStatsHandle>, MvsError> {
+        let Some(getter) = &self.stats_handle_getter else {
+            return Err(MvsError::Other("mv service stats handle getter is nil".to_owned()));
+        };
+        getter().ok_or_else(|| MvsError::Other("mv service stats handle is nil".to_owned()))
+    }
+
+    /// Go `mlogAnalyzeStopped`.
+    fn mlog_analyze_stopped(&self, ctx: &Context) -> bool {
+        ctx.err().is_some()
+            || !tidb_vardef::RUN_AUTO_ANALYZE.load(std::sync::atomic::Ordering::SeqCst)
+            || self.is_auto_analyze_stopped.as_ref().is_some_and(|stopped| stopped())
+    }
+
+    /// Go `canAnalyzeMLog`: not stopped and inside the auto-analyze window.
+    fn can_analyze_mlog(&self, ctx: &Context, sctx: &dyn MVServiceSessionContext) -> bool {
+        if self.mlog_analyze_stopped(ctx) {
+            return false;
+        }
+        let parameters = tidb_stats_handle_autoanalyze_exec::get_auto_analyze_parameters(sctx.stats_session());
+        let get = |name: &str| parameters.get(name).cloned().unwrap_or_default();
+        let (start, end) = match tidb_stats_handle_autoanalyze_exec::parse_auto_analysis_window(
+            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_START_TIME),
+            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_END_TIME),
+        ) {
+            Ok(window) => window,
+            Err(err) => {
+                bg_logger().warn(
+                    "mv service: failed to parse mlog auto analyze window",
+                    &[Field::new("error", Value::Str(err.to_string()))],
+                );
+                return false;
+            }
+        };
+        tidb_timeutil::within_day_time_period(
+            start.with_timezone(&chrono::Utc),
+            end.with_timezone(&chrono::Utc),
+            mvs_now().instant(),
+        ) && !self.mlog_analyze_stopped(ctx)
+    }
+
     /// Go `&serviceHelper{}`: no server view, metrics to a test sink.
     #[cfg(test)]
     pub(crate) fn new_for_test() -> Self {
         Self {
             local_server: Box::new(|| Ok(ServerInfo::default())),
             all_servers: Box::new(|| Ok(Vec::new())),
-            analyzer: None,
+            stats_handle_getter: None,
+            sys_proc_tracker: None,
+            is_auto_analyze_stopped: None,
             metrics: Arc::new(crate::mvservice_test::MockMVServiceHelper::default()),
         }
     }
@@ -1049,18 +1128,101 @@ impl MVTaskHandler for ServiceHelper {
         })
     }
 
-    fn load_all_tidb_mv_log_analyze_tasks(&self, ctx: &Context, _: &dyn SessionPool) -> Result<HashMap<i64, MlogAnalyzeTask>, MvsError> {
-        match &self.analyzer {
-            Some(analyzer) => analyzer.load_all_tidb_mv_log_analyze_tasks(ctx),
-            None => Err(MvsError::Other("mv service stats handle getter is nil".to_owned())),
+    /// Go `LoadAllTiDBMVLogAnalyzeTasks`: the MV logs that currently need analyze.
+    fn load_all_tidb_mv_log_analyze_tasks(&self, ctx: &Context, pool: &dyn SessionPool) -> Result<HashMap<i64, MlogAnalyzeTask>, MvsError> {
+        const FETCH_SQL: &str = "SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info";
+        if self.mlog_analyze_stopped(ctx) {
+            return Ok(HashMap::new());
         }
+        let stats_handle = self.get_stats_handle()?;
+        with_session(pool, |sctx| {
+            let mut tasks = HashMap::new();
+            if !self.can_analyze_mlog(ctx, sctx) {
+                return Ok(tasks);
+            }
+            let locked_tables =
+                tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx.stats_session()).map_err(sql_exec_error)?;
+            let rows = exec_rc(sctx, FETCH_SQL, &[])?;
+            let ratio = read_mlog_auto_analyze_ratio(sctx);
+            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
+            for row in rows {
+                let Some(mlog_id) = row.first().and_then(datum_i64) else {
+                    continue;
+                };
+                if mlog_id <= 0 || locked_tables.contains(&mlog_id) {
+                    continue;
+                }
+                let Some((schema_name, mlog_name)) = resolve_mv_log_identity_by_id(sctx, mlog_id)? else {
+                    continue;
+                };
+                let Some(stats_tbl) = stats_handle.get_non_pseudo_physical_table_stats(mlog_id) else {
+                    continue;
+                };
+                let (need_analyze, reason) = need_analyze_mlog(Some(&stats_tbl), ratio, min_count);
+                if !need_analyze {
+                    continue;
+                }
+                tasks.insert(mlog_id, MlogAnalyzeTask { schema_name, mlog_name, reason, ratio });
+            }
+            Ok(tasks)
+        })
     }
 
-    fn analyze_mv_log(&self, ctx: &Context, _: &dyn SessionPool, mlog_id: i64) -> Result<(), MvsError> {
-        match &self.analyzer {
-            Some(analyzer) => analyzer.analyze_mv_log(ctx, mlog_id),
-            None => Err(MvsError::Other("mv service stats handle getter is nil".to_owned())),
+    /// Go `AnalyzeMVLog`: one `ANALYZE TABLE` of the MV log.
+    fn analyze_mv_log(&self, ctx: &Context, pool: &dyn SessionPool, mlog_id: i64) -> Result<(), MvsError> {
+        const ANALYZE_MLOG_SQL: &str = "ANALYZE TABLE %n.%n";
+        if self.mlog_analyze_stopped(ctx) {
+            return Ok(());
         }
+        let stats_handle = self.get_stats_handle()?;
+        let Some(sys_proc_tracker) = &self.sys_proc_tracker else {
+            return Err(MvsError::Other("mv service sys process tracker is nil".to_owned()));
+        };
+        with_session(pool, |sctx| {
+            let stats_sctx = sctx.stats_session();
+            let _restore_stats_vars =
+                tidb_stats_handle_util::update_sctx_vars_for_stats(stats_sctx).map_err(sql_exec_error)?;
+
+            let Some((schema_name, mlog_name)) = resolve_mv_log_identity_by_id(sctx, mlog_id)? else {
+                return Ok(());
+            };
+            let locked_tables =
+                tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(stats_sctx).map_err(sql_exec_error)?;
+            if locked_tables.contains(&mlog_id) {
+                return Ok(());
+            }
+            // A task may have waited in the executor queue or for a pooled session.
+            // Recheck current eligibility and controls before starting another ANALYZE.
+            let ratio = read_mlog_auto_analyze_ratio(sctx);
+            let Some(stats_tbl) = stats_handle.get_non_pseudo_physical_table_stats(mlog_id) else {
+                return Ok(());
+            };
+            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
+            if !need_analyze_mlog(Some(&stats_tbl), ratio, min_count).0 {
+                return Ok(());
+            }
+            if !self.can_analyze_mlog(ctx, sctx) {
+                return Ok(());
+            }
+            let table_stats_ver = tidb_stats_handle_util::StatsSessionContext::analyze_version(stats_sctx);
+            let need_version_rewrite_warn = !tidb_stats::analyze_version_matches(
+                Some(i64::from(stats_tbl.stats_ver)),
+                stats_tbl.pseudo,
+                table_stats_ver,
+            );
+            tidb_stats_handle_autoanalyze_exec::run_analyze_stmt(
+                stats_sctx,
+                &*stats_handle,
+                Arc::clone(&sys_proc_tracker.track),
+                Arc::clone(&sys_proc_tracker.untrack),
+                i32::try_from(table_stats_ver).unwrap_or(i32::MAX),
+                need_version_rewrite_warn,
+                ANALYZE_MLOG_SQL,
+                &[SqlArg::String(schema_name.as_bytes()), SqlArg::String(mlog_name.as_bytes())],
+            )
+            .map(|_| ())
+            .map_err(sql_exec_error)
+        })
     }
 
     fn load_all_tidb_mv_refresh(&self, _: &Context, pool: &dyn SessionPool) -> Result<HashMap<i64, Arc<MViewTask>>, MvsError> {
@@ -1187,6 +1349,60 @@ impl MVMetricsReporter for ServiceHelper {
     }
 }
 
+/// Go `infosync.GetServerInfo` / `infosync.GetAllServerInfo`, which Go's
+/// helper reads from a package global and Rust passes in.
+pub struct ServerViews {
+    /// Go `infosync.GetServerInfo`.
+    pub local_server: Box<dyn Fn() -> Result<ServerInfo, String> + Send + Sync>,
+    /// Go `infosync.GetAllServerInfo`, keyed by ID with Go's exec ID.
+    pub all_servers: Box<dyn Fn() -> Result<Vec<(ServerInfo, String)>, String> + Send + Sync>,
+}
+
+/// Go `RegisterMVService`: the MV service with the default config and the
+/// default CPU / memory backpressure, one startup fetch requested, and its
+/// DDL handler registered through `register_handler`.
+#[allow(clippy::too_many_arguments)]
+pub fn register_mv_service(
+    ctx: Context,
+    register_handler: impl FnOnce(tidb_ddl_notifier::HandlerId, tidb_ddl_notifier::Handler),
+    se: Arc<dyn SessionPool>,
+    servers: ServerViews,
+    stats_handle_getter: Option<StatsHandleGetter>,
+    sys_proc_tracker: Option<SysProcTracker>,
+    is_auto_analyze_stopped: Arc<dyn Fn() -> bool + Send + Sync>,
+    on_ddl_handled: Arc<dyn Fn() + Send + Sync>,
+) -> Arc<MVService> {
+    let mut cfg = crate::service_settings::default_mv_service_config();
+    cfg.task_backpressure = crate::service::TaskBackpressureConfig {
+        cpu_threshold: crate::backpressure::DEFAULT_BACKPRESSURE_CPU_THRESHOLD,
+        mem_threshold: crate::backpressure::DEFAULT_BACKPRESSURE_MEM_THRESHOLD,
+        delay: crate::backpressure::DEFAULT_TASK_BACKPRESSURE_DELAY,
+    };
+    let helper = ServiceHelper {
+        local_server: servers.local_server,
+        all_servers: servers.all_servers,
+        stats_handle_getter,
+        sys_proc_tracker,
+        is_auto_analyze_stopped: Some(is_auto_analyze_stopped),
+        metrics: Arc::new(crate::metrics_reporter::MetricsReporter::default()),
+    };
+    let mv_service = crate::service_settings::new_mv_service(ctx, se, Arc::new(helper), cfg);
+    mv_service.notify_ddl_change(); // Trigger one startup refresh so in-memory state catches up with metadata.
+
+    // The notifier callback runs on the DDL owner only.
+    // Other nodes should be notified through the domain-side registry path.
+    register_handler(
+        tidb_ddl_notifier::MV_SERVICE_HANDLER_ID,
+        Arc::new(move |_session, event| {
+            if should_handle_mv_create_event(event) {
+                on_ddl_handled();
+            }
+            Ok(())
+        }),
+    );
+    mv_service
+}
+
 /// Go `shouldHandleMVCreateEvent`: the DDL events the owner fans out to the
 /// service (other changes wait for the periodic metadata refresh).
 #[must_use]
@@ -1209,6 +1425,8 @@ pub fn should_handle_mv_create_event(event: &tidb_ddl_notifier::SchemaChangeEven
 pub struct MLogStats {
     /// Go `Pseudo`.
     pub pseudo: bool,
+    /// Go `StatsVer`.
+    pub stats_ver: i32,
     /// Go `RealtimeCount`.
     pub realtime_count: i64,
     /// Go `ModifyCount`.

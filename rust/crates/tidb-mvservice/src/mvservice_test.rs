@@ -743,7 +743,7 @@ fn set_refresh_alert_cleanup_owner_for_test(svc: &MVService, owner_hash: u32) {
 }
 
 /// Go `setTaskOwnersForTest`.
-fn set_task_owners_for_test(svc: &MVService, task_hashes: &[(i64, u32)]) {
+pub(crate) fn set_task_owners_for_test(svc: &MVService, task_hashes: &[(i64, u32)]) {
     let overrides: Vec<(Vec<u8>, u32)> = task_hashes
         .iter()
         .map(|(id, hash)| (crate::server_maintainer::int64_key_to_binary_bytes(*id).to_vec(), *hash))

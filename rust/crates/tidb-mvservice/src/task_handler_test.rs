@@ -799,3 +799,47 @@ fn test_mv_service_m_log_analyze_submit_rejected_cleans_dedup_state() {
     assert_eq!(0, helper.analyze_mlog_calls.load(SeqCst));
     assert_eq!(1, svc.mlog_analyze_executor.metrics.counters.rejected_count.load(SeqCst));
 }
+
+/// Go `TestServerHelperMLogAnalyzeControls`.
+#[test]
+fn test_server_helper_m_log_analyze_controls() {
+    use crate::service_helper_test::{
+        contains_analyze_sql, new_m_log_analyze_helper_for_test, RunAutoAnalyzeGuard, TEST_SQL_AUTO_ANALYZE_PARAMETERS,
+    };
+    use crate::task_handler::MVTaskHandler;
+    use crate::time_proxy::{install_mock_time_module_for_test, MockTimeModule};
+    use tidb_datatype::Datum;
+    let _serial = serial();
+    let _restore_enabled = RunAutoAnalyzeGuard::set(tidb_vardef::RUN_AUTO_ANALYZE.load(SeqCst));
+    // Go `time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)`.
+    let _restore_time = install_mock_time_module_for_test(MockTimeModule::new(GoTime::from_unix(1_770_724_800, 0)));
+    let text = |value: &str| Datum::new_string_datum(value.as_bytes());
+    for (name, enabled, start, end, allowed) in [
+        ("disabled", false, "00:00 +0000", "23:59 +0000", false),
+        ("outside window", true, "13:00 +0000", "14:00 +0000", false),
+        ("inside window", true, "11:00 +0000", "13:00 +0000", true),
+        ("overnight inside", true, "11:00 +0000", "01:00 +0000", true),
+        ("overnight outside", true, "23:00 +0000", "01:00 +0000", false),
+        ("offset inside", true, "19:00 +0800", "21:00 +0800", true),
+        ("invalid window", true, "invalid", "13:00 +0000", false),
+    ] {
+        tidb_vardef::RUN_AUTO_ANALYZE.store(enabled, SeqCst);
+        for phase in ["scan", "execute"] {
+            let (helper, _, se, pool) = new_m_log_analyze_helper_for_test();
+            se.0.lock().unwrap().restricted_rows.insert(
+                TEST_SQL_AUTO_ANALYZE_PARAMETERS.to_owned(),
+                vec![
+                    vec![text(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_START_TIME), text(start)],
+                    vec![text(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_END_TIME), text(end)],
+                ],
+            );
+            if phase == "scan" {
+                let tasks = helper.load_all_tidb_mv_log_analyze_tasks(&Context::background(), &pool).unwrap();
+                assert_eq!(allowed, tasks.len() == 1, "{name}/{phase}");
+            } else {
+                helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap();
+                assert_eq!(allowed, contains_analyze_sql(&se), "{name}/{phase}");
+            }
+        }
+    }
+}

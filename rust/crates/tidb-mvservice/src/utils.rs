@@ -62,7 +62,7 @@ impl Notifier {
         }
     }
 
-    fn is_awake(&self) -> bool {
+    pub(crate) fn is_awake(&self) -> bool {
         self.awake.load(Ordering::SeqCst) != 0
     }
 

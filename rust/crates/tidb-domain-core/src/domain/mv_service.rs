@@ -30,8 +30,7 @@ use tidb_gocontext::{CancelFunc, Context};
 use tidb_log::{Field, Value};
 use tidb_logutil::bg_logger;
 use tidb_mvservice::{
-    MVService, MVServiceSessionContext, MVServiceSessionPool, MetricsReporter, MvsError, ServerInfo, ServiceHelper,
-    SystemSessionPool, TaskBackpressureConfig,
+    MVService, MVServiceSessionContext, MVServiceSessionPool, MvsError, ServerInfo, SystemSessionPool,
 };
 
 use super::Domain;
@@ -42,6 +41,9 @@ const MVS_DDL_NOTIFY_KEY: &str = "/tidb/mvservice/ddl";
 /// The domain's MV service and Go's `do.mvService.ddlNotify`.
 pub(crate) struct MvServiceState {
     service: Arc<MVService>,
+    /// The DDL handler Go's `RegisterMVService` registers on the notifier;
+    /// the notifier, also built on first use, takes it from here.
+    ddl_handler: (tidb_ddl_notifier::HandlerId, tidb_ddl_notifier::Handler),
     ddl_notify_tx: Sender<()>,
     ddl_notify_rx: Receiver<()>,
     cancel: CancelFunc,
@@ -100,43 +102,41 @@ impl Domain {
             let (ctx, cancel) = Context::with_cancel(&Context::background());
             let local = Arc::downgrade(self);
             let all = Arc::downgrade(self);
-            let helper = ServiceHelper {
-                local_server: Box::new(move || {
-                    let domain = local.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
-                    let syncer = domain.server_info().ok_or_else(|| "the server info is not ready".to_owned())?;
-                    Ok(server_info_of(&syncer.get_local_server_info()))
-                }),
-                all_servers: Box::new(move || {
-                    let domain = all.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
-                    let syncer = domain.server_info().ok_or_else(|| "the server info is not ready".to_owned())?;
-                    Ok(syncer
-                        .get_all_server_info()?
-                        .values()
-                        .map(|info| (server_info_of(info), tidb_util_disttask::generate_exec_id(info)))
-                        .collect())
-                }),
-                analyzer: Some(Arc::new(DomainMvAnalyzer(Arc::downgrade(self)))),
-                metrics: Arc::new(MetricsReporter::default()),
-            };
-            // Go `RegisterMVService`: the default config with the default
-            // CPU / memory backpressure.
-            let mut cfg = tidb_mvservice::default_mv_service_config();
-            cfg.task_backpressure = TaskBackpressureConfig {
-                cpu_threshold: tidb_mvservice::DEFAULT_BACKPRESSURE_CPU_THRESHOLD,
-                mem_threshold: tidb_mvservice::DEFAULT_BACKPRESSURE_MEM_THRESHOLD,
-                delay: tidb_mvservice::DEFAULT_TASK_BACKPRESSURE_DELAY,
-            };
-            let service = tidb_mvservice::new_mv_service(
-                ctx,
-                Arc::new(SystemSessionPool(Arc::new(DomainMvSessionPool(Arc::downgrade(self))))),
-                Arc::new(helper),
-                cfg,
-            );
-            // Trigger one startup refresh so in-memory state catches up with metadata.
-            service.notify_ddl_change();
-            register_mv_service_sysvar_hooks(&self.global_vars, &service);
+            let (stats_handle_getter, sys_proc_tracker, is_auto_analyze_stopped) = mv_service_stats_seams(self);
             let (ddl_notify_tx, ddl_notify_rx) = bounded(1);
-            MvServiceState { service, ddl_notify_tx, ddl_notify_rx, cancel }
+            let on_ddl_handled_tx = ddl_notify_tx.clone();
+            let mut ddl_handler = None;
+            let service = tidb_mvservice::register_mv_service(
+                ctx,
+                |id, handler| ddl_handler = Some((id, handler)),
+                Arc::new(SystemSessionPool(Arc::new(DomainMvSessionPool(Arc::downgrade(self))))),
+                tidb_mvservice::ServerViews {
+                    local_server: Box::new(move || {
+                        let domain = local.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+                        let syncer = domain.server_info().ok_or_else(|| "the server info is not ready".to_owned())?;
+                        Ok(server_info_of(&syncer.get_local_server_info()))
+                    }),
+                    all_servers: Box::new(move || {
+                        let domain = all.upgrade().ok_or_else(|| "the domain is closed".to_owned())?;
+                        let syncer = domain.server_info().ok_or_else(|| "the server info is not ready".to_owned())?;
+                        Ok(syncer
+                            .get_all_server_info()?
+                            .values()
+                            .map(|info| (server_info_of(info), tidb_util_disttask::generate_exec_id(info)))
+                            .collect())
+                    }),
+                },
+                Some(stats_handle_getter),
+                Some(sys_proc_tracker),
+                is_auto_analyze_stopped,
+                // Go `onDDLHandled`: wake the cross-server fan-out.
+                Arc::new(move || {
+                    let _ = on_ddl_handled_tx.try_send(());
+                }),
+            );
+            register_mv_service_sysvar_hooks(&self.global_vars, &service);
+            let ddl_handler = ddl_handler.expect("RegisterMVService registers its DDL handler");
+            MvServiceState { service, ddl_handler, ddl_notify_tx, ddl_notify_rx, cancel }
         })
     }
 
@@ -145,10 +145,10 @@ impl Domain {
         Arc::clone(&self.mv_service_state().service)
     }
 
-    /// Go `RegisterMVService`'s `onDDLHandled`: the DDL owner saw an MV
-    /// change; fan it out to the other servers.
-    pub(crate) fn on_mv_ddl_handled(self: &Arc<Self>) {
-        let _ = self.mv_service_state().ddl_notify_tx.try_send(());
+    /// The DDL handler Go's `RegisterMVService` registered, for the notifier.
+    pub(crate) fn mv_service_ddl_handler(self: &Arc<Self>) -> (tidb_ddl_notifier::HandlerId, tidb_ddl_notifier::Handler) {
+        let (id, handler) = &self.mv_service_state().ddl_handler;
+        (*id, Arc::clone(handler))
     }
 
     /// Go `StartMVService`: the service loop and the cross-server DDL
@@ -301,189 +301,55 @@ fn register_mv_service_sysvar_hooks(globals: &tidb_domain::global_sysvars::Globa
     );
 }
 
-/// Go `serviceHelper`'s MV log analyze half over the domain: its statistics
-/// handle, the system process tracker and `do.stopAutoAnalyze` (the
-/// service context ending here).
-struct DomainMvAnalyzer(Weak<Domain>);
+/// Go `do.StatsHandle()` as the MV service reads it: the domain's loaded
+/// statistics and its connection IDs for auto-analyze processes.
+struct DomainMvStatsHandle(Weak<Domain>);
 
-/// Go `mlogAnalyzeTask` candidates' statistics, as `GetNonPseudoPhysicalTableStats` finds them.
-fn mlog_stats(domain: &Domain, mlog_id: i64) -> Option<(tidb_mvservice::MLogStats, i32)> {
-    let statistics = domain.stats.load();
-    let table = statistics.get(&mlog_id).and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)?;
-    if table.hist_coll.pseudo {
-        return None;
+impl tidb_stats_handle_util::AutoAnalyzeProcIdGenerator for DomainMvStatsHandle {
+    fn auto_analyze_proc_id(&self) -> u64 {
+        self.0.upgrade().map_or(0, |domain| domain.next_conn_id().next_id())
     }
-    Some((
-        tidb_mvservice::MLogStats {
+
+    fn release_auto_analyze_proc_id(&self, id: u64) {
+        if let Some(domain) = self.0.upgrade() {
+            domain.next_conn_id().release(id);
+        }
+    }
+}
+
+impl tidb_mvservice::MVServiceStatsHandle for DomainMvStatsHandle {
+    /// Go `GetNonPseudoPhysicalTableStats`.
+    fn get_non_pseudo_physical_table_stats(&self, physical_table_id: i64) -> Option<tidb_mvservice::MLogStats> {
+        let domain = self.0.upgrade()?;
+        let statistics = domain.stats.load();
+        let table = statistics
+            .get(&physical_table_id)
+            .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)?;
+        if table.hist_coll.pseudo {
+            return None;
+        }
+        Some(tidb_mvservice::MLogStats {
             pseudo: table.hist_coll.pseudo,
+            stats_ver: table.hist_coll.stats_version,
             realtime_count: table.hist_coll.realtime_count,
             modify_count: table.hist_coll.modify_count,
             analyzed: tidb_stats::table_is_analyzed(table.last_analyze_version),
             analyze_row_count: table.hist_coll.analyze_row_count(),
-        },
-        table.hist_coll.stats_version,
-    ))
-}
-
-impl DomainMvAnalyzer {
-    fn domain(&self) -> Result<Arc<Domain>, MvsError> {
-        self.0.upgrade().ok_or_else(|| MvsError::Other("mv service: the domain is closed".to_owned()))
-    }
-
-    /// Go `mlogAnalyzeStopped`.
-    fn mlog_analyze_stopped(domain: &Domain, ctx: &Context) -> bool {
-        ctx.err().is_some()
-            || !domain
-                .global_vars
-                .get(tidb_vardef::tidb_vars::TIDB_ENABLE_AUTO_ANALYZE)
-                .map_or(true, |value| value.eq_ignore_ascii_case("ON"))
-    }
-
-    /// Go `canAnalyzeMLog`: not stopped and inside the auto-analyze window.
-    fn can_analyze_mlog(
-        domain: &Domain,
-        ctx: &Context,
-        sctx: &dyn crate::sys_session::DomainSysSession,
-    ) -> bool {
-        if Self::mlog_analyze_stopped(domain, ctx) {
-            return false;
-        }
-        let parameters = tidb_stats_handle_autoanalyze_exec::get_auto_analyze_parameters(sctx);
-        let get = |name: &str| parameters.get(name).cloned().unwrap_or_default();
-        let Ok((start, end)) = tidb_stats_handle_autoanalyze_exec::parse_auto_analysis_window(
-            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_START_TIME),
-            &get(tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_END_TIME),
-        ) else {
-            bg_logger().warn("mv service: failed to parse mlog auto analyze window", &[]);
-            return false;
-        };
-        let now = tidb_mvservice::mvs_now().instant();
-        tidb_timeutil::within_day_time_period(start.with_timezone(&chrono::Utc), end.with_timezone(&chrono::Utc), now)
-            && !Self::mlog_analyze_stopped(domain, ctx)
-    }
-
-    fn with_session<T>(
-        domain: &Arc<Domain>,
-        f: impl FnOnce(&dyn crate::sys_session::DomainSysSession) -> Result<T, MvsError>,
-    ) -> Result<T, MvsError> {
-        let pool = domain.advanced_sys_session_pool();
-        let mut outcome = None;
-        let mut f = Some(f);
-        pool.with_session(|session| {
-            session.with_session_context(|context| {
-                outcome = Some((f.take().expect("called once"))(context));
-                Ok(())
-            })
         })
-        .map_err(|err| MvsError::Other(err.to_string()))?;
-        outcome.unwrap_or_else(|| Err(MvsError::Other("mv service: no system session".to_owned())))
     }
 }
 
-fn sql_exec_error(err: tidb_sqlexec::SqlExecError) -> MvsError {
-    MvsError::Other(err.to_string())
-}
-
-impl tidb_mvservice::MVServiceAnalyzer for DomainMvAnalyzer {
-    /// Go `LoadAllTiDBMVLogAnalyzeTasks`.
-    fn load_all_tidb_mv_log_analyze_tasks(
-        &self,
-        ctx: &Context,
-    ) -> Result<std::collections::HashMap<i64, tidb_mvservice::MlogAnalyzeTask>, MvsError> {
-        const FETCH_SQL: &str = "SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info";
-        let domain = self.domain()?;
-        if Self::mlog_analyze_stopped(&domain, ctx) {
-            return Ok(std::collections::HashMap::new());
-        }
-        Self::with_session(&domain, |sctx| {
-            let mut tasks = std::collections::HashMap::new();
-            if !Self::can_analyze_mlog(&domain, ctx, sctx) {
-                return Ok(tasks);
-            }
-            let locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx).map_err(sql_exec_error)?;
-            let mv_sctx = sctx.mv_service_session();
-            let rows = mv_sctx.exec_restricted_sql(FETCH_SQL, &[])?;
-            let ratio = tidb_mvservice::read_mlog_auto_analyze_ratio(mv_sctx);
-            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
-            for row in rows {
-                let Some(tidb_datatype::Datum::Int(mlog_id)) = row.first().cloned() else {
-                    continue;
-                };
-                if mlog_id <= 0 || locked.contains(&mlog_id) {
-                    continue;
-                }
-                let Some((schema_name, mlog_name)) = tidb_mvservice::resolve_mv_log_identity_by_id(mv_sctx, mlog_id)? else {
-                    continue;
-                };
-                let Some((stats, _)) = mlog_stats(&domain, mlog_id) else {
-                    continue;
-                };
-                let (need, reason) = tidb_mvservice::need_analyze_mlog(Some(&stats), ratio, min_count);
-                if !need {
-                    continue;
-                }
-                tasks.insert(mlog_id, tidb_mvservice::MlogAnalyzeTask { schema_name, mlog_name, reason, ratio });
-            }
-            Ok(tasks)
-        })
-    }
-
-    /// Go `AnalyzeMVLog`: one `ANALYZE TABLE` of the log, rechecked first.
-    fn analyze_mv_log(&self, ctx: &Context, mlog_id: i64) -> Result<(), MvsError> {
-        const ANALYZE_MLOG_SQL: &str = "ANALYZE TABLE %n.%n";
-        let domain = self.domain()?;
-        if Self::mlog_analyze_stopped(&domain, ctx) {
-            return Ok(());
-        }
-        Self::with_session(&domain, |sctx| {
-            let _restore_stats_vars = tidb_stats_handle_util::update_sctx_vars_for_stats(sctx).map_err(sql_exec_error)?;
-            let mv_sctx = sctx.mv_service_session();
-            let Some((schema_name, mlog_name)) = tidb_mvservice::resolve_mv_log_identity_by_id(mv_sctx, mlog_id)? else {
-                return Ok(());
-            };
-            let locked = tidb_stats_handle_lockstats::session_stats_lock::query_locked_tables(sctx).map_err(sql_exec_error)?;
-            if locked.contains(&mlog_id) {
-                return Ok(());
-            }
-            // A task may have waited in the executor queue or for a pooled session.
-            // Recheck current eligibility and controls before starting another ANALYZE.
-            let ratio = tidb_mvservice::read_mlog_auto_analyze_ratio(mv_sctx);
-            let Some((stats, stats_version)) = mlog_stats(&domain, mlog_id) else {
-                return Ok(());
-            };
-            let min_count = tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst);
-            if !tidb_mvservice::need_analyze_mlog(Some(&stats), ratio, min_count).0 {
-                return Ok(());
-            }
-            if !Self::can_analyze_mlog(&domain, ctx, sctx) {
-                return Ok(());
-            }
-            let table_stats_ver = mv_sctx
-                .global_system_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)?
-                .parse::<i32>()
-                .map_err(|err| MvsError::Other(err.to_string()))?;
-            let need_version_rewrite_warn =
-                !tidb_stats::analyze_version_matches(Some(i64::from(stats_version)), stats.pseudo, i64::from(table_stats_ver));
-            let ids = domain.next_conn_id();
-            let released = Arc::clone(&ids);
-            let generator =
-                tidb_stats_handle_util::Generator::new(move || ids.next_id(), move |id| released.release(id));
-            let (track, untrack) = crate::sys_session::system_process_trackers(domain.processes());
-            tidb_stats_handle_autoanalyze_exec::run_analyze_stmt(
-                sctx,
-                &generator,
-                track,
-                untrack,
-                table_stats_ver,
-                need_version_rewrite_warn,
-                ANALYZE_MLOG_SQL,
-                &[
-                    tidb_sqlescape::SqlArg::String(schema_name.as_bytes()),
-                    tidb_sqlescape::SqlArg::String(mlog_name.as_bytes()),
-                ],
-            )
-            .map(|_| ())
-            .map_err(sql_exec_error)
-        })
-    }
+/// Go `RegisterMVService`'s statistics arguments: `do.StatsHandle()`,
+/// `&do.sysProcesses` and `do.stopAutoAnalyze.Load` (the domain gone).
+fn mv_service_stats_seams(
+    domain: &Arc<Domain>,
+) -> (tidb_mvservice::StatsHandleGetter, tidb_mvservice::SysProcTracker, Arc<dyn Fn() -> bool + Send + Sync>) {
+    let handle: Arc<dyn tidb_mvservice::MVServiceStatsHandle> = Arc::new(DomainMvStatsHandle(Arc::downgrade(domain)));
+    let (track, untrack) = crate::sys_session::system_process_trackers(domain.processes());
+    let weak = Arc::downgrade(domain);
+    (
+        Arc::new(move || Some(Arc::clone(&handle))),
+        tidb_mvservice::SysProcTracker { track, untrack },
+        Arc::new(move || weak.strong_count() == 0),
+    )
 }

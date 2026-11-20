@@ -73,9 +73,78 @@ pub(crate) struct RecordingSession {
     pub(crate) watched_vars: Vec<String>,
     pub(crate) restricted_var_values: Vec<HashMap<String, Option<String>>>,
     pub(crate) store_version: u64,
+    /// Go `StmtCtx.TimeZone()`.
+    statement_time_zone: String,
 }
 
-pub(crate) struct RecordingSessionContext(pub(crate) Mutex<RecordingSession>);
+/// Go `recordingSessionContext`: one session that is also its own
+/// restricted SQL executor.
+pub(crate) struct RecordingSessionContext(pub(crate) Arc<Mutex<RecordingSession>>);
+
+/// Go `mock.NewContext()`'s variables: a variable the test did not set
+/// holds its default, GLOBAL or session.
+fn sys_var_default(name: &str) -> Option<String> {
+    tidb_variable::sysvar::get_sys_var(name).map(|definition| definition.value.to_owned())
+}
+
+impl RecordingSession {
+    /// Go `ExecRestrictedSQL`: records the statement, its arguments and the
+    /// watched variables, then answers from the canned rows.
+    fn exec_restricted(&mut self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, MvsError> {
+        self.executed_restricted_sql.push(sql.to_owned());
+        self.executed_restricted_args.push(args.iter().map(arg_text).collect());
+        let values = self.watched_vars.iter().map(|name| (name.clone(), self.system_vars.get(name).cloned())).collect();
+        self.restricted_var_values.push(values);
+        let affected = match self.restricted_affected_rows.get(sql).cloned() {
+            Some(seq) => {
+                let pos = self.restricted_affected_pos.entry(sql.to_owned()).or_default();
+                let value = seq.get(*pos).copied().unwrap_or(0);
+                *pos += 1;
+                value
+            }
+            None => 0,
+        };
+        self.affected_rows = affected;
+        if let Some(err) = self.restricted_errs.get(sql) {
+            return Err(err.clone());
+        }
+        Ok(self.restricted_rows.get(sql).cloned().unwrap_or_default())
+    }
+
+    /// Go `faultyGlobalAccessor.GetGlobalSysVar` over
+    /// `variable.NewMockGlobalAccessor4Tests()`.
+    fn global_system_var(&mut self, name: &str) -> Result<String, MvsError> {
+        let calls = {
+            let calls = self.global_var_get_calls.entry(name.to_owned()).or_default();
+            *calls += 1;
+            *calls
+        };
+        if let Some(&ok_after) = self.global_var_fail_after.get(name) {
+            if calls > ok_after {
+                return Err(self
+                    .global_var_errs
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| MvsError::Other("mock global read failure".to_owned())));
+            }
+        } else if let Some(err) = self.global_var_errs.get(name) {
+            return Err(err.clone());
+        }
+        Ok(self.global_vars.get(name).cloned().or_else(|| sys_var_default(name)).unwrap_or_default())
+    }
+
+    fn system_var(&self, name: &str) -> Option<String> {
+        self.system_vars.get(name).cloned().or_else(|| sys_var_default(name))
+    }
+
+    fn set_system_var(&mut self, name: &str, value: &str) -> Result<(), MvsError> {
+        if self.invalid_system_var_values.iter().any(|(n, v)| n == name && v == value) {
+            return Err(MvsError::Other(format!("invalid value {value} for {name}")));
+        }
+        self.system_vars.insert(name.to_owned(), value.to_owned());
+        Ok(())
+    }
+}
 
 fn arg_text(arg: &SqlArg<'_>) -> String {
     match arg {
@@ -87,26 +156,12 @@ fn arg_text(arg: &SqlArg<'_>) -> String {
 }
 
 impl MVServiceSessionContext for RecordingSessionContext {
+    fn stats_session(&self) -> &dyn crate::service_helper::MVServiceStatsSession {
+        self
+    }
+
     fn exec_restricted_sql(&self, sql: &str, args: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, MvsError> {
-        let mut s = self.0.lock().unwrap();
-        s.executed_restricted_sql.push(sql.to_owned());
-        s.executed_restricted_args.push(args.iter().map(arg_text).collect());
-        let values = s.watched_vars.iter().map(|name| (name.clone(), s.system_vars.get(name).cloned())).collect();
-        s.restricted_var_values.push(values);
-        let affected = match s.restricted_affected_rows.get(sql).cloned() {
-            Some(seq) => {
-                let pos = s.restricted_affected_pos.entry(sql.to_owned()).or_default();
-                let value = seq.get(*pos).copied().unwrap_or(0);
-                *pos += 1;
-                value
-            }
-            None => 0,
-        };
-        s.affected_rows = affected;
-        if let Some(err) = s.restricted_errs.get(sql) {
-            return Err(err.clone());
-        }
-        Ok(s.restricted_rows.get(sql).cloned().unwrap_or_default())
+        self.0.lock().unwrap().exec_restricted(sql, args)
     }
 
     fn execute_internal(&self, sql: &str) -> Result<(), MvsError> {
@@ -128,37 +183,15 @@ impl MVServiceSessionContext for RecordingSessionContext {
     }
 
     fn global_system_var(&self, name: &str) -> Result<String, MvsError> {
-        let mut s = self.0.lock().unwrap();
-        let calls = {
-            let calls = s.global_var_get_calls.entry(name.to_owned()).or_default();
-            *calls += 1;
-            *calls
-        };
-        if let Some(&ok_after) = s.global_var_fail_after.get(name) {
-            if calls > ok_after {
-                return Err(s
-                    .global_var_errs
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| MvsError::Other("mock global read failure".to_owned())));
-            }
-        } else if let Some(err) = s.global_var_errs.get(name) {
-            return Err(err.clone());
-        }
-        Ok(s.global_vars.get(name).cloned().unwrap_or_default())
+        self.0.lock().unwrap().global_system_var(name)
     }
 
     fn system_var(&self, name: &str) -> Option<String> {
-        self.0.lock().unwrap().system_vars.get(name).cloned()
+        self.0.lock().unwrap().system_var(name)
     }
 
     fn set_system_var(&self, name: &str, value: &str) -> Result<(), MvsError> {
-        let mut s = self.0.lock().unwrap();
-        if s.invalid_system_var_values.iter().any(|(n, v)| n == name && v == value) {
-            return Err(MvsError::Other(format!("invalid value {value} for {name}")));
-        }
-        s.system_vars.insert(name.to_owned(), value.to_owned());
-        Ok(())
+        self.0.lock().unwrap().set_system_var(name, value)
     }
 
     fn store_current_version(&self) -> Result<u64, MvsError> {
@@ -170,19 +203,273 @@ impl MVServiceSessionContext for RecordingSessionContext {
     }
 }
 
-/// Go `recordingSessionPool`.
-pub(crate) struct RecordingSessionPool(pub(crate) Arc<RecordingSessionContext>);
+/// The recording session as its own restricted SQL executor (Go
+/// `GetRestrictedSQLExecutor` returns the session).
+struct RecordingExecutor(Arc<Mutex<RecordingSession>>);
+
+fn exec_error(err: MvsError) -> tidb_sqlexec::SqlExecError {
+    err.to_string().into()
+}
+
+impl tidb_sqlexec::RestrictedSqlExecutor for RecordingExecutor {
+    fn parse_with_params(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        _: &str,
+        _: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
+        Err("parse is not recorded".into())
+    }
+
+    fn exec_restricted_stmt(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        _: &tidb_ast::Stmt,
+        _: &[tidb_sqlexec::OptionFuncAlias],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        Err("statements are not recorded".into())
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        _: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        args: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<tidb_resolve::ResultFieldRef>)> {
+        self.0.lock().unwrap().exec_restricted(sql, args).map(|rows| (rows, Vec::new())).map_err(exec_error)
+    }
+}
+
+impl tidb_sqlexec::SqlExecutor for RecordingExecutor {
+    fn execute(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> tidb_sqlexec::Result<Vec<Box<dyn tidb_sqlexec::RecordSet>>> {
+        self.0.lock().unwrap().executed_sql.push(sql.to_owned());
+        Ok(Vec::new())
+    }
+
+    fn execute_internal(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+        _: &[SqlArg<'_>],
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        let mut s = self.0.lock().unwrap();
+        s.executed_sql.push(sql.to_owned());
+        s.exec_errs.get(sql).cloned().map_or(Ok(None), |err| Err(exec_error(err)))
+    }
+
+    fn execute_stmt(
+        &self,
+        _: &dyn tidb_sqlexec::ExecutionContext,
+        _: &tidb_ast::Stmt,
+    ) -> tidb_sqlexec::Result<Option<Box<dyn tidb_sqlexec::RecordSet>>> {
+        Err("statements are not recorded".into())
+    }
+}
+
+impl tidb_syssession::SessionContext for RecordingSessionContext {
+    fn close(&self) {}
+
+    fn rollback_txn(&self, _: &dyn tidb_sqlexec::ExecutionContext) {}
+
+    fn has_prepared_txn_future(&self) -> bool {
+        false
+    }
+
+    fn txn_valid(&self) -> Result<bool, tidb_sqlexec::SqlExecError> {
+        Ok(false)
+    }
+
+    fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
+        Arc::new(RecordingExecutor(Arc::clone(&self.0)))
+    }
+
+    fn restricted_sql_executor(&self) -> Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+        Arc::new(RecordingExecutor(Arc::clone(&self.0)))
+    }
+
+    fn register_internal_session(&self) {}
+
+    fn unregister_internal_session(&self) {}
+
+    fn contains_internal_session(&self) -> bool {
+        false
+    }
+
+    fn store_internal_session(&self) -> bool {
+        true
+    }
+}
+
+const ON_OFF: [&str; 2] = ["OFF", "ON"];
+
+impl RecordingSessionContext {
+    fn stats_var(&self, name: &str) -> String {
+        self.0.lock().unwrap().system_var(name).unwrap_or_default()
+    }
+
+    fn set_stats_var(&self, name: &str, value: impl Into<String>) {
+        self.0.lock().unwrap().system_vars.insert(name.to_owned(), value.into());
+    }
+}
+
+/// Go `GetSessionVars()` as the statistics packages read and write it, over
+/// the recorded session variables.
+impl tidb_stats_handle_util::StatsSessionContext for RecordingSessionContext {
+    fn global_system_var(&self, name: &str) -> Result<String, tidb_sqlexec::SqlExecError> {
+        self.0.lock().unwrap().global_system_var(name).map_err(exec_error)
+    }
+
+    fn set_enable_async_merge_global_stats(&self, enabled: bool) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_ASYNC_MERGE_GLOBAL_STATS, ON_OFF[usize::from(enabled)]);
+    }
+
+    fn set_analyze_partition_concurrency(&self, concurrency: i64) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY, concurrency.to_string());
+    }
+
+    fn set_analyze_version(&self, version: i64) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION, version.to_string());
+    }
+
+    fn set_analyze_store_batch_size(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE, value);
+        Ok(())
+    }
+
+    fn set_enable_historical_stats(&self, enabled: bool) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS, ON_OFF[usize::from(enabled)]);
+    }
+
+    fn set_partition_prune_mode(&self, mode: &str) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE, mode);
+    }
+
+    fn partition_prune_mode(&self) -> String {
+        self.stats_var(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
+    }
+
+    fn set_enable_analyze_snapshot(&self, enabled: bool) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT, ON_OFF[usize::from(enabled)]);
+    }
+
+    fn set_analyze_skip_column_types(&self, value: std::collections::BTreeSet<String>) {
+        self.set_stats_var(
+            tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES,
+            value.into_iter().collect::<Vec<_>>().join(","),
+        );
+    }
+
+    fn set_skip_missing_partition_stats(&self, enabled: bool) {
+        self.set_stats_var(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS, ON_OFF[usize::from(enabled)]);
+    }
+
+    fn set_lock_wait_timeout(&self, milliseconds: i64) {
+        self.set_stats_var("innodb_lock_wait_timeout", (milliseconds / 1_000).to_string());
+    }
+
+    fn set_time_zone(&self, value: &str) -> Result<(), tidb_sqlexec::SqlExecError> {
+        self.set_stats_var("time_zone", value);
+        Ok(())
+    }
+
+    fn location(&self) -> String {
+        self.stats_var("time_zone")
+    }
+
+    fn set_statement_time_zone(&self, value: &str) {
+        self.0.lock().unwrap().statement_time_zone = value.to_owned();
+    }
+
+    fn statement_time_zone(&self) -> String {
+        self.0.lock().unwrap().statement_time_zone.clone()
+    }
+
+    fn system_var(&self, name: &str) -> Option<String> {
+        self.0.lock().unwrap().system_var(name)
+    }
+
+    fn analyze_skip_column_types(&self) -> std::collections::BTreeSet<String> {
+        tidb_stats_handle_util::parse_analyze_skip_column_types(
+            &self.stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES),
+        )
+    }
+
+    fn enable_analyze_snapshot(&self) -> bool {
+        tidb_vardef::option_values::tidb_opt_on(&self.stats_var(tidb_vardef::tidb_vars::TIDB_ENABLE_ANALYZE_SNAPSHOT))
+    }
+
+    fn skip_missing_partition_stats(&self) -> bool {
+        tidb_vardef::option_values::tidb_opt_on(&self.stats_var(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS))
+    }
+
+    fn analyze_partition_concurrency(&self) -> i64 {
+        self.stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY).parse().unwrap_or_default()
+    }
+
+    fn analyze_version(&self) -> i64 {
+        self.stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION).parse().unwrap_or_default()
+    }
+
+    fn analyze_store_batch_size(&self) -> i64 {
+        self.stats_var(tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE).parse().unwrap_or_default()
+    }
+
+    fn lock_wait_timeout(&self) -> i64 {
+        self.stats_var("innodb_lock_wait_timeout").parse::<i64>().unwrap_or_default() * 1_000
+    }
+
+    fn transaction_start_ts(&self, _active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        Ok(0)
+    }
+
+    fn current_ts(&self) -> Result<u64, tidb_sqlexec::SqlExecError> {
+        Ok(self.0.lock().unwrap().store_version)
+    }
+
+    fn affected_rows(&self) -> u64 {
+        self.0.lock().unwrap().affected_rows
+    }
+
+    fn latest_table_meta_by_id(&self, _table_id: i64) -> Option<tidb_model::GoShared<TableInfo>> {
+        None
+    }
+}
+
+impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for RecordingSessionContext {
+    fn partition_prune_mode(&self) -> String {
+        tidb_stats_handle_util::StatsSessionContext::partition_prune_mode(self)
+    }
+
+    fn enable_analyze_snapshot(&self) -> bool {
+        tidb_stats_handle_util::StatsSessionContext::enable_analyze_snapshot(self)
+    }
+}
+
+/// Go `recordingSessionPool`: the one session, `onGet` called first.
+pub(crate) struct RecordingSessionPool(pub(crate) Arc<RecordingSessionContext>, pub(crate) Option<Box<dyn Fn() + Send + Sync>>);
 
 impl MVServiceSessionPool for RecordingSessionPool {
     fn with_session(&self, f: &mut dyn FnMut(&dyn MVServiceSessionContext) -> Result<(), MvsError>) -> Result<(), MvsError> {
+        if let Some(on_get) = &self.1 {
+            on_get();
+        }
         f(self.0.as_ref())
     }
 }
 
 /// `newRecordingSessionContext()` and its pool, as `SessionPool`.
 fn new_recording_session() -> (Arc<RecordingSessionContext>, SystemSessionPool) {
-    let se = Arc::new(RecordingSessionContext(Mutex::new(RecordingSession::default())));
-    (Arc::clone(&se), SystemSessionPool(Arc::new(RecordingSessionPool(se))))
+    let se = Arc::new(RecordingSessionContext(Arc::new(Mutex::new(RecordingSession {
+        // Go `mock.NewContext()`'s statement context zone.
+        statement_time_zone: "UTC".to_owned(),
+        ..RecordingSession::default()
+    }))));
+    (Arc::clone(&se), SystemSessionPool(Arc::new(RecordingSessionPool(Arc::clone(&se), None))))
 }
 
 /// Go `&serviceHelper{}`.
@@ -1441,4 +1728,389 @@ fn test_server_helper_cleanup_stale_mv_refresh_alerts() {
     );
     assert_eq!(2, s.executed_restricted_args.len());
     assert!(s.executed_restricted_args.iter().all(Vec::is_empty));
+}
+
+/// Go `recordingStatsHandle`: canned statistics, process ID 1.
+#[derive(Default)]
+pub(crate) struct RecordingStatsHandle(pub(crate) Mutex<HashMap<i64, MLogStats>>);
+
+impl tidb_stats_handle_util::AutoAnalyzeProcIdGenerator for RecordingStatsHandle {
+    fn auto_analyze_proc_id(&self) -> u64 {
+        1
+    }
+
+    fn release_auto_analyze_proc_id(&self, _: u64) {}
+}
+
+impl crate::service_helper::MVServiceStatsHandle for RecordingStatsHandle {
+    fn get_non_pseudo_physical_table_stats(&self, physical_table_id: i64) -> Option<MLogStats> {
+        self.0.lock().unwrap().get(&physical_table_id).copied()
+    }
+}
+
+/// Go `&recordingSysProcTracker{}`.
+fn recording_sys_proc_tracker() -> crate::service_helper::SysProcTracker {
+    crate::service_helper::SysProcTracker { track: Arc::new(|_, _| Ok(())), untrack: Arc::new(|_| {}) }
+}
+
+/// Go `newServiceHelper(statsHandleGetter, &recordingSysProcTracker{})`.
+pub(crate) fn service_helper_with_stats(handle: &Arc<RecordingStatsHandle>) -> ServiceHelper {
+    let handle: Arc<dyn crate::service_helper::MVServiceStatsHandle> = Arc::clone(handle) as _;
+    let mut helper = service_helper();
+    helper.stats_handle_getter = Some(Arc::new(move || Some(Arc::clone(&handle))));
+    helper.sys_proc_tracker = Some(recording_sys_proc_tracker());
+    helper
+}
+
+/// Go `statistics.AutoAnalyzeMinCnt`.
+fn auto_analyze_min_cnt() -> i64 {
+    tidb_stats::AUTO_ANALYZE_MIN_CNT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Go `newMLogAnalyzeHelperForTest`.
+pub(crate) fn new_m_log_analyze_helper_for_test() -> (ServiceHelper, Arc<RecordingStatsHandle>, Arc<RecordingSessionContext>, SystemSessionPool) {
+    let (se, pool) = new_recording_session();
+    let (_, mlog_table) = build_mock_mv_base_and_mv_log_tables(101, 201, &[101]);
+    with_mock_info_schema(&se, vec![mlog_table]);
+    se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_FETCH_MV_LOG_ACCUMULATION.to_owned(), vec![ints(&[Some(201)])]);
+    let handle = Arc::new(RecordingStatsHandle::default());
+    handle.0.lock().unwrap().insert(201, MLogStats { realtime_count: auto_analyze_min_cnt() + 1, ..MLogStats::default() });
+    (service_helper_with_stats(&handle), handle, se, pool)
+}
+
+/// Go `testSQLAutoAnalyzeParameters`.
+pub(crate) const TEST_SQL_AUTO_ANALYZE_PARAMETERS: &str =
+    "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)";
+const TEST_SQL_STATS_TABLE_LOCKED: &str = "SELECT table_id FROM mysql.stats_table_locked";
+
+/// Go `containsAnalyzeSQL`.
+pub(crate) fn contains_analyze_sql(se: &RecordingSessionContext) -> bool {
+    se.0.lock().unwrap().executed_restricted_sql.iter().any(|sql| sql == "ANALYZE TABLE %n.%n")
+}
+
+/// Go `vardef.RunAutoAnalyze.Store(enabled)`, restored on drop (Go `t.Cleanup`).
+pub(crate) struct RunAutoAnalyzeGuard(bool);
+
+impl RunAutoAnalyzeGuard {
+    pub(crate) fn set(enabled: bool) -> Self {
+        Self(tidb_vardef::RUN_AUTO_ANALYZE.swap(enabled, std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
+impl Drop for RunAutoAnalyzeGuard {
+    fn drop(&mut self) {
+        tidb_vardef::RUN_AUTO_ANALYZE.store(self.0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn test_server_helper_analyze_mv_log_temporarily_updates_stats_session_vars() {
+    use tidb_vardef::tidb_vars as v;
+    let _serial = crate::test_helpers_test::serial();
+    let (se, pool) = new_recording_session();
+    let (_, mlog_table) = build_mock_mv_base_and_mv_log_tables(101, 201, &[101]);
+    with_mock_info_schema(&se, vec![mlog_table]);
+    {
+        let mut s = se.0.lock().unwrap();
+        s.watched_vars = vec![v::TIDB_ANALYZE_PARTITION_CONCURRENCY.to_owned()];
+        for (name, session) in [
+            (v::TIDB_ANALYZE_PARTITION_CONCURRENCY, "0"),
+            (v::TIDB_ANALYZE_VERSION, "1"),
+            (v::TIDB_ENABLE_ANALYZE_SNAPSHOT, "OFF"),
+            (v::TIDB_PARTITION_PRUNE_MODE, "static"),
+            (v::TIDB_ANALYZE_SKIP_COLUMN_TYPES, "json"),
+        ] {
+            s.system_vars.insert(name.to_owned(), session.to_owned());
+        }
+        for (name, global) in [
+            (v::TIDB_ANALYZE_PARTITION_CONCURRENCY, "3"),
+            (v::TIDB_ANALYZE_VERSION, "2"),
+            (v::TIDB_ENABLE_ANALYZE_SNAPSHOT, "on"),
+            (v::TIDB_PARTITION_PRUNE_MODE, "dynamic"),
+            (v::TIDB_ANALYZE_SKIP_COLUMN_TYPES, "blob"),
+        ] {
+            s.global_vars.insert(name.to_owned(), global.to_owned());
+        }
+    }
+    let handle = Arc::new(RecordingStatsHandle::default());
+    handle
+        .0
+        .lock()
+        .unwrap()
+        .insert(201, MLogStats { stats_ver: 2, realtime_count: auto_analyze_min_cnt() + 1, ..MLogStats::default() });
+    let helper = service_helper_with_stats(&handle);
+
+    helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap();
+    let s = se.0.lock().unwrap();
+    assert!(!s.executed_restricted_sql.is_empty());
+    let analyze_idx = s.executed_restricted_sql.len() - 1;
+    assert_eq!("ANALYZE TABLE %n.%n", s.executed_restricted_sql[analyze_idx]);
+    assert_eq!(vec!["test".to_owned(), "mlog1".to_owned()], s.executed_restricted_args[analyze_idx]);
+    assert_eq!(Some("3"), s.restricted_var_values[analyze_idx][v::TIDB_ANALYZE_PARTITION_CONCURRENCY].as_deref());
+    drop(s);
+    assert_eq!(0, tidb_stats_handle_util::StatsSessionContext::analyze_partition_concurrency(se.as_ref()));
+    assert_eq!(1, tidb_stats_handle_util::StatsSessionContext::analyze_version(se.as_ref()));
+    assert!(!tidb_stats_handle_util::StatsSessionContext::enable_analyze_snapshot(se.as_ref()));
+    assert_eq!("static", tidb_stats_handle_util::StatsSessionContext::partition_prune_mode(se.as_ref()));
+    assert_eq!(
+        std::collections::BTreeSet::from(["json".to_owned()]),
+        tidb_stats_handle_util::StatsSessionContext::analyze_skip_column_types(se.as_ref())
+    );
+}
+
+#[test]
+fn test_server_helper_m_log_analyze_rechecks_eligibility() {
+    let _serial = crate::test_helpers_test::serial();
+    let _run = RunAutoAnalyzeGuard::set(true);
+    let row_count = auto_analyze_min_cnt() + 1;
+    let analyzed_stats =
+        |modify_count: i64| MLogStats { realtime_count: row_count, modify_count, analyzed: true, ..MLogStats::default() };
+    let ratio_var = tidb_vardef::tidb_vars::TIDB_MLOG_AUTO_ANALYZE_RATIO;
+    for (name, ratio, stats, want_analyze) in [
+        ("ratio raised", "2", analyzed_stats(row_count), false),
+        ("statistics refreshed", "0.5", analyzed_stats(0), false),
+        ("still eligible", "0.5", analyzed_stats(row_count), true),
+        (
+            "initial analysis with raised ratio",
+            "2",
+            MLogStats { realtime_count: row_count, ..MLogStats::default() },
+            true,
+        ),
+    ] {
+        let (helper, handle, se, pool) = new_m_log_analyze_helper_for_test();
+        if stats.analyzed {
+            handle.0.lock().unwrap().insert(201, analyzed_stats(row_count));
+        }
+        se.0.lock().unwrap().global_vars.insert(ratio_var.to_owned(), "0.5".to_owned());
+        let tasks = helper.load_all_tidb_mv_log_analyze_tasks(&Context::background(), &pool).unwrap();
+        assert!(tasks.contains_key(&201), "{name}");
+
+        // Change the configuration or cached statistics after the task was selected.
+        se.0.lock().unwrap().global_vars.insert(ratio_var.to_owned(), ratio.to_owned());
+        handle.0.lock().unwrap().insert(201, stats);
+        helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap();
+        assert_eq!(want_analyze, contains_analyze_sql(&se), "{name}");
+    }
+}
+
+#[test]
+fn test_server_helper_m_log_analyze_locked_stats() {
+    let _serial = crate::test_helpers_test::serial();
+    let _run = RunAutoAnalyzeGuard::set(true);
+    for phase in ["scan", "execute"] {
+        // "lock query error"
+        let (helper, _, se, pool) = new_m_log_analyze_helper_for_test();
+        se.0.lock()
+            .unwrap()
+            .restricted_errs
+            .insert(TEST_SQL_STATS_TABLE_LOCKED.to_owned(), MvsError::Other("lock query failed".to_owned()));
+        let err = if phase == "scan" {
+            helper.load_all_tidb_mv_log_analyze_tasks(&Context::background(), &pool).unwrap_err()
+        } else {
+            helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap_err()
+        };
+        assert!(err.to_string().contains("lock query failed"), "{phase}: {err}");
+        assert!(!contains_analyze_sql(&se), "{phase}");
+        for locked in [false, true] {
+            let (helper, _, se, pool) = new_m_log_analyze_helper_for_test();
+            if locked {
+                se.0.lock().unwrap().restricted_rows.insert(TEST_SQL_STATS_TABLE_LOCKED.to_owned(), vec![ints(&[Some(201)])]);
+            }
+            if phase == "scan" {
+                let tasks = helper.load_all_tidb_mv_log_analyze_tasks(&Context::background(), &pool).unwrap();
+                assert_eq!(!locked, tasks.len() == 1, "{phase} locked={locked}");
+            } else {
+                helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap();
+                assert_eq!(!locked, contains_analyze_sql(&se), "{phase} locked={locked}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_server_helper_m_log_analyze_stops_queued_tasks() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let _serial = crate::test_helpers_test::serial();
+    let _run = RunAutoAnalyzeGuard::set(true);
+    let (mut helper, _, se, pool) = new_m_log_analyze_helper_for_test();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stopped_load = Arc::clone(&stopped);
+    helper.is_auto_analyze_stopped = Some(Arc::new(move || stopped_load.load(SeqCst)));
+    let helper = Arc::new(helper);
+    let pool = Arc::new(pool);
+    let executor = crate::executor::TaskExecutor::new(1, 0);
+    let (entered_tx, entered) = crossbeam_channel::bounded::<()>(1);
+    let (release_tx, release) = crossbeam_channel::bounded::<()>(1);
+    executor.run();
+    assert!(executor.submit(
+        "running",
+        Box::new(move || {
+            let _ = entered_tx.send(());
+            let _ = release.recv();
+            Ok(())
+        })
+    ));
+    entered.recv().unwrap();
+    let (queued_helper, queued_pool) = (Arc::clone(&helper), Arc::clone(&pool));
+    assert!(executor.submit(
+        "queued analyze",
+        Box::new(move || {
+            queued_helper.analyze_mv_log(&Context::background(), &*queued_pool, 201).map_err(|err| err.to_string())
+        })
+    ));
+    stopped.store(true, SeqCst);
+    release_tx.send(()).unwrap();
+    crate::test_helpers_test::eventually(
+        || executor.metrics.counters.finished_count.load(SeqCst) == 2,
+        crate::test_helpers_test::TEST_EVENTUALLY_WAIT,
+        crate::test_helpers_test::TEST_EVENTUALLY_TICK,
+    );
+    executor.close();
+    assert!(!contains_analyze_sql(&se));
+
+    stopped.store(false, SeqCst);
+    se.0.lock().unwrap().executed_restricted_sql.clear();
+    let on_get_stopped = Arc::clone(&stopped);
+    let pool = SystemSessionPool(Arc::new(RecordingSessionPool(
+        Arc::clone(&se),
+        Some(Box::new(move || on_get_stopped.store(true, SeqCst))),
+    )));
+    helper.analyze_mv_log(&Context::background(), &pool, 201).unwrap();
+    assert!(!contains_analyze_sql(&se));
+}
+
+#[test]
+fn test_mv_service_m_log_analyze_logs_owned_candidates() {
+    let _serial = crate::test_helpers_test::serial();
+    let _run = RunAutoAnalyzeGuard::set(true);
+    let (observer, recorded) = tidb_logutil::observer::new(tidb_log::Level::Info);
+    let restore = tidb_log::replace_globals(observer);
+    let (helper, handle, se, pool) = new_m_log_analyze_helper_for_test();
+    let (_, owned) = build_mock_mv_base_and_mv_log_tables(101, 201, &[]);
+    let (_, mut unowned) = build_mock_mv_base_and_mv_log_tables(102, 301, &[]);
+    unowned.name = tidb_ast::CiString::new("mlog2");
+    with_mock_info_schema(&se, vec![owned, unowned]);
+    {
+        let mut stats = handle.0.lock().unwrap();
+        let owned_stats = stats[&201];
+        stats.insert(301, owned_stats);
+    }
+    se.0.lock()
+        .unwrap()
+        .restricted_rows
+        .insert(TEST_SQL_FETCH_MV_LOG_ACCUMULATION.to_owned(), vec![ints(&[Some(201)]), ints(&[Some(301)])]);
+    let svc = crate::service_settings::new_mv_service(
+        Context::background(),
+        Arc::new(pool),
+        Arc::new(helper),
+        crate::service_settings::default_mv_service_config(),
+    );
+    crate::mvservice_test::set_task_owners_for_test(&svc, &[(201, 5), (301, 25)]);
+    let ids = svc.fetch_mlog_analyze_tasks().unwrap();
+    let entries = recorded.filter_message("mv service: mlog analyze needed");
+    restore.restore();
+    assert_eq!(vec![201], ids);
+    assert_eq!(1, entries.len());
+    let context: HashMap<_, _> = entries[0].context.iter().cloned().collect();
+    assert_eq!(Some("201"), context.get("mvlog_id").map(String::as_str));
+    assert_eq!(Some("mlog unanalyzed"), context.get("reason").map(String::as_str));
+}
+
+#[test]
+fn test_register_mv_service_bootstrap_and_ddl_handler() {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::SeqCst};
+    use tidb_model::ActionType;
+    let called = Arc::new(AtomicI32::new(0));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let mut got = None;
+    let (stopped_load, called_add) = (Arc::clone(&stopped), Arc::clone(&called));
+    let svc = crate::service_helper::register_mv_service(
+        Context::background(),
+        |id, handler| got = Some((id, handler)),
+        Arc::new(crate::mvservice_test::MockSessionPool),
+        crate::service_helper::ServerViews {
+            local_server: Box::new(|| Ok(ServerInfo::default())),
+            all_servers: Box::new(|| Ok(Vec::new())),
+        },
+        None,
+        None,
+        Arc::new(move || stopped_load.load(SeqCst)),
+        Arc::new(move || {
+            called_add.fetch_add(1, SeqCst);
+        }),
+    );
+    stopped.store(true, SeqCst);
+    // Go `svc.mh.(*serviceHelper).isAutoAnalyzeStopped()`: a stopped helper
+    // answers the analyze scan before it needs a statistics handle.
+    {
+        let _serial = crate::test_helpers_test::serial();
+        let _run = RunAutoAnalyzeGuard::set(true);
+        let tasks = svc.mh.load_all_tidb_mv_log_analyze_tasks(&Context::background(), &crate::mvservice_test::MockSessionPool);
+        assert!(tasks.unwrap().is_empty());
+    }
+    assert!(svc.ddl_dirty.load(SeqCst));
+    assert!(svc.notifier.is_awake());
+    let (handler_id, handler) = got.expect("the DDL handler is registered");
+    assert_eq!(tidb_ddl_notifier::MV_SERVICE_HANDLER_ID, handler_id);
+    assert_eq!(
+        crate::service::TaskBackpressureConfig {
+            cpu_threshold: crate::backpressure::DEFAULT_BACKPRESSURE_CPU_THRESHOLD,
+            mem_threshold: crate::backpressure::DEFAULT_BACKPRESSURE_MEM_THRESHOLD,
+            delay: crate::backpressure::DEFAULT_TASK_BACKPRESSURE_DELAY,
+        },
+        svc.get_task_backpressure_config()
+    );
+    assert!(svc.refresh_executor.backpressure.read().unwrap().is_some());
+    assert!(svc.purge_executor.backpressure.read().unwrap().is_some());
+    assert!(svc.mlog_analyze_executor.backpressure.read().unwrap().is_some());
+
+    let handle = |event: tidb_ddl_notifier::SchemaChangeEvent| {
+        let mut session = NoNotifierSession;
+        handler(&mut session, &event).unwrap();
+        called.load(SeqCst)
+    };
+    let typed = |action: ActionType| {
+        serde_json::from_str::<tidb_ddl_notifier::SchemaChangeEvent>(&format!(r#"{{"type":{}}}"#, action.0)).unwrap()
+    };
+    assert_eq!(0, handle(tidb_ddl_notifier::SchemaChangeEvent::create_table(table(1, "t"))));
+    let mut mlog = table(2, "mlog");
+    mlog.materialized_view_log = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewLogInfo {
+        base_table_id: 1,
+        ..Default::default()
+    }));
+    assert_eq!(1, handle(tidb_ddl_notifier::SchemaChangeEvent::create_table(mlog)));
+    let mut mv = table(3, "mv");
+    mv.materialized_view = Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewInfo {
+        base_table_ids: vec![1].into(),
+        ..Default::default()
+    }));
+    assert_eq!(2, handle(tidb_ddl_notifier::SchemaChangeEvent::create_table(mv.clone_like_go())));
+    assert_eq!(2, handle(typed(ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG)));
+    assert_eq!(2, handle(typed(ActionType::ACTION_CREATE_MATERIALIZED_VIEW)));
+    assert_eq!(3, handle(typed(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH)));
+    assert_eq!(4, handle(typed(ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE)));
+    assert_eq!(5, handle(typed(ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER)));
+    assert_eq!(5, handle(tidb_ddl_notifier::SchemaChangeEvent::drop_table(table(4, "t4"))));
+    let mut drop_mv = table(5, "mv5");
+    drop_mv.materialized_view = mv.materialized_view.clone();
+    assert_eq!(6, handle(tidb_ddl_notifier::SchemaChangeEvent::drop_table(drop_mv)));
+}
+
+/// Go's `nil` session the MV handler ignores.
+struct NoNotifierSession;
+
+impl tidb_ddl_notifier::NotifierSession for NoNotifierSession {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn begin_pessimistic(&mut self) -> Result<(), tidb_ddl_notifier::NotifierError> {
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), tidb_ddl_notifier::NotifierError> {
+        Ok(())
+    }
+
+    fn rollback(&mut self) {}
 }

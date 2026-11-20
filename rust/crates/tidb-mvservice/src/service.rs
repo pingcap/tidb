@@ -410,7 +410,7 @@ pub struct MVService {
     pub(crate) mlog_analyze_executor: Arc<TaskExecutor>,
     pub(crate) refresh_task_concurrency_ratio_bits: AtomicU64,
     pub(crate) notifier: Notifier,
-    ddl_dirty: AtomicBool,
+    pub(crate) ddl_dirty: AtomicBool,
 
     pub(crate) mh: Arc<dyn Helper>,
 
@@ -1419,7 +1419,7 @@ impl MVService {
 
     /// Go `fetchMLogAnalyzeTasks`: the MV logs this node owns that need
     /// analyzing.
-    fn fetch_mlog_analyze_tasks(&self) -> Result<Vec<i64>, MvsError> {
+    pub(crate) fn fetch_mlog_analyze_tasks(&self) -> Result<Vec<i64>, MvsError> {
         let start = mvs_now();
         let outcome = match self.mh.load_all_tidb_mv_log_analyze_tasks(&self.ctx, self.sys_session_pool.as_ref()) {
             Ok(mut candidates) => {

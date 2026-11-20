@@ -162,7 +162,7 @@ pub struct TaskExecutor {
     pub(crate) max_concurrency: AtomicI64,
     timeout_nanos: AtomicI64,
     lifecycle_state: AtomicI32,
-    backpressure: RwLock<Option<Arc<dyn TaskBackpressureController>>>,
+    pub(crate) backpressure: RwLock<Option<Arc<dyn TaskBackpressureController>>>,
     close_tx: Mutex<Option<Sender<()>>>,
     close_rx: Receiver<()>,
     pub(crate) metrics: ExecutorMetrics,
