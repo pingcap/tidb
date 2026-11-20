@@ -225,6 +225,12 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 		case *expression.Column:
 			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
+			onlyColumn = false
+			// A key that is NULL for every row, like `NULL - c`, doesn't affect the
+			// order. Skip it so the remaining keys can still use the child's order.
+			if expr.IsNullForAllRows() {
+				continue
+			}
 			col, desc := expr.GetSingleColumn(item.Desc)
 			if col == nil {
 				return nil, false, false
@@ -235,7 +241,6 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 				return nil, false, false
 			}
 			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
-			onlyColumn = false
 		default:
 			return nil, false, false
 		}
