@@ -16,9 +16,10 @@ package ddl
 
 import (
 	"bytes"
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestFlashbackMaskingPolicyKeyRanges(t *testing.T) {
