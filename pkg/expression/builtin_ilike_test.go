@@ -234,3 +234,96 @@ func TestVectorizedBuiltinIlikeForConstants(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorizedBuiltinIlikeEscapeError(t *testing.T) {
+	ctx := createContext(t)
+	fieldTypes := []*types.FieldType{
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_general_ci").BuildP(),
+	}
+
+	// JSON_CONTAINS_PATH('{}', 'one', 'invalid') returns isNull=true together
+	// with an "Invalid JSON path expression" error.
+	escape, err := newFunctionForTest(ctx, ast.JSONContainsPath,
+		getStringConstant("{}", false), getStringConstant("one", false), getStringConstant("invalid", false))
+	require.NoError(t, err)
+	require.Equal(t, ConstStrict, escape.ConstLevel())
+
+	args := []Expression{
+		&Column{Index: 0, RetType: fieldTypes[0]},
+		&Column{Index: 1, RetType: fieldTypes[1]},
+		escape,
+	}
+	f, err := funcs[ast.Ilike].getFunction(ctx, args)
+	require.NoError(t, err)
+	f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+	testCases := []struct {
+		name     string
+		exprs    []any
+		patterns []any
+		hasError bool
+	}{
+		{
+			name:     "no NULL operand",
+			exprs:    []any{"a", "b"},
+			patterns: []any{"a", "a"},
+			hasError: true,
+		},
+		{
+			name:     "some rows have a NULL operand",
+			exprs:    []any{nil, "b"},
+			patterns: []any{"a", "a"},
+			hasError: true,
+		},
+		{
+			name:     "all rows have a NULL operand",
+			exprs:    []any{nil, "b"},
+			patterns: []any{"a", nil},
+			hasError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := chunk.New(fieldTypes, len(tc.exprs), len(tc.exprs))
+			for i := range tc.exprs {
+				for col, v := range []any{tc.exprs[i], tc.patterns[i]} {
+					if v == nil {
+						input.AppendNull(col)
+					} else {
+						input.AppendString(col, v.(string))
+					}
+				}
+			}
+
+			// Vectorized evaluation must behave like the row-based evaluation,
+			// which reports the error of ESCAPE unless the value or the pattern
+			// is NULL.
+			output := chunk.NewColumn(eType2FieldType(types.ETInt), len(tc.exprs))
+			err := vecEvalType(ctx, f, types.ETInt, input, output)
+			if tc.hasError {
+				require.Error(t, err)
+				require.True(t, types.ErrInvalidJSONPath.Equal(err), err.Error())
+			} else {
+				require.NoError(t, err)
+			}
+
+			rowErrs := 0
+			for i := range tc.exprs {
+				val, err := evalBuiltinFunc(f, ctx, input.GetRow(i))
+				if err != nil {
+					require.True(t, types.ErrInvalidJSONPath.Equal(err), err.Error())
+					rowErrs++
+					continue
+				}
+				require.True(t, val.IsNull())
+				if !tc.hasError {
+					require.True(t, output.IsNull(i))
+				}
+			}
+			require.Equal(t, tc.hasError, rowErrs > 0)
+		})
+	}
+}
