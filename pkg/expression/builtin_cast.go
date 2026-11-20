@@ -1794,6 +1794,18 @@ func (b *builtinCastStringAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res
 		return res, isNull, err
 	}
 
+	if mysql.HasBinaryFlag(b.args[0].GetType(ctx).GetFlag()) {
+		if len(val) == 0 {
+			return 0, false, nil
+		}
+		byteNum := types.BinaryLiteral(val)
+		u, err := byteNum.ToInt(typeCtx(ctx))
+		if err != nil {
+			return 0, true, err
+		}
+		return int64(u), false, nil
+	}
+
 	val = strings.TrimSpace(val)
 	isNegative := false
 	if len(val) > 1 && val[0] == '-' { // negative number
