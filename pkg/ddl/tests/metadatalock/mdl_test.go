@@ -695,9 +695,9 @@ func TestMDLStaleRead(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
-	time.Sleep(2 * time.Second)
-
-	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 1 SECOND")
+	// Use the insert commit TS so stale read does not depend on wall-clock sleep.
+	tk.MustExec("set @a=json_extract(@@tidb_last_txn_info, '$.commit_ts')")
+	tk.MustExec("start transaction read only as of timestamp @a")
 	tk.MustQuery("select * from t")
 
 	tkDDL.MustExec("alter table test.t add column b int;")
