@@ -30,7 +30,7 @@ use crate::mvservice_test::{new_service, MockMVServiceHelper, MockSessionPool};
 use crate::service::*;
 use crate::service_settings::{default_mv_service_config, new_mv_service};
 use crate::task_handler::{
-    err_mv_task_canceled_manually, MVTaskHandler, MvsError, ERR_MV_LOG_PURGE_HANDLER_NOT_REGISTERED,
+    err_mv_task_canceled_manually, MvsError, ERR_MV_LOG_PURGE_HANDLER_NOT_REGISTERED,
     ERR_MV_REFRESH_HANDLER_NOT_REGISTERED,
 };
 use crate::test_helpers_test::*;

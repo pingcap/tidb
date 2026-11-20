@@ -952,3 +952,493 @@ fn test_server_helper_refresh_mv_best_effort_when_global_session_vars_unavailabl
         assert_eq!(Some(value), s.system_vars.get(name).map(String::as_str), "{name}");
     }
 }
+
+/// Go `config.GetGlobalConfig().IsolationRead.Engines` joined: the default
+/// of `tidb_mview_maintain_isolation_read_engines` a fresh Go session holds.
+const DEFAULT_ISOLATION_READ_ENGINES: &str = "tikv,tiflash,tidb";
+
+/// The purge's maintenance variables Go's `recordingSessionContext`
+/// samples at each restricted statement.
+fn purge_session_var_names() -> Vec<&'static str> {
+    use tidb_vardef::tidb_vars as v;
+    vec![
+        v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA,
+        v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES,
+        v::TIDB_MLOG_PURGE_BATCH_SIZE,
+        v::TIDB_MLOG_PURGE_MIN_RATE,
+        v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO,
+        v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS,
+    ]
+}
+
+fn purge_mv_log_ready_session() -> (Arc<RecordingSessionContext>, SystemSessionPool) {
+    let (se, pool) = new_recording_session();
+    setup_purge_mv_log_meta_for_test(&se, vec![ints(&[Some(mvs_unix(1_700_000_000, 0).add(MINUTE).unix())])]);
+    {
+        let mut s = se.0.lock().unwrap();
+        s.watched_vars = purge_session_var_names().iter().map(|n| (*n).to_owned()).collect();
+        s.system_vars.insert(
+            tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned(),
+            DEFAULT_ISOLATION_READ_ENGINES.to_owned(),
+        );
+    }
+    (se, pool)
+}
+
+#[test]
+fn test_server_helper_purge_mv_log_uses_global_maintain_mem_quota() {
+    use tidb_vardef::tidb_vars as v;
+    let (se, pool) = purge_mv_log_ready_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        for (name, value) in [
+            (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+            (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tikv"),
+            (v::TIDB_MLOG_PURGE_BATCH_SIZE, "4321"),
+            (v::TIDB_MLOG_PURGE_MIN_RATE, "8765"),
+            (v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO, "0.75"),
+            (v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS, "3"),
+        ] {
+            s.global_vars.insert(name.to_owned(), value.to_owned());
+        }
+    }
+    let session = [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "268435456"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_MLOG_PURGE_BATCH_SIZE, "1234"),
+        (v::TIDB_MLOG_PURGE_MIN_RATE, "2345"),
+        (v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO, "0.25"),
+        (v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS, "5"),
+    ];
+    set_session_vars(&se, &session);
+
+    let next_purge = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap();
+    assert!(!next_purge.is_zero());
+    require_expected_purge_mv_log_sql(&se);
+    for (name, value) in [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "536870912"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tikv"),
+        (v::TIDB_MLOG_PURGE_BATCH_SIZE, "4321"),
+        (v::TIDB_MLOG_PURGE_MIN_RATE, "8765"),
+        (v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO, "0.75"),
+        (v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS, "3"),
+    ] {
+        assert_eq!(vec![value.to_owned(), value.to_owned()], sampled(&se, name), "{name}");
+    }
+
+    se.0.lock().unwrap().restricted_errs.insert(TEST_SQL_PURGE_MV_LOG.to_owned(), MvsError::Other("mock purge failure".to_owned()));
+    let err = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap_err();
+    assert_eq!(MvsError::Other("mock purge failure".to_owned()), err);
+    let s = se.0.lock().unwrap();
+    for (name, value) in session {
+        assert_eq!(Some(value), s.system_vars.get(name).map(String::as_str), "{name}");
+    }
+}
+
+#[test]
+fn test_server_helper_purge_mv_log_best_effort_when_global_maintain_mem_quota_unavailable() {
+    use tidb_vardef::tidb_vars as v;
+    let (se, pool) = purge_mv_log_ready_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        for name in purge_session_var_names() {
+            s.global_var_errs.insert(name.to_owned(), MvsError::Other("mock global read failure".to_owned()));
+        }
+        s.global_var_fail_after.insert(v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned(), 1);
+        s.global_vars.insert(v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES.to_owned(), "tidb".to_owned());
+    }
+    let session = [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "268435456"),
+        (v::TIDB_ISOLATION_READ_ENGINES, "tikv"),
+        (v::TIDB_MLOG_PURGE_BATCH_SIZE, "3456"),
+        (v::TIDB_MLOG_PURGE_MIN_RATE, "4567"),
+        (v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO, "0.35"),
+        (v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS, "7"),
+    ];
+    set_session_vars(&se, &session);
+
+    let next_purge = service_helper().purge_mv_log(&Context::background(), &pool, 201).unwrap();
+    assert!(!next_purge.is_zero());
+    require_expected_purge_mv_log_sql(&se);
+    for (name, value) in [
+        (v::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "268435456"),
+        (v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb"),
+        (v::TIDB_MLOG_PURGE_BATCH_SIZE, "3456"),
+        (v::TIDB_MLOG_PURGE_MIN_RATE, "4567"),
+        (v::TIDB_MLOG_PURGE_RATE_BUDGET_RATIO, "0.35"),
+        (v::TIDB_MLOG_PURGE_DELETE_TIFLASH_THREADS, "7"),
+    ] {
+        assert_eq!(vec![value.to_owned(), value.to_owned()], sampled(&se, name), "{name}");
+    }
+    let s = se.0.lock().unwrap();
+    for (name, value) in session {
+        assert_eq!(Some(value), s.system_vars.get(name).map(String::as_str), "{name}");
+    }
+    assert_eq!(
+        Some(DEFAULT_ISOLATION_READ_ENGINES),
+        s.system_vars.get(v::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES).map(String::as_str)
+    );
+}
+
+use crate::service::DEFAULT_MV_HISTORY_GC_MAX_RECORDS;
+use crate::service_helper::{
+    build_delete_log_purge_history_by_count_limit_sql, build_delete_log_purge_history_by_cutoff_tso_sql,
+    build_delete_refresh_history_by_count_limit_sql, build_delete_refresh_history_by_cutoff_tso_sql,
+    build_mark_log_purge_history_running_rows_orphaned_sql, build_mark_refresh_history_running_rows_orphaned_sql,
+    COUNT_LOG_PURGE_HISTORY_SQL, COUNT_REFRESH_HISTORY_SQL, HISTORY_GC_DELETE_BATCH_SIZE,
+};
+
+/// Go's `COUNT(*), MIN(job id)` row of the history count query.
+fn count_cap_row(count: u64, min_job_id: u64) -> Vec<Datum> {
+    vec![Datum::Int(count as i64), Datum::UInt(min_job_id)]
+}
+
+#[derive(Default)]
+struct PurgeMVHistoryCase {
+    name: &'static str,
+    current_tso: u64,
+    mview_retention: i64,
+    mlog_retention: i64,
+    refresh_time_affected_rows: Vec<u64>,
+    purge_time_affected_rows: Vec<u64>,
+    refresh_count_rows: Option<Vec<Vec<Datum>>>,
+    purge_count_rows: Option<Vec<Vec<Datum>>>,
+    refresh_time_err: Option<MvsError>,
+    expect_refresh_exec: usize,
+    expect_purge_exec: usize,
+    expect_refresh_count_cap: Vec<u64>,
+    expect_purge_count_cap: Vec<u64>,
+    refresh_count_affected_rows: Vec<u64>,
+    purge_count_affected_rows: Vec<u64>,
+    assert_args_are_equal_tso: bool,
+    assert_args_not_equal: bool,
+    expect_err_contains: Vec<&'static str>,
+}
+
+#[test]
+fn test_server_helper_purge_mv_history_before_tso() {
+    const HOUR: i64 = tidb_timer::go_time::HOUR;
+    let build_expected_sql = |refresh_exec: usize, purge_exec: usize, refresh_caps: &[u64], purge_caps: &[u64]| {
+        let mut sqls = vec![build_mark_refresh_history_running_rows_orphaned_sql()];
+        sqls.extend(std::iter::repeat_n(build_delete_refresh_history_by_cutoff_tso_sql(), refresh_exec));
+        sqls.push(COUNT_REFRESH_HISTORY_SQL.to_owned());
+        sqls.extend(refresh_caps.iter().map(|&limit| build_delete_refresh_history_by_count_limit_sql(limit)));
+        sqls.push(build_mark_log_purge_history_running_rows_orphaned_sql());
+        sqls.extend(std::iter::repeat_n(build_delete_log_purge_history_by_cutoff_tso_sql(), purge_exec));
+        sqls.push(COUNT_LOG_PURGE_HISTORY_SQL.to_owned());
+        sqls.extend(purge_caps.iter().map(|&limit| build_delete_log_purge_history_by_count_limit_sql(limit)));
+        sqls
+    };
+    let cases = vec![
+        PurgeMVHistoryCase {
+            name: "zero_retention",
+            current_tso: 987_654_321,
+            expect_refresh_exec: 1,
+            expect_purge_exec: 1,
+            assert_args_are_equal_tso: true,
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "separate_retention",
+            current_tso: ((10 * HOUR / 1_000_000) as u64) << 18,
+            mview_retention: 2 * HOUR,
+            mlog_retention: 4 * HOUR,
+            expect_refresh_exec: 1,
+            expect_purge_exec: 1,
+            assert_args_not_equal: true,
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "batch_delete",
+            current_tso: 987_654_321,
+            refresh_time_affected_rows: vec![HISTORY_GC_DELETE_BATCH_SIZE, HISTORY_GC_DELETE_BATCH_SIZE, 1],
+            purge_time_affected_rows: vec![0],
+            expect_refresh_exec: 3,
+            expect_purge_exec: 1,
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "batch_delete_no_max_batches",
+            current_tso: 987_654_321,
+            expect_refresh_exec: 26,
+            expect_purge_exec: 1,
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "count_cap_delete_budget",
+            current_tso: 987_654_321,
+            refresh_count_rows: Some(vec![count_cap_row(
+                DEFAULT_MV_HISTORY_GC_MAX_RECORDS + HISTORY_GC_DELETE_BATCH_SIZE + 5,
+                500,
+            )]),
+            purge_count_rows: Some(vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS + 8, 900)]),
+            refresh_time_affected_rows: vec![0],
+            purge_time_affected_rows: vec![0],
+            expect_refresh_exec: 1,
+            expect_purge_exec: 1,
+            expect_refresh_count_cap: vec![HISTORY_GC_DELETE_BATCH_SIZE, 5],
+            expect_purge_count_cap: vec![8],
+            refresh_count_affected_rows: vec![HISTORY_GC_DELETE_BATCH_SIZE, 5],
+            purge_count_affected_rows: vec![8],
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "count_cap_under_limit",
+            current_tso: 987_654_321,
+            refresh_time_affected_rows: vec![0],
+            purge_time_affected_rows: vec![0],
+            refresh_count_rows: Some(vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS, 500)]),
+            purge_count_rows: Some(vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS - 1, 900)]),
+            expect_refresh_exec: 1,
+            expect_purge_exec: 1,
+            ..Default::default()
+        },
+        PurgeMVHistoryCase {
+            name: "continue_after_refresh_retention_error",
+            current_tso: 987_654_321,
+            refresh_time_err: Some(MvsError::Other("refresh retention gc failed".to_owned())),
+            purge_time_affected_rows: vec![0],
+            expect_refresh_exec: 1,
+            expect_purge_exec: 1,
+            expect_err_contains: vec!["purge mview refresh history by retention failed", "refresh retention gc failed"],
+            ..Default::default()
+        },
+    ];
+
+    for tc in cases {
+        let (se, pool) = new_recording_session();
+        {
+            let mut s = se.0.lock().unwrap();
+            s.restricted_affected_rows.insert(build_mark_refresh_history_running_rows_orphaned_sql(), vec![0]);
+            s.restricted_affected_rows.insert(build_mark_log_purge_history_running_rows_orphaned_sql(), vec![0]);
+            if tc.name == "batch_delete_no_max_batches" {
+                const EXTRA_BATCHES: usize = 25;
+                let mut refresh_affected = vec![HISTORY_GC_DELETE_BATCH_SIZE; EXTRA_BATCHES];
+                refresh_affected.push(1);
+                s.restricted_affected_rows.insert(build_delete_refresh_history_by_cutoff_tso_sql(), refresh_affected);
+                s.restricted_affected_rows.insert(build_delete_log_purge_history_by_cutoff_tso_sql(), vec![0]);
+            } else {
+                if !tc.refresh_time_affected_rows.is_empty() {
+                    s.restricted_affected_rows
+                        .insert(build_delete_refresh_history_by_cutoff_tso_sql(), tc.refresh_time_affected_rows.clone());
+                }
+                if !tc.purge_time_affected_rows.is_empty() {
+                    s.restricted_affected_rows
+                        .insert(build_delete_log_purge_history_by_cutoff_tso_sql(), tc.purge_time_affected_rows.clone());
+                }
+            }
+            for (i, &limit) in tc.expect_refresh_count_cap.iter().enumerate() {
+                s.restricted_affected_rows
+                    .insert(build_delete_refresh_history_by_count_limit_sql(limit), vec![tc.refresh_count_affected_rows[i]]);
+            }
+            for (i, &limit) in tc.expect_purge_count_cap.iter().enumerate() {
+                s.restricted_affected_rows
+                    .insert(build_delete_log_purge_history_by_count_limit_sql(limit), vec![tc.purge_count_affected_rows[i]]);
+            }
+            if let Some(rows) = &tc.refresh_count_rows {
+                s.restricted_rows.insert(COUNT_REFRESH_HISTORY_SQL.to_owned(), rows.clone());
+            }
+            if let Some(rows) = &tc.purge_count_rows {
+                s.restricted_rows.insert(COUNT_LOG_PURGE_HISTORY_SQL.to_owned(), rows.clone());
+            }
+            if let Some(err) = &tc.refresh_time_err {
+                s.restricted_errs.insert(build_delete_refresh_history_by_cutoff_tso_sql(), err.clone());
+            }
+        }
+
+        let result = service_helper().purge_mv_history_before_tso(
+            &Context::background(),
+            &pool,
+            tc.current_tso,
+            tc.mview_retention,
+            tc.mlog_retention,
+        );
+        if tc.expect_err_contains.is_empty() {
+            assert!(result.is_ok(), "{}: {result:?}", tc.name);
+        } else {
+            let err = result.unwrap_err().to_string();
+            for msg in &tc.expect_err_contains {
+                assert!(err.contains(msg), "{}: {err}", tc.name);
+            }
+        }
+        let s = se.0.lock().unwrap();
+        assert_eq!(
+            build_expected_sql(
+                tc.expect_refresh_exec,
+                tc.expect_purge_exec,
+                &tc.expect_refresh_count_cap,
+                &tc.expect_purge_count_cap
+            ),
+            s.executed_restricted_sql,
+            "{}",
+            tc.name
+        );
+        let args = &s.executed_restricted_args;
+        assert_eq!(args.len(), s.executed_restricted_sql.len());
+
+        let refresh_retention_arg_pos = 1;
+        let purge_orphan_arg_pos = tc.expect_refresh_exec + tc.expect_refresh_count_cap.len() + 2;
+        let purge_time_arg_pos = purge_orphan_arg_pos + 1;
+        if tc.assert_args_are_equal_tso {
+            assert_eq!(1, args[0].len());
+            assert_eq!(1, args[purge_orphan_arg_pos].len());
+            assert_eq!(args[0][0], args[purge_orphan_arg_pos][0]);
+            assert_eq!(vec![tc.current_tso.to_string()], args[refresh_retention_arg_pos]);
+            assert_eq!(vec![tc.current_tso.to_string()], args[purge_time_arg_pos]);
+        }
+        if tc.assert_args_not_equal {
+            assert_ne!(args[refresh_retention_arg_pos][0], args[purge_time_arg_pos][0]);
+        }
+        assert!(args[tc.expect_refresh_exec + 1].is_empty());
+        let arg_base = tc.expect_refresh_exec + 2;
+        if let Some(rows) = &tc.refresh_count_rows {
+            let Datum::UInt(min_job_id) = rows[0][1] else { unreachable!() };
+            for i in 0..tc.expect_refresh_count_cap.len() {
+                assert_eq!(vec![min_job_id.to_string()], args[arg_base + i]);
+            }
+        }
+        let count_pos = purge_time_arg_pos + tc.expect_purge_exec;
+        assert!(args[count_pos].is_empty());
+        if let Some(rows) = &tc.purge_count_rows {
+            let Datum::UInt(min_job_id) = rows[0][1] else { unreachable!() };
+            for i in 0..tc.expect_purge_count_cap.len() {
+                assert_eq!(vec![min_job_id.to_string()], args[count_pos + 1 + i]);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_server_helper_purge_mv_history_before_tso_treats_null_status_as_deletable() {
+    let (se, pool) = new_recording_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        s.restricted_affected_rows.insert(build_delete_refresh_history_by_cutoff_tso_sql(), vec![0]);
+        s.restricted_affected_rows.insert(build_delete_log_purge_history_by_cutoff_tso_sql(), vec![0]);
+        s.restricted_rows.insert(COUNT_REFRESH_HISTORY_SQL.to_owned(), vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS, 500)]);
+        s.restricted_rows.insert(COUNT_LOG_PURGE_HISTORY_SQL.to_owned(), vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS, 900)]);
+    }
+    service_helper().purge_mv_history_before_tso(&Context::background(), &pool, 987_654_321, 0, 0).unwrap();
+    let s = se.0.lock().unwrap();
+    assert!(s.executed_restricted_sql.contains(&build_delete_refresh_history_by_cutoff_tso_sql()));
+    assert!(s.executed_restricted_sql.contains(&build_delete_log_purge_history_by_cutoff_tso_sql()));
+    assert!(build_delete_refresh_history_by_cutoff_tso_sql().contains("REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running'"));
+    assert!(build_delete_log_purge_history_by_cutoff_tso_sql().contains("PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'"));
+    assert!(build_delete_refresh_history_by_count_limit_sql(1).contains("REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running'"));
+    assert!(build_delete_log_purge_history_by_count_limit_sql(1).contains("PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'"));
+}
+
+#[test]
+fn test_server_helper_purge_mv_history_before_tso_reconciles_stale_running_hist_rows() {
+    const HOUR: i64 = tidb_timer::go_time::HOUR;
+    let current_tso = ((36 * HOUR / 1_000_000) as u64) << 18;
+    // Go `oracle.GetTimeFromTS(oracle.ComposeTS(12h in ms, 0))`.
+    let expected_cutoff_time = arg_text(&crate::service_helper::time_arg(&mvs_unix_milli(12 * HOUR / 1_000_000)));
+
+    let (se, pool) = new_recording_session();
+    {
+        let mut s = se.0.lock().unwrap();
+        s.restricted_affected_rows.insert(build_mark_refresh_history_running_rows_orphaned_sql(), vec![2]);
+        s.restricted_affected_rows.insert(build_mark_log_purge_history_running_rows_orphaned_sql(), vec![1]);
+        s.restricted_affected_rows.insert(build_delete_refresh_history_by_cutoff_tso_sql(), vec![0]);
+        s.restricted_affected_rows.insert(build_delete_log_purge_history_by_cutoff_tso_sql(), vec![0]);
+        s.restricted_rows.insert(COUNT_REFRESH_HISTORY_SQL.to_owned(), vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS, 500)]);
+        s.restricted_rows.insert(COUNT_LOG_PURGE_HISTORY_SQL.to_owned(), vec![count_cap_row(DEFAULT_MV_HISTORY_GC_MAX_RECORDS, 900)]);
+    }
+    service_helper().purge_mv_history_before_tso(&Context::background(), &pool, current_tso, 0, 0).unwrap();
+    let s = se.0.lock().unwrap();
+    assert_eq!(
+        vec![
+            build_mark_refresh_history_running_rows_orphaned_sql(),
+            build_delete_refresh_history_by_cutoff_tso_sql(),
+            COUNT_REFRESH_HISTORY_SQL.to_owned(),
+            build_mark_log_purge_history_running_rows_orphaned_sql(),
+            build_delete_log_purge_history_by_cutoff_tso_sql(),
+            COUNT_LOG_PURGE_HISTORY_SQL.to_owned(),
+        ],
+        s.executed_restricted_sql
+    );
+    assert_eq!(vec![expected_cutoff_time.clone()], s.executed_restricted_args[0]);
+    assert_eq!(vec![current_tso.to_string()], s.executed_restricted_args[1]);
+    assert_eq!(vec![expected_cutoff_time], s.executed_restricted_args[3]);
+    assert_eq!(vec![current_tso.to_string()], s.executed_restricted_args[4]);
+}
+
+#[test]
+fn test_server_helper_purge_mv_history_before_tso_uses_status_index_hints() {
+    assert!(build_mark_refresh_history_running_rows_orphaned_sql().contains("FORCE INDEX (idx_refresh_status_start_time)"));
+    assert!(build_mark_log_purge_history_running_rows_orphaned_sql().contains("FORCE INDEX (idx_purge_status_start_time)"));
+}
+
+#[test]
+fn test_server_helper_sync_mv_refresh_alert_states() {
+    use crate::service::{RefreshAlertTask, MV_REFRESH_ALERT_LEVEL_OVERDUE, MV_REFRESH_ALERT_LEVEL_WARNING};
+    use crate::service_helper::{
+        build_clear_resolved_mv_refresh_alert_level_sql, build_delete_resolved_mv_refresh_alert_sql,
+        build_upsert_mv_refresh_alert_sql,
+    };
+    let now = mvs_unix(1_700_000_000, 0);
+    let (se, pool) = new_recording_session();
+    let states = vec![
+        RefreshAlertTask {
+            mview_id: 101,
+            schema_name: "test".to_owned(),
+            mview_name: "mv_warn".to_owned(),
+            last_success_time: now.add(-MINUTE),
+            alert_level: MV_REFRESH_ALERT_LEVEL_WARNING.to_owned(),
+            ..Default::default()
+        },
+        RefreshAlertTask {
+            mview_id: 102,
+            schema_name: "test".to_owned(),
+            mview_name: "mv_overdue".to_owned(),
+            last_success_time: now.add(-2 * MINUTE),
+            alert_level: MV_REFRESH_ALERT_LEVEL_OVERDUE.to_owned(),
+            ..Default::default()
+        },
+        RefreshAlertTask { mview_id: 103, ..Default::default() },
+        RefreshAlertTask { mview_id: 104, metadata_unresolved: true, ..Default::default() },
+        RefreshAlertTask { mview_id: 0, ..Default::default() },
+        RefreshAlertTask {
+            mview_id: 105,
+            schema_name: "test".to_owned(),
+            mview_name: "mv_no_success".to_owned(),
+            alert_level: MV_REFRESH_ALERT_LEVEL_WARNING.to_owned(),
+            ..Default::default()
+        },
+    ];
+
+    service_helper().sync_mv_refresh_alert_states(&Context::background(), &pool, &now, &states).unwrap();
+    let upsert_sql =
+        build_upsert_mv_refresh_alert_sql(&now, &[states[0].clone(), states[1].clone(), states[5].clone()]);
+    let s = se.0.lock().unwrap();
+    assert_eq!(
+        vec![
+            build_delete_resolved_mv_refresh_alert_sql(&[103]),
+            build_clear_resolved_mv_refresh_alert_level_sql(&now, &[103]),
+            upsert_sql.clone(),
+        ],
+        s.executed_restricted_sql
+    );
+    assert_eq!(3, s.executed_restricted_args.len());
+    assert!(upsert_sql.contains("'mv_no_success', 'warning', NULL,"), "{upsert_sql}");
+    assert!(s.executed_restricted_args.iter().all(Vec::is_empty));
+}
+
+#[test]
+fn test_server_helper_cleanup_stale_mv_refresh_alerts() {
+    use crate::service_helper::{build_cleanup_stale_mv_refresh_alert_sql, build_clear_disabled_mv_refresh_alert_level_sql};
+    let (se, pool) = new_recording_session();
+    service_helper().cleanup_stale_mv_refresh_alerts(&Context::background(), &pool).unwrap();
+    let s = se.0.lock().unwrap();
+    assert_eq!(
+        vec![
+            build_clear_disabled_mv_refresh_alert_level_sql().to_owned(),
+            build_cleanup_stale_mv_refresh_alert_sql().to_owned()
+        ],
+        s.executed_restricted_sql
+    );
+    assert_eq!(2, s.executed_restricted_args.len());
+    assert!(s.executed_restricted_args.iter().all(Vec::is_empty));
+}

@@ -39,7 +39,7 @@ use crate::task_handler::{
 };
 use crate::time_proxy::{mvs_now, mvs_since, mvs_unix, mvs_unix_milli};
 
-const HISTORY_GC_DELETE_BATCH_SIZE: u64 = 10_000;
+pub(crate) const HISTORY_GC_DELETE_BATCH_SIZE: u64 = 10_000;
 const REFRESH_ALERT_WRITE_BATCH_SIZE: usize = 128;
 /// Go `mvHistoryHeartbeatTimeout` (24h), in nanoseconds.
 const MV_HISTORY_HEARTBEAT_TIMEOUT: i64 = 24 * 60 * MINUTE;
@@ -224,7 +224,7 @@ pub fn build_delete_resolved_mv_refresh_alert_sql(mview_ids: &[i64]) -> String {
     sql
 }
 
-fn time_arg(time: &GoTime) -> SqlArg<'static> {
+pub(crate) fn time_arg(time: &GoTime) -> SqlArg<'static> {
     if time.is_zero() {
         return SqlArg::Time(None);
     }
