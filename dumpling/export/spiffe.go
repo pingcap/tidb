@@ -48,9 +48,9 @@ func (d *Dumper) initTLS() error {
 		endpoint.Path == "/" || strings.ContainsRune(endpoint.Path, '\x00') {
 		return errors.New("--spiffe-workload-api-addr requires a Unix socket URL such as unix:///absolute/path.sock")
 	}
-	serverID, err := spiffeid.FromString(security.SPIFFEServerID)
-	if err != nil || serverID.Path() == "" {
-		return errors.New("--spiffe-workload-api-addr requires a valid --spiffe-server-id")
+	matchServer, err := parseSPIFFEServerMatcher(security.SPIFFEServerID)
+	if err != nil {
+		return errors.Annotate(err, "invalid --spiffe-server-id")
 	}
 	ctx, cancel := context.WithTimeout(d.tctx.Context, 30*time.Second)
 	defer cancel()
@@ -58,9 +58,48 @@ func (d *Dumper) initTLS() error {
 	if err != nil {
 		return errors.Annotate(err, "load X.509 credentials from the SPIFFE Workload API")
 	}
-	tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AuthorizeID(serverID))
+	tlsConfig := tlsconfig.MTLSClientConfig(source, source, tlsconfig.AdaptMatcher(matchServer))
 	tlsConfig.MinVersion = max(tlsConfig.MinVersion, conf.MinTLSVersion)
 	d.spiffeSource = source
 	security.TLS = tlsConfig
 	return nil
+}
+
+func parseSPIFFEServerMatcher(pattern string) (spiffeid.Matcher, error) {
+	authorityAndPath, hasScheme := strings.CutPrefix(pattern, "spiffe://")
+	domain, path, hasPath := strings.Cut(authorityAndPath, "/")
+	if !hasScheme || !hasPath || strings.Contains(domain, "*") {
+		return nil, errors.New("expected a SPIFFE URI with a fixed trust domain and a workload path")
+	}
+	trustDomain, err := spiffeid.TrustDomainFromString(domain)
+	if err != nil {
+		return nil, err
+	}
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
+		if segment == "*" {
+			continue
+		}
+		if strings.Contains(segment, "*") {
+			return nil, errors.New("a wildcard must occupy a complete SPIFFE path segment")
+		}
+		if err := spiffeid.ValidatePathSegment(segment); err != nil {
+			return nil, err
+		}
+	}
+
+	return func(peer spiffeid.ID) error {
+		// TLS verification parses and validates the peer SPIFFE ID before matching it.
+		peerPath := peer.Path()
+		peerSegments := strings.Split(strings.TrimPrefix(peerPath, "/"), "/")
+		if !peer.MemberOf(trustDomain) || peerPath == "" || len(peerSegments) != len(segments) {
+			return errors.Errorf("unexpected ID %q", peer)
+		}
+		for i, segment := range segments {
+			if segment != "*" && segment != peerSegments[i] {
+				return errors.Errorf("unexpected ID %q", peer)
+			}
+		}
+		return nil
+	}, nil
 }

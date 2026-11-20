@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/spf13/pflag"
 	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -127,9 +128,7 @@ func TestGetDriverConfigTLSHandshake(t *testing.T) {
 }
 
 func TestSPIFFETLS(t *testing.T) {
-	const clientID, serverID = "spiffe://example.org/dumpling", "spiffe://example.org/tidb"
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	const clientID, serverID = "spiffe://example.org/dumpling", "spiffe://example.org/ns/prod/tidb"
 
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -186,29 +185,41 @@ func TestSPIFFETLS(t *testing.T) {
 		<-done
 	})
 
-	conf := parseConfigFromArgsForTest(t, "--spiffe-workload-api-addr", "unix://"+socket, "--spiffe-server-id", serverID)
-	d := &Dumper{
-		conf:      conf,
-		tctx:      tcontext.Background().WithContext(ctx),
-		cancelCtx: cancel,
-		metrics:   newMetrics(conf.PromFactory, conf.Labels),
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{name: "exact", id: serverID},
+		{name: "wildcard", id: "spiffe://example.org/ns/*/tidb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			conf := parseConfigFromArgsForTest(t, "--spiffe-workload-api-addr", "unix://"+socket, "--spiffe-server-id", tc.id)
+			d := &Dumper{
+				conf:      conf,
+				tctx:      tcontext.Background().WithContext(ctx),
+				cancelCtx: cancel,
+				metrics:   newMetrics(conf.PromFactory, conf.Labels),
+			}
+			d.metrics.registerTo(conf.PromRegistry)
+			require.NoError(t, d.initTLS())
+			t.Cleanup(func() {
+				require.NoError(t, d.Close())
+				_, err := conf.Security.TLS.GetClientCertificate(nil)
+				require.Error(t, err)
+			})
+			driverCfg := conf.GetDriverConfig("")
+			require.False(t, driverCfg.AllowFallbackToPlaintext)
+			require.NotNil(t, driverCfg.TLS.GetClientCertificate)
+			require.NotNil(t, driverCfg.TLS.VerifyPeerCertificate)
+			clientCert, err := driverCfg.TLS.GetClientCertificate(nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]byte{clientDER}, clientCert.Certificate)
+			require.NoError(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{serverDER}, nil))
+			require.Error(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{clientDER}, nil))
+		})
 	}
-	d.metrics.registerTo(conf.PromRegistry)
-	require.NoError(t, d.initTLS())
-	t.Cleanup(func() {
-		require.NoError(t, d.Close())
-		_, err := conf.Security.TLS.GetClientCertificate(nil)
-		require.Error(t, err)
-	})
-	driverCfg := conf.GetDriverConfig("")
-	require.False(t, driverCfg.AllowFallbackToPlaintext)
-	require.NotNil(t, driverCfg.TLS.GetClientCertificate)
-	require.NotNil(t, driverCfg.TLS.VerifyPeerCertificate)
-	clientCert, err := driverCfg.TLS.GetClientCertificate(nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]byte{clientDER}, clientCert.Certificate)
-	require.NoError(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{serverDER}, nil))
-	require.Error(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{clientDER}, nil))
 }
 
 type testSPIFFEWorkloadAPI struct {
@@ -240,6 +251,9 @@ func TestSPIFFETLSConfigValidation(t *testing.T) {
 		{name: "missing endpoint", serverID: serverID, want: "--spiffe-workload-api-addr"},
 		{name: "invalid server ID", endpoint: endpoint, serverID: "example.org", want: "--spiffe-server-id"},
 		{name: "server ID without a workload path", endpoint: endpoint, serverID: "spiffe://example.org", want: "--spiffe-server-id"},
+		{name: "wildcard trust domain", endpoint: endpoint, serverID: "spiffe://*.example.org/ns/tidb", want: "--spiffe-server-id"},
+		{name: "partial wildcard segment", endpoint: endpoint, serverID: "spiffe://example.org/ns/tidb-*", want: "--spiffe-server-id"},
+		{name: "globstar segment", endpoint: endpoint, serverID: "spiffe://example.org/ns/**/tidb", want: "--spiffe-server-id"},
 		{name: "PEM path conflict", endpoint: endpoint, serverID: serverID, caPath: "ca.pem", want: "file or byte TLS credentials"},
 		{name: "PEM content conflict", endpoint: endpoint, serverID: serverID, caBytes: []byte("ca"), want: "file or byte TLS credentials"},
 	} {
@@ -257,6 +271,32 @@ func TestSPIFFETLSConfigValidation(t *testing.T) {
 	}
 	_, err := parseConfigFromArgsForTestWithErr(t, "--dump-service", "unix:///tmp/dump.sock", "--spiffe-workload-api-addr", endpoint)
 	require.ErrorContains(t, err, "--spiffe-workload-api-addr cannot be combined with --dump-service")
+}
+
+func TestSPIFFEServerMatcher(t *testing.T) {
+	match, err := parseSPIFFEServerMatcher("spiffe://example.org/ns/*/tidb/*")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		id    string
+		match bool
+	}{
+		{name: "one segment per wildcard", id: "spiffe://example.org/ns/prod/tidb/server-1", match: true},
+		{name: "different trust domain", id: "spiffe://other.org/ns/prod/tidb/server-1"},
+		{name: "missing segment", id: "spiffe://example.org/ns/tidb/server-1"},
+		{name: "extra segment", id: "spiffe://example.org/ns/prod/zone/tidb/server-1"},
+		{name: "different literal segment", id: "spiffe://example.org/ns/prod/pd/server-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := spiffeid.FromString(tc.id)
+			require.NoError(t, err)
+			if tc.match {
+				require.NoError(t, match(id))
+			} else {
+				require.Error(t, match(id))
+			}
+		})
+	}
 }
 
 func TestCreateExternalStorage(t *testing.T) {

@@ -158,6 +158,7 @@ go_test(
         "@com_github_prometheus_client_model//go",
         "@com_github_spf13_pflag//:pflag",
         "@com_github_spiffe_go_spiffe_v2//proto/spiffe/workload",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//clients/gc",
