@@ -550,9 +550,10 @@ func RecordFastPlanMaskingPolicyReads(ctx context.Context, sctx base.PlanContext
 	if sctx.GetSessionVars().InRestrictedSQL {
 		return true
 	}
+	var assignments []*expression.Assignment
 	switch x := p.(type) {
 	case *Update:
-		p = x.SelectPlan
+		p, assignments = x.SelectPlan, x.OrderedList
 	case *Delete:
 		p = x.SelectPlan
 	}
@@ -572,6 +573,20 @@ func RecordFastPlanMaskingPolicyReads(ctx context.Context, sctx base.PlanContext
 	}
 	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || !hasPolicies {
 		return err == nil
+	}
+	// A fast UPDATE skips the check of RESTRICT ON (UPDATE_SELECT) on its
+	// assignments. Leave an assignment that reads a column with such a policy
+	// to the normal planner, which checks it for the current identity.
+	for _, assign := range assignments {
+		for _, col := range expression.ExtractColumns(assign.Expr) {
+			policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, col.ID)
+			if err != nil {
+				return false
+			}
+			if ok && policy != nil && policy.RestrictOps&ast.MaskingPolicyRestrictOpUpdateSelect != 0 {
+				return false
+			}
+		}
 	}
 	cols := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	for _, col := range p.Schema().Columns {

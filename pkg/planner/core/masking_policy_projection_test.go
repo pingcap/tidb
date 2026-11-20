@@ -2131,6 +2131,126 @@ func TestMaskingPolicyRestrictDirectUpdateAssignment(t *testing.T) {
 // TestMaskingPolicyRestrictOnDuplicateAssignment tests that an assignment of
 // INSERT ... ON DUPLICATE KEY UPDATE reading a protected column of the
 // existing row is restricted like an UPDATE assignment.
+// TestMaskingPolicyRestrictPointUpdateAssignment tests that an UPDATE by
+// primary key, which may get a fast plan, is restricted like any other UPDATE.
+func TestMaskingPolicyRestrictPointUpdateAssignment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_pu(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create table t_pu_free(id int primary key, c varchar(20), c2 varchar(20))")
+	root.MustExec("create masking policy p on t_pu(c) as case when current_user()='root@%' then c else mask_full(c) end restrict on (update_select) enable")
+	root.MustExec("create masking policy p_free on t_pu_free(c) as case when current_user()='root@%' then c else mask_full(c) end enable")
+	root.MustExec("create user u_pu")
+	root.MustExec("grant select, insert, update, delete on test.* to u_pu")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_pu", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	original := testkit.Rows("1 secret a", "2 hidden b")
+	reset := func() {
+		for _, tbl := range []string{"t_pu", "t_pu_free"} {
+			root.MustExec("delete from " + tbl)
+			root.MustExec("insert into " + tbl + " values (1,'secret','a'),(2,'hidden','b')")
+		}
+	}
+	rows := func(tbl string) *testkit.Result {
+		return root.MustQuery("select id, c, c2 from " + tbl + " order by id")
+	}
+	reset()
+	// Load the policies, as the fast plans are only taken afterwards.
+	tk.MustQuery("select c from t_pu where id = 1").Check(testkit.Rows("XXXXXX"))
+
+	for _, sql := range []string{
+		"update t_pu set c2 = c where id = 1",
+		"update t_pu set c2 = c where id in (1, 2)",
+		"update t_pu set c2 = concat(c, '!') where id = 1",
+		"update t_pu set c = upper(c) where id = 1",
+		"update t_pu set c2 = 'k', c = concat(c, 'x') where id in (1, 2)",
+	} {
+		tk.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		rows("t_pu").Check(original)
+	}
+	require.ErrorContains(t, tk.ExecToErr("prepare st from 'update t_pu set c2 = c where id = ?'"), "Access to masked column")
+	// An identity that reads the original value prepares and executes it.
+	root.MustExec("prepare st from 'update t_pu set c2 = c where id = ?'")
+	root.MustExec("set @a = 1")
+	root.MustExec("execute st using @a")
+	rows("t_pu").Check(testkit.Rows("1 secret secret", "2 hidden b"))
+	reset()
+
+	// Not restricted.
+	for _, tc := range []struct {
+		sql  string
+		rows [][]any
+	}{
+		{"update t_pu set c = c where id = 1", original},
+		{"update t_pu set c2 = 'w' where id = 1", testkit.Rows("1 secret w", "2 hidden b")},
+		{"update t_pu set c = c2 where id in (1, 2)", testkit.Rows("1 a a", "2 b b")},
+		{"update t_pu set c = 'new' where id = 2", testkit.Rows("1 secret a", "2 new b")},
+	} {
+		tk.MustExec(tc.sql)
+		rows("t_pu").Check(tc.rows)
+		reset()
+	}
+	tk.MustExec("update t_pu_free set c2 = c where id = 1")
+	rows("t_pu_free").Check(testkit.Rows("1 secret secret", "2 hidden b"))
+	root.MustExec("update t_pu set c2 = c where id in (1, 2)")
+	rows("t_pu").Check(testkit.Rows("1 secret secret", "2 hidden hidden"))
+}
+
+// TestMaskingPolicyExplainRedactsValues tests that EXPLAIN does not show the
+// original values a statement computes from a masked column.
+func TestMaskingPolicyExplainRedactsValues(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_ex(id int primary key, c varchar(20), b varchar(20), key(c))")
+	root.MustExec("insert into t_ex values (1, 'secret', 'plainvalue')")
+	root.MustExec("create masking policy p on t_ex(c) as case when current_user()='root@%' then c else mask_full(c) end enable")
+	root.MustExec("create user u_ex")
+	root.MustExec("grant select on test.* to u_ex")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_ex", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	plan := func(who *testkit.TestKit, sql string) string {
+		var sb strings.Builder
+		for _, row := range who.MustQuery(sql).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	for _, who := range []*testkit.TestKit{tk, root} {
+		who.MustExec("set session tidb_redact_log = 'OFF'")
+		who.MustExec("set session tidb_opt_enable_non_eval_scalar_subquery = OFF")
+	}
+	for _, format := range []string{"explain ", "explain format='brief' ", "explain analyze ", "explain format='verbose' "} {
+		for _, sql := range []string{
+			"select count(*) from t_ex where c = (select min(c) from t_ex)",
+			"select count(*) from t_ex where c >= (select max(c) from t_ex)",
+			"select count(*) from t_ex where b = (select max(c) from t_ex)",
+		} {
+			require.NotContains(t, plan(tk, format+sql), "secret", format+sql)
+			// An identity that reads the original value keeps its plans.
+			require.Contains(t, plan(root, format+sql), "secret", format+sql)
+		}
+		// A statement that reads no masked column keeps its values.
+		require.Contains(t, plan(tk, format+"select count(*) from t_ex where b = (select max(b) from t_ex)"), "plainvalue")
+	}
+	require.Equal(t, "OFF", tk.MustQuery("select @@session.tidb_redact_log").Rows()[0][0])
+
+	// The plan recorded for the statement itself does not keep them either.
+	// Each identity runs a statement of its own, as a summary is shared.
+	summary := "select plan from information_schema.statements_summary where digest_text like '%%%s%%' and digest_text not like '%%statements_summary%%'"
+	tk.MustQuery("select count(*) as masked_reader from t_ex where c = (select min(c) from t_ex)").Check(testkit.Rows("1"))
+	root.MustQuery("select count(*) as exempt_reader from t_ex where c = (select min(c) from t_ex)").Check(testkit.Rows("1"))
+	maskedPlan := plan(tk, fmt.Sprintf(summary, "masked_reader"))
+	require.Contains(t, maskedPlan, "IndexRangeScan")
+	require.NotContains(t, maskedPlan, "secret")
+	require.Contains(t, plan(root, fmt.Sprintf(summary, "exempt_reader")), "secret")
+}
+
 func TestMaskingPolicyRestrictOnDuplicateAssignment(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	root := testkit.NewTestKit(t, store)
