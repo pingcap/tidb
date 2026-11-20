@@ -247,6 +247,50 @@ HashJoin	10000.00	root		inner join, equal:[eq(executor__jointest__join.t_plan_in
   └─Selection	8000.00	cop[tikv]		eq(0, cast(executor__jointest__join.t_plan_inner.a, double BINARY))
     └─TableFullScan	10000.00	cop[tikv]	table:t_plan_inner	keep order:false, stats:pseudo
 drop table t_plan_outer, t_plan_inner;
+create table t_coll_o (s varchar(10) collate utf8mb4_bin);
+create table t_coll_i (b varchar(10) collate utf8mb4_bin);
+create table t_coll_i2 (b varchar(10) collate utf8mb4_general_ci);
+insert into t_coll_o values ('a');
+insert into t_coll_i values ('A'), ('a');
+insert into t_coll_i2 values ('A'), ('a');
+select count(*) from t_coll_o where (1, s collate utf8mb4_general_ci) in (select 1, b from t_coll_i);
+count(*)
+1
+select count(*) from t_coll_o where (1, s) in (select 1, b from t_coll_i2);
+count(*)
+1
+explain format='brief' select * from t_coll_o where (1, s) in (select 1, b from t_coll_i2);
+id	estRows	task	access object	operator info
+HashJoin	9990.00	root		inner join, equal:[eq(executor__jointest__join.t_coll_o.s, executor__jointest__join.t_coll_i2.b)]
+├─HashAgg(Build)	7992.00	root		group by:Column#10, funcs:firstrow(Column#11)->executor__jointest__join.t_coll_i2.b
+│ └─TableReader	7992.00	root		data:HashAgg
+│   └─HashAgg	7992.00	cop[tikv]		group by:cast(executor__jointest__join.t_coll_i2.b, varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), funcs:firstrow(executor__jointest__join.t_coll_i2.b)->Column#11
+│     └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_coll_i2.b))
+│       └─TableFullScan	10000.00	cop[tikv]	table:t_coll_i2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_coll_o.s))
+    └─TableFullScan	10000.00	cop[tikv]	table:t_coll_o	keep order:false, stats:pseudo
+drop table t_coll_o, t_coll_i, t_coll_i2;
+create table t_pad_o (s varchar(10)) charset utf8mb4 collate utf8mb4_0900_ai_ci;
+create table t_pad_i (s varchar(10)) charset utf8 collate utf8_unicode_ci;
+insert into t_pad_o values ('a'), ('a ');
+insert into t_pad_i values ('a'), ('a ');
+select concat('[', s, ']') from t_pad_o where s in (select s from t_pad_i) order by 1;
+concat('[', s, ']')
+[a ]
+[a]
+explain format='brief' select * from t_pad_o where s in (select s from t_pad_i);
+id	estRows	task	access object	operator info
+HashJoin	9990.00	root		inner join, equal:[eq(executor__jointest__join.t_pad_o.s, executor__jointest__join.t_pad_i.s)]
+├─HashAgg(Build)	7992.00	root		group by:Column#7, funcs:firstrow(Column#8)->executor__jointest__join.t_pad_i.s
+│ └─TableReader	7992.00	root		data:HashAgg
+│   └─HashAgg	7992.00	cop[tikv]		group by:cast(executor__jointest__join.t_pad_i.s, varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci), funcs:firstrow(executor__jointest__join.t_pad_i.s)->Column#8
+│     └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_pad_i.s))
+│       └─TableFullScan	10000.00	cop[tikv]	table:t_pad_i	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t_pad_o.s))
+    └─TableFullScan	10000.00	cop[tikv]	table:t_pad_o	keep order:false, stats:pseudo
+drop table t_pad_o, t_pad_i;
 drop table if exists t_outer, t_inner;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
