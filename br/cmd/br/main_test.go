@@ -138,3 +138,24 @@ func TestRawAndTxnRestoreRejectRename(t *testing.T) {
 		})
 	}
 }
+
+func TestRawAndTxnRestoreRejectSingleReplica(t *testing.T) {
+	for _, tc := range []struct {
+		commandName string
+		taskName    string
+	}{
+		{commandName: "raw", taskName: task.RawRestoreCmd},
+		{commandName: "txn", taskName: task.TxnRestoreCmd},
+	} {
+		t.Run(tc.commandName, func(t *testing.T) {
+			root := NewRestoreCommand()
+			command, _, err := root.Find([]string{tc.commandName})
+			require.NoError(t, err)
+			require.NoError(t, rejectRestoreFlag(command, tc.taskName, task.FlagSingleReplica))
+			require.NoError(t, command.InheritedFlags().Set(task.FlagSingleReplica, "true"))
+
+			err = rejectRestoreFlag(command, tc.taskName, task.FlagSingleReplica)
+			require.ErrorContains(t, err, "--single-replica is not supported by "+tc.taskName)
+		})
+	}
+}

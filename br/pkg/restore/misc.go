@@ -390,7 +390,20 @@ const maxUserTablesNum = 10
 
 // AssertUserDBsEmpty check whether user dbs exist in the cluster
 func AssertUserDBsEmpty(dom *domain.Domain) error {
-	databases := dom.InfoSchema().AllSchemas()
+	return assertUserDBsEmpty(dom, dom.InfoSchema().AllSchemas())
+}
+
+// AssertNoUserDBsInCluster is AssertUserDBsEmpty over every database of the cluster. When BR
+// restores some databases, the info schema of dom has only them and the system databases.
+func AssertNoUserDBsInCluster(dom *domain.Domain) error {
+	databases, err := meta.NewReader(dom.Store().GetSnapshot(kv.MaxVersion)).ListDatabases()
+	if err != nil {
+		return errors.Annotate(err, "failed to list the databases of the cluster")
+	}
+	return assertUserDBsEmpty(dom, databases)
+}
+
+func assertUserDBsEmpty(dom *domain.Domain, databases []*model.DBInfo) error {
 	m := meta.NewReader(dom.Store().GetSnapshot(kv.MaxVersion))
 	userTables := make([]string, 0, maxUserTablesNum+1)
 	appendTables := func(dbName, tableName string) bool {

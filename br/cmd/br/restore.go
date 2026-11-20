@@ -55,6 +55,9 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	if cfg.FullBackupType == task.FullBackupTypeEBS {
+		if err := rejectRestoreFlag(command, "an EBS restore", task.FlagSingleReplica); err != nil {
+			return err
+		}
 		if cfg.Prepare {
 			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
 				log.Error("failed to restore EBS meta", zap.Error(err))
@@ -117,6 +120,9 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
 		return err
 	}
+	if err := rejectRestoreFlag(command, cmdName, task.FlagSingleReplica); err != nil {
+		return err
+	}
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
 	}
@@ -142,6 +148,9 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
 		return err
 	}
+	if err := rejectRestoreFlag(command, cmdName, task.FlagSingleReplica); err != nil {
+		return err
+	}
 	cfg := task.Config{LogProgress: HasLogFile()}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
@@ -162,10 +171,15 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 }
 
 func rejectRestoreRenameFlag(command *cobra.Command, cmdName string) error {
-	renameFlag := command.Flag(task.FlagRename)
-	if renameFlag != nil && renameFlag.Changed {
+	return rejectRestoreFlag(command, cmdName, task.FlagRename)
+}
+
+// rejectRestoreFlag rejects a restore flag the command would ignore.
+func rejectRestoreFlag(command *cobra.Command, cmdName string, name string) error {
+	flag := command.Flag(name)
+	if flag != nil && flag.Changed {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"--%s is not supported by %s", task.FlagRename, cmdName)
+			"--%s is not supported by %s", name, cmdName)
 	}
 	return nil
 }

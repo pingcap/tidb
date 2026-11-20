@@ -281,6 +281,7 @@ type RestoreConfig struct {
 	RestoreCommonConfig
 
 	NoSchema              bool          `json:"no-schema" toml:"no-schema"`
+	SingleReplica         bool          `json:"single-replica" toml:"single-replica"`
 	Rename                []string      `json:"rename" toml:"rename"`
 	LoadStats             bool          `json:"load-stats" toml:"load-stats"`
 	FastLoadSysTables     bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
@@ -368,6 +369,10 @@ type RestoreConfig struct {
 	// field may be assigned after ParseFromFlags (or DefaultRestoreConfig), so
 	// a stale cache must never be returned when the rules changed.
 	nameRouterRules []string `json:"-" toml:"-"`
+
+	// replicasAfterRestore is the replica count the restored data will have once
+	// PD has added the others, set by --single-replica for the disk space check.
+	replicasAfterRestore uint64 `json:"-" toml:"-"`
 }
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
@@ -434,6 +439,12 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		"A schema created for a rename is retained even if the restore ends up dropping every table in it")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
+	flags.Bool(FlagSingleReplica, false, "restore with one replica of each region, then put the replica count back "+
+		"so PD adds the other replicas in the background. The target cluster must have no user tables, so it cannot "+
+		"resume an interrupted restore from its checkpoint: run that one without this flag. "+
+		"Until PD finishes the cluster has no redundancy: losing a TiKV loses the regions it holds. "+
+		"Tables restored with a placement policy keep the replica count of the policy. "+
+		"When the restore is killed, the next br restore or br abort restore puts the replica count back.")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -553,6 +564,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.FastLoadSysTables, err = flags.GetBool(flagFastLoadSysTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.SingleReplica, err = flags.GetBool(FlagSingleReplica)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1120,6 +1135,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err := cfg.validateNameRouting(cmdName); err != nil {
 		return errors.Trace(err)
 	}
+	if err := cfg.checkSingleReplica(); err != nil {
+		return errors.Trace(err)
+	}
 
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
@@ -1161,6 +1179,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
+	// The replica count is lowered after the checks below. It is put back from
+	// this defer, once the defers below have done their work with the cluster.
+	var singleReplica *singleReplicaRestore
+	defer func() {
+		if singleReplica != nil {
+			restoreErr = singleReplica.leave(c, restoreErr)
+		}
+	}()
 	defer func() {
 		if logTaskBackend == nil || restoreErr != nil {
 			return
@@ -1230,6 +1256,13 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), verChecker); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	singleReplica, err = startSingleReplicaRestore(c, cfg, mgr, etcdCLI, glue.GetConsole(g).Out())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if singleReplica != nil {
+		cfg.replicasAfterRestore = singleReplica.replicasAfterRestore()
 	}
 	if IsStreamRestore(cmdName) {
 		restoreErr = RunStreamRestore(c, mgr, g, cfg)
@@ -2264,10 +2297,15 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	return nil
 }
 
-func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64) error {
-	maxReplica, err := getMaxReplica(ctx, mgr)
-	if err != nil {
-		return errors.Trace(err)
+// checkDiskSpace checks the stores can hold the restored data. replicas is the
+// replica count to check for, or 0 for the one PD keeps now.
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64, replicas uint64) error {
+	maxReplica := replicas
+	if maxReplica == 0 {
+		var err error
+		if maxReplica, err = getMaxReplica(ctx, mgr); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	stores, err := getStores(ctx, mgr)
 	if err != nil {
@@ -3007,7 +3045,7 @@ func checkOptionalClusterRequirements(
 	isPitr bool,
 	nameSources *restoreNameSources) error {
 	if cfg.CheckRequirements && !checkpointEnabledAndExists {
-		if err := checkDiskSpace(ctx, mgr, sourceTables, archiveSize); err != nil {
+		if err := checkDiskSpace(ctx, mgr, sourceTables, archiveSize, cfg.replicasAfterRestore); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -3115,6 +3153,8 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	putBackSingleReplicaOnAbort(ctx, cfg, mgr, glue.GetConsole(g).Out())
 
 	// get upstream cluster ID and startTS from backup storage if not already set
 	if cfg.UpstreamClusterID == 0 {
