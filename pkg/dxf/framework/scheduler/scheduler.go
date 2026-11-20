@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -707,41 +706,28 @@ func (s *BaseScheduler) keepExistingStepNodes(
 	if err != nil {
 		return nil, err
 	}
-	existingCnts := make(map[string]int)
+	existing := make(map[string]struct{})
 	for _, st := range activeSubtasks {
 		if st.Step == step {
-			existingCnts[st.ExecID]++
+			existing[st.ExecID] = struct{}{}
 		}
 	}
-	if len(existingCnts) == 0 {
+	if len(existing) == 0 {
 		return adjustedEligibleNodes, nil
 	}
 
-	existingNodes := make([]string, 0, len(existingCnts))
-	existingSet := make(map[string]struct{}, len(existingCnts))
+	res := make([]string, 0, len(eligibleNodes))
 	for _, node := range eligibleNodes {
-		if existingCnts[node] > 0 {
-			if _, ok := existingSet[node]; !ok {
-				existingSet[node] = struct{}{}
-				existingNodes = append(existingNodes, node)
-			}
+		if _, ok := existing[node]; ok {
+			res = append(res, node)
 		}
 	}
-	if len(existingNodes) == 0 {
-		return adjustedEligibleNodes, nil
-	}
-	sort.SliceStable(existingNodes, func(i, j int) bool {
-		return existingCnts[existingNodes[i]] > existingCnts[existingNodes[j]]
-	})
-
-	merged := make([]string, 0, len(existingNodes)+len(adjustedEligibleNodes))
-	merged = append(merged, existingNodes...)
 	for _, node := range adjustedEligibleNodes {
-		if _, ok := existingSet[node]; !ok {
-			merged = append(merged, node)
+		if _, ok := existing[node]; !ok {
+			res = append(res, node)
 		}
 	}
-	return merged, nil
+	return res, nil
 }
 
 func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
