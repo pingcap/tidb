@@ -125,11 +125,17 @@ impl MergeWorkerData {
 /// Go `mergeWriterStats`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MergeWriterStats {
+    /// Go `chunks`.
     pub chunks: i64,
+    /// Go `rowOps`.
     pub row_ops: i64,
+    /// Go `noopRows`.
     pub noop_rows: i64,
+    /// Go `insertRows`.
     pub insert_rows: i64,
+    /// Go `updateRows`.
     pub update_rows: i64,
+    /// Go `deleteRows`.
     pub delete_rows: i64,
 }
 
@@ -160,9 +166,13 @@ impl MergeWriterStats {
 /// Go `mergeRuntimeStats`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MergeRuntimeStats {
+    /// Go `readerTime`.
     pub reader_time: Duration,
+    /// Go `writerTime`.
     pub writer_time: Duration,
+    /// Go `mergeWorkerTime`.
     pub merge_worker_time: Vec<Duration>,
+    /// Go `writerDetail`.
     pub writer_detail: MergeWriterStats,
 }
 
@@ -506,25 +516,6 @@ impl Exec {
         core.mapping_cnt = self.agg_mappings.len();
         self.core = core;
         Ok(())
-    }
-
-    /// Go `aggOutputColIDs`.
-    pub(crate) fn agg_output_col_ids(&self) -> &[i64] {
-        &self.core.agg_output_col_ids
-    }
-
-    /// Go `mergeOneChunk`.
-    pub(crate) fn merge_one_chunk(&self, chk: Chunk, worker_data: &mut MergeWorkerData) -> Result<ChunkResult, ExecError> {
-        self.core.merge_one_chunk(chk, worker_data, 0, &self.recompute_ctx())
-    }
-
-    fn recompute_ctx(&self) -> crate::recompute::RecomputeCtx<'_> {
-        crate::recompute::RecomputeCtx {
-            agg_mappings: &self.agg_mappings,
-            meta: self.min_max_recompute.as_ref(),
-            key_types: &self.core.key_types,
-            child_types: &self.core.child_types,
-        }
     }
 }
 

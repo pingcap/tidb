@@ -1386,3 +1386,97 @@ fn test_reject_min_max_final_count_for_non_nullable_expr() {
     let got = open_err(exec);
     assert!(got.contains("max(non-nullable expr) must not set final-count dependency"), "{got}");
 }
+
+#[test]
+fn test_reject_min_max_recompute_validation() {
+    let ft_int = ft(FieldTypeCode::LongLong);
+    let min_desc = || agg_desc(names::MIN, vec![col_arg(0, ft(FieldTypeCode::LongLong))]);
+    let batch = |batch_result_col_idxes: Vec<i64>| {
+        Some(MinMaxRecomputeSpec {
+            strategy: MinMaxRecomputeStrategy::Batch,
+            batch_result_col_idxes,
+            ..MinMaxRecomputeSpec::default()
+        })
+    };
+    let meta = |builder: bool| MinMaxRecomputeExec {
+        key_input_col_ids: vec![0],
+        key_result_col_idxes: vec![0],
+        batch_builder: builder.then(|| Box::new(MockBatchRecomputeBuilder::default()) as Box<dyn MinMaxBatchExecBuilder>),
+    };
+    let cases: Vec<(&str, usize, Vec<Mapping>, MinMaxRecomputeExec, &str)> = vec![
+        (
+            "non-minmax mapping with recompute metadata",
+            2,
+            vec![Mapping { min_max_recompute: batch(vec![1]), ..mapping(count_star(), &[1], &[0]) }],
+            meta(true),
+            "set for non-MIN/MAX",
+        ),
+        (
+            "batch strategy without builder",
+            3,
+            vec![
+                mapping(count_star(), &[1], &[0]),
+                Mapping { min_max_recompute: batch(vec![1]), ..mapping(min_desc(), &[2], &[0]) },
+            ],
+            meta(false),
+            "batch strategy requires BatchBuilder",
+        ),
+        (
+            "batch result index overlaps key prefix",
+            3,
+            vec![
+                mapping(count_star(), &[1], &[0]),
+                Mapping { min_max_recompute: batch(vec![0]), ..mapping(min_desc(), &[2], &[0]) },
+            ],
+            meta(true),
+            "conflicts with key prefix",
+        ),
+    ];
+    for (name, col_cnt, agg_mappings, min_max, expected_error) in cases {
+        let mut exec = Exec::new(new_mock_source(&vec![ft_int.clone(); col_cnt], Vec::new()));
+        exec.agg_mappings = agg_mappings;
+        exec.delta_agg_col_count = 1;
+        exec.min_max_recompute = Some(min_max);
+        let got = open_err(exec);
+        assert!(got.contains(expected_error), "{name}: {got}");
+    }
+}
+
+#[test]
+fn test_encode_chunk_key_rows() {
+    let mut key_types = vec![ft(FieldTypeCode::LongLong), ft(FieldTypeCode::Varchar)];
+    key_types[1].set_collation_name("utf8mb4_bin");
+    let rows: [(Option<i64>, Option<&str>); 8] = [
+        (Some(1), Some("same")),
+        (Some(2), Some("same")),
+        (None, Some("same")),
+        (Some(1), None),
+        (Some(2), None),
+        (None, None),
+        (Some(1), Some("")),
+        (Some(1), Some("same")),
+    ];
+    let mut chk = Chunk::new_chunk_with_capacity(&key_types, rows.len());
+    for (int, string) in rows {
+        match int {
+            Some(v) => chk.append_int64(0, v),
+            None => chk.append_null(0),
+        }
+        match string {
+            Some(v) => chk.append_string(1, v),
+            None => chk.append_null(1),
+        }
+    }
+    let keys = crate::recompute::encode_chunk_key_rows(&chk, &[0, 1], &key_types, &[0, 1, 2, 3, 4, 5, 6, 7]).unwrap();
+    assert_eq!(keys[0], keys[7]);
+    let mut seen = std::collections::HashSet::new();
+    for (i, key) in keys.iter().enumerate().take(rows.len() - 1) {
+        assert!(!key.is_empty());
+        assert!(seen.insert(key.clone()), "duplicate key for row {i}");
+    }
+    let used_rows = [7, 3, 1, 4];
+    let subset = crate::recompute::encode_chunk_key_rows(&chk, &[0, 1], &key_types, &used_rows).unwrap();
+    for (i, &row_idx) in used_rows.iter().enumerate() {
+        assert_eq!(keys[row_idx], subset[i]);
+    }
+}
