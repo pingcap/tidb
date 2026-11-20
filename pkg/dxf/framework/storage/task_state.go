@@ -42,26 +42,59 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_global_task
-		 set state = %?,
-			 state_update_time = CURRENT_TIMESTAMP()
-		 where id = %? and state in (%?, %?, %?)`,
-		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
-		proto.TaskStateAwaitingResolution,
-	)
-	return err
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return cancelTaskInTxn(ctx, se, taskID)
+	})
 }
 
 // CancelTaskByKeySession cancels task by key using input session.
 func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
-	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+	exec := se.GetSQLExecutor()
+	rows, err := sqlexec.ExecSQL(ctx, exec,
+		`select id from mysql.tidb_global_task
+		 where task_key = %? and state in (%?, %?, %?, %?, %?, %?, %?)`,
+		taskKey,
+		proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateAwaitingResolution,
+		proto.TaskStatePausing, proto.TaskStatePaused, proto.TaskStateResuming,
+		proto.TaskStateModifying,
+	)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return cancelTaskInTxn(ctx, se, rows[0].GetInt64(0))
+}
+
+func cancelTaskInTxn(ctx context.Context, se sessionctx.Context, taskID int64) error {
+	exec := se.GetSQLExecutor()
+	_, err := sqlexec.ExecSQL(ctx, exec,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?, %?)`,
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
-		proto.TaskStateAwaitingResolution,
+		 where id = %? and state in (%?, %?, %?, %?, %?, %?, %?)`,
+		proto.TaskStateCancelling, taskID,
+		proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateAwaitingResolution,
+		proto.TaskStatePausing, proto.TaskStatePaused, proto.TaskStateResuming,
+		proto.TaskStateModifying,
+	)
+	if err != nil {
+		return err
+	}
+	if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return nil
+	}
+	// Cancel non-running subtasks in the same transaction so paused/pending subtasks
+	// do not stall reversion; running subtasks are cancelled by their executors.
+	_, err = sqlexec.ExecSQL(ctx, exec,
+		`update mysql.tidb_background_subtask
+		 set state = %?,
+			 state_update_time = unix_timestamp(),
+			 end_time = CURRENT_TIMESTAMP()
+		 where task_key = %? and state in (%?, %?)`,
+		proto.SubtaskStateCanceled, TaskIDToKey(taskID),
+		proto.SubtaskStatePending, proto.SubtaskStatePaused,
 	)
 	return err
 }
