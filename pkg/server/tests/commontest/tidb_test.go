@@ -1174,6 +1174,53 @@ func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 	require.Nil(t, rs) // should be no delay
 }
 
+func TestZeroLengthCommandPacket(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Keep the connection of the driver, to write a packet the driver would never send.
+	var rawConn net.Conn
+	mysql.RegisterDialContext("zero-length-packet", func(ctx context.Context, addr string) (net.Conn, error) {
+		var d net.Dialer
+		c, err := d.DialContext(ctx, "tcp", addr)
+		rawConn = c
+		return c, err
+	})
+	db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+		config.Net = "zero-length-packet"
+	}))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+	require.NoError(t, conn.PingContext(ctx))
+	require.NotNil(t, rawConn)
+
+	// A header with payload length 0 and sequence 0, and no payload.
+	require.NoError(t, rawConn.SetDeadline(time.Now().Add(10*time.Second)))
+	_, err = rawConn.Write([]byte{0x00, 0x00, 0x00, 0x00})
+	require.NoError(t, err)
+	var header [4]byte
+	_, err = io.ReadFull(rawConn, header[:])
+	require.NoError(t, err)
+	payload := make([]byte, int(header[0])|int(header[1])<<8|int(header[2])<<16)
+	_, err = io.ReadFull(rawConn, payload)
+	require.NoError(t, err)
+	require.NotEmpty(t, payload)
+	require.Equal(t, byte(0xff), payload[0], "expect an ERR packet")
+	require.NoError(t, rawConn.SetDeadline(time.Time{}))
+
+	// The connection keeps serving.
+	var one int
+	require.NoError(t, conn.QueryRowContext(ctx, "select 1").Scan(&one))
+	require.Equal(t, 1, one)
+}
+
 func TestTopSQLCatchRunningSQL(t *testing.T) {
 	ts := servertestkit.CreateTidbTestTopSQLSuite(t)
 

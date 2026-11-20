@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "resultset",
@@ -17,5 +17,19 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/sqlexec",
         "@com_github_tikv_client_go_v2//util",
+    ],
+)
+
+go_test(
+    name = "resultset_test",
+    timeout = "short",
+    srcs = ["cursor_test.go"],
+    embed = [":resultset"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "@com_github_stretchr_testify//require",
     ],
 )

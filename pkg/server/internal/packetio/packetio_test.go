@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -476,6 +477,38 @@ func TestSubHeaderWithWrongSequenceNumber(t *testing.T) {
 	require.Equal(t, uint8(1), pkt.compressedSequence)
 	require.Equal(t, []byte{0x03, 0x73, 0x65, 0x6c, 0x65, 0x63,
 		0x74, 0x20, 0x31, 0x3b}, readBytes)
+}
+
+// emptyCompressedPackets is a peer that only sends compressed packets with an empty payload:
+//
+//	00 00 00   Compressed length
+//	xx         Compressed sequence number
+//	00 00 00   Uncompressed length
+type emptyCompressedPackets struct {
+	testutil.BytesConn
+	seq  uint8
+	sent int
+}
+
+func (c *emptyCompressedPackets) Read(b []byte) (int, error) {
+	if c.Len() == 0 {
+		if c.sent == 1000 {
+			return 0, errors.New("the reader kept asking for packets")
+		}
+		c.Buffer.Write([]byte{0x00, 0x00, 0x00, c.seq, 0x00, 0x00, 0x00})
+		c.seq++
+		c.sent++
+	}
+	return c.Buffer.Read(b)
+}
+
+func TestEmptyCompressedPacket(t *testing.T) {
+	for _, algorithm := range []int{mysql.CompressionZlib, mysql.CompressionZstd} {
+		pkt := New(util.NewBufferedReadConn(&emptyCompressedPackets{}))
+		pkt.SetCompressionAlgorithm(algorithm)
+		_, err := pkt.ReadPacket()
+		require.ErrorContains(t, err, "empty compressed packet")
+	}
 }
 
 func TestCompressedWriterThreshold(t *testing.T) {
