@@ -434,28 +434,73 @@ func TestInet6AtoN(t *testing.T) {
 		{"Not IP address", nil},
 		{"1.0002.3.4", nil},
 		{"1.2.256", nil},
+		{"\x00", nil},
+		{"fe80::3%eth0", nil},
+		{"198.51.100.0/24", nil},
 		{"::ffff:255.255.255.255", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
 	}
 	fc := funcs[ast.Inet6Aton]
+	invalidCount := 0
 	for _, test := range tests {
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		expect := types.NewDatum(test.expect)
 		if expect.IsNull() {
+			require.NoError(t, err)
+			require.True(t, result.IsNull())
+			require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
+			invalidCount++
+			// Strict DML must propagate invalid input rather than append a warning.
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.SetWarnings(nil)
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(false))
+			_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+			require.Zero(t, sc.WarningCount())
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		} else {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, expect, result)
+			require.Zero(t, ctx.GetSessionVars().StmtCtx.WarningCount())
 		}
 	}
 
+	ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+	ft := types.NewFieldType(mysql.TypeVarString)
+	vec, err := fc.getFunction(ctx, []Expression{&Column{Index: 0, RetType: ft}})
+	require.NoError(t, err)
+	require.True(t, vec.vectorized() && vec.isChildrenVectorized())
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, len(tests)+1)
+	for _, test := range tests {
+		input.AppendString(0, test.ip)
+	}
+	input.AppendNull(0)
+	output := chunk.NewColumn(vec.getRetTp(), len(tests)+1)
+	require.NoError(t, vec.vecEvalString(ctx, input, output))
+	for i, test := range tests {
+		require.Equal(t, test.expect == nil, output.IsNull(i))
+		if test.expect != nil {
+			require.Equal(t, string(test.expect.([]byte)), output.GetString(i))
+		}
+	}
+	require.True(t, output.IsNull(len(tests)))
+	require.Equal(t, uint16(invalidCount), ctx.GetSessionVars().StmtCtx.WarningCount())
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.SetWarnings(nil)
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(false))
+	require.True(t, terror.ErrorEqual(vec.vecEvalString(ctx, input, output), errWrongValueForType))
+	require.Zero(t, sc.WarningCount())
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+	ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
+	require.Zero(t, ctx.GetSessionVars().StmtCtx.WarningCount())
 }
 
 func TestIsIPv4Mapped(t *testing.T) {

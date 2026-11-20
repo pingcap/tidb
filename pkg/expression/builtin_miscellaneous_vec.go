@@ -597,12 +597,12 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			continue
 		}
 		val := buf.GetString(i)
-		if len(val) == 0 {
-			result.AppendNull()
-			continue
-		}
 		ip := net.ParseIP(val)
 		if ip == nil {
+			ec := errCtx(ctx)
+			if err := ec.HandleError(errWrongValueForType.GenWithStackByArgs("string", val, "inet6_aton")); err != nil {
+				return err
+			}
 			result.AppendNull()
 			continue
 		}
@@ -626,6 +626,7 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		}
 
 		if isMappedIpv6 {
+			clear(res[:10])
 			copy(res[12:], ipTo4)
 			res[11] = 0xff
 			res[10] = 0xff
