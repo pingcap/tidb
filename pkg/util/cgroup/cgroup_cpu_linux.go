@@ -98,3 +98,16 @@ func inContainer(path string) bool {
 
 	return false
 }
+
+func InWSL2() bool {
+	v, err := os.ReadFile(procPathMountInfo)
+	if err != nil {
+		return false
+	}
+	for line := range strings.SplitSeq(string(v), "\n") {
+		if strings.Contains(line, "microsoft-standard-WSL2") {
+			return true
+		}
+	}
+	return false
+}
