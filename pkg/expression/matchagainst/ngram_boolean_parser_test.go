@@ -1,0 +1,317 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package matchagainst
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func dumpModifier(mod BooleanModifier) string {
+	switch mod {
+	case BooleanModifierMust:
+		return "+"
+	case BooleanModifierMustNot:
+		return "-"
+	case BooleanModifierNegate:
+		return "~"
+	case BooleanModifierBoost:
+		return ">"
+	case BooleanModifierDeBoost:
+		return "<"
+	default:
+		return ""
+	}
+}
+
+func dumpClause(c BooleanClause) string {
+	return dumpModifier(c.Modifier) + dumpExpr(c.Expr)
+}
+
+func dumpExpr(expr BooleanExpr) string {
+	switch x := expr.(type) {
+	case *BooleanTerm:
+		var b strings.Builder
+		b.WriteString(x.text)
+		if x.Wildcard {
+			b.WriteByte('*')
+		}
+		return b.String()
+	case *BooleanPhrase:
+		return fmt.Sprintf("%q", x.text)
+	default:
+		return "<unknown>"
+	}
+}
+
+func dumpClauses(clauses []BooleanClause) string {
+	if len(clauses) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(clauses))
+	for _, c := range clauses {
+		out = append(out, dumpClause(c))
+	}
+	return strings.Join(out, " ")
+}
+
+func dumpGroup(g *BooleanGroup) string {
+	return fmt.Sprintf("M[%s] S[%s] N[%s]", dumpClauses(g.Must), dumpClauses(g.Should), dumpClauses(g.MustNot))
+}
+
+func TestParseNgramBooleanMode(t *testing.T) {
+	type testCase struct {
+		name            string
+		input           string
+		want            string
+		wantErrContains string
+	}
+
+	cases := []testCase{
+		{
+			name:  "empty",
+			input: "",
+			want:  "M[] S[] N[]",
+		},
+		{
+			name:  "only whitespace",
+			input: "  \t\n  ",
+			want:  "M[] S[] N[]",
+		},
+		{
+			name:  "basic buckets",
+			input: "foo +bar -baz",
+			want:  "M[+bar] S[foo] N[-baz]",
+		},
+		{
+			name:  "prefix only after space",
+			input: "a+foo",
+			want:  "M[] S[a foo] N[]",
+		},
+		{
+			name:  "prefix after delimiter needs a space",
+			input: "foo,+bar",
+			want:  "M[] S[foo bar] N[]",
+		},
+		{
+			name:  "prefix after delimiter with space works",
+			input: "foo, +bar",
+			want:  "M[+bar] S[foo] N[]",
+		},
+		{
+			name:  "trunc word",
+			input: "foo*",
+			want:  "M[] S[foo*] N[]",
+		},
+		{
+			name:  "non-ASCII term is accepted",
+			input: "你好",
+			want:  "M[] S[你好] N[]",
+		},
+		{
+			name:  "underscore is part of term",
+			input: "foo_bar baz_qux",
+			want:  "M[] S[foo_bar baz_qux] N[]",
+		},
+		{
+			name:  "digits and letters are one term",
+			input: "123foo",
+			want:  "M[] S[123foo] N[]",
+		},
+		{
+			name:  "newline is treated as delimiter",
+			input: "foo\nbar",
+			want:  "M[] S[foo bar] N[]",
+		},
+		{
+			name:  "leading '*' before a term is ignored",
+			input: "*foo",
+			want:  "M[] S[foo] N[]",
+		},
+		{
+			name:  "wildcard requires adjacency to the word",
+			input: "foo * bar",
+			want:  "M[] S[foo bar] N[]",
+		},
+		{
+			name:  "multiple prefix signs are tolerated and the last one wins",
+			input: "-+foo",
+			want:  "M[+foo] S[] N[]",
+		},
+		{
+			name:  "prefix can be neutralized by delimiter before the term",
+			input: "+*foo",
+			want:  "M[] S[foo] N[]",
+		},
+		// '>', '<' and '~' only change relevance: the word stays optional unless
+		// a '+' or '-' before them requires or excludes it.
+		{
+			name:  "ranking operator '>' leaves the word optional",
+			input: ">foo",
+			want:  "M[] S[foo] N[]",
+		},
+		{
+			name:  "ranking operator '<' leaves the word optional",
+			input: "<bar",
+			want:  "M[] S[bar] N[]",
+		},
+		{
+			name:  "ranking operator '~' leaves the word optional",
+			input: "+qux ~baz",
+			want:  "M[+qux] S[baz] N[]",
+		},
+		{
+			name:            "reject unsupported operator '('",
+			input:           "(foo)",
+			wantErrContains: "unsupported operator '('",
+		},
+		{
+			name:            "reject unsupported operator ')'",
+			input:           "foo)",
+			wantErrContains: "unsupported operator ')'",
+		},
+		{
+			name:  "only negative terms",
+			input: "-foo -bar",
+			want:  "M[] S[] N[-foo -bar]",
+		},
+		{
+			name:  "quoted phrase",
+			input: `"foo bar"`,
+			want:  `M[] S["foo bar"] N[]`,
+		},
+		{
+			name:  "empty quoted phrase is ignored",
+			input: `""`,
+			want:  `M[] S[] N[]`,
+		},
+		{
+			name:  "quoted phrase with prefix",
+			input: `+"foo bar"`,
+			want:  `M[+"foo bar"] S[] N[]`,
+		},
+		{
+			name:  "quoted phrase can be must-not",
+			input: `-"foo bar"`,
+			want:  `M[] S[] N[-"foo bar"]`,
+		},
+		{
+			name:  "unclosed quote auto close",
+			input: `"foo bar`,
+			want:  `M[] S["foo bar"] N[]`,
+		},
+		{
+			name:  "operators inside quote are ignored, words still captured",
+			input: `"foo +bar -baz"`,
+			want:  `M[] S["foo bar baz"] N[]`,
+		},
+		{
+			name:  "word adjacent to quoted phrase",
+			input: `"foo"bar`,
+			want:  `M[] S["foo" bar] N[]`,
+		},
+		{
+			name:  "quoted phrase can be adjacent to words on both sides",
+			input: `foo"bar"baz`,
+			want:  `M[] S[foo "bar" baz] N[]`,
+		},
+		{
+			name:  "unsupported operators inside quote are treated as delimiters",
+			input: `"a>b ~c (d)"`,
+			want:  `M[] S["a b c d"] N[]`,
+		},
+		{
+			name:  "empty quoted phrase with '+' is ignored",
+			input: `+""`,
+			want:  `M[] S[] N[]`,
+		},
+		{
+			name:  "empty quoted phrase with '-' is ignored",
+			input: `-""`,
+			want:  `M[] S[] N[]`,
+		},
+		{
+			name:  "word after quoted phrase can take prefix if separated by space",
+			input: `"foo" +bar`,
+			want:  `M[+bar] S["foo"] N[]`,
+		},
+		{
+			name:  "'@' after a phrase is a delimiter",
+			input: `"foo"@2 bar`,
+			want:  `M[] S["foo" 2 bar] N[]`,
+		},
+		{
+			name:  "'@' inside a word is a delimiter",
+			input: `user@example.com`,
+			want:  `M[] S[user example com] N[]`,
+		},
+		{
+			name:  "'@' after a space does not carry a prefix operator",
+			input: `+foo @+bar`,
+			want:  `M[+foo] S[bar] N[]`,
+		},
+		{
+			name:  "'@' at beginning is a delimiter",
+			input: `@1`,
+			want:  `M[] S[1] N[]`,
+		},
+		{
+			name:  "ranking operators after '+' keep the word required",
+			input: "+>~foo",
+			want:  "M[+foo] S[] N[]",
+		},
+		{
+			name:  "ranking operator after '+' keeps the word required",
+			input: "+>apple banana",
+			want:  "M[+apple] S[banana] N[]",
+		},
+		{
+			name:  "ranking operator after '-' keeps the word excluded",
+			input: "banana ->apple",
+			want:  "M[] S[banana] N[-apple]",
+		},
+		{
+			name:  "'+' after a ranking operator still requires the word",
+			input: "<+apple",
+			want:  "M[+apple] S[] N[]",
+		},
+		{
+			name:  "a ranking operator inside a word is a delimiter",
+			input: "+apple>banana",
+			want:  "M[+apple] S[banana] N[]",
+		},
+		{
+			name:  "ranking operator before a phrase keeps it required",
+			input: `+>"foo bar"`,
+			want:  `M[+"foo bar"] S[] N[]`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := ParseNgramBooleanMode(tc.input)
+			if tc.wantErrContains != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErrContains)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, dumpGroup(root))
+		})
+	}
+}
