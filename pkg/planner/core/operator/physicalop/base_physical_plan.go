@@ -409,6 +409,44 @@ func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.Physic
 	return child
 }
 
+// admitIndexJoinPropForAgg is admitIndexJoinProp for an aggregation on the inner side of an
+// index join. The join's other conditions in IndexJoinProp are only used to build runtime
+// ranges (e.g. `a.c2 > t1.c2` on index(c1, c2)). A range on a column that is not a direct
+// GROUP BY column would filter rows below the aggregation and split groups, so such conditions
+// are dropped from the child prop. They are still evaluated by the index join above the
+// aggregation, and equality-only access paths remain available.
+func admitIndexJoinPropForAgg(child, prop *property.PhysicalProperty, la *logicalop.LogicalAggregation) *property.PhysicalProperty {
+	child = admitIndexJoinProp(child, prop)
+	if child == nil || child.IndexJoinProp == nil || len(child.IndexJoinProp.OtherConditions) == 0 {
+		return child
+	}
+	groupByCols := make(map[int64]struct{}, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols[col.UniqueID] = struct{}{}
+		}
+	}
+	kept := make([]expression.Expression, 0, len(child.IndexJoinProp.OtherConditions))
+	for _, cond := range child.IndexJoinProp.OtherConditions {
+		safe := true
+		for _, col := range expression.ExtractColumns(cond) {
+			if !la.Schema().Contains(col) {
+				// columns from the outer side.
+				continue
+			}
+			if _, ok := groupByCols[col.UniqueID]; !ok {
+				safe = false
+				break
+			}
+		}
+		if safe {
+			kept = append(kept, cond)
+		}
+	}
+	child.IndexJoinProp.OtherConditions = kept
+	return child
+}
+
 func admitIndexJoinTypes(types []property.TaskType, prop *property.PhysicalProperty) []property.TaskType {
 	if prop.TaskTp == property.MppTaskType {
 		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
