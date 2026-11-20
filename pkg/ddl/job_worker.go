@@ -189,6 +189,10 @@ type worker struct {
 	// Policy SQL can flush earlier metadata writes into the transaction.
 	// A failed step must roll back the transaction rather than only its last statement.
 	maskingPolicyTxn bool
+	// A multi-schema change restores the table and its earlier sub-jobs when a
+	// sub-job fails, and then reports no error. Policy SQL of this step is
+	// outside the table metadata and has to be undone with the transaction.
+	maskingPolicyStepRestored bool
 
 	*ddlCtx
 }
@@ -628,6 +632,7 @@ func (w *worker) transitOneJobStep(
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	w.maskingPolicyTxn = false
+	w.maskingPolicyStepRestored = false
 	wasRollingback := job.IsRollingback()
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
 
@@ -647,7 +652,7 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if (runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone()) ||
-		(w.maskingPolicyTxn && (runJobErr != nil || job.IsCancelling() || job.IsRollingback() && !wasRollingback)) {
+		(w.maskingPolicyTxn && (runJobErr != nil || w.maskingPolicyStepRestored || job.IsCancelling() || job.IsRollingback() && !wasRollingback)) {
 		// Preserve the existing rollback behavior for other DDLs, but discard
 		// the entire transaction if policy SQL may have flushed partial writes.
 

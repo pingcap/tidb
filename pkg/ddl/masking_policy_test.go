@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1123,4 +1124,43 @@ func TestMaskingPolicyCreatedBeforeQueuedModifyColumnRuns(t *testing.T) {
 			tk.MustExec("admin check table t_queued_modify")
 		})
 	}
+}
+
+func TestMaskingPolicyMultiSchemaSubJobFailureIsAtomic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_sub_atomic(a varchar(20))")
+	tk.MustExec("insert into t_sub_atomic values ('secret')")
+	tk.MustExec("create masking policy p on t_sub_atomic(a) as mask_full(a)")
+	originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(10 * time.Millisecond)
+	defer ddl.SetWaitTimeWhenErrorOccurred(originalWait)
+
+	// A sub-job fails once after the rename has rewritten the policy. The
+	// table definition is restored for the retry, and the policy must be
+	// restored with it: after every step the policy names a column the table
+	// has. Otherwise a cancellation at that point leaves the column unreadable.
+	observer := testkit.NewTestKit(t, store)
+	var steps, mismatches atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		if job.Type != model.ActionMultiSchemaChange {
+			return
+		}
+		steps.Add(1)
+		rows := observer.MustQuery(`select count(*) from mysql.tidb_masking_policy p
+			left join information_schema.columns c
+			on c.table_schema = p.db_name and c.table_name = p.table_name and c.column_name = p.column_name
+			where p.table_name = 't_sub_atomic' and c.column_name is null`).Rows()
+		if rows[0][0] != "0" {
+			mismatches.Add(1)
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError", "1*return()")
+	tk.MustExec("alter table t_sub_atomic change column a aa varchar(20), add column b int")
+	require.Positive(t, steps.Load())
+	require.Zero(t, mismatches.Load())
+	tk.MustQuery("select column_name,expression from mysql.tidb_masking_policy where table_name='t_sub_atomic'").
+		Check(testkit.Rows("aa MASK_FULL(`aa`)"))
+	tk.MustQuery("select aa from t_sub_atomic").Check(testkit.Rows("XXXXXX"))
 }
