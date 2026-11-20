@@ -784,6 +784,9 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	return req, *sstMeta, nil
 }
 
+// batchDownloadSST merges files with matching rewrite rules per column family
+// and downloads each group to all region peers. Each attempt is observed before
+// peer retries or cancellation can obscure its error.
 func (importer *SnapFileImporter) batchDownloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -864,14 +867,18 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						defer cancel()
 						if len(req.Ssts) == 0 {
 							// fallback to single download
-							return importer.importClient.DownloadSST(dctx, storeID, req)
+							resp, err := importer.importClient.DownloadSST(dctx, storeID, req)
+							observeDownloadError(storeID, resp, err)
+							return resp, err
 						}
 						logger.Info("Sending batch download SST request.",
 							zap.Uint64("store_id", storeID),
 							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
 							logutil.Region(regionInfo.Region),
 						)
-						return importer.importClient.BatchDownloadSST(dctx, storeID, req)
+						resp, err := importer.importClient.BatchDownloadSST(dctx, storeID, req)
+						observeDownloadError(storeID, resp, err)
+						return resp, err
 					})
 					if err != nil {
 						return errors.Trace(err)
@@ -907,6 +914,9 @@ func (importer *SnapFileImporter) batchDownloadSST(
 	return maps.Values(resultMetasMap), nil
 }
 
+// batchDownloadNewestVersionSST downloads the latest visible MVCC versions to
+// all region peers, using write CF timestamps to determine visibility. Groups
+// without write CF files are skipped, and failed attempts remain diagnostic samples.
 func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -990,7 +1000,9 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 						logutil.BriefSSTMetas("ssts", maps.Values(downloadReq.Ssts)),
 						logutil.Region(regionInfo.Region),
 					)
-					return importer.importClient.BatchDownloadLatestMVCC(dctx, storeID, downloadReq)
+					resp, err := importer.importClient.BatchDownloadLatestMVCC(dctx, storeID, downloadReq)
+					observeDownloadError(storeID, resp, err)
+					return resp, err
 				})
 				if err != nil {
 					return errors.Trace(err)
@@ -1035,6 +1047,9 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	return finalResultMetas, nil
 }
 
+// downloadSST downloads overlapping files to the region peers, or only the leader
+// for next-generation restore. It retains each attempt's error while leaving
+// peer retry decisions and returned errors to the existing download flow.
 func (importer *SnapFileImporter) downloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -1088,7 +1103,9 @@ func (importer *SnapFileImporter) downloadSST(
 				resp, err = importer.downloadWithOptionalPeerRetry(ectx, nil, func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
-					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					resp, err := importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					observeDownloadError(peer.GetStoreId(), resp, err)
+					return resp, err
 				})
 				if err != nil {
 					return errors.Trace(err)
@@ -1134,6 +1151,9 @@ func (importer *SnapFileImporter) downloadSST(
 	return maps.Values(resultMetasMap), nil
 }
 
+// downloadRawKVSST clips files to the requested raw key range and downloads them
+// to every region peer. Response errors are observed before sibling cancellation
+// can replace the error returned by the concurrent downloads.
 func (importer *SnapFileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -1183,6 +1203,7 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 				peer := p
 				eg.Go(func() error {
 					resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+					observeDownloadError(peer.GetStoreId(), resp, err)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1217,6 +1238,19 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 	return downloadMetas, nil
 }
 
+// observeDownloadError retains both transport and TiKV response errors without
+// changing either value used by the caller's retry and failure handling.
+func observeDownloadError(storeID uint64, resp *import_sstpb.DownloadResponse, err error) {
+	summary.ObserveError("tikv", "download_sst", storeID, err)
+	if resp.GetError() != nil {
+		summary.ObserveError("tikv", "download_sst", storeID,
+			errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage()))
+	}
+}
+
+// ingest submits downloaded SSTs and follows leader changes when supported.
+// Other TiKV response errors are retained with their diagnostic category while
+// preserving the existing error returned to the caller.
 func (importer *SnapFileImporter) ingest(
 	ctx context.Context,
 	info *split.RegionInfo,
@@ -1289,11 +1323,19 @@ func (importer *SnapFileImporter) ingest(
 			return errors.Trace(berrors.ErrKVKeyNotInRegion)
 		default:
 			// Other errors like `ServerIsBusy`, `RegionNotFound`, etc. should be retryable
+			diagnosticErr := berrors.ErrKVIngestFailed
+			if errPb.GetDiskFull() != nil {
+				diagnosticErr = berrors.ErrKVDiskFull
+			}
+			summary.ObserveError("tikv", "ingest_sst", info.Leader.GetStoreId(),
+				errors.Annotatef(diagnosticErr, "ingest error %s", errPb))
 			return errors.Annotatef(berrors.ErrKVIngestFailed, "ingest error %s", errPb)
 		}
 	}
 }
 
+// ingestSSTs sends one MultiIngest request to the current region leader and
+// retains any transport error before returning it to the caller.
 func (importer *SnapFileImporter) ingestSSTs(
 	ctx context.Context,
 	sstMetas []*import_sstpb.SSTMeta,
@@ -1320,6 +1362,7 @@ func (importer *SnapFileImporter) ingestSSTs(
 	}
 	logutil.CL(ctx).Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
 	resp, err := importer.importClient.MultiIngest(ctx, leader.GetStoreId(), req)
+	summary.ObserveError("tikv", "ingest_sst", leader.GetStoreId(), err)
 	return resp, errors.Trace(err)
 }
 
