@@ -58,6 +58,7 @@ type DistSQLContext struct {
 	TiFlashMaxBytesBeforeExternalJoin    int64
 	TiFlashMaxBytesBeforeExternalGroupBy int64
 	TiFlashMaxBytesBeforeExternalSort    int64
+	TiFlashMaxBytesBeforeCTESpill        int64
 	TiFlashMaxQueryMemoryPerNode         int64
 	TiFlashQuerySpillRatio               float64
 	TiFlashHashJoinVersion               string
