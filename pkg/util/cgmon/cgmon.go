@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
@@ -126,6 +127,11 @@ func refreshCgroupCPU() error {
 		if ratio < float64(quota) {
 			quota = int(math.Ceil(ratio))
 		}
+	}
+
+	// performance.max-procs caps GOMAXPROCS in main, so the metric must respect it too.
+	if maxProcs := int(config.GetGlobalConfig().Performance.MaxProcs); maxProcs > 0 && maxProcs < quota {
+		quota = maxProcs
 	}
 
 	if quota != lastCPU {

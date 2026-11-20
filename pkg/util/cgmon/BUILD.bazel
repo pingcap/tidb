@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/cgmon",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/metrics",
         "//pkg/util",
         "//pkg/util/cgroup",
@@ -22,6 +23,7 @@ go_test(
     embed = [":cgmon"],
     flaky = True,
     deps = [
+        "//pkg/config",
         "@com_github_shirou_gopsutil_v3//mem",
         "@com_github_stretchr_testify//require",
     ],
