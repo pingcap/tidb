@@ -20,14 +20,181 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSkipScanCandidateProperties(t *testing.T) {
+	retType := types.NewFieldType(mysql.TypeLonglong)
+	groupCol := &expression.Column{UniqueID: 1, ID: 1, RetType: retType}
+	secondCol := &expression.Column{UniqueID: 2, ID: 2, RetType: retType}
+	normal := &property.PhysicalProperty{
+		TaskTp:    property.CopSingleReadTaskType,
+		SortItems: []property.SortItem{{Col: groupCol}},
+	}
+	strict := normal.CloneEssentialFields()
+	strict.SkipScanInfo = &property.SkipScanInfo{GroupByCols: []*expression.Column{groupCol}}
+	otherGroup := normal.CloneEssentialFields()
+	otherGroup.SkipScanInfo = &property.SkipScanInfo{GroupByCols: []*expression.Column{secondCol}}
+	require.Equal(t, strict.HashCode(), strict.CloneEssentialFields().HashCode())
+	require.NotEqual(t, strict.HashCode(), normal.HashCode())
+	require.NotEqual(t, strict.HashCode(), otherGroup.HashCode())
+
+	cols := []*expression.Column{groupCol, secondCol}
+	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength}
+	ds := &logicalop.DataSource{
+		TableInfo:        &model.TableInfo{IsCommonHandle: true},
+		CommonHandleCols: cols,
+		CommonHandleLens: lengths,
+	}
+	secondary := &util.AccessPath{
+		Index: &model.IndexInfo{
+			Tp:      ast.IndexTypeBtree,
+			Columns: []*model.IndexColumn{{Offset: 0}, {Offset: 1}},
+		},
+		IdxCols:      cols,
+		IdxColLens:   lengths,
+		Ranges:       ranger.FullRange(),
+		IsSingleScan: true,
+	}
+	clustered := &util.AccessPath{
+		Index: &model.IndexInfo{
+			Tp:      ast.IndexTypeBtree,
+			Columns: []*model.IndexColumn{{Offset: 0}, {Offset: 1}},
+			Primary: true,
+			Unique:  true,
+		},
+		Ranges:             ranger.FullRange(),
+		IsCommonHandlePath: true,
+	}
+	require.True(t, matchesSkipScanPath(ds, secondary, strict.SkipScanInfo))
+	require.True(t, matchesSkipScanPath(ds, clustered, strict.SkipScanInfo))
+	require.False(t, matchesSkipScanPath(ds, secondary, otherGroup.SkipScanInfo))
+	require.False(t, matchesSkipScanPath(ds, clustered, otherGroup.SkipScanInfo))
+
+	ctx := mock.NewContext()
+	projection := (logicalop.LogicalProjection{Exprs: []expression.Expression{secondCol}}).Init(ctx, 0)
+	projection.SetSchema(expression.NewSchema(groupCol))
+	mapped, ok := projection.TryToGetChildProp(strict)
+	require.True(t, ok)
+	require.Equal(t, secondCol, mapped.SkipScanInfo.GroupByCols[0])
+	require.Equal(t, secondCol, mapped.SortItems[0].Col)
+	require.Equal(t, groupCol, strict.SkipScanInfo.GroupByCols[0])
+	projection.Exprs[0] = &expression.Constant{RetType: retType}
+	_, ok = projection.TryToGetChildProp(strict)
+	require.False(t, ok)
+	selection := (logicalop.LogicalSelection{}).Init(ctx, 0)
+	task, err := physicalop.FindBestTask(selection, strict)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+
+	stats := &property.StatsInfo{RowCount: 100, ColNDVs: map[int64]float64{1: 5, 2: 50}}
+	scan := (&physicalop.PhysicalIndexScan{}).Init(ctx, 0)
+	scan.SetStats(stats)
+	setSkipScanRows(scan, 5)
+	require.Equal(t, float64(5), scan.StatsCount())
+	require.Equal(t, map[int64]float64{1: 5, 2: 5}, scan.StatsInfo().ColNDVs)
+	require.Equal(t, float64(100), stats.RowCount)
+	require.Equal(t, float64(50), stats.ColNDVs[2])
+
+	t.Run("same access path competes on cost", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.Store = &mock.Store{Client: &mock.Client{}}
+		ctx.GetSessionVars().CostModelVersion = modelVer1
+		table := &model.TableInfo{ID: 1}
+		index := &model.IndexInfo{ID: 1}
+		schema := expression.NewSchema(groupCol)
+		ds := (logicalop.DataSource{TableInfo: table}).Init(ctx, 0)
+		groups := []expression.Expression{groupCol}
+		agg := (logicalop.LogicalAggregation{GroupByItems: groups}).Init(ctx, 0)
+		agg.SetChildren(ds)
+
+		// Cache tasks for the exact same access path with controlled costs.
+		// Enumerate the strict candidate first to exercise the former pruning.
+		for _, skipWins := range []bool{false, true} {
+			var candidates []base.PhysicalPlan
+			for _, req := range []*property.PhysicalProperty{strict, normal} {
+				skip := req.SkipScanInfo != nil
+				scan := physicalop.PhysicalIndexScan{
+					Table: table, Index: index, KeepOrder: true, SkipScan: skip,
+					Ranges: ranger.FullRange(), TblColHists: &statistics.HistColl{},
+				}.Init(ctx, 0)
+				scan.SetSchema(schema)
+				scan.SetStats(&property.StatsInfo{RowCount: 5})
+				scan.PlanCostInit = true
+				scan.PlanCost = 1
+				if skip != skipWins {
+					scan.PlanCost = 10000
+				}
+				ds.StoreTask(req, &physicalop.CopTask{IndexPlan: scan, KeepOrder: true, SkipScan: skip})
+				candidate := physicalop.BasePhysicalAgg{GroupByItems: groups}
+				candidates = append(candidates, candidate.InitForStream(ctx, scan.StatsInfo(), 0, schema, req))
+			}
+			root := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: normal.SortItems}
+			best, _, err := enumeratePhysicalPlans4TaskHelper(agg, candidates, root, false)
+			require.NoError(t, err)
+			require.False(t, best.Invalid())
+			reader := best.Plan().Children()[0].(*physicalop.PhysicalIndexReader)
+			require.Equal(t, skipWins, reader.IndexPlans[0].(*physicalop.PhysicalIndexScan).SkipScan)
+		}
+	})
+
+	t.Run("table skip scan cost uses operator cardinality", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().CostModelVersion = modelVer2
+		ctx.GetSessionVars().StmtCtx.SetIndexForce()
+		normal := physicalop.PhysicalTableScan{
+			Table:       &model.TableInfo{},
+			TblCols:     []*expression.Column{groupCol},
+			Ranges:      ranger.FullRange(),
+			TblColHists: statistics.NewHistColl(0, 5000, 0, 0, 0),
+		}.Init(ctx, 0)
+		normal.SetStats(&property.StatsInfo{RowCount: 5})
+		skip := physicalop.PhysicalTableScan{
+			Table:                     normal.Table,
+			TblCols:                   normal.TblCols,
+			Ranges:                    normal.Ranges,
+			TblColHists:               normal.TblColHists,
+			SkipScan:                  true,
+			SkipScanPrefixColumnCount: 1,
+		}.Init(ctx, 0)
+		skip.SetStats(&property.StatsInfo{RowCount: 5000})
+		setSkipScanRows(skip, normal.StatsCount())
+
+		cost := func(scan *physicalop.PhysicalTableScan) float64 {
+			t.Helper()
+			result, invalid, err := getTaskPlanCost(&physicalop.CopTask{TablePlan: scan, IndexPlanFinished: true})
+			require.NoError(t, err)
+			require.False(t, invalid)
+			return result
+		}
+		require.Equal(t, cost(normal), cost(skip))
+	})
+
+	t.Run("estimated skip rows do not trigger the low estimate penalty", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().SetAllowPreferRangeScan(true)
+		hists := statistics.NewHistColl(0, 5000, 10, 1, 0)
+		hists.SetCol(secondCol.ID, &statistics.Column{
+			Histogram:         *statistics.NewHistogram(secondCol.ID, 0, 5000, 0, retType, 0, 0),
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		})
+		scan := physicalop.PhysicalTableScan{TblColHists: hists}.Init(ctx, 0)
+		require.Positive(t, getTableScanPenalty(scan, 5, 0))
+		scan.SkipScan = true
+		require.Zero(t, getTableScanPenalty(scan, 5, 0))
+	})
+}
 
 func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	ctx := mock.NewContext()

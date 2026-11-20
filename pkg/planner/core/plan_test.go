@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,94 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStreamAggSkipScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table skip_idx (g int, n int, key idx(g, n))")
+	tk.MustExec("create table skip_pk (g int, n int, primary key(g, n) clustered, key idx(g, n))")
+	tk.MustExec("create table skip_pseudo (g int, n int, key idx(g, n))")
+	tk.MustExec("insert into skip_pseudo values (0, 1), (0, 2), (1, 3)")
+	for _, table := range []string{"skip_idx", "skip_pk"} {
+		values := make([]string, 0, 120)
+		for i := range 120 {
+			values = append(values, fmt.Sprintf("(%d,%d)", i%3, i))
+		}
+		tk.MustExec("insert into " + table + " values " + strings.Join(values, ","))
+		tk.MustExec("analyze table " + table)
+	}
+	explain := func(sql string) string {
+		return fmt.Sprint(tk.MustQuery("explain format='verbose' " + sql).Rows())
+	}
+	indexSQL := "select /*+ stream_agg() */ g from skip_idx group by g"
+	tableSQL := "select /*+ stream_agg() */ g from skip_pk use index(primary) group by g"
+	require.NotContains(t, explain(indexSQL), "skip scan:true")
+	require.NotContains(t, explain(tableSQL), "skip scan:true")
+
+	const fp = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/enablePlannerSkipScan"
+	require.NoError(t, failpoint.Enable(fp, "return(true)"))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	scanCost := func(sql, name string, expectSkip bool) float64 {
+		t.Helper()
+		rows := tk.MustQuery("explain format='verbose' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), name) {
+				if expectSkip {
+					require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:1")
+					require.Equal(t, "3.00", row[1])
+				} else {
+					require.NotContains(t, fmt.Sprint(row), "skip scan:true")
+					require.Equal(t, "120.00", row[1])
+				}
+				var cost float64
+				_, err := fmt.Sscan(fmt.Sprint(row[2]), &cost)
+				require.NoError(t, err)
+				return cost
+			}
+		}
+		require.FailNow(t, "missing scan", "expected %s in %v", name, rows)
+		return 0
+	}
+	for _, version := range []int{1, 2} {
+		tk.MustExec(fmt.Sprintf("set tidb_cost_model_version = %d", version))
+		for _, tc := range []struct{ sql, scan string }{
+			{indexSQL, "IndexFullScan"},
+			{tableSQL, "TableFullScan"},
+		} {
+			skipCost := scanCost(tc.sql, tc.scan, true)
+			require.NoError(t, failpoint.Disable(fp))
+			normalCost := scanCost(tc.sql, tc.scan, false)
+			require.NoError(t, failpoint.Enable(fp, "return(true)"))
+			require.Less(t, skipCost, normalCost)
+		}
+	}
+	bothSQL := "select /*+ stream_agg() */ g from skip_pk group by g"
+	// Both paths satisfy the same required property and compete on scan cost.
+	tk.MustExec("set tidb_opt_index_scan_cost_factor = 1000")
+	plan := explain(bothSQL)
+	require.Contains(t, plan, "TableFullScan")
+	require.Contains(t, plan, "skip scan:true")
+	tk.MustExec("set tidb_opt_index_scan_cost_factor = 0.001")
+	plan = explain(bothSQL)
+	require.Contains(t, plan, "IndexFullScan")
+	require.Contains(t, plan, "skip scan:true")
+	for _, sql := range []string{
+		"select /*+ stream_agg() */ g from skip_idx where n > 0 group by g",
+		"select /*+ stream_agg() */ g from skip_idx where g > 0 group by g",
+		"select /*+ stream_agg() */ n from skip_idx group by n",
+		"select /*+ stream_agg() */ g, max(n) from skip_idx group by g",
+		"select /*+ stream_agg() */ g, count(*) from skip_idx group by g",
+		"select /*+ stream_agg() */ a.g from skip_idx a join skip_idx b on a.g=b.g group by a.g",
+		"select /*+ stream_agg() */ g from skip_pseudo group by g",
+	} {
+		require.NotContains(t, explain(sql), "skip scan:true", sql)
+	}
+	tk.MustExec("set tidb_opt_stream_agg_cost_factor = 10000")
+	plan = explain("select g from skip_pk group by g")
+	require.Contains(t, plan, "HashAgg")
+	require.NotContains(t, plan, "skip scan:true")
+}
 
 func TestEncodeDecodePlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)

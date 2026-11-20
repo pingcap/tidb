@@ -18,9 +18,11 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -110,6 +113,13 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	var enableSkipScan bool
+	// Enable only in planner tests until both scans can send the attributes to TiKV.
+	if intest.InTest {
+		failpoint.Inject("enablePlannerSkipScan", func() { enableSkipScan = true })
+	}
+	enableSkipScan = enableSkipScan && len(groupByCols) > 0 && prop.IndexJoinProp == nil &&
+		skipScanAggregationSupported(la.AggFuncs, groupByCols)
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
@@ -141,17 +151,23 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.TaskTp = taskTp
 
-			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
-			copy(newGbyItems, la.GroupByItems)
-			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
-			copy(newAggFuncs, la.AggFuncs)
-
-			baseAgg := &BasePhysicalAgg{
-				GroupByItems: newGbyItems,
-				AggFuncs:     newAggFuncs,
+			makeStreamAgg := func(child *property.PhysicalProperty) base.PhysicalPlan {
+				baseAgg := BasePhysicalAgg{
+					GroupByItems: append([]expression.Expression(nil), la.GroupByItems...),
+					AggFuncs:     append([]*aggregation.AggFuncDesc(nil), la.AggFuncs...),
+				}
+				return baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), child)
 			}
-			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
-			streamAggs = append(streamAggs, streamAgg)
+			streamAggs = append(streamAggs, makeStreamAgg(copiedChildProperty))
+			if enableSkipScan && taskTp == property.CopSingleReadTaskType {
+				cols := make([]*expression.Column, 0, len(childProp.SortItems))
+				for _, item := range childProp.SortItems {
+					cols = append(cols, item.Col)
+				}
+				req := copiedChildProperty.CloneEssentialFields()
+				req.SkipScanInfo = &property.SkipScanInfo{GroupByCols: cols}
+				streamAggs = append(streamAggs, makeStreamAgg(req))
+			}
 		}
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
@@ -160,6 +176,20 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		streamAggs = append(streamAggs, getEnforcedStreamAggs(la, prop)...)
 	}
 	return streamAggs
+}
+
+func skipScanAggregationSupported(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column) bool {
+	schema := expression.NewSchema(groupBy...)
+	for _, agg := range aggs {
+		if agg.Name != ast.AggFuncFirstRow || agg.HasDistinct || len(agg.Args) != 1 {
+			return false
+		}
+		col, ok := agg.Args[0].(*expression.Column)
+		if !ok || !schema.Contains(col) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetPointer return inner base physical agg.
