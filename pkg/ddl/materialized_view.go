@@ -298,6 +298,12 @@ func InitMViewSession(
 	mviewInfo *model.MaterializedViewInfo,
 	currentDB, resourceGroup string,
 ) (func(), error) {
+	if mviewInfo == nil {
+		return nil, errors.New("materialized view: missing definition metadata")
+	}
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		return nil, errors.New("materialized view: invalid maintenance numeric metadata")
+	}
 	timezone := mviewInfo.DefinitionTimeZone.Clone()
 	loc, err := timezone.GetLocation()
 	if err != nil {
@@ -353,6 +359,8 @@ func InitMViewSession(
 		}
 		originalVars[assignment.name] = oldValue
 	}
+	// The definition stores an effective precision. SET 0 maps to the default.
+	sessVars.DivPrecisionIncrement = mviewInfo.DefinitionDivPrecisionIncrement
 	sessVars.CurrentDB = currentDB
 	if resourceGroup != "" {
 		sessVars.ResourceGroupName = resourceGroup
@@ -755,6 +763,15 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	colDefs := make([]*ast.ColumnDef, 0, len(resultFields))
 	for i, rf := range resultFields {
 		ft := rf.Column.FieldType
+		if integerDigits, ok := queryAnalysis.DecimalAvgIntegerDigits[i]; ok {
+			// Keep the defining query's AVG scale without narrowing the input range.
+			if precision := integerDigits + ft.GetDecimal(); precision > mysql.MaxDecimalWidth {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf(
+					"CREATE MATERIALIZED VIEW AVG output column %s requires DECIMAL(%d,%d), exceeding the maximum precision %d; reduce div_precision_increment or use a narrower input column",
+					s.Cols[i].O, precision, ft.GetDecimal(), mysql.MaxDecimalWidth,
+				))
+			}
+		}
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
 			Name: &ast.ColumnName{Name: s.Cols[i]},
@@ -1657,6 +1674,8 @@ type mviewQueryAnalysis struct {
 	GroupByInfos []mviewGroupByInfo
 	GroupByCols  []string
 	HasMinOrMax  bool
+	// DecimalAvgIntegerDigits holds the declared input integer width by SELECT field index.
+	DecimalAvgIntegerDigits map[int]int
 }
 
 func validateCreateMaterializedViewQuery(
@@ -1718,6 +1737,9 @@ func validateCreateMaterializedViewQuery(
 	groupByCols := make([]string, 0, len(sel.GroupBy.Items))
 	groupByNotNull := make(map[string]bool, len(sel.GroupBy.Items))
 	countExprCols := make(map[string]struct{})
+	sumExprCols := make(map[string]struct{})
+	avgExprCols := make(map[string]struct{})
+	var decimalAvgIntegerDigits map[int]int
 	nullableSumCols := make(map[string]struct{})
 	usedCols := make(map[string]struct{}, 8)
 
@@ -1783,7 +1805,7 @@ func validateCreateMaterializedViewQuery(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function")
 			}
 			aggFunc := strings.ToLower(expr.F)
-			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax {
+			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax && aggFunc != ast.AggFuncAvg {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW: agg %s", expr.F)
 			}
 			switch aggFunc {
@@ -1809,7 +1831,7 @@ func validateCreateMaterializedViewQuery(
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports count(*)/count(1)")
 				}
 				hasCountStarOrOne = true
-			case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax:
+			case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg:
 				if len(expr.Args) != 1 {
 					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("aggregate function must have exactly one argument in CREATE MATERIALIZED VIEW")
 				}
@@ -1821,14 +1843,36 @@ func validateCreateMaterializedViewQuery(
 				if err != nil {
 					return nil, err
 				}
+				baseCol := baseColMap[colName]
 				if aggFunc == ast.AggFuncSum {
-					tp := baseColMap[colName].GetType()
+					sumExprCols[colName] = struct{}{}
+					tp := baseCol.GetType()
 					if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
 						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
 					}
-					if !mysql.HasNotNullFlag(baseColMap[colName].GetFlag()) {
+					if !mysql.HasNotNullFlag(baseCol.GetFlag()) {
 						nullableSumCols[colName] = struct{}{}
 					}
+				}
+				if aggFunc == ast.AggFuncAvg {
+					baseColType := baseCol.GetType()
+					switch baseColType {
+					case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal,
+						mysql.TypeFloat, mysql.TypeDouble:
+						// Supported AVG inputs. Floating-point AVG follows the
+						// existing approximate floating-point SUM semantics.
+					default:
+						return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColType),
+						)
+					}
+					if baseColType == mysql.TypeNewDecimal {
+						if decimalAvgIntegerDigits == nil {
+							decimalAvgIntegerDigits = make(map[int]int)
+						}
+						decimalAvgIntegerDigits[i] = baseCol.GetFlen() - baseCol.GetDecimal()
+					}
+					avgExprCols[colName] = struct{}{}
 				}
 				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
 					hasMinOrMax = true
@@ -1847,6 +1891,21 @@ func validateCreateMaterializedViewQuery(
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack(
 				fmt.Sprintf("CREATE MATERIALIZED VIEW SUM on nullable column %s requires matching COUNT(%s) in SELECT list", colName, colName),
 			)
+		}
+	}
+	for colName := range avgExprCols {
+		if _, ok := sumExprCols[colName]; !ok {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("unsupported aggregate function: CREATE MATERIALIZED VIEW AVG on column %s requires matching SUM(%s) in SELECT list", colName, colName),
+			)
+		}
+		baseCol := baseColMap[colName]
+		if !mysql.HasNotNullFlag(baseCol.GetFlag()) {
+			if _, ok := countExprCols[colName]; !ok {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					fmt.Sprintf("CREATE MATERIALIZED VIEW AVG on column %s requires matching COUNT(%s) in SELECT list", colName, colName),
+				)
+			}
 		}
 	}
 
@@ -1875,9 +1934,10 @@ func validateCreateMaterializedViewQuery(
 	}
 
 	return &mviewQueryAnalysis{
-		GroupByInfos: groupByInfos,
-		GroupByCols:  groupByCols,
-		HasMinOrMax:  hasMinOrMax,
+		GroupByInfos:            groupByInfos,
+		GroupByCols:             groupByCols,
+		HasMinOrMax:             hasMinOrMax,
+		DecimalAvgIntegerDigits: decimalAvgIntegerDigits,
 	}, nil
 }
 

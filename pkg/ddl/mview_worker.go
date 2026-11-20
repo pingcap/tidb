@@ -606,6 +606,9 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
+	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing materialized view metadata")
+	}
 	sessVars := sessCtx.GetSessionVars() //nolint:forbidigo
 	target, err := MViewExecutionSessionVarsFromJob(job, sessVars)
 	if err != nil {

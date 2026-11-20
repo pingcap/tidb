@@ -50,6 +50,32 @@ func TestClone(t *testing.T) {
 
 func TestBaseFunc_InferAggRetType(t *testing.T) {
 	ctx := mock.NewContext()
+	t.Run("decimal AVG", func(t *testing.T) {
+		ctx := mock.NewContext()
+		for _, tc := range []struct {
+			precision, scale, increment int
+			wantPrecision, wantScale    int
+		}{
+			{10, 2, 4, 14, 6},
+			{10, 2, 30, 40, 30},
+			{65, 30, 4, 65, 30},
+			{60, 10, 30, 65, 30},
+			{65, 0, 4, 65, 4},
+		} {
+			ctx.GetSessionVars().DivPrecisionIncrement = tc.increment
+			colType := types.NewFieldType(mysql.TypeNewDecimal)
+			colType.SetFlen(tc.precision)
+			colType.SetDecimal(tc.scale)
+			desc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{
+				&expression.Column{RetType: colType},
+			})
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeNewDecimal, desc.RetTp.GetType())
+			require.Equal(t, tc.wantPrecision, desc.RetTp.GetFlen())
+			require.Equal(t, tc.wantScale, desc.RetTp.GetDecimal())
+		}
+	})
+
 	doubleType := types.NewFieldType(mysql.TypeDouble)
 	bitType := types.NewFieldType(mysql.TypeBit)
 
