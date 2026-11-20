@@ -400,8 +400,11 @@ func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[str
 
 // MaskingPolicyManifest uses the backup snapshot, rather than the current
 // InfoSchema cache, so concurrent policy DDL cannot change its protection set.
+//
+// It reads the policy table through se instead of opening a session: a backup
+// opens one short-lived session for all it reads through SQL.
 func (ss *Schemas) MaskingPolicyManifest(
-	ctx context.Context, g glue.Glue, store kv.Storage, backupTS uint64, closeDomain bool,
+	ctx context.Context, se glue.Session, store kv.Storage, backupTS uint64,
 ) (*metautil.MaskingPolicyManifest, error) {
 	manifest := &metautil.MaskingPolicyManifest{SnapshotTS: backupTS, TableIDs: []int64{}}
 	selected := make(map[int64]struct{})
@@ -423,21 +426,18 @@ func (ss *Schemas) MaskingPolicyManifest(
 	if !hasPolicyTable || len(selected) == 0 {
 		return manifest, nil
 	}
-	err = g.UseOneShotSession(store, closeDomain, func(se glue.Session) error {
-		rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
-			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(backupTS)},
-			"SELECT DISTINCT table_id FROM mysql.tidb_masking_policy ORDER BY table_id")
-		if err != nil {
-			return errors.Trace(err)
+	rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(backupTS)},
+		"SELECT DISTINCT table_id FROM mysql.tidb_masking_policy ORDER BY table_id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, row := range rows {
+		id := row.GetInt64(0)
+		if _, ok := selected[id]; ok {
+			manifest.TableIDs = append(manifest.TableIDs, id)
 		}
-		for _, row := range rows {
-			id := row.GetInt64(0)
-			if _, ok := selected[id]; ok {
-				manifest.TableIDs = append(manifest.TableIDs, id)
-			}
-		}
-		return nil
-	})
-	return manifest, errors.Trace(err)
+	}
+	return manifest, nil
 }

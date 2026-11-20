@@ -14,6 +14,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -420,8 +421,11 @@ func TestBackupMaskingPolicyManifestSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		_, schemas, _, err := backup.BuildBackupRangeAndInitSchema(cluster.Storage, f, ts, false, true)
 		require.NoError(t, err)
-		manifest, err := schemas.MaskingPolicyManifest(ctx, gluetidb.New(), cluster.Storage, ts, false)
-		require.NoError(t, err)
+		var manifest *metautil.MaskingPolicyManifest
+		require.NoError(t, gluetidb.New().UseOneShotSession(cluster.Storage, false, func(se glue.Session) error {
+			manifest, err = schemas.MaskingPolicyManifest(ctx, se, cluster.Storage, ts)
+			return err
+		}))
 		require.Equal(t, ts, manifest.SnapshotTS)
 		if pattern == "manifest_db.ordinary" {
 			require.Empty(t, manifest.TableIDs)

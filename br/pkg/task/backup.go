@@ -461,20 +461,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
-	var newCollationEnable string
-	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
-		newCollationEnable, err = se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Info(fmt.Sprintf("get %s config from mysql.tidb table", utils.TidbNewCollationEnabled),
-			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	client := backup.NewTableBackupClient(ctx, mgr)
 
 	// set cipher only for checkpoint
@@ -645,6 +631,26 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
+	// One short-lived session serves everything the backup reads through SQL:
+	// the collation setting, and the masking policies at the backup timestamp.
+	var newCollationEnable string
+	var manifest *metautil.MaskingPolicyManifest
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
+		newCollationEnable, err = se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info(fmt.Sprintf("get %s config from mysql.tidb table", utils.TidbNewCollationEnabled),
+			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
+		if schemas != nil {
+			manifest, err = schemas.MaskingPolicyManifest(ctx, se, mgr.GetStorage(), backupTS)
+		}
+		return errors.Trace(err)
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
 		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
@@ -660,11 +666,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
 
-	if schemas != nil {
-		manifest, err := schemas.MaskingPolicyManifest(ctx, g, mgr.GetStorage(), backupTS, !needDomain)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if manifest != nil {
 		if err = metautil.WriteMaskingPolicyManifest(ctx, client.GetStorage(), &cfg.CipherInfo, manifest); err != nil {
 			return errors.Trace(err)
 		}
