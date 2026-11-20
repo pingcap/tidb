@@ -718,8 +718,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			return inNode, true
 		})
+	case *ast.VariableExpr:
+		er.asScalar = true
+		er.enterMaskingStateWrite(v, 1)
 	case *ast.FuncCallExpr:
 		er.asScalar = true
+		er.enterMaskingStateWrite(v, 1)
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
@@ -1685,9 +1689,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 				er.rewriteSystemVariable(planCtx, v)
 			}, "accessing system variable requires plan context")
 		} else {
+			er.enterMaskingStateWrite(v, -1)
 			er.rewriteUserVariable(v)
 		}
 	case *ast.FuncCallExpr:
+		er.enterMaskingStateWrite(v, -1)
 		switch v.FnName.L {
 		case ast.Grouping:
 			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
@@ -1903,6 +1909,40 @@ func (er *expressionRewriter) useCache() bool {
 	return er.sctx.IsUseCache()
 }
 
+// maskingStateWriteFuncArgs maps the functions that keep an argument in
+// session state to the position of that argument. SETVAR is what a user
+// variable assignment is rewritten to, and can also be called by name.
+var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 1, ast.LastInsertId: 0}
+
+// enterMaskingStateWrite enters (delta 1) or leaves (delta -1) an expression
+// that keeps its argument in session state. A scalar subquery in the argument
+// is a stored value and masks its own result, as in SET and DO.
+func (er *expressionRewriter) enterMaskingStateWrite(node ast.Node, delta int) {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return
+	}
+	switch v := node.(type) {
+	case *ast.VariableExpr:
+		if v.IsSystem || v.Value == nil {
+			return
+		}
+	case *ast.FuncCallExpr:
+		if idx, ok := maskingStateWriteFuncArgs[v.FnName.L]; !ok || len(v.Args) <= idx {
+			return
+		}
+	}
+	er.planCtx.builder.maskScalarSubqueryValue += delta
+}
+
+// checkMaskingStateWrite rejects keeping stored in session state when it reads
+// a column that is masked for the current session.
+func (er *expressionRewriter) checkMaskingStateWrite(stored expression.Expression, shape string) {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return
+	}
+	er.err = er.planCtx.builder.checkMaskingPolicyStateWrite(er.ctx, er.planCtx.plan, er.planCtx.insertPlan, stored, shape)
+}
+
 func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
@@ -1921,6 +1961,9 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 
 		intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
 
+		if er.checkMaskingStateWrite(er.ctxStack[stkLen-1], "user variable assignment"); er.err != nil {
+			return
+		}
 		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
@@ -2629,6 +2672,11 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 
 	if er.rewriteFuncCall(v) {
 		return
+	}
+	if idx, ok := maskingStateWriteFuncArgs[v.FnName.L]; ok && len(args) > idx {
+		if er.checkMaskingStateWrite(args[idx], strings.ToUpper(v.FnName.L)); er.err != nil {
+			return
+		}
 	}
 
 	var function expression.Expression

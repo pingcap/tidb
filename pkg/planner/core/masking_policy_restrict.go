@@ -127,6 +127,18 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 	p base.LogicalPlan,
 	outputColIdx int,
 ) []maskingPolicySourceColumn {
+	return b.extractMaskingPolicySourceColumns(p, outputColIdx, nil)
+}
+
+// extractMaskingPolicySourceColumns returns the table columns read by an
+// output column of p or, when stored is not nil, by that expression over p.
+// For stored, a column that a masking projection has already masked is not a
+// source: the expression receives its masked value.
+func (b *PlanBuilder) extractMaskingPolicySourceColumns(
+	p base.LogicalPlan,
+	outputColIdx int,
+	stored expression.Expression,
+) []maskingPolicySourceColumn {
 	sources := make([]maskingPolicySourceColumn, 0, 2)
 	seen := make(map[[2]int64]struct{}, 2)
 	appendSource := func(ds *logicalop.DataSource, col *expression.Column) {
@@ -169,6 +181,13 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 		}
 		visited[visitKey] = struct{}{}
 		if source, ok := b.maskingSourcePlans[plan.ID()]; ok {
+			if stored != nil {
+				if proj, ok := plan.(*logicalop.LogicalProjection); ok && colIdx < len(proj.Exprs) {
+					if _, raw := proj.Exprs[colIdx].(*expression.Column); !raw {
+						return
+					}
+				}
+			}
 			walkByIndex(source, colIdx)
 			return
 		}
@@ -241,8 +260,58 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 		}
 	}
 
+	if stored != nil {
+		walkExpression(p, stored)
+		return sources
+	}
 	walkByIndex(p, outputColIdx)
 	return sources
+}
+
+// checkMaskingPolicyStateWrite rejects an expression that keeps the value of
+// stored in session state, such as a user variable assignment, when stored
+// reads a column that is masked for the current session. Masking applies to
+// the statement result only, so a later statement could read the original
+// value back from that state. In ON DUPLICATE KEY UPDATE, the columns of
+// insertPlan's table are read from the existing row rather than from p.
+func (b *PlanBuilder) checkMaskingPolicyStateWrite(ctx context.Context, p base.LogicalPlan, insertPlan *Insert, stored expression.Expression, shape string) error {
+	cols := expression.ExtractColumns(stored)
+	sv := b.ctx.GetSessionVars()
+	if b.is == nil || p == nil || sv.InRestrictedSQL || len(cols) == 0 && len(expression.ExtractCorColumns(stored)) == 0 {
+		return nil
+	}
+	var sources []maskingPolicySourceColumn
+	if enabled, err := b.maskingEnabled(ctx, p); err != nil {
+		return err
+	} else if enabled {
+		sources = b.extractMaskingPolicySourceColumns(p, 0, stored)
+	}
+	if insertPlan != nil && insertPlan.tableSchema != nil {
+		tblInfo := insertPlan.Table.Meta()
+		for _, col := range cols {
+			colInfo := model.FindColumnInfoByID(tblInfo.Columns, col.ID)
+			if colInfo != nil && tblInfo.TempTableType == model.TempTableNone && insertPlan.tableSchema.Contains(col) {
+				sources = append(sources, maskingPolicySourceColumn{tblInfo: tblInfo, colInfo: colInfo})
+			}
+		}
+	}
+	for _, source := range sources {
+		policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, source.tblInfo.ID, source.colInfo.ID)
+		if err != nil {
+			return err
+		}
+		if !ok || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		allowed, err := canCurrentSessionReadUnmaskedColumn(b.ctx.GetExprCtx(), sv, b.is.SchemaMetaVersion(), policy, source.tblInfo, source.colInfo)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return &maskingNotPreservedError{shape: shape}
+		}
+	}
+	return nil
 }
 
 func canCurrentSessionReadUnmaskedColumn(

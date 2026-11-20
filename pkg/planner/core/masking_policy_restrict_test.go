@@ -634,3 +634,145 @@ func TestMaskingPolicyRestrictOnJoinOnSubquery(t *testing.T) {
 	user.MustExec("delete d from on_dst d join on_dummy x on d.c = (select max(c) from on_src)")
 	root.MustQuery("select * from on_dst").Check(testkit.Rows())
 }
+
+func TestMaskingPolicyUserVarAssignment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table uv_src(id int primary key, c varchar(20), n bigint)")
+	root.MustExec("insert into uv_src values (1, 'secret', 424242)")
+	root.MustExec("create table uv_pub(id int primary key, v varchar(20))")
+	root.MustExec("insert into uv_pub values (1, 'pub')")
+	root.MustExec("create view uv_view as select id, c from uv_src")
+	root.MustExec("create masking policy p on uv_src(c) as case when current_user() = 'root@%' then c else mask_full(c) end enable")
+	root.MustExec("create masking policy pn on uv_src(n) as case when current_user() = 'root@%' then n else 0 end enable")
+	root.MustExec("create user uv_select")
+	root.MustExec("grant select on test.* to uv_select")
+	root.MustExec("create user uv_dml")
+	root.MustExec("grant select, insert, update, delete on test.* to uv_dml")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "uv_select", Hostname: "%"}, nil, nil, nil))
+	user.MustExec("use test")
+	dml := testkit.NewTestKit(t, store)
+	require.NoError(t, dml.Session().Auth(&auth.UserIdentity{Username: "uv_dml", Hostname: "%"}, nil, nil, nil))
+	dml.MustExec("use test")
+
+	const notPreserved = "masking policy cannot be preserved through "
+	selects := []string{
+		"select 1 from uv_src where length(@leak := c) > 0",
+		"select 1 from uv_src where id = 1 and length(@leak := c) > 0",
+		"select 1 from uv_src where (@leak := substr(c, 1, 3)) is not null",
+		"select 1 from uv_src where (@leak := (@x := c)) is not null",
+		"select 1 from uv_src a join uv_pub b on (@leak := a.c) is not null",
+		"select 1 from uv_pub b left join uv_src a on (@leak := a.c) is not null",
+		"select 1 from uv_src join uv_pub using (id) where (@leak := c) is not null",
+		"select 1 from uv_src group by id having (@leak := max(c)) is not null",
+		"select 1 from uv_src having (@leak := group_concat(c)) is not null",
+		"select 1 from uv_src group by (@leak := c)",
+		"select 1 from uv_src order by (@leak := c)",
+		"select row_number() over (partition by (@leak := c)) from uv_src",
+		"select row_number() over (order by (@leak := c)) from uv_src",
+		"select 1 from dual where exists (select 1 from uv_src where (@leak := c) is not null)",
+		"select 1 from dual where (select count(*) from uv_src where (@leak := c) is not null) > 0",
+		"select 1 from uv_pub where 1 in (select id from uv_src where (@leak := c) is not null)",
+		"select 1 from uv_src where (select @leak := uv_src.c) is not null",
+		"select 1 from uv_src where exists (select 1 from uv_pub where (@leak := uv_src.c) is not null)",
+		"with x as (select c from uv_src) select 1 from x where (@leak := c) is not null",
+		"with x as (select c from uv_src where (@leak := c) is not null) select 1 from x",
+		"select 1 from (select c from uv_src where (@leak := c) is not null) d",
+		"select 1 from (select concat(c, '') d from uv_src) x where (@leak := d) is not null",
+		"select 1 from (select c from uv_src union all select v from uv_pub) d where (@leak := c) is not null",
+		"select 1 from (select max(c) over () m from uv_src) d where (@leak := m) is not null",
+		"select 1 from (select @leak := c as x from uv_src) d",
+		"select 1 from uv_view where (@leak := c) is not null",
+		"select 1 from uv_pub union all select 1 from uv_src where (@leak := c) is not null",
+		"do (select 1 from uv_src where (@leak := c) is not null)",
+		"prepare st from 'select 1 from uv_src where length(@leak := c) > 0'",
+		"explain analyze select 1 from uv_src where length(@leak := c) > 0",
+		"select 1 from uv_src where setvar('leak', c) is not null",
+		"select 1 from uv_src where last_insert_id(n) > 0",
+		"select 1 from uv_src order by last_insert_id(n)",
+		"select last_insert_id(n) from uv_src",
+		// The result field itself was already rejected.
+		"select @leak := c from uv_src",
+		"select count(@leak := c) from uv_src",
+	}
+	dmls := []string{
+		"update uv_src set n = n where (@leak := c) is not null",
+		"update uv_src set n = n + 0 * length(@leak := c)",
+		"update uv_pub set v = 'pub' where exists (select 1 from uv_src where (@leak := c) is not null)",
+		"update uv_pub, uv_src set uv_pub.v = 'pub' where (@leak := uv_src.c) is not null",
+		"delete from uv_src where (@leak := c) = 'nomatch'",
+		"delete uv_pub from uv_pub, uv_src where (@leak := uv_src.c) = 'nomatch'",
+		"insert into uv_pub select 5, 'x' from uv_src where (@leak := c) = 'nomatch'",
+		"replace into uv_pub select 5, 'x' from uv_src where (@leak := c) = 'nomatch'",
+		"insert into uv_src(id) values (1) on duplicate key update n = n + 0 * length(@leak := c)",
+		"insert into uv_src(id) values (1) on duplicate key update n = last_insert_id(n)",
+	}
+	rejected := func(tk *testkit.TestKit, sqls []string, restricted bool) {
+		for _, sql := range sqls {
+			tk.MustExec("set @leak = null, @x = null")
+			tk.MustQuery("select last_insert_id(1)")
+			err := tk.ExecToErr(sql)
+			if restricted {
+				// RESTRICT ON may deny the statement first.
+				require.Error(t, err, sql)
+			} else {
+				require.ErrorContains(t, err, notPreserved, sql)
+			}
+			tk.MustQuery("select @leak, @x, last_insert_id()").Check(testkit.Rows("<nil> <nil> 1"))
+		}
+	}
+	for _, restrict := range []string{"none", "(insert_into_select, update_select, delete_select)"} {
+		root.MustExec("alter table uv_src modify masking policy p set restrict on " + restrict)
+		root.MustExec("alter table uv_src modify masking policy pn set restrict on " + restrict)
+		rejected(user, selects, false)
+		rejected(dml, dmls, restrict != "none")
+		require.ErrorContains(t, user.ExecToErr(selects[0]), notPreserved+"user variable assignment")
+		require.ErrorContains(t, user.ExecToErr("select 1 from uv_src where last_insert_id(n) > 0"), notPreserved+"LAST_INSERT_ID")
+
+		// An assigned scalar subquery is a stored value and masks its own result.
+		for _, sql := range []string{
+			"select 1 from uv_pub where (@leak := (select max(c) from uv_src)) is not null",
+			"select 1 from uv_pub where (@leak := (select c from uv_src where uv_src.id = uv_pub.id)) is not null",
+			"select 1 from uv_pub group by (@leak := (select max(c) from uv_src))",
+			"select @leak := (select c from uv_src where id = 1)",
+		} {
+			user.MustExec("set @leak = null")
+			user.MustQuery(sql)
+			user.MustQuery("select @leak").Check(testkit.Rows("XXXXXX"))
+		}
+		user.MustQuery("select 1 from uv_pub where last_insert_id((select max(n) from uv_src)) >= 0").Check(testkit.Rows("1"))
+		user.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
+
+		// Assignments that read no masked column are unaffected.
+		user.MustQuery("select 1 from uv_src where (@leak := id + 1) is not null").Check(testkit.Rows("1"))
+		user.MustQuery("select @leak").Check(testkit.Rows("2"))
+		user.MustQuery("select 1 from uv_pub join uv_src using (id) where (@leak := v) is not null").Check(testkit.Rows("1"))
+		user.MustQuery("select @leak").Check(testkit.Rows("pub"))
+		user.MustQuery("select @leak := v, last_insert_id(uv_pub.id + 6) from uv_pub").Check(testkit.Rows("pub 7"))
+		user.MustQuery("select last_insert_id()").Check(testkit.Rows("7"))
+
+		// A session the policy does not mask keeps its behavior.
+		root.MustQuery("select 1 from uv_src where length(@leak := c) > 0 and last_insert_id(n) > 0").Check(testkit.Rows("1"))
+		root.MustQuery("select @leak, last_insert_id()").Check(testkit.Rows("secret 424242"))
+		root.MustExec("update uv_src set n = n where (@leak := concat(c, '!')) is not null")
+		root.MustQuery("select @leak").Check(testkit.Rows("secret!"))
+		require.ErrorContains(t, root.ExecToErr("select @leak := c from uv_src"), notPreserved+"mutable expression")
+	}
+
+	// A disabled policy does not reject the assignment, and enabling it again
+	// applies to a statement prepared while it was disabled.
+	root.MustExec("alter table uv_src disable masking policy p")
+	user.MustExec("prepare st from 'select 1 from uv_src where length(@leak := c) > 0'")
+	for range 2 {
+		user.MustQuery("execute st").Check(testkit.Rows("1"))
+		user.MustQuery("select @leak").Check(testkit.Rows("secret"))
+	}
+	user.MustQuery("select @leak := c from uv_src").Check(testkit.Rows("secret"))
+	root.MustExec("alter table uv_src enable masking policy p")
+	user.MustExec("set @leak = null")
+	require.ErrorContains(t, user.ExecToErr("execute st"), notPreserved+"user variable assignment")
+	user.MustQuery("select @leak").Check(testkit.Rows("<nil>"))
+}
