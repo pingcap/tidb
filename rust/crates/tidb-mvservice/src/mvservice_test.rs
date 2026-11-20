@@ -93,6 +93,12 @@ pub(crate) struct MockKnobs {
     pub(crate) purge_manual_cancel_backoff: (bool, Option<GoTime>),
     /// Go `fullChainMVServiceHelper`'s pending metadata, when set.
     pub(crate) full_chain: Option<(HashMap<i64, GoTime>, HashMap<i64, GoTime>)>,
+    /// Go `scriptedServerDiscoveryHelper`'s `selfID` / `seq` / `seqIdx` /
+    /// `refreshErr`, when set.
+    pub(crate) discovery_self_id: String,
+    pub(crate) discovery_seq: Vec<HashMap<String, ServerInfo>>,
+    pub(crate) discovery_seq_idx: usize,
+    pub(crate) discovery_refresh_err: Option<String>,
 }
 
 /// Go `mockMVServiceHelper` (and, with `full_chain`, Go
@@ -139,12 +145,28 @@ impl ServerDiscovery for MockMVServiceHelper {
     }
 
     fn get_server_info(&self) -> Result<ServerInfo, String> {
-        Ok(ServerInfo { id: "test-server".to_owned(), ..ServerInfo::default() })
+        let knobs = self.knobs.lock().unwrap();
+        let id = if knobs.discovery_self_id.is_empty() { "test-server" } else { knobs.discovery_self_id.as_str() };
+        Ok(ServerInfo { id: id.to_owned(), ..ServerInfo::default() })
     }
 
     fn get_all_server_info(&self, _: &Context) -> Result<HashMap<String, ServerInfo>, String> {
         self.server_refresh_calls.fetch_add(1, SeqCst);
-        Ok(HashMap::from([("test-server".to_owned(), ServerInfo { id: "test-server".to_owned(), ..ServerInfo::default() })]))
+        let mut knobs = self.knobs.lock().unwrap();
+        if let Some(err) = &knobs.discovery_refresh_err {
+            return Err(err.clone());
+        }
+        if knobs.discovery_seq.is_empty() {
+            return Ok(HashMap::from([(
+                "test-server".to_owned(),
+                ServerInfo { id: "test-server".to_owned(), ..ServerInfo::default() },
+            )]));
+        }
+        let cur = knobs.discovery_seq[knobs.discovery_seq_idx].clone();
+        if knobs.discovery_seq_idx < knobs.discovery_seq.len() - 1 {
+            knobs.discovery_seq_idx += 1;
+        }
+        Ok(cur)
     }
 }
 

@@ -364,6 +364,99 @@ fn test_mv_service_notify_ddl_change_triggers_fetch() {
     eventually(|| helper.run_event_count(MV_RUN_EVENT_FETCH_BY_DDL) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
 }
 
+/// Go `TestMVServiceServerRefreshWithoutPeriodicFetch`.
+#[test]
+fn test_mv_service_server_refresh_without_periodic_fetch() {
+    let _serial = serial();
+    let server = |id: &str| (id.to_owned(), crate::server_maintainer::ServerInfo { id: id.to_owned(), ..crate::server_maintainer::ServerInfo::default() });
+    struct Case {
+        name: &'static str,
+        configure: Box<dyn Fn(&mut crate::mvservice_test::MockKnobs)>,
+        advance_second_refresh: bool,
+        expect_server_changed: bool,
+        expect_server_refresh_err: bool,
+        expect_meta_fetch: bool,
+    }
+    let cases = vec![
+        Case {
+            name: "server_changed_triggers_fetch",
+            configure: Box::new(move |knobs| {
+                knobs.discovery_self_id = "test-server".to_owned();
+                knobs.discovery_seq = vec![
+                    HashMap::from([server("test-server")]),
+                    HashMap::from([server("test-server"), server("node-2")]),
+                ];
+            }),
+            advance_second_refresh: true,
+            expect_server_changed: true,
+            expect_server_refresh_err: false,
+            expect_meta_fetch: true,
+        },
+        Case {
+            name: "server_refresh_error_does_not_trigger_fetch",
+            configure: Box::new(|knobs| {
+                knobs.discovery_self_id = "test-server".to_owned();
+                knobs.discovery_refresh_err = Some("refresh failed".to_owned());
+            }),
+            advance_second_refresh: false,
+            expect_server_changed: false,
+            expect_server_refresh_err: true,
+            expect_meta_fetch: false,
+        },
+    ];
+    for tc in cases {
+        // Go `newServerRefreshServiceForTest`.
+        let (module, _clock) = install_mock_time_for_test();
+        let (ctx, cancel) = Context::with_cancel(&Context::background());
+        let helper = Arc::new(MockMVServiceHelper::default());
+        (tc.configure)(&mut helper.knobs.lock().unwrap());
+        let mut cfg = default_mv_service_config();
+        cfg.fetch_interval = 24 * HOUR;
+        cfg.server_refresh_interval = SECOND;
+        let svc = new_mv_service(ctx, Arc::new(MockSessionPool), helper.clone(), cfg.clone());
+        svc.last_meta_fetch_millis.store(unix_milli(&mvs_now()), SeqCst);
+        let running = run_mv_service_for_test(&svc, cancel);
+
+        // Go `waitInitialServerRefresh`.
+        eventually(|| helper.server_refresh_calls.load(SeqCst) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+        assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_SERVER_CHANGED), "{}", tc.name);
+        assert_eq!(0, helper.fetch_logs_calls.load(SeqCst), "{}", tc.name);
+        assert_eq!(0, helper.fetch_view_calls.load(SeqCst), "{}", tc.name);
+
+        if tc.advance_second_refresh {
+            module.advance(cfg.server_refresh_interval);
+            eventually(|| helper.server_refresh_calls.load(SeqCst) > 1, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+        }
+        if tc.expect_server_changed {
+            eventually(|| helper.run_event_count(MV_RUN_EVENT_SERVER_CHANGED) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+        } else {
+            assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_SERVER_CHANGED), "{}", tc.name);
+        }
+        if tc.expect_server_refresh_err {
+            eventually(
+                || helper.run_event_count(MV_RUN_EVENT_SERVER_REFRESH_ERROR) > 0,
+                TEST_EVENTUALLY_WAIT,
+                TEST_EVENTUALLY_TICK,
+            );
+        } else {
+            assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_SERVER_REFRESH_ERROR), "{}", tc.name);
+        }
+        if tc.expect_meta_fetch {
+            eventually(
+                || helper.fetch_logs_calls.load(SeqCst) > 0 && helper.fetch_view_calls.load(SeqCst) > 0,
+                TEST_EVENTUALLY_WAIT,
+                TEST_EVENTUALLY_TICK,
+            );
+        } else {
+            assert_eq!(0, helper.fetch_logs_calls.load(SeqCst), "{}", tc.name);
+            assert_eq!(0, helper.fetch_view_calls.load(SeqCst), "{}", tc.name);
+        }
+        assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_FETCH_BY_DDL), "{}", tc.name);
+        assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_FETCH_BY_INTERVAL), "{}", tc.name);
+        drop(running);
+    }
+}
+
 fn execute_task_skip_when_deleted_refresh() {
     let helper = Arc::new(MockMVServiceHelper::default());
     helper.knobs.lock().unwrap().refresh_next = mvs_now().add(MINUTE);
