@@ -155,9 +155,8 @@ func TestLocalMatchAgainstStateSurvivesCloneAndSubstitution(t *testing.T) {
 	})
 }
 
-// TestLocalMatchAgainstWordBoundary covers the headline semantic
-// difference from the ILIKE fallback, which matches "cat" inside "concatenate"
-// because it can only test for a substring.
+// TestLocalMatchAgainstWordBoundary checks token boundaries rather than
+// substring matches such as "cat" inside "concatenate".
 func TestLocalMatchAgainstWordBoundary(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newLocalMatchAgainstForTest(t, ctx, "+cat", 1, ast.FulltextSearchModifierBooleanMode)
@@ -179,8 +178,7 @@ func TestLocalMatchAgainstWordBoundary(t *testing.T) {
 	require.Equal(t, float64(1), v)
 }
 
-// TestLocalMatchAgainstPhrase covers quoted phrases, which the
-// ILIKE fallback cannot express at all: it degrades them to independent terms.
+// TestLocalMatchAgainstPhrase checks the order and adjacency of phrase terms.
 func TestLocalMatchAgainstPhrase(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newLocalMatchAgainstForTest(t, ctx, `"distributed sql"`, 1, ast.FulltextSearchModifierBooleanMode)
@@ -312,8 +310,7 @@ func TestLocalMatchAgainstMultiColumn(t *testing.T) {
 
 // TestLocalMatchAgainstShortTokenFiltered checks that a term below
 // innodb_ft_min_token_size is dropped by the analyzer. A query consisting only
-// of such terms matches nothing, which the ILIKE fallback gets wrong by
-// substring-matching them.
+// of such terms matches nothing, even when the text contains those substrings.
 func TestLocalMatchAgainstShortTokenFiltered(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newLocalMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)

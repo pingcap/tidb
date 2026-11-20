@@ -343,9 +343,12 @@ const (
 
 	// TiDBEnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
+	// Its ON default applies to fresh installations; upgrades preserve persisted
+	// values because an old default OFF cannot be distinguished from an opt-out.
+	//
+	// Deprecated: Local MATCH is enabled by default. This variable will be removed
+	// in a future release, when Local MATCH will always be enabled.
 	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
-	// TiDBEnableFTSLikeFallback enables the ILIKE alternative for MATCH predicates.
-	TiDBEnableFTSLikeFallback = "tidb_enable_fts_like_fallback"
 
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
@@ -1359,7 +1362,7 @@ const (
 	DefOptEnableCorrelationAdjustment       = true
 	DefOptEnableNoDecorrelateInSelect       = false
 	DefOptEnableAlternativeLogicalPlans     = false
-	DefTiDBEnableLocalMatchAgainst          = false
+	DefTiDBEnableLocalMatchAgainst          = true
 	DefOptEnableSemiJoinRewrite             = false
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9

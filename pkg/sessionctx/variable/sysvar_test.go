@@ -37,6 +37,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLocalMatchAgainstDefaultAndDeprecation(t *testing.T) {
+	sv := GetSysVar(TiDBEnableLocalMatchAgainst)
+	require.Equal(t, On, sv.Value)
+	vars := NewSessionVars(nil)
+	require.True(t, vars.EnableLocalMatchAgainst)
+	require.Empty(t, vars.StmtCtx.GetWarnings())
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		for _, value := range []string{Off, On} {
+			vars.StmtCtx.SetWarnings(nil)
+			normalized, err := sv.Validate(vars, value, scope)
+			require.NoError(t, err)
+			require.Equal(t, value, normalized)
+			warns := vars.StmtCtx.GetWarnings()
+			require.Len(t, warns, 1)
+			require.True(t, ErrWarnDeprecatedSyntaxSimpleMsg.Equal(warns[0].Err))
+			require.Contains(t, warns[0].Err.Error(), TiDBEnableLocalMatchAgainst+" is deprecated and will be removed in a future release.")
+			if scope == ScopeSession {
+				require.NoError(t, sv.SetSessionFromHook(vars, normalized))
+				require.Equal(t, value == On, vars.EnableLocalMatchAgainst)
+			}
+		}
+	}
+	vars.StmtCtx.SetWarnings(nil)
+	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBEnableLocalMatchAgainst, On))
+	require.True(t, vars.EnableLocalMatchAgainst)
+	require.Empty(t, vars.StmtCtx.GetWarnings())
+}
+
 func TestSQLSelectLimit(t *testing.T) {
 	sv := GetSysVar(SQLSelectLimit)
 	vars := NewSessionVars(nil)
