@@ -845,6 +845,9 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
+	// redactedRowsOnly makes an operator that is not in ExplainRows show no
+	// operator info, instead of rendering it from TargetPlan.
+	redactedRowsOnly bool
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -926,31 +929,11 @@ func (e *Explain) prepareSchema() error {
 	return nil
 }
 
-// redactMaskedPlanValues makes the plan of the current statement render its
-// data values as with tidb_redact_log = ON, whatever the session has set,
-// when the statement reads a masked column: such a plan holds original
-// values, for example the result of a subquery evaluated while planning and
-// the ranges built from it. The returned function restores the setting.
-func redactMaskedPlanValues(sctx base.PlanContext) func() {
-	if sctx == nil {
-		return func() {}
-	}
-	sv := sctx.GetSessionVars()
-	if !sv.StmtCtx.RedactDiagnostics || sv.EnableRedactLog == errors.RedactLogEnable {
-		return func() {}
-	}
-	redactLog := sv.EnableRedactLog
-	sv.EnableRedactLog = errors.RedactLogEnable
-	return func() { sv.EnableRedactLog = redactLog }
-}
-
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
-	defer redactMaskedPlanValues(e.TargetPlan.SCtx())()
-
 	if e.Analyze && e.Format == types.ExplainFormatTrueCardCost {
 		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
@@ -1224,6 +1207,9 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
 	}
+	if e.redactedRowsOnly {
+		return "N/A", "N/A", "N/A", "N/A", "N/A"
+	}
 
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
@@ -1259,7 +1245,6 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
 func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) string {
-	defer redactMaskedPlanValues(explainCtx)()
 	binary := binaryDataFromFlatPlan(explainCtx, flat)
 	if binary == nil {
 		return ""

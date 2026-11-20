@@ -6099,7 +6099,18 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	if explainForFormat == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	if processInfo.RedactPlanValues && len(explainRows) == 0 {
+		// The plan holds original values of a masked column. Only the rows
+		// its own session rendered without them can be shown; rendering
+		// the plan here would read the state of another, running session.
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"EXPLAIN FOR CONNECTION in this format for a statement that reads a masked column")
+	}
+	p, err := b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
+	if explain, ok := p.(*Explain); ok {
+		explain.redactedRowsOnly = processInfo.RedactPlanValues
+	}
+	return p, err
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {

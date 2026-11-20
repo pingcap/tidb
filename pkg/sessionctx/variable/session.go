@@ -3530,6 +3530,18 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
 
+// PlanRedactLog returns the tidb_redact_log mode to render the data values in
+// the plan of the current statement with. The plan of a statement that reads
+// a masked column holds original values, for example the result of a subquery
+// evaluated while planning and the ranges built from it, so it is rendered as
+// with tidb_redact_log = ON, whatever the session has set.
+func (s *SessionVars) PlanRedactLog() string {
+	if s.StmtCtx != nil && s.StmtCtx.RedactDiagnostics {
+		return errors.RedactLogEnable
+	}
+	return s.EnableRedactLog
+}
+
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 	mu := &s.TxnCtx.tdmLock

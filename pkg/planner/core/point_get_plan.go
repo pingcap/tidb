@@ -216,7 +216,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
-			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactMode := p.SCtx().GetSessionVars().PlanRedactLog()
 			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
 			if redactOn {

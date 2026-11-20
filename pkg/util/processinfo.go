@@ -51,25 +51,30 @@ type ProcessInfo struct {
 	CursorTracker       cursor.Tracker
 	StmtCtx             *stmtctx.StatementContext
 	// SQLCPUUsage should be set nil for sleep command
-	SQLCPUUsage           *ppcpuusage.SQLCPUUsages
-	RefCountOfStmtCtx     *stmtctx.ReferenceCount
-	MemTracker            *memory.Tracker
-	DiskTracker           *disk.Tracker
-	RunawayChecker        resourcegroup.RunawayChecker
-	StatsInfo             func(any) map[string]uint64
-	RuntimeStatsColl      *execdetails.RuntimeStatsColl
-	User                  string
-	Digest                string
-	Host                  string
-	DB                    string
-	Info                  string
-	Port                  string
-	ResourceGroupName     string
-	SessionAlias          string
-	RedactSQL             string
-	IndexNames            []string
-	TableIDs              []int64
-	PlanExplainRows       [][]string
+	SQLCPUUsage       *ppcpuusage.SQLCPUUsages
+	RefCountOfStmtCtx *stmtctx.ReferenceCount
+	MemTracker        *memory.Tracker
+	DiskTracker       *disk.Tracker
+	RunawayChecker    resourcegroup.RunawayChecker
+	StatsInfo         func(any) map[string]uint64
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	User              string
+	Digest            string
+	Host              string
+	DB                string
+	Info              string
+	Port              string
+	ResourceGroupName string
+	SessionAlias      string
+	RedactSQL         string
+	IndexNames        []string
+	TableIDs          []int64
+	PlanExplainRows   [][]string
+	// RedactPlanValues is set when the statement of Plan reads a column that
+	// a masking policy masks for the session. PlanExplainRows was rendered
+	// without the data values then; Plan itself still holds them and must
+	// not be rendered again by another session.
+	RedactPlanValues      bool
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64

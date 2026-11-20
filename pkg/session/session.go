@@ -1442,6 +1442,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		RedactPlanValues:      p != nil && s.sessionVars.StmtCtx.RedactDiagnostics,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1471,6 +1472,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
+			pi.RedactPlanValues = oldPi.RedactPlanValues
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
 	}

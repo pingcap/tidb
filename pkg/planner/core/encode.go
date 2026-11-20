@@ -33,9 +33,6 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	if len(flat.Main) == 0 {
 		return ""
 	}
-	if origin := flat.Main[0].Origin; origin != nil {
-		defer redactMaskedPlanValues(origin.SCtx())()
-	}
 	// We won't collect the plan when we're in "EXPLAIN FOR" statement and the plan is from EXECUTE statement (please
 	// read comments of InExecute for details about the meaning of InExecute) because we are unable to get some
 	// necessary information when the execution of the plan is finished and some states in the session such as
@@ -163,7 +160,6 @@ func EncodePlan(p base.Plan) string {
 	if p == nil || p.SCtx() == nil {
 		return ""
 	}
-	defer redactMaskedPlanValues(p.SCtx())()
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
 	selectPlan := getSelectPlan(p)

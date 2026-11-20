@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -33,7 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2249,6 +2252,122 @@ func TestMaskingPolicyExplainRedactsValues(t *testing.T) {
 	require.Contains(t, maskedPlan, "IndexRangeScan")
 	require.NotContains(t, maskedPlan, "secret")
 	require.Contains(t, plan(root, fmt.Sprintf(summary, "exempt_reader")), "secret")
+}
+
+// TestMaskingPolicyExplainForConnection tests that EXPLAIN FOR CONNECTION
+// shows the plan of a statement that reads a masked column only as its own
+// session rendered it, also after that session went on to other statements.
+func TestMaskingPolicyExplainForConnection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_ef(id int primary key, c varchar(20), b varchar(20), key(c), key(b))")
+	root.MustExec("insert into t_ef values (1, 'secret', 'plainvalue')")
+	root.MustExec("create masking policy p on t_ef(c) as case when current_user()='root@%' then c else mask_full(c) end enable")
+	root.MustExec("create user u_ef")
+	root.MustExec("grant select on test.* to u_ef")
+	newUser := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_ef", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		tk.MustExec("set session tidb_redact_log = 'OFF'")
+		tk.MustExec("set session tidb_opt_enable_non_eval_scalar_subquery = OFF")
+		return tk
+	}
+	target, viewer := newUser(), newUser()
+	root.MustExec("set session tidb_opt_enable_non_eval_scalar_subquery = OFF")
+	explainFor := func(who, of *testkit.TestKit, format string) (string, error) {
+		pi := of.Session().ShowProcess()
+		who.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*util.ProcessInfo{pi}})
+		rs, err := who.Exec(fmt.Sprintf("explain %s for connection %d", format, pi.ID))
+		if err != nil || rs == nil {
+			return "", err
+		}
+		var sb strings.Builder
+		for _, row := range who.ResultSetToResult(rs, "").Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String(), nil
+	}
+	masked := "select count(*) from t_ef where c = (select min(c) from t_ef)"
+	plain := "select count(*) from t_ef where b = (select max(b) from t_ef)"
+
+	target.MustQuery(masked).Check(testkit.Rows("1"))
+	for _, after := range []string{"", "set @x = 1", "begin", "rollback"} {
+		if after != "" {
+			// The session may keep the last plan, or show the one of this
+			// statement.
+			target.MustExec(after)
+		}
+		out, err := explainFor(viewer, target, "")
+		require.NoError(t, err, after)
+		require.NotContains(t, out, "secret", after)
+		if after == "" {
+			require.Contains(t, out, "IndexRangeScan")
+		}
+		for _, format := range []string{"format='brief'", "format='verbose'", "format='dot'", "format='tidb_json'"} {
+			out, err = explainFor(viewer, target, format)
+			if after == "" || err != nil {
+				require.ErrorContains(t, err, "statement that reads a masked column", format+after)
+			}
+			require.NotContains(t, out, "secret", format+after)
+		}
+	}
+	// The next statement of the session reads no masked column.
+	target.MustQuery(plain).Check(testkit.Rows("1"))
+	for _, format := range []string{"", "format='brief'"} {
+		out, err := explainFor(viewer, target, format)
+		require.NoError(t, err)
+		require.Contains(t, out, "plainvalue")
+	}
+	// An identity that reads the original value keeps its plan.
+	for _, format := range []string{"", "format='brief'"} {
+		root.MustQuery(masked).Check(testkit.Rows("1"))
+		out, err := explainFor(root, root, format)
+		require.NoError(t, err)
+		require.Contains(t, out, "secret")
+	}
+
+	// The session keeps running while its plans are explained. EXPLAIN FOR
+	// CONNECTION has always read the plan of a running session without
+	// synchronization, so the race detector cannot run this part.
+	if israce.RaceEnabled {
+		return
+	}
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			switch i % 3 {
+			case 0:
+				target.MustQuery(masked)
+			case 1:
+				target.MustQuery(plain)
+			default:
+				target.MustExec("set session tidb_redact_log = 'OFF'")
+			}
+		}
+	}()
+	for range 300 {
+		for _, format := range []string{"", "format='brief'"} {
+			if out, err := explainFor(viewer, target, format); err == nil {
+				require.NotContains(t, out, "secret")
+			} else {
+				require.ErrorContains(t, err, "statement that reads a masked column")
+			}
+		}
+	}
+	close(stop)
+	wg.Wait()
+	target.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("OFF"))
 }
 
 func TestMaskingPolicyRestrictOnDuplicateAssignment(t *testing.T) {
