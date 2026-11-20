@@ -60,6 +60,11 @@ pub(crate) struct MockKnobs {
     pub(crate) sync_refresh_alert_err: Option<MvsError>,
     pub(crate) cleanup_stale_refresh_alert_err: Option<MvsError>,
     pub(crate) last_refresh_alert_sync: Vec<RefreshAlertTask>,
+    /// Go `currentTSO` / `currentTSOErr` / `historyGCErr` / `historyGCPanic`.
+    pub(crate) current_tso: u64,
+    pub(crate) current_tso_err: Option<MvsError>,
+    pub(crate) history_gc_err: Option<MvsError>,
+    pub(crate) history_gc_panic: bool,
     /// Go `lastRefreshID` / `lastPurgeID`.
     pub(crate) last_refresh_id: i64,
     pub(crate) last_purge_id: i64,
@@ -95,6 +100,11 @@ pub(crate) struct MockMVServiceHelper {
     pub(crate) sync_refresh_alert_calls: AtomicI32,
     pub(crate) cleanup_stale_refresh_alert_calls: AtomicI32,
     pub(crate) server_refresh_calls: AtomicI32,
+    /// Go `historyGCCalls` and the last call's arguments.
+    pub(crate) history_gc_calls: AtomicI32,
+    pub(crate) last_history_gc_current_tso: std::sync::atomic::AtomicU64,
+    pub(crate) last_mview_history_gc_retention: std::sync::atomic::AtomicI64,
+    pub(crate) last_mlog_history_gc_retention: std::sync::atomic::AtomicI64,
     pub(crate) refresh_manual_cancel_backoff_calls: AtomicI32,
     pub(crate) purge_manual_cancel_backoff_calls: AtomicI32,
     pub(crate) refresh_signal: Option<(Sender<i64>, Receiver<i64>)>,
@@ -286,11 +296,31 @@ impl MVTaskHandler for MockMVServiceHelper {
     }
 
     fn get_current_tso(&self, _: &Context, _: &dyn SessionPool) -> Result<u64, MvsError> {
-        Ok(1)
+        let knobs = self.knobs.lock().unwrap();
+        if let Some(err) = &knobs.current_tso_err {
+            return Err(err.clone());
+        }
+        Ok(if knobs.current_tso == 0 { 1 } else { knobs.current_tso })
     }
 
-    fn purge_mv_history_before_tso(&self, _: &Context, _: &dyn SessionPool, _: u64, _: i64, _: i64) -> Result<(), MvsError> {
-        Ok(())
+    fn purge_mv_history_before_tso(
+        &self,
+        _: &Context,
+        _: &dyn SessionPool,
+        current_tso: u64,
+        mview_refresh_retention: i64,
+        mlog_purge_retention: i64,
+    ) -> Result<(), MvsError> {
+        let (panic, err) = {
+            let knobs = self.knobs.lock().unwrap();
+            (knobs.history_gc_panic, knobs.history_gc_err.clone())
+        };
+        assert!(!panic, "mock history gc panic");
+        self.history_gc_calls.fetch_add(1, SeqCst);
+        self.last_history_gc_current_tso.store(current_tso, SeqCst);
+        self.last_mview_history_gc_retention.store(mview_refresh_retention, SeqCst);
+        self.last_mlog_history_gc_retention.store(mlog_purge_retention, SeqCst);
+        err.map_or(Ok(()), Err)
     }
 }
 
@@ -628,7 +658,7 @@ fn add_mv_refresh_execution_tasks_for_test(svc: &MVService, tasks: &[&Arc<MViewT
 }
 
 /// Go `setServiceHashOverridesForTest`: two servers, this one `nodeA`.
-fn set_service_hash_overrides_for_test(svc: &MVService, overrides: &[(Vec<u8>, u32)]) {
+pub(crate) fn set_service_hash_overrides_for_test(svc: &MVService, overrides: &[(Vec<u8>, u32)]) {
     let mut mapping: HashMap<Vec<u8>, u32> = HashMap::from([
         (b"nodeA#0".to_vec(), 10),
         (b"nodeB#0".to_vec(), 30),

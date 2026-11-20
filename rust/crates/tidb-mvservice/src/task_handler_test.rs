@@ -18,7 +18,10 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 
-use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
+use tidb_timer::go_time::{GoTime, HOUR, MINUTE, SECOND};
+
+/// Go `time.Millisecond`.
+const MILLISECOND: i64 = SECOND / 1000;
 
 use crossbeam_channel::Receiver;
 use tidb_gocontext::Context;
@@ -440,4 +443,151 @@ fn test_mv_service_execute_task_skip_when_deleted() {
     execute_task_skip_when_deleted_refresh_panic_reschedules();
     execute_task_skip_when_deleted_purge();
     execute_task_skip_when_deleted_purge_panic_reschedules();
+}
+
+/// Go `setHistoryGCOwnerForTest`.
+fn set_history_gc_owner_for_test(svc: &MVService, owner_hash: u32) {
+    crate::mvservice_test::set_service_hash_overrides_for_test(svc, &[(MV_HISTORY_GC_OWNER_KEY.as_bytes().to_vec(), owner_hash)]);
+    svc.next_history_gc_at_millis.store(0, SeqCst);
+}
+
+/// Go `TestMVServiceMaintenanceTimerTriggersHistoryGC`.
+#[test]
+fn test_mv_service_maintenance_timer_triggers_history_gc() {
+    let _serial = serial();
+    let (module, _guard) = install_mock_time_for_test();
+    let (ctx, cancel) = Context::with_cancel(&Context::background());
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().current_tso = 1 << 40;
+    let mut cfg = default_mv_service_config();
+    cfg.basic_interval = SECOND;
+    cfg.fetch_interval = 24 * HOUR;
+    let svc = new_mv_service(ctx, Arc::new(MockSessionPool), helper.clone(), cfg.clone());
+    svc.last_meta_fetch_millis.store(unix_milli(&mvs_now()), SeqCst);
+    svc.next_history_gc_at_millis.store(unix_milli(&mvs_now().add(DEFAULT_MV_HISTORY_GC_INTERVAL)), SeqCst);
+    let _running = run_mv_service_for_test(&svc, cancel);
+
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    eventually(|| helper.server_refresh_calls.load(SeqCst) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+
+    module.advance(DEFAULT_MV_HISTORY_GC_INTERVAL + cfg.basic_interval);
+    eventually(|| helper.history_gc_calls.load(SeqCst) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+    assert_eq!(1 << 40, helper.last_history_gc_current_tso.load(SeqCst));
+    assert_eq!(DEFAULT_MV_HISTORY_GC_RETENTION, helper.last_mview_history_gc_retention.load(SeqCst));
+    assert_eq!(DEFAULT_MV_HISTORY_GC_RETENTION, helper.last_mlog_history_gc_retention.load(SeqCst));
+    eventually(
+        || helper.task_duration_count(MV_TASK_DURATION_TYPE_HISTORY_GC, MV_DURATION_RESULT_SUCCESS) > 0,
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+}
+
+/// Go `TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner`.
+#[test]
+fn test_mv_service_maybe_gcmv_history_skips_when_not_owner() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().current_tso = 1 << 40;
+    let mut cfg = default_mv_service_config();
+    cfg.server_consistent_hash_replicas = 1;
+    let svc = new_service(helper.clone(), cfg);
+    svc.next_history_gc_at_millis.store(0, SeqCst);
+    svc.history_gc_retry_count.store(3, SeqCst);
+    set_history_gc_owner_for_test(&svc, 20);
+
+    svc.maybe_gc_operation_history(&mvs_now());
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    assert_eq!(0, helper.run_event_count(MV_RUN_EVENT_GET_TSO_ERR));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_HISTORY_GC, MV_DURATION_RESULT_SUCCESS));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_HISTORY_GC, MV_DURATION_RESULT_FAILED));
+    assert_eq!(0, svc.history_gc_retry_count.load(SeqCst));
+}
+
+fn history_gc_service(configure: impl FnOnce(&mut crate::mvservice_test::MockKnobs), basic_interval: Option<i64>) -> (Arc<MockMVServiceHelper>, Arc<MVService>) {
+    let helper = Arc::new(MockMVServiceHelper::default());
+    configure(&mut helper.knobs.lock().unwrap());
+    let mut cfg = default_mv_service_config();
+    cfg.server_consistent_hash_replicas = 1;
+    if let Some(basic_interval) = basic_interval {
+        cfg.basic_interval = basic_interval;
+    }
+    let svc = new_service(helper.clone(), cfg);
+    set_history_gc_owner_for_test(&svc, 5);
+    (helper, svc)
+}
+
+/// Go `TestMVServiceMaybeGCMVHistoryReportsMetrics` (its subtests in order).
+#[test]
+fn test_mv_service_maybe_gcmv_history_reports_metrics() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let failed = |helper: &MockMVServiceHelper| helper.task_duration_count(MV_TASK_DURATION_TYPE_HISTORY_GC, MV_DURATION_RESULT_FAILED) > 0;
+    let wait = |cond: &dyn Fn() -> bool| eventually(cond, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+
+    // "success"
+    let (helper, svc) = history_gc_service(|knobs| knobs.current_tso = 1 << 40, None);
+    svc.maybe_gc_operation_history(&mvs_now());
+    wait(&|| helper.history_gc_calls.load(SeqCst) == 1);
+    wait(&|| helper.task_duration_count(MV_TASK_DURATION_TYPE_HISTORY_GC, MV_DURATION_RESULT_SUCCESS) > 0);
+
+    // "get_tso_error"
+    let (helper, svc) =
+        history_gc_service(|knobs| knobs.current_tso_err = Some(MvsError::Other("get tso failed".to_owned())), None);
+    svc.maybe_gc_operation_history(&mvs_now());
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    wait(&|| helper.run_event_count(MV_RUN_EVENT_GET_TSO_ERR) > 0);
+    wait(&|| failed(&helper));
+
+    // "purge_error"
+    let (helper, svc) = history_gc_service(
+        |knobs| {
+            knobs.current_tso = 1 << 40;
+            knobs.history_gc_err = Some(MvsError::Other("purge failed".to_owned()));
+        },
+        None,
+    );
+    svc.maybe_gc_operation_history(&mvs_now());
+    wait(&|| helper.history_gc_calls.load(SeqCst) == 1);
+    wait(&|| failed(&helper));
+
+    // "get_tso_error_retries_quickly"
+    let basic_interval = 100 * MILLISECOND;
+    let (helper, svc) = history_gc_service(
+        |knobs| knobs.current_tso_err = Some(MvsError::Other("get tso failed".to_owned())),
+        Some(basic_interval),
+    );
+    let start_at = mvs_now();
+    svc.maybe_gc_operation_history(&start_at);
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    wait(&|| helper.run_event_count(MV_RUN_EVENT_GET_TSO_ERR) > 0);
+    wait(&|| !svc.history_gc_running.load(SeqCst));
+    helper.knobs.lock().unwrap().current_tso_err = None;
+    svc.maybe_gc_operation_history(&start_at.add(basic_interval));
+    wait(&|| helper.history_gc_calls.load(SeqCst) == 1);
+
+    // "error_waits_for_basic_interval_retry"
+    let (helper, svc) = history_gc_service(|knobs| knobs.current_tso_err = Some(MvsError::Canceled), Some(basic_interval));
+    let start_at = mvs_now();
+    svc.maybe_gc_operation_history(&start_at);
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    wait(&|| failed(&helper));
+    wait(&|| !svc.history_gc_running.load(SeqCst));
+    helper.knobs.lock().unwrap().current_tso_err = None;
+    svc.maybe_gc_operation_history(&start_at.add(basic_interval / 2));
+    assert_eq!(0, helper.history_gc_calls.load(SeqCst));
+    svc.maybe_gc_operation_history(&start_at.add(basic_interval));
+    wait(&|| helper.history_gc_calls.load(SeqCst) == 1);
+
+    // "panic_in_history_gc_is_recovered"
+    let (helper, svc) = history_gc_service(
+        |knobs| {
+            knobs.current_tso = 1 << 40;
+            knobs.history_gc_panic = true;
+        },
+        None,
+    );
+    svc.maybe_gc_operation_history(&mvs_now());
+    wait(&|| failed(&helper));
+    wait(&|| !svc.history_gc_running.load(SeqCst));
 }
