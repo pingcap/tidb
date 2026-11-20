@@ -204,12 +204,25 @@ func checkSystemSchemaDiff(t meta.Reader, diff *model.SchemaDiff, flashbackTSStr
 		// independently of database IDs. Check the bound table instead.
 		return checkSystemSchemaTableID(t, diff.TableID, flashbackTSString)
 	}
-	return checkSystemSchemaID(t, diff.SchemaID, flashbackTSString)
+	if err := checkSystemSchemaID(t, diff.SchemaID, flashbackTSString); err != nil {
+		return err
+	}
+	if diff.Type == model.ActionRenameTables {
+		// SchemaID is the target schema of the first table only. The targets
+		// of the other tables are in AffectedOpts.
+		for _, opt := range diff.AffectedOpts {
+			if err := checkSystemSchemaID(t, opt.SchemaID, flashbackTSString); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // checkSystemSchemaTableID checks whether the table was in a system schema at
 // the flashback snapshot. A table that enters a system schema later does so by
-// a diff carrying that schema ID, which checkSystemSchemaID rejects.
+// a diff carrying that schema ID as a target, which checkSystemSchemaDiff
+// rejects.
 func checkSystemSchemaTableID(t meta.Reader, tableID int64, flashbackTSString string) error {
 	dbs, err := t.ListDatabases()
 	if err != nil {
