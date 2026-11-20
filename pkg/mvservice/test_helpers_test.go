@@ -50,7 +50,6 @@ const (
 	testSQLCountMVLogRows         = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
 	testSQLFetchMVLogAccumulation = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
 	testSQLFetchMVLogPurge        = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
-	testSQLFetchMVRefresh         = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	testSQLRefreshMV              = `REFRESH MATERIALIZED VIEW %n.%n FAST`
 	testSQLFindMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	testSQLLockMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
@@ -59,6 +58,10 @@ const (
 	testSQLFindPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
 	testSQLLockPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
 	testSQLUpdatePurgeNextTime    = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`
+	testSQLFetchMVRefresh         = `SELECT i.NEXT_REFRESH_UNIX_SECONDS, i.MVIEW_ID, i.LAST_SUCCESS_READ_TSO, a.ALERT_LEVEL, a.LAST_SUCCESS_SNAPSHOT_TIME
+FROM mysql.tidb_mview_refresh_info AS i
+LEFT JOIN mysql.tidb_mview_refresh_alert AS a ON a.MVIEW_ID = i.MVIEW_ID
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 )
 
 var (
