@@ -1638,7 +1638,7 @@ func isNonDefaultPartitionOptionsUsed(defs []model.PartitionDefinition) bool {
 }
 
 func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *model.TableInfo, numParts uint64) ([]model.PartitionDefinition, error) {
-	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
+	if err := checkAddPartitionTooManyPartitions(numParts); err != nil {
 		return nil, err
 	}
 
