@@ -936,7 +936,7 @@ impl MVService {
         }
     }
 
-    fn execute_refresh_task(&self, m: &Arc<MViewTask>) -> Result<(), String> {
+    pub(crate) fn execute_refresh_task(&self, m: &Arc<MViewTask>) -> Result<(), String> {
         if !self.has_pending_mview_task(m) {
             return Ok(());
         }
@@ -959,7 +959,7 @@ impl MVService {
         err.map_or(Ok(()), |err| Err(err.to_string()))
     }
 
-    fn execute_purge_task(&self, l: &Arc<MlogPurgeTask>) -> Result<(), String> {
+    pub(crate) fn execute_purge_task(&self, l: &Arc<MlogPurgeTask>) -> Result<(), String> {
         if !self.has_pending_mlog_purge_task(l) {
             return Ok(());
         }

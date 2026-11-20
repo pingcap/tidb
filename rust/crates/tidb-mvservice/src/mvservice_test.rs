@@ -60,6 +60,12 @@ pub(crate) struct MockKnobs {
     pub(crate) sync_refresh_alert_err: Option<MvsError>,
     pub(crate) cleanup_stale_refresh_alert_err: Option<MvsError>,
     pub(crate) last_refresh_alert_sync: Vec<RefreshAlertTask>,
+    /// Go `lastRefreshID` / `lastPurgeID`.
+    pub(crate) last_refresh_id: i64,
+    pub(crate) last_purge_id: i64,
+    /// Go `refreshPanic` / `purgePanic`.
+    pub(crate) refresh_panic: bool,
+    pub(crate) purge_panic: bool,
     /// Go `lastRefreshAlertAt`.
     pub(crate) last_refresh_alert_at: GoTime,
     /// Go `accumulationRowCountPanic`.
@@ -96,6 +102,11 @@ pub(crate) struct MockMVServiceHelper {
 }
 
 impl MockMVServiceHelper {
+    /// Go `runEventCount`.
+    pub(crate) fn run_event_count(&self, event_type: &str) -> i64 {
+        self.knobs.lock().unwrap().run_event_counts.get(event_type).copied().unwrap_or(0)
+    }
+
     pub(crate) fn task_duration_count(&self, task_type: &str, result: &str) -> i64 {
         self.knobs.lock().unwrap().task_duration_counts.get(&format!("{task_type}/{result}")).copied().unwrap_or(0)
     }
@@ -125,7 +136,12 @@ fn emit(signal: &Option<(Sender<i64>, Receiver<i64>)>, id: i64) {
 impl MVTaskHandler for MockMVServiceHelper {
     fn refresh_mv(&self, _: &Context, _: &dyn SessionPool, mview_id: i64) -> Result<GoTime, MvsError> {
         emit(&self.refresh_signal, mview_id);
-        let knobs = self.knobs.lock().unwrap();
+        let mut knobs = self.knobs.lock().unwrap();
+        knobs.last_refresh_id = mview_id;
+        if knobs.refresh_panic {
+            drop(knobs);
+            panic!("mock refresh panic");
+        }
         match &knobs.refresh_err {
             Some(err) => Err(err.clone()),
             None => Ok(knobs.refresh_next.clone()),
@@ -134,7 +150,12 @@ impl MVTaskHandler for MockMVServiceHelper {
 
     fn purge_mv_log(&self, _: &Context, _: &dyn SessionPool, mlog_id: i64) -> Result<GoTime, MvsError> {
         emit(&self.purge_signal, mlog_id);
-        let knobs = self.knobs.lock().unwrap();
+        let mut knobs = self.knobs.lock().unwrap();
+        knobs.last_purge_id = mlog_id;
+        if knobs.purge_panic {
+            drop(knobs);
+            panic!("mock purge panic");
+        }
         match &knobs.purge_err {
             Some(err) => Err(err.clone()),
             None => Ok(knobs.purge_next.clone()),

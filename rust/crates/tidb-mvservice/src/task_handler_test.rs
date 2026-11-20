@@ -20,10 +20,16 @@ use std::sync::Arc;
 
 use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
 
-use crate::mvservice_test::{new_service, MockMVServiceHelper};
+use crossbeam_channel::Receiver;
+use tidb_gocontext::Context;
+
+use crate::mvservice_test::{new_service, MockMVServiceHelper, MockSessionPool};
 use crate::service::*;
-use crate::service_settings::default_mv_service_config;
-use crate::task_handler::{err_mv_task_canceled_manually, MvsError};
+use crate::service_settings::{default_mv_service_config, new_mv_service};
+use crate::task_handler::{
+    err_mv_task_canceled_manually, MVTaskHandler, MvsError, ERR_MV_LOG_PURGE_HANDLER_NOT_REGISTERED,
+    ERR_MV_REFRESH_HANDLER_NOT_REGISTERED,
+};
 use crate::test_helpers_test::*;
 use crate::time_proxy::{mvs_now, unix_milli};
 
@@ -258,4 +264,180 @@ fn test_mv_service_task_result() {
     let _serial = serial();
     task_result_purge();
     task_result_refresh();
+}
+
+/// Go `runMVServiceForTest`: the service's loop until the test ends.
+struct RunningService {
+    cancel: Option<tidb_gocontext::CancelFunc>,
+    done: Receiver<()>,
+}
+
+impl Drop for RunningService {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel.cancel();
+        }
+        if !std::thread::panicking() {
+            assert!(
+                matches!(self.done.recv_timeout(TEST_EVENTUALLY_WAIT), Err(crossbeam_channel::RecvTimeoutError::Disconnected)),
+                "mv service did not stop in time"
+            );
+        }
+    }
+}
+
+fn run_mv_service_for_test(svc: &Arc<MVService>, cancel: tidb_gocontext::CancelFunc) -> RunningService {
+    let (done_tx, done) = crossbeam_channel::bounded::<()>(0);
+    let run = Arc::clone(svc);
+    std::thread::spawn(move || {
+        run.run();
+        drop(done_tx);
+    });
+    RunningService { cancel: Some(cancel), done }
+}
+
+/// Go `TestMVServiceDefaultTaskHandler`.
+#[test]
+fn test_mv_service_default_task_handler() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.refresh_err = Some(MvsError::Other(ERR_MV_REFRESH_HANDLER_NOT_REGISTERED.to_owned()));
+        knobs.purge_err = Some(MvsError::Other(ERR_MV_LOG_PURGE_HANDLER_NOT_REGISTERED.to_owned()));
+    }
+    let svc = new_service(helper, default_mv_service_config());
+    let err = svc.mh.refresh_mv(&Context::background(), &MockSessionPool, 1).unwrap_err();
+    assert_eq!(ERR_MV_REFRESH_HANDLER_NOT_REGISTERED, err.to_string());
+    let err = svc.mh.purge_mv_log(&Context::background(), &MockSessionPool, 1).unwrap_err();
+    assert_eq!(ERR_MV_LOG_PURGE_HANDLER_NOT_REGISTERED, err.to_string());
+}
+
+/// Go `TestMVServiceUseInjectedTaskHandler`.
+#[test]
+fn test_mv_service_use_injected_task_handler() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let next_refresh = mvs_now().add(MINUTE);
+    let next_purge = mvs_now().add(2 * MINUTE);
+    let helper = Arc::new(MockMVServiceHelper::default());
+    {
+        let mut knobs = helper.knobs.lock().unwrap();
+        knobs.refresh_next = next_refresh.clone();
+        knobs.purge_next = next_purge.clone();
+    }
+    let svc = new_service(helper.clone(), default_mv_service_config());
+
+    let got_next_refresh = svc.mh.refresh_mv(&Context::background(), &MockSessionPool, 2).unwrap();
+    assert_eq!(next_refresh, got_next_refresh);
+    assert_eq!(2, helper.knobs.lock().unwrap().last_refresh_id);
+
+    let got_next_purge = svc.mh.purge_mv_log(&Context::background(), &MockSessionPool, 2).unwrap();
+    assert_eq!(next_purge, got_next_purge);
+    assert_eq!(2, helper.knobs.lock().unwrap().last_purge_id);
+}
+
+/// Go `TestMVServiceNotifyDDLChangeTriggersFetch`.
+#[test]
+fn test_mv_service_notify_ddl_change_triggers_fetch() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    let (ctx, cancel) = Context::with_cancel(&Context::background());
+    let helper = Arc::new(MockMVServiceHelper::default());
+    let svc = new_mv_service(ctx, Arc::new(MockSessionPool), helper.clone(), default_mv_service_config());
+    svc.last_meta_fetch_millis.store(unix_milli(&mvs_now()), SeqCst);
+    let _running = run_mv_service_for_test(&svc, cancel);
+
+    assert_eq!(0, helper.fetch_logs_calls.load(SeqCst));
+    assert_eq!(0, helper.fetch_view_calls.load(SeqCst));
+
+    svc.notify_ddl_change();
+    eventually(
+        || helper.fetch_logs_calls.load(SeqCst) > 0 && helper.fetch_view_calls.load(SeqCst) > 0,
+        TEST_EVENTUALLY_WAIT,
+        TEST_EVENTUALLY_TICK,
+    );
+    eventually(|| helper.run_event_count(MV_RUN_EVENT_FETCH_BY_DDL) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
+}
+
+fn execute_task_skip_when_deleted_refresh() {
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().refresh_next = mvs_now().add(MINUTE);
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    let next = mvs_now().add(-MINUTE);
+    let m = MViewTask::new(403, MViewTaskState { next_refresh: next.clone(), ..MViewTaskState::default() }, unix_milli(&next));
+    svc.build_mview_refresh_tasks(HashMap::from([(m.id, Arc::clone(&m))]));
+    svc.build_mview_refresh_tasks(HashMap::new());
+
+    svc.execute_refresh_task(&m).unwrap();
+    assert_eq!(0, helper.knobs.lock().unwrap().last_refresh_id);
+    assert_eq!(0, svc.metrics.running_mv_refresh_count.load(SeqCst));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_REFRESH, MV_DURATION_RESULT_SUCCESS));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_REFRESH, MV_DURATION_RESULT_FAILED));
+}
+
+fn execute_task_skip_when_deleted_refresh_panic_reschedules() {
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().refresh_panic = true;
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    let next = mvs_now().add(-MINUTE);
+    let m = MViewTask::new(404, MViewTaskState { next_refresh: next.clone(), ..MViewTaskState::default() }, unix_milli(&next));
+    svc.build_mview_refresh_tasks(HashMap::from([(m.id, Arc::clone(&m))]));
+
+    let err = svc.execute_refresh_task(&m).unwrap_err();
+    assert!(err.contains("refresh MV task panicked"), "{err}");
+    assert_eq!(1, m.retry_count.load(SeqCst));
+    assert_eq!(0, svc.metrics.running_mv_refresh_count.load(SeqCst));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_REFRESH, MV_DURATION_RESULT_SUCCESS));
+    assert_eq!(1, helper.task_duration_count(MV_TASK_DURATION_TYPE_REFRESH, MV_DURATION_RESULT_FAILED));
+    let queue = svc.mview_refresh_mu.lock().unwrap();
+    assert!(queue.pending.contains_key(&m.id));
+    assert_ne!(MAX_NEXT_SCHEDULE_TS, m.order_ts.load(SeqCst));
+}
+
+fn execute_task_skip_when_deleted_purge() {
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().purge_next = mvs_now().add(MINUTE);
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    let next = mvs_now().add(-MINUTE);
+    let l = MlogPurgeTask::new(303, next.clone(), unix_milli(&next));
+    svc.build_mlog_purge_tasks(HashMap::from([(l.id, Arc::clone(&l))]));
+    svc.build_mlog_purge_tasks(HashMap::new());
+
+    svc.execute_purge_task(&l).unwrap();
+    assert_eq!(0, helper.knobs.lock().unwrap().last_purge_id);
+    assert_eq!(0, svc.metrics.running_mv_log_purge_count.load(SeqCst));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_PURGE, MV_DURATION_RESULT_SUCCESS));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_PURGE, MV_DURATION_RESULT_FAILED));
+}
+
+fn execute_task_skip_when_deleted_purge_panic_reschedules() {
+    let helper = Arc::new(MockMVServiceHelper::default());
+    helper.knobs.lock().unwrap().purge_panic = true;
+    let svc = new_service(helper.clone(), default_mv_service_config());
+    let next = mvs_now().add(-MINUTE);
+    let l = MlogPurgeTask::new(304, next.clone(), unix_milli(&next));
+    svc.build_mlog_purge_tasks(HashMap::from([(l.id, Arc::clone(&l))]));
+
+    let err = svc.execute_purge_task(&l).unwrap_err();
+    assert!(err.contains("purge MV log task panicked"), "{err}");
+    assert_eq!(1, l.retry_count.load(SeqCst));
+    assert_eq!(0, svc.metrics.running_mv_log_purge_count.load(SeqCst));
+    assert_eq!(0, helper.task_duration_count(MV_TASK_DURATION_TYPE_PURGE, MV_DURATION_RESULT_SUCCESS));
+    assert_eq!(1, helper.task_duration_count(MV_TASK_DURATION_TYPE_PURGE, MV_DURATION_RESULT_FAILED));
+    let queue = svc.mlog_purge_mu.lock().unwrap();
+    assert!(queue.pending.contains_key(&l.id));
+    assert_ne!(MAX_NEXT_SCHEDULE_TS, l.order_ts.load(SeqCst));
+}
+
+/// Go `TestMVServiceExecuteTaskSkipWhenDeleted` (its four subtests).
+#[test]
+fn test_mv_service_execute_task_skip_when_deleted() {
+    let _serial = serial();
+    let _clock = install_mock_time_for_test();
+    execute_task_skip_when_deleted_refresh();
+    execute_task_skip_when_deleted_refresh_panic_reschedules();
+    execute_task_skip_when_deleted_purge();
+    execute_task_skip_when_deleted_purge_panic_reschedules();
 }
