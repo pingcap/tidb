@@ -706,7 +706,10 @@ func TestMaskingPolicyCollationSubstitution(t *testing.T) {
 	tk.MustExec("insert into t_collation values ('secret')")
 	tk.MustExec("create masking policy p on t_collation(c) as _utf8mb4'X' collate utf8mb4_general_ci")
 	tk.MustQuery("select c from t_collation").Check(testkit.Rows("X"))
-	require.ErrorContains(t, tk.ExecToErr("select concat(c, '!') from t_collation"), "masking policy cannot be preserved through expression substitution")
+	// An expression over the column is built for the collation its policy returns.
+	tk.MustQuery("select concat(c, '!'), collation(concat(c, '!')), c = 'x', concat(c, '!') = 'x!' from t_collation").
+		Check(testkit.Rows("X! utf8mb4_general_ci 1 1"))
+	tk.MustQuery("select count(*) from t_collation where c = 'x'").Check(testkit.Rows("0"))
 }
 
 func TestMaskingBuiltinNullableParameters(t *testing.T) {
@@ -1075,6 +1078,102 @@ func TestMaskingPolicyComparisonOnNotNullColumn(t *testing.T) {
 			tk.MustQuery("execute cmp_decimal using @p, @p").Check(testkit.Rows("<nil> <nil>"))
 		}
 		tk.MustExec("drop table cmp_source")
+	}
+}
+
+func TestMaskingPolicyTypeChangingResultExpressions(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table type_source(id int primary key, ti tinyint not null, c int, d datetime, y year, " +
+		"dec2 decimal(5,2), s varchar(10), u int)")
+	tk.MustExec("insert into type_source values (1, 1, 1, '2024-01-02 03:04:05', 2012, 1.5, 'x2', 1)")
+	// raw is the result for the original column, masked the result of the same
+	// expression over the value its policy returns: 1.5 for ti, 'x1' for c,
+	// '2024' for d and '2012' for y.
+	cases := []struct{ expr, raw, masked string }{
+		{"ti < 1.3", "1", "0"}, {"ti = 1.5", "0", "1"}, {"ti <=> 1.5", "0", "1"}, {"ti = 1", "1", "0"},
+		{"ti between 1.4 and 1.6", "0", "1"}, {"ti not between 1.4 and 1.6", "1", "0"},
+		{"ti in (1.5)", "0", "1"}, {"ti in (1.5, 7)", "0", "1"}, {"ti not in (1.5, 7)", "1", "0"},
+		{"not (ti < 1.3)", "0", "1"}, {"if(ti = 1.5, 'y', 'n')", "n", "y"},
+		{"case when ti = 1.5 then 'y' else 'n' end", "n", "y"}, {"case ti when 1.5 then 'y' else 'n' end", "n", "y"},
+		{"(ti, 1) = (1.5, 1)", "0", "1"}, {"nullif(ti, 1.5)", "1", "<nil>"}, {"ti + 1", "2", "2.5"},
+		// An explicit cast is kept as written.
+		{"cast(ti as signed)", "1", "2"}, {"cast(ti as signed) = 2", "0", "1"},
+		// Only one side of the comparison is masked.
+		{"ti = dec2", "0", "1"}, {"dec2 = ti", "0", "1"}, {"c < s", "0", "1"}, {"s > c", "0", "1"}, {"c = u", "1", "0"},
+		{"c = 'x1'", "0", "1"}, {"c <=> 'x1'", "0", "1"}, {"c = 1", "1", "0"}, {"c = 0", "0", "1"}, {"c + 1", "2", "1"},
+		{"c in ('x1')", "0", "1"}, {"c in ('x1', 'y')", "0", "1"}, {"c between 'x0' and 'x2'", "0", "1"},
+		{"case c when 'x1' then 'y' else 'n' end", "n", "y"}, {"if(c = 'x1', c, 'no')", "no", "x1"},
+		{"concat(c, '!')", "1!", "x1!"}, {"coalesce(c, 'z')", "1", "x1"},
+		{"d = '2024'", "<nil>", "1"}, {"d = 2024", "0", "1"}, {"d > '2024-01-01'", "1", "0"},
+		{"d between '2023' and '2025'", "<nil>", "1"}, {"d in ('2024', '2')", "<nil>", "1"},
+		{"y = 12", "1", "0"}, {"y = '2012'", "1", "1"}, {"y < 13", "1", "0"}, {"y between 11 and 13", "1", "0"},
+	}
+	check := func(masked bool) {
+		for _, tc := range cases {
+			want := tc.raw
+			if masked {
+				want = tc.masked
+			}
+			tk.MustQuery("select " + tc.expr + " from type_source").Check(testkit.Rows(want))
+			tk.MustQuery("select x from (select " + tc.expr + " as x from type_source) z").Check(testkit.Rows(want))
+			tk.MustQuery("select count(*) from type_source where (" + tc.expr + ") <=> " + "'" + tc.raw + "'").
+				Check(testkit.Rows(map[bool]string{true: "1", false: "0"}[tc.raw != "<nil>"]))
+		}
+	}
+	plans := func() (rows [][]any) {
+		for _, expr := range []string{"u < 1.3", "u = '1'", "y < 13", "d = 20240102030405", "u in ('1', 2.0)", "d between '2023' and '2025'"} {
+			rows = append(rows, tk.MustQuery("explain format='brief' select "+expr+" from type_source").Rows()...)
+		}
+		return rows
+	}
+	check(false)
+	ordinary := plans()
+	// A policy anywhere makes result expressions keep what masking may need.
+	// A column without a policy still gets the ordinary expression and result.
+	tk.MustExec("create table type_other(c int)")
+	tk.MustExec("create masking policy p on type_other(c) as mask_null(c)")
+	check(false)
+	require.Equal(t, ordinary, plans())
+
+	tk.MustExec("create masking policy p_ti on type_source(ti) as ti + 0.5")
+	tk.MustExec("create masking policy p_c on type_source(c) as concat('x', c)")
+	tk.MustExec("create masking policy p_d on type_source(d) as date_format(d, '%Y')")
+	tk.MustExec("create masking policy p_y on type_source(y) as concat(y, '')")
+	check(true)
+	// WITH ROLLUP replaces the grouping columns of a built expression in place.
+	tk.MustQuery("select ti < 1.3, ti = 1.5, c = 'x1', count(*) from type_source group by ti, c with rollup").Sort().
+		Check(testkit.Rows("0 1 1 1", "0 1 <nil> 1", "<nil> <nil> <nil> 1"))
+	tk.MustQuery("select max(ti) < 1.3, min(ti) between 1.4 and 1.6, distinct_x from " +
+		"(select distinct ti = 1.5 as distinct_x, ti from type_source) z group by distinct_x").Check(testkit.Rows("0 1 1"))
+	tk.MustQuery("select a.ti < 1.3, b.c = 'x1', a.ti = b.dec2 from type_source a join type_source b on a.ti = b.c").
+		Check(testkit.Rows("0 1 1"))
+
+	// The parameters of a cached plan are compared with the masked values too.
+	tk.MustExec("prepare cmp_cached from 'select ti < ?, ti + ? from type_source'")
+	tk.MustExec("prepare cmp_derived from 'select x from (select ti <= ? as x from type_source) z'")
+	for i, tc := range []struct{ n, want string }{
+		{"2", "1 3.5"}, {"1", "0 2.5"}, {"2", "1 3.5"}, {"1", "0 2.5"},
+	} {
+		tk.MustExec("set @n = " + tc.n)
+		tk.MustQuery("execute cmp_cached using @n, @n").Check(testkit.Rows(tc.want))
+		if i > 0 {
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
+		tk.MustQuery("execute cmp_derived using @n").Check(testkit.Rows(tc.want[:1]))
+	}
+	// A policy calling CONCAT is not cached; each execution builds its plan.
+	tk.MustExec("prepare cmp_string from 'select c = ?, c in (?, ''y'') from type_source'")
+	for _, tc := range []struct{ str, want string }{{"'x1'", "1 1"}, {"'x2'", "0 0"}, {"'x1'", "1 1"}, {"0", "1 1"}} {
+		tk.MustExec("set @s = " + tc.str)
+		tk.MustQuery("execute cmp_string using @s, @s").Check(testkit.Rows(tc.want))
+	}
+	tk.MustExec("prepare cmp_decimal from 'select ti < ?, ti = ?, ti between ? and ?, ti in (?, 7) from type_source'")
+	for _, tc := range []struct{ lt, eq, want string }{
+		{"1.3", "1.5", "0 1 0 1"}, {"1.6", "1.4", "1 0 1 0"}, {"1.6", "1.5", "1 1 1 1"}, {"1", "2", "0 0 0 0"},
+	} {
+		tk.MustExec("set @lt = " + tc.lt + ", @eq = " + tc.eq)
+		tk.MustQuery("execute cmp_decimal using @lt, @eq, @eq, @lt, @eq").Check(testkit.Rows(tc.want))
 	}
 }
 

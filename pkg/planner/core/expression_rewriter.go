@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -1870,17 +1871,65 @@ func (er *expressionRewriter) buildCtx() expression.BuildContext {
 	return er.sctx
 }
 
+// maskingSource returns the arguments a result expression is about to be built
+// from. A masking policy may replace a column by a value of another type, and
+// the expression is then built again from these arguments rather than from the
+// constants and implicit casts chosen for the original column. It returns nil
+// when masking cannot apply.
+func (er *expressionRewriter) maskingSource(args []expression.Expression) []expression.Expression {
+	if !er.preserveMaskingDependencies {
+		return nil
+	}
+	return expression.CloneConstants(args)
+}
+
+func setMaskingSource(
+	expr expression.Expression, source []expression.Expression,
+	build func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error),
+) {
+	if sf, ok := expr.(*expression.ScalarFunction); ok && source != nil {
+		sf.SetSubstituteSource(source, build)
+	}
+}
+
+// maskingRebuilder returns how to build an expression again from its source:
+// build runs as it does for an ordinary expression, with the source as stack.
+func (er *expressionRewriter) maskingRebuilder(build func(er *expressionRewriter)) func(expression.BuildContext, []expression.Expression) (expression.Expression, error) {
+	// The rewriter is pooled and may serve another expression by then.
+	sctx, ctx := er.sctx, er.ctx
+	return func(_ expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+		sub := &expressionRewriter{
+			sctx: sctx, ctx: ctx,
+			ctxStack: slices.Clone(args), ctxNameStk: make([]*types.FieldName, len(args)),
+		}
+		build(sub)
+		if sub.err != nil {
+			return nil, sub.err
+		}
+		return sub.ctxStack[len(sub.ctxStack)-1], nil
+	}
+}
+
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
 func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
 	buildCtx := er.buildCtx()
+	newFunc := expression.NewFunction
 	if init != nil {
 		ret, err = expression.NewFunctionWithInit(buildCtx, funcName, retType, init, args...)
-	} else if er.disableFoldCounter > 0 {
-		ret, err = expression.NewFunctionBase(buildCtx, funcName, retType, args...)
-	} else if er.tryFoldCounter > 0 {
-		ret, err = expression.NewFunctionTryFold(buildCtx, funcName, retType, args...)
 	} else {
-		ret, err = expression.NewFunction(buildCtx, funcName, retType, args...)
+		if er.disableFoldCounter > 0 {
+			newFunc = expression.NewFunctionBase
+		} else if er.tryFoldCounter > 0 {
+			newFunc = expression.NewFunctionTryFold
+		}
+		source := er.maskingSource(args)
+		ret, err = newFunc(buildCtx, funcName, retType, args...)
+		// Folding may return an argument, which keeps its own source.
+		if err == nil && !slices.Contains(args, ret) {
+			setMaskingSource(ret, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return newFunc(ctx, funcName, retType, args...)
+			})
+		}
 	}
 	if err != nil {
 		return
@@ -2183,6 +2232,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	args := er.ctxStack[stkLen-lLen-1:]
+	source := er.maskingSource(args)
 	leftFt := args[0].GetType(er.sctx.GetEvalCtx())
 	leftEt, leftIsNull := leftFt.EvalType(), leftFt.GetType() == mysql.TypeNull
 	if leftIsNull {
@@ -2247,6 +2297,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			}
 		}
 	}
+	setMaskingSource(function, source, er.maskingRebuilder(func(sub *expressionRewriter) { sub.inToExpression(lLen, not, tp) }))
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
@@ -2485,6 +2536,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
+	source := er.maskingSource(er.ctxStack[stkLen-3:])
 	expr, lexp, rexp := er.wrapExpWithCast()
 
 	coll, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
@@ -2524,6 +2576,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 			return
 		}
 	}
+	setMaskingSource(function, source, er.maskingRebuilder(func(sub *expressionRewriter) { sub.betweenToExpression(v) }))
 	er.ctxStackPop(3)
 	er.ctxStackAppend(function, types.EmptyName)
 }

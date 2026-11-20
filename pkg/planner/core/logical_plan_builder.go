@@ -1804,6 +1804,7 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 			for i, arg := range newArgs {
 				newArgs[i] = r.Transform(arg)
 			}
+			x.TransformSubstituteSource(r.Transform)
 			res = x
 		}
 	default:

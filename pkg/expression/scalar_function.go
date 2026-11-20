@@ -46,6 +46,74 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	// source is set by SetSubstituteSource.
+	source *substituteSource `plan-cache-clone:"shallow"`
+}
+
+// substituteSource records the arguments a function was built from, before
+// constant refinement and implicit casts adapted them to their types, and how
+// to build the function again from arguments of other types.
+type substituteSource struct {
+	args  []Expression
+	build func(ctx BuildContext, args []Expression) (Expression, error)
+}
+
+// SetSubstituteSource makes ColumnSubstituteAllFromSource build this function
+// again from args instead of substituting into its current arguments. Building
+// a function may change its constant arguments, so args must hold copies taken
+// with CloneConstants before this function was built.
+func (sf *ScalarFunction) SetSubstituteSource(args []Expression, build func(ctx BuildContext, args []Expression) (Expression, error)) {
+	sf.source = &substituteSource{args: args, build: build}
+}
+
+// TransformSubstituteSource applies fn to the arguments recorded by
+// SetSubstituteSource. Code that replaces the arguments of a built function in
+// place must replace them in its source as well.
+func (sf *ScalarFunction) TransformSubstituteSource(fn func(Expression) Expression) {
+	if sf.source == nil {
+		return
+	}
+	// The source is shared with the clones of this function.
+	args := make([]Expression, len(sf.source.args))
+	for i, arg := range sf.source.args {
+		args[i] = fn(arg)
+	}
+	sf.source = &substituteSource{args: args, build: sf.source.build}
+}
+
+// matches reports whether the source still describes sf: both must depend on
+// the same columns. They differ when the arguments of sf were replaced in place
+// without its source, or when folding removed a column from sf. Substituting
+// into the source would then leave a column of sf unsubstituted, or bring back
+// one it does not have.
+func (s *substituteSource) matches(sf *ScalarFunction) bool {
+	if s == nil {
+		return false
+	}
+	built := make(map[int64]struct{})
+	for _, col := range ExtractColumns(sf) {
+		built[col.UniqueID] = struct{}{}
+	}
+	recorded := make(map[int64]struct{}, len(built))
+	for _, col := range ExtractColumnsFromExpressions(nil, s.args, nil) {
+		if _, ok := built[col.UniqueID]; !ok {
+			return false
+		}
+		recorded[col.UniqueID] = struct{}{}
+	}
+	return len(recorded) == len(built)
+}
+
+// CloneConstants copies args, cloning the constants among them.
+func CloneConstants(args []Expression) []Expression {
+	cloned := make([]Expression, len(args))
+	for i, arg := range args {
+		if con, ok := arg.(*Constant); ok {
+			arg = con.Clone()
+		}
+		cloned[i] = arg
+	}
+	return cloned
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -349,6 +417,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
+		source:   sf.source,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.hashcode != nil {

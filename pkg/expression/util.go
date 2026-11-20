@@ -469,6 +469,19 @@ func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newE
 // @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
 // @return Expression, the original expr or the changed expr, it depends on the first @return bool.
 func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
+	return columnSubstituteImpl(ctx, expr, schema, newExprs, fail1Return, false)
+}
+
+// ColumnSubstituteAllFromSource is ColumnSubstituteAll for new expressions whose
+// types may differ from the columns they replace. A function that recorded its
+// source with SetSubstituteSource is built again from it, so that its type
+// inference, implicit casts and constant refinement follow the new types.
+func ColumnSubstituteAllFromSource(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression) {
+	_, hasFail, resExpr := columnSubstituteImpl(ctx, expr, schema, newExprs, true, true)
+	return hasFail, resExpr
+}
+
+func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return, fromSource bool) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -483,9 +496,30 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *ScalarFunction:
 		substituted := false
 		hasFail := false
+		if fromSource && v.source.matches(v) {
+			args := CloneConstants(v.source.args)
+			for i, arg := range args {
+				changed, failed, newArg := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, fromSource)
+				if failed {
+					return changed, true, v
+				}
+				if changed {
+					args[i] = newArg
+					substituted = true
+				}
+			}
+			if !substituted {
+				return false, false, v
+			}
+			newFunc, err := v.source.build(ctx, args)
+			if err != nil {
+				return true, true, v
+			}
+			return true, false, newFunc
+		}
 		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.Grouping {
 			var newArg Expression
-			substituted, hasFail, newArg = ColumnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return)
+			substituted, hasFail, newArg = columnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return, fromSource)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -557,7 +591,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := ColumnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return)
+			changed, failed, newFuncExpr := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, fromSource)
 			if fail1Return && failed {
 				return changed, failed, v
 			}

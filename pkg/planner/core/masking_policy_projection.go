@@ -476,7 +476,8 @@ func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, exp
 }
 
 func (m *maskingResultBuilder) substitute(expr expression.Expression, schema *expression.Schema, replacements []expression.Expression) (expression.Expression, error) {
-	failed, result := expression.ColumnSubstituteAll(m.b.ctx.GetExprCtx(), expr, schema, replacements)
+	// A policy may return another type than its column.
+	failed, result := expression.ColumnSubstituteAllFromSource(m.b.ctx.GetExprCtx(), expr, schema, replacements)
 	if failed {
 		return nil, &maskingNotPreservedError{shape: "expression substitution"}
 	}
