@@ -50,6 +50,18 @@ func MaskingPolicyStagingTableName(tableID int64) string {
 	return maskingPolicyLocalTablePrefix + strconv.FormatInt(tableID, 10)
 }
 
+// MaskingPolicySnapshotTableName is stable across checkpoint retries and
+// independent of other restore tasks, including tasks on the same backup.
+func MaskingPolicySnapshotTableName(restoreID uint64) string {
+	return maskingPolicyLocalTablePrefix + "snapshot_" + strconv.FormatUint(restoreID, 10)
+}
+
+// IsMaskingPolicySnapshotTable recognizes a task-owned snapshot stage.
+func IsMaskingPolicySnapshotTable(dbName, tableName string) bool {
+	return strings.EqualFold(dbName, mysql.SystemDB) &&
+		strings.HasPrefix(strings.ToLower(tableName), maskingPolicyLocalTablePrefix+"snapshot_")
+}
+
 var planPeplayerTables = map[string]map[string]struct{}{
 	"mysql": {
 		"plan_replayer_status": {},
@@ -407,8 +419,13 @@ func restoreMaskingPoliciesFromTemporaryTable(
 	targetSupportsMasking bool,
 	backedUpTables map[filter.Table]struct{},
 	execSQL func(context.Context, string) error,
+	stagingTable ...string,
 ) error {
-	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
+	name := sysMaskingPolicyTableName
+	if len(stagingTable) > 0 && stagingTable[0] != "" {
+		name = stagingTable[0]
+	}
+	tempTable := utils.EncloseDBAndTable(tempDBName, name)
 
 	// Replay policies as canonical CREATE MASKING POLICY semantics instead of raw row replay.
 	// This lets target cluster bind table_id/column_id with its own IDs.
@@ -510,7 +527,11 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	defer func() {
 		// Don't clean the temporary database for next restore with checkpoint.
 		if rerr == nil && !retainPolicyStage {
-			rc.cleanTemporaryDatabase(ctx, sysDB)
+			onlyPrivatePolicy := sysDB == mysql.SystemDB && !f.MatchSchema(sysDB) &&
+				(rc.maskingPolicySnapshotTable != "" || rc.skipSnapshotMaskingPolicy)
+			if !onlyPrivatePolicy {
+				rc.cleanTemporaryDatabase(ctx, sysDB)
+			}
 		}
 	}()
 
@@ -559,6 +580,9 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 			continue
 		}
 		tableName := table.Info.Name
+		if tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB && rc.skipSnapshotMaskingPolicy {
+			continue
+		}
 		if rc.deferMaskingPolicyRestore && tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB {
 			retainPolicyStage = true
 			continue
@@ -569,12 +593,24 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		if loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O) {
 			continue
 		}
-		if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db, f); err != nil {
+		policyDB := db
+		if tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB && rc.maskingPolicySnapshotTable != "" {
+			copyDB := *db
+			copyDB.TemporaryName = pmodel.NewCIStr(mysql.SystemDB)
+			policyDB = &copyDB
+		}
+		if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, policyDB, f); err != nil {
 			log.Warn("error during merging temporary tables into system tables",
 				logutil.ShortError(err),
 				zap.Stringer("table", tableName),
 			)
 			return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
+		}
+		if tableName.L == sysMaskingPolicyTableName && sysDB == mysql.SystemDB && rc.maskingPolicySnapshotTable != "" {
+			stage := utils.EncloseDBAndTable(mysql.SystemDB, rc.maskingPolicySnapshotTable)
+			if err := rc.db.Session().Execute(ctx, "DROP TABLE IF EXISTS "+stage); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		tablesRestored = append(tablesRestored, tableName.L)
 	}
@@ -597,7 +633,11 @@ func PreserveMaskingPolicyStagingTable(ctx context.Context, dom *domain.Domain, 
 		return nil
 	}
 	sourceDB, ok := dom.InfoSchema().SchemaByID(staged.DBID)
-	if !ok || sourceDB.Name.L != utils.TemporaryDBName(mysql.SystemDB).L || staged.Name.L != sysMaskingPolicyTableName {
+	if !ok {
+		return errors.New("masking policy snapshot staging table is missing")
+	}
+	legacyStage := sourceDB.Name.L == utils.TemporaryDBName(mysql.SystemDB).L && staged.Name.L == sysMaskingPolicyTableName
+	if !legacyStage && !IsMaskingPolicySnapshotTable(sourceDB.Name.O, staged.Name.O) {
 		return errors.New("masking policy snapshot staging table is missing")
 	}
 	source := utils.EncloseDBAndTable(sourceDB.Name.O, staged.Name.O)
@@ -748,6 +788,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			db.ExistingTables[tableName] != nil,
 			rc.maskingPolicyRestoreTables(),
 			execSQL,
+			rc.maskingPolicySnapshotTable,
 		); err != nil {
 			return err
 		}

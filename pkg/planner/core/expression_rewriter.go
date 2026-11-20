@@ -2461,7 +2461,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			isEnumSet = true
 		}
 		// if expr1 is a column with not null flag, then we can optimize it as a cast.
-		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+		if !er.preserveMaskingDependencies && isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
 			if err != nil {
 				er.err = err

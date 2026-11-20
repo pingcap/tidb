@@ -292,7 +292,10 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 }
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
-	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
+	// Policies bind to the user-table IDs restored by flashback. Their rows
+	// must return to the same snapshot, including policies deleted by DROP.
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") &&
+		tableName != "gc_delete_range" && tableName != "tidb_masking_policy" {
 		flashbackIDs = append(flashbackIDs, tableID)
 	}
 	return flashbackIDs

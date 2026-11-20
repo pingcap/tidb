@@ -48,11 +48,12 @@ type maskingProjectionBuildContext struct{ expression.BuildContext }
 func (maskingProjectionBuildContext) SkipNotNullFolding() bool { return true }
 
 type maskingResultBuilder struct {
-	b         *PlanBuilder
-	ctx       context.Context
-	outerPlan base.LogicalPlan
-	rootPlan  base.LogicalPlan
-	cache     map[maskingResultKey]maskingResult
+	b           *PlanBuilder
+	ctx         context.Context
+	outerPlan   base.LogicalPlan
+	rootPlan    base.LogicalPlan
+	cache       map[maskingResultKey]maskingResult
+	joinMatches map[int]*expression.Column
 	// predicate is set when the result is only compared by an outer predicate.
 	predicate bool
 }
@@ -98,6 +99,13 @@ func planHasMaskingSource(p base.LogicalPlan, visited map[int]struct{}) bool {
 // values. Only the final projection evaluates masking, using raw dependencies
 // carried through intermediate projections and DISTINCT as auxiliary columns.
 func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
+	if b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
+		// Check original output lineage before rejecting an unsupported masked
+		// result, so INSERT ... SELECT reports its policy's access restriction.
+		if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, ast.MaskingPolicyRestrictOpInsertIntoSelect); err != nil {
+			return nil, err
+		}
+	}
 	return b.buildMaskingProjection(ctx, p, oldLen, false, outerPlan...)
 }
 
@@ -181,6 +189,18 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 		// FullSchema. Their source is still available in the join's children.
 		if full, _ := findJoinFullSchema(p); full != nil && full.Contains(col) {
 			return m.passThrough(p, col)
+		}
+		return plain, nil
+	}
+	if inputs, generated := maskingScalarJoinInputs(p, idx); generated {
+		for _, input := range inputs {
+			result, err := m.expr(p, input)
+			if err != nil {
+				return plain, err
+			}
+			if result.masked {
+				return plain, &maskingNotPreservedError{shape: "scalar subquery comparison"}
+			}
 		}
 		return plain, nil
 	}
@@ -293,7 +313,7 @@ func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.C
 // inherits from one of its children.
 func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
 	plain := maskingResult{expr: col}
-	for _, child := range p.Children() {
+	for childIdx, child := range p.Children() {
 		if !child.Schema().Contains(col) {
 			if full, _ := findJoinFullSchema(child); full == nil || !full.Contains(col) {
 				continue
@@ -313,16 +333,80 @@ func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.C
 				output := input.Clone().(*expression.Column)
 				output.RetType = output.RetType.Clone()
 				output.RetType.DelFlag(mysql.NotNullFlag)
-				inputIdx = p.Schema().Len()
-				p.Schema().Append(output)
-				p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
+				inputIdx = appendMaskingInput(p, output)
 			}
 			replacements[i] = p.Schema().Columns[inputIdx]
 		}
 		result.expr, err = m.substitute(result.expr, expression.NewSchema(inputs...), replacements)
+		// A derived value was evaluated below the join and must retain its
+		// NULL extension. A direct source column still applies its policy to
+		// the value exposed by the join, as for other AT RESULT expressions.
+		if err == nil && result.policyID == 0 && maskingNullableChild(p, childIdx) {
+			result.expr, err = m.preserveOuterJoinNull(p, childIdx, result.expr)
+		}
 		return result, err
 	}
 	return plain, nil
+}
+
+// Expand's generated columns are positional: keep gid/gpos at the schema's end.
+func appendMaskingInput(p base.LogicalPlan, col *expression.Column) int {
+	idx := p.Schema().Len()
+	if expand, ok := p.(*logicalop.LogicalExpand); ok {
+		idx = p.Schema().ColumnIndex(expand.GID)
+	}
+	p.Schema().Columns = slices.Insert(p.Schema().Columns, idx, col)
+	p.SetOutputNames(slices.Insert(p.OutputNames(), idx, types.EmptyName))
+	return idx
+}
+
+func maskingNullableChild(p base.LogicalPlan, childIdx int) bool {
+	var tp logicalop.JoinType
+	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		tp = x.JoinType
+	case *logicalop.LogicalApply:
+		tp = x.JoinType
+	default:
+		return false
+	}
+	return tp == logicalop.LeftOuterJoin && childIdx == 1 || tp == logicalop.RightOuterJoin && childIdx == 0
+}
+
+func (m *maskingResultBuilder) preserveOuterJoinNull(
+	p base.LogicalPlan, childIdx int, expr expression.Expression,
+) (expression.Expression, error) {
+	marker := m.joinMatches[p.ID()]
+	if marker == nil {
+		child := p.Children()[childIdx]
+		one := expression.NewOne()
+		col := &expression.Column{UniqueID: m.b.ctx.GetSessionVars().AllocPlanColumnID(), RetType: one.RetType.Clone()}
+		exprs := append(expression.Column2Exprs(child.Schema().Columns), one)
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(m.b.ctx, p.QueryBlockOffset())
+		proj.SetSchema(child.Schema().Clone())
+		proj.Schema().Append(col)
+		proj.SetOutputNames(append(child.OutputNames().Shallow(), types.EmptyName))
+		proj.SetChildren(child)
+		children := append([]base.LogicalPlan(nil), p.Children()...)
+		children[childIdx] = proj
+		p.SetChildren(children...)
+		marker = col.Clone().(*expression.Column)
+		marker.RetType = col.RetType.Clone()
+		marker.RetType.DelFlag(mysql.NotNullFlag)
+		appendMaskingInput(p, marker)
+		if m.joinMatches == nil {
+			m.joinMatches = make(map[int]*expression.Column)
+		}
+		m.joinMatches[p.ID()] = marker
+	}
+	ctx := m.b.ctx.GetExprCtx()
+	missing, err := expression.NewFunction(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), marker)
+	if err != nil {
+		return nil, err
+	}
+	tp := expr.GetType(ctx.GetEvalCtx()).Clone()
+	tp.DelFlag(mysql.NotNullFlag)
+	return expression.NewFunction(ctx, ast.If, tp, missing, expression.NewNull(), expr)
 }
 
 func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expression) (maskingResult, error) {

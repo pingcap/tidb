@@ -159,8 +159,10 @@ type SnapClient struct {
 	fullClusterRestore bool
 
 	// see RestoreCommonConfig.WithSysTable
-	withSysTable              bool
-	deferMaskingPolicyRestore bool
+	withSysTable               bool
+	deferMaskingPolicyRestore  bool
+	maskingPolicySnapshotTable string
+	skipSnapshotMaskingPolicy  bool
 
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
@@ -332,6 +334,12 @@ func (rc *SnapClient) GetBatchDdlSize() uint {
 
 func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
+}
+
+// SetMaskingPolicySnapshotTable configures the task-owned snapshot stage.
+func (rc *SnapClient) SetMaskingPolicySnapshotTable(name string, skip bool) {
+	rc.maskingPolicySnapshotTable = name
+	rc.skipSnapshotMaskingPolicy = skip
 }
 
 // SetDeferMaskingPolicyRestore retains source policy rows for PiTR log replay.
@@ -1218,7 +1226,10 @@ func (rc *SnapClient) CreateTablesWithPlan(
 // isMaskingPolicyStagingTable identifies metadata that must be staged even
 // when --no-schema reuses existing user tables.
 func (rc *SnapClient) isMaskingPolicyStagingTable(dbName, tableName pmodel.CIStr) bool {
-	return rc.withSysTable && dbName.L == utils.TemporaryDBName(mysql.SystemDB).L && tableName.L == sysMaskingPolicyTableName
+	legacyStage := dbName.L == utils.TemporaryDBName(mysql.SystemDB).L && tableName.L == sysMaskingPolicyTableName
+	privateStage := dbName.L == mysql.SystemDB && rc.maskingPolicySnapshotTable != "" &&
+		tableName.L == rc.maskingPolicySnapshotTable
+	return rc.withSysTable && (legacyStage || privateStage)
 }
 
 func (rc *SnapClient) createTables(

@@ -948,6 +948,13 @@ func appendVisitInfo4Test(vs []visitInfo) {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
+	// Fast plans return before the normal planner's table-mode check. A table
+	// being restored must remain inaccessible even while its policies are absent.
+	for _, tbl := range node.GetResolveContext().GetTableNames() {
+		if tbl.TableInfo != nil && tbl.TableInfo.Mode != model.TableModeNormal {
+			return nil
+		}
+	}
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		// or Fix52592 is turn on to disable fast path for select, update and delete

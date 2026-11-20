@@ -1272,6 +1272,8 @@ type SnapshotRestoreConfig struct {
 	logTableHistoryManager     *stream.LogBackupTableHistoryManager
 	tableMappingManager        *stream.TableMappingManager
 	maskingPolicyRestoreTables map[filter.Table]struct{}
+	maskingPolicyTableIDs      map[int64]struct{}
+	skipSnapshotMaskingPolicy  bool
 }
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
@@ -1407,6 +1409,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	manifest, err := metautil.ReadMaskingPolicyManifest(ctx, s, &cfg.CipherInfo, backupMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// build restore client
 	// need to retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
@@ -1492,6 +1498,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	configureSnapshotMaskingPolicies(cfg, tableMap, manifest, isPiTR)
+	client.SetMaskingPolicySnapshotTable(maskingPolicySnapshotTableName(cfg.RestoreID), cfg.skipSnapshotMaskingPolicy)
 	log.Info("found items to restore after filtering",
 		zap.Int("tables", len(tableMap)),
 		zap.Int("db", len(dbMap)))
@@ -1603,14 +1611,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	// The optional target-existence check needs the effective target names before
-	// AllocTableIDs/PreCheck run. Without routing the target names are identical
-	// to the source names, so only build a plan when a route is configured; the
-	// plan is rebuilt below because those steps can change the table metadata.
+	// AllocTableIDs/PreCheck run, including task-owned policy staging names.
+	// The plan is rebuilt below because those steps can change table metadata.
 	var namePlan *restoreNamePlan
 	targetTablesForCheck := tables
-	if cfg.hasNameRouting() {
+	if cfg.hasNameRouting() || cfg.WithSysTable {
 		namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
 		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = isolateMaskingPolicySnapshot(namePlan, cfg.RestoreConfig); err != nil {
 			return errors.Trace(err)
 		}
 		targetTablesForCheck = namePlan.targetTables
@@ -1641,6 +1651,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
+	if len(cfg.maskingPolicyRestoreTables) > 0 {
+		supportsMasking := mgr.GetDomain().InfoSchema().TableExists(
+			pmodel.NewCIStr(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
+		if !supportsMasking {
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks masking policy support for selected tables")
+		}
+		if cfg.RestoreID == 0 {
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys,
+				"selected masking policies require a target supporting the restore registry")
+		}
+	}
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1691,6 +1712,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = isolateMaskingPolicySnapshot(namePlan, cfg.RestoreConfig); err != nil {
 		return errors.Trace(err)
 	}
 	preAllocRange, err := client.GetPreAllocedTableIDRange()
@@ -2965,7 +2989,7 @@ func createDBsAndTables(
 
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool, isIncremental bool) {
 	protectMasking := cfg.WithSysTable && !isIncremental && hasMaskingPolicySource(cfg.tableMappingManager)
-	if cfg.WithSysTable && !isIncremental {
+	if cfg.WithSysTable && !isIncremental && !cfg.skipSnapshotMaskingPolicy {
 		for _, tbl := range tables {
 			protectMasking = protectMasking || isTemporaryMaskingPolicyTable(tbl.DB.Name.O, tbl.Info.Name.O)
 		}
@@ -2982,6 +3006,11 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 		}
 		if !(cfg.isPartialRestore() && isPiTR) && tbl.Info.Mode != model.TableModeNormal {
 			continue
+		}
+		if protectMasking && !isPiTR && cfg.maskingPolicyTableIDs != nil {
+			if _, ok := cfg.maskingPolicyTableIDs[tbl.Info.ID]; !ok {
+				continue
+			}
 		}
 		if protectMasking && !utils.IsSysOrTempSysDB(tbl.DB.Name.O) && tbl.Info.Mode == model.TableModeNormal {
 			cfg.maskingPolicyRestoreTables[filter.Table{Schema: tbl.DB.Name.L, Name: tbl.Info.Name.L}] = struct{}{}

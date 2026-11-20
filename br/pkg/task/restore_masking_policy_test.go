@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -125,4 +126,70 @@ func TestSnapshotMaskingPolicyTablesStartProtected(t *testing.T) {
 		require.Equal(t, model.TableModeNormal, tables[1].Info.Mode)
 		require.Equal(t, model.TableModeImport, tables[2].Info.Mode)
 	}
+}
+
+func TestSnapshotMaskingPolicySelection(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		manifest   *metautil.MaskingPolicyManifest
+		legacyRows uint64
+		isPiTR     bool
+		wantMode   model.TableMode
+		wantStage  bool
+	}{
+		{"empty manifest", &metautil.MaskingPolicyManifest{TableIDs: []int64{}}, 0, false, model.TableModeNormal, false},
+		{"unselected policies", &metautil.MaskingPolicyManifest{TableIDs: []int64{99}},
+			1, false, model.TableModeNormal, false},
+		{"selected policy", &metautil.MaskingPolicyManifest{TableIDs: []int64{42}}, 1, false, model.TableModeRestore, true},
+		{"legacy empty", nil, 0, false, model.TableModeNormal, false},
+		{"legacy nonempty", nil, 1, false, model.TableModeRestore, true},
+		{"pitr future policies", &metautil.MaskingPolicyManifest{TableIDs: []int64{}}, 0, true, model.TableModeRestore, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := &SnapshotRestoreConfig{RestoreConfig: &RestoreConfig{
+				RestoreCommonConfig: RestoreCommonConfig{WithSysTable: true},
+			}}
+			tables := map[int64]*metautil.Table{
+				42: {
+					DB:   &model.DBInfo{Name: pmodel.NewCIStr("ordinary")},
+					Info: &model.TableInfo{ID: 42, Name: pmodel.NewCIStr("t")},
+				},
+				43: {
+					DB:       &model.DBInfo{Name: utils.TemporaryDBName(mysql.SystemDB)},
+					Info:     &model.TableInfo{ID: 43, Name: pmodel.NewCIStr("tidb_masking_policy")},
+					TotalKvs: testCase.legacyRows,
+				},
+			}
+			configureSnapshotMaskingPolicies(cfg, tables, testCase.manifest, testCase.isPiTR)
+			_, hasStage := tables[43]
+			require.Equal(t, testCase.wantStage, hasStage)
+			selected := utils.Values(tables)
+			setTablesRestoreModeIfNeeded(selected, cfg, testCase.isPiTR, false)
+			for _, tbl := range selected {
+				if tbl.Info.ID == 42 {
+					require.Equal(t, testCase.wantMode, tbl.Info.Mode)
+				}
+			}
+		})
+	}
+}
+
+func TestMaskingPolicySnapshotTargetIsolation(t *testing.T) {
+	sourceDB := &metautil.Database{Info: &model.DBInfo{ID: 2, Name: utils.TemporaryDBName(mysql.SystemDB)}}
+	source := &metautil.Table{
+		DB: sourceDB.Info, Info: &model.TableInfo{ID: 43, Name: pmodel.NewCIStr("tidb_masking_policy")},
+	}
+	router, err := nameroute.Parse(nil)
+	require.NoError(t, err)
+	var targets []string
+	for _, restoreID := range []uint64{123, 456, 123} {
+		plan, err := buildRestoreNamePlan(router, []*metautil.Database{sourceDB}, []*metautil.Table{source}, nil)
+		require.NoError(t, err)
+		require.NoError(t, isolateMaskingPolicySnapshot(plan, &RestoreConfig{RestoreID: restoreID}))
+		require.Equal(t, "mysql", plan.targetTables[0].DB.Name.L)
+		targets = append(targets, plan.targetTables[0].Info.Name.L)
+		require.Equal(t, "tidb_masking_policy", source.Info.Name.L)
+	}
+	require.NotEqual(t, targets[0], targets[1])
+	require.Equal(t, targets[0], targets[2])
 }

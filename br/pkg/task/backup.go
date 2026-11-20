@@ -660,6 +660,21 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
 
+	if schemas != nil {
+		manifest, err := schemas.MaskingPolicyManifest(ctx, g, mgr.GetStorage(), backupTS, !needDomain)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = metautil.WriteMaskingPolicyManifest(ctx, client.GetStorage(), &cfg.CipherInfo, manifest); err != nil {
+			return errors.Trace(err)
+		}
+		if len(manifest.TableIDs) > 0 {
+			metawriter.Update(func(m *backuppb.BackupMeta) {
+				m.BackupSchemaVersion = max(m.BackupSchemaVersion, metautil.MaskingPolicyBackupSchemaVersion)
+			})
+		}
+	}
+
 	log.Info("get placement policies", zap.Int("count", len(policies)))
 	if len(policies) != 0 {
 		metawriter.Update(func(m *backuppb.BackupMeta) {

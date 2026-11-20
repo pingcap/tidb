@@ -17,6 +17,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"sort"
 	"strings"
 
@@ -314,20 +315,20 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 	if !cfg.WithSysTable {
 		return nil
 	}
-	hasPolicyStage := false
 	for _, db := range cfg.tableMappingManager.DBReplaceMap {
 		for sourceID, tbl := range db.TableMap {
 			if !isSourceMaskingPolicyTable(db, tbl) {
 				continue
 			}
-			hasPolicyStage = true
 			target, ok, err := loadTableByID(ctx, dom.InfoSchema(), tbl.TableID)
 			if err != nil {
 				return err
 			}
 			if ok {
 				targetDB, exists := dom.InfoSchema().SchemaByID(target.Meta().DBID)
-				if exists && targetDB.Name.L == utils.TemporaryDBName(mysql.SystemDB).L && target.Meta().Name.L == "tidb_masking_policy" {
+				legacyStage := exists && isTemporaryMaskingPolicyTable(targetDB.Name.O, target.Meta().Name.O)
+				privateStage := exists && snapclient.IsMaskingPolicySnapshotTable(targetDB.Name.O, target.Meta().Name.O)
+				if legacyStage || privateStage {
 					if !idMapPersisted {
 						continue // A retry may still need the snapshot's original table name.
 					}
@@ -363,9 +364,6 @@ func prepareMaskingPolicyStaging(ctx context.Context, dom *domain.Domain, se glu
 			}
 			tbl.TableID = target.Meta().ID
 		}
-	}
-	if hasPolicyStage && idMapPersisted {
-		return errors.Trace(se.Execute(ctx, "DROP DATABASE IF EXISTS "+utils.EncloseName(utils.TemporaryDBName(mysql.SystemDB).O)))
 	}
 	return nil
 }
@@ -697,6 +695,87 @@ func restoreMaskingPoliciesAfterLogReplay(
 		if err := se.Execute(ctx, fmt.Sprintf("DELETE FROM %s WHERE table_id = %d AND restore_id = %d", fenceRecord, tableID, owner)); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+// configureSnapshotMaskingPolicies intersects the snapshot manifest with this
+// restore's selected tables. Legacy backups are conservative unless the policy
+// table is provably empty. PiTR must also protect policies introduced in logs.
+func configureSnapshotMaskingPolicies(
+	cfg *SnapshotRestoreConfig, tables map[int64]*metautil.Table,
+	manifest *metautil.MaskingPolicyManifest, isPiTR bool,
+) {
+	if manifest != nil {
+		cfg.maskingPolicyTableIDs = make(map[int64]struct{})
+		for _, id := range manifest.TableIDs {
+			if _, ok := tables[id]; ok {
+				cfg.maskingPolicyTableIDs[id] = struct{}{}
+			}
+		}
+	}
+	if isPiTR {
+		return
+	}
+	empty := manifest != nil && len(cfg.maskingPolicyTableIDs) == 0
+	for _, tbl := range tables {
+		if !isTemporaryMaskingPolicyTable(tbl.DB.Name.O, tbl.Info.Name.O) {
+			continue
+		}
+		hasFiles := false
+		for _, files := range tbl.FilesOfPhysicals {
+			hasFiles = hasFiles || len(files) > 0
+		}
+		empty = empty || manifest == nil && tbl.TotalKvs == 0 && tbl.TotalBytes == 0 && !hasFiles
+	}
+	if !empty {
+		return
+	}
+	cfg.skipSnapshotMaskingPolicy = true
+	for id, tbl := range tables {
+		if isTemporaryMaskingPolicyTable(tbl.DB.Name.O, tbl.Info.Name.O) {
+			delete(tables, id)
+		}
+	}
+}
+
+func maskingPolicySnapshotTableName(restoreID uint64) string {
+	if restoreID == 0 {
+		return ""
+	}
+	return snapclient.MaskingPolicySnapshotTableName(restoreID)
+}
+
+// isolateMaskingPolicySnapshot changes only the target plan; the backup's
+// source names and IDs remain available for policy rebinding and PiTR mapping.
+func isolateMaskingPolicySnapshot(plan *restoreNamePlan, cfg *RestoreConfig) error {
+	for _, table := range plan.tables {
+		if !isTemporaryMaskingPolicyTable(table.Source.DB.Name.O, table.Source.Info.Name.O) {
+			continue
+		}
+		if cfg.RestoreID == 0 {
+			return errors.New("masking policy staging requires a restore task ID")
+		}
+		db := table.TargetDB.Clone()
+		db.Name = pmodel.NewCIStr(mysql.SystemDB)
+		table.TargetDB = db
+		table.TargetInfo.Name = pmodel.NewCIStr(maskingPolicySnapshotTableName(cfg.RestoreID))
+		used := false
+		for _, database := range plan.databases {
+			if database.Target.Name.L == db.Name.L {
+				used = true
+				break
+			}
+		}
+		if !used {
+			plan.databases = append(plan.databases, &restoreutils.DatabaseRestorePlan{
+				Source: &metautil.Database{Info: table.Source.DB}, Target: db,
+			})
+		}
+	}
+	plan.targetTables = plan.targetTables[:0]
+	for _, table := range plan.tables {
+		plan.targetTables = append(plan.targetTables, table.TargetTable())
 	}
 	return nil
 }

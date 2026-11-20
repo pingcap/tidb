@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -394,4 +396,48 @@ func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[str
 	}
 
 	return tableMergeOptionAllowed, partitionMergeOptionAllowed, nil
+}
+
+// MaskingPolicyManifest uses the backup snapshot, rather than the current
+// InfoSchema cache, so concurrent policy DDL cannot change its protection set.
+func (ss *Schemas) MaskingPolicyManifest(
+	ctx context.Context, g glue.Glue, store kv.Storage, backupTS uint64, closeDomain bool,
+) (*metautil.MaskingPolicyManifest, error) {
+	manifest := &metautil.MaskingPolicyManifest{SnapshotTS: backupTS, TableIDs: []int64{}}
+	selected := make(map[int64]struct{})
+	hasPolicyTable := false
+	err := ss.iterFunc(store, func(db *model.DBInfo, tbl *model.TableInfo) {
+		if tbl == nil {
+			return
+		}
+		if db.Name.L == mysql.SystemDB && tbl.Name.L == sysMaskingPolicyTableName {
+			hasPolicyTable = true
+		}
+		if !utils.IsSysOrTempSysDB(db.Name.O) {
+			selected[tbl.ID] = struct{}{}
+		}
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !hasPolicyTable || len(selected) == 0 {
+		return manifest, nil
+	}
+	err = g.UseOneShotSession(store, closeDomain, func(se glue.Session) error {
+		rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(backupTS)},
+			"SELECT DISTINCT table_id FROM mysql.tidb_masking_policy ORDER BY table_id")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, row := range rows {
+			id := row.GetInt64(0)
+			if _, ok := selected[id]; ok {
+				manifest.TableIDs = append(manifest.TableIDs, id)
+			}
+		}
+		return nil
+	})
+	return manifest, errors.Trace(err)
 }

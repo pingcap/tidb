@@ -862,3 +862,73 @@ func TestSnapshotPoliciesInstallWhileTableProtected(t *testing.T) {
 	}))
 	tk.MustQuery("select c from snapshot_guard").Check(testkit.Rows("XXXXXX"))
 }
+
+func TestRestoreMaskingPolicySnapshotIsolation(t *testing.T) {
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	ctx := context.Background()
+	var clients []*snapclient.SnapClient
+	for i, dbName := range []string{"independent_a", "independent_b"} {
+		tk.MustExec("create database " + dbName)
+		tk.MustExec("create table " + dbName + ".t(c varchar(20))")
+		tk.MustExec("insert into " + dbName + ".t values('secret')")
+		stage := snapclient.MaskingPolicySnapshotTableName(uint64(i + 1))
+		tk.MustExec("create table mysql." + stage + " like mysql.tidb_masking_policy")
+		tk.MustExec(fmt.Sprintf(`insert into mysql.%s
+ (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,
+ expression,status,masking_type,created_at,updated_at,created_by)
+ values(1,'p','%s','t',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')`, stage, dbName))
+		dbInfo, ok := cluster.Domain.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+		require.True(t, ok)
+		tbl, err := cluster.Domain.InfoSchema().TableByName(ctx, dbInfo.Name, pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tempDB := &model.DBInfo{ID: 999, Name: utils.TemporaryDBName(mysql.SystemDB)}
+		client := snapclient.MockClient(map[string]*metautil.Database{
+			tempDB.Name.O: {Info: tempDB, Tables: []*metautil.Table{
+				{DB: tempDB, Info: &model.TableInfo{Name: pmodel.NewCIStr("tidb_masking_policy")}},
+			}},
+			dbName: {Info: dbInfo, Tables: []*metautil.Table{{DB: dbInfo, Info: tbl.Meta()}}},
+		})
+		require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
+		client.InitFullClusterRestore(true, false, true)
+		client.SetWithSysTable(true)
+		client.SetMaskingPolicySnapshotTable(stage, false)
+		clients = append(clients, client)
+	}
+	// A is paused with its stage retained while B completes independently.
+	f, err := filter.Parse([]string{"independent_b.*"})
+	require.NoError(t, err)
+	require.NoError(t, clients[1].RestoreSystemSchemas(ctx, f, false))
+	tk.MustQuery("select c from independent_b.t").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("select count(*) from mysql." + snapclient.MaskingPolicySnapshotTableName(1)).Check(testkit.Rows("1"))
+	require.False(t, cluster.Domain.InfoSchema().TableExists(
+		pmodel.NewCIStr("mysql"), pmodel.NewCIStr(snapclient.MaskingPolicySnapshotTableName(2))))
+	f, err = filter.Parse([]string{"independent_a.*"})
+	require.NoError(t, err)
+	require.NoError(t, clients[0].RestoreSystemSchemas(ctx, f, false))
+	tk.MustQuery("select c from independent_a.t").Check(testkit.Rows("XXXXXX"))
+	for _, client := range clients {
+		client.Close()
+	}
+}
+
+func TestPreserveMaskingPolicyPrivateSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	snapshot := snapclient.MaskingPolicySnapshotTableName(123)
+	tk.MustExec("create table mysql." + snapshot + " (policy_id bigint primary key, table_id bigint)")
+	tk.MustExec("insert into mysql." + snapshot + " values(1,42)")
+	stage, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("mysql"), pmodel.NewCIStr(snapshot))
+	require.NoError(t, err)
+	se := gluetidb.WrapSession(tk.Session())
+	for range 2 {
+		require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, dom, se, stage.Meta()))
+		retainedName := snapclient.MaskingPolicyStagingTableName(stage.Meta().ID)
+		retained, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("mysql"), pmodel.NewCIStr(retainedName))
+		require.NoError(t, err)
+		require.Equal(t, stage.Meta().ID, retained.Meta().ID)
+		tk.MustQuery("select policy_id,table_id from mysql." + retainedName).Check(testkit.Rows("1 42"))
+	}
+}

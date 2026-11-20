@@ -307,7 +307,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 	baseMetaBytes, err := baseMeta.Marshal()
 	require.NoError(t, err)
 	newerSchemaMeta := &backuppb.BackupMeta{
-		BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+		BackupSchemaVersion: max(backuppb.BackupSchemaVersion, MaskingPolicyBackupSchemaVersion) + 1,
 		ClusterVersion:      "8.5.6",
 		BrVersion:           "v8.5.6",
 	}
@@ -418,4 +418,41 @@ func TestNewMetaWriterInitializesBackupSchemaVersion(t *testing.T) {
 	// so readers can distinguish new semantics from pre-versioned backups.
 	writer := NewMetaWriter(nil, MetaFileSize, false, "", nil)
 	require.Equal(t, backuppb.BackupSchemaVersion, writer.backupMeta.BackupSchemaVersion)
+}
+
+func TestMaskingPolicyBackupCompatibility(t *testing.T) {
+	ctx := context.Background()
+	es, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	for _, cipher := range []*backuppb.CipherInfo{
+		{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
+		{CipherType: encryptionpb.EncryptionMethod_AES256_CTR, CipherKey: make([]byte, 32)},
+	} {
+		manifest := &MaskingPolicyManifest{SnapshotTS: 123, TableIDs: []int64{42}}
+		require.NoError(t, WriteMaskingPolicyManifest(ctx, es, cipher, manifest))
+		meta := &backuppb.BackupMeta{EndVersion: 123, BackupSchemaVersion: MaskingPolicyBackupSchemaVersion}
+		data, err := meta.Marshal()
+		require.NoError(t, err)
+		require.NoError(t, CheckBackupMetaCompatibilityFromBytes(data, meta))
+		// The pre-masking reader's existing gate compares against kvproto's v2.
+		require.Greater(t, meta.BackupSchemaVersion, backuppb.BackupSchemaVersion)
+		loaded, err := ReadMaskingPolicyManifest(ctx, es, cipher, meta)
+		require.NoError(t, err)
+		require.Equal(t, manifest, loaded)
+		meta.EndVersion++
+		_, err = ReadMaskingPolicyManifest(ctx, es, cipher, meta)
+		require.ErrorContains(t, err, "snapshot mismatch")
+		require.NoError(t, es.DeleteFile(ctx, MaskingPolicyManifestFile))
+		_, err = ReadMaskingPolicyManifest(ctx, es, cipher, meta)
+		require.ErrorContains(t, err, "missing masking policy manifest")
+		meta.BackupSchemaVersion = backuppb.BackupSchemaVersion
+		loaded, err = ReadMaskingPolicyManifest(ctx, es, cipher, meta)
+		require.NoError(t, err)
+		require.Nil(t, loaded)
+		emptyManifest := &MaskingPolicyManifest{SnapshotTS: meta.EndVersion, TableIDs: []int64{}}
+		require.NoError(t, WriteMaskingPolicyManifest(ctx, es, cipher, emptyManifest))
+		loaded, err = ReadMaskingPolicyManifest(ctx, es, cipher, meta)
+		require.NoError(t, err)
+		require.Empty(t, loaded.TableIDs)
+	}
 }

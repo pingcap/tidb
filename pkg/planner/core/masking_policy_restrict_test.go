@@ -530,3 +530,25 @@ func TestMaskingPolicyDeleteRestrictOnFromSources(t *testing.T) {
 	root.MustQuery("select * from delete_dst").Check(testkit.Rows())
 	user.MustExec("delete from delete_src where c='secret'")
 }
+
+func TestMaskingPolicyScalarSemiJoinLineage(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table semi_source(c varchar(20))")
+	tk.MustExec("insert into semi_source values('secret')")
+	tk.MustExec("create table semi_target(v int)")
+	tk.MustExec("create masking policy p on semi_source(c) as mask_full(c) restrict on(insert_into_select)")
+	for i, expr := range []string{"c in(select 'secret')", "c not in(select 'secret')", "c=any(select 'secret')"} {
+		tk.MustGetErrCode("insert into semi_target select "+expr+" from semi_source", errno.ErrAccessDeniedToMaskedColumn)
+		require.ErrorContains(t, tk.ExecToErr("select "+expr+" from semi_source"), "masking policy cannot be preserved")
+		expected := testkit.Rows("1")
+		if i == 1 {
+			expected = testkit.Rows()
+		}
+		tk.MustQuery("select 1 from semi_source where " + expr).Check(expected)
+	}
+	tk.MustQuery("select * from semi_target").Check(testkit.Rows())
+	tk.MustExec("alter table semi_source disable masking policy p")
+	tk.MustExec("insert into semi_target select c in(select 'secret') from semi_source")
+	tk.MustQuery("select * from semi_target").Check(testkit.Rows("1"))
+}

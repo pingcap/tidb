@@ -138,6 +138,20 @@ Primary code ownership map (for implementation navigation):
 
 Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT), but restore cannot replay source table rows blindly.
 
+Snapshot backups record the protected source table IDs at the backup timestamp
+in `masking-policy.json`, encrypted with the backup cipher. Backups containing
+selected policies require backup schema version 3, so pre-masking BR readers
+that support at most version 2 reject them before importing user data. The
+manifest is required for version 3 and must match the backup timestamp. An empty
+protection set preserves ordinary restores to targets without a restore registry;
+selected policies require masking support and a registered restore task.
+
+Snapshot policy rows are imported into
+`mysql.tidb_pitr_masking_policy_snapshot_<restore_id>`. Each task owns its stage,
+including checkpoint retries and cleanup, so independent restores do not share
+the fixed temporary mysql policy table. PiTR moves that private snapshot stage
+to the retained table below without rewriting its MVCC timestamps.
+
 PiTR retains the source policy table under
 `mysql.tidb_pitr_masking_policy_<table_id>`, preserving its physical table ID and
 original MVCC timestamps. It replays policy-table logs into that table and

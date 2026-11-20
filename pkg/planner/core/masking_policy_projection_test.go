@@ -20,7 +20,10 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	core "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -979,5 +982,92 @@ func TestMaskingPolicyNullableCastSubstitution(t *testing.T) {
 	tk.MustExec("prepare st from 'select c + 1, (c + 1) is null from nullable_cast'")
 	for range 2 {
 		tk.MustQuery("execute st").Check(testkit.Rows("<nil> 1"))
+	}
+}
+
+func TestMaskingPolicyIfnullFallback(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	for _, declaration := range []string{"not null", "null"} {
+		tk.MustExec("create table ifnull_source(c varchar(20) " + declaration + ")")
+		tk.MustExec("insert into ifnull_source values('secret')")
+		tk.MustQuery("select ifnull(c,'fallback') from ifnull_source").Check(testkit.Rows("secret"))
+		tk.MustExec("create masking policy p on ifnull_source(c) as mask_null(c)")
+		tk.MustQuery("select ifnull(c,'fallback') from ifnull_source").Check(testkit.Rows("fallback"))
+		tk.MustExec("drop table ifnull_source")
+	}
+}
+
+func TestMaskingPolicyDerivedRollup(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table rollup_source(c varchar(20))")
+	tk.MustExec("insert into rollup_source values('secret'),(null)")
+	tk.MustExec("create masking policy p on rollup_source(c) as mask_full(c)")
+	for _, grouping := range []string{"d", "d,d"} {
+		query := "select d,count(*) from (select concat(c,'!') as d from rollup_source) s group by " +
+			grouping + " with rollup"
+		expected := testkit.Rows("<nil> 1", "<nil> 2", "XXXXXX! 1")
+		if grouping == "d,d" {
+			expected = testkit.Rows("<nil> 1", "<nil> 1", "<nil> 2", "XXXXXX! 1", "XXXXXX! 1")
+		}
+		tk.MustQuery(query).Sort().Check(expected)
+	}
+}
+
+func TestMaskingPolicyOuterJoinNullExtension(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table join_l(id int primary key)")
+	tk.MustExec("create table join_r(id int primary key,c varchar(20))")
+	tk.MustExec("insert into join_l values(1),(2),(3)")
+	tk.MustExec("insert into join_r values(1,'secret'),(3,null)")
+	tk.MustExec("create masking policy p on join_r(c) as mask_full(c)")
+	for _, from := range []string{
+		"join_l l left join (select id,concat_ws('',c,'!') as d from join_r) s on l.id=s.id",
+		"(select id,concat_ws('',c,'!') as d from join_r) s right join join_l l on l.id=s.id",
+	} {
+		tk.MustQuery("select l.id,s.d from " + from + " order by l.id").Check(testkit.Rows("1 XXXXXX!", "2 <nil>", "3 !"))
+		tk.MustQuery("select l.id,ifnull(s.d,'missing') from " + from + " order by l.id").
+			Check(testkit.Rows("1 XXXXXX!", "2 missing", "3 !"))
+	}
+	// Expressions written above the join still evaluate for unmatched rows.
+	tk.MustQuery("select l.id,concat_ws('',r.c,'!') from join_l l left join join_r r on l.id=r.id order by l.id").
+		Check(testkit.Rows("1 XXXXXX!", "2 !", "3 !"))
+}
+
+func TestMaskingPolicyRestoreModeFastPlans(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table restore_gap(id int primary key,c varchar(20))")
+	tk.MustExec("insert into restore_gap values(1,'secret')")
+	tk.MustExec("create masking policy p on restore_gap(c) as mask_full(c)")
+	tk.MustExec("create user restore_reader")
+	tk.MustExec("grant select on test.restore_gap to restore_reader")
+	reader := testkit.NewTestKit(t, store)
+	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "restore_reader", Hostname: "%"}, nil, nil, nil))
+	reader.MustExec("use test")
+	reader.MustExec("prepare cached_read from 'select c from restore_gap where id=?'")
+	reader.MustExec("set @id=1")
+	reader.MustQuery("execute cached_read using @id").Check(testkit.Rows("XXXXXX"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("restore_gap"))
+	require.NoError(t, err)
+	require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
+		SchemaID: tbl.Meta().DBID, TableID: tbl.Meta().ID, TableMode: model.TableModeRestore,
+	}))
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	tk.Session().GetSessionVars().InMaskingPolicyRestore = true
+	tk.MustExec("alter table restore_gap drop masking policy p")
+	tk.Session().GetSessionVars().InMaskingPolicyRestore = false
+	tk.Session().GetSessionVars().InRestrictedSQL = false
+	for range 2 { // Includes retries after a failed replacement left no policy.
+		reader.MustQuery("show masking policies for restore_gap").Check(testkit.Rows())
+		for _, query := range []string{
+			"select c from restore_gap where id=1", "select c from restore_gap where id in(1,2)",
+			"select c from restore_gap", "execute cached_read using @id",
+		} {
+			reader.MustGetErrCode(query, errno.ErrProtectedTableMode)
+		}
 	}
 }

@@ -230,6 +230,7 @@ go_test(
         "bdr_test.go",
         "bench_test.go",
         "cancel_test.go",
+        "cluster_internal_test.go",
         "cluster_test.go",
         "column_change_test.go",
         "column_modify_test.go",

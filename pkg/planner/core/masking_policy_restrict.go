@@ -87,6 +87,31 @@ type maskingPolicySourceColumn struct {
 	colInfo *model.ColumnInfo
 }
 
+// maskingScalarJoinInputs identifies the synthetic boolean produced by a
+// scalar IN/ANY subquery. It has no corresponding column in either child;
+// its source columns live in the join's comparison conditions instead.
+func maskingScalarJoinInputs(p base.LogicalPlan, idx int) ([]expression.Expression, bool) {
+	var join *logicalop.LogicalJoin
+	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		join = x
+	case *logicalop.LogicalApply:
+		join = &x.LogicalJoin
+	default:
+		return nil, false
+	}
+	if idx != p.Schema().Len()-1 ||
+		(join.JoinType != logicalop.LeftOuterSemiJoin && join.JoinType != logicalop.AntiLeftOuterSemiJoin) {
+		return nil, false
+	}
+	inputs := expression.ScalarFuncs2Exprs(join.EqualConditions)
+	inputs = append(inputs, expression.ScalarFuncs2Exprs(join.NAEQConditions)...)
+	inputs = append(inputs, join.LeftConditions...)
+	inputs = append(inputs, join.RightConditions...)
+	inputs = append(inputs, join.OtherConditions...)
+	return inputs, true
+}
+
 // extractMaskingPolicySourceColumnsFromOutputColumn returns the table columns
 // that the output column reads. The columns are those bound to the scans, so
 // an alias, a CTE name or another table that shares a name with a protected
@@ -138,6 +163,12 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumnsFromOutputColumn(
 		visited[visitKey] = struct{}{}
 		if source, ok := b.maskingSourcePlans[plan.ID()]; ok {
 			walkByIndex(source, colIdx)
+			return
+		}
+		if inputs, generated := maskingScalarJoinInputs(plan, colIdx); generated {
+			for _, input := range inputs {
+				walkExpression(plan, input)
+			}
 			return
 		}
 

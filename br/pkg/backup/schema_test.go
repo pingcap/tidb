@@ -14,6 +14,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.opencensus.io/stats/view"
 )
 
@@ -398,5 +400,33 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	for _, schema := range schemas2 {
 		require.Equal(t, utils.TemporaryDBName("mysql"), schema.DB.Name)
 		require.Equal(t, true, strings.HasPrefix(schema.Info.Name.O, tablePrefix))
+	}
+}
+
+func TestBackupMaskingPolicyManifestSnapshot(t *testing.T) {
+	cluster := createMockCluster(t)
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	tk.MustExec("create database manifest_db")
+	tk.MustExec("create table manifest_db.protected(c varchar(20))")
+	tk.MustExec("create table manifest_db.ordinary(c varchar(20))")
+	tk.MustExec("create masking policy p on manifest_db.protected(c) as mask_full(c)")
+	ts, err := cluster.Storage.GetOracle().GetTimestamp(ctx, &oracle.Option{})
+	require.NoError(t, err)
+	// Current policy metadata no longer describes the backup snapshot.
+	tk.MustExec("alter table manifest_db.protected drop masking policy p")
+	for _, pattern := range []string{"manifest_db.*", "manifest_db.protected", "manifest_db.ordinary"} {
+		f, err := filter.Parse([]string{pattern})
+		require.NoError(t, err)
+		_, schemas, _, err := backup.BuildBackupRangeAndInitSchema(cluster.Storage, f, ts, false, true)
+		require.NoError(t, err)
+		manifest, err := schemas.MaskingPolicyManifest(ctx, gluetidb.New(), cluster.Storage, ts, false)
+		require.NoError(t, err)
+		require.Equal(t, ts, manifest.SnapshotTS)
+		if pattern == "manifest_db.ordinary" {
+			require.Empty(t, manifest.TableIDs)
+		} else {
+			require.Len(t, manifest.TableIDs, 1)
+		}
 	}
 }
