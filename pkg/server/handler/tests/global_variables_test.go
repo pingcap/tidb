@@ -97,6 +97,7 @@ func TestGlobalVariables(t *testing.T) {
 			vardef.TiDBExpEmbedJinaAIAPIKey, vardef.TiDBExpEmbedOpenAIAPIKey,
 			vardef.TiDBExpEmbedCohereAPIKey, vardef.TiDBExpEmbedHuggingFaceAPIKey,
 			vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.TiDBExpEmbedGeminiAPIKey,
+			vardef.TiDBExpEmbedVoyageAIAPIKey,
 			vardef.AuthenticationLDAPSASLBindRootPWD, vardef.AuthenticationLDAPSimpleBindRootPWD,
 			vardef.TiDBConfig, vardef.TiDBTraceEvent, vardef.InitConnect,
 			vardef.ValidatePasswordDictionary, "init_slave",

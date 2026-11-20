@@ -586,6 +586,7 @@ func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
 		"tidb_exp_embed_huggingface_api_key",
 		"tidb_exp_embed_nvidia_nim_api_key",
 		"tidb_exp_embed_gemini_api_key",
+		"tidb_exp_embed_voyage_ai_api_key",
 	} {
 		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
 		node, err := p.ParseOneStmt(input, "", "")

@@ -105,6 +105,7 @@ func TestEmbeddingAPIKeySysVars(t *testing.T) {
 		{name: vardef.TiDBExpEmbedHuggingFaceAPIKey, load: vardef.EmbedHuggingFaceAPIKey.Load, store: vardef.EmbedHuggingFaceAPIKey.Store},
 		{name: vardef.TiDBExpEmbedNvidiaNIMAPIKey, load: vardef.EmbedNvidiaNIMAPIKey.Load, store: vardef.EmbedNvidiaNIMAPIKey.Store},
 		{name: vardef.TiDBExpEmbedGeminiAPIKey, load: vardef.EmbedGeminiAPIKey.Load, store: vardef.EmbedGeminiAPIKey.Store},
+		{name: vardef.TiDBExpEmbedVoyageAIAPIKey, load: vardef.EmbedVoyageAIAPIKey.Load, store: vardef.EmbedVoyageAIAPIKey.Store},
 	}
 
 	originalVersion := vardef.EmbeddingConfigVersion.Load()

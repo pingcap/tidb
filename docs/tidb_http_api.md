@@ -869,7 +869,7 @@ Variable scope and no-op selection follow `SHOW GLOBAL VARIABLES`, including rea
 
 Values are read through the existing global-variable getters. For every included variable marked `SysVar.IsSensitive`, a non-empty value is replaced with the literal `******`; an empty value remains an empty string. This includes:
 
-- Embedding API keys: `tidb_exp_embed_jina_ai_api_key`, `tidb_exp_embed_openai_api_key`, `tidb_exp_embed_cohere_api_key`, `tidb_exp_embed_huggingface_api_key`, `tidb_exp_embed_nvidia_nim_api_key`, and `tidb_exp_embed_gemini_api_key`.
+- Embedding API keys: `tidb_exp_embed_jina_ai_api_key`, `tidb_exp_embed_openai_api_key`, `tidb_exp_embed_cohere_api_key`, `tidb_exp_embed_huggingface_api_key`, `tidb_exp_embed_nvidia_nim_api_key`, `tidb_exp_embed_gemini_api_key`, and `tidb_exp_embed_voyage_ai_api_key`.
 - LDAP bind passwords: `authentication_ldap_sasl_bind_root_pwd` and `authentication_ldap_simple_bind_root_pwd`.
 - The entire non-empty values of `tidb_config`, `tidb_trace_event`, `init_connect`, `init_slave` (when no-op variables are enabled), and `validate_password.dictionary`.
 
