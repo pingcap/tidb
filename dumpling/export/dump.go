@@ -42,9 +42,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -64,8 +66,9 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storeapi.Storage
-	dbHandle *sql.DB
+	extStore     storeapi.Storage
+	dbHandle     *sql.DB
+	spiffeSource *workloadapi.X509Source
 
 	tidbPDClientForGC             pd.Client
 	tidbUseKeyspaceGC             bool
@@ -109,16 +112,23 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	d.metrics.registerTo(conf.PromRegistry)
 	defer func() {
 		if err != nil {
-			d.metrics.unregisterFrom(conf.PromRegistry)
+			if d.spiffeSource != nil {
+				_ = d.Close()
+			} else {
+				d.metrics.unregisterFrom(conf.PromRegistry)
+			}
 		}
 	}()
 
 	err = adjustConfig(conf,
-		buildTLSConfig,
 		validateDumpService,
 		validateSpecifiedSQL,
 		adjustFileFormat,
 		validateIncludeGeneratedColumns)
+	if err != nil {
+		return nil, err
+	}
+	err = d.initTLS()
 	if err != nil {
 		return nil, err
 	}
@@ -1687,10 +1697,14 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 func (d *Dumper) Close() error {
 	d.cancelCtx()
 	d.metrics.unregisterFrom(d.conf.PromRegistry)
+	var err error
 	if d.dbHandle != nil {
-		return d.dbHandle.Close()
+		err = d.dbHandle.Close()
 	}
-	return nil
+	if d.spiffeSource != nil {
+		err = multierr.Append(err, d.spiffeSource.Close())
+	}
+	return err
 }
 
 func runSteps(d *Dumper, steps ...func(*Dumper) error) error {
