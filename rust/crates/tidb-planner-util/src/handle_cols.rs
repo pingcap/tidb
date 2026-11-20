@@ -355,6 +355,23 @@ pub struct CommonHandleCols {
     pub columns: Vec<tidb_expr::column::Column>,
 }
 
+/// Go `NewIntHandleCols`.
+#[must_use]
+pub fn new_int_handle_cols(col: tidb_expr::column::Column) -> HandleCols {
+    HandleCols::Int(IntHandleCols { col })
+}
+
+/// Go `NewCommonHandlesColsWithoutColsAlign`: the primary key's columns as
+/// given, without aligning them to the table's columns.
+#[must_use]
+pub fn new_common_handles_cols_without_cols_align(
+    tbl_info: tidb_model::GoShared<tidb_model::TableInfo>,
+    idx_info: tidb_model::GoShared<tidb_model::IndexInfo>,
+    cols: Vec<tidb_expr::column::Column>,
+) -> HandleCols {
+    HandleCols::Common(CommonHandleCols { tbl_info, idx_info, columns: cols })
+}
+
 /// The error Go's `sc.HandleError(err)` passes on from encoding a handle.
 pub type HandleColsError = tidb_codec::CodecError;
 

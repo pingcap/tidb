@@ -1625,6 +1625,31 @@ pub(crate) fn physical_select_plan_with_allocators(
     .map(|(_, physical)| physical)
 }
 
+/// Go `optimizeForTest`'s build and optimize: the logical plan (whose
+/// output names Go's tests read) and the physical plan.
+#[cfg(test)]
+pub(crate) fn planner_optimized_query_with_allocators_for_test(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
+    planner_optimized_query_with_allocators(
+        query,
+        catalog,
+        current_database,
+        ctx,
+        false,
+        plan_ids,
+        column_ids,
+        &ScalarSubqueryRegistry::default(),
+        BuildVisits::Discard,
+        QueryBuild::Statement,
+    )
+}
+
 /// Builds the ordinary physical tree for either Go query-statement shape.
 /// Set operations, their CTEs, and plain SELECTs therefore all enter the same
 /// logical optimizer, physical search, and executor-builder switch.

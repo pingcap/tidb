@@ -3757,6 +3757,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut original_name = name.clone();
             original_name.names.table = original_name.names.original_table.clone();
             extra.orig_name = original_name.display_name();
+            // Go's `types.FieldName` for the extra handle names no
+            // `OrigTblName`.
+            let mut name = name;
+            name.names.original_table = IdentifierMetadata::default();
             handle_cols = vec![extra.clone()];
             handle_is_int = true;
             columns.push(tidb_model::GoShared::new(
@@ -3793,6 +3797,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             original_commit_ts_name.names.table =
                 original_commit_ts_name.names.original_table.clone();
             commit_ts.orig_name = original_commit_ts_name.display_name();
+            // Go's `types.FieldName` for the commit ts names no
+            // `OrigTblName`.
+            let mut commit_ts_name = commit_ts_name;
+            commit_ts_name.names.original_table = IdentifierMetadata::default();
             columns.push(tidb_model::GoShared::new(
                 tidb_model::ColumnInfo::new_extra_commit_ts_col_info(),
             ));

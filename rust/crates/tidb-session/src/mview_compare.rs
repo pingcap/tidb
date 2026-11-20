@@ -225,7 +225,7 @@ impl Session {
             tidb_parser::parse_with_config_and_connection(sql, config, &charset, &collation)
                 .map_err(|error| error.compatibility_message(sql))
         };
-        let diff = tidb_planner::mview::build_complete_diff_source(&info, &schema, &parse).map_err(plain)?;
+        let diff = tidb_planner::mview::build_complete_diff_source(&parse, &snapshot, &info).map_err(plain)?;
         let visible: Vec<ColumnInfo> = info
             .columns
             .iter_deref()

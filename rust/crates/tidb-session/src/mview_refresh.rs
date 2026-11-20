@@ -2135,8 +2135,7 @@ fn resolve_refresh_materialized_view_log_info(
     catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     info: &tidb_model::TableInfo,
 ) -> Result<i64, DriverError> {
-    let table_by_id = |id: i64| catalog.table_info_by_id(id).map(|table| table.read().clone());
-    tidb_planner::mview::resolve_fast_refresh_source(info, &table_by_id)
+    tidb_planner::mview::resolve_fast_refresh_source(catalog, info)
         .map(|source| source.mlog_table_id)
         .map_err(|error| plain(format!("refresh materialized view fast: {error}")))
 }

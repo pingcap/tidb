@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 use tidb_planner::common_plans::MViewDeltaMerge;
-use tidb_planner::mview::{AggInfo, AggKind, BuildResult, DiffHandleCols};
+use tidb_planner::mview::{AggInfo, AggKind, BuildResult};
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_table::tables::TableHandle;
 
@@ -150,7 +150,6 @@ pub fn build_merge_source(
         ));
     };
     let mv = mv.read().clone_like_go();
-    let table_by_id = |id: i64| catalog.table_info_by_id(id).map(|table| table.read().clone_like_go());
     // Go master `parseSelectFromSQL`: a new parser (its own `ModeNone` SQL
     // mode) with the session's parser configuration and connection charset.
     let (charset, collation) = ctx.connection_charset_info();
@@ -158,7 +157,7 @@ pub fn build_merge_source(
         tidb_parser::parse_with_config_and_connection(sql, ctx.parser_config(), charset, collation)
             .map_err(|error| error.compatibility_message(sql))
     };
-    tidb_planner::mview::build(&mv, &plan.database, &table_by_id, plan.options, &parse).map_err(plain)
+    tidb_planner::mview::build(&parse, catalog, &mv, plan.options, None).map_err(plain)
 }
 
 /// Go master `formatMViewDeltaMergeAggDependency`.
@@ -357,7 +356,7 @@ pub fn plan_mview_delta_merge(
     // Go `buildRefreshMaterializedViewImplement`'s MIN / MAX fallback: the
     // lookup template planned (IndexJoin over the supporting index) while
     // the log has rows.
-    let full_update = match &build.full_update_lookup_template_sql {
+    let full_update = match &build.full_update_lookup_template_select {
         Some(template) if !empty => {
             // Go `lookupIS`: an AS OF refresh plans and reads the lookup at
             // its target (the GC safe point checked, the target's schema).
@@ -378,20 +377,8 @@ pub fn plan_mview_delta_merge(
                     "refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns",
                 ));
             }
-            let sql = tidb_planner::mview::set_full_update_lookup_index_hint(template, &indexes);
-            // Go keeps this template as the AST `parseSelectFromSQL` built
-            // (a new parser's `ModeNone`); its restored text re-parses the
-            // same way.
-            let (charset, collation) = ctx.connection_charset_info();
-            let parsed = tidb_parser::parse_with_config_and_connection(&sql, ctx.parser_config(), charset, collation)
-                .map_err(|error| plain(error.compatibility_message(&sql)))?;
-            let select = match parsed {
-                tidb_ast::Stmt::Query(query) => match &*query {
-                    tidb_ast::QueryStmt::Select(select) => (**select).clone(),
-                    _ => return Err(plain("mview full-update lookup template is not a select")),
-                },
-                _ => return Err(plain("mview full-update lookup template is not a query")),
-            };
+            let mut select = template.clone();
+            tidb_planner::mview::set_full_update_lookup_index_hint(&mut select, &indexes).map_err(plain)?;
             let lookup_ctx = plan_ctx.clone().with_inl_join_inner_multi_pattern(true);
             let lookup_plan = super::planner_bridge::physical_select_plan_with_allocators(
                 &select,
@@ -873,15 +860,15 @@ pub fn run_mview_delta_merge(
                 let kv = Arc::make_mut(kv);
                 let handle = |kv: &mut tidb_table::tables::TableCommon| -> Result<TableHandle, DriverError> {
                     match &build.mv_table_pk_cols {
-                        DiffHandleCols::IntPk { source_offset } | DiffHandleCols::RowId { source_offset } => {
-                            match &row[*source_offset] {
+                        tidb_planner_util::handle_cols::HandleCols::Int(int) => {
+                            match &row[int.col.index as usize] {
                                 Datum::Int(value) => Ok(TableHandle::Int(*value)),
                                 Datum::UInt(value) => Ok(TableHandle::Int(*value as i64)),
                                 other => Err(plain(format!("MViewDeltaMerge invalid handle {other:?}"))),
                             }
                         }
-                        DiffHandleCols::Common { source_offsets } => {
-                            let values: Vec<Datum> = source_offsets.iter().map(|&offset| row[offset].clone()).collect();
+                        tidb_planner_util::handle_cols::HandleCols::Common(common) => {
+                            let values: Vec<Datum> = common.columns.iter().map(|col| row[col.index as usize].clone()).collect();
                             kv.common_handle_from_values(&values, &zone).map_err(super::dml::kv_write_error)
                         }
                     }

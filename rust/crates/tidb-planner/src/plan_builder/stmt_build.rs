@@ -1609,7 +1609,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             tidb_parser::parse_with_config_and_connection(sql, config, &charset, &collation)
                 .map_err(|error| error.compatibility_message(sql))
         };
-        let diff = crate::mview::build_complete_diff_source(&info, &database, &parse).map_err(PlanError::internal)?;
+        // The planner's source answers names, not ids: the diff source reads
+        // only the view's schema, which the statement named.
+        struct StatementViewSchema<'a> {
+            database: &'a str,
+            view_id: i64,
+        }
+        impl crate::mview::InfoSchema for StatementViewSchema<'_> {
+            fn table_info_by_id(&self, _id: i64) -> Option<tidb_model::TableInfo> {
+                None
+            }
+            fn table_item_db_name(&self, id: i64) -> Option<String> {
+                (id == self.view_id).then(|| self.database.to_owned())
+            }
+        }
+        let is = StatementViewSchema { database: &database, view_id: info.id };
+        let diff = crate::mview::build_complete_diff_source(&parse, &is, &info).map_err(PlanError::internal)?;
         Ok(Plan::MViewCompleteDeltaApply(Box::new(crate::common_plans::MViewCompleteDeltaApply {
             database,
             name: info.name.original().to_owned(),

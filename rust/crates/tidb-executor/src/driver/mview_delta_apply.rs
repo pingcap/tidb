@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 use tidb_planner::common_plans::MViewCompleteDeltaApply;
-use tidb_planner::mview::{DiffHandleCols, DIFF_OP_DELETE, DIFF_OP_INSERT, DIFF_OP_UPDATE};
+use tidb_planner::mview::{DIFF_OP_DELETE, DIFF_OP_INSERT, DIFF_OP_UPDATE};
 use tidb_table::tables::TableHandle;
 
 use super::{DriverError, SessionExtendedInfoSchema, TableEntry};
@@ -158,10 +158,9 @@ fn explain_info(diff: &tidb_planner::mview::CompleteDiffBuildResult) -> String {
         let picked: Vec<String> = diff.group_key_mv_offsets.iter().map(|&mv| at(offsets, mv).to_string()).collect();
         format!("[{}]", picked.join(","))
     };
-    let handle = match &diff.current_handle_cols {
-        DiffHandleCols::IntPk { source_offset } | DiffHandleCols::RowId { source_offset } => format_offsets(&[*source_offset]),
-        DiffHandleCols::Common { source_offsets } => format_offsets(source_offsets),
-    };
+    let handle_cols = &diff.current_handle_cols;
+    let handle =
+        format_offsets(&(0..handle_cols.num_cols()).map(|i| handle_cols.get_col(i).index as usize).collect::<Vec<_>>());
     format!(
         "op_offset:{}, current_marker_offset:{}, recomputed_marker_offset:{}, current_group_keys_offset:{}, recomputed_group_keys_offset:{}, current_handle_offset:{}, current_row_offset:{}, recomputed_row_offset:{}",
         diff.op_col_offset,
@@ -314,15 +313,15 @@ pub fn run_mview_complete_delta_apply(
                 let kv = Arc::make_mut(kv);
                 let handle = |kv: &mut tidb_table::tables::TableCommon| -> Result<TableHandle, DriverError> {
                     match &diff.current_handle_cols {
-                        DiffHandleCols::IntPk { source_offset } | DiffHandleCols::RowId { source_offset } => {
-                            match &row[*source_offset] {
+                        tidb_planner_util::handle_cols::HandleCols::Int(int) => {
+                            match &row[int.col.index as usize] {
                                 Datum::Int(value) => Ok(TableHandle::Int(*value)),
                                 Datum::UInt(value) => Ok(TableHandle::Int(*value as i64)),
                                 other => Err(plain(format!("MViewCompleteDeltaApply invalid handle {other:?}"))),
                             }
                         }
-                        DiffHandleCols::Common { source_offsets } => {
-                            let values: Vec<Datum> = source_offsets.iter().map(|&offset| row[offset].clone()).collect();
+                        tidb_planner_util::handle_cols::HandleCols::Common(common) => {
+                            let values: Vec<Datum> = common.columns.iter().map(|col| row[col.index as usize].clone()).collect();
                             kv.common_handle_from_values(&values, &zone).map_err(super::dml::kv_write_error)
                         }
                     }
