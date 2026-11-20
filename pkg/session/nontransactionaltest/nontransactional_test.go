@@ -572,6 +572,41 @@ func TestNonTransactionalDMLWithMaskedShardColumn(t *testing.T) {
 		}
 	}
 
+	// A user who cannot select the shard column gets the errors and output of
+	// a table without policy, so the check does not reveal the policy.
+	root.MustExec("create user nt_none, nt_dml, nt_other_col")
+	for _, policy := range []string{"mask_full(c)", ""} {
+		reset(policy)
+		root.MustExec("grant update, delete on test.t to nt_dml")
+		root.MustExec("grant select(id, v), update, delete on test.t to nt_other_col")
+		for user, selectErr := range map[string]string{
+			"nt_none":      "[planner:1142]SELECT command denied to user 'nt_none'@'%' for table 't'",
+			"nt_dml":       "[planner:1142]SELECT command denied to user 'nt_dml'@'%' for table 't'",
+			"nt_other_col": "[planner:1143]SELECT command denied to user 'nt_other_col'@'%' for column 'c' in table 't'",
+		} {
+			tk := testkit.NewTestKit(t, store)
+			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "%"}, nil, nil, nil))
+			for _, dml := range []string{"delete from test.t", "update test.t set v = 1"} {
+				require.EqualError(t, tk.ExecToErr("batch on c limit 1 "+dml), selectErr)
+				require.EqualError(t, tk.ExecToErr("batch on c limit 1 dry run "+dml), selectErr)
+				tk.MustQuery("batch on c limit 1 dry run query " + dml).Check(testkit.Rows(
+					"SELECT `c` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`c`),0,1),`c`"))
+			}
+		}
+		root.MustQuery("select count(*) from t where v = 0").Check(testkit.Rows("4"))
+	}
+
+	// A column-level SELECT privilege on the shard column is enough to see the
+	// masked values, hence to be told about the mask.
+	reset("mask_full(c)")
+	root.MustExec("create user nt_shard_col")
+	root.MustExec("grant select(c), update, delete on test.t to nt_shard_col")
+	shardCol := testkit.NewTestKit(t, store)
+	require.NoError(t, shardCol.Session().Auth(&auth.UserIdentity{Username: "nt_shard_col", Hostname: "%"}, nil, nil, nil))
+	for _, form := range []string{"", "dry run ", "dry run query "} {
+		shardCol.MustContainErrMsg("batch on c limit 1 "+form+"delete from test.t", maskedErr)
+	}
+
 	// A user the policy does not mask reads the stored boundaries.
 	for _, dml := range dmls {
 		reset("case when current_user() = 'nt_unmasked@%' then c else mask_full(c) end")
