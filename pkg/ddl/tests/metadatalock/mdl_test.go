@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -179,6 +180,108 @@ func TestMDLBasicDelete(t *testing.T) {
 
 	wg.Wait()
 	require.Less(t, ts1, ts2)
+}
+
+func TestMDLInternalSession(t *testing.T) {
+	testMDLInternalSession(t, "test.mdl_internal_session")
+}
+
+func TestMDLInternalSystemTableSession(t *testing.T) {
+	testMDLInternalSession(t, "mysql.mdl_internal_session")
+}
+
+func testMDLInternalSession(t *testing.T, tableName string) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+	tkDDL.MustExec(fmt.Sprintf("create table %s(a int primary key, b int)", tableName))
+	tkDDL.MustExec(fmt.Sprintf("insert into %s values (1, 1)", tableName))
+
+	internalSession, err := dom.AdvancedSysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.AdvancedSysSessionPool().Put(internalSession)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	execInternal := func(sql string) {
+		rs, execErr := internalSession.ExecuteInternal(ctx, sql)
+		require.NoError(t, execErr)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+	}
+
+	// This is the same transaction shape used by a TTL delete worker: the
+	// DELETE is executed through an internal session and the transaction stays
+	// open while validateTTLWork runs before COMMIT.
+	execInternal("begin")
+	execInternal(fmt.Sprintf("delete from %s where a = 1", tableName))
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		ddlDone <- tkDDL.ExecToErr(fmt.Sprintf("alter table %s add index idx_b(b)", tableName))
+	}()
+
+	ddlCompletedBeforeCommit := false
+	var ddlErr error
+	select {
+	case ddlErr = <-ddlDone:
+		ddlCompletedBeforeCommit = true
+	case <-time.After(time.Second):
+	}
+
+	execInternal("commit")
+	if !ddlCompletedBeforeCommit {
+		select {
+		case ddlErr = <-ddlDone:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "DDL did not finish after the internal transaction committed")
+		}
+	}
+
+	require.NoError(t, ddlErr)
+	require.False(t, ddlCompletedBeforeCommit, "DDL must wait for the internal transaction")
+	tkDDL.MustExec(fmt.Sprintf("admin check table %s", tableName))
+}
+
+func TestMDLInternalDDLDoesNotBlockItself(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t(a int primary key, b int)")
+
+	internalSession, err := dom.AdvancedSysSessionPool().Get()
+	require.NoError(t, err)
+	defer dom.AdvancedSysSessionPool().Put(internalSession)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	done := make(chan error, 1)
+	go func() {
+		rs, execErr := internalSession.ExecuteInternal(ctx, "alter table test.t add index idx_b(b)")
+		if rs != nil {
+			closeErr := rs.Close()
+			if execErr == nil {
+				execErr = closeErr
+			}
+		}
+		done <- execErr
+	}()
+
+	select {
+	case err = <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "an internal DDL blocked on its own MDL census entry")
+	}
 }
 
 func TestMDLBasicPointGet(t *testing.T) {
