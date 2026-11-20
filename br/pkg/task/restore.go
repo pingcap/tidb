@@ -54,13 +54,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1267,13 +1265,10 @@ func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, erro
 
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
-	piTRTaskInfo               *PiTRTaskInfo
-	logRestoreStorage          storage.ExternalStorage
-	logTableHistoryManager     *stream.LogBackupTableHistoryManager
-	tableMappingManager        *stream.TableMappingManager
-	maskingPolicyRestoreTables map[filter.Table]struct{}
-	maskingPolicyTableIDs      map[int64]struct{}
-	skipSnapshotMaskingPolicy  bool
+	piTRTaskInfo           *PiTRTaskInfo
+	logRestoreStorage      storage.ExternalStorage
+	logTableHistoryManager *stream.LogBackupTableHistoryManager
+	tableMappingManager    *stream.TableMappingManager
 }
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
@@ -1409,10 +1404,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	manifest, err := metautil.ReadMaskingPolicyManifest(ctx, s, &cfg.CipherInfo, backupMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// build restore client
 	// need to retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
@@ -1498,8 +1489,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	configureSnapshotMaskingPolicies(cfg, tableMap, manifest, isPiTR)
-	client.SetMaskingPolicySnapshotTable(maskingPolicySnapshotTableName(cfg.RestoreID), cfg.skipSnapshotMaskingPolicy)
 	log.Info("found items to restore after filtering",
 		zap.Int("tables", len(tableMap)),
 		zap.Int("db", len(dbMap)))
@@ -1590,7 +1579,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 	}
-	ensureDBMapCoversTables(tableMap, dbMap)
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 	nameRouter, err := cfg.getNameRouter()
@@ -1611,16 +1599,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 	// The optional target-existence check needs the effective target names before
-	// AllocTableIDs/PreCheck run, including task-owned policy staging names.
-	// The plan is rebuilt below because those steps can change table metadata.
+	// AllocTableIDs/PreCheck run. Without routing the target names are identical
+	// to the source names, so only build a plan when a route is configured; the
+	// plan is rebuilt below because those steps can change the table metadata.
 	var namePlan *restoreNamePlan
 	targetTablesForCheck := tables
-	if cfg.hasNameRouting() || cfg.WithSysTable {
+	if cfg.hasNameRouting() {
 		namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		if err = isolateMaskingPolicySnapshot(namePlan, cfg.RestoreConfig); err != nil {
 			return errors.Trace(err)
 		}
 		targetTablesForCheck = namePlan.targetTables
@@ -1651,17 +1637,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
-	if len(cfg.maskingPolicyRestoreTables) > 0 {
-		supportsMasking := mgr.GetDomain().InfoSchema().TableExists(
-			pmodel.NewCIStr(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
-		if !supportsMasking {
-			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "target lacks masking policy support for selected tables")
-		}
-		if cfg.RestoreID == 0 {
-			return errors.Annotate(berrors.ErrRestoreIncompatibleSys,
-				"selected masking policies require a target supporting the restore registry")
-		}
-	}
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -1712,9 +1687,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = isolateMaskingPolicySnapshot(namePlan, cfg.RestoreConfig); err != nil {
 		return errors.Trace(err)
 	}
 	preAllocRange, err := client.GetPreAllocedTableIDRange()
@@ -1825,7 +1797,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	ddlJobs := filterDDLJobsForRestore(client.GetDDLJobs(), tables, cfg.WithSysTable)
+	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
 	if cfg.AllowPITRFromIncremental {
 		err = CheckDDLJobByRules(ddlJobs, DDLJobLogIncrementalCompactBlockListRule)
 		if err != nil {
@@ -1877,40 +1850,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if len(dbs) == 0 && len(tables) == 0 {
 		log.Info("nothing to restore, all databases and tables are filtered out")
 		// even nothing to restore, we show a success message since there is no failure.
-	}
-
-	var maskingSession glue.Session
-	var maskingTableIDs []int64
-	if len(cfg.maskingPolicyRestoreTables) > 0 {
-		maskingSession, err = g.CreateSession(mgr.GetStorage())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer maskingSession.Close()
-		for _, tbl := range tables {
-			if _, protect := cfg.maskingPolicyRestoreTables[filter.Table{Schema: tbl.DB.Name.L, Name: tbl.Info.Name.L}]; !protect {
-				continue
-			}
-			target, err := mgr.GetDomain().InfoSchema().TableByName(ctx, tbl.DB.Name, tbl.Info.Name)
-			if err == nil {
-				maskingTableIDs = append(maskingTableIDs, target.Meta().ID)
-			} else if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-				id, err := client.GetPreallocatedTableID(tbl.Info.ID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				maskingTableIDs = append(maskingTableIDs, id)
-			} else {
-				return errors.Trace(err)
-			}
-		}
-		var isRegistered func(context.Context, uint64) (bool, error)
-		if cfg.RestoreRegistry != nil {
-			isRegistered = cfg.RestoreRegistry.IsRegistered
-		}
-		if err := protectMaskingPolicyTables(ctx, mgr.GetDomain(), maskingSession, maskingTableIDs, cfg.RestoreID, isRegistered); err != nil {
-			return err
-		}
 	}
 
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, namePlan.databases, namePlan.tables)
@@ -2050,7 +1989,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// So leave it out of the pipeline for easier implementation.
 	log.Info("restoring system schemas", zap.Bool("withSys", cfg.WithSysTable),
 		zap.Strings("filter", cfg.FilterStr))
-	client.SetDeferMaskingPolicyRestore(isPiTR && cfg.WithSysTable)
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, loadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
@@ -2061,11 +1999,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return err
 	}
 
-	if !isPiTR && maskingSession != nil {
-		if err := reopenMaskingPolicyTables(ctx, mgr.GetDomain(), maskingSession, maskingTableIDs, cfg.RestoreID); err != nil {
-			return err
-		}
-	}
 	canRestoreSchedulers = true
 	log.Info("snapshot restore success")
 	// Set task summary to success status.
@@ -2261,19 +2194,6 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 	return newTables
 }
 
-func shouldForceRestoreMaskingPolicySchema(cfg *RestoreConfig, dbName string) bool {
-	return cfg.WithSysTable && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
-}
-
-func shouldForceRestoreMaskingPolicyTable(cfg *RestoreConfig, dbName, tableName string) bool {
-	return shouldForceRestoreMaskingPolicySchema(cfg, dbName) && strings.EqualFold(tableName, "tidb_masking_policy")
-}
-
-func isTemporaryMaskingPolicyTable(dbName, tableName string) bool {
-	return strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O) &&
-		strings.EqualFold(tableName, "tidb_masking_policy")
-}
-
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
 	client *snapclient.SnapClient,
@@ -2288,9 +2208,7 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !loadStatsPhysical &&
-			!utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) &&
-			!shouldForceRestoreMaskingPolicySchema(cfg, dbName) {
+		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -2298,10 +2216,10 @@ func filterRestoreFiles(
 			if table.Info == nil {
 				continue
 			}
-			if !shouldForceRestoreMaskingPolicyTable(cfg, dbName, table.Info.Name.O) &&
-				!(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) &&
-				!utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
-				continue
+			if !(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
+				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+					continue
+				}
 			}
 
 			// Add table to tableMap using table ID as key
@@ -2425,23 +2343,6 @@ func processLogBackupTableHistory(
 				}
 			}
 		}
-	}
-}
-
-func ensureDBMapCoversTables(tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database) {
-	for tableID, table := range tableMap {
-		if table == nil || table.DB == nil || table.Info == nil {
-			continue
-		}
-		if _, ok := dbMap[table.DB.ID]; ok {
-			continue
-		}
-		dbMap[table.DB.ID] = &metautil.Database{Info: table.DB}
-		log.Warn("database missing after filtering, adding back from selected table",
-			zap.Int64("dbID", table.DB.ID),
-			zap.String("dbName", table.DB.Name.O),
-			zap.Int64("tableID", tableID),
-			zap.String("tableName", table.Info.Name.O))
 	}
 }
 
@@ -2695,28 +2596,12 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 	return
 }
 
-func filterDDLJobsForRestore(jobs []*model.Job, tables []*metautil.Table, withSysTable bool) []*model.Job {
-	return FilterDDLJobByRules(FilterDDLJobs(jobs, tables), DDLJobBlockListRule, func(job *model.Job) bool {
-		return !withSysTable && isMaskingPolicyDDL(job.Type)
-	})
-}
-
 // FilterDDLJobs filters ddl jobs.
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
 	slices.SortFunc(allDDLJobs, func(i, j *model.Job) int {
 		return cmp.Compare(j.BinlogInfo.SchemaVersion, i.BinlogInfo.SchemaVersion)
 	})
-	// A job can match more than one restored object, for example a table by
-	// its ID and another table by the name the first one used to have. Emit it
-	// once: replaying a DDL twice fails or repeats its effect.
-	emitted := make(map[int64]struct{})
-	emit := func(job *model.Job) {
-		if _, ok := emitted[job.ID]; !ok {
-			emitted[job.ID] = struct{}{}
-			ddlJobs = append(ddlJobs, job)
-		}
-	}
 	dbs := getDatabases(tables)
 	for _, db := range dbs {
 		// These maps is for solving some corner case.
@@ -2731,7 +2616,7 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		for _, job := range allDDLJobs {
 			if job.BinlogInfo.DBInfo != nil {
 				if dbIDs[job.SchemaID] || dbNames[job.BinlogInfo.DBInfo.Name.String()] {
-					emit(job)
+					ddlJobs = append(ddlJobs, job)
 					// The the jobs executed with the old id, like the step 2 in the example above.
 					dbIDs[job.SchemaID] = true
 					// For the jobs executed after rename, like the step 3 in the example above.
@@ -2748,25 +2633,13 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		name := restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
-			jobTableName := ""
-			if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil {
-				jobTableName = job.BinlogInfo.TableInfo.Name.String()
-			} else if job.TableName != "" {
-				// Some DDL jobs (for example masking policy DDL) don't persist BinlogInfo.TableInfo.
-				// Fall back to job.TableName so table-scope restore can still replay them.
-				jobTableName = job.TableName
-			}
-			name = restore.UniqueTableName{DB: job.SchemaName, Table: jobTableName}
-			if (job.TableID != 0 && tableIDs[job.TableID]) || (jobTableName != "" && tableNames[name]) {
-				emit(job)
-				if job.TableID != 0 {
+			if job.BinlogInfo.TableInfo != nil {
+				name = restore.UniqueTableName{DB: job.SchemaName, Table: job.BinlogInfo.TableInfo.Name.String()}
+				if tableIDs[job.TableID] || tableNames[name] {
+					ddlJobs = append(ddlJobs, job)
 					tableIDs[job.TableID] = true
-				}
-				// For truncate table, the id may be changed.
-				if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil && job.BinlogInfo.TableInfo.ID != 0 {
+					// For truncate table, the id may be changed
 					tableIDs[job.BinlogInfo.TableInfo.ID] = true
-				}
-				if jobTableName != "" {
 					tableNames[name] = true
 				}
 			}
@@ -2987,41 +2860,20 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool, isIncremental bool) {
-	protectMasking := cfg.WithSysTable && !isIncremental && hasMaskingPolicySource(cfg.tableMappingManager)
-	if cfg.WithSysTable && !isIncremental && !cfg.skipSnapshotMaskingPolicy {
-		for _, tbl := range tables {
-			protectMasking = protectMasking || isTemporaryMaskingPolicyTable(tbl.DB.Name.O, tbl.Info.Name.O)
-		}
-	}
-	if protectMasking {
-		cfg.maskingPolicyRestoreTables = make(map[filter.Table]struct{})
-	}
-	if !(cfg.isPartialRestore() && isPiTR && !isIncremental) && !protectMasking {
-		return
-	}
-	for i, tbl := range tables {
-		if tbl.Info.IsSequence() || tbl.Info.IsView() || isTemporaryMaskingPolicyTable(tbl.DB.Name.O, tbl.Info.Name.O) {
-			continue
-		}
-		if !(cfg.isPartialRestore() && isPiTR) && tbl.Info.Mode != model.TableModeNormal {
-			continue
-		}
-		if protectMasking && !isPiTR && cfg.maskingPolicyTableIDs != nil {
-			if _, ok := cfg.maskingPolicyTableIDs[tbl.Info.ID]; !ok {
+func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
+	isIncremental bool) {
+	if cfg.isPartialRestore() && isPiTR && !isIncremental {
+		for i, table := range tables {
+			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
+			if table.Info.IsSequence() {
 				continue
 			}
+			tableCopy := *table
+			tableCopy.Info = table.Info.Clone()
+			tableCopy.Info.Mode = model.TableModeRestore
+			tables[i] = &tableCopy
 		}
-		if protectMasking && !utils.IsSysOrTempSysDB(tbl.DB.Name.O) && tbl.Info.Mode == model.TableModeNormal {
-			cfg.maskingPolicyRestoreTables[filter.Table{Schema: tbl.DB.Name.L, Name: tbl.Info.Name.L}] = struct{}{}
-		}
-		if utils.IsSysOrTempSysDB(tbl.DB.Name.O) && !(cfg.isPartialRestore() && isPiTR) {
-			continue
-		}
-		restoredTable := *tbl
-		restoredTable.Info = tbl.Info.Clone()
-		restoredTable.Info.Mode = model.TableModeRestore
-		tables[i] = &restoredTable
+		log.Info("set tables to restore mode for filtered PiTR restore", zap.Int("table count", len(tables)))
 	}
 }
 

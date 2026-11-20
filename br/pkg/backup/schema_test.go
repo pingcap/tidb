@@ -14,17 +14,16 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.opencensus.io/stats/view"
 )
 
@@ -111,7 +110,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	testFilter, err := filter.Parse([]string{"test.t1"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-		m.Storage, testFilter, math.MaxUint64, false, false)
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.NotNil(t, backupSchemas)
 
@@ -119,7 +118,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, fooFilter, math.MaxUint64, false, false)
+		m.Storage, fooFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Nil(t, backupSchemas)
 
@@ -128,7 +127,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*", "!sys.*"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, noFilter, math.MaxUint64, false, false)
+		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.NotNil(t, backupSchemas)
 
@@ -140,7 +139,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 
 	var policies []*backuppb.PlacementPolicy
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, testFilter, math.MaxUint64, false, false)
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 	// we expect no policies collected, because it's not full backup.
@@ -173,7 +172,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("insert into t2 values (11);")
 
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, noFilter, math.MaxUint64, true, false)
+		m.Storage, noFilter, math.MaxUint64, true)
 	require.NoError(t, err)
 	require.Equal(t, 2, backupSchemas.Len())
 	// we expect the policy fivereplicas collected in full backup.
@@ -201,88 +200,6 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	require.NotZerof(t, schemas[1].TotalBytes, "%v", schemas[1])
 }
 
-func TestBuildBackupRangeAndSchemaForceMaskingPolicyForDBBackup(t *testing.T) {
-	m := createMockCluster(t)
-	tk := testkit.NewTestKit(t, m.Storage)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_force_mask")
-	tk.MustExec("create table t_force_mask (id int primary key, c varchar(20))")
-	tk.MustExec("create masking policy p_force on t_force_mask(c) as mask_full(c) enable")
-
-	dbFilter, err := filter.Parse([]string{"test.*"})
-	require.NoError(t, err)
-
-	for _, full := range []bool{false, true} {
-		_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-			m.Storage, dbFilter, math.MaxUint64, full, true)
-		require.NoError(t, err)
-		require.NotNil(t, backupSchemas)
-		require.Equal(t, 2, backupSchemas.Len())
-
-		es := GetRandomStorage(t)
-		cipher := backuppb.CipherInfo{
-			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-		}
-		metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
-		ctx := context.Background()
-		require.NoError(t, backupSchemas.BackupSchemas(
-			ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, nil))
-		require.NoError(t, metaWriter.FlushBackupMeta(ctx))
-
-		schemas := GetSchemasFromMeta(t, es)
-		var foundUserTable bool
-		var foundMaskingPolicyTable bool
-		for _, s := range schemas {
-			if s.DB.Name.L == "test" && s.Info != nil && s.Info.Name.L == "t_force_mask" {
-				foundUserTable = true
-			}
-			if s.DB.Name.L == utils.TemporaryDBName("mysql").L && s.Info != nil && s.Info.Name.L == "tidb_masking_policy" {
-				foundMaskingPolicyTable = true
-			}
-		}
-		require.True(t, foundUserTable)
-		require.True(t, foundMaskingPolicyTable)
-
-		// When the schema pattern selects mysql but no table pattern does, the
-		// attached policy table is the database's only record: an additional
-		// empty-database record would have no table info for restore to read.
-		tableFilter, err := filter.Parse([]string{"*.t_force_mask"})
-		require.NoError(t, err)
-		_, tableSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-			m.Storage, tableFilter, math.MaxUint64, full, true)
-		require.NoError(t, err)
-		require.NotNil(t, tableSchemas)
-		tableStorage := GetRandomStorage(t)
-		tableMetaWriter := metautil.NewMetaWriter(tableStorage, metautil.MetaFileSize, false, "", &cipher)
-		require.NoError(t, tableSchemas.BackupSchemas(
-			ctx, tableMetaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, variable.DefChecksumTableConcurrency, true, nil))
-		require.NoError(t, tableMetaWriter.FlushBackupMeta(ctx))
-		written := GetSchemasFromMeta(t, tableStorage)
-		require.Equal(t, tableSchemas.Len(), len(written))
-		policyRecords := 0
-		for _, s := range written {
-			if s.DB.Name.L != utils.TemporaryDBName("mysql").L {
-				continue
-			}
-			require.NotNil(t, s.Info, "mysql must not get an empty-database record")
-			require.Equal(t, "tidb_masking_policy", s.Info.Name.L)
-			policyRecords++
-		}
-		require.Equal(t, 1, policyRecords)
-
-		// A filter that selects nothing must still report an empty backup:
-		// attaching the policy table would hide a mistyped database name.
-		missingFilter, err := filter.Parse([]string{"db_not_exist.*"})
-		require.NoError(t, err)
-		ranges, missingSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-			m.Storage, missingFilter, math.MaxUint64, full, true)
-		require.NoError(t, err)
-		require.Empty(t, ranges)
-		require.Nil(t, missingSchemas)
-	}
-}
-
 func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	m := createMockCluster(t)
 
@@ -304,7 +221,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	f, err := filter.Parse([]string{"test.t3"})
 	require.NoError(t, err)
 
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, false)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -338,7 +255,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	// recover the statistics.
 	tk.MustExec("analyze table t3 all columns;")
 
-	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, false)
+	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -379,7 +296,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 
 	f, err := filter.Parse([]string{"mysql.systable*"})
 	require.NoError(t, err)
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, false)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, systemTablesCount, backupSchemas.Len())
 
@@ -404,33 +321,68 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	}
 }
 
-func TestBackupMaskingPolicyManifestSnapshot(t *testing.T) {
-	cluster := createMockCluster(t)
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	tk.MustExec("create database manifest_db")
-	tk.MustExec("create table manifest_db.protected(c varchar(20))")
-	tk.MustExec("create table manifest_db.ordinary(c varchar(20))")
-	tk.MustExec("create masking policy p on manifest_db.protected(c) as mask_full(c)")
-	ts, err := cluster.Storage.GetOracle().GetTimestamp(ctx, &oracle.Option{})
-	require.NoError(t, err)
-	// Current policy metadata no longer describes the backup snapshot.
-	tk.MustExec("alter table manifest_db.protected drop masking policy p")
-	for _, pattern := range []string{"manifest_db.*", "manifest_db.protected", "manifest_db.ordinary"} {
-		f, err := filter.Parse([]string{pattern})
+// BR does not back up masking policies: mysql.tidb_masking_policy is left out of
+// full, database and table backups, and no filter can select it.
+func TestBackupSkipsMaskingPolicyTable(t *testing.T) {
+	m := createMockCluster(t)
+	tk := testkit.NewTestKit(t, m.Storage)
+	tk.MustExec("create database br_masking")
+	tk.MustExec("create table br_masking.t (id int primary key, c varchar(32))")
+	tk.MustExec("insert into br_masking.t values (1, 'secret')")
+	tk.MustExec("create masking policy p on br_masking.t(c) as mask_full(c) enable")
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("1"))
+
+	const policyTable = "tidb_masking_policy"
+	policyTableID := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_schema = 'mysql' and table_name = '" + policyTable + "'").Rows()[0][0].(string)
+	userTableID := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_schema = 'mysql' and table_name = 'user'").Rows()[0][0].(string)
+	tablePrefix := func(id string) []byte {
+		var tableID int64
+		_, err := fmt.Sscanf(id, "%d", &tableID)
 		require.NoError(t, err)
-		_, schemas, _, err := backup.BuildBackupRangeAndInitSchema(cluster.Storage, f, ts, false, true)
-		require.NoError(t, err)
-		var manifest *metautil.MaskingPolicyManifest
-		require.NoError(t, gluetidb.New().UseOneShotSession(cluster.Storage, false, func(se glue.Session) error {
-			manifest, err = schemas.MaskingPolicyManifest(ctx, se, cluster.Storage, ts)
-			return err
-		}))
-		require.Equal(t, ts, manifest.SnapshotTS)
-		if pattern == "manifest_db.ordinary" {
-			require.Empty(t, manifest.TableIDs)
-		} else {
-			require.Len(t, manifest.TableIDs, 1)
-		}
+		return tablecodec.EncodeTablePrefix(tableID)
+	}
+
+	for _, tc := range []struct {
+		name         string
+		filter       []string
+		isFullBackup bool
+		// the tables that must be in the backup, as "db.table"
+		expected []string
+	}{
+		{name: "full", filter: []string{"*.*"}, isFullBackup: true, expected: []string{"mysql.user", "br_masking.t"}},
+		{name: "system database", filter: []string{"mysql.*"}, expected: []string{"mysql.user"}},
+		{name: "user database", filter: []string{"br_masking.*"}, expected: []string{"br_masking.t"}},
+		{name: "user table", filter: []string{"br_masking.t"}, expected: []string{"br_masking.t"}},
+		{name: "policy table named in the filter", filter: []string{"mysql." + policyTable, "br_masking.t"}, expected: []string{"br_masking.t"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := filter.Parse(tc.filter)
+			require.NoError(t, err)
+
+			tables := make(map[string]struct{})
+			require.NoError(t, backup.BuildBackupSchemas(m.Storage, f, math.MaxUint64, tc.isFullBackup,
+				func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+					if tableInfo != nil {
+						tables[dbInfo.Name.L+"."+tableInfo.Name.L] = struct{}{}
+					}
+				}))
+			require.NotContains(t, tables, "mysql."+policyTable)
+			for _, table := range tc.expected {
+				require.Contains(t, tables, table)
+			}
+
+			ranges, _, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, tc.isFullBackup)
+			require.NoError(t, err)
+			hasUserTableRange := false
+			for _, r := range ranges {
+				require.False(t, strings.HasPrefix(string(r.StartKey), string(tablePrefix(policyTableID))),
+					"the key range of mysql.%s must not be backed up", policyTable)
+				hasUserTableRange = hasUserTableRange || strings.HasPrefix(string(r.StartKey), string(tablePrefix(userTableID)))
+			}
+			_, expectUserTable := tables["mysql.user"]
+			require.Equal(t, expectUserTable, hasUserTableRange)
+		})
 	}
 }

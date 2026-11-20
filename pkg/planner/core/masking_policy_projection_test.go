@@ -1653,19 +1653,12 @@ func TestMaskingPolicyRestoreModeFastPlans(t *testing.T) {
 	require.NoError(t, dom.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
 		SchemaID: tbl.Meta().DBID, TableID: tbl.Meta().ID, TableMode: model.TableModeRestore,
 	}))
-	tk.Session().GetSessionVars().InRestrictedSQL = true
-	tk.Session().GetSessionVars().InMaskingPolicyRestore = true
-	tk.MustExec("alter table restore_gap drop masking policy p")
-	tk.Session().GetSessionVars().InMaskingPolicyRestore = false
-	tk.Session().GetSessionVars().InRestrictedSQL = false
-	for range 2 { // Includes retries after a failed replacement left no policy.
-		reader.MustQuery("show masking policies for restore_gap").Check(testkit.Rows())
-		for _, query := range []string{
-			"select c from restore_gap where id=1", "select c from restore_gap where id in(1,2)",
-			"select c from restore_gap", "execute cached_read using @id",
-		} {
-			reader.MustGetErrCode(query, errno.ErrProtectedTableMode)
-		}
+	// A table in Restore mode is not readable, whichever plan the query would get.
+	for _, query := range []string{
+		"select c from restore_gap where id=1", "select c from restore_gap where id in(1,2)",
+		"select c from restore_gap", "execute cached_read using @id",
+	} {
+		reader.MustGetErrCode(query, errno.ErrProtectedTableMode)
 	}
 }
 

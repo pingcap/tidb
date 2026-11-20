@@ -42,10 +42,6 @@ const (
 	LockFile = "backup.lock"
 	// MetaFile represents file name
 	MetaFile = "backupmeta"
-	// MaskingPolicyManifestFile records the protected source table IDs at the backup snapshot.
-	MaskingPolicyManifestFile = "masking-policy.json"
-	// MaskingPolicyBackupSchemaVersion requires a reader that restores masking policies.
-	MaskingPolicyBackupSchemaVersion uint32 = 3
 	// MetaJSONFile represents backup meta json file name
 	MetaJSONFile = "jsons/backupmeta.json"
 	// MaxBatchSize represents the internal channel buffer size of MetaWriter and MetaReader.
@@ -225,39 +221,19 @@ func getNestedMessageType(fieldTyp reflect.Type) (reflect.Type, bool) {
 
 // CheckBackupMetaCompatibilityFromBytes blocks restore when backup metadata
 // requires a newer metadata schema reader or contains protobuf fields the
-// current BR binary does not recognize. It is for metadata other than that of
-// a snapshot backup, such as log backup metadata and the PiTR ID map.
+// current BR binary does not recognize.
 func CheckBackupMetaCompatibilityFromBytes(
 	backupMetaBytes []byte,
 	backupMeta *backuppb.BackupMeta,
 ) error {
-	return checkBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta, backuppb.BackupSchemaVersion)
-}
-
-// CheckSnapshotBackupMetaCompatibilityFromBytes is the check for the metadata
-// of a snapshot backup. Only a snapshot backup carries masking policies, so
-// only its metadata may use MaskingPolicyBackupSchemaVersion.
-func CheckSnapshotBackupMetaCompatibilityFromBytes(
-	backupMetaBytes []byte,
-	backupMeta *backuppb.BackupMeta,
-) error {
-	return checkBackupMetaCompatibilityFromBytes(
-		backupMetaBytes, backupMeta, max(backuppb.BackupSchemaVersion, MaskingPolicyBackupSchemaVersion))
-}
-
-func checkBackupMetaCompatibilityFromBytes(
-	backupMetaBytes []byte,
-	backupMeta *backuppb.BackupMeta,
-	supportedVersion uint32,
-) error {
-	if backupMeta.GetBackupSchemaVersion() > supportedVersion {
+	if backupMeta.GetBackupSchemaVersion() > backuppb.BackupSchemaVersion {
 		return errors.Annotatef(
 			berrors.ErrVersionMismatch,
 			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR "+
 				"may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR "+
 				"version: %s. use --check-requirements=false to skip this check",
 			backupMeta.GetBackupSchemaVersion(),
-			supportedVersion,
+			backuppb.BackupSchemaVersion,
 			backupMeta.GetClusterVersion(),
 			backupMeta.GetBrVersion(),
 		)
@@ -1217,69 +1193,4 @@ func mergeDDLs(ddls [][]byte) []byte {
 	b[0] = byte('[')
 	b = append(b, ']')
 	return b
-}
-
-// MaskingPolicyManifest identifies policies by the same source table IDs used
-// in the backup schemas. An empty list proves ordinary tables need no fence.
-type MaskingPolicyManifest struct {
-	SnapshotTS uint64  `json:"snapshot_ts"`
-	TableIDs   []int64 `json:"table_ids"`
-}
-
-// WriteMaskingPolicyManifest writes the snapshot protection set with the backup cipher.
-func WriteMaskingPolicyManifest(
-	ctx context.Context, store storage.ExternalStorage, cipher *backuppb.CipherInfo, manifest *MaskingPolicyManifest,
-) error {
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	encrypted, iv, err := Encrypt(data, cipher)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return store.WriteFile(ctx, MaskingPolicyManifestFile, append(iv, encrypted...))
-}
-
-// ReadMaskingPolicyManifest validates the protection set before user data is imported.
-func ReadMaskingPolicyManifest(
-	ctx context.Context, store storage.ExternalStorage, cipher *backuppb.CipherInfo, meta *backuppb.BackupMeta,
-) (*MaskingPolicyManifest, error) {
-	exists, err := store.FileExists(ctx, MaskingPolicyManifestFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !exists {
-		if meta.GetBackupSchemaVersion() >= MaskingPolicyBackupSchemaVersion {
-			return nil, errors.Annotate(berrors.ErrRestoreInvalidBackup, "missing masking policy manifest")
-		}
-		return nil, nil
-	}
-	data, err := store.ReadFile(ctx, MaskingPolicyManifestFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	data, err = DecryptFullBackupMetaIfNeeded(data, cipher)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var manifest MaskingPolicyManifest
-	if err = json.Unmarshal(data, &manifest); err != nil {
-		return nil, errors.Annotate(err, "invalid masking policy manifest")
-	}
-	requiresPolicies := meta.GetBackupSchemaVersion() >= MaskingPolicyBackupSchemaVersion
-	if manifest.TableIDs == nil || requiresPolicies && len(manifest.TableIDs) == 0 {
-		return nil, errors.Annotate(berrors.ErrRestoreInvalidBackup, "missing protected tables in masking policy manifest")
-	}
-	seen := make(map[int64]struct{}, len(manifest.TableIDs))
-	for _, id := range manifest.TableIDs {
-		if _, duplicate := seen[id]; id <= 0 || duplicate {
-			return nil, errors.Annotate(berrors.ErrRestoreInvalidBackup, "invalid table ID in masking policy manifest")
-		}
-		seen[id] = struct{}{}
-	}
-	if manifest.SnapshotTS != meta.EndVersion {
-		return nil, errors.Annotate(berrors.ErrRestoreInvalidBackup, "masking policy manifest snapshot mismatch")
-	}
-	return &manifest, nil
 }

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -312,7 +311,7 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	})
 	require.NoError(t, err)
 	decoder := json.NewDecoder(bytes.NewReader(tablesPayload))
-	tables := make([]repoSnapshotTableView, 0, 2)
+	tables := make([]repoSnapshotTableView, 0, 1)
 	for {
 		var table repoSnapshotTableView
 		err := decoder.Decode(&table)
@@ -322,10 +321,11 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 		require.NoError(t, err)
 		tables = append(tables, table)
 	}
-	require.ElementsMatch(t, []repoSnapshotTableView{
-		{DBName: suite.dbName, TableName: "t"},
-		{DBName: utils.TemporaryDBName("mysql").O, TableName: "tidb_masking_policy"},
-	}, tables)
+	require.Len(t, tables, 1)
+	require.Equal(t, repoSnapshotTableView{
+		DBName:    suite.dbName,
+		TableName: "t",
+	}, tables[0])
 
 	result, err := taskrepo.RunRepoSnapshotDelete(ctx, console, taskrepo.RepoSnapshotDeleteConfig{
 		Config:   cfg,

@@ -1450,9 +1450,8 @@ func TestMaskingPolicyUpgrade(t *testing.T) {
 				require.Equal(t, policyTable.Meta().ID, tableAfter.Meta().ID)
 			} else {
 				tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("0"))
-				tableAfter, err := upgraded.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
+				_, err := upgraded.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("tidb_masking_policy"))
 				require.NoError(t, err)
-				require.Greater(t, tableAfter.Meta().BootstrapCreatedTS, txn.StartTS())
 
 				tk.MustExec("create table masking_upgrade(c varchar(20))")
 				tk.MustExec("insert into masking_upgrade values ('secret')")

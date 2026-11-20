@@ -139,13 +139,8 @@ type CheckpointMetadataForLogRestore struct {
 	RestoredTS        uint64 `json:"restored-ts"`
 	StartTS           uint64 `json:"start-ts"`
 	RewriteTS         uint64 `json:"rewrite-ts"`
-	// RewriteTSAfterTableClose tells that RewriteTS was taken after the restore
-	// had switched the existing tables it protects to Restore mode. Only such
-	// a timestamp makes the replayed table definitions visible; see where the
-	// log restore sets it.
-	RewriteTSAfterTableClose bool   `json:"rewrite-ts-after-table-close,omitempty"`
-	GcRatio                  string `json:"gc-ratio"`
-	RouteFingerprint         string `json:"route-fingerprint,omitempty"`
+	GcRatio           string `json:"gc-ratio"`
+	RouteFingerprint  string `json:"route-fingerprint,omitempty"`
 	// tiflash recorder items with snapshot restore records
 	TiFlashItems map[int64]model.TiFlashReplicaInfo `json:"tiflash-recorder,omitempty"`
 }

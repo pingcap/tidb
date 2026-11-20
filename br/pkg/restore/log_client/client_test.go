@@ -2032,29 +2032,6 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 		}
 	}
 
-	t.Run("registered restore resumes without the ID-map table", func(t *testing.T) {
-		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
-		require.NoError(t, err)
-		first := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-		first.SetRestoreID(101)
-		require.NoError(t, first.SetStorage(ctx, backend, nil))
-		require.NoError(t, first.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
-
-		retry := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-		retry.SetRestoreID(101)
-		require.NoError(t, retry.SetStorage(ctx, backend, nil))
-		loaded, err := retry.TEST_initSchemasMap(ctx, 2, nil)
-		require.NoError(t, err)
-		require.Len(t, loaded, len(baseTableMappingManager.DBReplaceMap))
-
-		other := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-		other.SetRestoreID(102)
-		require.NoError(t, other.SetStorage(ctx, backend, nil))
-		loaded, err = other.TEST_initSchemasMap(ctx, 2, nil)
-		require.NoError(t, err)
-		require.Nil(t, loaded)
-	})
-
 	t.Run("reject newer backup schema version", func(t *testing.T) {
 		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
 		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
@@ -2319,43 +2296,6 @@ func TestLogRestoreCheckpointRouteFingerprint(t *testing.T) {
 		require.ErrorContains(t, loadOrCreate(t, client, manager, "route-a"),
 			"restore rename rules do not match the log restore checkpoint")
 	})
-}
-
-func TestSaveRewriteTSAfterTableClose(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	g := gluetidb.New()
-	ctx := context.Background()
-	se, err := g.CreateSession(s.Mock.Storage)
-	require.NoError(t, err)
-	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-
-	const restoreID = 4
-	dbName := fmt.Sprintf("%s_%d", checkpoint.LogRestoreCheckpointDatabaseName, restoreID)
-	tk.MustExec("CREATE DATABASE " + dbName)
-	defer tk.MustExec("DROP DATABASE " + dbName)
-	manager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, restoreID)
-	require.NoError(t, err)
-	defer manager.Close()
-	require.NoError(t, manager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID: 123, StartTS: 1, RestoredTS: 2, RewriteTS: 100, GcRatio: "1.1",
-	}))
-
-	// A rewrite ts saved when the metadata is created was taken before the
-	// protected tables were closed.
-	taken, err := client.RewriteTSTakenAfterTableClose(ctx, manager)
-	require.NoError(t, err)
-	require.False(t, taken)
-	// Replacing it marks the new one; the other fields are kept.
-	require.NoError(t, client.SaveRewriteTSAfterTableClose(ctx, manager, 200))
-	meta, err := manager.LoadCheckpointMetadata(ctx)
-	require.NoError(t, err)
-	require.Equal(t, uint64(200), meta.RewriteTS)
-	require.Equal(t, uint64(123), meta.UpstreamClusterID)
-	require.Equal(t, "1.1", meta.GcRatio)
-	taken, err = client.RewriteTSTakenAfterTableClose(ctx, manager)
-	require.NoError(t, err)
-	require.True(t, taken)
 }
 
 func TestRepairIngestIndexFromCheckpoint(t *testing.T) {

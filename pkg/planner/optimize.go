@@ -545,8 +545,7 @@ func buildAndOptimizeLogicalPlanRound(
 			return nil, nil, false, err
 		}
 
-		vars := sctx.GetSessionVars()
-		if err := core.CheckTableMode(node, vars.InRestrictedSQL && vars.InMaskingPolicyRestore); err != nil {
+		if err := core.CheckTableMode(node); err != nil {
 			return nil, nil, false, err
 		}
 		*checked = true

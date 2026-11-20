@@ -312,7 +312,7 @@ func (ref *SnapshotStorageRef) LoadBackupMeta(
 	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return nil, errors.Annotate(err, "parse backupmeta failed")
 	}
-	if err = metautil.CheckSnapshotBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if checkRequirements {
 			return nil, errors.Trace(err)
 		}

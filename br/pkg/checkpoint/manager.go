@@ -55,8 +55,6 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
 	LoadCheckpointMetadata(context.Context) (*M, error)
 	SaveCheckpointMetadata(context.Context, *M) error
-	// UpdateCheckpointMetadata replaces checkpoint metadata that has been saved.
-	UpdateCheckpointMetadata(context.Context, *M) error
 	ExistsCheckpointMetadata(context.Context) (bool, error)
 	RemoveCheckpointData(context.Context) error
 
@@ -190,15 +188,6 @@ func (manager *TableMetaManager[K, SV, LV, M]) SaveCheckpointMetadata(
 		return insertCheckpointMeta(ctx, manager.se, manager.dbName, checkpointMetaTableName, meta)
 	}
 	return nil
-}
-
-// UpdateCheckpointMetadata implements MetaManager. SaveCheckpointMetadata
-// creates the checkpoint tables and cannot be called a second time.
-func (manager *TableMetaManager[K, SV, LV, M]) UpdateCheckpointMetadata(
-	ctx context.Context,
-	meta *M,
-) error {
-	return updateCheckpointMeta(ctx, manager.se, manager.dbName, checkpointMetaTableName, meta)
 }
 
 func (manager *TableMetaManager[K, SV, LV, M]) ExistsCheckpointMetadata(
@@ -357,14 +346,6 @@ func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointMetadata(
 }
 
 func (manager *StorageMetaManager[K, SV, LV, M]) SaveCheckpointMetadata(
-	ctx context.Context,
-	meta *M,
-) error {
-	return saveCheckpointMetadata(ctx, manager.storage, meta, getCheckpointMetaPathByName(manager.taskName))
-}
-
-// UpdateCheckpointMetadata implements MetaManager.
-func (manager *StorageMetaManager[K, SV, LV, M]) UpdateCheckpointMetadata(
 	ctx context.Context,
 	meta *M,
 ) error {

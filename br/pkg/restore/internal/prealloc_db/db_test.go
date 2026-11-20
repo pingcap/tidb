@@ -560,7 +560,6 @@ func TestDB_ExecDDL(t *testing.T) {
 
 func TestDB_ExecDDL2(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
 
 	ctx := context.Background()
 	fieldType := types.NewFieldType(8)
@@ -603,17 +602,6 @@ func TestDB_ExecDDL2(t *testing.T) {
 				},
 			},
 		},
-		// The policy job carries no TableInfo and its query is not qualified. It
-		// runs before any job that selects test_db, so it only passes when the
-		// schema is selected from the job's table name.
-		{
-			SchemaName: "test_db",
-			TableID:    20000,
-			TableName:  "t1",
-			Type:       model.ActionCreateMaskingPolicy,
-			Query:      "CREATE MASKING POLICY p ON t1(id) AS id;",
-			BinlogInfo: &model.HistoryInfo{},
-		},
 		{
 			SchemaName: "test_db",
 			Type:       model.ActionAddIndex,
@@ -628,14 +616,9 @@ func TestDB_ExecDDL2(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, ddlJob := range ddlJobs {
-		if ddlJob.Type == model.ActionCreateMaskingPolicy {
-			// Do not inherit test_db from the preceding index job.
-			require.NoError(t, db.Session().Execute(ctx, "USE mysql"))
-		}
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
-	tk.MustQuery("SHOW MASKING POLICIES FOR test_db.t1").Check(testkit.Rows("p id `id` ENABLED CUSTOM NONE"))
 }
 
 func TestCreateTableConsistent(t *testing.T) {

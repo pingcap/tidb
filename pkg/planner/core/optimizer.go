@@ -245,30 +245,13 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 }
 
 // CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
-func CheckTableMode(node *resolve.NodeW, maskingPolicyRestore bool) error {
-	// BR must rebuild policies before allowing reads and writes. Restrict this
-	// exception to the policy statements emitted by the internal replay path.
-	allowRestore := false
-	if maskingPolicyRestore {
-		switch stmt := node.Node.(type) {
-		case *ast.CreateMaskingPolicyStmt:
-			allowRestore = true
-		case *ast.AlterTableStmt:
-			allowRestore = len(stmt.Specs) > 0
-			for _, spec := range stmt.Specs {
-				allowRestore = allowRestore && spec.Tp == ast.AlterTableDropMaskingPolicy
-			}
-		}
-	}
+func CheckTableMode(node *resolve.NodeW) error {
 	// First make exceptions for stmt that only visit table meta;
 	// For example, `describe <table_name>` and `show create table <table_name>`;
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
 		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
-			if allowRestore && tblNameW.TableInfo.Mode == model.TableModeRestore {
-				continue
-			}
 			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
 				return err
 			}

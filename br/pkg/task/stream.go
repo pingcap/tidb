@@ -1665,36 +1665,6 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	var maskingTableIDs []int64
-	if cfg.WithSysTable && hasMaskingPolicySource(cfg.tableMappingManager) {
-		for _, db := range cfg.tableMappingManager.DBReplaceMap {
-			if db.FilteredOut {
-				continue
-			}
-			for _, tbl := range db.TableMap {
-				if !tbl.FilteredOut && !utils.IsSysOrTempSysDB(tbl.EffectiveDBName(db)) {
-					maskingTableIDs = append(maskingTableIDs, tbl.TableID)
-				}
-			}
-		}
-		var isRegistered func(context.Context, uint64) (bool, error)
-		if cfg.RestoreRegistry != nil {
-			isRegistered = cfg.RestoreRegistry.IsRegistered
-		}
-		if err := protectMaskingPolicyTables(ctx, client.GetDomain(), client.UnsafeSession(), maskingTableIDs, cfg.RestoreID, isRegistered); err != nil {
-			return err
-		}
-	}
-	if len(maskingTableIDs) > 0 {
-		if currentTS, err = rewriteTSAfterTableClose(ctx, mgr, client, cfg, currentTS); err != nil {
-			return errors.Trace(err)
-		}
-		cfg.RewriteTS = currentTS
-		if err := client.SetCurrentTS(currentTS); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg)
 	if err != nil {
@@ -1754,9 +1724,6 @@ func restoreStream(
 	}
 	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
-	if cfg.WithSysTable {
-		addMaskingPolicyRewriteRules(schemasReplace, rewriteRules)
-	}
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
@@ -1831,17 +1798,6 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	if cfg.WithSysTable {
-		var isRegistered func(context.Context, uint64) (bool, error)
-		if cfg.RestoreRegistry != nil {
-			isRegistered = cfg.RestoreRegistry.IsRegistered
-		}
-		if err := restoreMaskingPoliciesAfterLogReplay(ctx, client.GetDomain(), client.UnsafeSession(), schemasReplace,
-			!cfg.isPartialRestore(), cfg.RestoreID, isRegistered); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	if cfg.isPartialRestore() {
 		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("fail before setting table mode to normal"))
@@ -1849,11 +1805,6 @@ func restoreStream(
 
 		if err = client.SetTableModeToNormal(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
-		}
-		if len(maskingTableIDs) > 0 {
-			if err := reopenMaskingPolicyTables(ctx, client.GetDomain(), client.UnsafeSession(), maskingTableIDs, cfg.RestoreID); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -2127,7 +2078,7 @@ func getFullBackupTS(
 	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if err = metautil.CheckSnapshotBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return 0, 0, errors.Trace(err)
 		}
@@ -2321,7 +2272,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore() || (cfg.WithSysTable && hasMaskingPolicySource(cfg.tableMappingManager)))
+		client.CurrentTS(), client.RecordDeleteRange, cfg.isPartialRestore())
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -2411,16 +2362,6 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
-	// Policy rows have a separate staging/rebuild lifecycle. Generic target
-	// validation, metadata refresh and table-mode changes must not treat their
-	// source name as the live mysql.tidb_masking_policy table.
-	for _, db := range cfg.tableMappingManager.DBReplaceMap {
-		for _, tbl := range db.TableMap {
-			if isSourceMaskingPolicyTable(db, tbl) {
-				tbl.FilteredOut = true
-			}
-		}
-	}
 	// The dependency classification is persisted with the ID map, so a direct
 	// phase-2 run makes the same pre-DDL decision as the initial scan.
 	nameRouter, err := cfg.getNameRouter()
@@ -2454,10 +2395,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		return errors.Trace(err)
 	}
 	if saved {
-		if err := client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager); err != nil {
-			return err
-		}
-		return prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, false, true)
+		return client.ValidateTableRouteTargetDatabases(ctx, cfg.tableMappingManager)
 	}
 	// reuse existing database ids if it exists in the current cluster
 	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
@@ -2466,72 +2404,12 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, hasFullBackupStorage, false); err != nil {
-		return err
-	}
 	if err = client.SaveIdMapWithFailPoints(
 		ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager, routeFingerprint,
 	); err != nil {
 		return errors.Trace(err)
 	}
-	// Renaming is safe only after checkpoint progress prevents another snapshot
-	// replay from recreating the original temporary table under a different ID.
-	return prepareMaskingPolicyStaging(ctx, client.GetDomain(), client.UnsafeSession(), cfg, false, true)
-}
-
-// rewriteTSAfterTableClose returns the timestamp at which the log restore
-// replays table metadata when it protects tables for masking policy restore.
-//
-// Switching a table that already exists to Restore mode is a DDL job: it
-// writes a table definition newer than a rewrite ts taken before it. Metadata
-// replayed at that rewrite ts stays hidden behind the definition the job
-// wrote, and the schema changes of the table in the log are lost. The replay
-// therefore needs a rewrite ts taken after the tables are closed.
-//
-// The timestamp must not move again afterwards. Later steps of the restore run
-// DDL jobs of their own, such as rebuilding ingested indexes, and a retry
-// replays the metadata in full: only at the same, older timestamp does that
-// replay leave their results in place. So the timestamp is taken once, marked
-// in the checkpoint, and reused by every later run.
-func rewriteTSAfterTableClose(
-	ctx context.Context, mgr *conn.Mgr, client *logclient.LogClient, cfg *LogRestoreConfig, currentTS uint64,
-) (uint64, error) {
-	if cfg.UseCheckpoint {
-		taken, err := client.RewriteTSTakenAfterTableClose(ctx, cfg.logCheckpointMetaManager)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if taken {
-			return currentTS, nil
-		}
-		// The saved rewrite ts was taken before the tables were closed: by
-		// this run a moment ago, by a run that was interrupted before it
-		// could replace it, or by a BR without this fix. Whatever was replayed
-		// at it is hidden and has to be replayed again at a new one. That
-		// is no longer possible once the restore has gone on to rebuild
-		// indexes on top of the hidden definitions.
-		repairing, err := cfg.logCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if repairing {
-			return 0, errors.Annotatef(berrors.ErrRestoreCheckpointMismatch,
-				"the checkpoint was written by a BR that replays table metadata at a timestamp older than its own "+
-					"table mode changes, which can lose schema changes of the restored tables, and it has already "+
-					"started to rebuild indexes; clean the restored tables and the checkpoint, then restore again")
-		}
-	}
-	newTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	log.Info("take the rewrite ts after closing tables for masking policy restore", zap.Uint64("rewrite-ts", newTS))
-	if cfg.UseCheckpoint {
-		if err := client.SaveRewriteTSAfterTableClose(ctx, cfg.logCheckpointMetaManager, newTS); err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-	return newTS, nil
+	return nil
 }
 
 func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *LogRestoreConfig) (uint64, error) {
@@ -2558,10 +2436,8 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return nil
 	}
 
-	// Registration depends on the registry itself. The PiTR ID-map table may
-	// be absent even on a supported target, in which case ID maps use storage.
-	if !domain.InfoSchema().TableExists(
-		pmodel.NewCIStr(registry.RestoreRegistryDBName), pmodel.NewCIStr(registry.RestoreRegistryTableName)) {
+	// skip registration if target TiDB version doesn't support restore registry
+	if !restore.HasRestoreIDColumn(domain) {
 		log.Info("skipping restore registration since target TiDB version doesn't support restore registry")
 		return nil
 	}

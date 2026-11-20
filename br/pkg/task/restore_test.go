@@ -419,63 +419,6 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.Equal(t, 7, len(ddlJobs))
 }
 
-func TestFilterDDLJobsWithMaskingPolicyDDL(t *testing.T) {
-	tables := []*metautil.Table{{
-		DB: &model.DBInfo{
-			ID:   1,
-			Name: pmodel.NewCIStr("test_db"),
-		},
-		Info: &model.TableInfo{
-			ID:   100,
-			Name: pmodel.NewCIStr("test_table"),
-		},
-	}}
-
-	allDDLJobs := []*model.Job{
-		{
-			SchemaName: "test_db",
-			TableID:    100,
-			TableName:  "test_table",
-			Type:       model.ActionCreateMaskingPolicy,
-			Query:      "CREATE MASKING POLICY p ON test_table(c1) AS c1;",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 2},
-		},
-	}
-
-	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
-	require.Len(t, ddlJobs, 1)
-	require.Equal(t, model.ActionCreateMaskingPolicy, ddlJobs[0].Type)
-}
-
-func TestFilterDDLJobsEmitsEachJobOnce(t *testing.T) {
-	// db.a (ID 100) gets policy p, is renamed to db.b, and a new db.a (ID 200)
-	// is created. Restoring both tables finds the policy job twice: db.b by the
-	// table ID, the new db.a by the name the old table had.
-	db := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("db")}
-	tables := []*metautil.Table{
-		{DB: db, Info: &model.TableInfo{ID: 100, Name: pmodel.NewCIStr("b")}},
-		{DB: db, Info: &model.TableInfo{ID: 200, Name: pmodel.NewCIStr("a")}},
-	}
-	allDDLJobs := []*model.Job{
-		{ID: 1, SchemaName: "db", TableID: 100, TableName: "a", Type: model.ActionCreateMaskingPolicy,
-			Query: "CREATE MASKING POLICY p ON a(c) AS c", BinlogInfo: &model.HistoryInfo{SchemaVersion: 2}},
-		{ID: 2, SchemaName: "db", TableID: 100, Type: model.ActionRenameTable, Query: "RENAME TABLE a TO b",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 3, TableInfo: &model.TableInfo{ID: 100, Name: pmodel.NewCIStr("b")}}},
-		{ID: 3, SchemaName: "db", TableID: 200, Type: model.ActionCreateTable, Query: "CREATE TABLE a (c INT)",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 4, TableInfo: &model.TableInfo{ID: 200, Name: pmodel.NewCIStr("a")}}},
-	}
-	// Separate decoded copies of the same history job share its stable ID.
-	duplicate := allDDLJobs[0].Clone()
-	require.NotNil(t, duplicate)
-	allDDLJobs = append(allDDLJobs, duplicate)
-	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
-	seen := make(map[int64]int)
-	for _, job := range ddlJobs {
-		seen[job.ID]++
-	}
-	require.Equal(t, map[int64]int{1: 1, 2: 1, 3: 1}, seen)
-}
-
 func TestFilterDDLJobByRules(t *testing.T) {
 	ddlJobs := []*model.Job{
 		{

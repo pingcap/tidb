@@ -73,8 +73,6 @@ const (
 	UnitRange ProgressUnit = "range"
 	// UnitRegion represents the progress updated counter when a region finished.
 	UnitRegion ProgressUnit = "region"
-
-	sysMaskingPolicyTableName = "tidb_masking_policy"
 )
 
 // PerStoreBackupAdapter rewrites per-store backup requests and responses.
@@ -785,25 +783,25 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-	forceMaskingPolicyTable bool,
 ) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
-		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable)
+		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
-	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable)
+	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	if schemas != nil {
 		schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
 	}
 	return ranges, schemas, policies, errors.Trace(err)
 }
 
-func shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable bool, dbName string) bool {
-	return forceMaskingPolicyTable && strings.EqualFold(dbName, mysql.SystemDB)
-}
-
-func shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable bool, dbName, tableName string) bool {
-	return shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbName) &&
-		strings.EqualFold(tableName, sysMaskingPolicyTableName)
+// isTableNotBackedUp reports whether BR leaves the table out of every backup,
+// whatever the table filter says.
+//
+// mysql.tidb_masking_policy binds each masking policy to a table ID and a
+// column ID. Those IDs are not kept by a restore, so BR neither backs up nor
+// restores masking policies; they are recreated on the target cluster.
+func isTableNotBackedUp(dbNameL, tableNameL string) bool {
+	return dbNameL == mysql.SystemDB && tableNameL == "tidb_masking_policy"
 }
 
 // CheckBackupStorageIsLocked checks whether backups is locked.
@@ -837,7 +835,6 @@ func BuildBackupRangeAndInitSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-	forceMaskingPolicyTable bool,
 ) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewReader(snapshot)
@@ -862,11 +859,6 @@ func BuildBackupRangeAndInitSchema(
 
 	ranges := make([]rtree.KeyRange, 0)
 	schemasNum := 0
-	// The masking policy table is attached to a backup rather than selected by
-	// the user. Keep it apart until the filter is known to select something, so
-	// a filter that matches nothing still reports an empty backup.
-	forcedRanges := make([]rtree.KeyRange, 0)
-	forcedSchemasNum := 0
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -874,12 +866,7 @@ func BuildBackupRangeAndInitSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
-			continue
-		}
-		matchSchema := tableFilter.MatchSchema(dbInfo.Name.O)
-		if !matchSchema &&
-			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
@@ -894,16 +881,14 @@ func BuildBackupRangeAndInitSchema(
 					tableInfo.Version,
 				)
 			}
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) &&
-				!shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable, dbInfo.Name.O, tableInfo.Name.O) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) ||
+				isTableNotBackedUp(dbInfo.Name.L, tableInfo.Name.L) {
 				// Skip tables other than the given table.
 				return nil
 			}
-			// Defer the policy table only when its database was not selected.
-			// In a selected database it is written like any other table, so the
-			// database gets no additional "empty database" record.
-			forced := !matchSchema
 
+			schemasNum += 1
+			hasTable = true
 			tableRanges, err := distsql.BuildTableRanges(tableInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -911,21 +896,10 @@ func BuildBackupRangeAndInitSchema(
 			for _, r := range tableRanges {
 				// Add keyspace prefix to BackupRequest
 				startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
-				keyRange := rtree.KeyRange{
+				ranges = append(ranges, rtree.KeyRange{
 					StartKey: startKey,
 					EndKey:   endKey,
-				}
-				if forced {
-					forcedRanges = append(forcedRanges, keyRange)
-				} else {
-					ranges = append(ranges, keyRange)
-				}
-			}
-			if forced {
-				forcedSchemasNum += 1
-			} else {
-				schemasNum += 1
-				hasTable = true
+				})
 			}
 
 			return nil
@@ -935,8 +909,7 @@ func BuildBackupRangeAndInitSchema(
 			return nil, nil, nil, errors.Trace(err)
 		}
 
-		// A database visited only to attach the policy table was not selected.
-		if !hasTable && matchSchema {
+		if !hasTable {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
 			schemasNum += 1
 		}
@@ -946,10 +919,8 @@ func BuildBackupRangeAndInitSchema(
 		log.Info("nothing to backup")
 		return nil, nil, nil, nil
 	}
-	ranges = append(ranges, forcedRanges...)
-	schemasNum += forcedSchemasNum
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable, fn)
+		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, fn)
 	}, schemasNum), policies, nil
 }
 
@@ -958,7 +929,6 @@ func BuildBackupSchemas(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-	forceMaskingPolicyTable bool,
 	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
@@ -971,12 +941,7 @@ func BuildBackupSchemas(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
-			continue
-		}
-		matchSchema := tableFilter.MatchSchema(dbInfo.Name.O)
-		if !matchSchema &&
-			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
 			continue
 		}
 
@@ -988,8 +953,8 @@ func BuildBackupSchemas(
 
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) &&
-				!shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable, dbInfo.Name.O, tableInfo.Name.O) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) ||
+				isTableNotBackedUp(dbInfo.Name.L, tableInfo.Name.L) {
 				// Skip tables other than the given table.
 				return nil
 			}
@@ -1075,9 +1040,7 @@ func BuildBackupSchemas(
 			return errors.Trace(err)
 		}
 
-		// A database visited only to attach the policy table was not selected,
-		// so it gets no empty-database record; see BuildBackupRangeAndInitSchema.
-		if !hasTable && matchSchema {
+		if !hasTable {
 			fn(dbInfo, nil)
 		}
 	}
@@ -1097,6 +1060,12 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 		model.ActionAlterTablePlacement,
 		model.ActionAlterTableAttributes,
 		model.ActionAlterTablePartitionAttributes:
+		return true
+	// BR does not back up masking policies, see isTableNotBackedUp. Replaying
+	// these jobs in an incremental restore would create policies on the target.
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy:
 		return true
 	default:
 		return false
@@ -1405,18 +1374,13 @@ func (bc *Client) OnBackupResponse(
 					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
 					return nil, err
 				}
-				// The tests that interrupt here expect at least one file in the
-				// checkpoint. Ranges without data, such as an empty system
-				// table backed up first, answer with no file.
-				if len(resp.Files) > 0 {
-					failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
-						msg, ok := val.(string)
-						if !ok || msg == "" {
-							msg = "failpoint: backup response error after checkpoint"
-						}
-						failpoint.Return(nil, errors.New(msg))
-					})
-				}
+				failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
+					msg, ok := val.(string)
+					if !ok || msg == "" {
+						msg = "failpoint: backup response error after checkpoint"
+					}
+					failpoint.Return(nil, errors.New(msg))
+				})
 			}
 			pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 			apiVersion := resp.ApiVersion

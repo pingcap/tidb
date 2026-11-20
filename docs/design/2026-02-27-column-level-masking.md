@@ -134,7 +134,7 @@ This section describes how the feature is expected to be wired in code, so imple
 - DDL: target validation, metadata writes, lifecycle synchronization, schema actions.
 - InfoSchema: delayed loading and cache invalidation model for masking metadata.
 - Planner/Executor: AT RESULT expression rewrite and restricted-operation enforcement.
-- BR/TiCDC integration: carry DDL semantics and preserve cross-cluster binding correctness.
+- BR: does not back up or restore masking policies (see `BR backup and restore` below).
 
 Primary code ownership map (for implementation navigation):
 
@@ -142,56 +142,25 @@ Primary code ownership map (for implementation navigation):
 - DDL path: `pkg/ddl/executor.go`, `pkg/ddl/masking_policy.go`, `pkg/ddl/table.go`, `pkg/ddl/modify_column.go`
 - InfoSchema loading/cache: `pkg/infoschema/masking_policy.go`, `pkg/infoschema/masking_policy_loader.go`, `pkg/infoschema/builder.go`
 - Planner/executor behavior: `pkg/planner/core/point_get_plan.go`, `pkg/planner/core/masking_policy_restrict.go`, `pkg/executor/show.go`
-- BR integration (design target): restore should replay policy DDL semantics instead of raw row replay for `mysql.tidb_masking_policy`
+- BR: `br/pkg/backup/client.go` (the policy table is left out of backups), `br/pkg/restore/snap_client/systable_restore.go` (the policy table is not restored)
 
-#### BR restore compatibility design
+#### BR backup and restore
 
-Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT), but restore cannot replay source table rows blindly.
+BR behavior in 8.5:
 
-Snapshot backups record the protected source table IDs at the backup timestamp
-in `masking-policy.json`, encrypted with the backup cipher. Backups containing
-selected policies require backup schema version 3, so a BR reader that checks
-the backup schema version and supports at most version 2 rejects them before
-importing user data. That check exists from v8.5.7 on; BR v8.5.0 through v8.5.6
-does not check the version and restores such a backup without its policies. The
-manifest is required for version 3 and must match the backup timestamp. An empty
-protection set preserves ordinary restores to targets without a restore registry;
-selected policies require masking support and a registered restore task.
+- BR does not back up masking policies. `mysql.tidb_masking_policy` is left out of full, database and table backups, whatever the table filter selects.
+- BR does not restore masking policies. If a backup in a supported format contains `mysql.tidb_masking_policy` (for example, a full backup made by an earlier BR, or its incremental backup with masking policy DDL), restore skips that table and those DDL statements: it does not create or change any policy on the target cluster, and policies that already exist there are kept as they are.
+- A backup with backup schema version 3, which development builds of this feature wrote for backups with masking policies, is rejected before any data is imported: BR supports at most version 2.
+- Restore brings back table data only. A restored table has no masking policy unless one is created on the target cluster.
+- Point-in-time recovery does not rebuild the policies of the source cluster on the target cluster either. This says nothing about the content of a log backup: log backup records the changes of the whole data key range, so its raw files may contain masking policy data and must be protected like the protected data itself.
 
-Snapshot policy rows are imported into
-`mysql.tidb_pitr_masking_policy_snapshot_<restore_id>`. Each task owns its stage,
-including checkpoint retries and cleanup, so independent restores do not share
-the fixed temporary mysql policy table. PiTR moves that private snapshot stage
-to the retained table below without rewriting its MVCC timestamps.
+Reason: each row of `mysql.tidb_masking_policy` binds a policy to a table ID and a column ID. Restored tables and columns can get different IDs, so copying the rows would bind policies to the wrong objects.
 
-PiTR retains the source policy table under
-`mysql.tidb_pitr_masking_policy_<table_id>`, preserving its physical table ID and
-original MVCC timestamps. It replays policy-table logs into that table and
-rebuilds policies using the final restored table and column bindings. The staging
-table ID is persisted in the PiTR ID map; retain this table for checkpoint retries
-and subsequent log-only restores. Missing
-staging state makes those restores fail rather than silently omit policies.
-Unselected target tables keep their existing policies, and `--with-sys-table=false`
-continues to exclude policy restoration, including historical policy DDL in
-incremental snapshots. Bootstrap-created system tables carry an immutable
-`bootstrap_created_ts` in TableInfo, so log-only PiTR can distinguish a policy
-table created during an upgrade in the current interval from a lost baseline.
-Committed metadata and a creation timestamp within the interval are required;
-absence from a predecessor ID map alone is insufficient.
+Deployment prerequisite:
 
-Reason:
-
-- BR restores schema first, then restores data.
-- Restored table and column IDs can differ from source cluster IDs.
-- Direct replay of source `mysql.tidb_masking_policy` rows can bind policies to wrong target IDs.
-
-Design:
-
-1. Read source policy rows as logical policy definitions.
-2. Reconstruct canonical `CREATE MASKING POLICY ...` semantics from those definitions.
-3. When restoring policy metadata, protect selected user tables before data import. Persist the restore task's ownership before creating new tables in Restore mode or fencing existing tables. Snapshot restores install policies during system-schema restoration; PiTR keeps tables protected through log replay and policy reconstruction, including table metadata created or replaced by the logs. Only successful policy reconstruction releases protection. Errors and cancellation keep it in place for retry. A rerun may take over a recorded fence only after confirming its former owner is no longer registered; unrelated Restore-mode tables are not reopened. The shared fence table remains present so concurrent tasks cannot lose each other's records.
-4. Let target cluster generate correct target `table_id/column_id` bindings.
-5. Do not directly replay source physical rows for `mysql.tidb_masking_policy`.
+- Masking on a target cluster depends on the policy existing on that cluster. Before opening restored tables to users, the administrator recreates the masking policies there, together with the roles and users that the policy expressions refer to. `SHOW MASKING POLICIES FOR <table_name>` on the source cluster lists the definitions of a table.
+- After that, verify with an ordinary account that the protected columns return masked values.
+- If a policy exists on the target cluster but the exempt users or roles do not, the masked columns return redacted data to all users.
 
 ### SQL interface (reference)
 
@@ -517,9 +486,9 @@ SELECT salary FROM employees WHERE id = 1;
 ## Compatibility
 
 - Syntax and behavior are TiDB-specific (not MySQL-compatible feature parity).
-- BR/TiCDC can carry masking-related DDL and metadata semantics to downstream clusters.
+- BR in 8.5 does not back up or restore masking policies. Recreate the policies on the target cluster before opening restored tables to users (see `BR backup and restore`).
+- Replication of masking policies by TiCDC is not part of this design and is not verified. Automatic masking on a downstream cluster depends on the policies, and the users and roles their expressions refer to, existing there.
 - Runtime masking decisions depend on identity evaluation (`current_user()` / `current_role()`), so missing or diverged user/role state in downstream clusters can change effective masking behavior.
-- BR restore should rebuild masking policies by replaying `CREATE MASKING POLICY` semantics against restored target tables, instead of directly replaying source rows from `mysql.tidb_masking_policy` (restored table/column IDs may differ across clusters).
 - Dump/validation tools may see masked values if executed by non-exempt users.
 
 > **Caution**

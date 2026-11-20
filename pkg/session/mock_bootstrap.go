@@ -182,18 +182,6 @@ func addMockBootstrapVersionForTest(s types.Session) {
 	currentBootstrapVersion = mockLatestVer
 }
 
-// SaveBootstrapVersionsForTest returns a function that restores the bootstrap
-// versions as they are now. A mock upgrade appends an upgrade function and
-// raises the current version; without the restore, both leak into the tests
-// that run after it in the same process.
-func SaveBootstrapVersionsForTest() (restore func()) {
-	// Cap the slice so that a later append cannot write into the saved one.
-	versions, current := bootstrapVersion[:len(bootstrapVersion):len(bootstrapVersion)], currentBootstrapVersion
-	return func() {
-		bootstrapVersion, currentBootstrapVersion = versions, current
-	}
-}
-
 // Callback is used for Test.
 type Callback interface {
 	// OnBootstrapBefore is called before doing bootstrap.

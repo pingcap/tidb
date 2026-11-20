@@ -16,6 +16,7 @@ package meta_test
 
 import (
 	"fmt"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,17 +61,12 @@ func TestInitMetaTable(t *testing.T) {
 
 		require.Greater(t, metaInMySQL.ID, int64(0))
 		require.Greater(t, metaInMySQL.UpdateTS, uint64(0))
-		// Only the system table was created directly by bootstrap. Check its
-		// creation marker separately before comparing the table definitions.
-		require.Greater(t, metaInMySQL.BootstrapCreatedTS, uint64(0))
-		require.Zero(t, metaInTest.BootstrapCreatedTS)
 
 		metaInTest.ID = metaInMySQL.ID
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
-		metaInMySQL.BootstrapCreatedTS = 0
 		metaInTest.DBID = 0
 		metaInMySQL.DBID = 0
-		require.Equal(t, metaInMySQL, metaInTest)
+		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
 	}
 }
 

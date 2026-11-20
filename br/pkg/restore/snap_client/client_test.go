@@ -40,7 +40,6 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -159,8 +158,6 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 
 	_, err := client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
 	require.NoError(t, err)
-	protectedID, err := client.GetPreallocatedTableID(source.Info.ID)
-	require.NoError(t, err)
 	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{
 		Source:     source,
 		TargetDB:   targetDB,
@@ -168,7 +165,6 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	}}, 0)
 	require.NoError(t, err)
 	require.Len(t, created, 1)
-	require.Equal(t, protectedID, created[0].Table.ID, "protection must use the physical ID visible at creation")
 	require.Same(t, source, created[0].OldTable)
 	require.Equal(t, "route_target", created[0].TargetDBName().O)
 	require.Equal(t, "target_table", created[0].Table.Name.O)
@@ -778,35 +774,4 @@ func TestGetMinUserTableID(t *testing.T) {
 		generateMetautilTable("test2", 5, 6),
 	})
 	require.Equal(t, int64(2), minUserTableID)
-}
-
-func TestMaskingPolicyStagingWithNoSchema(t *testing.T) {
-	// Not the shared `mc`: this test creates and drops the temporary system
-	// database, which other tests expect to find untouched.
-	mc := getStartedMockedCluster(t)
-	defer mc.Stop()
-
-	client := snapclient.NewRestoreClient(mc.PDClient, mc.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	require.NoError(t, client.InitConnections(gluetidb.New(), mc.Storage))
-	client.SetWithSysTable(true)
-	client.EnableSkipCreateSQL()
-	ctx := context.Background()
-	sourceTable, err := mc.Domain.InfoSchema().TableByName(ctx, pmodel.NewCIStr(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	stagingDB := &model.DBInfo{ID: 12345, Name: utils.TemporaryDBName(mysql.SystemDB)}
-	skippedDB := &model.DBInfo{ID: 12346, Name: pmodel.NewCIStr("noschema_user_not_created")}
-	require.NoError(t, client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{
-		{Source: &metautil.Database{Info: stagingDB}, Target: stagingDB.Clone()},
-		{Source: &metautil.Database{Info: skippedDB}, Target: skippedDB.Clone()},
-	}))
-	_, ok := mc.Domain.InfoSchema().SchemaByName(skippedDB.Name)
-	require.False(t, ok)
-	source := &metautil.Table{DB: stagingDB, Info: sourceTable.Meta().Clone()}
-	_, err = client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
-	require.NoError(t, err)
-	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{Source: source, TargetDB: stagingDB.Clone(), TargetInfo: source.Info.Clone()}}, 0)
-	require.NoError(t, err)
-	require.Len(t, created, 1)
-	_, err = mc.Domain.InfoSchema().TableByName(ctx, stagingDB.Name, pmodel.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
 }

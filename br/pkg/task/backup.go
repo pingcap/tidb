@@ -461,6 +461,20 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
+	var newCollationEnable string
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
+		newCollationEnable, err = se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info(fmt.Sprintf("get %s config from mysql.tidb table", utils.TidbNewCollationEnabled),
+			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	client := backup.NewTableBackupClient(ctx, mgr)
 
 	// set cipher only for checkpoint
@@ -620,33 +634,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(
-		mgr.GetStorage(),
-		cfg.TableFilter,
-		backupTS,
-		isFullBackup(cmdName),
-		true,
-	)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// One short-lived session serves everything the backup reads through SQL:
-	// the collation setting, and the masking policies at the backup timestamp.
-	var newCollationEnable string
-	var manifest *metautil.MaskingPolicyManifest
-	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
-		newCollationEnable, err = se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Info(fmt.Sprintf("get %s config from mysql.tidb table", utils.TidbNewCollationEnabled),
-			zap.String(utils.GetTidbNewCollationEnabled(), newCollationEnable))
-		if schemas != nil {
-			manifest, err = schemas.MaskingPolicyManifest(ctx, se, mgr.GetStorage(), backupTS)
-		}
-		return errors.Trace(err)
-	})
+	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -665,17 +653,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.NewCollationsEnabled = newCollationEnable
 		m.ApiVersion = mgr.GetStorage().GetCodec().GetAPIVersion()
 	})
-
-	if manifest != nil {
-		if err = metautil.WriteMaskingPolicyManifest(ctx, client.GetStorage(), &cfg.CipherInfo, manifest); err != nil {
-			return errors.Trace(err)
-		}
-		if len(manifest.TableIDs) > 0 {
-			metawriter.Update(func(m *backuppb.BackupMeta) {
-				m.BackupSchemaVersion = max(m.BackupSchemaVersion, metautil.MaskingPolicyBackupSchemaVersion)
-			})
-		}
-	}
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
 	if len(policies) != 0 {

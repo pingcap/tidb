@@ -26,11 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -164,9 +162,7 @@ func (ss *Schemas) BackupSchemas(
 						}
 					}
 				}
-				// The policy table is forced into filtered backups so its rows survive.
-				// Its optimizer stats are not user-table statistics and must not be dumped.
-				if statsHandle != nil && !isMaskingPolicySystemTable(schema) {
+				if statsHandle != nil {
 					statsWriter := metaWriter.NewStatsWriter()
 					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
@@ -273,14 +269,6 @@ func (s *schemaInfo) matchChecksum(checksumMap map[int64]*metautil.ChecksumStats
 	log.Info("checksum success",
 		zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
 	return nil
-}
-
-func isMaskingPolicySystemTable(schema *schemaInfo) bool {
-	if schema == nil || schema.tableInfo == nil || schema.dbInfo == nil {
-		return false
-	}
-	return schema.tableInfo.Name.L == sysMaskingPolicyTableName &&
-		utils.IsSysOrTempSysDB(schema.dbInfo.Name.O)
 }
 
 func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
@@ -396,48 +384,4 @@ func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[str
 	}
 
 	return tableMergeOptionAllowed, partitionMergeOptionAllowed, nil
-}
-
-// MaskingPolicyManifest uses the backup snapshot, rather than the current
-// InfoSchema cache, so concurrent policy DDL cannot change its protection set.
-//
-// It reads the policy table through se instead of opening a session: a backup
-// opens one short-lived session for all it reads through SQL.
-func (ss *Schemas) MaskingPolicyManifest(
-	ctx context.Context, se glue.Session, store kv.Storage, backupTS uint64,
-) (*metautil.MaskingPolicyManifest, error) {
-	manifest := &metautil.MaskingPolicyManifest{SnapshotTS: backupTS, TableIDs: []int64{}}
-	selected := make(map[int64]struct{})
-	hasPolicyTable := false
-	err := ss.iterFunc(store, func(db *model.DBInfo, tbl *model.TableInfo) {
-		if tbl == nil {
-			return
-		}
-		if db.Name.L == mysql.SystemDB && tbl.Name.L == sysMaskingPolicyTableName {
-			hasPolicyTable = true
-		}
-		if !utils.IsSysOrTempSysDB(db.Name.O) {
-			selected[tbl.ID] = struct{}{}
-		}
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !hasPolicyTable || len(selected) == 0 {
-		return manifest, nil
-	}
-	rows, _, err := se.GetSessionCtx().GetRestrictedSQLExecutor().ExecRestrictedSQL(
-		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(backupTS)},
-		"SELECT DISTINCT table_id FROM mysql.tidb_masking_policy ORDER BY table_id")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, row := range rows {
-		id := row.GetInt64(0)
-		if _, ok := selected[id]; ok {
-			manifest.TableIDs = append(manifest.TableIDs, id)
-		}
-	}
-	return manifest, nil
 }

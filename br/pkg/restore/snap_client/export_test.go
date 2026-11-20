@@ -40,16 +40,14 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile                       = getSSTMetaFromFile
-	GetKeyRangeByMode                        = getKeyRangeByMode
-	GetFileRangeKey                          = getFileRangeKey
-	GetSortedPhysicalTables                  = getSortedPhysicalTables
-	GetMinUserTableID                        = getMinUserTableID
-	NotifyUpdateAllUsersPrivilege            = notifyUpdateAllUsersPrivilege
-	RestoreMaskingPoliciesFromTemporaryTable = restoreMaskingPoliciesFromTemporaryTable
-	IsUnrecoverableTable                     = isUnrecoverableTable
-	GetSchemaVersionFromStatsMeta            = getSchemaVersionFromStatsMeta
-	UpdateStatsMetaSchema                    = updateStatsMetaSchema
+	GetSSTMetaFromFile            = getSSTMetaFromFile
+	GetKeyRangeByMode             = getKeyRangeByMode
+	GetFileRangeKey               = getFileRangeKey
+	GetSortedPhysicalTables       = getSortedPhysicalTables
+	GetMinUserTableID             = getMinUserTableID
+	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
+	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema         = updateStatsMetaSchema
 )
 
 // MockClient create a fake Client used to test.
@@ -186,6 +184,3 @@ func NewSnapFileImporterOptionsForTest(
 func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
 	return importer.paginateScanRegion(ctx, startKey, endKey)
 }
-
-// RestoreMaskingPoliciesFromTemporaryTableForTest exposes policy replay to integration tests.
-var RestoreMaskingPoliciesFromTemporaryTableForTest = restoreMaskingPoliciesFromTemporaryTable

@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -159,15 +158,7 @@ type SnapClient struct {
 	fullClusterRestore bool
 
 	// see RestoreCommonConfig.WithSysTable
-	withSysTable               bool
-	deferMaskingPolicyRestore  bool
-	maskingPolicySnapshotTable string
-	skipSnapshotMaskingPolicy  bool
-	// createdTemporaryDBs holds the temporary system databases this restore
-	// asked to create. Any other one, whether or not the backup has it, may
-	// belong to a restore running at the same time and is not this restore's
-	// to drop. Nil until the databases are created.
-	createdTemporaryDBs map[string]struct{}
+	withSysTable bool
 
 	// the rewrite mode of the downloaded SST files in TiKV.
 	rewriteMode RewriteMode
@@ -341,17 +332,6 @@ func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
 }
 
-// SetMaskingPolicySnapshotTable configures the task-owned snapshot stage.
-func (rc *SnapClient) SetMaskingPolicySnapshotTable(name string, skip bool) {
-	rc.maskingPolicySnapshotTable = name
-	rc.skipSnapshotMaskingPolicy = skip
-}
-
-// SetDeferMaskingPolicyRestore retains source policy rows for PiTR log replay.
-func (rc *SnapClient) SetDeferMaskingPolicyRestore(deferRestore bool) {
-	rc.deferMaskingPolicyRestore = deferRestore
-}
-
 // TODO: remove this check and return RewriteModeKeyspace
 func (rc *SnapClient) SetRewriteMode(ctx context.Context) {
 	if err := version.CheckClusterVersion(ctx, rc.pdClient, version.CheckVersionForKeyspaceBR); err != nil {
@@ -463,12 +443,6 @@ func (rc *SnapClient) AllocTableIDs(
 	}
 	rc.preallocedIDs = preallocedTableIDs
 	return userTableIDNotReusedWhenNeedCheck, nil
-}
-
-// GetPreallocatedTableID resolves the physical target ID before table creation,
-// so restore protection can be persisted before the table becomes visible.
-func (rc *SnapClient) GetPreallocatedTableID(sourceID int64) (int64, error) {
-	return rc.preallocedIDs.AllocID(sourceID)
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
@@ -1111,24 +1085,8 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 // source metadata loaded from the backup.
 func (rc *SnapClient) CreateDatabasesWithPlan(ctx context.Context, plans []*restoreutils.DatabaseRestorePlan) error {
 	if rc.IsSkipCreateSQL() {
-		// --no-schema reuses user schemas, but policy rows still need a staging
-		// database before they can be rebound to the existing target tables.
-		staging := make([]*restoreutils.DatabaseRestorePlan, 0, 1)
-		for _, plan := range plans {
-			if rc.withSysTable && plan.Target.Name.L == utils.TemporaryDBName(mysql.SystemDB).L {
-				staging = append(staging, plan)
-			}
-		}
-		plans = staging
-	}
-
-	rc.createdTemporaryDBs = make(map[string]struct{}, 2)
-	for _, plan := range plans {
-		for _, sysDB := range []string{mysql.SystemDB, mysql.SysDB} {
-			if plan.Target.Name.L == utils.TemporaryDBName(sysDB).L {
-				rc.createdTemporaryDBs[plan.Target.Name.L] = struct{}{}
-			}
-		}
+		log.Info("skip create database")
+		return nil
 	}
 
 	if len(rc.dbPool) == 0 {
@@ -1237,15 +1195,6 @@ func (rc *SnapClient) CreateTablesWithPlan(
 	return rc.createTablesSingle(ctx, []*tidallocdb.DB{rc.db}, plans, newTS)
 }
 
-// isMaskingPolicyStagingTable identifies metadata that must be staged even
-// when --no-schema reuses existing user tables.
-func (rc *SnapClient) isMaskingPolicyStagingTable(dbName, tableName pmodel.CIStr) bool {
-	legacyStage := dbName.L == utils.TemporaryDBName(mysql.SystemDB).L && tableName.L == sysMaskingPolicyTableName
-	privateStage := dbName.L == mysql.SystemDB && rc.maskingPolicySnapshotTable != "" &&
-		tableName.L == rc.maskingPolicySnapshotTable
-	return rc.withSysTable && (legacyStage || privateStage)
-}
-
 func (rc *SnapClient) createTables(
 	ctx context.Context,
 	db *tidallocdb.DB,
@@ -1255,12 +1204,11 @@ func (rc *SnapClient) createTables(
 	log.Info("client to create tables")
 	targetTables := make([]*metautil.Table, 0, len(plans))
 	for _, plan := range plans {
-		if rc.IsSkipCreateSQL() && !rc.isMaskingPolicyStagingTable(plan.TargetDB.Name, plan.TargetInfo.Name) {
-			continue
-		}
 		targetTables = append(targetTables, plan.TargetTable())
 	}
-	if len(targetTables) > 0 {
+	if rc.IsSkipCreateSQL() {
+		log.Info("skip create table and alter autoIncID")
+	} else {
 		err := db.CreateTables(ctx, targetTables, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1481,7 +1429,7 @@ func (rc *SnapClient) createTable(
 	newTS uint64,
 ) (*restoreutils.CreatedTable, error) {
 	targetTable := plan.TargetTable()
-	if rc.IsSkipCreateSQL() && !rc.isMaskingPolicyStagingTable(plan.TargetDB.Name, plan.TargetInfo.Name) {
+	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", plan.TargetInfo.Name))
 	} else {
 		err := db.CreateTable(ctx, targetTable, rc.getRebasedTables(), rc.supportPolicy, rc.policyMap)
@@ -1597,6 +1545,14 @@ func (rc *SnapClient) EnsureNoUserTables() error {
 	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
+func isMaskingPolicyDDLJob(job *model.Job) bool {
+	switch job.Type {
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		return true
+	}
+	return false
+}
+
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
@@ -1605,6 +1561,14 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	})
 
 	for _, job := range ddlJobs {
+		if isMaskingPolicyDDLJob(job) {
+			// BR does not restore masking policies. An incremental backup made
+			// by another build may still carry their jobs.
+			log.Info("skip masking policy ddl job",
+				zap.String("db", job.SchemaName),
+				zap.String("query", job.Query))
+			continue
+		}
 		err := rc.db.ExecDDL(ctx, job)
 		if err != nil {
 			return errors.Trace(err)

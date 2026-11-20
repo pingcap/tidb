@@ -940,7 +940,7 @@ func ReadBackupMeta(
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	if err = metautil.CheckSnapshotBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return nil, nil, nil, errors.Trace(err)
 		}

@@ -30,7 +30,6 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -474,126 +473,8 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 	}
 }
 
-func TestRestoreMaskingPoliciesFromTemporaryTable(t *testing.T) {
-	// Not the shared `mc`: the temporary system database is created here.
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-
-	const dbName = "test_masking_policy_rewrite"
-	tk.MustExec("DROP DATABASE IF EXISTS " + dbName)
-	tk.MustExec("CREATE DATABASE " + dbName)
-	defer tk.MustExec("DROP DATABASE IF EXISTS " + dbName)
-
-	tk.MustExec("CREATE TABLE " + dbName + ".t (id INT PRIMARY KEY, c1 INT, c2 DECIMAL(10,2))")
-	tk.MustExec("CREATE TABLE " + dbName + ".u(c VARCHAR(20))")
-	tk.MustExec("INSERT INTO " + dbName + ".u VALUES ('secret')")
-	tk.MustExec("CREATE MASKING POLICY p_unrelated ON " + dbName + ".u(c) AS 'target'")
-	tableInfo, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr(dbName), pmodel.NewCIStr("t"))
-	require.NoError(t, err)
-
-	columnID := int64(0)
-	for _, col := range tableInfo.Columns {
-		if col.Name.L == "c1" {
-			columnID = col.ID
-			break
-		}
-	}
-	require.NotZero(t, columnID)
-
-	tk.MustExec("CREATE DATABASE IF NOT EXISTS __TiDB_BR_Temporary_mysql")
-	tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
-	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.tidb_masking_policy LIKE mysql.tidb_masking_policy")
-	defer tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
-
-	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.tidb_masking_policy
-(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
-VALUES
-('p_keep', '%s', 't', 101, 'c1', 201, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%'),
-('p_orphan', '%s', 't_missing', 102, 'c1', 202, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%'),
-('p_unrelated', '%s', 'u', 103, 'c', 203, 'MASK_FULL(c)', 'ENABLE', 'MASK_FULL', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName, dbName, dbName))
-
-	execSQL := func(execCtx context.Context, sql string) error {
-		_, err := tk.Session().ExecuteInternal(execCtx, sql)
-		return err
-	}
-	allowAllFilter, parseErr := filter.Parse([]string{"*.*"})
-	require.NoError(t, parseErr)
-	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(
-		ctx,
-		tk.Session().GetRestrictedSQLExecutor(),
-		"__TiDB_BR_Temporary_mysql",
-		true,
-		allowAllFilter,
-		true,
-		map[filter.Table]struct{}{{Schema: dbName, Name: "t"}: {}},
-		execSQL,
-	)
-	require.NoError(t, err)
-
-	tk.MustQuery("SHOW MASKING POLICIES FOR " + dbName + ".t").Check(testkit.Rows("p_keep c1 `c1` ENABLED CUSTOM NONE"))
-	tk.MustQuery("SELECT table_id, column_id FROM mysql.tidb_masking_policy WHERE policy_name='p_keep' AND db_name='" + dbName + "' AND table_name='t'").
-		Check(testkit.Rows(fmt.Sprintf("%d %d", tableInfo.ID, columnID)))
-	tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name='p_orphan' AND db_name='" + dbName + "'").
-		Check(testkit.Rows("0"))
-	tk.MustQuery("SELECT c FROM " + dbName + ".u").Check(testkit.Rows("target"))
-
-	// A selected table that lacks the policy column (for example a reused table
-	// under --no-schema) must fail the restore instead of losing the policy.
-	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.tidb_masking_policy
-(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
-VALUES ('p_lost', '%s', 't', 101, 'c_renamed', 204, 'c_renamed', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName))
-	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(
-		ctx,
-		tk.Session().GetRestrictedSQLExecutor(),
-		"__TiDB_BR_Temporary_mysql",
-		true,
-		allowAllFilter,
-		true,
-		map[filter.Table]struct{}{{Schema: dbName, Name: "t"}: {}},
-		execSQL,
-	)
-	require.ErrorContains(t, err, "masking policy p_lost refers to column c_renamed which does not exist in target table")
-}
-
-func TestRestoreMaskingPoliciesFromTemporaryTableRejectMissingTempTable(t *testing.T) {
-	// Not the shared `mc`: the temporary system database is created here.
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-
-	tk.MustExec("CREATE DATABASE IF NOT EXISTS __TiDB_BR_Temporary_mysql")
-	tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
-
-	execCount := 0
-	execSQL := func(execCtx context.Context, sql string) error {
-		execCount++
-		_, err := tk.Session().ExecuteInternal(execCtx, sql)
-		return err
-	}
-	allowAllFilter, parseErr := filter.Parse([]string{"*.*"})
-	require.NoError(t, parseErr)
-	err := snapclient.RestoreMaskingPoliciesFromTemporaryTable(
-		ctx,
-		tk.Session().GetRestrictedSQLExecutor(),
-		"__TiDB_BR_Temporary_mysql",
-		true,
-		allowAllFilter,
-		true,
-		nil,
-		execSQL,
-	)
-	require.ErrorContains(t, err, "cannot read masking policy staging table")
-	require.Equal(t, 0, execCount)
-}
-
 func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
-	// TestKit may change the global schema-cache setting. Create a live domain
-	// here so its hook cannot point to an earlier staging test's stopped domain.
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
+	cluster := mc
 	ctx := context.Background()
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
@@ -645,6 +526,112 @@ func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
 		Check(testkit.Rows("Y"))
 }
 
+// BR does not restore masking policies. A backup may still carry
+// mysql.tidb_masking_policy (an old backup, or one made by another build), so
+// the rows staged in the temporary system database must never reach the target:
+// the policies of the target cluster stay as they are and none is created.
+func TestRestoreSystemSchemasSkipsMaskingPolicyTable(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const policyTable = "tidb_masking_policy"
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec("DROP DATABASE IF EXISTS br_masking_restore")
+	}
+	cleanup()
+	defer cleanup()
+
+	// The policy that already exists on the target cluster.
+	tk.MustExec("CREATE DATABASE br_masking_restore")
+	tk.MustExec("CREATE TABLE br_masking_restore.t (id INT PRIMARY KEY, c VARCHAR(32), d VARCHAR(32))")
+	tk.MustExec("CREATE MASKING POLICY p_target ON br_masking_restore.t(c) AS MASK_FULL(c) ENABLE")
+	policyRows := "SELECT policy_name, table_id, column_id, expression, status FROM mysql." + policyTable + " ORDER BY policy_id"
+	before := tk.MustQuery(policyRows).Rows()
+	require.Len(t, before, 1)
+	shownBefore := tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows()
+
+	// stageBackupRows puts the rows a backup carries into the temporary system
+	// database, as the data restore does before the system tables are merged: one
+	// clashes with the target policy on its name and its column, the other would
+	// bind a policy to a column without one.
+	stageBackupRows := func(t *testing.T) (*model.DBInfo, *model.TableInfo) {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+		tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql." + policyTable + " LIKE mysql." + policyTable)
+		tk.MustExec("INSERT INTO __TiDB_BR_Temporary_mysql." + policyTable + " SELECT * FROM mysql." + policyTable)
+		tk.MustExec("UPDATE __TiDB_BR_Temporary_mysql." + policyTable + " SET expression = 'c', status = 'DISABLED'")
+		tk.MustExec("INSERT INTO __TiDB_BR_Temporary_mysql." + policyTable + `
+			(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+			SELECT 'p_backup', db_name, table_name, table_id, 'd', column_id + 1, 'MASK_FULL(d)', status, masking_type, restrict_on, created_at, updated_at, created_by
+			FROM mysql.` + policyTable)
+		tk.MustQuery("SELECT COUNT(*) FROM __TiDB_BR_Temporary_mysql." + policyTable).Check(testkit.Rows("2"))
+
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+		require.True(t, ok)
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, pmodel.NewCIStr(policyTable))
+		require.NoError(t, err)
+		return tmpSysDB, ti
+	}
+
+	for _, tc := range []struct {
+		name                 string
+		filter               filter.Filter
+		loadSysTablePhysical bool
+	}{
+		{name: "full restore", filter: filter.All()},
+		{name: "system database selected", filter: filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB))},
+		{name: "system tables loaded physically", filter: filter.All(), loadSysTablePhysical: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpSysDB, ti := stageBackupRows(t)
+			client.SetDatabases(map[string]*metautil.Database{
+				tmpSysDB.Name.O: {
+					Info:   tmpSysDB,
+					Tables: []*metautil.Table{{DB: tmpSysDB, Info: ti}},
+				},
+			})
+			require.NoError(t, client.RestoreSystemSchemas(ctx, tc.filter, tc.loadSysTablePhysical))
+			require.Equal(t, before, tk.MustQuery(policyRows).Rows())
+			require.Equal(t, shownBefore, tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows())
+		})
+	}
+
+	// The DDL jobs of an incremental backup are replayed by their queries. Those
+	// of masking policies are skipped.
+	require.NoError(t, client.ExecDDLs(ctx, []*model.Job{
+		{
+			Type: model.ActionCreateMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
+			Query:      "CREATE MASKING POLICY p_backup ON br_masking_restore.t(d) AS MASK_FULL(d)",
+			BinlogInfo: &model.HistoryInfo{SchemaVersion: 1},
+		},
+		{
+			Type: model.ActionAlterMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
+			Query:      "ALTER TABLE br_masking_restore.t MODIFY MASKING POLICY p_target SET EXPRESSION = MASK_NULL(c)",
+			BinlogInfo: &model.HistoryInfo{SchemaVersion: 2},
+		},
+		{
+			Type: model.ActionDropMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
+			Query:      "ALTER TABLE br_masking_restore.t DROP MASKING POLICY p_target",
+			BinlogInfo: &model.HistoryInfo{SchemaVersion: 3},
+		},
+	}))
+	require.Equal(t, before, tk.MustQuery(policyRows).Rows())
+	require.Equal(t, shownBefore, tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows())
+
+	// The physical path renames only the tables it lists; the policy table is not one of them.
+	require.False(t, snapclient.IsRenameableSysTemporaryTable(utils.TemporaryDBName(mysql.SystemDB).O, policyTable))
+	require.False(t, snapclient.IsStatsTemporaryTable(utils.TemporaryDBName(mysql.SystemDB).O, policyTable))
+}
+
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
@@ -657,15 +644,6 @@ func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	require.Equal(t, int64(234), session.CurrentBootstrapVersion)
-}
-
-func TestMaskingPolicyLocalTablesAreUnrecoverable(t *testing.T) {
-	// The staging tables and the fence record hold physical IDs of the cluster
-	// they were written in. A system table restore must not copy them.
-	require.True(t, snapclient.IsUnrecoverableTable("mysql", snapclient.MaskingPolicyStagingTableName(123)))
-	require.True(t, snapclient.IsUnrecoverableTable("mysql", snapclient.MaskingPolicyFenceTableName))
-	require.False(t, snapclient.IsUnrecoverableTable("test", snapclient.MaskingPolicyFenceTableName))
-	require.False(t, snapclient.IsUnrecoverableTable("mysql", "tidb_masking_policy"))
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {
@@ -831,283 +809,4 @@ func TestNotifyUpdateAllUsersPrivilege(t *testing.T) {
 		"mysql": {"test": {}, "user": {}, "db": {}},
 	}, notifier)
 	require.Error(t, err)
-}
-
-func TestPreserveMaskingPolicyStagingTable(t *testing.T) {
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	ctx := context.Background()
-	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
-	tk.MustExec("create table __TiDB_BR_Temporary_mysql.tidb_masking_policy like mysql.tidb_masking_policy")
-	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (123,'p','test','t',42,'c',1,'''X''','ENABLED','CUSTOM',now(),now(),'root')")
-	staged, err := cluster.Domain.InfoSchema().TableByName(ctx, utils.TemporaryDBName(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
-	tk.MustExec("drop database __TiDB_BR_Temporary_mysql")
-	qualified := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID))
-	tk.MustQuery("select policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("123 42 1"))
-	retained, err := cluster.Domain.InfoSchema().TableByName(ctx, pmodel.NewCIStr(snapclient.MaskingPolicyStagingDB), pmodel.NewCIStr(snapclient.MaskingPolicyStagingTableName(staged.Meta().ID)))
-	require.NoError(t, err)
-	require.Equal(t, staged.Meta().ID, retained.Meta().ID)
-	require.Equal(t, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID), retained.Meta().Name.O)
-}
-
-func TestPreserveMaskingPolicyStagingHiddenHandle(t *testing.T) {
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	ctx := context.Background()
-	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
-	tk.MustExec("create table __TiDB_BR_Temporary_mysql.tidb_masking_policy (policy_id bigint primary key nonclustered, table_id bigint, column_id bigint)")
-	tk.MustExec("set tidb_opt_write_row_id=1")
-	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.tidb_masking_policy (_tidb_rowid,policy_id,table_id,column_id) values (456,123,42,1)")
-	staged, err := cluster.Domain.InfoSchema().TableByName(ctx, utils.TemporaryDBName(mysql.SystemDB), pmodel.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
-	qualified := utils.EncloseDBAndTable(snapclient.MaskingPolicyStagingDB, snapclient.MaskingPolicyStagingTableName(staged.Meta().ID))
-	tk.MustQuery("select _tidb_rowid,policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("456 123 42 1"))
-	// A log checkpoint retry keeps the same physical table and hidden handles.
-	require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, cluster.Domain, gluetidb.WrapSession(tk.Session()), staged.Meta()))
-	tk.MustQuery("select _tidb_rowid,policy_id,table_id,column_id from " + qualified).Check(testkit.Rows("456 123 42 1"))
-}
-
-func TestRestoreMaskingPoliciesChecksActualTargetColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	// Match --no-schema: preserve the source column ID and data representation,
-	// but reuse an existing target whose column has a different name.
-	tk.MustExec("create table noschema_columns(renamed varchar(20))")
-	tk.MustExec("insert into noschema_columns values ('secret')")
-	tk.MustExec("create database staged_columns")
-	tk.MustExec("create table staged_columns.tidb_masking_policy like mysql.tidb_masking_policy")
-	tk.MustExec("insert into staged_columns.tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (1,'selected_missing','test','noschema_columns',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')")
-	backedUp := map[filter.Table]struct{}{{Schema: "test", Name: "noschema_columns"}: {}}
-	restore := func(pattern string) error {
-		f, err := filter.Parse([]string{pattern})
-		require.NoError(t, err)
-		return snapclient.RestoreMaskingPoliciesFromTemporaryTableForTest(context.Background(), tk.Session().GetRestrictedSQLExecutor(),
-			"staged_columns", true, f, true, backedUp,
-			func(_ context.Context, sql string) error { return tk.ExecToErr(sql) })
-	}
-	require.NoError(t, restore("test.unselected"))
-	require.ErrorContains(t, restore("test.noschema_columns"), "does not exist in target table")
-	tk.MustQuery("show masking policies for noschema_columns").Check(testkit.Rows())
-	tk.MustExec("alter table noschema_columns rename column renamed to c")
-	require.NoError(t, restore("test.noschema_columns"))
-	tk.MustQuery("select c from noschema_columns").Check(testkit.Rows("XXXXXX"))
-}
-
-func TestSnapshotPoliciesInstallWhileTableProtected(t *testing.T) {
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	tk.MustExec("use test")
-	tk.MustExec("create table snapshot_guard(c varchar(20))")
-	tk.MustExec("insert into snapshot_guard values ('secret')")
-	target, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr("test"), pmodel.NewCIStr("snapshot_guard"))
-	require.NoError(t, err)
-	require.NoError(t, cluster.Domain.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
-		SchemaID: target.DBID, TableID: target.ID, TableMode: model.TableModeRestore,
-	}))
-	tk.MustGetErrCode("select c from snapshot_guard", errno.ErrProtectedTableMode)
-	tempDBName := utils.TemporaryDBName(mysql.SystemDB)
-	tk.MustExec("create database " + tempDBName.O)
-	tk.MustExec("create table " + tempDBName.O + ".tidb_masking_policy like mysql.tidb_masking_policy")
-	tk.MustExec("insert into " + tempDBName.O + ".tidb_masking_policy (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,expression,status,masking_type,created_at,updated_at,created_by) values (1,'snapshot_p','test','snapshot_guard',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')")
-	tempDB, ok := cluster.Domain.InfoSchema().SchemaByName(tempDBName)
-	require.True(t, ok)
-	userDB, ok := cluster.Domain.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
-	require.True(t, ok)
-	stage, err := restore.GetTableSchema(cluster.Domain, tempDBName, pmodel.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	client := snapclient.MockClient(map[string]*metautil.Database{
-		tempDBName.O: {Info: tempDB, Tables: []*metautil.Table{{DB: tempDB, Info: stage}}},
-		"test":       {Info: userDB, Tables: []*metautil.Table{{DB: userDB, Info: target}}},
-	})
-	require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
-	client.SetWithSysTable(true)
-	f, err := filter.Parse([]string{"test.*"})
-	require.NoError(t, err)
-	require.NoError(t, client.RestoreSystemSchemas(ctx, f, false))
-	// Snapshot system-schema restoration must not open the table itself.
-	tk.MustGetErrCode("select c from snapshot_guard", errno.ErrProtectedTableMode)
-	require.NoError(t, cluster.Domain.DDLExecutor().AlterTableMode(tk.Session(), &model.AlterTableModeArgs{
-		SchemaID: target.DBID, TableID: target.ID, TableMode: model.TableModeNormal,
-	}))
-	tk.MustQuery("select c from snapshot_guard").Check(testkit.Rows("XXXXXX"))
-}
-
-func TestRestoreMaskingPolicySnapshotIsolation(t *testing.T) {
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	ctx := context.Background()
-	clients := make([]*snapclient.SnapClient, 0, 2)
-	for i, dbName := range []string{"independent_a", "independent_b"} {
-		tk.MustExec("create database " + dbName)
-		tk.MustExec("create table " + dbName + ".t(c varchar(20))")
-		tk.MustExec("insert into " + dbName + ".t values('secret')")
-		stage := snapclient.MaskingPolicySnapshotTableName(uint64(i + 1))
-		tk.MustExec("create table mysql." + stage + " like mysql.tidb_masking_policy")
-		tk.MustExec(fmt.Sprintf(`insert into mysql.%s
- (policy_id,policy_name,db_name,table_name,table_id,column_name,column_id,
- expression,status,masking_type,created_at,updated_at,created_by)
- values(1,'p','%s','t',42,'c',1,'MASK_FULL(c)','ENABLED','MASK_FULL',now(),now(),'root')`, stage, dbName))
-		dbInfo, ok := cluster.Domain.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
-		require.True(t, ok)
-		tbl, err := cluster.Domain.InfoSchema().TableByName(ctx, dbInfo.Name, pmodel.NewCIStr("t"))
-		require.NoError(t, err)
-		tempDB := &model.DBInfo{ID: 999, Name: utils.TemporaryDBName(mysql.SystemDB)}
-		client := snapclient.MockClient(map[string]*metautil.Database{
-			tempDB.Name.O: {Info: tempDB, Tables: []*metautil.Table{
-				{DB: tempDB, Info: &model.TableInfo{Name: pmodel.NewCIStr("tidb_masking_policy")}},
-			}},
-			dbName: {Info: dbInfo, Tables: []*metautil.Table{{DB: dbInfo, Info: tbl.Meta()}}},
-		})
-		require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
-		client.InitFullClusterRestore(true, false, true)
-		client.SetWithSysTable(true)
-		client.SetMaskingPolicySnapshotTable(stage, false)
-		clients = append(clients, client)
-	}
-	// A is paused with its stage retained while B completes independently.
-	f, err := filter.Parse([]string{"independent_b.*"})
-	require.NoError(t, err)
-	require.NoError(t, clients[1].RestoreSystemSchemas(ctx, f, false))
-	tk.MustQuery("select c from independent_b.t").Check(testkit.Rows("XXXXXX"))
-	tk.MustQuery("select count(*) from mysql." + snapclient.MaskingPolicySnapshotTableName(1)).Check(testkit.Rows("1"))
-	require.False(t, cluster.Domain.InfoSchema().TableExists(
-		pmodel.NewCIStr("mysql"), pmodel.NewCIStr(snapclient.MaskingPolicySnapshotTableName(2))))
-	f, err = filter.Parse([]string{"independent_a.*"})
-	require.NoError(t, err)
-	require.NoError(t, clients[0].RestoreSystemSchemas(ctx, f, false))
-	tk.MustQuery("select c from independent_a.t").Check(testkit.Rows("XXXXXX"))
-	for _, client := range clients {
-		client.Close()
-	}
-}
-
-func TestPreserveMaskingPolicyPrivateSnapshot(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	ctx := context.Background()
-	snapshot := snapclient.MaskingPolicySnapshotTableName(123)
-	tk.MustExec("create table mysql." + snapshot + " (policy_id bigint primary key, table_id bigint)")
-	tk.MustExec("insert into mysql." + snapshot + " values(1,42)")
-	stage, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("mysql"), pmodel.NewCIStr(snapshot))
-	require.NoError(t, err)
-	se := gluetidb.WrapSession(tk.Session())
-	for range 2 {
-		require.NoError(t, snapclient.PreserveMaskingPolicyStagingTable(ctx, dom, se, stage.Meta()))
-		retainedName := snapclient.MaskingPolicyStagingTableName(stage.Meta().ID)
-		retained, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("mysql"), pmodel.NewCIStr(retainedName))
-		require.NoError(t, err)
-		require.Equal(t, stage.Meta().ID, retained.Meta().ID)
-		tk.MustQuery("select policy_id,table_id from mysql." + retainedName).Check(testkit.Rows("1 42"))
-	}
-}
-
-func TestRestoreSystemSchemasKeepsUnrestoredTemporaryDatabase(t *testing.T) {
-	// Not the shared `mc`: the temporary system databases are created here.
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	ctx := context.Background()
-	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	require.NoError(t, client.InitConnections(g, cluster.Storage))
-	defer client.Close()
-	client.SetWithSysTable(true)
-
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	tempDBs := []string{utils.TemporaryDBName(mysql.SystemDB).O, utils.TemporaryDBName(mysql.SysDB).O}
-	existing := func() []string {
-		names := make([]string, 0, len(tempDBs))
-		for _, name := range tempDBs {
-			if len(tk.MustQuery("SELECT 1 FROM information_schema.schemata WHERE schema_name = ?", name).Rows()) > 0 {
-				names = append(names, name)
-			}
-		}
-		return names
-	}
-	// Another restore is staging its system tables under the fixed names.
-	for _, name := range tempDBs {
-		tk.MustExec("CREATE DATABASE IF NOT EXISTS " + name)
-		tk.MustExec("CREATE TABLE IF NOT EXISTS " + name + ".staged(id INT)")
-	}
-	defer func() {
-		for _, name := range tempDBs {
-			tk.MustExec("DROP DATABASE IF EXISTS " + name)
-		}
-	}()
-	userFilter, err := filter.Parse([]string{"a.*"})
-	require.NoError(t, err)
-
-	// The backup of this restore has no system database at all, as one taken
-	// of a single user database by an older version: nothing is dropped.
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("a")}}}))
-	defer tk.MustExec("DROP DATABASE IF EXISTS a")
-	require.NoError(t, client.RestoreSystemSchemas(ctx, userFilter, false))
-	require.Equal(t, tempDBs, existing())
-
-	// Only the temporary database this restore asked to create is dropped.
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr(tempDBs[0])}}}))
-	require.NoError(t, client.RestoreSystemSchemas(ctx, userFilter, false))
-	require.Equal(t, tempDBs[1:], existing())
-}
-
-func TestDeferredPolicyRestoreCleansTemporaryDatabase(t *testing.T) {
-	cluster := getStartedMockedCluster(t)
-	defer cluster.Stop()
-	ctx := context.Background()
-	tk := testkit.NewTestKit(t, cluster.Storage)
-	tempDBName := utils.TemporaryDBName(mysql.SystemDB)
-	const ownStage, otherStage = "tidb_pitr_masking_policy_snapshot_7", "tidb_pitr_masking_policy_snapshot_8"
-	exists := func(db, table string) bool {
-		return len(tk.MustQuery("select 1 from information_schema.tables where table_schema = ? and table_name = ?", db, table).Rows()) > 0
-	}
-	defer func() {
-		tk.MustExec("drop database if exists " + tempDBName.O)
-		tk.MustExec("drop table if exists mysql." + ownStage + ", mysql." + otherStage)
-	}()
-	allFilter, err := filter.Parse([]string{"*.*"})
-	require.NoError(t, err)
-
-	for _, privateStage := range []bool{true, false} {
-		// The snapshot phase of PiTR leaves the policies for the log phase.
-		// The tables it replaced in the system database stay in the temporary one.
-		tk.MustExec("drop database if exists " + tempDBName.O)
-		tk.MustExec("create database " + tempDBName.O)
-		tk.MustExec("create table " + tempDBName.O + ".user_deleted_1(id int)")
-		tk.MustExec("create table " + tempDBName.O + ".tidb_masking_policy like mysql.tidb_masking_policy")
-		tk.MustExec("create table if not exists mysql." + ownStage + " like mysql.tidb_masking_policy")
-		tk.MustExec("create table if not exists mysql." + otherStage + " like mysql.tidb_masking_policy")
-		tempDB, ok := cluster.Domain.InfoSchema().SchemaByName(tempDBName)
-		require.True(t, ok)
-		policyTable, err := restore.GetTableSchema(cluster.Domain, tempDBName, pmodel.NewCIStr("tidb_masking_policy"))
-		require.NoError(t, err)
-		client := snapclient.MockClient(map[string]*metautil.Database{
-			tempDBName.O: {Info: tempDB, Tables: []*metautil.Table{{DB: tempDB, Info: policyTable}}},
-		})
-		require.NoError(t, client.InitConnections(gluetidb.New(), cluster.Storage))
-		client.SetWithSysTable(true)
-		client.SetDeferMaskingPolicyRestore(true)
-		if privateStage {
-			client.SetMaskingPolicySnapshotTable(ownStage, false)
-		}
-		require.NoError(t, client.RestoreSystemSchemas(ctx, allFilter, false))
-		// With a task-owned stage nothing in the temporary database is needed
-		// any more. A stage inside it is still kept for the log phase.
-		require.Equal(t, !privateStage, exists(tempDBName.O, "user_deleted_1"))
-		// The stages in the system database, this task's and another's, stay.
-		require.True(t, exists("mysql", ownStage))
-		require.True(t, exists("mysql", otherStage))
-		client.Close()
-	}
 }
