@@ -31,9 +31,15 @@ func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
 }
 
 func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
+	b.buildingFoundRows = true
+	defer func() { b.buildingFoundRows = false }()
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
+	// ORDER BY alone can make this an aggregate query, even when it returns a constant.
+	if b.detectSelectAgg(sel) && !b.detectSelectAgg(&countSel) {
+		countSel.OrderBy = sel.OrderBy
+	}
 	fields := *sel.Fields
 	fields.Fields = slices.Clone(sel.Fields.Fields)
 	countSel.Fields = &fields
@@ -156,6 +162,7 @@ type foundRowsChecker struct {
 	root       *ast.SelectStmt
 	depth      int
 	outerOrder bool
+	inView     bool
 	err        error
 }
 
@@ -168,7 +175,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.SelectStmt:
 		v.depth++
 		switch {
-		case n != v.root && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
+		case !v.inView && n != v.root && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
 			v.err = plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 			return true
 		case n.LockInfo != nil && n.LockInfo.LockType != ast.SelectLockNone:
@@ -179,7 +186,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.WindowFuncExpr:
 		reason = "SQL_CALC_FOUND_ROWS with window functions"
 	case *ast.OrderByClause:
-		if n == v.root.OrderBy {
+		if !v.inView && n == v.root.OrderBy {
 			v.outerOrder = true
 		}
 	case *ast.VariableExpr:
@@ -212,7 +219,7 @@ func (v *foundRowsChecker) Leave(node ast.Node) bool {
 	if _, ok := node.(*ast.SelectStmt); ok {
 		v.depth--
 	}
-	if node == v.root.OrderBy {
+	if !v.inView && node == v.root.OrderBy {
 		v.outerOrder = false
 	}
 	return v.err == nil

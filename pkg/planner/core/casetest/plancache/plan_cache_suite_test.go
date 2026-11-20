@@ -1991,9 +1991,10 @@ func TestInstancePlanCacheAcrossSession(t *testing.T) {
 	tk2.MustExecWithContext(ctx, `set @a=4`)
 	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
 	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	t.Run("sql-calc-found-rows", testSQLCalcFoundRowsConcurrentInstanceCache)
 }
 
-func TestSQLCalcFoundRowsConcurrentInstanceCache(t *testing.T) {
+func testSQLCalcFoundRowsConcurrentInstanceCache(t *testing.T) {
 	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
 	store := testkit.CreateMockStore(t)
 	setup := testkit.NewTestKit(t, store)

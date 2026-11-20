@@ -22,6 +22,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -123,6 +127,91 @@ func TestSQLCalcFoundRows(t *testing.T) {
 	tk.MustExec("set sql_mode=''")
 	tk.MustQuery("select SQL_CALC_FOUND_ROWS distinct category from found_rows order by id limit 1").Check(testkit.Rows("1"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+	t.Run("aggregate-order-by", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set sql_mode=''")
+		for _, predicate := range []string{"", " where id>10"} {
+			tk.MustQuery("select SQL_CALC_FOUND_ROWS 1 from found_rows" + predicate + " order by count(*) limit 5").Check(testkit.Rows("1"))
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		}
+	})
+}
+
+func TestSQLCalcFoundRowsViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table view_found_rows(id int primary key)")
+	tk.MustExec("insert into view_found_rows values (1),(2),(3),(4)")
+	tk.MustExec("create view view_page as select id from view_found_rows order by id limit 2")
+	tk.MustExec("create view view_nested as select id from view_page")
+	// Simulate a definition persisted by a version where the modifier was a noop.
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), db.Name, ast.NewCIStr("view_page"))
+	require.NoError(t, err)
+	info := tbl.Meta().Clone()
+	view := *info.View
+	info.View = &view
+	info.View.SelectStmt = "select SQL_CALC_FOUND_ROWS id from test.view_found_rows order by id limit 2"
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		version, err := m.GenSchemaVersion()
+		if err != nil {
+			return err
+		}
+		if err := m.UpdateTable(db.ID, info); err != nil {
+			return err
+		}
+		return m.SetSchemaDiff(&model.SchemaDiff{
+			Version: version, Type: model.ActionCreateView, SchemaID: db.ID, TableID: info.ID, OldTableID: info.ID,
+		})
+	}))
+	require.NoError(t, dom.Reload())
+	loaded, err := dom.InfoSchema().TableByName(context.Background(), db.Name, info.Name)
+	require.NoError(t, err)
+	require.Equal(t, info.View.SelectStmt, loaded.Meta().View.SelectStmt)
+	t.Run("legacy-modifier", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		for _, name := range []string{"view_page", "view_nested"} {
+			for _, tc := range []struct {
+				query string
+				rows  []string
+				total string
+			}{
+				{"select id from " + name + " where id>99", nil, "0"},
+				{"select id from " + name + " order by id limit 1", []string{"1"}, "1"},
+				{"select SQL_CALC_FOUND_ROWS id from " + name + " order by id limit 1", []string{"1"}, "2"},
+				{"select SQL_CALC_FOUND_ROWS id from " + name + " where id>99", nil, "0"},
+			} {
+				for _, prepared := range []bool{false, true} {
+					query := tc.query
+					if prepared {
+						tk.MustExec("prepare view_stmt from '" + query + "'")
+						query = "execute view_stmt"
+					}
+					tk.MustQuery(query).Check(testkit.Rows(tc.rows...))
+					tk.MustQuery("select found_rows()").Check(testkit.Rows(tc.total))
+				}
+			}
+		}
+	})
+	tk.MustExec("create view view_coin as select id from view_found_rows where rand()<0.5")
+	tk.MustExec("create view view_coin_nested as select id from view_coin")
+	tk.MustExec("create view view_token as select id, uuid() as token from view_found_rows")
+	t.Run("non-repeatable", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		for _, name := range []string{"view_coin", "view_coin_nested", "view_token"} {
+			query := "select SQL_CALC_FOUND_ROWS id from " + name + " order by id limit 1"
+			tk.MustGetErrCode(query, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("explain "+query, mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("prepare view_stmt from '"+query+"'", mysql.ErrNotSupportedYet)
+		}
+	})
 }
 
 func TestSQLCalcFoundRowsNonPreparedCache(t *testing.T) {
@@ -509,7 +598,6 @@ func TestSQLCalcFoundRowsCTE(t *testing.T) {
 				}
 			})
 		}
-
 	})
 }
 
