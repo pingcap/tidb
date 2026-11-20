@@ -1240,3 +1240,95 @@ fn test_reject_max_single_row_recompute_multiple_rows() {
     let got = next_err(exec);
     assert!(got.contains("returns more than one row"), "{got}");
 }
+
+/// Go `types.NewBinaryLiteralFromUint(v, byteSize)`: big-endian bytes.
+fn binary_literal(v: u64, byte_size: usize) -> Vec<u8> {
+    v.to_be_bytes()[8 - byte_size..].to_vec()
+}
+
+#[test]
+fn test_min_max_bit_merge() {
+    for (name, flen, low, high) in [
+        ("bit1", 1_i64, 0_u64, 1_u64),
+        ("bit8", 8, 127, 128),
+        ("bit16", 16, 255, 256),
+        ("bit64", 64, i64::MAX as u64, 1 << 63),
+    ] {
+        for agg_name in [names::MIN, names::MAX] {
+            let mut ft_bit = ft(FieldTypeCode::Bit);
+            ft_bit.set_flen(flen);
+            ft_bit.set_collation_name("binary");
+            ft_bit.add_flags(FieldTypeFlags::UNSIGNED);
+            let ft_int = ft(FieldTypeCode::LongLong);
+            let fts = vec![ft_bit.clone(), ft_int.clone(), ft_bit.clone(), ft_int.clone(), ft_bit.clone(), ft_int];
+            let byte_size = ((flen + 7) / 8) as usize;
+            let low = binary_literal(low, byte_size);
+            let high = binary_literal(high, byte_size);
+            let max_value = binary_literal(u64::MAX >> (64 - flen), byte_size);
+            // (old, added, removed, count)
+            let rows: Vec<(Option<&Vec<u8>>, Option<&Vec<u8>>, Option<&Vec<u8>>, i64)> = vec![
+                (Some(&low), Some(&high), None, 2),
+                (Some(&high), Some(&low), None, 2),
+                (None, Some(&high), None, 1),
+                (Some(&high), None, Some(&high), 1), // Recompute the removed extremum.
+                (None, None, None, 1),               // An all-NULL group.
+                (Some(&low), None, None, 0),         // A deleted group.
+                (Some(&low), None, None, 2),
+                (Some(&high), Some(&max_value), None, 2),
+            ];
+            let mut input = Chunk::new_chunk_with_capacity(&fts, rows.len());
+            for (old, added, removed, count) in &rows {
+                for (i, value) in [added, removed, old].into_iter().enumerate() {
+                    match value {
+                        None => {
+                            input.append_null(2 * i);
+                            if i < 2 {
+                                input.append_int64(2 * i + 1, 0);
+                            }
+                        }
+                        Some(value) => {
+                            input.append_bytes(2 * i, value);
+                            if i < 2 {
+                                input.append_int64(2 * i + 1, 1);
+                            }
+                        }
+                    }
+                }
+                input.append_int64(5, *count);
+            }
+            let desc = agg_desc(agg_name, vec![col_arg(0, ft_bit.clone())]);
+            let mut exec = Exec::new(new_mock_source(&[], Vec::new()));
+            exec.agg_mappings = vec![Mapping { col_id: vec![5], ..Mapping::default() }];
+            exec.delta_agg_col_count = 4;
+            let merger = exec
+                .build_min_max_merger(
+                    0,
+                    &mapping(desc, &[4], &[0, 1, 2, 3]),
+                    &std::collections::HashMap::from([(5, 0)]),
+                    &fts,
+                )
+                .unwrap();
+            let mut worker_data = crate::exec::MergeWorkerData::default();
+            worker_data.prepare_min_max_recompute(1);
+            let mut output = vec![None];
+            merger
+                .merge_chunk(&input, &[input.column(5).copy_construct()], &mut output, &mut worker_data)
+                .unwrap();
+            assert_eq!(vec![vec![3_usize]], worker_data.min_max_mapping_idx_to_rows, "{name} {agg_name}");
+            let mut want: Vec<Option<&Vec<u8>>> =
+                vec![Some(&low), Some(&low), Some(&high), None, None, None, Some(&low), Some(&high)];
+            if agg_name == names::MAX {
+                want[0] = Some(&high);
+                want[1] = Some(&high);
+                want[7] = Some(&max_value);
+            }
+            let out = output[0].as_ref().unwrap();
+            for (row_idx, value) in want.into_iter().enumerate() {
+                match value {
+                    None => assert!(out.is_null(row_idx), "{name} {agg_name} row {row_idx}"),
+                    Some(value) => assert_eq!(value.as_slice(), out.get_raw(row_idx).as_ref(), "{name} {agg_name} row {row_idx}"),
+                }
+            }
+        }
+    }
+}
