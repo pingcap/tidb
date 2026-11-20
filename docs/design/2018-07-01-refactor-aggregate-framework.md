@@ -10,7 +10,7 @@ This proposal proposes a new execution framework for the aggregate functions, to
 
 ## Background
 
-In release-2.0, the framework of aggregate functions is located in the “expression/aggregation” package. In this framework, all the aggregate functions implement the `Aggregation` interface. It uses the `AggEvaluateContext` to store partial result for all the aggregate functions with all kind of possible argument types. The `DistinctChecker` in the `AggEvaluateContext` uses a `[]byte` as the key of `map`, which is used to de-duplicate the values in the same group. During the execution, the `Update` interface is called to update the partial result for every input record. It enumerates every possible state during the execution of every aggregate function, which introduces a lot of CPU branch predictions.
+In release-2.0, the framework of aggregate functions is located in the “expression/aggregation” package. In this framework, all the aggregate functions implement the `Aggregation` interface. It uses the `AggEvaluateContext` to store partial results for all the aggregate functions with all kinds of possible argument types. The `DistinctChecker` in the `AggEvaluateContext` uses a `[]byte` as the key of `map`, which is used to de-duplicate the values in the same group. During the execution, the `Update` interface is called to update the partial result for every input record. It enumerates every possible state during the execution of every aggregate function, which introduces a lot of CPU branch predictions.
 
 It’s easy to implement a new aggregate function under this framework. But it has some disadvantages as well:
 
