@@ -120,9 +120,12 @@ func (b *balancer) orderAndFilterNodes(
 	taskNodes map[string]struct{},
 ) []string {
 	limitNodeCnt := task.MaxNodeCount > 0 && len(nodes) > task.MaxNodeCount
-	subtaskCnts := make(map[string]int, len(nodes))
-	for _, st := range subtasks {
-		subtaskCnts[st.ExecID]++
+	var subtaskCnts map[string]int
+	if limitNodeCnt {
+		subtaskCnts = make(map[string]int, len(nodes))
+		for _, st := range subtasks {
+			subtaskCnts[st.ExecID]++
+		}
 	}
 	sort.SliceStable(nodes, func(i, j int) bool {
 		if limitNodeCnt && subtaskCnts[nodes[i]] != subtaskCnts[nodes[j]] {
@@ -147,7 +150,7 @@ func (b *balancer) canRunWithoutPreempt(task *proto.Task, taskNodes map[string]s
 
 func (b *balancer) updateActualUsedSlots(task *proto.Task, oldNodes, newNodes map[string]struct{}) {
 	for node := range oldNodes {
-		b.actualUsedSlots[node] -= task.RequiredSlots
+		b.actualUsedSlots[node] = max(0, b.actualUsedSlots[node]-task.RequiredSlots)
 	}
 	for node := range newNodes {
 		b.actualUsedSlots[node] += task.RequiredSlots

@@ -19,6 +19,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -618,6 +619,15 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int("requiredSlots", task.RequiredSlots),
 		zap.Int("subtasks", len(metas)))
 
+	var size uint64
+	for _, meta := range metas {
+		size += uint64(len(meta))
+	}
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	insertInBatch := size >= limit
+
 	// the scheduled node of the subtask might not be optimal, as we run all
 	// scheduler in parallel, and update might be called too many times when
 	// multiple tasks are switching to next step.
@@ -629,10 +639,16 @@ func (s *BaseScheduler) scheduleSubTask(
 	// Prefer nodes with enough slots, falling back to all eligible nodes if none qualify.
 	// Then limit the number of execution nodes to MaxNodeCount.
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
+	if insertInBatch {
+		var err error
+		adjustedEligibleNodes, err = s.keepExistingStepNodes(task.ID, subtaskStep, eligibleNodes, adjustedEligibleNodes)
+		if err != nil {
+			return err
+		}
+	}
 	if task.MaxNodeCount > 0 && len(adjustedEligibleNodes) > task.MaxNodeCount {
 		adjustedEligibleNodes = adjustedEligibleNodes[:task.MaxNodeCount]
 	}
-	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// our schedule target is to maximize the resource usage of all nodes while
@@ -651,16 +667,11 @@ func (s *BaseScheduler) scheduleSubTask(
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, task.ID, task.Type, instanceID, task.RequiredSlots, meta, i+1))
-
-		size += uint64(len(meta))
 	}
 	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
 
-	// as other fields and generated key and index KV takes space too, we limit
-	// the size of subtasks to 80% of the transaction limit.
-	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
 	fn := s.taskMgr.SwitchTaskStep
-	if size >= limit {
+	if insertInBatch {
 		// On default, transaction size limit is controlled by tidb_mem_quota_query
 		// which is 1G on default, so it's unlikely to reach this limit, but in
 		// case user set txn-total-size-limit explicitly, we insert in batch.
@@ -679,6 +690,58 @@ func (s *BaseScheduler) scheduleSubTask(
 			return true, err
 		},
 	)
+}
+
+// keepExistingStepNodes preserves still-eligible nodes that already hold
+// partially inserted subtasks for (taskID, step) ahead of slot-filtered nodes
+// before applying MaxNodeCount. This prevents SwitchTaskStepInBatch recovery
+// from counting the task's own pending rows as used slots, picking different
+// hosts, and exceeding MaxNodeCount once the step becomes runnable.
+func (s *BaseScheduler) keepExistingStepNodes(
+	taskID int64,
+	step proto.Step,
+	eligibleNodes []string,
+	adjustedEligibleNodes []string,
+) ([]string, error) {
+	activeSubtasks, err := s.taskMgr.GetActiveSubtasks(s.ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	existingCnts := make(map[string]int)
+	for _, st := range activeSubtasks {
+		if st.Step == step {
+			existingCnts[st.ExecID]++
+		}
+	}
+	if len(existingCnts) == 0 {
+		return adjustedEligibleNodes, nil
+	}
+
+	existingNodes := make([]string, 0, len(existingCnts))
+	existingSet := make(map[string]struct{}, len(existingCnts))
+	for _, node := range eligibleNodes {
+		if existingCnts[node] > 0 {
+			if _, ok := existingSet[node]; !ok {
+				existingSet[node] = struct{}{}
+				existingNodes = append(existingNodes, node)
+			}
+		}
+	}
+	if len(existingNodes) == 0 {
+		return adjustedEligibleNodes, nil
+	}
+	sort.SliceStable(existingNodes, func(i, j int) bool {
+		return existingCnts[existingNodes[i]] > existingCnts[existingNodes[j]]
+	})
+
+	merged := make([]string, 0, len(existingNodes)+len(adjustedEligibleNodes))
+	merged = append(merged, existingNodes...)
+	for _, node := range adjustedEligibleNodes {
+		if _, ok := existingSet[node]; !ok {
+			merged = append(merged, node)
+		}
+	}
+	return merged, nil
 }
 
 func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
