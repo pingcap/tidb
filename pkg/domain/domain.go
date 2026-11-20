@@ -2829,21 +2829,34 @@ func (do *Domain) gcStatsWorker() {
 			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
-			if !do.statsOwner.IsOwner() {
-				continue
-			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
-			if err != nil {
-				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
-			}
-			do.CheckAutoAnalyzeWindows()
+			callWithRecover("gcStatsWorker", func() {
+				if !do.statsOwner.IsOwner() {
+					return
+				}
+				err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
+				if err != nil {
+					logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
+				}
+				do.CheckAutoAnalyzeWindows()
+			})
 		case <-readMemTicker.C:
-			memory.ForceReadMemStats()
-			do.StatsHandle().StatsCache.TriggerEvict()
+			callWithRecover("gcStatsWorker", func() {
+				memory.ForceReadMemStats()
+				do.StatsHandle().StatsCache.TriggerEvict()
+			})
 		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
+			callWithRecover("gcStatsWorker", func() {
+				statsHandle.UpdateStatsHealthyMetrics()
+			})
 		}
 	}
+}
+
+// callWithRecover calls fn and recovers a panic in it. gcStatsWorker uses it for each
+// tick, because the worker does not restart after it exits.
+func callWithRecover(funcInfo string, fn func()) {
+	defer util.Recover(metrics.LabelDomain, funcInfo, nil, false)
+	fn()
 }
 
 func (do *Domain) dumpColStatsUsageWorker() {
