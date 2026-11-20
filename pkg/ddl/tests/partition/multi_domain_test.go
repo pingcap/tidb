@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -1067,10 +1066,13 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		logutil.BgLogger().Info("Query result after DDL", zap.String("result", res.String()))
 	}
 	// Verify that there are no KV entries for old partitions or old indexes!!!
-	gcWorker, err := gcworker.NewMockGCWorker(store)
-	require.NoError(t, err)
-	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
-	require.NoError(t, err)
+	for range waitForCleanDataRound {
+		deleteRanges := tkO.MustQuery(`select * from mysql.gc_delete_range`).Rows()
+		if len(deleteRanges) == 0 {
+			break
+		}
+		time.Sleep(waitForCleanDataInterval)
+	}
 	tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
 	ctx = tkO.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
