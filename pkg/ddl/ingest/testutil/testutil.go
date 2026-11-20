@@ -39,7 +39,7 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpOp)
 		})
 	ingest.LitInitialized = true
-	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitDiskRoot = &mockDiskRoot{DiskRoot: ingest.NewDiskRootImpl(t.TempDir())}
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 
 	return func() {
@@ -47,6 +47,25 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 		ingest.LitDiskRoot = oldLitDiskRoot
 		ingest.LitMemRoot = oldLitMemRoot
 	}
+}
+
+type mockDiskRoot struct {
+	ingest.DiskRoot
+}
+
+// Mock backend tests validate ingest control flow, not host disk availability.
+func (*mockDiskRoot) UpdateUsage() {}
+
+func (*mockDiskRoot) ShouldImport() bool {
+	return false
+}
+
+func (*mockDiskRoot) PreCheckUsage() error {
+	return nil
+}
+
+func (*mockDiskRoot) StartupCheck() error {
+	return nil
 }
 
 // CheckIngestLeakageForTest is only used in test.
