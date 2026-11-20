@@ -25,7 +25,14 @@ go_test(
     embed = [":expensivequery"],
     flaky = True,
     deps = [
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
