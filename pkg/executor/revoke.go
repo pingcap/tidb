@@ -325,17 +325,18 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 	sql := new(strings.Builder)
 	for _, c := range priv.Cols {
 		col := table.FindCol(tbl.Cols(), c.Name.L)
-		if col == nil {
-			return errors.Errorf("Unknown column: %s", c)
+		colName := c.Name.O
+		if col != nil {
+			colName = col.Name.O
 		}
 
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.ColumnPrivTable)
-		isDelRow, err := composeColumnPrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		isDelRow, err := composeColumnPrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O, colName)
 		if err != nil {
 			return err
 		}
-		sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", user, host, dbName, tbl.Meta().Name.O, colName)
 
 		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 		if err != nil {
@@ -344,12 +345,11 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 
 		if isDelRow {
 			sql.Reset()
-			sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+			sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O, colName)
 			_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return err
 			}
-			break
 		}
 		//TODO Optimized for batch, one-shot.
 	}
