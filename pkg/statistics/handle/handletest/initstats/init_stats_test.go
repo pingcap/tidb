@@ -269,6 +269,9 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsFullLoad())
 		}
 	}
+	// Allow sync loading to finish under CI contention before checking that
+	// queries fully load the initialized column statistics.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where a = 1", i)).CheckNotContain("pseudo")
 	}
