@@ -576,6 +576,17 @@ timezone.*
      curl -X POST -d "ddl_slow_threshold=300" http://{TiDBIP}:10080/settings
      ```
 
+     Change the TiKV worker address (`tikv-worker-url`) used by ingest. The value is
+     `host:port` or `http(s)://host:port`, without a path, query, or credentials.
+     It takes effect for ingest backends created after the change, such as new
+     `ADD INDEX` or `IMPORT INTO` jobs; running jobs keep the old address. The change
+     applies only to this TiDB instance and is not written to the configuration file,
+     so it is lost after a restart.
+
+     ```shell
+     curl -X POST -d "tikv_worker_url=127.0.0.1:19000" http://{TiDBIP}:10080/settings
+     ```
+
 23. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information. 
 
      Argument example: rowBin=base64_encoded_row_value
