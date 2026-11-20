@@ -426,9 +426,7 @@ func SaveMetaToStorage(
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
 // and insert a bucket to stats_buckets with default value. This operation also
 // updates version. It locks mysql.stats_meta before those histogram rows, matching
-// the lock order of SaveAnalyzeResultToStorage. On clusters bootstrapped before
-// v8.5.7, a point get for a single table ID can still deadlock with that
-// analyze save.
+// the lock order and BatchPointGet locking of SaveAnalyzeResultToStorage.
 func InsertColStats2KV(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -444,17 +442,19 @@ func InsertColStats2KV(
 	// SaveAnalyzeResultToStorage already takes that order. Inserting the histogram
 	// first deadlocks with ANALYZE: this transaction holds the new histogram row and
 	// waits for stats_meta, while ANALYZE holds stats_meta and waits for the histogram.
-	// On clusters bootstrapped before v8.5.7, mysql.stats_meta is a non-clustered
-	// table with a unique key on table_id. A point get for a single table ID can
-	// deadlock with the analyze batch point get, as explained in
-	// SaveAnalyzeResultToStorage.
-	// TODO: Resolve the point-get/batch-point-get deadlock on non-clustered
-	// stats_meta tables, possibly in the transaction layer.
+	// Use a fake negative table ID in an IN clause so the query uses BatchPointGet
+	// (single sorted LockKeys call) rather than PointGet (two-step index+row LockKeys),
+	// avoiding non-retryable deadlocks on pre-v8.5.7 non-clustered mysql.stats_meta.
+	fakeID := -physicalID
+	if fakeID == physicalID {
+		fakeID = -1
+	}
+	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(physicalID, 10)}
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
 		ctx, sctx,
-		"select count from mysql.stats_meta where table_id = %? for update",
-		physicalID,
+		"select count from mysql.stats_meta where table_id in (%?) for update",
+		tableIDStrs,
 	)
 	if err != nil {
 		return errors.Trace(err)
