@@ -793,3 +793,36 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
 }
+
+func TestIssue66753(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`CREATE TABLE t_tz_idx (
+		id INT PRIMARY KEY,
+		v INT NOT NULL,
+		updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+		updated_hour TIMESTAMP GENERATED ALWAYS AS (
+			TIMESTAMP(DATE_FORMAT(updated_at, '%Y-%m-%d %H:00:00'))
+		) VIRTUAL NOT NULL,
+		KEY idx_v1 (updated_hour, id)
+	)`)
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("INSERT INTO t_tz_idx(id, v, updated_at) VALUES (1, 1, '2026-03-05 20:20:57.000')")
+	tk.MustExec("ALTER TABLE t_tz_idx DROP INDEX idx_v1")
+	tk.MustExec("ALTER TABLE t_tz_idx ADD INDEX idx_v2 (updated_hour, id)")
+	tk.MustExec("SET tidb_txn_assertion_level = 'STRICT'")
+
+	tk.MustExec("UPDATE t_tz_idx SET v = v + 1 WHERE id = 1")
+	tk.MustExec("SET time_zone = '-08:00'")
+	tk.MustExec("UPDATE t_tz_idx SET v = v + 1 WHERE id = 1")
+
+	tk.MustExec("SET time_zone = '+00:00'")
+	tk.MustExec("SET tidb_enable_fast_table_check = 0")
+	tk.MustExec("ADMIN CHECK TABLE t_tz_idx")
+	tk.MustExec("ADMIN CHECK INDEX t_tz_idx idx_v2")
+	indexRows := tk.MustQuery("SELECT updated_hour FROM t_tz_idx USE INDEX(idx_v2) WHERE id = 1")
+	recordRows := tk.MustQuery("SELECT updated_hour FROM t_tz_idx USE INDEX() WHERE id = 1")
+	require.True(t, indexRows.Equal(recordRows.Rows()))
+}
