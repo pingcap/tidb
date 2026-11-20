@@ -10,7 +10,7 @@
 
 [![Build Status](https://prow.tidb.net/badge.svg?jobs=merged-tidb-build)](https://prow.tidb.net/?repo=pingcap%2Ftidb&type=postsubmit&job=merged-tidb-build)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-[![GitHub release](https://img.shields.io/github/tag/pingcap/tidb.svg?label=release)](https://github.com/pingcap/tidb/releases)
+[![GitHub release](https://img.shields.io/github/v/release/pingcap/tidb)](https://github.com/pingcap/tidb/releases)
 </div>
 
 # TiDB
