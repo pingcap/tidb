@@ -347,7 +347,7 @@ func TestClientDeleteObjects(t *testing.T) {
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
 
-	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).DoAndReturn(
+	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, input *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
 			require.Len(t, input.Delete.Objects, 3)
 			require.Equal(t, "prefix/sub/object1", *input.Delete.Objects[0].Key)
@@ -360,7 +360,7 @@ func TestClientDeleteObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, s.Controller.Satisfied())
 
-	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock delete error"))
+	s.MockS3.EXPECT().DeleteObjects(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock delete error"))
 	err = cli.DeleteObjects(ctx, []string{"sub/object1", "object2"})
 	require.ErrorContains(t, err, "mock delete error")
 	require.True(t, s.Controller.Satisfied())
