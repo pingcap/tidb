@@ -554,6 +554,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.ProcessGeneralLog.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "sql_log_off", Value: vardef.Off, Type: vardef.TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.SQLLogOff = TiDBOptOn(val)
+			return nil
+		},
+		RequireDynamicPrivileges: func(bool, bool) []string {
+			return []string{"SYSTEM_VARIABLES_ADMIN"}
+		},
+	},
 	// NOTE: The trace-event switch is experimental. It is subject to changes.
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBTraceEvent, Hidden: kerneltype.IsClassic(), Value: vardef.DefTiDBTraceEvent, Type: vardef.TypeStr, IsSensitive: true,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
