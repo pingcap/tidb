@@ -1665,15 +1665,9 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	// build schema replace
-	schemasReplace, err := buildSchemaReplace(client, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	var maskingTableIDs []int64
 	if cfg.WithSysTable && hasMaskingPolicySource(cfg.tableMappingManager) {
-		for _, db := range schemasReplace.DbReplaceMap {
+		for _, db := range cfg.tableMappingManager.DBReplaceMap {
 			if db.FilteredOut {
 				continue
 			}
@@ -1690,6 +1684,39 @@ func restoreStream(
 		if err := protectMaskingPolicyTables(ctx, client.GetDomain(), client.UnsafeSession(), maskingTableIDs, cfg.RestoreID, isRegistered); err != nil {
 			return err
 		}
+	}
+	if len(maskingTableIDs) > 0 {
+		// Switching a table that already exists to Restore mode is a DDL job:
+		// it writes a table definition newer than the rewrite ts taken above.
+		// The metadata replay below writes at the rewrite ts, so everything it
+		// replays for that table would stay hidden behind the definition the
+		// job wrote, and the schema changes in the log would be lost.
+		//
+		// Replay at a rewrite ts taken after the tables are closed instead.
+		// This is done by every run, whether or not it had a table to close:
+		// a rewrite ts saved in the checkpoint may be older than a job of an
+		// earlier run that was interrupted, or of an earlier version of BR.
+		// The metadata replay is redone in full by every run, so it is always
+		// consistent under the timestamp of the run that completes it.
+		if currentTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient()); err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("take the rewrite ts after closing tables for masking policy restore", zap.Uint64("rewrite-ts", currentTS))
+		cfg.RewriteTS = currentTS
+		if err := client.SetCurrentTS(currentTS); err != nil {
+			return errors.Trace(err)
+		}
+		if cfg.UseCheckpoint {
+			if err := client.SaveRewriteTSToCheckpoint(ctx, cfg.logCheckpointMetaManager, currentTS); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	// build schema replace
+	schemasReplace, err := buildSchemaReplace(client, cfg)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),

@@ -2321,6 +2321,37 @@ func TestLogRestoreCheckpointRouteFingerprint(t *testing.T) {
 	})
 }
 
+func TestSaveRewriteTSToCheckpoint(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	g := gluetidb.New()
+	ctx := context.Background()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+	const restoreID = 4
+	dbName := fmt.Sprintf("%s_%d", checkpoint.LogRestoreCheckpointDatabaseName, restoreID)
+	tk.MustExec("CREATE DATABASE " + dbName)
+	defer tk.MustExec("DROP DATABASE " + dbName)
+	manager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, restoreID)
+	require.NoError(t, err)
+	defer manager.Close()
+	require.NoError(t, manager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
+		UpstreamClusterID: 123, StartTS: 1, RestoredTS: 2, RewriteTS: 100, GcRatio: "1.1",
+	}))
+
+	// Only the rewrite ts changes; saving the same value again is a no-op.
+	for _, rewriteTS := range []uint64{200, 200, 300} {
+		require.NoError(t, client.SaveRewriteTSToCheckpoint(ctx, manager, rewriteTS))
+		meta, err := manager.LoadCheckpointMetadata(ctx)
+		require.NoError(t, err)
+		require.Equal(t, rewriteTS, meta.RewriteTS)
+		require.Equal(t, uint64(123), meta.UpstreamClusterID)
+		require.Equal(t, "1.1", meta.GcRatio)
+	}
+}
+
 func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)

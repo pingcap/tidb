@@ -467,6 +467,26 @@ func (rc *LogClient) CurrentTS() uint64 {
 	return rc.currentTS
 }
 
+// SaveRewriteTSToCheckpoint makes the checkpoint metadata carry the given
+// rewrite timestamp, in place of the one saved when the metadata was created.
+func (*LogClient) SaveRewriteTSToCheckpoint(
+	ctx context.Context,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rewriteTS uint64,
+) error {
+	meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if meta.RewriteTS == rewriteTS {
+		return nil
+	}
+	log.Info("update the rewrite ts in checkpoint metadata",
+		zap.Uint64("old-rewrite-ts", meta.RewriteTS), zap.Uint64("rewrite-ts", rewriteTS))
+	meta.RewriteTS = rewriteTS
+	return errors.Trace(logCheckpointMetaManager.UpdateCheckpointMetadata(ctx, meta))
+}
+
 // GetClusterID gets the cluster id from down-stream cluster.
 func (rc *LogClient) GetClusterID(ctx context.Context) uint64 {
 	if rc.clusterID <= 0 {

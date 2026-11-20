@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -85,6 +86,8 @@ const (
 
 	insertCheckpointMetaSQLTemplate string = `
 		REPLACE INTO %n.%n (segment_id, data) VALUES (%?, %?);`
+
+	deleteCheckpointMetaTailSQLTemplate string = `DELETE FROM %n.%n WHERE segment_id >= %?;`
 
 	selectCheckpointMetaSQLTemplate string = `SELECT segment_id, data FROM %n.%n;`
 )
@@ -288,6 +291,47 @@ func insertCheckpointMeta[T any](ctx context.Context, se glue.Session, dbName st
 		return errors.Trace(err)
 	})
 	return errors.Trace(err)
+}
+
+// updateCheckpointMeta replaces the metadata saved by insertCheckpointMeta.
+// The metadata may span several segments: they are replaced in one
+// transaction, so an interrupted update leaves the previous metadata intact
+// instead of a mix of both that cannot be parsed.
+func updateCheckpointMeta[T any](
+	ctx context.Context, se glue.Session, dbName string, tableName string, meta *T,
+) (err error) {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := se.ExecuteInternal(ctx, "BEGIN"); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err != nil {
+			// The caller's context may be the reason of the failure.
+			if rollbackErr := se.ExecuteInternal(context.WithoutCancel(ctx), "ROLLBACK"); rollbackErr != nil {
+				log.Warn("failed to roll back the checkpoint metadata update", zap.Error(rollbackErr))
+			}
+		}
+	}()
+	segments := uint64(0)
+	if err := chunkInsertCheckpointData(data, func(segmentId uint64, chunk []byte) error {
+		failpoint.Inject("failed-before-checkpoint-meta-segment", func(v failpoint.Value) {
+			if uint64(v.(int)) == segmentId {
+				failpoint.Return(errors.Errorf("failpoint: failed before checkpoint metadata segment %d", segmentId))
+			}
+		})
+		segments = segmentId + 1
+		return errors.Trace(se.ExecuteInternal(ctx, insertCheckpointMetaSQLTemplate, dbName, tableName, segmentId, chunk))
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	// The previous metadata may have been longer.
+	if err := se.ExecuteInternal(ctx, deleteCheckpointMetaTailSQLTemplate, dbName, tableName, segments); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(se.ExecuteInternal(ctx, "COMMIT"))
 }
 
 func selectCheckpointMeta(

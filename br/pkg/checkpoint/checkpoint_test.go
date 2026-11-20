@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -527,6 +528,49 @@ func testCheckpointRunnerNoRetry(
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[2].Crc64xor, items[2].TotalBytes, items[2].TotalKvs), "2_2_2")
+}
+
+func TestUpdateLogRestoreCheckpointMetadataOnTable(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	g := gluetidb.New()
+	manager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 7)
+	require.NoError(t, err)
+	defer manager.Close()
+	ctx := context.Background()
+
+	// Longer than one segment, so that an update replaces two rows.
+	saved := &checkpoint.CheckpointMetadataForLogRestore{
+		UpstreamClusterID: 123,
+		RewriteTS:         100,
+		GcRatio:           strings.Repeat("A", checkpoint.CheckpointIdMapBlockSize+1024),
+	}
+	require.NoError(t, manager.SaveCheckpointMetadata(ctx, saved))
+	defer func() { require.NoError(t, manager.RemoveCheckpointData(ctx)) }()
+
+	// An update interrupted between two segments must leave the saved
+	// metadata as it was: a mix of old and new segments cannot be parsed, and
+	// the restore could not resume from the checkpoint any more.
+	updated := *saved
+	updated.RewriteTS = 0
+	fp := "github.com/pingcap/tidb/br/pkg/checkpoint/failed-before-checkpoint-meta-segment"
+	require.NoError(t, failpoint.Enable(fp, "return(1)"))
+	err = manager.UpdateCheckpointMetadata(ctx, &updated)
+	require.NoError(t, failpoint.Disable(fp))
+	require.ErrorContains(t, err, "failed before checkpoint metadata segment 1")
+	loaded, err := manager.LoadCheckpointMetadata(ctx)
+	require.NoError(t, err)
+	require.Equal(t, saved, loaded)
+
+	// A shorter replacement drops the segments it no longer needs.
+	short := &checkpoint.CheckpointMetadataForLogRestore{UpstreamClusterID: 123, RewriteTS: 200, GcRatio: "1.1"}
+	require.NoError(t, manager.UpdateCheckpointMetadata(ctx, short))
+	loaded, err = manager.LoadCheckpointMetadata(ctx)
+	require.NoError(t, err)
+	require.Equal(t, short, loaded)
+	require.NoError(t, manager.UpdateCheckpointMetadata(ctx, saved))
+	loaded, err = manager.LoadCheckpointMetadata(ctx)
+	require.NoError(t, err)
+	require.Equal(t, saved, loaded)
 }
 
 func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
