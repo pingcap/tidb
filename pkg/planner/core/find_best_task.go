@@ -2313,6 +2313,15 @@ func isPointGetConvertableSchema(ds *logicalop.DataSource, singlePoint bool) boo
 	return true
 }
 
+func accessesExtraCommitTSColumn(ds *logicalop.DataSource) bool {
+	for _, col := range ds.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			return true
+		}
+	}
+	return false
+}
+
 // exploreEnforcedPlan determines whether to explore enforced plans for this DataSource if it has already found an unenforced plan.
 // See #46177 for more information.
 func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
@@ -2438,6 +2447,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	t = base.InvalidTask
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
+	accessesCommitTS := accessesExtraCommitTSColumn(ds)
 	candidates = appendPrunedRangeCandidates(ds, prop, candidates)
 	defer func() {
 		if err == nil && t != nil && !t.Invalid() && pruningInfo != "" {
@@ -2461,7 +2471,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
-			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate)
+			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, accessesCommitTS)
 			if err != nil {
 				return nil, err
 			}
@@ -2487,7 +2497,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			return t, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) == 1)
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) == 1) && !accessesCommitTS
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
@@ -2611,7 +2621,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if ds.SampleInfo != nil {
 			continue
 		}
-		idxTask, err := convertToIndexScan(ds, prop, candidate)
+		idxTask, err := convertToIndexScan(ds, prop, candidate, accessesCommitTS)
 		if err != nil {
 			return nil, err
 		}
@@ -2628,7 +2638,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 }
 
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
-func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath) (task base.Task, err error) {
+func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath,
+	accessesCommitTS bool) (task base.Task, err error) {
+	if accessesCommitTS {
+		return base.InvalidTask, nil
+	}
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return base.InvalidTask, nil
 	}
@@ -2877,7 +2891,10 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	candidate *candidatePath) (task base.Task, err error) {
+	candidate *candidatePath, accessesCommitTS bool) (task base.Task, err error) {
+	if candidate.path.IsSingleScan && accessesCommitTS {
+		return base.InvalidTask, nil
+	}
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
