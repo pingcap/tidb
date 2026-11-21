@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -423,4 +425,54 @@ func TestMaskingPolicyDiagnosticsCompile(t *testing.T) {
 	// An error raised before a masked value is read is kept.
 	require.Equal(t, []string{"Error 1054 (42S22): Unknown column 'nosuch' in 'where clause'"},
 		maskingDiagnostics(reader, "select 1 from ts where nosuch = (select min(c) from ts)"))
+}
+
+// TestMaskingPolicyDiagnosticsCop tests the warnings that the store reports
+// for the expressions it evaluates. Their message is formatted by the store,
+// and their code may not be one whose template TiDB knows the values of.
+func TestMaskingPolicyDiagnosticsCop(t *testing.T) {
+	_, user := prepareMaskingDiagnostics(t)
+	masked := "select 1 from t where cast(c as double) > 0"
+	plain := "select 1 from t where cast(b as double) > 0"
+	for _, sql := range []string{masked, plain} {
+		found := false
+		for _, row := range user.MustQuery("explain " + sql).Rows() {
+			if strings.Contains(row[0].(string), "Selection") {
+				require.Equal(t, "cop[tikv]", row[2], sql)
+				found = true
+			}
+		}
+		require.True(t, found, sql)
+	}
+	truncated := func(value string) []string {
+		return []string{"Warning 1292 (22007): Truncated incorrect DOUBLE value: '" + value + "'"}
+	}
+	require.Equal(t, truncated("?"), maskingDiagnostics(user, masked))
+	require.Equal(t, truncated("plain"), maskingDiagnostics(user, plain))
+
+	cases := []struct {
+		code     int32
+		original string
+		masked   string
+	}{
+		// A code without a template of its own.
+		{mysql.ErrUnknown, "Warning 1105 (HY000): Truncated incorrect DOUBLE value: '%s'",
+			"Warning 1105 (HY000): the error message is hidden because the statement reads a column masked by a masking policy"},
+		// A code whose template holds no value: the message is rebuilt from it.
+		{mysql.ErrDivisionByZero, "Warning 1365 (22012): Truncated incorrect DOUBLE value: '%s'",
+			"Warning 1365 (22012): Division by 0"},
+	}
+	var code int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/copResponseWarnings", func(warnings []*tipb.Error) {
+		for _, w := range warnings {
+			w.Code = code
+		}
+	})
+	for _, tc := range cases {
+		code = tc.code
+		require.Equal(t, []string{tc.masked}, maskingDiagnostics(user, masked), tc.code)
+		user.MustQuery(masked).Check(testkit.Rows())
+		user.MustQuery("show warnings").Check(testkit.Rows(strings.Replace(strings.Replace(tc.masked, " (HY000):", "", 1), " (22012):", "", 1)))
+		require.Equal(t, []string{fmt.Sprintf(tc.original, "plain")}, maskingDiagnostics(user, plain), tc.code)
+	}
 }

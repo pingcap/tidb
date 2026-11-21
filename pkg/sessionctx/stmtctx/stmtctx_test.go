@@ -643,6 +643,11 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 		{types.ErrTooBigScale.GenWithStackByArgs(123456789, "c", 30), "1425 Too big scale 123456789 specified for column 'c'. Maximum is 30.",
 			"1425 Too big scale ? specified for column '?'. Maximum is ?."},
 		{types.ErrTooBigPrecision.GenWithStackByArgs(123456789, "now", 6), "1426 Too-big precision ? specified for 'now'. Maximum is 6.", ""},
+		// A message formatted by the store is rebuilt from the template of its
+		// code unless it is that template.
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDivisionByZero, "Division by 0"), "1365 Division by 0", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDivisionByZero, "Truncated incorrect DOUBLE value: 'secret'"),
+			"1365 Truncated incorrect DOUBLE value: 'secret'", "1365 Division by 0"},
 		// Only an execution error without an error code of its own is hidden.
 		{plain, "1105 invalid text: secret",
 			"1105 the error message is hidden because the statement reads a column masked by a masking policy"},

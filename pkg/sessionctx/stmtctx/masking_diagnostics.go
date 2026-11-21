@@ -201,11 +201,21 @@ func redactMaskingDiagnostic(err error, evaluated bool) error {
 	if !ok || terror.ToSQLError(te).Code == mysql.ErrUnknown {
 		return errMaskingDiagnosticHidden
 	}
-	if _, noData := maskingNoDataArgCodes[uint16(te.Code())]; noData || len(te.Args()) == 0 {
+	code := terror.ToSQLError(te).Code
+	if _, noData := maskingNoDataArgCodes[code]; noData {
 		return err
 	}
-	// Nothing tells which arguments are data values.
-	return keepTxnRetryableMark(te, te.FastGen(printfVerb.ReplaceAllString(te.MessageTemplate(), maskingRedactedValue)))
+	if len(te.Args()) > 0 {
+		// Nothing tells which arguments are data values.
+		return keepTxnRetryableMark(te, te.FastGen(printfVerb.ReplaceAllString(te.MessageTemplate(), maskingRedactedValue)))
+	}
+	if msg, ok := errno.MySQLErrName[code]; ok && te.MessageTemplate() == msg.Raw {
+		// The message is the template of the code, which holds no value.
+		return err
+	}
+	// The message was formatted before, for example by the store that
+	// evaluated the expression, so it is rebuilt from the template of the code.
+	return keepTxnRetryableMark(te, te.FastGen(redactMaskingText("", code)))
 }
 
 // keepTxnRetryableMark keeps the mark of a transaction error that can be
