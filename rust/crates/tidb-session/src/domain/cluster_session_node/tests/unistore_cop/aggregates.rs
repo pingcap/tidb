@@ -124,3 +124,49 @@ fn aggregates_read_the_arguments_collation() {
     values.sort_unstable();
     assert_eq!(values, ["A", "b"]);
 }
+
+/// Global and grouped aggregates over `t (a, b)` = (1,30),(2,20),(3,10):
+/// SUM and AVG over integers are DECIMAL, empty inputs give one global row
+/// and no groups, DISTINCT folds per group, and empty MIN/MAX/AVG are NULL.
+#[test]
+fn aggregate_selects() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 476);
+    rows(&mut tk, "CREATE TABLE t (a BIGINT, b BIGINT)");
+    rows(&mut tk, "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)");
+    let q = |tk: &mut Session, sql: &str| displayed(rows(tk, sql));
+    assert_eq!(q(&mut tk, "SELECT COUNT(*), SUM(a) FROM t"), [["3", "6"]]);
+    let mut groups = q(&mut tk, "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a");
+    groups.sort();
+    assert_eq!(groups, [["1", "1"], ["2", "1"]]);
+    assert_eq!(q(&mut tk, "SELECT COUNT(a) FROM t WHERE a > 100"), [["0"]]);
+    assert!(rows(&mut tk, "SELECT a, COUNT(*) FROM t WHERE a > 100 GROUP BY a").is_empty());
+    assert_eq!(q(&mut tk, "SELECT MIN(a), MAX(b) FROM t"), [["1", "30"]]);
+    assert_eq!(q(&mut tk, "SELECT AVG(a) FROM t"), [["2.0000"]]);
+    assert_eq!(q(&mut tk, "SELECT COUNT(DISTINCT a), COUNT(DISTINCT 1) FROM t"), [["3", "1"]]);
+    assert_eq!(q(&mut tk, "SELECT MIN(a), MAX(a), AVG(a) FROM t WHERE a > 100"), [["NULL", "NULL", "NULL"]]);
+}
+
+/// SELECT DISTINCT is an aggregation over every projected column. Go's
+/// serial HashAgg (both hash-agg concurrencies 1) emits groups in first-seen
+/// order, which the order-sensitive checks pin.
+#[test]
+fn select_distinct() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 477);
+    rows(&mut tk, "SET tidb_hashagg_partial_concurrency = 1");
+    rows(&mut tk, "SET tidb_hashagg_final_concurrency = 1");
+    rows(&mut tk, "CREATE TABLE d2 (a BIGINT, b BIGINT)");
+    rows(&mut tk, "INSERT INTO d2 VALUES (1, 1), (1, 2), (1, 1), (2, 2)");
+    let q = |tk: &mut Session, sql: &str| displayed(rows(tk, sql));
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a FROM d2"), [["1"], ["2"]]);
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a, b FROM d2"), [["1", "1"], ["1", "2"], ["2", "2"]]);
+    assert_eq!(rows(&mut tk, "SELECT a FROM d2").len(), 4);
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a + b FROM d2"), [["2"], ["3"], ["4"]]);
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a FROM d2 ORDER BY a DESC"), [["2"], ["1"]]);
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a FROM d2 LIMIT 1"), [["1"]]);
+    assert_eq!(q(&mut tk, "SELECT DISTINCT a FROM d2 WHERE b = 2"), [["1"], ["2"]]);
+    rows(&mut tk, "CREATE TABLE g3 (k BIGINT, v BIGINT)");
+    rows(&mut tk, "INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)");
+    assert_eq!(q(&mut tk, "SELECT DISTINCT SUM(v) FROM g3 GROUP BY k"), [["5"], ["9"]]);
+}
