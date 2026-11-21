@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -340,12 +341,21 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
+	originSkipMissingPartitionStats := sessVars.SkipMissingPartitionStats
+	originPartitionPruneMode := sessVars.PartitionPruneMode.Load()
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	// A global index can only be read in dynamic prune mode. In static prune mode, which the planner
+	// also falls back to when global stats are missing and SkipMissingPartitionStats is off, the
+	// index side query silently scans the table instead and the check compares the table with itself.
+	sessVars.SkipMissingPartitionStats = true
+	sessVars.PartitionPruneMode.Store(string(variable.Dynamic))
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		sessVars.SkipMissingPartitionStats = originSkipMissingPartitionStats
+		sessVars.PartitionPruneMode.Store(originPartitionPruneMode)
 	}
 }
 

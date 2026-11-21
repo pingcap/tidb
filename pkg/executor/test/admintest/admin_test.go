@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -2117,6 +2118,66 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 			require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 2, index-values:\"handle: 2, values: [KindInt64 100]\" != record-values:\"handle: 2, values: [KindInt64 -1]\"")
 		}
 	}
+}
+
+func TestFastAdminCheckGlobalIndexWithPooledSession(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = true")
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a) global) partition by hash(c) partitions 5")
+	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
+	require.NoError(t, err)
+	// Delete the row (2, 12, 0) and keep its index entry.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn.Delete(tablecodec.EncodeRowKey(tbl.Meta().GetPartitionInfo().Definitions[0].ID, kv.IntHandle(4).Encoded())))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// The fast check runs on a session from this pool. Take the idle sessions out so that it gets
+	// the session each case prepares: the pool is FIFO, so it is empty once the marker comes back.
+	pool := dom.SysSessionPool()
+	var held []pools.Resource
+	defer func() {
+		for _, r := range held {
+			pool.Put(r)
+		}
+	}()
+	drain := func() pools.Resource {
+		marker, err := pool.Get()
+		require.NoError(t, err)
+		pool.Put(marker)
+		for range 1000 {
+			r, err := pool.Get()
+			require.NoError(t, err)
+			if r == marker {
+				return marker
+			}
+			held = append(held, r)
+		}
+		require.FailNow(t, "the marker session did not come back from the pool")
+		return nil
+	}
+	checkInconsistent := func(desc string) {
+		err := tk.ExecToErr("admin check table admin_test")
+		require.Error(t, err, desc)
+		require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err), desc)
+	}
+
+	held = append(held, drain())
+	checkInconsistent("session newly created by the pool")
+
+	// The statistics code leaves pooled sessions in static prune mode when the global mode is static.
+	se := drain()
+	vars := se.(sessionctx.Context).GetSessionVars()
+	originPruneMode := vars.PartitionPruneMode.Load()
+	vars.PartitionPruneMode.Store(string(variable.Static))
+	pool.Put(se)
+	checkInconsistent("session in static prune mode")
+	require.Equal(t, string(variable.Static), vars.PartitionPruneMode.Load())
+	vars.PartitionPruneMode.Store(originPruneMode)
 }
 
 func TestAdminCheckGlobalIndexDuringDDL(t *testing.T) {
