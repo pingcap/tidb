@@ -116,14 +116,7 @@ fn setup_auto_id_service(
     }
 }
 
-/// Go `net.JoinHostPort`.
-fn join_host_port(host: &str, port: u16) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+use tidb_go_net::join_host_port;
 
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,

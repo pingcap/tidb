@@ -171,6 +171,12 @@ pub fn query_escape(s: &[u8]) -> Vec<u8> {
     escape(s, Encoding::QueryComponent)
 }
 
+/// Go `url.QueryEscape` as text: the escaped form is ASCII.
+#[must_use]
+pub fn query_escape_string(s: impl AsRef<[u8]>) -> String {
+    String::from_utf8(query_escape(s.as_ref())).expect("an escaped query component is ASCII")
+}
+
 /// Go `url.PathEscape`.
 pub fn path_escape(s: &[u8]) -> Vec<u8> {
     escape(s, Encoding::PathSegment)

@@ -55,14 +55,7 @@ use tidb_test_isolation::isolate_process_globals;
 use tidb_logutil::{log_recovered_panic, zap_error, zap_stack};
 use tidb_domain_core::node_config;
 
-/// Go `net.JoinHostPort`.
-pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+pub use tidb_go_net::join_host_port;
 
 /// Go `listenStatusHTTPServer`'s line, logged before the status port is
 /// bound.

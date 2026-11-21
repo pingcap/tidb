@@ -18,6 +18,7 @@ jemalloc = ["tidb-memory/jemalloc"]
 testexport = []
 
 [dependencies]
+tidb-go-net = { path = "../tidb-go-net" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-sessmgr = { path = "../tidb-sessmgr" }

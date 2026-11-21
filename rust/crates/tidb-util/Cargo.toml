@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-go-net = { path = "../tidb-go-net" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-terror = { path = "../tidb-terror" }

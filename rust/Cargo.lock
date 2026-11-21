@@ -5105,6 +5105,7 @@ dependencies = [
  "tidb-encrypt",
  "tidb-errno",
  "tidb-failpoint",
+ "tidb-go-net",
  "tidb-go-semver",
  "tidb-go-strconv",
  "tidb-go-time-layout",
@@ -5944,6 +5945,7 @@ dependencies = [
  "tidb-errno",
  "tidb-fixcontrol",
  "tidb-globalconn",
+ "tidb-go-net",
  "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
@@ -5984,6 +5986,7 @@ dependencies = [
  "base64 0.22.1",
  "serde",
  "tidb-errno",
+ "tidb-go-url",
  "tracing",
 ]
 
@@ -6137,6 +6140,7 @@ dependencies = [
  "tidb-domain-affinity",
  "tidb-errno",
  "tidb-failpoint",
+ "tidb-go-net",
  "tidb-log",
  "tidb-logutil",
  "tidb-model",
@@ -6162,6 +6166,7 @@ dependencies = [
  "serde_json",
  "tidb-config",
  "tidb-ddl-util",
+ "tidb-go-net",
  "tidb-mysql",
  "tidb-owner",
  "tracing",
@@ -7502,6 +7507,10 @@ version = "0.0.0"
 dependencies = [
  "tracing",
 ]
+
+[[package]]
+name = "tidb-go-net"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-go-rand"
@@ -9119,6 +9128,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile 2.2.0",
+ "tidb-go-net",
  "tidb-intest",
  "tidb-log",
  "tidb-logutil",
@@ -9523,7 +9533,9 @@ dependencies = [
  "tidb-format-textrow",
  "tidb-gcworker",
  "tidb-globalconn",
+ "tidb-go-net",
  "tidb-go-strconv",
+ "tidb-go-url",
  "tidb-gocontext",
  "tidb-goruntime",
  "tidb-hack",
@@ -9672,6 +9684,7 @@ dependencies = [
  "chrono",
  "tidb-datatype",
  "tidb-failpoint",
+ "tidb-go-net",
  "tidb-intest",
  "tidb-log",
  "tidb-logutil",
@@ -9777,6 +9790,7 @@ dependencies = [
  "tidb-fixcontrol",
  "tidb-gcutil",
  "tidb-globalconn",
+ "tidb-go-net",
  "tidb-gocontext",
  "tidb-gomock",
  "tidb-goruntime",
@@ -11005,6 +11019,7 @@ name = "tidb-tidbmanager"
 version = "0.0.0"
 dependencies = [
  "reqwest 0.13.4",
+ "tidb-go-url",
 ]
 
 [[package]]
@@ -11466,6 +11481,8 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-go-net",
+ "tidb-go-url",
  "tidb-hack",
  "tidb-metrics",
  "tidb-model",

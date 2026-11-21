@@ -11,6 +11,7 @@ description = "TiDB pkg/domain/affinity: the table affinity manager (Rust)."
 workspace = true
 
 [dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
 tidb-errno = { path = "../tidb-errno" }
 serde.workspace = true
 tracing = "0.1"

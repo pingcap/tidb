@@ -99,18 +99,7 @@ impl Client for ManagerClient {
     }
 }
 
-/// Go `url.QueryEscape`.
-fn query_escape(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => escaped.push(byte as char),
-            b' ' => escaped.push('+'),
-            _ => escaped.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    escaped
-}
+use tidb_go_url::query_escape_string as query_escape;
 
 #[cfg(test)]
 mod tests {

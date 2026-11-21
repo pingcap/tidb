@@ -14,6 +14,8 @@
 
 //! Go `pkg/util/service_url.go`.
 
+use tidb_go_net::split_host_port;
+
 /// Go `URLSchemeHTTP`: the http scheme.
 pub const URL_SCHEME_HTTP: &str = "http";
 /// Go `URLSchemeHTTPS`: the https scheme.
@@ -67,67 +69,23 @@ fn parse_service_url_with(raw: &str, default_scheme: &str) -> Result<ServiceUrl,
         }
     }
 
-    let (scheme, host, path) = split_url(raw)?;
-    if !is_supported_service_url_scheme(scheme) {
+    let u = tidb_go_url::parse(raw).map_err(|err| format!("parse url {raw} failed {err}"))?;
+    let scheme = String::from_utf8_lossy(&u.scheme).into_owned();
+    if !is_supported_service_url_scheme(&scheme) {
         return Err(format!("URL scheme must be http, https, unix, or unixs: {raw}"));
     }
+    let host = String::from_utf8_lossy(&u.host).into_owned();
     let bad_address = || format!("URL address does not have the form \"host:port\": {raw}");
-    let (host_part, port) = split_host_port(host).ok_or_else(bad_address)?;
+    let (host_part, port) = split_host_port(&host).ok_or_else(bad_address)?;
     if host_part.is_empty() || port.is_empty() {
         return Err(bad_address());
     }
-    if !path.is_empty() {
+    if !u.path.is_empty() {
         return Err(format!("URL must not contain a path: {raw}"));
     }
-    Ok(ServiceUrl { scheme: scheme.to_owned(), address: host.to_owned() })
+    Ok(ServiceUrl { scheme, address: host })
 }
 
-/// The scheme, `Host` and `Path` Go's `url.Parse` answers for
-/// `scheme://[userinfo@]host[/path][?query][#fragment]`.
-fn split_url(raw: &str) -> Result<(&str, &str, &str), String> {
-    let (scheme, rest) = raw.split_once("://").expect("the caller checked the separator");
-    let rest = rest.split('#').next().unwrap_or_default();
-    let rest = rest.split('?').next().unwrap_or_default();
-    let (authority, path) = match rest.find('/') {
-        Some(slash) => rest.split_at(slash),
-        None => (rest, ""),
-    };
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
-    // Go `url.Parse` (`parseHost`): a bracketed host needs its closing
-    // bracket, and whatever follows it is a port.
-    if host.starts_with('[') {
-        let valid = host
-            .find(']')
-            .is_some_and(|end| host[end + 1..].is_empty() || host[end + 1..].starts_with(':'));
-        if !valid {
-            return Err(format!("parse url {raw} failed parse {raw:?}: missing ']' in host"));
-        }
-    } else if let Some((_, port)) = host.rsplit_once(':') {
-        // `validOptionalPort`: digits only.
-        if !port.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(format!("parse url {raw} failed parse {raw:?}: invalid port {:?} after host", format!(":{port}")));
-        }
-    }
-    Ok((scheme, host, path))
-}
-
-/// Go `net.SplitHostPort`: `None` where Go answers an error.
-fn split_host_port(hostport: &str) -> Option<(&str, &str)> {
-    let colon = hostport.rfind(':')?;
-    let (host, port) = (&hostport[..colon], &hostport[colon + 1..]);
-    if let Some(inner) = host.strip_prefix('[') {
-        let inner = inner.strip_suffix(']')?;
-        if inner.contains(['[', ']']) {
-            return None;
-        }
-        return (!port.contains(['[', ']'])).then_some((inner, port));
-    }
-    // An unbracketed host has no colon and no bracket of its own.
-    if host.contains([':', '[', ']']) || port.contains(['[', ']']) {
-        return None;
-    }
-    Some((host, port))
-}
 
 /// Go `NormalizeServiceURL`: normalizes host:port or supported URL input to
 /// scheme://address.

@@ -480,20 +480,7 @@ impl From<&tidb_store_helper::HotTableIndex> for HotTableIndex {
     }
 }
 
-/// Go `net/url.QueryEscape` over a key's bytes.
-fn query_escape(bytes: &[u8]) -> String {
-    let mut escaped = String::with_capacity(bytes.len());
-    for byte in bytes {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                escaped.push(char::from(*byte));
-            }
-            b' ' => escaped.push('+'),
-            _ => escaped.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    escaped
-}
+use tidb_go_url::query_escape_string as query_escape;
 
 /// Go `TableHandler.getPDAddr`.
 fn get_pd_addr(store: &dyn RegionStore) -> Result<Vec<String>, String> {

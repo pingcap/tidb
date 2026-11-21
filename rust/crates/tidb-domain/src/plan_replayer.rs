@@ -439,18 +439,7 @@ fn base_name(file_name: &str) -> &str {
     }
 }
 
-/// Go `net.JoinHostPort(serverInfo.IP, strconv.FormatUint(port, 10))`.
-///
-/// The bracket rule is `net.JoinHostPort`'s: a host containing a colon — an
-/// IPv6 literal — is wrapped, so the result stays parseable.
-#[must_use]
-pub fn join_host_port(ip: &str, port: u64) -> String {
-    if ip.contains(':') {
-        format!("[{ip}]:{port}")
-    } else {
-        format!("{ip}:{port}")
-    }
-}
+pub use tidb_go_net::join_host_port;
 
 /// The session-bound half of [`DumpFileGcChecker`].
 ///

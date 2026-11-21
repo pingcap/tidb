@@ -281,14 +281,7 @@ fn try_connect_ldap_through_tls(
     Ok(ldap_connection)
 }
 
-/// Go `net.JoinHostPort`.
-fn join_host_port(host: &str, port: i64) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+use tidb_go_net::join_host_port;
 
 /// Go `connectionFactory`.
 fn connection_factory(config: &ConnectConfig) -> Result<Conn, ldap_conn::Error> {

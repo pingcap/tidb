@@ -925,18 +925,7 @@ fn sleep_until_stopped(
     stop.load(std::sync::atomic::Ordering::Acquire)
 }
 
-/// Go `net.JoinHostPort`: a host containing a colon -- a literal IPv6
-/// address -- is BRACKETED before the port is appended, so the topology
-/// key of an IPv6 node reads `/topology/tidb/[::1]:4000`. Everything else
-/// is `host:port`.
-#[must_use]
-pub fn join_host_port(host: &str, port: usize) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+pub use tidb_go_net::join_host_port;
 
 /// Go `getInfo`'s decode loop: each value unmarshaled into a `ServerInfo`
 /// and keyed by the DECODED id, not by the key's suffix.

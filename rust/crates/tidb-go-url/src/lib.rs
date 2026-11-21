@@ -11,7 +11,7 @@ mod netip;
 mod parse;
 mod values;
 
-pub use escape::{path_escape, path_unescape, query_escape, query_unescape};
+pub use escape::{path_escape, path_unescape, query_escape, query_escape_string, query_unescape};
 pub use parse::{parse, parse_request_uri};
 pub use values::{parse_query, Values};
 

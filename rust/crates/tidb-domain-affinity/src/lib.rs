@@ -296,22 +296,7 @@ fn affinity_group_ids_escaped_query_len(ids: &[String]) -> usize {
         .sum()
 }
 
-/// Go `net/url.QueryEscape`: every byte but `[A-Za-z0-9-_.~]` percent-encoded
-/// in uppercase hex, a space as `+`.
-#[must_use]
-pub fn query_escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                escaped.push(char::from(byte));
-            }
-            b' ' => escaped.push('+'),
-            _ => escaped.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    escaped
-}
+pub use tidb_go_url::query_escape_string as query_escape;
 
 /// Go `shouldFallbackCreateAffinityGroups`.
 fn should_fallback_create_affinity_groups(error: &PdHttpError) -> bool {

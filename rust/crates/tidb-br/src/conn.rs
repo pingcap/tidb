@@ -216,14 +216,7 @@ pub fn handle_tikv_address(store: &metapb::Store, http_prefix: &str) -> Result<S
     Ok(String::from_utf8_lossy(&status_url.to_bytes()).into_owned())
 }
 
-/// Go `net.JoinHostPort`.
-fn join_host_port(host: &str, port: &str) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+use tidb_go_net::join_host_port;
 
 /// Go `httputil.NewClient(tlsConf)`: a client for TiKV's status ports.
 ///

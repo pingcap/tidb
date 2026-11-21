@@ -11,4 +11,5 @@ description = "TiDB pkg/tidbmanager: the client of the TiDB manager server (Rust
 workspace = true
 
 [dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
 reqwest = { workspace = true, features = ["blocking"] }

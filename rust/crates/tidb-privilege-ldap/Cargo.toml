@@ -11,6 +11,7 @@ description = "Go pkg/privilege/privileges/ldap (LDAP simple and SASL authentica
 workspace = true
 
 [dependencies]
+tidb-go-net = { path = "../tidb-go-net" }
 tidb-privilege-conn = { path = "../tidb-privilege-conn" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-log = { path = "../tidb-log" }

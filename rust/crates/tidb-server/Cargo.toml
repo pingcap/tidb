@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-go-net = { path = "../tidb-go-net" }
 tidb-ddl-util = { path = "../tidb-ddl-util" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-dxf-importinto = { path = "../tidb-dxf-importinto" }

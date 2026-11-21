@@ -418,14 +418,7 @@ impl MemoryOpsHistoryManager {
     }
 }
 
-/// Go `net.JoinHostPort`.
-fn join_host_port(host: &str, port: &str) -> String {
-    if host.contains(':') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
-}
+use tidb_go_net::join_host_port;
 
 #[cfg(test)]
 mod tests {

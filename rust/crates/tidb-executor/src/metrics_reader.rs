@@ -305,18 +305,7 @@ fn query_range(
     query_result(&data)
 }
 
-/// Go `url.QueryEscape`.
-fn query_escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => escaped.push(char::from(byte)),
-            b' ' => escaped.push('+'),
-            _ => escaped.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    escaped
-}
+use tidb_go_url::query_escape_string as query_escape;
 
 /// Go `apiClientImpl.Do` after the round trip: the response's `data`, or the
 /// error its code and body state.

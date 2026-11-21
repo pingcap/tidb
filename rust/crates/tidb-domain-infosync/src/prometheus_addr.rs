@@ -174,13 +174,7 @@ fn compose_url(address: &str, path: &str, security: &ClusterSecurity) -> String 
     format!("{schema}://{address}{path}")
 }
 
-/// Go `net.JoinHostPort(host, strconv.Itoa(port))`.
-fn join_host_port(host: &str, port: i64) -> String {
-    if host.contains(':') || host.contains('%') {
-        return format!("[{host}]:{port}");
-    }
-    format!("{host}:{port}")
-}
+use tidb_go_net::join_host_port;
 
 #[cfg(test)]
 mod tests {

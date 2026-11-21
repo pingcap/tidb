@@ -11,6 +11,7 @@ description = "Go `pkg/domain/serverinfo`: this server's info, its etcd syncer a
 workspace = true
 
 [dependencies]
+tidb-go-net = { path = "../tidb-go-net" }
 tidb-ddl-util = { path = "../tidb-ddl-util" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-config = { path = "../tidb-config" }
