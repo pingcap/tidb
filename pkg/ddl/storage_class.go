@@ -406,16 +406,16 @@ func BuildStorageClassForPartitions(
 PartitionLoop:
 	for i := range partitions {
 		part := &partitions[i]
+		// Naming a partition explicitly wins over a range match regardless of rule order.
+		for _, def := range settings.Defs {
+			if len(def.NamesIn) > 0 && isPartitionMatchNamesIn(part, def.NamesIn) {
+				setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
+				continue PartitionLoop
+			}
+		}
 		for _, def := range settings.Defs {
 			if def.HasNoScopeDef() {
 				continue
-			}
-
-			if len(def.NamesIn) > 0 {
-				if isPartitionMatchNamesIn(part, def.NamesIn) {
-					setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
-					continue PartitionLoop
-				}
 			}
 
 			if def.LessThan != nil {
