@@ -715,7 +715,8 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
-	if snapshotTS == math.MaxUint64 {
+	latest := snapshotTS == math.MaxUint64
+	if latest {
 		// Latest reads still need a real timestamp for delayed policy SQL.
 		version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
 		if err != nil {
@@ -727,17 +728,51 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	if is, valid := do.infoCache.GetBySnapshotTSWithValidity(snapshotTS); is != nil {
 		// The newest cached schema is returned for any later snapshotTS, even
 		// if a newer schema version has been committed but not loaded yet.
-		// Only advance its policy read time when it is known to be valid at
-		// snapshotTS. Otherwise, keep the time it was last verified at, which
-		// reload keeps advancing for the newest schema.
+		// It is valid at snapshotTS if it was verified at a later time.
+		if !valid {
+			valid = snapshotTS <= infoschema.MaskingPolicySnapshotTS(is)
+		}
 		if valid {
 			infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
+			return is, nil
 		}
-		return is, nil
+		if latest {
+			// A latest read uses the newest schema, as other current reads do.
+			return is, nil
+		}
+		verified, err := do.verifyNewestInfoSchema(is)
+		if err != nil {
+			return nil, err
+		}
+		if verified {
+			return is, nil
+		}
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
 	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
 	return is, err
+}
+
+// verifyNewestInfoSchema reports whether is, the newest cached schema, is
+// still the schema at the current time. If so, it is valid at any time since
+// it took effect, and its verified time is advanced to the current time, so
+// later snapshot reads up to that time need no further check.
+func (do *Domain) verifyNewestInfoSchema(is infoschema.InfoSchema) (bool, error) {
+	version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return false, err
+	}
+	snapshot := do.store.GetSnapshot(version)
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000))
+	schemaVersion, err := meta.NewReader(snapshot).GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return false, err
+	}
+	if do.infoCache.GetByVersion(schemaVersion) != is {
+		return false, nil
+	}
+	infoschema.UpdateMaskingPolicySnapshotTS(is, version.Ver)
+	return true, nil
 }
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
