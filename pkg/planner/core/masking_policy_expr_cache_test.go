@@ -60,10 +60,39 @@ func TestMaskingPolicyExprCache(t *testing.T) {
 	entry := cache.entries[policy.ID]
 	require.NotNil(t, entry)
 
-	// Changing the policy expression while on the same schema version
-	// should still return the cached entry.
+	// The same inputs on the same schema version reuse the cached entry.
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, tblInfo, colInfo)
+	require.NoError(t, err)
+	require.Same(t, entry, cache.entries[policy.ID])
+
+	// A policy or table taken from a newer schema under the same version, as
+	// for a table replaced under MDL, rebuilds the expression.
 	policy.Expression = "upper(c)"
 	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, tblInfo, colInfo)
+	require.NoError(t, err)
+	require.NotSame(t, entry, cache.entries[policy.ID])
+	entry = cache.entries[policy.ID]
+	replaced := tblInfo.Clone()
+	replaced.ID = 101
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, replaced, replaced.Columns[0])
+	require.NoError(t, err)
+	require.NotSame(t, entry, cache.entries[policy.ID])
+	entry = cache.entries[policy.ID]
+	retyped := replaced.Columns[0].Clone()
+	retyped.FieldType = *types.NewFieldType(mysql.TypeVarchar)
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, replaced, retyped)
+	require.NoError(t, err)
+	require.NotSame(t, entry, cache.entries[policy.ID])
+	// A change of nullability alone also rebuilds the expression: the loose
+	// FieldType.Equal ignores the NOT NULL flag.
+	entry = cache.entries[policy.ID]
+	notNull := retyped.Clone()
+	notNull.AddFlag(mysql.NotNullFlag)
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, replaced, notNull)
+	require.NoError(t, err)
+	require.NotSame(t, entry, cache.entries[policy.ID])
+	entry = cache.entries[policy.ID]
+	_, _, err = getMaskingPolicyExpr(ctx, sv, 1, policy, replaced, notNull.Clone())
 	require.NoError(t, err)
 	require.Same(t, entry, cache.entries[policy.ID])
 

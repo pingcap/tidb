@@ -2913,3 +2913,35 @@ func TestMaskingPolicyExplainForConnectionInTxn(t *testing.T) {
 		target.MustExec("commit")
 	}
 }
+
+func TestMaskingPolicyMDLReplacementExprCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("use test")
+	root.MustExec("create table mdl_cache_pt(id int primary key,c varchar(20)) partition by range(id) (partition p0 values less than (10))")
+	root.MustExec("create table mdl_cache_nt(id int primary key,c varchar(20))")
+	root.MustExec("insert into mdl_cache_pt values(1,'secret')")
+	root.MustExec("insert into mdl_cache_nt values(1,'public')")
+	root.MustExec("create masking policy p on mdl_cache_nt(c) as c enable")
+	root.MustExec("create user mdl_cache_reader")
+	root.MustExec("grant select on test.mdl_cache_nt to mdl_cache_reader")
+
+	reader := testkit.NewTestKit(t, store)
+	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "mdl_cache_reader", Hostname: "%"}, nil, nil, nil))
+	reader.MustExec("use test")
+	reader.MustExec("set tidb_enable_non_prepared_plan_cache = off")
+	reader.MustExec("set transaction_isolation = 'REPEATABLE-READ'")
+	// Warm the policy expression `c` at the schema the transaction keeps.
+	reader.MustQuery("select c from mdl_cache_nt where id+0=1").Check(testkit.Rows("public"))
+	reader.MustExec("begin pessimistic")
+	t.Cleanup(func() { reader.MustExec("rollback") })
+	// The policy keeps its ID; the table it belongs to takes the partition's ID.
+	root.MustExec("alter table mdl_cache_nt modify masking policy p set expression = mask_full(c)")
+	root.MustExec("alter table mdl_cache_pt exchange partition p0 with table mdl_cache_nt")
+	// The first read in the transaction takes the replaced table, whose policy
+	// now masks the column; the cached `c` must not be reused.
+	reader.MustQuery("select c from mdl_cache_nt where id+0=1").Check(testkit.Rows("XXXXXX"))
+	reader.MustQuery("select c from mdl_cache_nt where id=1").Check(testkit.Rows("XXXXXX"))
+	reader.MustExec("rollback")
+	reader.MustQuery("select c from mdl_cache_nt where id+0=1").Check(testkit.Rows("XXXXXX"))
+}

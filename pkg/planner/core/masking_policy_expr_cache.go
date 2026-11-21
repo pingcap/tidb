@@ -21,11 +21,27 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 type maskingPolicyExprCacheEntry struct {
 	expr   expression.Expression
 	column *expression.Column
+	// The inputs the expression was built from. A hit must match them: the
+	// policy and table of an MDL-replaced table come from a newer schema than
+	// the version the cache is keyed by.
+	colType    *types.FieldType
+	policyExpr string
+	dbName     string
+	tableName  string
+	tableID    int64
+	columnID   int64
+}
+
+func (e *maskingPolicyExprCacheEntry) matches(policy *model.MaskingPolicyInfo, tblInfo *model.TableInfo, colInfo *model.ColumnInfo) bool {
+	return e.policyExpr == policy.Expression && e.dbName == policy.DBName.L &&
+		e.tableID == tblInfo.ID && e.tableName == tblInfo.Name.L &&
+		e.columnID == colInfo.ID && e.colType.Equals(&colInfo.FieldType)
 }
 
 type maskingPolicyExprCache struct {
@@ -67,7 +83,10 @@ func getMaskingPolicyExpr(
 	colInfo *model.ColumnInfo,
 ) (expression.Expression, *expression.Column, error) {
 	cache := getMaskingPolicyExprCache(sv, schemaVersion)
-	if entry, ok := cache.entries[policy.ID]; ok {
+	if policy == nil || tblInfo == nil || colInfo == nil {
+		return nil, nil, errors.New("masking policy expression requires policy/table/column info")
+	}
+	if entry, ok := cache.entries[policy.ID]; ok && entry.matches(policy, tblInfo, colInfo) {
 		return entry.expr.Clone(), entry.column, nil
 	}
 	if _, ok := cache.building[policy.ID]; ok {
@@ -84,8 +103,14 @@ func getMaskingPolicyExpr(
 		return expr, placeholder, nil
 	}
 	cache.entries[policy.ID] = &maskingPolicyExprCacheEntry{
-		expr:   expr,
-		column: placeholder,
+		expr:       expr,
+		column:     placeholder,
+		policyExpr: policy.Expression,
+		dbName:     policy.DBName.L,
+		tableName:  tblInfo.Name.L,
+		colType:    colInfo.FieldType.Clone(),
+		tableID:    tblInfo.ID,
+		columnID:   colInfo.ID,
 	}
 	return expr.Clone(), placeholder, nil
 }
