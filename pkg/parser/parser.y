@@ -81,6 +81,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
 	fullJoinType         "FULL OUTER JOIN"
+	explainExecute       "EXPLAIN EXECUTE"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -1100,6 +1101,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ExecuteStmt                   "Execute statement"
 	ExplainStmt                   "EXPLAIN statement"
 	ExplainableStmt               "explainable statement"
+	ExplainableStmtNoExecute      "explainable statement without execute"
 	FlushStmt                     "Flush statement"
 	FlashbackTableStmt            "Flashback table statement"
 	FlashbackToTimestampStmt      "Flashback cluster statement"
@@ -6464,10 +6466,27 @@ ExplainStmt:
 			},
 		}
 	}
-|	ExplainSym ExplainableStmt
+|	ExplainSym ExplainableStmtNoExecute
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
+			Format: "row",
+		}
+	}
+|	ExplainSym explainExecute Identifier
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:   &ast.ExecuteStmt{Name: $3},
+			Format: "row",
+		}
+	}
+|	ExplainSym explainExecute Identifier "USING" UserVariableList
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt: &ast.ExecuteStmt{
+				Name:      $3,
+				UsingVars: $5.([]ast.ExprNode),
+			},
 			Format: "row",
 		}
 	}
@@ -10411,12 +10430,16 @@ PrepareSQL:
  * OR
  * EXECUTE stmt1;
  */
+ExecuteSym:
+	"EXECUTE"
+|	explainExecute
+
 ExecuteStmt:
-	"EXECUTE" Identifier
+	ExecuteSym Identifier
 	{
 		$$ = &ast.ExecuteStmt{Name: $2}
 	}
-|	"EXECUTE" Identifier "USING" UserVariableList
+|	ExecuteSym Identifier "USING" UserVariableList
 	{
 		$$ = &ast.ExecuteStmt{
 			Name:      $2,
@@ -13836,6 +13859,10 @@ TraceableStmt:
 |	AnalyzeTableStmt
 
 ExplainableStmt:
+	ExplainableStmtNoExecute
+|	ExecuteStmt
+
+ExplainableStmtNoExecute:
 	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt

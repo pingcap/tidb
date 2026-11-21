@@ -6403,6 +6403,28 @@ func TestExplain(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
+func TestExplainExecute(t *testing.T) {
+	table := []testCase{
+		{"explain execute stmt", true, "EXPLAIN FORMAT = 'row' EXECUTE `stmt`"},
+		{"explain execute stmt using @a,@b,@c", true, "EXPLAIN FORMAT = 'row' EXECUTE `stmt` USING @`a`,@`b`,@`c`"},
+		{"desc execute stmt using @a", true, "EXPLAIN FORMAT = 'row' EXECUTE `stmt` USING @`a`"},
+		{"describe execute stmt", true, "EXPLAIN FORMAT = 'row' EXECUTE `stmt`"},
+		{"explain format = 'brief' execute stmt using @a", true, "EXPLAIN FORMAT = 'brief' EXECUTE `stmt` USING @`a`"},
+		{"explain format = VERBOSE execute stmt", true, "EXPLAIN FORMAT = 'VERBOSE' EXECUTE `stmt`"},
+		{"explain analyze execute stmt", true, "EXPLAIN ANALYZE EXECUTE `stmt`"},
+		{"explain analyze execute stmt using @a,@b", true, "EXPLAIN ANALYZE EXECUTE `stmt` USING @`a`,@`b`"},
+		{"explain analyze format = 'brief' execute stmt using @a", true, "EXPLAIN ANALYZE FORMAT = 'brief' EXECUTE `stmt` USING @`a`"},
+		{"explain analyze format = VERBOSE execute stmt", true, "EXPLAIN ANALYZE FORMAT = 'VERBOSE' EXECUTE `stmt`"},
+		{"plan replayer dump explain execute stmt", true, "PLAN REPLAYER DUMP EXPLAIN EXECUTE `stmt`"},
+		{"plan replayer dump explain analyze execute stmt using @a", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE EXECUTE `stmt` USING @`a`"},
+		// Unquoted `execute` as a single table name or db.table still parses as DESC.
+		{"explain execute", true, "DESC `execute`"},
+		{"explain execute.col", true, "DESC `execute`.`col`"},
+		{"explain `execute` col", true, "DESC `execute` `col`"},
+	}
+	RunTest(t, table, false, false)
+}
+
 func TestPrepare(t *testing.T) {
 	table := []testCase{
 		{"PREPARE pname FROM 'SELECT ?'", true, "PREPARE `pname` FROM 'SELECT ?'"},
