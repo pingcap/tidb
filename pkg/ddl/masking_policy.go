@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,10 +57,18 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	policyInfo.State = model.StateNone
 	submittedColumn := policyInfo.ColumnName
 
-	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, policyInfo); err != nil {
+	// Resolve the target on a copy: policyInfo is the job's args, which the
+	// reschedule step persists, and the next run needs the submitted column
+	// name to bind the expression to a renamed column.
+	target := policyInfo.Clone()
+	if err := validateMaskingPolicyTarget(jobCtx.stepCtx, jobCtx.infoCache, target); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if rescheduleMaskingPolicyJobForTarget(job, target) {
+		return ver, nil
+	}
+	policyInfo.DBName, policyInfo.TableName, policyInfo.ColumnName = target.DBName, target.TableName, target.ColumnName
 	// A rename may finish between submitter validation and worker execution.
 	// Rebind and validate the expression against the refreshed column metadata.
 	policyInfo.Expression, err = rewriteMaskingPolicyExprColumnName(policyInfo.Expression, submittedColumn, policyInfo.ColumnName)
@@ -170,6 +179,9 @@ func (w *worker) onAlterMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver i
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if rescheduleMaskingPolicyJobForTarget(job, oldPolicy) {
+		return ver, nil
+	}
 
 	newPolicy := oldPolicy.Clone()
 	submittedColumn := newPolicy.ColumnName
@@ -247,8 +259,11 @@ func (w *worker) onDropMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver in
 		job.State = model.JobStateCancelled
 		return ver, meta.ErrMaskingPolicyNotExists.GenWithStackByArgs(args.PolicyName.O)
 	}
-	policyInfo.State = model.StateNone
 	// A table rename keeps the names of its policies in the system table synced.
+	if rescheduleMaskingPolicyJobForTarget(job, policyInfo) {
+		return ver, nil
+	}
+	policyInfo.State = model.StateNone
 	rebindMaskingPolicyJob(job, policyInfo, policyInfo.ColumnName)
 	if err = w.deleteMaskingPolicyFromSysTable(jobCtx, policyInfo.ID); err != nil {
 		job.State = model.JobStateCancelled
@@ -897,6 +912,38 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 		return "", errors.New("failed to rewrite masking policy expression")
 	}
 	return restoreMaskingExpression(rewritten.(ast.ExprNode))
+}
+
+// rescheduleMaskingPolicyJobForTarget makes the job depend on the table the
+// policy is bound to now. The scheduler serializes a job only with the DDL
+// that involves the same names, and it registered this job under the names it
+// was submitted with. A table renamed after submission can therefore be the
+// target of other DDL, such as TRUNCATE, running alongside this job, which
+// then would miss the policy written here and leave it bound to a dropped
+// table ID. If the names differ, this replaces them in the involving schema
+// info and returns true, and the caller must return without writing anything:
+// the step commits the new dependency, and the scheduler delivers the job
+// again once the DDL involving the new names finishes. The next run checks
+// the target again, so each reschedule follows a rename that finished.
+func rescheduleMaskingPolicyJobForTarget(job *model.Job, policy *model.MaskingPolicyInfo) bool {
+	involving := job.GetInvolvingSchemaInfo()
+	for i, info := range involving {
+		if info.Table == "" {
+			// The entry of the policy name.
+			continue
+		}
+		if info.Database == policy.DBName.L && info.Table == policy.TableName.L {
+			return false
+		}
+		involving = slices.Clone(involving)
+		involving[i].Database, involving[i].Table = policy.DBName.L, policy.TableName.L
+		job.InvolvingSchemaInfo = involving
+		logutil.DDLLogger().Info("masking policy target was renamed, reschedule the job on the new name",
+			zap.Int64("jobID", job.ID), zap.String("oldDB", info.Database), zap.String("oldTable", info.Table),
+			zap.String("newDB", policy.DBName.L), zap.String("newTable", policy.TableName.L))
+		return true
+	}
+	return false
 }
 
 // rebindMaskingPolicyJob replaces the submitted names and expression in

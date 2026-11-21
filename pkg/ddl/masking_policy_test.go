@@ -1115,6 +1115,136 @@ func TestMaskingPolicyConcurrentRenameTableHistoryQuery(t *testing.T) {
 	}
 }
 
+// The step that reschedules a CREATE MASKING POLICY job on its renamed table
+// persists the job, so it must keep the submitted column name the next run
+// needs to bind the expression to the renamed column.
+func TestMaskingPolicyCreateAfterConcurrentTableAndColumnRename(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want string // column, expression and status
+		read string // select result after an insert
+	}{
+		{"full", "create masking policy p on t(c) as mask_full(c)", "d MASK_FULL(`d`) ENABLED", "XXXXXX"},
+		{"case", "create masking policy p on t(c) as case when c = 'x' then c else mask_null(c) end",
+			"d CASE WHEN `d`=_UTF8MB4'x' THEN `d` ELSE MASK_NULL(`d`) END ENABLED", "<nil>"},
+		{"disabled", "create masking policy p on t(c) as mask_full(c) disable", "d MASK_FULL(`d`) DISABLED", "secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t(c varchar(20))")
+			other := testkit.NewTestKit(t, store)
+			other.MustExec("use test")
+			prepared, release := make(chan struct{}), make(chan struct{})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate", func() { close(prepared); <-release })
+			done := make(chan error, 1)
+			go func() { done <- other.ExecToErr(tc.sql) }()
+			<-prepared
+			tk.MustExec("rename table t to u")
+			tk.MustExec("alter table u rename column c to d")
+			close(release)
+			require.NoError(t, <-done)
+
+			tableID := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema='test' and table_name='u'").Rows()[0][0]
+			tk.MustQuery("select table_id,table_name,column_name,expression,status from mysql.tidb_masking_policy where policy_name='p'").
+				Check(testkit.Rows(fmt.Sprintf("%v u %s", tableID, tc.want)))
+			tk.MustExec("insert into u values ('secret')")
+			tk.MustQuery("select d from u").Check(testkit.Rows(tc.read))
+		})
+	}
+}
+
+// A policy job submitted under a table name that a rename then moved is
+// registered with the DDL scheduler under the old name. It must wait for the
+// DDL running on the table's current name before it writes the policy:
+// otherwise a TRUNCATE of the renamed table runs alongside it, misses the
+// uncommitted policy, and leaves the policy bound to the dropped table ID.
+func TestMaskingPolicyRenamedTargetSerializesWithTruncate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		base string // creates the policy the statement operates on
+		sql  string
+		want string // select result after the TRUNCATE and a new insert
+	}{
+		{"create", "", "create masking policy p on t(c) as mask_full(c)", "XXXXXX"},
+		{"enable", "create masking policy p on t(c) as mask_full(c) disable", "alter table t enable masking policy p", "XXXXXX"},
+		{"drop", "create masking policy p on t(c) as mask_full(c)", "alter table t drop masking policy p", "secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t(c varchar(20))")
+			if tc.base != "" {
+				tk.MustExec(tc.base)
+			}
+			policyTK, truncateTK := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+			policyTK.MustExec("use test")
+			truncateTK.MustExec("use test")
+
+			prepared, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			pause := func() { once.Do(func() { close(prepared); <-release }) }
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyCreate", pause)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyAlter", func(ast.AlterTableType) { pause() })
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitMaskingPolicyDrop", pause)
+
+			// While the policy job is about to commit the policy, submit a
+			// TRUNCATE of the renamed table and see whether it gets scheduled.
+			var policyStepRunning, truncateOverlapped atomic.Bool
+			truncateDelivered := make(chan struct{}, 1)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+				if job.Type == model.ActionTruncateTable {
+					truncateOverlapped.Store(policyStepRunning.Load())
+					truncateDelivered <- struct{}{}
+				}
+			})
+			truncateDone := make(chan error, 1)
+			var startTruncate sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+				switch job.Type {
+				case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+				default:
+					return
+				}
+				if !job.IsDone() {
+					return
+				}
+				startTruncate.Do(func() {
+					policyStepRunning.Store(true)
+					go func() { truncateDone <- truncateTK.ExecToErr("truncate table u") }()
+					select {
+					case <-truncateDelivered:
+					case <-time.After(time.Second):
+					}
+					policyStepRunning.Store(false)
+				})
+			})
+
+			policyDone := make(chan error, 1)
+			go func() { policyDone <- policyTK.ExecToErr(tc.sql) }()
+			<-prepared
+			tk.MustExec("rename table t to u")
+			close(release)
+			require.NoError(t, <-policyDone)
+			require.NoError(t, <-truncateDone)
+
+			tableID := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema='test' and table_name='u'").Rows()[0][0]
+			policies := tk.MustQuery("select table_id, table_name from mysql.tidb_masking_policy where policy_name='p'")
+			if tc.name == "drop" {
+				policies.Check(testkit.Rows())
+			} else {
+				policies.Check(testkit.Rows(fmt.Sprintf("%v u", tableID)))
+			}
+			tk.MustExec("insert into u values ('secret')")
+			tk.MustQuery("select c from u").Check(testkit.Rows(tc.want))
+			require.False(t, truncateOverlapped.Load(), "TRUNCATE ran while the policy job wrote the policy of its table")
+		})
+	}
+}
+
 func TestMaskingPolicyConcurrentColumnShapeChange(t *testing.T) {
 	for _, tc := range []struct{ oldType, newType string }{
 		{"double", "bigint"}, {"varchar(20)", "varchar(30)"}, {"decimal(10,2)", "decimal(12,3)"},

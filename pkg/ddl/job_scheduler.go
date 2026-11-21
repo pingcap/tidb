@@ -21,6 +21,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -522,6 +523,14 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.Job
 				case <-time.After(500 * time.Millisecond):
 					continue
 				}
+			}
+			if !slices.Equal(jobW.GetInvolvingSchemaInfo(), involvedSchemaInfos) {
+				// The job changed the objects it involves, for example a masking
+				// policy job whose table was renamed. Give it back to the
+				// scheduler to check its dependencies on the new objects.
+				logutil.DDLLogger().Info("job involves other schema objects now, reschedule it",
+					zap.Int64("job_id", jobID))
+				return
 			}
 		}
 	})
