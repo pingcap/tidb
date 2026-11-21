@@ -246,6 +246,13 @@ type TxnCtxNoNeedToRestore struct {
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
 
+	// RedactDiagnostics marks that a statement of the transaction reads a
+	// column that a masking policy masks for the session. The diagnostics of
+	// its later statements are redacted too: COMMIT and other statements may
+	// report an error about the rows it has read and written, such as that of
+	// a unique key check deferred to them.
+	RedactDiagnostics bool
+
 	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
 	// It is merged into `pessimisticLockCache` after a statement finishes.
 	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback

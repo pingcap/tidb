@@ -2039,6 +2039,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if sessVars.TxnCtx.RedactDiagnostics {
+		sessVars.StmtCtx.SetRedactDiagnostics()
+	}
 	s.rebindDroppedResourceGroup(ctx)
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
@@ -2116,6 +2119,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	if sessVars.StmtCtx.RedactDiagnostics {
+		// Mark the transaction before the statement may end it.
+		sessVars.TxnCtx.RedactDiagnostics = true
+	}
 	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {

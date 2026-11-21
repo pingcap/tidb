@@ -350,3 +350,50 @@ func TestMaskingPolicyDiagnosticsUnclassified(t *testing.T) {
 		require.NotEmpty(t, maskingDiagnostics(reader, sql), sql)
 	}
 }
+
+// TestMaskingPolicyDiagnosticsCommit tests that the diagnostics of a
+// transaction that read a masked column stay redacted until it ends, as a
+// later statement such as COMMIT may report an error about the rows it read.
+func TestMaskingPolicyDiagnosticsCommit(t *testing.T) {
+	root, user := prepareMaskingDiagnostics(t)
+	root.MustExec("create table tu(id int primary key, c varchar(20), k int, unique key uk(c, k))")
+	root.MustExec("insert into tu values (1, 'secret', 0), (2, 'secret', 1)")
+	root.MustExec("create masking policy pu on tu(c) as case when current_user() = 'root@%' then c else mask_full(c) end" +
+		" restrict on (insert_into_select, update_select, delete_select, ctas) enable")
+	root.MustExec("grant create on test.* to u1")
+	for _, tk := range []*testkit.TestKit{user, root} {
+		tk.MustExec("set session tidb_constraint_check_in_place_pessimistic = off")
+	}
+	run := func(tk *testkit.TestKit, end string) []string {
+		require.Empty(t, maskingDiagnostics(tk, "begin pessimistic"))
+		// Only the unprotected component of the unique key is assigned, and
+		// the duplicate is found when the transaction commits.
+		require.Empty(t, maskingDiagnostics(tk, "update tu set k = 1 where id + 0 = 1"))
+		// The other statements of the transaction are redacted for the session.
+		value := map[*testkit.TestKit]string{user: "?", root: "plain"}[tk]
+		require.Equal(t, []string{truncatedWarning(value)}, maskingDiagnostics(tk, "select 1 from plain where cast(b as signed) > 0"))
+		return maskingDiagnostics(tk, end)
+	}
+	for _, end := range []string{"commit", "begin", "create table tu2(a int)"} {
+		root.MustExec("set session tidb_txn_assertion_level = off")
+		user.MustExec("set session tidb_txn_assertion_level = off")
+		require.Equal(t, []string{"Error 1062 (23000): Duplicate entry '?' for key 'tu.uk'"}, run(user, end), end)
+		require.Equal(t, []string{"Error 1062 (23000): Duplicate entry 'secret-1' for key 'tu.uk'"}, run(root, end), end)
+		user.MustExec("rollback")
+		root.MustExec("rollback")
+	}
+	// The assertion on the new index key fails first, and it reports the key.
+	user.MustExec("set session tidb_txn_assertion_level = default")
+	diags := run(user, "commit")
+	require.Len(t, diags, 1)
+	require.Contains(t, diags[0], "Error 8141 (HY000): assertion failed: key: ?,")
+	require.NotContains(t, diags[0], "736563726574")
+
+	// The next transaction starts without redaction.
+	require.Equal(t, []string{truncatedWarning("plain")}, maskingDiagnostics(user, "select 1 from plain where cast(b as signed) > 0"))
+	user.MustQuery("select k from tu where id = 1").Check(testkit.Rows("0"))
+}
+
+func truncatedWarning(value string) string {
+	return fmt.Sprintf("Warning 1292 (22007): Truncated incorrect INTEGER value: '%s'", value)
+}
