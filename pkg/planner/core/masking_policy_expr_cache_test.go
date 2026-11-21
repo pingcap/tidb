@@ -154,3 +154,29 @@ func TestMaskingPolicyPointGetMemoryUsage(t *testing.T) {
 	batchPointGet.MaskingExprs = exprs
 	require.Equal(t, base+expected, batchPointGet.MemoryUsage())
 }
+
+func TestHasNewColumnID(t *testing.T) {
+	col := func(id int64, state model.SchemaState) *model.ColumnInfo {
+		return &model.ColumnInfo{ID: id, State: state}
+	}
+	pub := model.StatePublic
+	tbl := func(ts uint64, maxID int64, cols ...*model.ColumnInfo) *model.TableInfo {
+		return &model.TableInfo{ID: 1, Columns: cols, MaxColumnID: maxID, UpdateTS: ts}
+	}
+	old := tbl(1, 3, col(1, pub), col(2, pub), col(3, pub))
+	require.False(t, hasNewColumnID(old, old))
+	// The same version of the table, even in another object.
+	require.False(t, hasNewColumnID(old, tbl(1, 3, col(1, pub), col(2, pub), col(3, pub))))
+	// A dropped column, or a column added and dropped again, brings no new ID.
+	require.False(t, hasNewColumnID(old, tbl(2, 4, col(1, pub), col(3, pub))))
+	// An online MODIFY COLUMN: the changing column takes ID 4 before it is
+	// public, and replaces column 2 when it becomes public. Both versions have
+	// the same MaxColumnID.
+	changing := tbl(2, 4, col(1, pub), col(2, pub), col(3, pub), col(4, model.StateWriteReorganization))
+	public := tbl(3, 4, col(1, pub), col(4, pub), col(3, pub))
+	require.False(t, hasNewColumnID(old, changing))
+	require.True(t, hasNewColumnID(old, public))
+	require.True(t, hasNewColumnID(changing, public))
+	// A new public column.
+	require.True(t, hasNewColumnID(old, tbl(4, 5, col(1, pub), col(2, pub), col(3, pub), col(5, pub))))
+}

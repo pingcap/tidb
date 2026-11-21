@@ -3102,3 +3102,85 @@ func TestMaskingPolicyMDLReplacementExprCache(t *testing.T) {
 	reader.MustExec("rollback")
 	reader.MustQuery("select c from mdl_cache_nt where id+0=1").Check(testkit.Rows("XXXXXX"))
 }
+
+func TestMaskingPolicyMDLColumnIDReplacement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("use test")
+	root.MustExec("create table mdl_col(id int primary key, c decimal(10,2))")
+	root.MustExec("create table mdl_col_dst(c decimal(10,2))")
+	root.MustExec("insert into mdl_col values(1, 123.45)")
+	root.MustExec("create masking policy p on mdl_col(c) as mask_full(c) restrict on (insert_into_select)")
+	root.MustExec("create user mdl_col_reader")
+	root.MustExec("grant select on test.mdl_col to mdl_col_reader")
+	root.MustExec("grant select, insert on test.mdl_col_dst to mdl_col_reader")
+	newReader := func(t *testing.T) *testkit.TestKit {
+		reader := testkit.NewTestKit(t, store)
+		require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "mdl_col_reader", Hostname: "%"}, nil, nil, nil))
+		reader.MustExec("use test")
+		reader.MustExec("set tidb_enable_non_prepared_plan_cache = off")
+		reader.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+		reader.MustExec("set @id = 1")
+		t.Cleanup(func() { reader.MustExec("rollback") })
+		return reader
+	}
+	// A fresh session reads the column under its new ID with the moved policy.
+	expected := func() *testkit.Result {
+		reader := newReader(t)
+		return reader.MustQuery("select c from mdl_col where id+0=1")
+	}
+	unsigned := false
+	for _, tc := range []struct {
+		name string
+		run  func(reader *testkit.TestKit, masked [][]any)
+	}{
+		{"scan", func(reader *testkit.TestKit, masked [][]any) {
+			reader.MustQuery("select c from mdl_col where id+0=1").Check(masked)
+		}},
+		{"point get", func(reader *testkit.TestKit, masked [][]any) {
+			reader.MustQuery("select c from mdl_col where id=1").Check(masked)
+		}},
+		{"plan cache", func(reader *testkit.TestKit, masked [][]any) {
+			for range 3 {
+				reader.MustQuery("execute st_scan using @id").Check(masked)
+				reader.MustQuery("execute st_point using @id").Check(masked)
+			}
+		}},
+		{"restrict", func(reader *testkit.TestKit, _ [][]any) {
+			reader.MustGetErrCode("insert into mdl_col_dst select c from mdl_col", errno.ErrAccessDeniedToMaskedColumn)
+		}},
+		{"show", func(reader *testkit.TestKit, _ [][]any) {
+			reader.MustQuery("select c from mdl_col where id+0=1")
+			reader.MustQuery("show masking policies for mdl_col").Check(root.MustQuery("show masking policies for mdl_col").Rows())
+			reader.MustQuery("show create table mdl_col").Check(root.MustQuery("show create table mdl_col").Rows())
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := newReader(t)
+			reader.MustExec("prepare st_scan from 'select c from mdl_col where id>=? and id<2'")
+			reader.MustExec("prepare st_point from 'select c from mdl_col where id=?'")
+			// Warm the policy, expression and plan caches before the column is replaced.
+			reader.MustQuery("select c from mdl_col where id+0=1").Check(testkit.Rows("0"))
+			for range 2 {
+				reader.MustQuery("execute st_scan using @id").Check(testkit.Rows("0"))
+				reader.MustQuery("execute st_point using @id").Check(testkit.Rows("0"))
+			}
+			reader.MustExec("begin pessimistic")
+			// A same-precision signedness change replaces the column ID but keeps
+			// the table ID.
+			if unsigned {
+				root.MustExec("alter table mdl_col modify column c decimal(10,2)")
+			} else {
+				root.MustExec("alter table mdl_col modify column c decimal(10,2) unsigned")
+			}
+			unsigned = !unsigned
+			masked := expected().Rows()
+			require.NotEqual(t, testkit.Rows("123.45"), masked)
+			// The first read in the transaction takes the replaced column.
+			tc.run(reader, masked)
+			reader.MustQuery("select c from mdl_col where id+0=1").Check(masked)
+			reader.MustExec("rollback")
+			root.MustQuery("select count(*) from mdl_col_dst").Check(testkit.Rows("0"))
+		})
+	}
+}

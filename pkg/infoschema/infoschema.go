@@ -938,9 +938,10 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 }
 
 // SetMaskingPolicySchema records that the table in MdlTables with ID tableID
-// was taken from src, while InfoSchema has it under oldID, as after TRUNCATE
-// TABLE or EXCHANGE PARTITION. The DDL moved the masking policies of the
-// table to tableID, so only src has them.
+// was taken from src, while InfoSchema has it under oldID, which may be the
+// same ID, as after TRUNCATE TABLE, EXCHANGE PARTITION or a MODIFY COLUMN that
+// replaces the column ID. The DDL moved the masking policies of the table to
+// the new IDs, so only src has them.
 func (ts *SessionExtendedInfoSchema) SetMaskingPolicySchema(oldID, tableID int64, src InfoSchema) {
 	if ts.mdlPolicySchemas == nil {
 		ts.mdlPolicySchemas = make(map[int64]mdlPolicySchema)
