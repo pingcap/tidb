@@ -273,6 +273,18 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 		}
 	}
 
+	// Disambiguate `EXPLAIN EXECUTE <stmt>` from `EXPLAIN <table> <column>` when
+	// `EXECUTE` immediately follows `EXPLAIN`/`DESCRIBE`/`DESC` and is followed by
+	// an argument rather than end-of-statement or `.` (e.g. `EXPLAIN execute;` or
+	// `EXPLAIN execute.col;` still describes the table named `execute`).
+	if tok == execute && (s.lastKeyword2 == explain || s.lastKeyword2 == describe || s.lastKeyword2 == desc) {
+		nextTok := s.getNextToken()
+		if nextTok != 0 && nextTok != ';' && nextTok != '.' && nextTok != ',' && nextTok != ')' {
+			tok = explainExecute
+			s.lastKeyword = explainExecute
+		}
+	}
+
 	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
