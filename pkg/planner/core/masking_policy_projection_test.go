@@ -1016,6 +1016,78 @@ func TestMaskingPolicyPredicateCTEFallbackKeepsSeedSchema(t *testing.T) {
 	tk.MustQuery("with x as (select c from t_cte_seed) select c from x where 'XXXXXX' in (select c from x)").Check(testkit.Rows("XXXXXX"))
 }
 
+func TestMaskingPolicyRepeatedCTEReferencesTraceOnce(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cte_chain(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_cte_chain values (1, 'secret')")
+	tk.MustExec("create masking policy p on t_cte_chain(c) as mask_full(c) enable")
+	// Each CTE references its predecessor twice, so every definition is
+	// materialized and shared by two consumers. Its lineage is traced once,
+	// not once per path to it.
+	const depth = 12
+	var sb strings.Builder
+	sb.WriteString("with c0 as (select c, concat(c, '!') d, id from t_cte_chain)")
+	for i := 1; i <= depth; i++ {
+		fmt.Fprintf(&sb, ", c%d as (select c, d, id from c%d union select c, d, id from c%d)", i, i-1, i-1)
+	}
+	with := sb.String()
+	visits := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/planner/core/maskingTraceColumn", func() { visits++ })
+	for _, tc := range []struct {
+		sql  string
+		rows []string
+	}{
+		{fmt.Sprintf("select c from c%d", depth), []string{"XXXXXX"}},
+		{fmt.Sprintf("select 1 from c%d where 'XXXXXX' in (select c from c%d)", depth, depth), []string{"1"}},
+		{fmt.Sprintf("select 1 from c%d where 'XXXXXXX' in (select d from c%d)", depth, depth), []string{"1"}},
+		{fmt.Sprintf("select c from c%d where 'secret!' in (select concat(c, '!') from c%d)", depth, depth), []string{}},
+		{fmt.Sprintf("select c from c%d where 'secret!' in (select d from c%d)", depth, depth), []string{}},
+		{fmt.Sprintf("select c from c%d where 1 in (select id from c%d)", depth, depth), []string{"XXXXXX"}},
+	} {
+		visits = 0
+		rows := make([][]any, 0, len(tc.rows))
+		for _, r := range tc.rows {
+			rows = append(rows, []any{r})
+		}
+		tk.MustQuery(with + " " + tc.sql).Check(rows)
+		require.Less(t, visits, 40*depth, tc.sql)
+	}
+	visits = 0
+	require.ErrorContains(t, tk.ExecToErr(fmt.Sprintf("%s select d from c%d", with, depth)), "masking policy cannot be preserved")
+	require.Less(t, visits, 40*depth)
+}
+
+func TestMaskingPolicyCTEConsumersBindOwnColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_force_inline_cte=0")
+	tk.MustExec("create table t_cte_bind(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_cte_bind values (1, 'secret'), (2, 'public')")
+	tk.MustExec("create masking policy p on t_cte_bind(c) as mask_full(c) enable")
+	// The lineage of a CTE column is shared by its consumers, but each
+	// consumer applies it to its own output column.
+	with := "with x as (select id, c, concat(c, '!') d from t_cte_bind) "
+	sql := with + "select a.id, a.c, b.c from x a left join x b on b.id = a.id + 1 order by a.id"
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain format='brief' "+sql).Rows()), "CTE")
+	tk.MustQuery(sql).Check(testkit.Rows("1 XXXXXX XXXXXX", "2 XXXXXX <nil>"))
+	tk.MustQuery(with + "select b.c, a.id from x a join x b on b.id = 3 - a.id order by a.id").Check(testkit.Rows("XXXXXX 1", "XXXXXX 2"))
+	// A derived column cannot be preserved. Its trace exposes raw inputs on the
+	// shared definition only temporarily: every consumer, before and after it,
+	// still reads the definition's columns and masks its protected one.
+	for _, union := range []string{"union distinct", "union all"} {
+		recursive := "with recursive r(id, d) as (select id, concat(c, '!') from t_cte_bind " + union + " select id, d from r where false) "
+		tk.MustQuery(recursive + "select a.id, b.id from r a join r b on a.id = b.id where 'secret!' in (select d from r) and 'public!' in (select d from r) order by a.id").
+			Check(testkit.Rows("1 1", "2 2"))
+	}
+	tk.MustQuery(with + "select a.c, b.id from x a join x b on a.id = b.id where 'secret!' in (select d from x) " +
+		"and 'XXXXXX' in (select c from x) and 'public!' = any (select d from x) order by b.id").Check(testkit.Rows("XXXXXX 1", "XXXXXX 2"))
+	require.ErrorContains(t, tk.ExecToErr(with+"select a.d, b.c from x a, x b"), "masking policy cannot be preserved through materialized CTE")
+	tk.MustQuery(with + "select a.c, b.c from x a, x b where a.id = 1 and b.id = 2 and 'secret!' in (select d from x)").Check(testkit.Rows("XXXXXX XXXXXX"))
+}
+
 func TestMaskingPolicyUsingNaturalJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

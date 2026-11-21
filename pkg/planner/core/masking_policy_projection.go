@@ -19,6 +19,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -43,6 +44,25 @@ type maskingResultKey struct {
 	columnID int64
 }
 
+// maskingCTEKey identifies an output column of a CTE definition.
+type maskingCTEKey struct {
+	cte *logicalop.CTEClass
+	idx int
+}
+
+// maskingCTEResult is the result of a CTE definition's output column, in
+// terms of its seed column, or the reason it cannot be preserved.
+type maskingCTEResult struct {
+	err    error
+	result maskingResult
+}
+
+type maskingPolicySource struct {
+	policy  *model.MaskingPolicyInfo
+	tblInfo *model.TableInfo
+	colInfo *model.ColumnInfo
+}
+
 type maskingProjectionBuildContext struct{ expression.BuildContext }
 
 func (maskingProjectionBuildContext) SkipNotNullFolding() bool { return true }
@@ -54,6 +74,10 @@ type maskingResultBuilder struct {
 	rootPlan    base.LogicalPlan
 	cache       map[maskingResultKey]maskingResult
 	joinMatches map[int]*expression.Column
+	// cteResults and ctePolicies hold the lineage of a CTE definition's output
+	// columns, which all consumers of the definition share.
+	cteResults  map[maskingCTEKey]maskingCTEResult
+	ctePolicies map[maskingCTEKey]maskingPolicySource
 	// predicate is set when the result is only compared by an outer predicate.
 	predicate bool
 }
@@ -220,6 +244,7 @@ func (m *maskingResultBuilder) column(p base.LogicalPlan, col *expression.Column
 }
 
 func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
+	failpoint.InjectCall("maskingTraceColumn")
 	plain := maskingResult{expr: col}
 	idx := p.Schema().ColumnIndex(col)
 	if idx < 0 {
@@ -673,6 +698,7 @@ func (m *maskingResultBuilder) predicateUnion(p *logicalop.LogicalUnionAll, idx 
 // predicatePolicySource returns the first enabled policy of a table column
 // that col is computed from by row-level expressions.
 func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	failpoint.InjectCall("maskingTraceColumn")
 	idx := p.Schema().ColumnIndex(col)
 	if idx < 0 {
 		// USING/NATURAL joins retain table-qualified common columns only in
@@ -728,7 +754,18 @@ func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *ex
 		if idx >= seed.Schema().Len() {
 			return nil, nil, nil, nil
 		}
-		return m.predicatePolicySource(seed, seed.Schema().Columns[idx])
+		key := maskingCTEKey{cte: x.Cte, idx: idx}
+		if source, ok := m.ctePolicies[key]; ok {
+			return source.policy, source.tblInfo, source.colInfo, nil
+		}
+		policy, tblInfo, colInfo, err := m.predicatePolicySource(seed, seed.Schema().Columns[idx])
+		if err == nil {
+			if m.ctePolicies == nil {
+				m.ctePolicies = make(map[maskingCTEKey]maskingPolicySource)
+			}
+			m.ctePolicies[key] = maskingPolicySource{policy: policy, tblInfo: tblInfo, colInfo: colInfo}
+		}
+		return policy, tblInfo, colInfo, err
 	default:
 		inputs = []*expression.Column{col}
 	}
@@ -756,33 +793,29 @@ func (m *maskingResultBuilder) predicatePolicySourceFromChildren(p base.LogicalP
 }
 
 func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingResult, error) {
-	// The seed and recursive parts are shared by every consumer of the CTE and
-	// must keep its columns. Tracing them may expose raw inputs on their plans,
-	// so they are restored whatever the outcome; a result that is preserved
-	// depends only on the consumer's column.
-	defer m.snapshotPlans(p.Cte.SeedPartLogicalPlan, p.Cte.RecursivePartLogicalPlan).restore(m)
+	key := maskingCTEKey{cte: p.Cte, idx: idx}
+	traced, ok := m.cteResults[key]
+	if !ok {
+		traced = m.traceCTE(p.Cte, idx)
+		if traced.err != nil && !isMaskingNotPreservedErr(traced.err) {
+			return maskingResult{}, traced.err
+		}
+		if m.cteResults == nil {
+			m.cteResults = make(map[maskingCTEKey]maskingCTEResult)
+		}
+		m.cteResults[key] = traced
+	}
+	// Bind the definition's result to the output column of this consumer.
 	col := p.Schema().Columns[idx]
-	seed := p.Cte.SeedPartLogicalPlan
-	input := seed.Schema().Columns[idx]
-	result, err := m.column(seed, input)
-	if err != nil {
-		return result, err
+	if traced.err != nil {
+		return maskingResult{expr: col}, traced.err
 	}
-	if recursive := p.Cte.RecursivePartLogicalPlan; recursive != nil {
-		branch, err := m.column(recursive, recursive.Schema().Columns[idx])
-		if err != nil {
-			return result, err
-		}
-		if result.masked || branch.masked {
-			return result, &maskingNotPreservedError{shape: "recursive CTE"}
-		}
-	}
+	result := traced.result
 	if !result.masked {
 		return maskingResult{expr: col}, nil
 	}
-	if result.policyID == 0 {
-		return result, &maskingNotPreservedError{shape: "materialized CTE"}
-	}
+	input := p.Cte.SeedPartLogicalPlan.Schema().Columns[idx]
+	var err error
 	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
 	if err != nil {
 		return result, err
@@ -793,6 +826,34 @@ func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingRes
 		}
 	}
 	return result, nil
+}
+
+// traceCTE returns the result of an output column of a CTE definition in terms
+// of its seed column.
+func (m *maskingResultBuilder) traceCTE(cte *logicalop.CTEClass, idx int) maskingCTEResult {
+	// The seed and recursive parts are shared by every consumer of the CTE and
+	// must keep its columns. Tracing them may expose raw inputs on their plans,
+	// so they are restored whatever the outcome; a result that is preserved
+	// depends only on the seed column.
+	defer m.snapshotPlans(cte.SeedPartLogicalPlan, cte.RecursivePartLogicalPlan).restore(m)
+	seed := cte.SeedPartLogicalPlan
+	result, err := m.column(seed, seed.Schema().Columns[idx])
+	if err != nil {
+		return maskingCTEResult{err: err}
+	}
+	if recursive := cte.RecursivePartLogicalPlan; recursive != nil {
+		branch, err := m.column(recursive, recursive.Schema().Columns[idx])
+		if err != nil {
+			return maskingCTEResult{err: err}
+		}
+		if result.masked || branch.masked {
+			return maskingCTEResult{err: &maskingNotPreservedError{shape: "recursive CTE"}}
+		}
+	}
+	if result.masked && result.policyID == 0 {
+		return maskingCTEResult{err: &maskingNotPreservedError{shape: "materialized CTE"}}
+	}
+	return maskingCTEResult{result: result}
 }
 
 // maskingPlanState is the part of a plan that tracing may change.
@@ -808,8 +869,8 @@ type maskingPlanState struct {
 
 type maskingPlanSnapshot []maskingPlanState
 
-// snapshotPlans records the plans reachable from roots, including the parts
-// of nested CTEs.
+// snapshotPlans records the plans reachable from roots. The parts of a nested
+// CTE are restored by the trace of that CTE itself.
 func (*maskingResultBuilder) snapshotPlans(roots ...base.LogicalPlan) maskingPlanSnapshot {
 	var snapshot maskingPlanSnapshot
 	visited := make(map[int]struct{})
@@ -834,9 +895,6 @@ func (*maskingResultBuilder) snapshotPlans(roots ...base.LogicalPlan) maskingPla
 			state.exprs = slices.Clone(x.Exprs)
 		case *logicalop.LogicalAggregation:
 			state.aggFuncs = slices.Clone(x.AggFuncs)
-		case *logicalop.LogicalCTE:
-			walk(x.Cte.SeedPartLogicalPlan)
-			walk(x.Cte.RecursivePartLogicalPlan)
 		}
 		snapshot = append(snapshot, state)
 		for _, child := range p.Children() {
@@ -849,13 +907,35 @@ func (*maskingResultBuilder) snapshotPlans(roots ...base.LogicalPlan) maskingPla
 	return snapshot
 }
 
-// restore undoes the changes of tracing and drops the results that may refer
-// to raw inputs it exposed.
+// changed reports whether tracing changed the plan. Tracing only adds
+// expressions, columns and children, or replaces the schema.
+func (s *maskingPlanState) changed() bool {
+	p := s.plan
+	if p.Schema() != s.schema || p.Schema().Len() != len(s.columns) || len(p.OutputNames()) != len(s.names) ||
+		!slices.Equal(p.Children(), s.children) {
+		return true
+	}
+	switch x := p.(type) {
+	case *logicalop.LogicalProjection:
+		return len(x.Exprs) != len(s.exprs)
+	case *logicalop.LogicalAggregation:
+		return len(x.AggFuncs) != len(s.aggFuncs)
+	}
+	return false
+}
+
+// restore undoes the changes of tracing. A result refers only to the output
+// columns of its plan, so it remains valid unless it refers to a raw input
+// that tracing exposed on that plan.
 func (s maskingPlanSnapshot) restore(m *maskingResultBuilder) {
-	ids := make(map[int]struct{}, len(s))
-	for _, state := range s {
+	changed := false
+	for i := range s {
+		state := &s[i]
+		if !state.changed() {
+			continue
+		}
+		changed = true
 		p := state.plan
-		ids[p.ID()] = struct{}{}
 		state.schema.Columns = state.columns
 		if x, ok := p.(interface{ SetSchema(*expression.Schema) }); ok {
 			x.SetSchema(state.schema)
@@ -870,9 +950,23 @@ func (s maskingPlanSnapshot) restore(m *maskingResultBuilder) {
 		}
 		delete(m.joinMatches, p.ID())
 	}
-	for key := range m.cache {
-		if _, ok := ids[key.planID]; ok {
-			delete(m.cache, key)
+	if !changed {
+		return
+	}
+	schemas := make(map[int]*expression.Schema, len(s))
+	for _, state := range s {
+		schemas[state.plan.ID()] = state.schema
+	}
+	for key, result := range m.cache {
+		schema, ok := schemas[key.planID]
+		if !ok {
+			continue
+		}
+		for _, dep := range expression.ExtractColumns(result.expr) {
+			if !schema.Contains(dep) {
+				delete(m.cache, key)
+				break
+			}
 		}
 	}
 }
