@@ -233,3 +233,86 @@ fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
     assert!(plan[2][4].contains("funcs:count(test.avg_revenue.price)"), "{plan:?}");
     assert!(plan[2][4].contains("funcs:sum(test.avg_revenue.price)"), "{plan:?}");
 }
+
+fn operators(plan: &[Vec<String>]) -> Vec<&str> {
+    plan.iter().map(|row| row[0].as_str()).collect()
+}
+
+fn tasks(plan: &[Vec<String>]) -> Vec<&str> {
+    plan.iter().map(|row| row[2].as_str()).collect()
+}
+
+/// A global SUM of an expression over a range is a cop partial and a root
+/// final StreamAgg.
+#[test]
+fn global_sum_expression_uses_partial_and_final_stream_agg() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 480);
+    rows(&mut tk, "CREATE TABLE revenue (id INT PRIMARY KEY, price DECIMAL(10,2), discount DECIMAL(4,2), k INT)");
+    rows(&mut tk, "INSERT INTO revenue VALUES (1,100.00,0.05,1),(2,200.00,0.10,2),(3,300.00,0.20,4)");
+    let sql = "SELECT SUM(price * discount) FROM revenue WHERE k >= 1 AND k <= 3";
+    assert_eq!(displayed(rows(&mut tk, sql)), [["25.0000"]]);
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(
+        operators(&plan),
+        ["StreamAgg", "└─TableReader", "  └─StreamAgg", "    └─Selection", "      └─TableFullScan"]
+    );
+    assert_eq!(tasks(&plan), ["root", "root", "cop[tikv]", "cop[tikv]", "cop[tikv]"]);
+    assert!(plan[0][4].starts_with("funcs:sum(Column#"), "{plan:?}");
+    assert!(plan[2][4].contains("sum(mul(test.revenue.price, test.revenue.discount))"), "{plan:?}");
+}
+
+/// A single integer SUM over a join uses Go's serial root StreamAgg with
+/// SUM's decimal input projection when both hash-agg concurrencies are 1.
+#[test]
+fn joined_integer_sum_uses_root_stream_agg() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 481);
+    rows(&mut tk, "SET tidb_hashagg_partial_concurrency = 1");
+    rows(&mut tk, "SET tidb_hashagg_final_concurrency = 1");
+    rows(&mut tk, "CREATE TABLE sum_orders (id INT PRIMARY KEY, customer_id INT, quantity INT)");
+    rows(&mut tk, "CREATE TABLE sum_customers (id INT PRIMARY KEY)");
+    rows(&mut tk, "INSERT INTO sum_orders VALUES (1,10,7),(2,20,11),(3,30,13)");
+    rows(&mut tk, "INSERT INTO sum_customers VALUES (10),(20),(30)");
+    let sql = "SELECT SUM(o.quantity) FROM sum_orders o JOIN sum_customers c ON o.customer_id = c.id";
+    assert_eq!(displayed(rows(&mut tk, sql)), [["31"]]);
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(plan[0][0], "StreamAgg", "{plan:?}");
+    assert!(
+        plan.iter().any(|row| row[0].trim_start_matches(&[' ', '│', '├', '└', '─'][..]) == "Projection"),
+        "{plan:?}"
+    );
+}
+
+/// A global integer SUM over a handle range: partial StreamAgg in the cop
+/// task, final StreamAgg at the root, the answer a DECIMAL.
+#[test]
+fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 482);
+    rows(&mut tk, "CREATE TABLE sum_range (id INT PRIMARY KEY, k INT NOT NULL)");
+    rows(&mut tk, "INSERT INTO sum_range VALUES (1, 10), (2, 20)");
+    let sql = "SELECT SUM(k) FROM sum_range WHERE id BETWEEN 1 AND 100";
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(operators(&plan), ["StreamAgg", "└─TableReader", "  └─StreamAgg", "    └─TableRangeScan"]);
+    assert_eq!(tasks(&plan), ["root", "root", "cop[tikv]", "cop[tikv]"]);
+    assert!(plan[0][4].starts_with("funcs:sum(Column#"), "{plan:?}");
+    assert!(plan[2][4].contains("funcs:sum(test.sum_range.k)->Column#"), "{plan:?}");
+    assert_eq!(displayed(rows(&mut tk, sql)), [["30"]]);
+}
+
+/// A global COUNT over a primary-key equality is a StreamAgg over Point_Get
+/// with no Selection left.
+#[test]
+fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 483);
+    rows(
+        &mut tk,
+        "CREATE TABLE point_count (id INT NOT NULL AUTO_INCREMENT, k INT NOT NULL DEFAULT 0, c CHAR(120) NOT NULL DEFAULT '', pad CHAR(60) NOT NULL DEFAULT '', PRIMARY KEY (id) CLUSTERED, KEY k_1 (k))",
+    );
+    rows(&mut tk, "INSERT INTO point_count VALUES (1, 10, 'one', 'pad'), (2, 20, 'two', 'pad')");
+    let sql = "SELECT COUNT(*) FROM point_count WHERE id = 1";
+    assert_eq!(operators(&explain_brief(&mut tk, sql)), ["StreamAgg", "└─Point_Get"]);
+    assert_eq!(displayed(rows(&mut tk, sql)), [["1"]]);
+}
