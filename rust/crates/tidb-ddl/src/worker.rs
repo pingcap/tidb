@@ -2795,43 +2795,27 @@ mod schema_sync_tests {
                 .any(|db| db.read().id == 601)
         );
 
+        // The stored GLOBAL value the worker's `loadGlobalVars` reads, written
+        // by a statement on a pool session.
+        let limit_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool> =
+            tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+                (*opener).clone(), Duration::from_secs(20),
+                Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()), true,
+                Duration::from_millis(500),
+            ).unwrap();
         let set_limit = |limit: i64| {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            let mut vars =
-                tidb_syssession::cluster_sysvar_load::load_cluster_sysvars(&mut snapshot, &catalog)
-                    .unwrap()
-                    .into_iter()
-                    .collect::<std::collections::BTreeMap<_, _>>();
-            vars.insert("tidb_ddl_error_count_limit".into(), limit.to_string());
-            let plan = tidb_syssession::cluster_sysvar_write::plan_sysvar_write(
-                &mut snapshot,
-                &catalog,
-                &vars,
-                tidb_datatype::Time::from_date_checked(
-                    2026,
-                    10,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    tidb_datatype::TimeType::Timestamp,
-                    0,
+            let limit = limit.to_string();
+            limit_pool
+                // The bootstrap stored every GLOBAL variable's row; updating it
+                // in place takes no `_tidb_rowid` from this pool's allocator.
+                .exec_restricted_sql_with(
+                    "UPDATE HIGH_PRIORITY mysql.global_variables SET variable_value = %? WHERE variable_name = %?",
+                    &[
+                        tidb_sqlescape::SqlArg::String(limit.as_bytes()),
+                        tidb_sqlescape::SqlArg::String(b"tidb_ddl_error_count_limit"),
+                    ],
                 )
-                .unwrap(),
-                &mut |_, _, minimum, _| Ok(minimum + 1),
-            )
-            .unwrap();
-            assert!(matches!(
-                tx.commit(
-                    plan.mutations,
-                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-                )
-                .unwrap(),
-                OptimisticCommitOutcome::Committed(_)
-            ));
+                .unwrap();
         };
         set_limit(1);
         let mut failed = Job::default();

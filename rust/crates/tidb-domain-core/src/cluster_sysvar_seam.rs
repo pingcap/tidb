@@ -325,8 +325,8 @@ pub fn notify_sysvar_update(notifier: Option<&EtcdClient>, _changed: &[String]) 
 /// Go source of truth: `pkg/domain/domain.go`'s `LoadSysVarCacheLoop`, which
 /// selects between its own 30-second ticker and a `/tidb/sysvars` etcd watch
 /// -- this is [`crate::cluster_privileges::PrivilegeReloader`]'s same
-/// tick-plus-nudge shape, aimed at [`load_cluster_sysvars`] and
-/// [`GlobalSysvars::replace_from`] instead of the account registry. Without
+/// tick-plus-nudge shape, aimed at Go's `rebuildSysVarCache` (the
+/// [`fetch_table_values`] statement) instead of the account registry. Without
 /// this, a `SET GLOBAL` a Go peer runs is durable in `mysql.global_variables`
 /// the instant it commits but invisible to THIS node until it restarts; with
 /// it, the node notices within one tick (or one round trip, if its own etcd
