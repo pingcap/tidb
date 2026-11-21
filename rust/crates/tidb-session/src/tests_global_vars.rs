@@ -82,6 +82,35 @@ fn ddl_error_count_limit_publishes_set_load_and_reset() {
     );
 }
 
+/// Go `TiDBEnableGCAwareMemoryTrack`: `SetGlobal` stores
+/// `memory.EnableGCAwareMemoryTrack` and `GetGlobal` answers it, not the
+/// stored row.
+#[test]
+fn gc_aware_memory_track_global_hooks_set_and_read_the_process_switch() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _serialised = process_switch_tests();
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.store(self.0, SeqCst);
+        }
+    }
+    let _restore = Restore(tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.load(SeqCst));
+    let globals = tidb_domain::global_sysvars::GlobalSysvars::new();
+    let name = tidb_vardef::tidb_vars::TIDB_ENABLE_GC_AWARE_MEMORY_TRACK;
+
+    globals.set(name, "ON".to_owned()).unwrap();
+    assert!(tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.load(SeqCst));
+    assert_eq!(globals.get(name).unwrap(), "ON");
+
+    // `GetGlobal` reads the switch itself.
+    tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.store(false, SeqCst);
+    assert_eq!(globals.get(name).unwrap(), "OFF");
+
+    globals.set(name, "OFF".to_owned()).unwrap();
+    assert!(!tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.load(SeqCst));
+}
+
 #[test]
 fn ttl_job_enable_global_hook_updates_the_process_switch() {
     let _serialised = process_switch_tests();

@@ -2834,18 +2834,8 @@ mod schema_route_tests {
     fn debug_pprof_profile_serves_a_gzipped_cpu_profile() {
         use prost::Message as _;
         use std::io::Read as _;
-        // Go's cpuprofile tests run with `DefProfileDuration = 200ms`
-        // (`TestMain`). A collector receives the profiler's whole windows
-        // only, so under the one-second default a one-second request holds
-        // just the part of a window between its registration and the
-        // profiler's next tick -- anything from a second down to nothing.
-        let window = std::mem::replace(
-            &mut *tidb_cpuprofile::DEF_PROFILE_DURATION.lock().unwrap(),
-            std::time::Duration::from_millis(200),
-        );
         tidb_cpuprofile::start_cpu_profiler().unwrap();
-        // The labeled work runs until the profile is served, so it spans the
-        // profile's windows however late a loaded machine opens them.
+        // The labeled work runs until a profile shows it.
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let busy = std::thread::spawn({
             let done = std::sync::Arc::clone(&done);
@@ -2861,26 +2851,46 @@ mod schema_route_tests {
                 x
             }
         });
-        let (code, header, body) = routed("/debug/pprof/profile?seconds=1", &StatusRoutes::default());
+        // A CPU profile is sampled on the process's CPU time: one second of it
+        // holds the busy thread only if the machine gave that thread a profiler
+        // tick's worth of CPU in the windows the collector received, which a
+        // machine running many times its cores of work does not promise (and
+        // Go's `TestProfileHTTPHandler` asserts a parsable profile only). Every
+        // response is checked for the route's own contract; the request is
+        // repeated until a profile holds the labeled work.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let (code, header, body) = routed("/debug/pprof/profile?seconds=1", &StatusRoutes::default());
+            assert_eq!(code, 200);
+            assert_eq!(header, "application/octet-stream|attachment; filename=\"profile\"");
+            assert!(std::time::Instant::now() < deadline, "no profile showed the busy thread in 120s");
+            // Go `StopCPUProfile` writes nothing when no window reached the
+            // collector.
+            if body.is_empty() {
+                continue;
+            }
+            let mut raw = Vec::new();
+            flate2::read::GzDecoder::new(body.as_slice()).read_to_end(&mut raw).unwrap();
+            let profile = tidb_proto::perftools::profiles::Profile::decode(raw.as_slice()).unwrap();
+            let text = |id: i64| profile.string_table[id as usize].as_str();
+            assert_eq!(text(profile.sample_type[0].r#type), "samples");
+            // Go `removeLabel`: only the `sql` label is served.
+            assert!(profile
+                .sample
+                .iter()
+                .flat_map(|sample| sample.label.iter())
+                .all(|label| text(label.key) == "sql"));
+            if profile
+                .sample
+                .iter()
+                .any(|sample| sample.label.iter().any(|label| text(label.str) == "select ?"))
+            {
+                break;
+            }
+        }
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         busy.join().unwrap();
         tidb_cpuprofile::stop_cpu_profiler();
-        *tidb_cpuprofile::DEF_PROFILE_DURATION.lock().unwrap() = window;
-        assert_eq!(code, 200);
-        assert_eq!(header, "application/octet-stream|attachment; filename=\"profile\"");
-        let mut raw = Vec::new();
-        flate2::read::GzDecoder::new(body.as_slice()).read_to_end(&mut raw).unwrap();
-        let profile = tidb_proto::perftools::profiles::Profile::decode(raw.as_slice()).unwrap();
-        let text = |id: i64| profile.string_table[id as usize].as_str();
-        assert_eq!(text(profile.sample_type[0].r#type), "samples");
-        assert!(!profile.sample.is_empty());
-        let keys: std::collections::BTreeSet<&str> =
-            profile.sample.iter().flat_map(|sample| sample.label.iter().map(|label| text(label.key))).collect();
-        assert_eq!(keys, std::collections::BTreeSet::from(["sql"]));
-        assert!(profile
-            .sample
-            .iter()
-            .any(|sample| sample.label.iter().any(|label| text(label.str) == "select ?")));
     }
 
     /// Go `/debug/zip`: a `seconds`-long CPU profile, the config as

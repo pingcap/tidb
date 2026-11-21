@@ -509,6 +509,7 @@ set_global! {
     set_tidb_enable_batch_dml => |s| tidb_vardef::ENABLE_BATCH_DML.store(on(s), SeqCst);
     set_tidb_enable_noop_variables => |s| tidb_vardef::ENABLE_NOOP_VARIABLES.store(on(s), SeqCst);
     set_tidb_enable_tmp_storage_on_oom => |s| tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.store(on(s), SeqCst);
+    set_tidb_enable_gc_aware_memory_track => |s| tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.store(on(s), SeqCst);
     set_tidb_enable_binding_usage => |s| tidb_vardef::ENABLE_BINDING_USAGE.store(on(s), SeqCst);
     set_tidb_mlog_log_slow_purge => |s| tidb_vardef::M_LOG_LOG_SLOW_PURGE.store(on(s), SeqCst);
     set_tidb_ignore_inlist_plan_digest => |s| tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.store(on(s), SeqCst);
@@ -540,6 +541,7 @@ get_global! {
     get_tidb_enable_batch_dml => on_off(tidb_vardef::ENABLE_BATCH_DML.load(SeqCst));
     get_tidb_enable_noop_variables => on_off(tidb_vardef::ENABLE_NOOP_VARIABLES.load(SeqCst));
     get_tidb_enable_tmp_storage_on_oom => on_off(tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.load(SeqCst));
+    get_tidb_enable_gc_aware_memory_track => on_off(tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.load(SeqCst));
     get_tidb_enable_binding_usage => on_off(tidb_vardef::ENABLE_BINDING_USAGE.load(SeqCst));
     get_tidb_mlog_log_slow_purge => on_off(tidb_vardef::M_LOG_LOG_SLOW_PURGE.load(SeqCst));
     get_tidb_ignore_inlist_plan_digest => on_off(tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.load(SeqCst));

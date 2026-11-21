@@ -66,6 +66,10 @@ impl AtomicTracker {
 /// Process-wide top-memory session tracker.
 pub static MEM_USAGE_TOP1_TRACKER: AtomicTracker = AtomicTracker::new();
 
+/// Go `EnableGCAwareMemoryTrack` is used to turn on/off the GC-aware memory
+/// track (`tidb_enable_gc_aware_memory_track`).
+pub static ENABLE_GC_AWARE_MEMORY_TRACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Consumption is buffered until it exceeds this (Go `TrackMemWhenExceeds`,
 /// 100MB).
 pub const TRACK_MEM_WHEN_EXCEEDS: i64 = 104_857_600;
@@ -941,9 +945,13 @@ impl Tracker {
         }
     }
 
-    /// Releases tracked memory (Go `Release`). The GC-aware deferred path
-    /// (`EnableGCAwareMemoryTrack` + `runtime.SetFinalizer`) is Go-runtime
-    /// machinery; this is the default flag-off path.
+    /// Releases tracked memory (Go `Release`). Under
+    /// [`ENABLE_GC_AWARE_MEMORY_TRACK`] Go adds the bytes to `bytesReleased`
+    /// of the analyze tracker up the chain (`recordRelease`) and takes them
+    /// back in a finalizer, when its collector frees the released object.
+    /// Here the object is freed as it is released, so the two cancel at
+    /// once and `bytes_released` is what it was: the switch changes nothing
+    /// a reader can see.
     pub fn release(self: &Arc<Self>, bytes: i64) {
         if bytes == 0 {
             return;
