@@ -101,10 +101,24 @@ type memtableRetriever struct {
 	initialized bool
 	extractor   base.MemTablePredicateExtractor
 	is          infoschema.InfoSchema
+	// historicalIS is the schema an explicit historical read selected for its
+	// read time when the executor was built.
+	historicalIS infoschema.InfoSchema
 
 	memTracker      *memory.Tracker
 	accMemPerBatch  int64
 	accMemRecordCnt int
+}
+
+// historicalStmtInfoSchema returns is, the schema the statement was planned
+// with, if the statement is an explicit historical read under tidb_snapshot or
+// a stale read, and nil otherwise.
+func historicalStmtInfoSchema(sctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	vars := sctx.GetSessionVars()
+	if vars.SnapshotTS != 0 || vars.StmtCtx.IsStaleness || vars.TxnCtx.IsStaleness {
+		return is
+	}
+	return nil
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -123,12 +137,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		// Because the transaction should have been activated in MemTableReaderExec Open().
 		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
 		// Because it could DATA RACE here and in Open() it's safe.
-		if sctx.GetSessionVars().InTxn() {
-			ts := sctx.GetSessionVars().TxnCtx.StartTS
-			if sctx.GetSessionVars().SnapshotTS != 0 {
-				ts = sctx.GetSessionVars().SnapshotTS
-			}
-			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(ts)
+		vars := sctx.GetSessionVars()
+		if e.historicalIS != nil {
+			// An explicit historical read uses the schema the statement selected
+			// for its read time. Looking it up again by time would get the newest
+			// cached schema, which may be older than the one at that time.
+			e.is = e.historicalIS
+		} else if vars.InTxn() {
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(vars.TxnCtx.StartTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -430,3 +430,88 @@ func TestMaskingPolicyUnverifiedSnapshotKeepsPolicyTS(t *testing.T) {
 	// The policy was enabled at t0, so the historical read stays masked.
 	historical.MustQuery("select c from t_unverified").Check(testkit.Rows("XXXXXX"))
 }
+
+func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
+	// Keep the newest cached schema stale, as on a node that has not yet
+	// loaded the schema versions committed by another node.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '')
+		on duplicate key update variable_value = '20160102-15:04:05 -0700'`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_old(c varchar(20))")
+	ctx := context.Background()
+	latest := dom.InfoSchema()
+	dbs := latest.AllSchemas()
+	for i, db := range dbs {
+		dbs[i] = db.Copy()
+		dbs[i].TableName2ID = nil
+		var err error
+		dbs[i].Deprecated.Tables, err = latest.SchemaTableInfos(ctx, db.Name)
+		require.NoError(t, err)
+	}
+	t0, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	// Another node creates the tables and the policy.
+	tk.MustExec("create table t_new(c varchar(20))")
+	tk.MustExec("create table t_mask(c varchar(20))")
+	tk.MustExec("insert into t_mask values ('secret')")
+	tk.MustExec("create masking policy p on t_mask(c) as mask_full(c)")
+	b := infoschema.NewBuilder(dom, nil, infoschema.NewData(), false)
+	require.NoError(t, b.InitWithDBInfos(dbs, latest.AllPlacementPolicies(), latest.AllResourceGroups(), latest.SchemaMetaVersion()))
+	stale := b.Build(t0.Ver)
+	dom.InfoCache().Reset(16)
+	dom.InfoCache().Insert(stale, t0.Ver)
+	// Let tidb_read_staleness pick a time after the tables were created.
+	time.Sleep(1500 * time.Millisecond)
+	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	// Explicit historical reads at t1 see the tables and the policy at t1.
+	historical := testkit.NewTestKit(t, store)
+	historical.MustExec("use test")
+	tablesSQL := "select count(*) from information_schema.tables%s where table_schema = 'test' and table_name = 't_new'"
+	check := func(asOf string) {
+		historical.MustQuery("select count(*) from t_new" + asOf).Check(testkit.Rows("0"))
+		historical.MustQuery("select c from t_mask" + asOf).Check(testkit.Rows("XXXXXX"))
+		// MustQuery runs a query on information_schema twice. Run it once: in
+		// a historical transaction, the first read of a memory table ends the
+		// transaction (see MemTableReaderExec.Open).
+		historical.MustQueryWithContext(ctx, fmt.Sprintf(tablesSQL, asOf)).Check(testkit.Rows("1"))
+	}
+	historical.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", t1.Ver))
+	check("")
+	historical.MustExec("set @@tidb_snapshot = ''")
+	// tidb_snapshot set inside a transaction.
+	historical.MustExec("begin")
+	historical.MustQuery("select count(*) from t_old").Check(testkit.Rows("0"))
+	historical.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", t1.Ver))
+	check("")
+	historical.MustExec("set @@tidb_snapshot = ''")
+	historical.MustExec("rollback")
+	check(fmt.Sprintf(" as of timestamp tidb_parse_tso(%d)", t1.Ver))
+	historical.MustExec(fmt.Sprintf("start transaction read only as of timestamp tidb_parse_tso(%d)", t1.Ver))
+	check("")
+	historical.MustExec("commit")
+	historical.MustExec("set @@tidb_read_staleness = -1")
+	check("")
+	historical.MustExec("set @@tidb_read_staleness = 0")
+	// A current read keeps the schema this node has published.
+	historical.MustQuery(fmt.Sprintf(tablesSQL, "")).Check(testkit.Rows("0"))
+
+	// A historical read at t0 still gets the cached schema of t0.
+	is, err := dom.GetHistoricalInfoSchema(t0.Ver)
+	require.NoError(t, err)
+	require.Same(t, stale, is)
+
+	// The reads did not publish the schema of t1 on this node.
+	require.Same(t, stale, dom.InfoSchema())
+	require.Same(t, stale, dom.InfoCache().GetLatest())
+	require.Equal(t, stale.SchemaMetaVersion(), dom.InfoSchema().SchemaMetaVersion())
+	// Internal lookups keep using the newest cached schema for a later time.
+	is, err = dom.GetSnapshotInfoSchema(t1.Ver)
+	require.NoError(t, err)
+	require.Same(t, stale, is)
+}

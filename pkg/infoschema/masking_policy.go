@@ -252,6 +252,15 @@ func UpdateMaskingPolicySnapshotTS(is InfoSchema, ts uint64) {
 	base.maskingPolicyMutex.Unlock()
 }
 
+// MaskingPolicySnapshotTS returns the policy read time of is. The schema
+// version of is is known to be valid at that time.
+func MaskingPolicySnapshotTS(is InfoSchema) uint64 {
+	base := is.base()
+	base.maskingPolicyMutex.RLock()
+	defer base.maskingPolicyMutex.RUnlock()
+	return base.maskingPolicySnapshotTS
+}
+
 // HasMaskingPolicies checks for policies without copying or sorting the policy map.
 func (is *infoSchema) HasMaskingPolicies(ctx context.Context) (bool, error) {
 	if err := is.loadMaskingPoliciesIfNeeded(ctx); err != nil {
