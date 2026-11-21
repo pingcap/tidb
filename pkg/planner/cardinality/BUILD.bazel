@@ -51,6 +51,7 @@ go_test(
     srcs = [
         "exponential_test.go",
         "main_test.go",
+        "max_est_test.go",
         "ndv_test.go",
         "row_size_test.go",
         "selectivity_test.go",

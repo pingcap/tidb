@@ -245,14 +245,15 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
 func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) statistics.RowEstimate {
-	// TODO: Track min/max range for column estimates, currently only used for indexes.
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
+	// The TopN rows inside the range are exact, so they shift all three estimates equally.
+	// Adding them to Est alone would leave MaxEst below Est, and the later Clamp would then
+	// discard the histogram's worst case.
 	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	// Only add TopN count to the main estimate, keep min/max estimates from histogram
-	histBetweenCnt.Est += topNCnt
+	histBetweenCnt.AddAll(topNCnt)
 	return histBetweenCnt
 }
 
@@ -282,7 +283,7 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 		if err != nil {
 			return 0, 0, err
 		}
-		return countEst.Est, 0, nil
+		return countEst.Est, max(countEst.MaxEst, countEst.Est), nil
 	}
 	tmpRan := []*ranger.Range{
 		{
@@ -337,11 +338,14 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 			count = countEst.Est
 			tempSelectivity := count / tableRowCount
 			selectivity *= tempSelectivity
-			corrSelectivity = min(corrSelectivity, tempSelectivity)
+			// A conjunction cannot return more rows than its least-qualifying column, so the
+			// smallest single-column worst case bounds the combined worst case.
+			corrSelectivity = min(corrSelectivity, max(countEst.MaxEst, count)/tableRowCount)
 		}
 		totalCount += selectivity * tableRowCount
 		maxCount += corrSelectivity * tableRowCount
 	}
 	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
+	maxCount = mathutil.Clamp(maxCount, totalCount, tableRowCount)
 	return totalCount, maxCount, nil
 }

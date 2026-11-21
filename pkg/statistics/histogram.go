@@ -632,11 +632,14 @@ func (r *RowEstimate) AddAll(f float64) {
 	r.MaxEst += f
 }
 
-// Subtract subtracts two RowEstimates together, storing result in the first RowEstimate.
+// Subtract subtracts r1 from r, storing the result in r. The bounds follow interval
+// arithmetic: the worst (max) case of r - r1 removes the fewest rows (r1.MinEst), and the
+// best (min) case removes the most rows (r1.MaxEst). Subtracting r1.MaxEst from r.MaxEst
+// would shrink the upper bound exactly when r1 is most uncertain.
 func (r *RowEstimate) Subtract(r1 RowEstimate) {
 	r.Est -= r1.Est
-	r.MinEst -= r1.MinEst
-	r.MaxEst -= r1.MaxEst
+	r.MinEst -= r1.MaxEst
+	r.MaxEst -= r1.MinEst
 }
 
 // MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
