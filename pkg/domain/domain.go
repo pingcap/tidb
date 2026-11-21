@@ -724,8 +724,15 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 		snapshotTS = version.Ver
 	}
 	// if the snapshotTS is new enough, we can get infoschema directly through snapshotTS.
-	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
-		infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
+	if is, valid := do.infoCache.GetBySnapshotTSWithValidity(snapshotTS); is != nil {
+		// The newest cached schema is returned for any later snapshotTS, even
+		// if a newer schema version has been committed but not loaded yet.
+		// Only advance its policy read time when it is known to be valid at
+		// snapshotTS. Otherwise, keep the time it was last verified at, which
+		// reload keeps advancing for the newest schema.
+		if valid {
+			infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
+		}
 		return is, nil
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)

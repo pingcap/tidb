@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -366,4 +367,66 @@ func TestMaskingPolicyTemporaryShowColdCache(t *testing.T) {
 	require.NoError(t, executor.ConstructResultOfShowCreateTable(tk.Session(), tbl.Meta(), tbl.Allocators(tk.Session().GetTableCtx()), &buf))
 	require.Contains(t, buf.String(), "CREATE TEMPORARY TABLE")
 	require.Zero(t, loads.Load())
+}
+
+func TestMaskingPolicyUnverifiedSnapshotKeepsPolicyTS(t *testing.T) {
+	// Keep the newest cached schema stale, as on a node that has not yet seen
+	// a policy DDL committed by another node.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '')
+		on duplicate key update variable_value = '20160102-15:04:05 -0700'`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_unverified(c varchar(20))")
+	tk.MustExec("insert into t_unverified values ('secret')")
+	tk.MustExec("create masking policy p on t_unverified(c) as mask_full(c)")
+	ctx := context.Background()
+	latest := dom.InfoSchema()
+	dbs := latest.AllSchemas()
+	for i, db := range dbs {
+		dbs[i] = db.Copy()
+		dbs[i].TableName2ID = nil
+		var err error
+		dbs[i].Deprecated.Tables, err = latest.SchemaTableInfos(ctx, db.Name)
+		require.NoError(t, err)
+	}
+	t0, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	// Another node drops the policy. This node still has the schema of t0 as
+	// its newest cached schema, with a cold policy cache.
+	tk.MustExec("alter table t_unverified drop masking policy p")
+	factory := func() (pools.Resource, error) {
+		se, err := session.CreateSessionWithDomain(store, dom)
+		if err != nil {
+			return nil, err
+		}
+		se.GetSessionVars().CommonGlobalLoaded = true
+		se.GetSessionVars().InRestrictedSQL = true
+		return se, nil
+	}
+	b := infoschema.NewBuilder(dom, factory, infoschema.NewData(), false)
+	require.NoError(t, b.InitWithDBInfos(dbs, latest.AllPlacementPolicies(), latest.AllResourceGroups(), latest.SchemaMetaVersion()))
+	stale := b.Build(t0.Ver)
+	dom.InfoCache().Reset(16)
+	dom.InfoCache().Insert(stale, t0.Ver)
+
+	// A historical session holds the stale schema.
+	historical := testkit.NewTestKit(t, store)
+	historical.MustExec("use test")
+	historical.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", t0.Ver))
+	require.False(t, infoschema.MaskingPoliciesLoaded(stale))
+
+	// A later snapshot lookup hits the stale schema, which is not known to be
+	// valid at that time.
+	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is, err := dom.GetSnapshotInfoSchema(t1.Ver)
+	require.NoError(t, err)
+	require.Same(t, stale, is)
+	require.False(t, infoschema.MaskingPoliciesLoaded(stale))
+
+	// The policy was enabled at t0, so the historical read stays masked.
+	historical.MustQuery("select c from t_unverified").Check(testkit.Rows("XXXXXX"))
 }

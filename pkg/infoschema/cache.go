@@ -168,7 +168,11 @@ func (h *InfoCache) GetEmptySchemaVersions() map[int64]struct{} {
 	return h.emptySchemaVersions
 }
 
-func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
+// getSchemaByTimestampNoLock returns the schema for ts. bounded reports whether
+// a newer cached schema took effect after ts, so the schema is known to be valid
+// at ts. The newest cached schema is not bounded: a newer version may have been
+// committed but not loaded yet.
+func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (_ InfoSchema, bounded bool, ok bool) {
 	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	// search one by one instead of binary search, because the timestamp of a schema could be 0
 	// this is ok because the size of h.cache is small (currently set to 16)
@@ -183,7 +187,7 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 		// ts >= is.timestamp must be true after the above condition.
 		if i == 0 {
 			// the first element is the latest schema, so we can return it directly.
-			return is.infoschema, true
+			return is.infoschema, false, true
 		}
 
 		if uint64(h.cache[i-1].timestamp) > ts {
@@ -193,7 +197,7 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 			if lastVersion == currentVersion+1 {
 				// This condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
 				// but current(cache[i]) schema-version is not 9, then current schema may not suitable for ts.
-				return is.infoschema, true
+				return is.infoschema, true, true
 			}
 			if lastVersion > currentVersion {
 				found := true
@@ -208,7 +212,7 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 					// This condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10, and
 					// current(cache[i]) schema-version is 8, then there is a gap exist, and if all the gap version can be found in cache.emptySchemaVersions
 					// which means those gap versions don't have schema info, then current schema is also suitable for ts.
-					return is.infoschema, true
+					return is.infoschema, true, true
 				}
 			}
 		}
@@ -217,7 +221,7 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
-	return nil, false
+	return nil, false, false
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
@@ -285,15 +289,24 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 // It searches the schema cache and find the schema with max schema ts that equals or smaller than given snapshot ts
 // Where the schema ts is the commitTs of the txn creates the schema diff
 func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
+	schema, _ := h.GetBySnapshotTSWithValidity(snapshotTS)
+	return schema
+}
+
+// GetBySnapshotTSWithValidity is like GetBySnapshotTS. It also reports whether
+// the returned schema is known to be valid at snapshotTS, that is, whether a
+// newer cached schema took effect after snapshotTS. The newest cached schema
+// is returned for any later snapshotTS without that guarantee.
+func (h *InfoCache) GetBySnapshotTSWithValidity(snapshotTS uint64) (InfoSchema, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	infoschema_metrics.GetTSCounter.Inc()
-	if schema, ok := h.getSchemaByTimestampNoLock(snapshotTS); ok {
+	if schema, bounded, ok := h.getSchemaByTimestampNoLock(snapshotTS); ok {
 		infoschema_metrics.HitTSCounter.Inc()
-		return schema
+		return schema, bounded
 	}
-	return nil
+	return nil, false
 }
 
 const gcCheckInterval = 128
