@@ -339,3 +339,66 @@ fn fast_point_get_uses_gos_smaller_index_hint_check() {
     let prefix_sql = "SELECT /*+ USE_INDEX(fast_hint, co) */ id FROM fast_hint WHERE code = 'one'";
     assert_eq!(displayed(rows(&mut tk, prefix_sql)), [["1"]]);
 }
+
+/// Batch point reads by handle and by unique index, including keys that match
+/// nothing, and the shapes Go does not serve with one -- which still answer.
+#[test]
+fn batch_point_get() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 465);
+    rows(&mut tk, "CREATE TABLE b (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)");
+    rows(&mut tk, "INSERT INTO b VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)");
+    let ids = |tk: &mut Session, sql: &str| {
+        let mut got: Vec<i64> = displayed(rows(tk, sql)).into_iter().map(|row| row[0].parse().unwrap()).collect();
+        got.sort_unstable();
+        got
+    };
+    // Handle path, including a value that matches nothing.
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE id IN (1, 3)"), [1, 3]);
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE id IN (3, 99)"), [3]);
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE id IN (99)"), Vec::<i64>::new());
+    // Unique-index path.
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE code IN ('a', 'c')"), [1, 3]);
+    // Shapes Go rejects fall back to other plans and stay correct.
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE id NOT IN (1, 3)"), [2]);
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE v IN (20, 30)"), [2, 3]);
+    assert_eq!(ids(&mut tk, "SELECT id FROM b WHERE id IN (1, 3) AND v = 30"), [3]);
+    assert_eq!(displayed(rows(&mut tk, "SELECT id FROM b WHERE id IN (3, 1) ORDER BY id")), [["1"], ["3"]]);
+    assert_eq!(rows(&mut tk, "SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2").len(), 2);
+}
+
+/// Point reads by handle and by unique index, with extra conditions, after
+/// writes, and the shapes that are not point plans -- which still answer.
+#[test]
+fn point_get_plans() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 466);
+    rows(&mut tk, "CREATE TABLE g (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)");
+    rows(&mut tk, "INSERT INTO g VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)");
+    let q = |tk: &mut Session, sql: &str| displayed(rows(tk, sql));
+    let none: [[&str; 1]; 0] = [];
+    assert_eq!(q(&mut tk, "SELECT v FROM g WHERE id = 2"), [["20"]]);
+    assert_eq!(q(&mut tk, "SELECT v FROM g WHERE id = 99"), none);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE code = 'c'"), [["3"]]);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE code = 'zz'"), none);
+    // An extra condition still filters.
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id = 2 AND v = 20"), [["2"]]);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id = 2 AND v = 999"), none);
+    // Shapes that are not point plans stay correct.
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE v = 30"), [["3"]]);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id > 1 ORDER BY id"), [["2"], ["3"]]);
+    let mut either = q(&mut tk, "SELECT id FROM g WHERE id = 1 OR id = 3");
+    either.sort();
+    assert_eq!(either, [["1"], ["3"]]);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1"), none);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id = 2 ORDER BY id"), [["2"]]);
+    // A non-integer constant names no integer handle.
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE id = 'x'"), none);
+    // A point read sees writes, including the row a DELETE removed and its
+    // index entry.
+    rows(&mut tk, "UPDATE g SET v = 99 WHERE id = 2");
+    assert_eq!(q(&mut tk, "SELECT v FROM g WHERE id = 2"), [["99"]]);
+    rows(&mut tk, "DELETE FROM g WHERE id = 2");
+    assert_eq!(q(&mut tk, "SELECT v FROM g WHERE id = 2"), none);
+    assert_eq!(q(&mut tk, "SELECT id FROM g WHERE code = 'b'"), none);
+}
