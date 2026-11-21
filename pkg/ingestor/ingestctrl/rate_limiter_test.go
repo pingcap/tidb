@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -67,29 +68,28 @@ func TestConcurrencyLimit(t *testing.T) {
 }
 
 func TestRateLimit(t *testing.T) {
-	l := newIngestLimiter(context.Background(), 10, 10)
+	// Run with a fake clock so that the expected waits are exact.
+	synctest.Test(t, func(t *testing.T) {
+		l := newIngestLimiter(context.Background(), 10, 10)
 
-	start := time.Now()
-	for i := 0; i < 10; i++ {
+		start := time.Now()
+		for i := 0; i < 10; i++ {
+			require.NoError(t, l.Acquire(0, 1))
+		}
+		require.Zero(t, time.Since(start), "burst should be immediate")
+
+		l.Release(0, 10)
+		start = time.Now()
 		require.NoError(t, l.Acquire(0, 1))
-	}
-	burstDuration := time.Since(start)
-	require.Less(t, burstDuration, 50*time.Millisecond, "burst should be immediate")
+		require.Equal(t, 100*time.Millisecond, time.Since(start), "should respect rate limit")
 
-	l.Release(0, 10)
-	start = time.Now()
-	require.NoError(t, l.Acquire(0, 1))
-	elapsed := time.Since(start)
-	require.GreaterOrEqual(t, elapsed, 90*time.Millisecond, "should respect rate limit")
-	require.Less(t, elapsed, 150*time.Millisecond, "within tolerance")
-
-	require.NoError(t, l.Acquire(1, 10))
-	l.Release(1, 10)
-	start = time.Now()
-	require.NoError(t, l.Acquire(2, 10))
-	burstDuration = time.Since(start)
-	require.Less(t, burstDuration, 50*time.Millisecond, "acquire for different storeID should be immediate")
-	l.Release(2, 10)
+		require.NoError(t, l.Acquire(1, 10))
+		l.Release(1, 10)
+		start = time.Now()
+		require.NoError(t, l.Acquire(2, 10))
+		require.Zero(t, time.Since(start), "acquire for different storeID should be immediate")
+		l.Release(2, 10)
+	})
 }
 
 func TestContextCancelDuringConcurrencyWait(t *testing.T) {
