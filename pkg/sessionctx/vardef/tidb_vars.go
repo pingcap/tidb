@@ -783,6 +783,10 @@ const (
 	// storage-class transitions retained in the system history table.
 	TiDBStorageClassTransitionHistorySize = "tidb_storage_class_transition_history_size"
 
+	// TiDBStorageClassIntervalRecalcPeriod is how often the DDL owner re-evaluates
+	// storage class 'less_than' interval selectors. 0 disables the recalculation.
+	TiDBStorageClassIntervalRecalcPeriod = "tidb_storage_class_interval_recalc_period"
+
 	// TiDBStmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
 	TiDBStmtSummaryMaxStmtCount = "tidb_stmt_summary_max_stmt_count"
 
@@ -1767,6 +1771,7 @@ const (
 	DefTiDBStmtSummaryRefreshInterval                 = 1800
 	DefTiDBStmtSummaryHistorySize                     = 24
 	DefTiDBStorageClassTransitionHistorySize          = 1000
+	DefTiDBStorageClassIntervalRecalcPeriod           = 24 * time.Hour
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBStmtSummaryPersistEvicted                  = false

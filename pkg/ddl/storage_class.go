@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -351,7 +352,7 @@ func checkStorageClassDef(def *model.StorageClassDef) error {
 		return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
 	}
 
-	return nil
+	return checkStorageClassIntervalDef(def)
 }
 
 func setStorageClassForTable(tbInfo *model.TableInfo, tier string, transitions []model.StorageClassTransitRule) {
@@ -395,56 +396,108 @@ func BuildStorageClassForPartitions(
 	if settings == nil {
 		return nil
 	}
-	for _, def := range settings.Defs {
-		if err := checkStorageClassPartitionScope(tbInfo, partitions, def); err != nil {
-			return err
-		}
+	evaluator, err := newStorageClassPartitionEvaluator(tbInfo, partitions, settings, storageClassIntervalNow())
+	if err != nil {
+		return err
 	}
-
-	defaultDef := firstNoScopeStorageClassDef(settings.Defs)
-
-PartitionLoop:
 	for i := range partitions {
 		part := &partitions[i]
-		for _, def := range settings.Defs {
-			if def.HasNoScopeDef() {
-				continue
-			}
-
-			if len(def.NamesIn) > 0 {
-				if isPartitionMatchNamesIn(part, def.NamesIn) {
-					setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
-					continue PartitionLoop
-				}
-			}
-
-			if def.LessThan != nil {
-				matched, err := isPartitionMatchLessThan(tbInfo, part, *def.LessThan)
-				if err != nil {
-					return err
-				}
-				if matched {
-					setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
-					continue PartitionLoop
-				}
-			}
-
-			if len(def.ValuesIn) > 0 {
-				if isPartitionMatchValuesIn(part, def.ValuesIn) {
-					setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
-					continue PartitionLoop
-				}
-			}
+		def, err := evaluator.matchingDef(part)
+		if err != nil {
+			return err
 		}
-
-		if defaultDef != nil {
-			setStorageClassTierForPartition(tbInfo, part, defaultDef.Tier, defaultDef.Transitions)
+		if def == nil {
+			setStorageClassTierForPartition(tbInfo, part, model.StorageClassTierDefault, nil)
 			continue
 		}
-		setStorageClassTierForPartition(tbInfo, part, model.StorageClassTierDefault, nil)
+		setStorageClassTierForPartition(tbInfo, part, def.Tier, def.Transitions)
 	}
-
 	return nil
+}
+
+// storageClassPartitionEvaluator decides partition storage classes without
+// modifying table metadata. Interval cutoffs are computed once per table.
+type storageClassPartitionEvaluator struct {
+	tbInfo     *model.TableInfo
+	defs       []*model.StorageClassDef
+	defaultDef *model.StorageClassDef
+	// intervalCutoffs[i] is the cutoff of defs[i], or nil if defs[i] is not an interval selector.
+	intervalCutoffs []*storageClassIntervalCutoff
+	hasInterval     bool
+}
+
+func newStorageClassPartitionEvaluator(
+	tbInfo *model.TableInfo,
+	partitions []model.PartitionDefinition,
+	settings *model.StorageClassSettings,
+	now time.Time,
+) (*storageClassPartitionEvaluator, error) {
+	evaluator := &storageClassPartitionEvaluator{
+		tbInfo:          tbInfo,
+		defs:            settings.Defs,
+		defaultDef:      firstNoScopeStorageClassDef(settings.Defs),
+		intervalCutoffs: make([]*storageClassIntervalCutoff, len(settings.Defs)),
+	}
+	for i, def := range settings.Defs {
+		if err := checkStorageClassPartitionScope(tbInfo, partitions, def); err != nil {
+			return nil, err
+		}
+		if def.LessThan == nil {
+			continue
+		}
+		interval, isInterval, err := parseStorageClassInterval(*def.LessThan)
+		if err != nil {
+			return nil, err
+		}
+		if !isInterval {
+			continue
+		}
+		cutoff, err := newStorageClassIntervalCutoff(tbInfo, interval, now)
+		if err != nil {
+			return nil, err
+		}
+		evaluator.intervalCutoffs[i] = cutoff
+		evaluator.hasInterval = true
+	}
+	return evaluator, nil
+}
+
+// matchingDef returns the first scoped definition matching the partition, then
+// the table-level default definition, or nil for the default tier.
+func (e *storageClassPartitionEvaluator) matchingDef(part *model.PartitionDefinition) (*model.StorageClassDef, error) {
+	for i, def := range e.defs {
+		if def.HasNoScopeDef() {
+			continue
+		}
+
+		if len(def.NamesIn) > 0 && isPartitionMatchNamesIn(part, def.NamesIn) {
+			return def, nil
+		}
+
+		if def.LessThan != nil {
+			var matched bool
+			var err error
+			if cutoff := e.intervalCutoffs[i]; cutoff != nil {
+				matched = len(part.LessThan) == 1
+				if matched {
+					matched, err = cutoff.matches(e.tbInfo, part.LessThan[0])
+				}
+			} else {
+				matched, err = isPartitionMatchLessThan(e.tbInfo, part, *def.LessThan)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if matched {
+				return def, nil
+			}
+		}
+
+		if len(def.ValuesIn) > 0 && isPartitionMatchValuesIn(part, def.ValuesIn) {
+			return def, nil
+		}
+	}
+	return e.defaultDef, nil
 }
 
 func firstNoScopeStorageClassDef(defs []*model.StorageClassDef) *model.StorageClassDef {
