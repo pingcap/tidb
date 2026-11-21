@@ -533,6 +533,45 @@ func TestMaskingPolicyCurrentRoleFoldsOutsidePolicies(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyUnprotectedTableKeepsNotNullFolding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table payloads(id bigint primary key clustered, k int, payload mediumblob not null, key ik(k))")
+	tk.MustExec("insert into payloads values (1, 1, 'x')")
+	tk.MustExec("create table policy_target(id int primary key, c varchar(20) not null)")
+	tk.MustExec("insert into policy_target values (1, 'secret')")
+	coveringPlan := testkit.Rows(
+		"Projection 10000.00 root  0->Column#4",
+		"└─IndexReader 10000.00 root  index:IndexFullScan",
+		"  └─IndexFullScan 10000.00 cop[tikv] table:payloads, index:ik(k) keep order:false, stats:pseudo")
+	const query = "select payload is null from payloads force index(ik)"
+	tk.MustQuery("explain format='brief' " + query).Check(coveringPlan)
+
+	// A policy on another table must not change the plans of unprotected tables.
+	tk.MustExec("create masking policy p on policy_target(c) as mask_null(c) enable")
+	tk.MustQuery("explain format='brief' " + query).Check(coveringPlan)
+	tk.MustQuery(query).Check(testkit.Rows("0"))
+	tk.MustQuery("select ifnull(payload, 'y') from payloads").Check(testkit.Rows("x"))
+	tk.MustQuery("select t.x from (select payload is null x from payloads) t").Check(testkit.Rows("0"))
+
+	// A NOT NULL protected column may still be masked to NULL.
+	tk.MustQuery("select c is null, ifnull(c, 'masked') from policy_target").Check(testkit.Rows("1 masked"))
+	tk.MustQuery("select t.x from (select c is null x from policy_target) t").Check(testkit.Rows("1"))
+	tk.MustQuery("select c is null from policy_target join payloads on policy_target.id = payloads.id").Check(testkit.Rows("1"))
+
+	// A plan cached while the table had no policy is not reused once it has one.
+	tk.MustExec("prepare st from 'select payload is null from payloads where k = ?'")
+	tk.MustExec("set @k = 1")
+	tk.MustQuery("execute st using @k").Check(testkit.Rows("0"))
+	tk.MustQuery("execute st using @k").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("create masking policy pp on payloads(payload) as mask_null(payload) enable")
+	tk.MustQuery("execute st using @k").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+}
+
 func TestMaskingPolicyRoleResultPlanCache(t *testing.T) {
 	for _, instance := range []bool{false, true} {
 		t.Run(fmt.Sprint(instance), func(t *testing.T) {

@@ -330,6 +330,9 @@ type PlanBuilder struct {
 	// key. Its fields are not results of the statement.
 	comparedSubquery  bool
 	maskingOuterPlans []base.LogicalPlan
+	// maskingPolicyTables caches whether a table read by the statement has a
+	// masking policy, by table ID.
+	maskingPolicyTables map[int64]bool
 	// Retain raw result dependencies for RESTRICT ON checks after masking has
 	// replaced an output expression with a constant.
 	maskingSourcePlans map[int]base.LogicalPlan
@@ -542,6 +545,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 
 	b.ctx = sctx
 	b.is = is
+	b.maskingPolicyTables = nil
 	b.hintProcessor = processor
 	if processor != nil {
 		b.hintState = processor.NewBuildState()

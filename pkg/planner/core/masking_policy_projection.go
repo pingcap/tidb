@@ -62,37 +62,75 @@ func (b *PlanBuilder) maskingEnabled(ctx context.Context, plans ...base.LogicalP
 	if b.is == nil || b.ctx.GetSessionVars().InRestrictedSQL {
 		return false, nil
 	}
+	// Only a plan reading a table with a policy can produce masked values. Other
+	// plans keep all the simplifications of ordinary statements, even when
+	// policies exist on other tables. Policy DDL changes the schema version, so
+	// a cached plan is rebuilt when a table gains a policy. Policies are looked
+	// up, and loaded, only for the persistent tables the plan reads.
 	// References to one CTE share its seed plan: visit each plan only once.
 	visited := make(map[int]struct{})
-	hasSource := func(p base.LogicalPlan) bool { return planHasMaskingSource(p, visited) }
-	if !slices.ContainsFunc(plans, hasSource) && !slices.ContainsFunc(b.maskingOuterPlans, hasSource) {
-		return false, nil
+	var err error
+	hasSource := func(p base.LogicalPlan) bool {
+		found, srcErr := b.planHasMaskingSource(ctx, p, visited)
+		if srcErr != nil {
+			err = srcErr
+			return true
+		}
+		return found
 	}
-	return b.is.HasMaskingPolicies(ctx)
+	found := slices.ContainsFunc(plans, hasSource) || slices.ContainsFunc(b.maskingOuterPlans, hasSource)
+	return found && err == nil, err
 }
 
-// Local temporary tables cannot have policies and must remain usable without TiKV.
-// A plan in visited has already been searched without finding a source.
-func planHasMaskingSource(p base.LogicalPlan, visited map[int]struct{}) bool {
+// planHasMaskingSource reports whether p reads a table with a masking policy.
+// Local temporary tables cannot have policies and must remain usable without
+// TiKV. A plan in visited has already been searched without finding a source.
+func (b *PlanBuilder) planHasMaskingSource(ctx context.Context, p base.LogicalPlan, visited map[int]struct{}) (bool, error) {
 	if p == nil {
-		return false
+		return false, nil
 	}
 	if _, ok := visited[p.ID()]; ok {
-		return false
+		return false, nil
 	}
 	visited[p.ID()] = struct{}{}
 	if ds, ok := p.(*logicalop.DataSource); ok {
-		return ds.TableInfo != nil && ds.TableInfo.TempTableType == model.TempTableNone
+		if ds.TableInfo == nil || ds.TableInfo.TempTableType != model.TempTableNone {
+			return false, nil
+		}
+		return b.tableHasMaskingPolicy(ctx, ds.TableInfo)
 	}
+	children := p.Children()
 	if cte, ok := p.(*logicalop.LogicalCTE); ok {
-		return planHasMaskingSource(cte.Cte.SeedPartLogicalPlan, visited) || planHasMaskingSource(cte.Cte.RecursivePartLogicalPlan, visited)
+		children = []base.LogicalPlan{cte.Cte.SeedPartLogicalPlan, cte.Cte.RecursivePartLogicalPlan}
 	}
-	for _, child := range p.Children() {
-		if planHasMaskingSource(child, visited) {
-			return true
+	for _, child := range children {
+		if found, err := b.planHasMaskingSource(ctx, child, visited); err != nil || found {
+			return found, err
 		}
 	}
-	return false
+	return false, nil
+}
+
+func (b *PlanBuilder) tableHasMaskingPolicy(ctx context.Context, tblInfo *model.TableInfo) (bool, error) {
+	if found, ok := b.maskingPolicyTables[tblInfo.ID]; ok {
+		return found, nil
+	}
+	found := false
+	for _, col := range tblInfo.Columns {
+		_, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, col.ID)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			found = true
+			break
+		}
+	}
+	if b.maskingPolicyTables == nil {
+		b.maskingPolicyTables = make(map[int64]bool)
+	}
+	b.maskingPolicyTables[tblInfo.ID] = found
+	return found, nil
 }
 
 // buildFinalProjectionWithMasking keeps all relational expressions on raw
