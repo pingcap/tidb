@@ -78,6 +78,111 @@ func waitSchemaReadOnlyJobs(t *testing.T, tk *testkit.TestKit, sql string, ready
 }
 
 func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
+	t.Run("CreateViewDraining", func(t *testing.T) {
+		for _, mdl := range []bool{true, false} {
+			for _, bypass := range []bool{false, true} {
+				t.Run(fmt.Sprintf("mdl=%t/bypass=%t", mdl, bypass), func(t *testing.T) {
+					if !mdl && kerneltype.IsNextGen() {
+						t.Skip("MDL is always enabled in nextgen")
+					}
+					enableReadOnlyDDLFp(t)
+					store, dom := testkit.CreateMockStoreAndDomain(t)
+					sv := server.CreateMockServer(t, store)
+					sv.SetDomain(dom)
+					dom.InfoSyncer().SetSessionManager(sv)
+					defer sv.Close()
+					conn := server.CreateMockConn(t, sv)
+					view := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+					admin := testkit.NewTestKit(t, store)
+					alter := testkit.NewTestKit(t, store)
+					admin.MustExec("create database ro")
+					admin.MustExec("create table ro.t(a int)")
+					if !mdl {
+						admin.MustExec("set global tidb_enable_metadata_lock = 0")
+						defer admin.MustExec("set global tidb_enable_metadata_lock = 1")
+					}
+					if bypass {
+						admin.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
+						require.NoError(t, view.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+					}
+					view.MustExec("set autocommit = 0")
+					view.MustExec("insert into ro.t values (1)")
+					preprocessed := make(chan struct{})
+					resume := make(chan struct{})
+					release := sync.OnceFunc(func() { close(resume) })
+					var txnID atomic.Uint64
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterCreateViewPreprocess", func(ctx sessionctx.Context) {
+						if ctx == view.Session() {
+							txnID.Store(ctx.GetSessionVars().TxnCtx.StartTS)
+							close(preprocessed)
+							<-resume
+						}
+					})
+					observed := make(chan struct{})
+					var once sync.Once
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+						if _, ok := ids[int64(txnID.Load())]; ok {
+							once.Do(func() { close(observed) })
+						}
+					})
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					var wg sync.WaitGroup
+					defer func() { release(); conn.Close(); cancel(); wg.Wait() }()
+					viewDone := make(chan error, 1)
+					alterDone := make(chan error, 1)
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						_, err := view.ExecWithContext(ctx, "create view ro.v as select * from ro.t")
+						viewDone <- err
+					}()
+					select {
+					case <-preprocessed:
+					case <-ctx.Done():
+						t.Fatal("CREATE VIEW did not finish preprocessing")
+					}
+					// DDL must already have committed the preceding user transaction.
+					admin.MustQuery("select * from ro.t").Check(testkit.Rows("1"))
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						_, err := alter.ExecWithContext(ctx, "alter database ro read only = 1")
+						alterDone <- err
+					}()
+					select {
+					case <-observed:
+					case err := <-alterDone:
+						t.Fatalf("ALTER returned before observing the CREATE VIEW transaction: %v", err)
+					case <-ctx.Done():
+						t.Fatal("ALTER did not observe the CREATE VIEW transaction")
+					}
+					// Clearing table registrations cannot release a transaction ID that
+					// the transition already cached; preprocessing's transaction must end.
+					release()
+					select {
+					case err := <-alterDone:
+						require.NoError(t, err)
+					case <-ctx.Done():
+						t.Fatal("ALTER remained blocked by CREATE VIEW")
+					}
+					select {
+					case err := <-viewDone:
+						if bypass {
+							require.NoError(t, err)
+							admin.MustQuery("select * from ro.v").Check(testkit.Rows("1"))
+						} else {
+							require.ErrorContains(t, err, "[schema:3989]")
+							admin.MustQuery("show full tables from ro").Check(testkit.Rows("t BASE TABLE"))
+						}
+					case <-ctx.Done():
+						t.Fatal("CREATE VIEW remained blocked after the read-only transition")
+					}
+					admin.MustGetErrCode("insert into ro.t values (2)", 3989)
+				})
+			}
+		}
+	})
 	t.Run("ImportModeTransition", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store, dom := testkit.CreateMockStoreAndDomain(t)

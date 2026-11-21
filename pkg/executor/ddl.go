@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -377,7 +378,14 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
-	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	failpoint.InjectCall("afterCreateViewPreprocess", e.Ctx())
+	// Only metadata was read in this transaction; preceding user writes were
+	// already committed above. A read-only transition can cache this transaction's
+	// ID and block the view job until it ends. Start an empty transaction to release
+	// that ID while retaining a context provider for statement completion hooks.
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
+		return errors.Trace(err)
+	}
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
