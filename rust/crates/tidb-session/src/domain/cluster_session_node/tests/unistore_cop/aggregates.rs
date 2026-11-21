@@ -170,3 +170,66 @@ fn select_distinct() {
     rows(&mut tk, "INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)");
     assert_eq!(q(&mut tk, "SELECT DISTINCT SUM(v) FROM g3 GROUP BY k"), [["5"], ["9"]]);
 }
+
+/// EXPLAIN brief rows with the plan ids dropped from the operator names.
+fn explain_brief(tk: &mut Session, sql: &str) -> Vec<Vec<String>> {
+    displayed(rows(tk, &format!("explain format = 'brief' {sql}")))
+        .into_iter()
+        .map(|mut row| {
+            if let Some((name, id)) = row[0].rsplit_once('_') {
+                if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+                    row[0] = name.to_owned();
+                }
+            }
+            row
+        })
+        .collect()
+}
+
+/// HAVING filters aggregate rows and ORDER BY sorts them; an aggregate or a
+/// grouped column used only there is a hidden column trimmed from the
+/// result. Go's serial HashAgg (concurrency 1) pins first-seen order.
+#[test]
+fn aggregate_having_and_order_by() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 478);
+    rows(&mut tk, "SET tidb_hashagg_partial_concurrency = 1");
+    rows(&mut tk, "SET tidb_hashagg_final_concurrency = 1");
+    rows(&mut tk, "CREATE TABLE g (a BIGINT, b BIGINT)");
+    rows(&mut tk, "INSERT INTO g VALUES (1, 10), (1, 20), (2, 5), (3, 7), (3, 8)");
+    let q = |tk: &mut Session, sql: &str| displayed(rows(tk, sql));
+    assert_eq!(q(&mut tk, "SELECT a, COUNT(*) FROM g GROUP BY a HAVING COUNT(*) > 1"), [["1", "2"], ["3", "2"]]);
+    assert_eq!(q(&mut tk, "SELECT a FROM g GROUP BY a HAVING SUM(b) > 15"), [["1"]]);
+    assert_eq!(q(&mut tk, "SELECT a FROM g GROUP BY a ORDER BY SUM(b) DESC"), [["1"], ["3"], ["2"]]);
+    assert_eq!(
+        q(&mut tk, "SELECT a, SUM(b) FROM g GROUP BY a HAVING COUNT(*) > 1 ORDER BY SUM(b) LIMIT 1"),
+        [["3", "15"]]
+    );
+    assert_eq!(
+        q(&mut tk, "SELECT a, SUM(b) AS total FROM g GROUP BY a ORDER BY total"),
+        [["2", "5"], ["3", "15"], ["1", "30"]]
+    );
+    assert_eq!(q(&mut tk, "SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1"), [["1"], ["2"]]);
+    assert!(rows(&mut tk, "SELECT COUNT(*) FROM g HAVING COUNT(*) > 100").is_empty());
+}
+
+/// A global AVG over a range splits into a cop partial StreamAgg of COUNT
+/// and SUM and a root final StreamAgg.
+#[test]
+fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 479);
+    rows(&mut tk, "CREATE TABLE avg_revenue (id INT PRIMARY KEY, price DECIMAL(10,2), k INT)");
+    rows(&mut tk, "INSERT INTO avg_revenue VALUES (10,100.00,1),(20,200.00,2),(30,300.00,3)");
+    let sql = "SELECT AVG(price) FROM avg_revenue WHERE k >= 1 AND k <= 3";
+    assert_eq!(displayed(rows(&mut tk, sql)), [["200.000000"]]);
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(
+        plan.iter().map(|row| row[0].as_str()).collect::<Vec<_>>(),
+        ["StreamAgg", "└─TableReader", "  └─StreamAgg", "    └─Selection", "      └─TableFullScan"]
+    );
+    assert!(plan[0][4].contains("funcs:avg(Column#"), "{plan:?}");
+    assert!(plan[0][4].matches("Column#").count() >= 3, "{plan:?}");
+    assert!(plan[2][4].contains("funcs:count(test.avg_revenue.price)"), "{plan:?}");
+    assert!(plan[2][4].contains("funcs:sum(test.avg_revenue.price)"), "{plan:?}");
+}
