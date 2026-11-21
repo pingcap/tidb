@@ -82,6 +82,10 @@ fn cop_backed_stack_with_stats_lease(
     stats_lease: Option<tidb_domain_core::node_config::StatsLease>,
 ) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_config(|config| {
+        // Go's testkit: `session.DisableStats4Test()` (`SetStatsLease(-1)`),
+        // so no statistics loop reloads or flushes behind a test's back; a
+        // test of that loop names its lease.
+        config.stats_lease = tidb_domain_core::node_config::StatsLease::Disabled;
         if let Some(stats_lease) = stats_lease {
             config.stats_lease = stats_lease;
         }
@@ -25777,10 +25781,80 @@ fn tidb_trace_tree(session: &mut Session, sql: &str) -> Vec<String> {
         "TiKVStore.getTimestampWithRetry",
         "copr.buildCopTasks",
     ];
-    trace_tree(session, sql)
+    without_conditional_spans(trace_tree(session, sql))
         .into_iter()
         .filter(|line| !CLIENT.iter().any(|client| line.contains(client)))
         .collect()
+}
+
+/// Go's `LimitExec.Close` starts its `limitExec.Close` span only when the
+/// close took over a millisecond (`if elapsed > time.Millisecond`), so the
+/// span is in a trace or not with the machine's speed. The tree is redrawn
+/// as the server draws it, without that span.
+fn without_conditional_spans(lines: Vec<String>) -> Vec<String> {
+    let nodes: Vec<(usize, String)> = lines
+        .iter()
+        .map(|line| {
+            let chars: Vec<char> = line.chars().collect();
+            match chars.iter().position(|c| matches!(c, '├' | '└')) {
+                Some(at) => ((at - 2) / 2 + 1, chars[at + 2..].iter().collect()),
+                None => (0, line.clone()),
+            }
+        })
+        .filter(|(_, label)| label != "limitExec.Close")
+        .collect();
+    // Whether each ancestor (by depth, from 1) has a later sibling.
+    let mut path: Vec<bool> = Vec::new();
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(index, (depth, label))| {
+            if *depth == 0 {
+                return label.clone();
+            }
+            let has_next_sibling = nodes[index + 1..]
+                .iter()
+                .find(|(later, _)| later <= depth)
+                .is_some_and(|(later, _)| later == depth);
+            path.truncate(depth - 1);
+            let mut line = String::from("  ");
+            for ancestor_has_next in &path {
+                line.push_str(if *ancestor_has_next { "│ " } else { "  " });
+            }
+            line.push_str(if has_next_sibling { "├─" } else { "└─" });
+            line.push_str(label);
+            path.push(has_next_sibling);
+            line
+        })
+        .collect()
+}
+
+#[test]
+fn a_conditional_span_leaves_the_trace_tree_as_drawn_without_it() {
+    let lines = |tree: &[&str]| tree.iter().map(|line| (*line).to_owned()).collect::<Vec<_>>();
+    let without = lines(&[
+        "trace",
+        "  └─session.ExecuteStmt",
+        "    ├─executor.Compile",
+        "    │ └─executor.EvalSubQuery",
+        "    │   ├─distsql.Select",
+        "    │   └─*executor.MaxOneRowExec.Next",
+        "    │     └─*aggregate.StreamAggExec.Next",
+        "    └─session.runStmt",
+    ]);
+    let with = lines(&[
+        "trace",
+        "  └─session.ExecuteStmt",
+        "    ├─executor.Compile",
+        "    │ └─executor.EvalSubQuery",
+        "    │   ├─distsql.Select",
+        "    │   ├─*executor.MaxOneRowExec.Next",
+        "    │   │ └─*aggregate.StreamAggExec.Next",
+        "    │   └─limitExec.Close",
+        "    └─session.runStmt",
+    ]);
+    assert_eq!(without_conditional_spans(without.clone()), without);
+    assert_eq!(without_conditional_spans(with), without);
 }
 
 /// The rest of Go's statement-path regions and events: a subquery the

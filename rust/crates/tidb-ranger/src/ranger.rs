@@ -31,6 +31,7 @@
 //! slightly different byte counts. Every current caller passes 0 (no
 //! limit).
 
+use crate::types::prefix_next;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 
@@ -55,22 +56,6 @@ fn valid_interval(low: &Point, high: &Point) -> Result<bool, PointBuilderError> 
         r = prefix_next(&r);
     }
     Ok(l < r)
-}
-
-/// Go `kv.Key.PrefixNext` (shared with `types.rs`'s private copy by
-/// intent: both are Go's five-line body).
-fn prefix_next(key: &[u8]) -> Vec<u8> {
-    let mut next = key.to_vec();
-    for i in (0..next.len()).rev() {
-        if next[i] != 0xff {
-            next[i] += 1;
-            next.truncate(i + 1);
-            return next;
-        }
-    }
-    let mut appended = key.to_vec();
-    appended.push(0);
-    appended
 }
 
 /// Go `convertPointsInPlace`: convert each pair into `new_tp`, apply the

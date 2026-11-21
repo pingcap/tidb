@@ -630,25 +630,37 @@ pub(super) fn go_g_float(value: f64) -> String {
     tidb_goruntime::go_strconv::format_float(value, b'g', -1, 64)
 }
 
-/// Go `kv.Key.PrefixNext`: the next prefix key — increment the last
-/// non-0xff byte, truncating after it; all-0xff appends a zero.
-fn prefix_next(key: &[u8]) -> Vec<u8> {
-    let mut next = key.to_vec();
-    for i in (0..next.len()).rev() {
-        if next[i] != 0xff {
-            next[i] += 1;
-            next.truncate(i + 1);
-            return next;
+/// Go `kv.Key.PrefixNext`: the next prefix key. Each byte from the end is
+/// incremented until one does not wrap to zero; the length is kept (`01 ff`
+/// is `02 00`), and a key of only `0xff` bytes is itself with a zero byte
+/// appended.
+pub(crate) fn prefix_next(key: &[u8]) -> Vec<u8> {
+    let mut buf = key.to_vec();
+    for byte in buf.iter_mut().rev() {
+        *byte = byte.wrapping_add(1);
+        if *byte != 0 {
+            return buf;
         }
     }
-    let mut appended = key.to_vec();
-    appended.push(0);
-    appended
+    let mut buf = key.to_vec();
+    buf.push(0);
+    buf
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `kv.Key.PrefixNext` (`pkg/kv/key_test.go` `TestPrefixNext`'s
+    /// shapes): a carry keeps the key's length.
+    #[test]
+    fn prefix_next_carries_like_go() {
+        assert_eq!(prefix_next(&[0x01, 0x02]), [0x01, 0x03]);
+        assert_eq!(prefix_next(&[0x01, 0xff]), [0x02, 0x00]);
+        assert_eq!(prefix_next(&[0x01, 0xff, 0xff]), [0x02, 0x00, 0x00]);
+        assert_eq!(prefix_next(&[0xff, 0xff]), [0xff, 0xff, 0x00]);
+        assert_eq!(prefix_next(&[]), [0x00]);
+    }
 
     fn int(v: i64) -> Datum {
         Datum::Int(v)

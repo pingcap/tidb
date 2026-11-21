@@ -346,29 +346,16 @@ fn cluster_security() -> tidb_pd_client::ClusterSecurity {
     )
 }
 
-/// Go `Security.ToTLSConfig` for an HTTP client: `None` without a cluster
-/// CA; else the CA as the roots and, when both are set, the certificate and
-/// key as the client identity.
+/// Go `Security.ToTLSConfig` for the manager's HTTP client: `None` without a
+/// cluster CA.
 fn cluster_tls_client_builder(
     security: &tidb_pd_client::ClusterSecurity,
 ) -> Result<Option<reqwest::blocking::ClientBuilder>, String> {
     if !security.is_tls_enabled() {
         return Ok(None);
     }
-    let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
-    let roots = reqwest::Certificate::from_pem_bundle(&ca).map_err(|error| error.to_string())?;
-    if roots.is_empty() {
-        return Err("cluster CA contains no certificates".to_owned());
-    }
-    let mut builder = reqwest::blocking::Client::builder().tls_certs_only(roots);
-    if !security.cert_path().is_empty() && !security.key_path().is_empty() {
-        let mut identity = std::fs::read(security.cert_path()).map_err(|error| error.to_string())?;
-        identity.push(b'\n');
-        identity.extend(std::fs::read(security.key_path()).map_err(|error| error.to_string())?);
-        builder =
-            builder.identity(reqwest::Identity::from_pem(&identity).map_err(|error| error.to_string())?);
-    }
-    Ok(Some(builder))
+    tidb_store_driver_txn::cluster_http::with_cluster_tls(reqwest::blocking::Client::builder(), security)
+        .map(Some)
 }
 
 /// Go `main`: in standby mode, creates the controller and waits for the
@@ -544,36 +531,20 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
-/// Go `url.Values`: the decoded pairs of a raw query.
+/// Go `r.URL.Query()`: `url.ParseQuery`'s valid pairs, a malformed one
+/// silently dropped.
 pub(crate) fn decode_query(raw: &str) -> Vec<(String, String)> {
-    fn unescape(text: &str) -> String {
-        let bytes = text.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'+' => out.push(b' '),
-                b'%' => match bytes
-                    .get(i + 1..i + 3)
-                    .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
-                {
-                    Some(byte) => {
-                        out.push(byte);
-                        i += 2;
-                    }
-                    None => out.push(b'%'),
-                },
-                byte => out.push(byte),
-            }
-            i += 1;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    }
-    raw.split('&')
-        .filter(|pair| !pair.is_empty())
-        .map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (unescape(key), unescape(value))
+    let (values, _) = tidb_go_url::parse_query(raw);
+    values
+        .0
+        .iter()
+        .flat_map(|(key, values)| {
+            values.iter().map(move |value| {
+                (
+                    String::from_utf8_lossy(key).into_owned(),
+                    String::from_utf8_lossy(value).into_owned(),
+                )
+            })
         })
         .collect()
 }
@@ -806,5 +777,7 @@ mod tests {
                 ("x".to_owned(), "/a".to_owned())
             ]
         );
+        // Go drops a pair it cannot unescape.
+        assert_eq!(decode_query("a=%zz&b=1"), [("b".to_owned(), "1".to_owned())]);
     }
 }

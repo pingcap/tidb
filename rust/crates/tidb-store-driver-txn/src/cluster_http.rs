@@ -104,7 +104,21 @@ fn init_internal_client(
     } else {
         default_transport_client_builder()?
     };
-    let mut builder = builder.timeout(std::time::Duration::from_secs(5 * 60));
+    let builder = builder.timeout(std::time::Duration::from_secs(5 * 60));
+    with_cluster_tls(builder, security)?.build().map_err(|error| error.to_string())
+}
+
+/// Go `Security.ToTLSConfig` on an HTTP client: the cluster CA as its only
+/// roots and, when both are set, the certificate and key as its identity.
+/// The builder is unchanged without a cluster CA.
+///
+/// # Errors
+///
+/// A file could not be read, or the CA holds no certificate.
+pub fn with_cluster_tls(
+    mut builder: reqwest::blocking::ClientBuilder,
+    security: &tidb_pd_client::ClusterSecurity,
+) -> Result<reqwest::blocking::ClientBuilder, String> {
     if security.is_tls_enabled() {
         let ca = std::fs::read(security.ca_path()).map_err(|error| error.to_string())?;
         let roots =
@@ -123,7 +137,7 @@ fn init_internal_client(
             );
         }
     }
-    builder.build().map_err(|error| error.to_string())
+    Ok(builder)
 }
 
 /// Runs one request of the node's PD HTTP client (Go `pdhttp.Client`, which
