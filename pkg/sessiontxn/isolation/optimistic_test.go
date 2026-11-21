@@ -129,6 +129,25 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, readTS, updateTS)
 	require.Greater(t, readTS, compareTS)
+
+	tk.MustExec("set @@autocommit=1")
+	tk.MustExec("create sequence test.point_get_sequence")
+	for _, sql := range []string{
+		"select nextval(test.point_get_sequence) from t where id = 1",
+		"select setval(test.point_get_sequence, 100) from t where id = 1",
+		"select coalesce(nextval(test.point_get_sequence), 0) from t where id = 1",
+	} {
+		stmts, _, err := parser.New().Parse(sql, "", "")
+		require.NoError(t, err)
+		provider = initializeOptimisticProvider(t, tk, false)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), stmts[0]))
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), resolve.NewNodeW(stmts[0]), provider.GetTxnInfoSchema())
+		require.NoError(t, err)
+		require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
+		readTS, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		require.NotEqual(t, uint64(math.MaxUint64), readTS, "sequence mutations must be visible to read-only draining: %s", sql)
+	}
 }
 
 func TestOptimisticHandleError(t *testing.T) {

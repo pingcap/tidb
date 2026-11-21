@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -617,6 +619,13 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	failpoint.InjectCall("afterBatchInsertNewTxn", e.Ctx())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.Table.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	return nil
