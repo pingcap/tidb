@@ -15,14 +15,15 @@
 //! `pkg/executor` `ProjectionExec`: evaluates a list of expressions over each
 //! input row to form the output rows.
 //!
-//! Serial evaluation runs on the caller. Parallel evaluation circulates bounded
-//! input/output chunks through the shared CPU pool and joins work on close.
+//! Serial evaluation runs on the caller. Parallel evaluation is Go's: one
+//! input-fetcher thread pulls the child ahead of the parent and `numWorkers`
+//! worker threads evaluate, circulating bounded input/output chunks.
 
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use crossbeam_channel::{bounded, select_biased, Receiver, Sender};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::evaluator::{EvaluatorError, EvaluatorProgram, EvaluatorSuite};
@@ -73,36 +74,56 @@ impl ProjectionContext for crate::StmtContext {
     }
 }
 
-/// The `'static` snapshot every projection worker task borrows: Go's workers
-/// share the executor's `evaluatorSuit` and its evaluation context.
-struct ParallelProjectionShared<C> {
-    program: Arc<EvaluatorProgram>,
-    ctx: C,
+/// Go `projectionInput`: a chunk the fetcher fills and the worker it names
+/// evaluates.
+struct ProjectionInput {
+    chk: Chunk,
+    target_worker: usize,
 }
 
-/// Go `projectionInputFetcher` + `projectionWorker`s, driven from the session
-/// thread: the parent's `Next` fetches a child chunk into a free input chunk,
-/// hands the pair to a pool worker, and releases finished outputs in fetch
-/// order. `numWorkers` input and output chunks circulate, so the fetch runs at
-/// most that far ahead of the parent, as Go's `inputCh`/`outputCh` bound it.
-struct ParallelProjection<C> {
-    // Drop the worker owner before the context, result receiver and buffers.
-    workers: tidb_goruntime::worker_pool::TaskGroup,
-    shared: Arc<ParallelProjectionShared<C>>,
-    result_tx: Sender<(u64, Result<(Chunk, Chunk), ExecError>)>,
-    result_rx: Receiver<(u64, Result<(Chunk, Chunk), ExecError>)>,
-    /// Finished pairs waiting for their turn (`output.done` in fetch order).
-    reorder: BTreeMap<u64, (Chunk, Chunk)>,
-    /// Outputs released in order, not yet handed to the parent.
-    ready: VecDeque<Chunk>,
-    free_inputs: Vec<Chunk>,
-    free_outputs: Vec<Chunk>,
-    inputs_allocated: usize,
-    outputs_allocated: usize,
-    next_seq: u64,
-    next_release: u64,
-    in_flight: usize,
-    child_done: bool,
+/// Go `projectionOutput`: the chunk a worker evaluates into, shared with the
+/// parent, which takes it once `done` reports.
+struct ProjectionOutput {
+    chk: Mutex<Chunk>,
+    /// Go `done chan error` (capacity one).
+    done: (Sender<Result<(), ExecError>>, Receiver<Result<(), ExecError>>),
+}
+
+impl ProjectionOutput {
+    fn new(chk: Chunk) -> Arc<Self> {
+        Arc::new(Self { chk: Mutex::new(chk), done: bounded(1) })
+    }
+
+    fn chk(&self) -> MutexGuard<'_, Chunk> {
+        self.chk.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Go `prepare`'s channels and goroutines: the parent reads `output_ch`
+/// (`e.outputCh`) and gives each output back on `fetcher_output_ch`; Close
+/// closes `finish_ch`, joins the threads and drains every resource channel.
+struct ParallelProjection {
+    /// Go `finishCh`, closed by dropping the sender.
+    finish_ch: Option<Sender<()>>,
+    /// Go `e.outputCh` (the fetcher's `globalOutputCh`).
+    output_ch: Receiver<Arc<ProjectionOutput>>,
+    /// Go `e.fetcher.inputCh`.
+    fetcher_input_ch: (Sender<ProjectionInput>, Receiver<ProjectionInput>),
+    /// Go `e.fetcher.outputCh`.
+    fetcher_output_ch: (Sender<Arc<ProjectionOutput>>, Receiver<Arc<ProjectionOutput>>),
+    /// Each worker's Go `inputCh` and `outputCh`.
+    worker_chs: Vec<(Receiver<ProjectionInput>, Receiver<Arc<ProjectionOutput>>)>,
+    /// Go `e.wg`.
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+/// Go `readProjection`: the next item, or `None` once `finish_ch` closes or
+/// the channel does.
+fn read_projection<T>(ch: &Receiver<T>, finish_ch: &Receiver<()>) -> Option<T> {
+    select_biased! {
+        recv(finish_ch) -> _ => None,
+        recv(ch) -> item => item.ok(),
+    }
 }
 
 /// One execution of a physical projection, with its own evaluator and buffer.
@@ -110,12 +131,15 @@ pub struct ProjectionExec<C: Columns> {
     meta: ExecutorMeta,
     evaluator_suite: EvaluatorSuite,
     program: Arc<EvaluatorProgram>,
-    child: Box<dyn Executor>,
+    /// Shared with the input-fetcher thread while the parallel path runs.
+    child: Arc<Mutex<Box<dyn Executor>>>,
     ctx: C,
     child_chunk: Chunk,
     /// Go `numWorkers`: the projection workers, zero for the serial path.
     num_workers: usize,
-    parallel: Option<ParallelProjection<C>>,
+    /// Go `parentReqRows`, read by the fetcher.
+    parent_req_rows: Arc<AtomicI64>,
+    parallel: Option<ParallelProjection>,
     /// A projection inside a reader's coprocessor plan, which Go runs in
     /// TiKV: an evaluation failure reaches TiDB as a coprocessor error.
     in_coprocessor: bool,
@@ -155,10 +179,11 @@ impl<C: Columns> ProjectionExec<C> {
             meta,
             evaluator_suite,
             program,
-            child,
+            child: Arc::new(Mutex::new(child)),
             ctx,
             child_chunk,
             num_workers: 0,
+            parent_req_rows: Arc::new(AtomicI64::new(0)),
             parallel: None,
             in_coprocessor: false,
             mem_tracker: None,
@@ -173,9 +198,11 @@ impl<C: Columns> ProjectionExec<C> {
     }
 
     fn consume(&self, bytes: i64) {
-        if let Some(tracker) = &self.mem_tracker {
-            tracker.consume(bytes);
-        }
+        consume(self.mem_tracker.as_ref(), bytes);
+    }
+
+    fn child(&self) -> MutexGuard<'_, Box<dyn Executor>> {
+        self.child.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Go `isUnparallelExec`.
@@ -208,230 +235,325 @@ impl<C: Columns> ProjectionExec<C> {
     }
 }
 
+/// `memTracker.Consume`, when the projection has a tracker.
+fn consume(tracker: Option<&Arc<tidb_memory::Tracker>>, bytes: i64) {
+    if let Some(tracker) = tracker {
+        tracker.consume(bytes);
+    }
+}
+
 impl<C: Columns> Drop for ProjectionExec<C> {
     fn drop(&mut self) {
         // Rust callers can drop without an explicit Close. Retire evaluation
         // before field destruction can release the child or statement state.
-        self.parallel.take();
+        if let Some(parallel) = self.parallel.take() {
+            parallel.close(self.mem_tracker.as_ref());
+        }
         if let Some(tracker) = &self.mem_tracker {
             tracker.replace_bytes_used(0);
         }
     }
 }
 
+impl ParallelProjection {
+    /// Go `Close`'s parallel half: close `finishCh`, wait for the fetcher and
+    /// workers, then drain the fetcher's and each worker's resources.
+    fn close(mut self, tracker: Option<&Arc<tidb_memory::Tracker>>) {
+        drop(self.finish_ch.take());
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+        let drain_inputs = |ch: &Receiver<ProjectionInput>| {
+            while let Ok(item) = ch.try_recv() {
+                consume(tracker, -item.chk.memory_usage());
+            }
+        };
+        let drain_outputs = |ch: &Receiver<Arc<ProjectionOutput>>| {
+            while let Ok(item) = ch.try_recv() {
+                consume(tracker, -item.chk().memory_usage());
+            }
+        };
+        // clear fetcher
+        drain_inputs(&self.fetcher_input_ch.1);
+        drain_outputs(&self.fetcher_output_ch.1);
+        // clear workers
+        for (input_ch, output_ch) in &self.worker_chs {
+            drain_inputs(input_ch);
+            drain_outputs(output_ch);
+        }
+    }
+}
+
 impl<C: Columns + Clone + Send + Sync + 'static> ProjectionExec<C> {
-    /// Go `parallelExecute`: the next finished output in fetch order, fetching
-    /// and dispatching further child chunks while a free input and output
-    /// chunk exist (`projectionInputFetcher.run`), else waiting on a worker.
+    /// Go `parallelExecute`: the next output in fetch order once its worker
+    /// (or, at the end, the fetcher) reports it done.
     fn parallel_next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        let max_chunk_size = self.meta.max_chunk_size();
-        req.grow_and_reset(max_chunk_size);
+        req.grow_and_reset(self.meta.max_chunk_size());
+        self.parent_req_rows
+            .store(i64::try_from(req.required_rows()).unwrap_or(i64::MAX), Ordering::SeqCst);
         if self.parallel.is_none() {
-            // Go `prepare`: one input and one output chunk per worker.
-            let num_workers = self.num_workers.max(1);
-            // Go `exec.NewFirstChunk`, outside the session's allocator.
-            let free_inputs: Vec<Chunk> = (0..num_workers)
-                .map(|_| tidb_executor_internal_exec::new_first_chunk(self.child.as_ref()))
-                .collect();
-            let free_outputs: Vec<Chunk> = (0..num_workers)
-                .map(|_| self.meta.new_first_chunk())
-                .collect();
-            self.consume(
-                free_inputs.iter().chain(&free_outputs).map(Chunk::memory_usage).sum(),
-            );
-            let (result_tx, result_rx) = std::sync::mpsc::channel();
-            self.parallel = Some(ParallelProjection {
-                workers: tidb_goruntime::worker_pool::TaskGroup::new(),
-                shared: Arc::new(ParallelProjectionShared {
-                    program: Arc::clone(&self.program),
-                    ctx: self.ctx.clone(),
-                }),
-                result_tx,
-                result_rx,
-                reorder: BTreeMap::new(),
-                ready: VecDeque::new(),
-                free_inputs,
-                free_outputs,
-                inputs_allocated: num_workers,
-                outputs_allocated: num_workers,
-                next_seq: 0,
-                next_release: 0,
-                in_flight: 0,
-                child_done: false,
-            });
+            self.prepare()?;
         }
-        loop {
-            self.collect_parallel_results(false)?;
-            let pipeline = self
-                .parallel
-                .as_mut()
-                .expect("the parallel projection is created above");
-            if let Some(mut output) = pipeline.ready.pop_front() {
-                // Go `chk.SwapColumns(output.chk); e.fetcher.outputCh <- output`.
-                let m_size = output.memory_usage();
-                req.swap_columns(&mut output);
-                let delta = output.memory_usage() - m_size;
-                output.reset();
-                pipeline.free_outputs.push(output);
-                self.consume(delta);
-                return Ok(());
-            }
-            if !pipeline.child_done {
-                if let Some((input, output)) = self.take_parallel_chunks() {
-                    self.fetch_and_dispatch_parallel(input, output, req.required_rows())?;
-                    continue;
-                }
-            }
-            let pipeline = self
-                .parallel
-                .as_ref()
-                .expect("the parallel projection is created above");
-            if pipeline.in_flight > 0 {
-                self.collect_parallel_results(true)?;
-                continue;
-            }
-            // The child is drained and every worker has reported: EOF.
+        let parallel = self.parallel.as_ref().expect("the parallel projection is prepared above");
+        let Ok(output) = parallel.output_ch.recv() else {
             return Ok(());
+        };
+        let fetcher_output_ch = parallel.fetcher_output_ch.0.clone();
+        if let Ok(err) = output.done.1.recv() {
+            err?;
         }
+        let m_size = {
+            let mut chk = output.chk();
+            let m_size = chk.memory_usage();
+            req.swap_columns(&mut chk);
+            chk.memory_usage() - m_size
+        };
+        self.consume(m_size);
+        let _ = fetcher_output_ch.send(output);
+        Ok(())
     }
 
-    /// A free input and a free output chunk, or `None` when Go's fetcher would
-    /// block on `inputCh`/`outputCh`: all `numWorkers` of either are with a
-    /// worker or waiting for the parent.
-    fn take_parallel_chunks(&mut self) -> Option<(Chunk, Chunk)> {
+    /// Go `prepare`: one input and one output chunk per worker on the
+    /// fetcher's channels, then the fetcher and worker goroutines.
+    fn prepare(&mut self) -> Result<(), ExecError> {
         let num_workers = self.num_workers.max(1);
-        let pipeline = self.parallel.as_mut()?;
-        let input = match pipeline.free_inputs.pop() {
-            Some(input) => Some(input),
-            None if pipeline.inputs_allocated < num_workers => {
-                pipeline.inputs_allocated += 1;
-                None
-            }
-            None => return None,
-        };
-        let output = match pipeline.free_outputs.pop() {
-            Some(output) => Some(output),
-            None if pipeline.outputs_allocated < num_workers => {
-                pipeline.outputs_allocated += 1;
-                None
-            }
-            None => {
-                if let Some(input) = input {
-                    pipeline.free_inputs.push(input);
-                } else {
-                    pipeline.inputs_allocated -= 1;
-                }
-                return None;
-            }
-        };
-        let input = input.unwrap_or_else(|| tidb_executor_internal_exec::new_first_chunk(self.child.as_ref()));
-        let output = output.unwrap_or_else(|| self.meta.new_first_chunk());
-        Some((input, output))
-    }
+        let (finish_tx, finish_rx) = bounded::<()>(0);
+        let output_ch = bounded::<Arc<ProjectionOutput>>(num_workers);
+        let fetcher_input_ch = bounded::<ProjectionInput>(num_workers);
+        let fetcher_output_ch = bounded::<Arc<ProjectionOutput>>(num_workers);
+        let mut worker_chs = Vec::with_capacity(num_workers);
+        let mut worker_txs = Vec::with_capacity(num_workers);
+        for i in 0..num_workers {
+            let input_ch = bounded::<ProjectionInput>(1);
+            let output_ch = bounded::<Arc<ProjectionOutput>>(1);
+            worker_txs.push((input_ch.0, output_ch.0));
+            worker_chs.push((input_ch.1, output_ch.1));
 
-    /// Go `projectionInputFetcher.run` for one chunk: pull it from the child
-    /// with the parent's required rows, end the fetch on an empty chunk,
-    /// otherwise hand the pair to a pool worker (`projectionWorker.run`).
-    fn fetch_and_dispatch_parallel(
-        &mut self,
-        mut input: Chunk,
-        output: Chunk,
-        required_rows: usize,
-    ) -> Result<(), ExecError> {
-        let max_chunk_size = self.meta.max_chunk_size();
-        input.reset();
-        input.set_required_rows(
-            isize::try_from(required_rows).unwrap_or(isize::MAX),
-            max_chunk_size,
-        );
-        let m_size = input.memory_usage();
-        let fetched = self.child.next(&mut input);
-        self.consume(input.memory_usage() - m_size);
-        if fetched.is_err() || input.num_rows() == 0 {
-            // Go's fetcher ends here, releasing the input it holds.
-            self.consume(-input.memory_usage());
-        }
-        fetched?;
-        let tracker = self.mem_tracker.clone();
-        let pipeline = self
-            .parallel
-            .as_mut()
-            .expect("the parallel projection is created before a fetch");
-        if input.num_rows() == 0 {
-            pipeline.child_done = true;
-            // Go's fetcher has already queued this output for the parent
-            // (`f.globalOutputCh <- output`) and completes it empty
-            // (`output.done <- err`): the parent swaps it in, charging the
-            // difference, as its last answer.
-            let seq = pipeline.next_seq;
-            pipeline.next_seq += 1;
-            let mut output = output;
-            output.reset();
-            pipeline.reorder.insert(seq, (input, output));
-            return Ok(());
-        }
-        let seq = pipeline.next_seq;
-        pipeline.next_seq += 1;
-        pipeline.in_flight += 1;
-        let shared = Arc::clone(&pipeline.shared);
-        let result_tx = pipeline.result_tx.clone();
-        pipeline.workers.submit(tidb_executor_internal_exec::ruv2::inherit_goroutine(move || {
-            let mut input = input;
-            let mut output = output;
-            let result = tidb_driver_error::panic_recovery::recover_worker_panic(|| {
-                let suite = EvaluatorSuite::from_program(Arc::clone(&shared.program));
-                // Go `projectionWorker.run`'s charge of what the evaluation
-                // grew.
-                let m_size = output.memory_usage() + input.memory_usage();
-                let ran = suite.run(&shared.ctx, &mut input, &mut output);
-                if let Some(tracker) = &tracker {
-                    tracker.consume(output.memory_usage() + input.memory_usage() - m_size);
-                }
-                ran.map(|()| (input, output)).map_err(Self::evaluator_error)
-            });
-            let _ = result_tx.send((seq, result));
-        }));
-        Ok(())
-    }
+            let input_chk = tidb_executor_internal_exec::new_first_chunk(self.child().as_ref());
+            self.consume(input_chk.memory_usage());
+            fetcher_input_ch
+                .0
+                .send(ProjectionInput { chk: input_chk, target_worker: i })
+                .expect("the fetcher's input channel holds every worker's input");
 
-    /// Takes every finished pair (one of them blocking when asked), then
-    /// releases outputs in fetch order and returns their inputs to the pool.
-    fn collect_parallel_results(&mut self, block: bool) -> Result<(), ExecError> {
-        let Some(pipeline) = self.parallel.as_mut() else {
-            return Ok(());
+            let output_chk = self.meta.new_first_chunk();
+            self.consume(output_chk.memory_usage());
+            fetcher_output_ch
+                .0
+                .send(ProjectionOutput::new(output_chk))
+                .expect("the fetcher's output channel holds every worker's output");
+        }
+
+        let mut threads = Vec::with_capacity(num_workers + 1);
+        let spawn = |threads: &mut Vec<std::thread::JoinHandle<()>>, body: Box<dyn FnOnce() + Send>| {
+            std::thread::Builder::new()
+                .spawn(tidb_executor_internal_exec::ruv2::inherit_goroutine(body))
+                .map(|handle| threads.push(handle))
+                .map_err(|error| ExecError::internal(format!("projection thread creation failure: {error}")))
         };
-        let mut block = block && pipeline.in_flight > 0;
-        loop {
-            let message = if block {
-                block = false;
-                pipeline.result_rx.recv().map_err(|_| ())
-            } else {
-                pipeline.result_rx.try_recv().map_err(|_| ())
-            };
-            let Ok((seq, result)) = message else {
+
+        let fetcher = ProjectionInputFetcher {
+            child: Arc::clone(&self.child),
+            mem_tracker: self.mem_tracker.clone(),
+            parent_req_rows: Arc::clone(&self.parent_req_rows),
+            max_chunk_size: self.meta.max_chunk_size(),
+            global_finish_ch: finish_rx.clone(),
+            global_output_ch: output_ch.0,
+            input_ch: fetcher_input_ch.1.clone(),
+            output_ch: fetcher_output_ch.1.clone(),
+            worker_chs: worker_txs,
+        };
+        let mut parallel = ParallelProjection {
+            finish_ch: Some(finish_tx),
+            output_ch: output_ch.1,
+            fetcher_input_ch,
+            fetcher_output_ch,
+            worker_chs,
+            threads: Vec::new(),
+        };
+        let mut result = spawn(&mut threads, Box::new(move || fetcher.run()));
+        for (input_ch, output_ch) in parallel.worker_chs.iter().map(|(i, o)| (i.clone(), o.clone())) {
+            if result.is_err() {
                 break;
+            }
+            let worker = ProjectionWorker {
+                program: Arc::clone(&self.program),
+                ctx: self.ctx.clone(),
+                in_coprocessor: self.in_coprocessor,
+                mem_tracker: self.mem_tracker.clone(),
+                global_finish_ch: finish_rx.clone(),
+                input_give_back_ch: parallel.fetcher_input_ch.0.clone(),
+                input_ch,
+                output_ch,
             };
-            pipeline.in_flight = pipeline.in_flight.saturating_sub(1);
-            pipeline.reorder.insert(seq, result?);
+            result = spawn(&mut threads, Box::new(move || worker.run()));
         }
-        while let Some((mut input, output)) = pipeline.reorder.remove(&pipeline.next_release) {
-            pipeline.next_release += 1;
-            input.reset();
-            pipeline.free_inputs.push(input);
-            pipeline.ready.push_back(output);
-        }
-        Ok(())
+        parallel.threads = threads;
+        self.parallel = Some(parallel);
+        result
     }
+}
+
+/// Go `projectionInputFetcher`.
+struct ProjectionInputFetcher {
+    child: Arc<Mutex<Box<dyn Executor>>>,
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    parent_req_rows: Arc<AtomicI64>,
+    max_chunk_size: usize,
+    global_finish_ch: Receiver<()>,
+    global_output_ch: Sender<Arc<ProjectionOutput>>,
+    input_ch: Receiver<ProjectionInput>,
+    output_ch: Receiver<Arc<ProjectionOutput>>,
+    /// Each worker's Go `inputCh` and `outputCh`, sending ends.
+    worker_chs: Vec<(Sender<ProjectionInput>, Sender<Arc<ProjectionOutput>>)>,
+}
+
+impl ProjectionInputFetcher {
+    /// Go `projectionInputFetcher.run`: takes a free input and output, hands
+    /// the output to the parent, fills the input from the child, and
+    /// dispatches both to the input's worker -- until the child is drained,
+    /// fails, or the projection closes. Ends by closing `globalOutputCh`
+    /// (dropping its sender).
+    fn run(self) {
+        let mut output: Option<Arc<ProjectionOutput>> = None;
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fetch(&mut output)));
+        if let Err(payload) = run {
+            recovery_projection(output.as_deref(), payload.as_ref());
+        }
+    }
+
+    fn fetch(&self, current_output: &mut Option<Arc<ProjectionOutput>>) {
+        loop {
+            let Some(mut input) = read_projection(&self.input_ch, &self.global_finish_ch) else {
+                return;
+            };
+            let target_worker = input.target_worker;
+
+            let Some(output) = read_projection(&self.output_ch, &self.global_finish_ch) else {
+                consume(self.mem_tracker.as_ref(), -input.chk.memory_usage());
+                return;
+            };
+            *current_output = Some(Arc::clone(&output));
+
+            if self.global_output_ch.send(Arc::clone(&output)).is_err() {
+                return;
+            }
+
+            let required_rows = self.parent_req_rows.load(Ordering::SeqCst);
+            input.chk.reset();
+            input
+                .chk
+                .set_required_rows(isize::try_from(required_rows).unwrap_or(isize::MAX), self.max_chunk_size);
+            let m_size = input.chk.memory_usage();
+            let err = self.child.lock().unwrap_or_else(PoisonError::into_inner).next(&mut input.chk);
+            consume(self.mem_tracker.as_ref(), input.chk.memory_usage() - m_size);
+            if err.is_err() || input.chk.num_rows() == 0 {
+                let _ = output.done.0.send(err);
+                consume(self.mem_tracker.as_ref(), -input.chk.memory_usage());
+                return;
+            }
+
+            let (input_ch, output_ch) = &self.worker_chs[target_worker];
+            if input_ch.send(input).is_err() || output_ch.send(output).is_err() {
+                return;
+            }
+            *current_output = None;
+        }
+    }
+}
+
+/// Go `projectionWorker`.
+struct ProjectionWorker<C> {
+    program: Arc<EvaluatorProgram>,
+    ctx: C,
+    in_coprocessor: bool,
+    mem_tracker: Option<Arc<tidb_memory::Tracker>>,
+    global_finish_ch: Receiver<()>,
+    input_give_back_ch: Sender<ProjectionInput>,
+    input_ch: Receiver<ProjectionInput>,
+    output_ch: Receiver<Arc<ProjectionOutput>>,
+}
+
+impl<C: Columns + Send + Sync> ProjectionWorker<C> {
+    /// Go `projectionWorker.run`: evaluates each input into its output,
+    /// reports the output done, and gives the input back to the fetcher --
+    /// until an evaluation fails or the projection closes.
+    fn run(self) {
+        let suite = EvaluatorSuite::from_program(Arc::clone(&self.program));
+        let mut output: Option<Arc<ProjectionOutput>> = None;
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.work(&suite, &mut output)));
+        if let Err(payload) = run {
+            recovery_projection(output.as_deref(), payload.as_ref());
+        }
+    }
+
+    fn work(&self, suite: &EvaluatorSuite, current_output: &mut Option<Arc<ProjectionOutput>>) {
+        loop {
+            let Some(mut input) = read_projection(&self.input_ch, &self.global_finish_ch) else {
+                return;
+            };
+            let Some(output) = read_projection(&self.output_ch, &self.global_finish_ch) else {
+                return;
+            };
+            *current_output = Some(Arc::clone(&output));
+
+            let err = {
+                let mut chk = output.chk();
+                let m_size = chk.memory_usage() + input.chk.memory_usage();
+                let err = suite.run(&self.ctx, &mut input.chk, &mut chk);
+                consume(self.mem_tracker.as_ref(), chk.memory_usage() + input.chk.memory_usage() - m_size);
+                err
+            };
+            let in_coprocessor = self.in_coprocessor;
+            let err = err.map_err(|error| match error {
+                EvaluatorError::Eval(error) if in_coprocessor => crate::driver::coprocessor_evaluation_error(error),
+                EvaluatorError::Eval(error) => ExecError::Eval(error),
+                EvaluatorError::Chunk(message) => ExecError::internal(message),
+            });
+            let failed = err.is_err();
+            let _ = output.done.0.send(err);
+            *current_output = None;
+
+            if failed {
+                return;
+            }
+
+            if self.input_give_back_ch.send(input).is_err() {
+                return;
+            }
+        }
+    }
+}
+
+/// Go `recoveryProjection`: the panicking goroutine's current output reports
+/// the recovered error.
+fn recovery_projection(output: Option<&ProjectionOutput>, payload: &(dyn std::any::Any + Send)) {
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("projection executor panicked")
+        .to_owned();
+    if let Some(output) = output {
+        let _ = output.done.0.send(Err(ExecError::internal(message.clone())));
+    }
+    tidb_logutil::bg_logger().warn(
+        "projection executor panicked",
+        &[tidb_log::Field::new("error", tidb_log::Value::Str(message))],
+    );
 }
 
 impl<C: ProjectionContext> ProjectionExec<C> {
     /// Go `ProjectionExec.open`: the executor's own state over a child that
     /// is already open (`buildProjectionForIndexJoin`).
     pub(crate) fn open_self(&mut self) -> Result<(), ExecError> {
-        self.parallel = None;
+        if let Some(parallel) = self.parallel.take() {
+            parallel.close(self.mem_tracker.as_ref());
+        }
         self.child_chunk.reset();
         if self.is_unparallel_exec() {
-            self.child_chunk = self.child.new_chunk();
+            let child_chunk = self.child().new_chunk();
+            self.child_chunk = child_chunk;
             self.consume(self.child_chunk.memory_usage());
         }
         Ok(())
@@ -442,17 +564,20 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     /// Go `ProjectionExec.Detach`: not when its `evaluatorSuit` requires any
     /// optional evaluation property, then its child.
     fn detach(&mut self) -> bool {
-        self.evaluator_suite.required_optional_eval_props().is_empty() && self.child.detach()
+        self.evaluator_suite.required_optional_eval_props().is_empty() && self.child().detach()
     }
 
     fn open(&mut self) -> Result<(), ExecError> {
-        self.parallel = None;
-        self.child.open()?;
+        if let Some(parallel) = self.parallel.take() {
+            parallel.close(self.mem_tracker.as_ref());
+        }
+        self.child().open()?;
         self.child_chunk.reset();
         // Go `open`: the serial path takes its child result from the pool
         // (`TryNewCacheChunk`) and charges it as it stands.
         if self.is_unparallel_exec() {
-            self.child_chunk = self.child.new_chunk();
+            let child_chunk = self.child().new_chunk();
+            self.child_chunk = child_chunk;
             self.consume(self.child_chunk.memory_usage());
         }
         Ok(())
@@ -476,7 +601,7 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
         self.child_chunk
             .set_required_rows(required_rows, max_chunk_size);
         let m_size = self.child_chunk.memory_usage();
-        let fetched = self.child.next(&mut self.child_chunk);
+        let fetched = self.child.lock().unwrap_or_else(PoisonError::into_inner).next(&mut self.child_chunk);
         self.consume(self.child_chunk.memory_usage() - m_size);
         fetched?;
         let child_rows = self.child_chunk.num_rows();
@@ -505,14 +630,16 @@ impl<C: ProjectionContext> Executor for ProjectionExec<C> {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        // Go closes finishCh, waits for workers, drains their resources, then
-        // closes the child. The task owner enforces that order even on error.
-        // Releasing every chunk still held leaves the tracker at zero.
-        self.parallel = None;
+        // Go closes finishCh, waits for the fetcher and workers, drains their
+        // resources, then closes the child. Releasing every chunk still held
+        // leaves the tracker at zero.
+        if let Some(parallel) = self.parallel.take() {
+            parallel.close(self.mem_tracker.as_ref());
+        }
         if let Some(tracker) = &self.mem_tracker {
             tracker.replace_bytes_used(0);
         }
-        self.child.close()
+        self.child().close()
     }
 
     fn schema(&self) -> &Schema {
@@ -1020,7 +1147,7 @@ mod tests {
     struct LifetimeSource {
         inner: Box<NumberSource>,
         gate: Arc<EvaluationGate>,
-        retired: Sender<bool>,
+        retired: std::sync::mpsc::Sender<bool>,
         opened: bool,
         fail_fetch: bool,
     }
@@ -1118,10 +1245,11 @@ mod tests {
         if result.is_ok() {
             assert_eq!(chunk.get_row(0).get_int64(0), 7);
         }
-        if first_result == FirstResult::ChildError {
-            assert!(format!("{:?}", projection.next(&mut chunk).unwrap_err())
-                .contains("child fetch error"));
-        }
+        // With a child error, Go reports outputs in fetch order: the gated
+        // second output comes before the error the fetcher hit after it, so
+        // the error cannot be read before the gate opens
+        // (`projection_reports_a_child_error_after_the_outputs_fetched_before_it`);
+        // the close below must still join the gated worker first.
         let (started, starting) = std::sync::mpsc::channel();
         let retirement =
             std::thread::spawn(move || {
@@ -1181,6 +1309,60 @@ mod tests {
     #[test]
     fn projection_lifetime_drop_joins_before_child_drop() {
         projection_lifetime_case(FirstResult::Row, Retirement::Drop);
+    }
+
+    /// Go `projectionInputFetcher.run` sends a child error on the output it
+    /// was fetching for, after the outputs it dispatched before: the parent
+    /// reads every earlier row first.
+    #[test]
+    fn projection_reports_a_child_error_after_the_outputs_fetched_before_it() {
+        struct FailingSource(Box<NumberSource>);
+        impl Executor for FailingSource {
+            fn open(&mut self) -> Result<(), ExecError> {
+                self.0.open()
+            }
+            fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+                if self.0.next == 2 {
+                    return Err(ExecError::internal("child fetch error"));
+                }
+                self.0.next(req)
+            }
+            fn close(&mut self) -> Result<(), ExecError> {
+                self.0.close()
+            }
+            fn schema(&self) -> &Schema {
+                self.0.schema()
+            }
+            fn ret_field_types(&self) -> &[FieldType] {
+                self.0.ret_field_types()
+            }
+            fn init_cap(&self) -> usize {
+                self.0.init_cap()
+            }
+            fn max_chunk_size(&self) -> usize {
+                self.0.max_chunk_size()
+            }
+            fn new_chunk(&self) -> Chunk {
+                self.0.new_chunk()
+            }
+        }
+        let (source, _) = NumberSource::new(3, 1);
+        let mut projection = ProjectionExec::new(
+            ExecutorMeta::new(Schema::new(vec![Column::new(3, long())]), 8, 1, 1024),
+            vec![int_const(7)],
+            Box::new(FailingSource(source)),
+            NoColumns,
+        )
+        .with_workers(2);
+        projection.open().unwrap();
+        let mut chunk = projection.new_chunk();
+        for _ in 0..2 {
+            projection.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1);
+            assert_eq!(chunk.get_row(0).get_int64(0), 7);
+        }
+        assert!(format!("{:?}", projection.next(&mut chunk).unwrap_err()).contains("child fetch error"));
+        projection.close().unwrap();
     }
 
     #[test]

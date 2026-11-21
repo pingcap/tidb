@@ -2,8 +2,8 @@
   "date": "2026-11-21",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 6,
-    "open": 1,
+    "unresolved": 5,
+    "open": 0,
     "partial": 5
   },
   "findings": [
@@ -40,14 +40,6 @@
       "go_owner": "`pkg/sessionctx/variable/sysvar.go`, `pkg/sessionctx/variable/variable.go` (`SysVar`), `pkg/sessionctx/variable/session.go` (`SetSystemVar`)"
     },
     {
-      "id": "X15",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "`ProjectionExec`'s parallel execution is not Go's goroutine structure. Go's `prepare` starts one `projectionInputFetcher` goroutine and `numWorkers` `projectionWorker` goroutines; the fetcher pulls the child ahead of the parent as fast as free input/output chunks allow, and `parallelExecute` only waits on `outputCh` (`pkg/executor/projection.go`). `tidb-executor` `projection.rs` `parallel_next` instead fetches the child on the parent's thread, only inside a parent `Next`, between non-blocking collections of finished worker results, so how far the fetch runs ahead -- and so the operator's peak memory -- follows whether a worker happens to have finished at each collection. Seen as `tests_explain::a_union_pulls_each_child_into_its_workers_chunk_like_go` reading `Projection_10` 31.3 KB where Go's probe reads 29.6 KB in every run (4 of 600 runs at 200 parallel copies, 0 of 40 serially; 2026-11-22). Fix: transcreate the fetcher and worker goroutines.",
-      "rust_evidence": "`rust/crates/tidb-executor/src/projection.rs` (`parallel_next`, `take_parallel_chunks`, `fetch_and_dispatch_parallel`)",
-      "go_owner": "`pkg/executor/projection.go` (`prepare`, `projectionInputFetcher.run`, `projectionWorker.run`, `parallelExecute`)"
-    },
-    {
       "id": "E29",
       "status": "partial",
       "group": "Expanded subsystem ownership review",
@@ -56,7 +48,7 @@
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
     }
   ],
-  "unresolved": 6,
-  "open": 1,
+  "unresolved": 5,
+  "open": 0,
   "partial": 5
 }

@@ -8067,7 +8067,21 @@ fn a_statement_records_go_executor_ruv2_metrics() {
     ] {
         row_text(session.run(sql));
         let summary = session.ruv2_metrics_summary().expect("a recorded statement");
-        assert_eq!(executor_parts(&summary), expected, "{sql}: {summary}");
+        let mut parts = executor_parts(&summary);
+        if sql == "SELECT b, count(*) FROM t GROUP BY b" {
+            // Go's parallel `ProjectionExec` fetches its child on the fetcher
+            // goroutine under the first `Next`'s accumulator, so its input
+            // counts only the child chunks fetched before that `Next`
+            // recorded: from none of the aggregate's 6 rows (12 output cells
+            // alone) to all of them (24, the Go run's figure).
+            let projection = parts[0]
+                .split_once("ProjectionExec:")
+                .and_then(|(_, rest)| rest.trim_end_matches('}').parse::<i64>().ok())
+                .unwrap_or_else(|| panic!("{sql}: {summary}"));
+            assert!((12..=24).contains(&projection), "{sql}: {summary}");
+            parts[0] = parts[0].replace(&format!("ProjectionExec:{projection}"), "ProjectionExec:24");
+        }
+        assert_eq!(parts, expected, "{sql}: {summary}");
     }
     // Go `recordOnTransactionExecution`: the statement that ends a valid
     // transaction counts it (`AddTxnCnt`), and the commit's details give its
