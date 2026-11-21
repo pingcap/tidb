@@ -217,12 +217,12 @@ func (ctx *EvalContext) Location() *time.Location {
 
 // AppendWarning append warnings to the context.
 func (ctx *EvalContext) AppendWarning(err error) {
-	ctx.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	ctx.sctx.GetSessionVars().StmtCtx.EvalWarnAppender().AppendWarning(err)
 }
 
 // AppendNote appends notes to the context.
 func (ctx *EvalContext) AppendNote(err error) {
-	ctx.sctx.GetSessionVars().StmtCtx.AppendNote(err)
+	ctx.sctx.GetSessionVars().StmtCtx.EvalWarnAppender().AppendNote(err)
 }
 
 // WarningCount gets warning count.

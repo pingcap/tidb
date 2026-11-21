@@ -300,3 +300,53 @@ func TestMaskingPolicyDiagnosticsPlanCache(t *testing.T) {
 	user.MustQuery("select c, b from t where id = 1").Check(testkit.Rows("XXXXXX plain"))
 	require.Empty(t, maskingDiagnostics(user, "select c from t where id = 1"))
 }
+
+// TestMaskingPolicyDiagnosticsUnclassified tests the diagnostics that a
+// masked value reaches although nothing marks their arguments as data values:
+// they are redacted when they are raised by evaluating the value, and the
+// advice of the planner is kept.
+func TestMaskingPolicyDiagnosticsUnclassified(t *testing.T) {
+	root, user := prepareMaskingDiagnostics(t)
+	restrictOn := " restrict on (insert_into_select, update_select, delete_select, ctas) enable"
+	root.MustExec("create table ti(c int)")
+	root.MustExec("insert into ti values (123456789)")
+	root.MustExec("create masking policy pi on ti(c) as case when current_user() = 'root@%' then c else mask_null(c) end" + restrictOn)
+	root.MustExec("create table ts(c varchar(20))")
+	root.MustExec("insert into ts values ('secret')")
+	root.MustExec("create masking policy ps on ts(c) as case when current_user() = 'root@%' then c else mask_full(c) end" + restrictOn)
+	root.MustExec("create user u2")
+	root.MustExec("grant select on test.* to u2")
+	reader := testkit.NewTestKit(t, root.Session().GetStore())
+	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil, nil))
+	reader.MustExec("use test")
+	reader.MustExec("set session tidb_enable_non_prepared_plan_cache = off")
+	root.MustExec("set session tidb_enable_non_prepared_plan_cache = off")
+
+	now := "select 1 from (select c from ti limit 1) d where now(d.c) > '2000-01-01'"
+	for _, vectorized := range []string{"off", "on"} {
+		for _, tk := range []*testkit.TestKit{reader, root} {
+			tk.MustExec("set session tidb_enable_vectorized_expression = " + vectorized)
+		}
+		require.Equal(t, []string{"Error 1426 (42000): Too-big precision ? specified for 'now'. Maximum is 6."}, maskingDiagnostics(reader, now), vectorized)
+		require.Equal(t, []string{"Error 1426 (42000): Too-big precision 123456789 specified for 'now'. Maximum is 6."}, maskingDiagnostics(root, now), vectorized)
+	}
+
+	hidden := "Warning 1105 (HY000): the error message is hidden because the statement reads a column masked by a masking policy"
+	decodeKey := "select count(*) from ts where length(tidb_decode_key(hex(concat('!', c)))) > 0"
+	require.Equal(t, []string{hidden}, maskingDiagnostics(reader, decodeKey))
+	reader.MustQuery(decodeKey).Check(testkit.Rows("1"))
+	reader.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 the error message is hidden because the statement reads a column masked by a masking policy"))
+	require.Equal(t, []string{"Warning 1105 (HY000): invalid key: 21736563726574"}, maskingDiagnostics(root, decodeKey))
+	// The same warning about an unprotected value is kept.
+	require.Equal(t, []string{"Warning 1105 (HY000): invalid key: 21706C61696E"},
+		maskingDiagnostics(user, "select count(*) from t where length(tidb_decode_key(hex(concat('!', b)))) > 0"))
+
+	// The advice of the planner is kept.
+	for _, sql := range []string{
+		"select /*+ use_index(ts, nosuch) */ count(*) from ts where length(c) > 0",
+		"select /*+ nosuch_hint() */ count(*) from ts where length(c) > 0",
+	} {
+		require.Equal(t, maskingDiagnostics(root, sql), maskingDiagnostics(reader, sql), sql)
+		require.NotEmpty(t, maskingDiagnostics(reader, sql), sql)
+	}
+}

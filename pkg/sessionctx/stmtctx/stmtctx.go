@@ -559,8 +559,8 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		stmtCache:        &stmtCache{},
 		StaleTSOProvider: &staleTSOProvider{},
 	}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.EvalWarnAppender())
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc.EvalWarnAppender())
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
@@ -607,8 +607,8 @@ func (sc *StatementContext) Reset() bool {
 	sc.mu = sc.mu.reset()
 	sc.stmtCache = sc.stmtCache.reset()
 	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.EvalWarnAppender())
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc.EvalWarnAppender())
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
@@ -725,7 +725,7 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 // SetErrLevels sets the error levels for statement
 // The argument otherLevels is used to set the error levels except truncate
 func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
-	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc.EvalWarnAppender())
 }
 
 // ErrLevels returns the current `errctx.LevelMap`
@@ -746,7 +746,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-	sc.errCtx = newErrCtx(sc.typeCtx, sc.errCtx.LevelMap(), sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, sc.errCtx.LevelMap(), sc.EvalWarnAppender())
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
 // maskingRedactedValue replaces a data value in a diagnostic of a statement
@@ -54,6 +55,22 @@ var maskingExtraRedactArgPos = map[uint16][]int{
 	errno.ErrLazyUniquenessCheckFailure: {0},
 	errno.ErrUserLockWrongName:          {0},
 	errno.ErrTimeStampInDSTTransition:   {0},
+	errno.ErrTooBigPrecision:            {0},
+}
+
+// maskingNoDataArgCodes lists the errors whose arguments only name objects,
+// users and rows, so they are kept when they are not known to be data values.
+var maskingNoDataArgCodes = map[uint16]struct{}{
+	errno.ErrDBaccessDenied:             {},
+	errno.ErrTableaccessDenied:          {},
+	errno.ErrColumnaccessDenied:         {},
+	errno.ErrSpecificAccessDenied:       {},
+	errno.ErrAccessDeniedToMaskedColumn: {},
+	errno.ErrBadDB:                      {},
+	errno.ErrNoSuchTable:                {},
+	errno.ErrBadField:                   {},
+	errno.ErrBadNull:                    {},
+	errno.ErrDataTooLong:                {},
 }
 
 // maskingTemplateAliases lists, for an error code, the other errors whose
@@ -118,8 +135,9 @@ func (sc *StatementContext) SetRedactDiagnostics() {
 // RedactExecError returns the error to report for err, which was raised by
 // executing the statement. Unless the statement reads a masked column, it is
 // err itself. Otherwise the data values of a data-carrying error are replaced
-// while its code and message shape are kept, and an error without an error
-// code of its own is replaced as a whole.
+// while its code and message shape are kept, the arguments of another error
+// with an error code are replaced as any of them may be a data value, and an
+// error without an error code of its own is replaced as a whole.
 func (sc *StatementContext) RedactExecError(err error) error {
 	if !sc.RedactDiagnostics || err == nil {
 		return err
@@ -127,25 +145,67 @@ func (sc *StatementContext) RedactExecError(err error) error {
 	return redactMaskingDiagnostic(err, true)
 }
 
-// redactMaskingWarning redacts a warning. Unlike an execution error, a
-// warning without an error code of its own is kept: the warnings raised by
-// evaluating data are errors with a code that the error context downgraded,
-// while the planner reports its advice as plain text.
+// evalWarnAppender records the warnings raised by evaluating and converting
+// values. When the statement reads a masked column, they are redacted like an
+// execution error: they may embed a data value in any argument or in plain
+// text.
+type evalWarnAppender StatementContext
+
+// AppendWarning implements contextutil.WarnAppender.
+func (a *evalWarnAppender) AppendWarning(warn error) {
+	sc := (*StatementContext)(a)
+	sc.AppendWarning(sc.redactEvalWarning(warn))
+}
+
+// AppendNote implements contextutil.WarnAppender.
+func (a *evalWarnAppender) AppendNote(warn error) {
+	sc := (*StatementContext)(a)
+	sc.AppendNote(sc.redactEvalWarning(warn))
+}
+
+func (sc *StatementContext) redactEvalWarning(warn error) error {
+	if !sc.RedactDiagnostics || warn == nil {
+		return warn
+	}
+	return redactMaskingDiagnostic(warn, true)
+}
+
+// EvalWarnAppender returns the appender of the warnings raised by evaluating
+// and converting values, as opposed to the advice of the planner and the
+// executors that the statement context records directly.
+func (sc *StatementContext) EvalWarnAppender() contextutil.WarnAppender {
+	return (*evalWarnAppender)(sc)
+}
+
+// redactMaskingWarning redacts a warning that the statement context records
+// directly. Unlike an evaluation warning, a warning without an error code of
+// its own and the arguments that are not known to be data values are kept:
+// the planner reports its advice as plain text or with the names of the
+// objects it refers to.
 func redactMaskingWarning(warn error) error {
 	return redactMaskingDiagnostic(warn, false)
 }
 
-func redactMaskingDiagnostic(err error, hideUnknown bool) error {
+// redactMaskingDiagnostic redacts err. evaluated tells that err may come from
+// evaluating data, so a value may be in any argument of err.
+func redactMaskingDiagnostic(err error, evaluated bool) error {
 	te, ok := errors.Cause(err).(*terror.Error)
 	if ok {
 		if redacted := redactMaskingDataValues(te); redacted != nil {
 			return keepTxnRetryableMark(te, redacted)
 		}
 	}
-	if !hideUnknown || err == nil || ok && terror.ToSQLError(te).Code != mysql.ErrUnknown {
+	if !evaluated || err == nil {
 		return err
 	}
-	return errMaskingDiagnosticHidden
+	if !ok || terror.ToSQLError(te).Code == mysql.ErrUnknown {
+		return errMaskingDiagnosticHidden
+	}
+	if _, noData := maskingNoDataArgCodes[uint16(te.Code())]; noData || len(te.Args()) == 0 {
+		return err
+	}
+	// Nothing tells which arguments are data values.
+	return keepTxnRetryableMark(te, te.FastGen(printfVerb.ReplaceAllString(te.MessageTemplate(), maskingRedactedValue)))
 }
 
 // keepTxnRetryableMark keeps the mark of a transaction error that can be

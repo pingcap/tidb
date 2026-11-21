@@ -421,7 +421,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Same(t, time.UTC, sc.TimeZone())
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -433,7 +433,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -458,13 +458,13 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
 	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestResetStmtCtx(t *testing.T) {
@@ -484,7 +484,7 @@ func TestResetStmtCtx(t *testing.T) {
 	levels := errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelIgnore
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	sc.Reset()
 	require.Same(t, time.UTC, sc.TimeZone())
@@ -501,7 +501,7 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestStmtCtxID(t *testing.T) {
@@ -542,13 +542,13 @@ func TestErrCtx(t *testing.T) {
 	require.Error(t, sc.HandleError(err))
 	levels := errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
 
 	// set error levels
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
 	sc.SetErrLevels(levels)
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	// reset the types flags will re-initialize the error flag, but keeps the error levels unchanged except for ErrGroupTruncate
 	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
@@ -556,13 +556,13 @@ func TestErrCtx(t *testing.T) {
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	// SetErrLevels will not affect ErrGroupTruncate
 	sc.SetErrLevels(errctx.LevelMap{})
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestReservedRowIDAlloc(t *testing.T) {
@@ -631,11 +631,18 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 		// The mark of a transaction error that can be retried is kept.
 		{kv.ErrWriteConflict.FastGenByArgs(1, 2, 3, "{tableID=", "1", ", handle=", "secret}", "Optimistic"),
 			"9007 Write conflict, txnStartTS=?, conflictStartTS=?, conflictCommitTS=?, key=????, reason=? " + kv.TxnRetryableMark, ""},
-		{kv.ErrWriteConflictInTiDB.FastGenByArgs(1), "8005 Write conflict, txnStartTS 1 is stale " + kv.TxnRetryableMark, ""},
+		{kv.ErrWriteConflictInTiDB.FastGenByArgs(1), "8005 Write conflict, txnStartTS 1 is stale " + kv.TxnRetryableMark,
+			"8005 Write conflict, txnStartTS ? is stale " + kv.TxnRetryableMark},
 		{kv.ErrTxnRetryable.FastGenByArgs("secret"), "8022 Error: KV error safe to retry ? " + kv.TxnRetryableMark, ""},
 		// Errors without data values.
 		{types.ErrDivByZero.GenWithStackByArgs(), "1365 Division by 0", ""},
 		{types.ErrDataTooLong.GenWithStackByArgs("c", 1), "1406 Data too long for column 'c' at row 1", ""},
+		// Nothing tells whether the arguments of another error are data values,
+		// so they are replaced in an execution error, and kept in a warning of
+		// the planner.
+		{types.ErrTooBigScale.GenWithStackByArgs(123456789, "c", 30), "1425 Too big scale 123456789 specified for column 'c'. Maximum is 30.",
+			"1425 Too big scale ? specified for column '?'. Maximum is ?."},
+		{types.ErrTooBigPrecision.GenWithStackByArgs(123456789, "now", 6), "1426 Too-big precision ? specified for 'now'. Maximum is 6.", ""},
 		// Only an execution error without an error code of its own is hidden.
 		{plain, "1105 invalid text: secret",
 			"1105 the error message is hidden because the statement reads a column masked by a masking policy"},
@@ -675,11 +682,30 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 	}
 	sc.SetWarnings(sc.GetWarnings())
 	require.Len(t, sc.GetWarnings(), 3*len(cases))
+	// A warning raised by evaluating a value is redacted like an execution
+	// error.
+	for _, tc := range cases {
+		if tc.execErr == "" {
+			tc.execErr = tc.warning
+		}
+		sc.SetWarnings(nil)
+		sc.EvalWarnAppender().AppendWarning(tc.err)
+		sc.EvalWarnAppender().AppendNote(tc.err)
+		typeCtx := sc.TypeCtx()
+		typeCtx.AppendWarning(tc.err)
+		for _, w := range sc.GetWarnings() {
+			require.Equal(t, tc.execErr, message(w.Err))
+		}
+	}
+	sc.SetWarnings(nil)
+	sc.AppendWarning(cases[0].err)
 	require.Equal(t, cases[0].warning, message(sc.GetWarnings()[0].Err))
 
 	// The next statement starts without redaction.
 	require.True(t, sc.Reset())
 	require.False(t, sc.RedactDiagnostics)
 	sc.AppendWarning(cases[0].err)
+	sc.EvalWarnAppender().AppendWarning(plain)
 	require.Same(t, cases[0].err, sc.GetWarnings()[0].Err)
+	require.Same(t, plain, sc.GetWarnings()[1].Err)
 }
