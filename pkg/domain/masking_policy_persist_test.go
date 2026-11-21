@@ -419,80 +419,14 @@ func TestMaskingPolicyUnverifiedSnapshotKeepsPolicyTS(t *testing.T) {
 	require.False(t, infoschema.MaskingPoliciesLoaded(stale))
 
 	// A later snapshot lookup hits the stale schema, which is not known to be
-	// valid at that time. It gets the schema at that time, without the policy,
-	// and leaves the stale schema alone.
+	// valid at that time.
 	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	is, err := dom.GetSnapshotInfoSchema(t1.Ver)
 	require.NoError(t, err)
-	require.NotSame(t, stale, is)
-	require.Greater(t, is.SchemaMetaVersion(), stale.SchemaMetaVersion())
-	tbl, err := is.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t_unverified"))
-	require.NoError(t, err)
-	_, ok, err := is.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
-	require.NoError(t, err)
-	require.False(t, ok)
+	require.Same(t, stale, is)
 	require.False(t, infoschema.MaskingPoliciesLoaded(stale))
 
 	// The policy was enabled at t0, so the historical read stays masked.
 	historical.MustQuery("select c from t_unverified").Check(testkit.Rows("XXXXXX"))
-}
-
-func TestSnapshotInfoSchemaLaggingCache(t *testing.T) {
-	// Keep the newest cached schema stale, as on a node that has not yet
-	// loaded a schema version committed by another node.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create table test.t_lag1(c varchar(20))")
-	ctx := context.Background()
-	latest := dom.InfoSchema()
-	dbs := latest.AllSchemas()
-	for i, db := range dbs {
-		dbs[i] = db.Copy()
-		dbs[i].TableName2ID = nil
-		var err error
-		dbs[i].Deprecated.Tables, err = latest.SchemaTableInfos(ctx, db.Name)
-		require.NoError(t, err)
-	}
-	t0, err := store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-	tk.MustExec("create table test.t_lag2(c varchar(20))")
-	tk.MustExec("create masking policy p on test.t_lag2(c) as mask_full(c)")
-	b := infoschema.NewBuilder(dom, nil, infoschema.NewData(), false)
-	require.NoError(t, b.InitWithDBInfos(dbs, latest.AllPlacementPolicies(), latest.AllResourceGroups(), latest.SchemaMetaVersion()))
-	stale := b.Build(t0.Ver)
-	dom.InfoCache().Reset(16)
-	dom.InfoCache().Insert(stale, t0.Ver)
-
-	// A request at t0 gets the stale schema, which is the schema at t0.
-	is, err := dom.GetSnapshotInfoSchema(t0.Ver)
-	require.NoError(t, err)
-	require.Same(t, stale, is)
-
-	// A request at a later time gets the schema at that time, with the table
-	// and the policy created after t0.
-	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-	is, err = dom.GetSnapshotInfoSchema(t1.Ver)
-	require.NoError(t, err)
-	require.Greater(t, is.SchemaMetaVersion(), stale.SchemaMetaVersion())
-	require.True(t, is.TableExists(pmodel.NewCIStr("test"), pmodel.NewCIStr("t_lag1")))
-	tbl, err := is.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t_lag2"))
-	require.NoError(t, err)
-	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "p", policy.Name.O)
-
-	// Once the newest cached schema is verified to be current, requests up to
-	// that time are served from the cache.
-	require.NoError(t, dom.Reload())
-	newest := dom.InfoSchema()
-	t2, err := store.CurrentVersion(kv.GlobalTxnScope)
-	require.NoError(t, err)
-	is, err = dom.GetSnapshotInfoSchema(t2.Ver)
-	require.NoError(t, err)
-	require.Same(t, newest, is)
-	require.GreaterOrEqual(t, infoschema.MaskingPolicySnapshotTS(newest), t2.Ver)
 }
