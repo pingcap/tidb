@@ -3156,10 +3156,12 @@ impl tidb_sqlexec::RestrictedSqlExecutor for NodeRestrictedSql {
 
 /// A system session of the domain (Go `BaseExecutor.GetSysSession`) as its
 /// `GetSQLExecutor()`.
-pub(crate) struct SystemSqlExecutor(std::sync::Mutex<Session>);
+pub struct SystemSqlExecutor(std::sync::Mutex<Session>);
 
 impl SystemSqlExecutor {
-    pub(crate) fn new(session: Session) -> Self {
+    /// `session` as its `GetSQLExecutor()`.
+    #[must_use]
+    pub fn new(session: Session) -> Self {
         Self(std::sync::Mutex::new(session))
     }
 

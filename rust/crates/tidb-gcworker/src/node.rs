@@ -31,11 +31,9 @@ use crate::tikv_store::TikvStoreClient;
 use crate::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_sqlescape::SqlArg;
 
-use tidb_session::domain::cluster_session_node::ClusterServerSession;
+use tidb_session::domain::cluster_session_node::SystemSqlExecutor;
 use tidb_domain_core::domain::Domain;
-use tidb_session::Session;
 use tidb_session::domain::session_api::SessionContext;
-use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -164,6 +162,7 @@ impl GcSessionFactory for NodeGcSessions {
                         cancellation: tidb_session::domain::session_api::ConnectionCancellation::default(),
                         close: tidb_session::domain::session_api::ConnectionClose::default(),
                     })
+                    .map(SystemSqlExecutor::new)
                     .map_err(|error| GcError::new(error.message))
             });
         Box::new(NodeGcSession {
@@ -174,12 +173,21 @@ impl GcSessionFactory for NodeGcSessions {
 }
 
 struct NodeGcSession<'a> {
-    session: GcResult<Session>,
+    session: GcResult<SystemSqlExecutor>,
     history_job: &'a HistoryJobLoader,
 }
 
-fn sql_error(error: SqlQueryError) -> GcError {
+fn mysql_error(error: tidb_terror::MysqlError) -> GcError {
     GcError::new(error.message)
+}
+
+/// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnGC)`, the context the
+/// worker's statements run under.
+fn gc_context() -> impl tidb_sqlexec::ExecutionContext {
+    tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_GC,
+    )
 }
 
 fn escaped(sql: &str, arguments: &[SqlArg<'_>]) -> GcResult<String> {
@@ -198,52 +206,29 @@ fn datum_string(value: &tidb_datatype::Datum) -> GcResult<String> {
     }
 }
 
-fn datum_i64(value: &tidb_datatype::Datum) -> GcResult<i64> {
-    match value {
-        tidb_datatype::Datum::Int(value) => Ok(*value),
-        tidb_datatype::Datum::UInt(value) => i64::try_from(*value).map_err(gc_error),
-        other => Err(GcError::new(format!("unexpected integer value {other:?}"))),
-    }
-}
-
 impl NodeGcSession<'_> {
-    fn session(&mut self) -> GcResult<ClusterServerSession<'_>> {
-        self.session
-            .as_mut()
-            .map(Session::node_conn)
-            .map_err(|error| error.clone())
+    /// Go `se.GetSQLExecutor()`.
+    fn sql_executor(&self) -> GcResult<&SystemSqlExecutor> {
+        self.session.as_ref().map_err(Clone::clone)
     }
 
     /// Go `ExecuteInternal` of a read: every row.
     fn query(&mut self, sql: &str) -> GcResult<Vec<Vec<tidb_datatype::Datum>>> {
-        self.session()?.execute_internal(sql).map_err(sql_error)
+        tidb_sqlexec::execute_sql(&gc_context(), self.sql_executor()?, sql, &[])
+            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+            .map_err(mysql_error)
     }
 
     /// Go `ExecuteInternal` of a write.
     fn write(&mut self, sql: &str) -> GcResult<()> {
-        self.session()?.execute_internal(sql).map_err(sql_error)?;
-        Ok(())
+        self.query(sql).map(|_rows| ())
     }
 
     fn control(&mut self, statement: &str) -> GcResult<()> {
-        self.session()?
-            .execute_internal(statement)
-            .map_err(sql_error)?;
-        Ok(())
+        self.query(statement).map(|_rows| ())
     }
 }
 
-/// Go `pkg/ddl/util`'s `loadDeleteRangeSQL`.
-const LOAD_DELETE_RANGE_SQL: &str =
-    "SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?";
-/// Go `recordDoneDeletedRangeSQL`.
-const RECORD_DONE_DELETED_RANGE_SQL: &str = "INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?";
-/// Go `completeDeleteRangeSQL`.
-const COMPLETE_DELETE_RANGE_SQL: &str =
-    "DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?";
-/// Go `deleteDoneRecordSQL`.
-const DELETE_DONE_RECORD_SQL: &str =
-    "DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?";
 /// Go `getRaftKvVersionSQL`.
 const GET_RAFT_KV_VERSION_SQL: &str = "select `value` from information_schema.cluster_config where type = 'tikv' and `key` = 'storage.engine'";
 
@@ -286,54 +271,25 @@ impl GcSession for NodeGcSession<'_> {
         self.write(&sql)
     }
 
-    /// Go `loadDeleteRangesFromTable`.
+    /// Go `util.LoadDeleteRanges` / `util.LoadDoneDeleteRanges`.
     fn load_delete_ranges(&mut self, done: bool, safe_point: u64) -> GcResult<Vec<DelRangeTask>> {
-        let table = if done {
-            "gc_delete_range_done"
+        let load = if done {
+            tidb_ddl::ddl_delete_range::load_done_delete_ranges
         } else {
-            "gc_delete_range"
+            tidb_ddl::ddl_delete_range::load_delete_ranges
         };
-        let sql = escaped(LOAD_DELETE_RANGE_SQL, &[table.into(), safe_point.into()])?;
-        let decode_hex = |text: String| -> GcResult<Vec<u8>> {
-            (0..text.len())
-                .step_by(2)
-                .map(|index| {
-                    text.get(index..index + 2)
-                        .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                        .ok_or_else(|| GcError::new(format!("encoding/hex: invalid key {text}")))
-                })
-                .collect()
-        };
-        self.query(&sql)?
-            .into_iter()
-            .map(|row| {
-                Ok(DelRangeTask {
-                    job_id: datum_i64(&row[0])?,
-                    element_id: datum_i64(&row[1])?,
-                    start_key: decode_hex(datum_string(&row[2])?)?,
-                    end_key: decode_hex(datum_string(&row[3])?)?,
-                })
-            })
-            .collect()
+        load(&gc_context(), self.sql_executor()?, safe_point).map_err(mysql_error)
     }
 
     /// Go `util.CompleteDeleteRange`.
     fn complete_delete_range(&mut self, range: &DelRangeTask, record_done: bool) -> GcResult<()> {
-        self.begin()?;
-        let arguments = [range.job_id.into(), range.element_id.into()];
-        if record_done {
-            self.write(&escaped(RECORD_DONE_DELETED_RANGE_SQL, &arguments)?)?;
-        }
-        self.write(&escaped(COMPLETE_DELETE_RANGE_SQL, &arguments)?)?;
-        self.commit()
+        tidb_ddl::ddl_delete_range::complete_delete_range(self.sql_executor()?, range, record_done)
+            .map_err(mysql_error)
     }
 
     /// Go `util.DeleteDoneRecord`.
     fn delete_done_record(&mut self, range: &DelRangeTask) -> GcResult<()> {
-        self.write(&escaped(
-            DELETE_DONE_RECORD_SQL,
-            &[range.job_id.into(), range.element_id.into()],
-        )?)
+        tidb_ddl::ddl_delete_range::delete_done_record(self.sql_executor()?, range).map_err(mysql_error)
     }
 
     /// Go `util.IsRaftKv2`: every TiKV runs the same engine.

@@ -261,6 +261,21 @@ fn read_affected_rows_metric_value(label: &str) -> f64 {
     tidb_metrics::executor::AFFECTED_ROWS.with_label_values(&[label]).get()
 }
 
+/// Waits until the DDL notifier has consumed every published event. The
+/// affected-rows counters are process-wide, and the notifier removes each
+/// delivered event with a one-row `DELETE` on its next one-second poll (Go
+/// `tableStore.DeleteAndCommit`), which lands in the "Delete" counter up to a
+/// second after the DDL statement returned; a test that reads the counter
+/// around a statement of its own starts from a notifier with nothing left to
+/// delete.
+fn wait_ddl_notifier_drained(tk: &mut Session) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while single_value(tk, "select count(*) from mysql.tidb_ddl_notifier") != "0" {
+        assert!(std::time::Instant::now() < deadline, "the DDL notifier kept undelivered events");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn last_purge_hist_row(tk: &mut Session, mlog_id: i64, columns: &str) -> Vec<String> {
     super::refresh::go_check(
         tk,
@@ -320,6 +335,7 @@ fn test_purge_materialized_view_log_batch_delete() {
     assert_eq!(single_value(&mut tk, "select count(*) from `$mlog$t_purge_batch_delete`"), "5");
     let max_commit_ts: u64 = must_query_mview_purge_internal_first(&mut tk, "select max(_tidb_commit_ts) from `$mlog$t_purge_batch_delete`").parse().unwrap();
     must_exec_all(&mut tk, &["set @@session.tidb_mlog_purge_batch_size = 2"]);
+    wait_ddl_notifier_drained(&mut tk);
     let (before_delete, before_purge) = (read_affected_rows_metric_value("Delete"), read_affected_rows_metric_value("PurgeMLog"));
     must_exec_all(&mut tk, &["purge materialized view log on t_purge_batch_delete"]);
     assert_eq!(tk.affected_rows(), 5);

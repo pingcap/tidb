@@ -597,7 +597,11 @@ impl DelRangeExecWrapper for StagedDelRanges {
     }
 }
 
-/// Go `pkg/ddl/util`'s `loadDeleteRangeSQL`.
+/// Go `pkg/ddl/util`'s `deleteRangesTable`.
+const DELETE_RANGES_TABLE: &str = "gc_delete_range";
+/// Go `doneDeleteRangesTable`.
+const DONE_DELETE_RANGES_TABLE: &str = "gc_delete_range_done";
+/// Go `loadDeleteRangeSQL`.
 const LOAD_DELETE_RANGE_SQL: &str =
     "SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?";
 /// Go `recordDoneDeletedRangeSQL`.
@@ -607,24 +611,72 @@ const COMPLETE_DELETE_RANGE_SQL: &str =
     "DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?";
 /// Go `updateDeleteRangeSQL`.
 const UPDATE_DELETE_RANGE_SQL: &str = "UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?";
+/// Go `deleteDoneRecordSQL`.
+const DELETE_DONE_RECORD_SQL: &str =
+    "DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?";
 
-/// Go `util.LoadDeleteRanges`: the `gc_delete_range` rows below
-/// `safe_point`.
+/// Go `kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)`,
+/// the context `pkg/ddl/util`'s statements run under.
+fn internal_ddl_context() -> impl tidb_sqlexec::ExecutionContext {
+    tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_DDL,
+    )
+}
+
+/// Go `sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)`, its record
+/// set drained.
+fn execute_internal(
+    ctx: &dyn tidb_sqlexec::ExecutionContext,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    sql: &str,
+    args: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
+    tidb_sqlexec::execute_sql(ctx, sctx, sql, args)
+        .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+}
+
+/// Go `util.LoadDeleteRanges` loads delete range tasks from gc_delete_range
+/// table.
 ///
 /// # Errors
 ///
 /// The statement's error, or a key that is not hex.
 pub fn load_delete_ranges(
-    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    ctx: &dyn tidb_sqlexec::ExecutionContext,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    safe_point: u64,
+) -> Result<Vec<DelRangeTask>, tidb_terror::MysqlError> {
+    load_delete_ranges_from_table(ctx, sctx, DELETE_RANGES_TABLE, safe_point)
+}
+
+/// Go `util.LoadDoneDeleteRanges` loads deleted ranges from
+/// gc_delete_range_done table.
+///
+/// # Errors
+///
+/// The statement's error, or a key that is not hex.
+pub fn load_done_delete_ranges(
+    ctx: &dyn tidb_sqlexec::ExecutionContext,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    safe_point: u64,
+) -> Result<Vec<DelRangeTask>, tidb_terror::MysqlError> {
+    load_delete_ranges_from_table(ctx, sctx, DONE_DELETE_RANGES_TABLE, safe_point)
+}
+
+/// Go `loadDeleteRangesFromTable`.
+fn load_delete_ranges_from_table(
+    ctx: &dyn tidb_sqlexec::ExecutionContext,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    table: &str,
     safe_point: u64,
 ) -> Result<Vec<DelRangeTask>, tidb_terror::MysqlError> {
     use tidb_sqlescape::SqlArg;
-    let rows = sctx.execute(
+    let rows = execute_internal(
+        ctx,
+        sctx,
         LOAD_DELETE_RANGE_SQL,
-        &[
-            SqlArg::from("gc_delete_range"),
-            SqlArg::Unsigned(safe_point),
-        ],
+        &[SqlArg::from(table), SqlArg::Unsigned(safe_point)],
     )?;
     let int = |datum: &Datum| match datum {
         Datum::Int(value) => *value,
@@ -648,37 +700,80 @@ pub fn load_delete_ranges(
         .collect()
 }
 
-/// Go `util.CompleteDeleteRange`: in one transaction, the range recorded in
-/// `gc_delete_range_done` (when asked) and removed from `gc_delete_range`.
+/// Go `util.CompleteDeleteRange` moves a record from gc_delete_range table
+/// to gc_delete_range_done table.
 ///
 /// # Errors
 ///
 /// A statement's error.
 pub fn complete_delete_range(
-    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
     dr: &DelRangeTask,
     need_to_record_done: bool,
 ) -> Result<(), tidb_terror::MysqlError> {
     use tidb_sqlescape::SqlArg;
-    let arguments = [SqlArg::Signed(dr.job_id), SqlArg::Signed(dr.element_id)];
-    sctx.execute("BEGIN", &[])?;
+    let ctx = internal_ddl_context();
+    execute_internal(&ctx, sctx, "BEGIN", &[])?;
     if need_to_record_done {
-        sctx.execute(RECORD_DONE_DELETED_RANGE_SQL, &arguments)?;
+        execute_internal(
+            &ctx,
+            sctx,
+            RECORD_DONE_DELETED_RANGE_SQL,
+            &[SqlArg::Signed(dr.job_id), SqlArg::Signed(dr.element_id)],
+        )?;
     }
-    // Go `RemoveFromGCDeleteRange`.
-    sctx.execute(COMPLETE_DELETE_RANGE_SQL, &arguments)?;
-    sctx.execute("COMMIT", &[])?;
+    remove_from_gc_delete_range(sctx, dr.job_id, dr.element_id)?;
+    execute_internal(&ctx, sctx, "COMMIT", &[])?;
     Ok(())
 }
 
-/// Go `util.UpdateDeleteRange`: the range's start key moves on, if it is
-/// still `old_start_key`.
+/// Go `util.RemoveFromGCDeleteRange` is exported for ddl pkg to use.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn remove_from_gc_delete_range(
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    job_id: i64,
+    element_id: i64,
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    execute_internal(
+        &internal_ddl_context(),
+        sctx,
+        COMPLETE_DELETE_RANGE_SQL,
+        &[SqlArg::Signed(job_id), SqlArg::Signed(element_id)],
+    )?;
+    Ok(())
+}
+
+/// Go `util.DeleteDoneRecord` removes a record from gc_delete_range_done
+/// table.
+///
+/// # Errors
+///
+/// The statement's error.
+pub fn delete_done_record(
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
+    dr: &DelRangeTask,
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    execute_internal(
+        &internal_ddl_context(),
+        sctx,
+        DELETE_DONE_RECORD_SQL,
+        &[SqlArg::Signed(dr.job_id), SqlArg::Signed(dr.element_id)],
+    )?;
+    Ok(())
+}
+
+/// Go `util.UpdateDeleteRange` is only for emulator.
 ///
 /// # Errors
 ///
 /// The statement's error.
 pub fn update_delete_range(
-    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    sctx: &dyn tidb_sqlexec::SqlExecutor,
     dr: &DelRangeTask,
     new_start_key: &[u8],
     old_start_key: &[u8],
@@ -686,7 +781,9 @@ pub fn update_delete_range(
     use tidb_sqlescape::SqlArg;
     let new_start_key_hex = hex_encode(new_start_key);
     let old_start_key_hex = hex_encode(old_start_key);
-    sctx.execute(
+    execute_internal(
+        &internal_ddl_context(),
+        sctx,
         UPDATE_DELETE_RANGE_SQL,
         &[
             SqlArg::from(new_start_key_hex.as_str()),

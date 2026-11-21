@@ -2834,9 +2834,18 @@ mod schema_route_tests {
     fn debug_pprof_profile_serves_a_gzipped_cpu_profile() {
         use prost::Message as _;
         use std::io::Read as _;
+        // Go's cpuprofile tests run with `DefProfileDuration = 200ms`
+        // (`TestMain`). A collector receives the profiler's whole windows
+        // only, so under the one-second default a one-second request holds
+        // just the part of a window between its registration and the
+        // profiler's next tick -- anything from a second down to nothing.
+        let window = std::mem::replace(
+            &mut *tidb_cpuprofile::DEF_PROFILE_DURATION.lock().unwrap(),
+            std::time::Duration::from_millis(200),
+        );
         tidb_cpuprofile::start_cpu_profiler().unwrap();
         // The labeled work runs until the profile is served, so it spans the
-        // profile's window however late a loaded machine opens it.
+        // profile's windows however late a loaded machine opens them.
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let busy = std::thread::spawn({
             let done = std::sync::Arc::clone(&done);
@@ -2856,6 +2865,7 @@ mod schema_route_tests {
         done.store(true, std::sync::atomic::Ordering::Relaxed);
         busy.join().unwrap();
         tidb_cpuprofile::stop_cpu_profiler();
+        *tidb_cpuprofile::DEF_PROFILE_DURATION.lock().unwrap() = window;
         assert_eq!(code, 200);
         assert_eq!(header, "application/octet-stream|attachment; filename=\"profile\"");
         let mut raw = Vec::new();

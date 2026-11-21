@@ -7489,6 +7489,7 @@ dependencies = [
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-tablecodec",
+ "tidb-terror",
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-unistore-tikv",

@@ -2012,7 +2012,93 @@ fn mask_mlog_window_estimates(answer: &str) -> String {
         rest = &rest[start + len..];
     }
     out.push_str(rest);
-    out
+    without_window_dependent_join(&out)
+}
+
+/// A FAST refresh joins the log's delta to the view, and the planner picks
+/// that join from Go master's `estimateMLogCommitTSSelectivity` -- "a
+/// physical-time estimate": the time since the last refresh over the age of
+/// the retained log. The same statements therefore plan an index join over a
+/// range scan or a hash join over a full scan with the wall time between
+/// them, in Go as here. The comparison keeps the join's kind and drops what
+/// the estimate decides: its algorithm and the operators under it.
+fn without_window_dependent_join(answer: &str) -> String {
+    let Some(rows) = answer
+        .strip_prefix("RS:")
+        .and_then(|rows| serde_json::from_str::<Vec<Vec<String>>>(rows).ok())
+    else {
+        return answer.to_owned();
+    };
+    // A plan row's depth: where its tree connector stands; none for a stage
+    // header or the plan's root.
+    let depth = |row: &[String]| {
+        row.first()
+            .and_then(|cell| cell.chars().position(|c| matches!(c, '├' | '└')))
+    };
+    let mut kept: Vec<Vec<String>> = Vec::with_capacity(rows.len());
+    let mut under_join: Option<usize> = None;
+    for mut row in rows {
+        if let Some(join_depth) = under_join {
+            if depth(&row).is_some_and(|depth| depth > join_depth) {
+                continue;
+            }
+            under_join = None;
+        }
+        let join = row.first().and_then(|cell| {
+            let at = cell.find("IndexJoin | ").or_else(|| cell.find("HashJoin | "))?;
+            let kind = cell[at..].split(" | ").nth(3)?.split(',').next()?.to_owned();
+            Some((at, kind))
+        });
+        if let Some((at, kind)) = join {
+            under_join = depth(&row);
+            let cell = &mut row[0];
+            cell.truncate(at);
+            cell.push_str(&format!("Join | {kind}"));
+        }
+        kept.push(row);
+    }
+    format!("RS:{}", serde_json::to_string(&kept).expect("rows serialize"))
+}
+
+#[test]
+fn the_window_dependent_join_compares_equal_across_its_two_plans() {
+    let plan = |join: &str, probe: &[&str]| {
+        let mut rows = vec![
+            vec!["[S04 DATA_CHANGE_FAST_MERGE]".to_owned()],
+            vec!["  MViewDeltaMerge | estRows:N/A | task:root | agg_deps:[]".to_owned()],
+            vec!["  └─Projection | estRows:? | task:root | a".to_owned()],
+            vec![format!("    └─{join}")],
+            vec!["      ├─HashAgg(Build) | estRows:? | task:root | group by:a".to_owned()],
+        ];
+        rows.extend(probe.iter().map(|row| vec![(*row).to_owned()]));
+        rows.push(vec!["[S05 PERSIST_REFRESH_INFO]".to_owned()]);
+        format!("RS:{}", serde_json::to_string(&rows).unwrap())
+    };
+    let index_join = plan(
+        "IndexJoin | estRows:? | task:root | left outer join, inner:TableReader_32, outer key:a",
+        &[
+            "      └─TableReader(Probe) | estRows:? | task:root | data:TableRangeScan_31",
+            "        └─TableRangeScan | estRows:? | task:cop[tikv] | table:mv | range: decided by [a]",
+        ],
+    );
+    let hash_join = plan(
+        "HashJoin | estRows:? | task:root | left outer join, left side:HashAgg_26, equal:[eq(a, a)]",
+        &[
+            "      └─TableReader(Probe) | estRows:10000.00 | task:root | data:TableFullScan_33",
+            "        └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:mv | keep order:false",
+        ],
+    );
+    let normalized = without_window_dependent_join(&index_join);
+    assert_eq!(normalized, without_window_dependent_join(&hash_join));
+    // The join's kind and the rows around the join stay.
+    assert!(normalized.contains("    └─Join | left outer join"), "{normalized}");
+    assert!(normalized.contains("[S05 PERSIST_REFRESH_INFO]"), "{normalized}");
+    assert!(!normalized.contains("TableReader"), "{normalized}");
+    // An inner join is not a left outer join.
+    let inner = plan("HashJoin | estRows:? | task:root | inner join, equal:[eq(a, a)]", &[]);
+    assert_ne!(without_window_dependent_join(&inner), normalized);
+    // Anything but a result set is left alone.
+    assert_eq!(without_window_dependent_join("OK"), "OK");
 }
 
 /// Polls `sql` until it answers `want` (Go `require.EventuallyWithT`, 20s
