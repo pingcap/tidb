@@ -1457,7 +1457,18 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 
 	// check plan
+<<<<<<< HEAD
 	if proj, ok := p.(*PhysicalProjection); ok {
+=======
+	if proj, ok := p.(*physicalop.PhysicalProjection); ok {
+		for _, expr := range proj.Exprs {
+			if hasSequenceWrite(expr) {
+				// Sequence mutations use an independent metadata transaction.
+				// Keep a real session start TS so database read-only can drain it.
+				return false
+			}
+		}
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 		p = proj.Children()[0]
 	}
 
@@ -1497,6 +1508,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	default:
 		return false
 	}
+}
+
+func hasSequenceWrite(expr expression.Expression) bool {
+	function, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if function.FuncName.L == ast.NextVal || function.FuncName.L == ast.SetVal {
+		return true
+	}
+	for _, arg := range function.GetArgs() {
+		if hasSequenceWrite(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn

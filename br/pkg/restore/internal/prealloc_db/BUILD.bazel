@@ -15,7 +15,12 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
+<<<<<<< HEAD
         "//pkg/parser/model",
+=======
+        "//pkg/parser/ast",
+        "//pkg/privilege",
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

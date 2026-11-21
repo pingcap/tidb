@@ -113,7 +113,11 @@ const (
 	ActionAddVectorIndex                        ActionType = 73
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
+<<<<<<< HEAD
 	_                                           ActionType = 77 // reserve for database read-only feature
+=======
+	ActionModifySchemaReadOnly                  ActionType = 77
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -270,6 +274,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -292,6 +298,8 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
 	default:
 		return "none"
 	}
@@ -433,6 +441,10 @@ type Job struct {
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
+	// CheckSchemaReadOnly requires the owner to recheck writable schemas before
+	// the first step. The submitter's explicit replica-writer bypass clears it.
+	// A multi-schema parent consumes it before creating any sub-job proxies.
+	CheckSchemaReadOnly bool `json:"check_schema_read_only,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`

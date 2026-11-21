@@ -914,6 +914,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
 	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
+	ErrSchemaInReadOnlyMode:                                  mysql.Message("Schema '%s' is in read only mode.", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -945,6 +946,16 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrConstraintNotFound:                                    mysql.Message("Constraint '%s' does not exist.", nil),
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
+<<<<<<< HEAD
+=======
+	// Dual-password errors — text matches MySQL 8.0
+	// share/messages_to_clients.txt (length-bounded %-.64s is a TiDB convention
+	// for user/host identifiers).
+	ErrSecondPasswordCannotBeEmpty:            mysql.Message("Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.", nil),
+	ErrPasswordCannotBeRetainedOnPluginChange: mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.", nil),
+	ErrCurrentPasswordCannotBeRetained:        mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.", nil),
+	ErrAccessSysDBRejected:                    mysql.Message("Access to system schema '%s' is rejected.", nil),
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),

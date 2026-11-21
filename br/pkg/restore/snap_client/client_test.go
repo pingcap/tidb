@@ -47,6 +47,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
@@ -121,8 +122,14 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	sourceDB := &metautil.Database{Info: &model.DBInfo{
+<<<<<<< HEAD
 		ID:   100,
 		Name: pmodel.NewCIStr("route_source"),
+=======
+		ID:       100,
+		Name:     ast.NewCIStr("route_source"),
+		ReadOnly: true,
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	}}
 	targetDB := sourceDB.Info.Clone()
 	targetDB.Name = pmodel.NewCIStr("route_target")
@@ -130,6 +137,10 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 		Source: sourceDB,
 		Target: targetDB,
 	}}))
+
+	createdDB, ok := m.Domain.InfoSchema().SchemaByName(targetDB.Name)
+	require.True(t, ok)
+	require.True(t, createdDB.ReadOnly, "restore must preserve the source database read-only state")
 
 	timestampField := types.NewFieldType(mysql.TypeTimestamp)
 	source := &metautil.Table{
@@ -175,6 +186,32 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	require.Equal(t, "source_table", source.Info.Name.O)
 	require.True(t, source.Info.TTLInfo.Enable)
 	require.True(t, targetInfo.TTLInfo.Enable)
+	sourceSequence := &metautil.Table{DB: sourceDB.Info, Info: &model.TableInfo{
+		ID: 102, Name: ast.NewCIStr("source_sequence"), State: model.StatePublic,
+		Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1}, AutoIncID: 41,
+	}}
+	targetSequence := sourceSequence.Info.Clone()
+	targetSequence.Name = ast.NewCIStr("target_sequence")
+	_, err = client.AllocTableIDs(ctx, []*metautil.Table{sourceSequence}, false, false, nil)
+	require.NoError(t, err)
+	_, err = client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{Source: sourceSequence, TargetDB: targetDB, TargetInfo: targetSequence}}, 0)
+	require.NoError(t, err)
+	reader := testkit.NewTestKit(t, m.Storage)
+	reader.MustGetErrCode("insert into route_target.target_table values (now())", 3989)
+	require.ErrorContains(t, reader.QueryToErr("select nextval(route_target.target_sequence)"), "read only mode")
+	restoreSession, err := gluetidb.New().CreateSession(m.Storage)
+	require.NoError(t, err)
+	defer restoreSession.Close()
+	// Internal sessions do not inherit a restore operation's scoped authorization.
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rs, err := restoreSession.GetSessionCtx().GetSQLExecutor().ExecuteInternal(internalCtx, "do setval(route_target.target_sequence, 99)")
+	if err == nil && rs != nil {
+		err = rs.Next(internalCtx, rs.NewChunk(nil))
+		require.NoError(t, rs.Close())
+	}
+	require.ErrorContains(t, err, "read only mode")
+	reader.MustExec("alter database route_target read only = 0")
+	reader.MustQuery("select nextval(route_target.target_sequence)").Check(testkit.Rows("42"))
 }
 
 func getStartedMockedCluster(t *testing.T) *mock.Cluster {

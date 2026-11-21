@@ -64,6 +64,7 @@ go_library(
         "replace.go",
         "revoke.go",
         "sample.go",
+        "schema_read_only.go",
         "select.go",
         "select_into.go",
         "set.go",

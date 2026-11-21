@@ -25,7 +25,12 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+<<<<<<< HEAD:pkg/planner/core/foreign_key.go
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+=======
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/privilege"
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912)):pkg/planner/core/operator/physicalop/foreign_key.go
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -402,7 +407,14 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	switch fkReferOption {
 	case pmodel.ReferOptionCascade, pmodel.ReferOptionSetNull:
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
-		return nil, fkCascade, err
+		if err != nil {
+			return nil, nil, err
+		}
+		db, ok := infoschema.SchemaByTable(is, childTable.Meta())
+		if ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, db.Name.L) {
+			return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O))
+		}
+		return nil, fkCascade, nil
 	default:
 		fkCheck, err := buildFKCheckForReferredFK(ctx, childTable, fk, referredFK)
 		return fkCheck, nil, err

@@ -214,8 +214,17 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
+<<<<<<< HEAD
 	DBName string
 	DBID   int64
+=======
+	QuerySource *QuerySource `json:",omitempty"`
+	DBName      string
+	DBID        int64
+	// SchemaReadOnlyBypass carries the submitting SQL session's authorization to
+	// the internal table-mode job. It is not inherited by background task metadata.
+	SchemaReadOnlyBypass bool `json:"-"`
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	// TableInfo is the table info we used during import, we might change it
 	// if add index by SQL is enabled(it's disabled now).
 	TableInfo *model.TableInfo

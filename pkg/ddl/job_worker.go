@@ -862,7 +862,15 @@ func (w *worker) runOneJobStep(
 		jobCtx.stepCtx = w.workCtx
 	} else {
 		job.State = model.JobStateRunning
-
+		if job.CheckSchemaReadOnly {
+			if err := checkSchemaReadOnlyBeforeJob(jobCtx, job); err != nil {
+				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				return ver, false, w.countForError(jobCtx, job, err)
+			}
+			job.CheckSchemaReadOnly = false
+		}
 		if jobCtx.shouldPollDDLJob() {
 			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
@@ -1059,6 +1067,13 @@ func (w *worker) runOneJobStep(
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
+<<<<<<< HEAD
+=======
+	case model.ActionAlterTableSetRegionSplitPolicy:
+		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
+>>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -136,6 +136,60 @@ type Manager interface {
 	GetUserResources(user, host string) (int64, error)
 }
 
+// ReplicaWriterAdminPriv is the dynamic privilege name that allows a session
+// to write to databases that are in read-only mode (e.g. replication threads).
+const ReplicaWriterAdminPriv = "RESTRICTED_REPLICA_WRITER_ADMIN"
+
+type schemaReadOnlyBypassKey struct{}
+
+func (schemaReadOnlyBypassKey) String() string { return "schema-read-only-bypass" }
+
+// WithInternalSchemaReadOnlyBypass authorizes a trusted internal operation for
+// the specified databases. The caller must authorize the parent operation and
+// restore the previous value before returning a pooled session.
+func WithInternalSchemaReadOnlyBypass(ctx sessionctx.Context, databases ...string) func() {
+	key := schemaReadOnlyBypassKey{}
+	previous := ctx.Value(key)
+	ctx.SetValue(key, databases)
+	return func() { ctx.SetValue(key, previous) }
+}
+
+// CanWriteReadOnlySchema accepts an explicit user grant or a database-scoped
+// authorization inherited by trusted internal work; internal SQL alone is insufficient.
+// Trusted BR restore is an explicit exception after the restore entrypoint's
+// authorization. Incremental DDL covers its recorded write dependencies; other
+// restore operations cover their current target database, including restoring
+// the source ReadOnly flag. SUPER alone still does not authorize ordinary writes.
+func CanWriteReadOnlySchema(ctx interface {
+	Value(fmt.Stringer) any
+	GetSessionVars() *variable.SessionVars
+}, database string) bool {
+	if HasExplicitReplicaWriterAdmin(ctx) {
+		return true
+	}
+	databases, _ := ctx.Value(schemaReadOnlyBypassKey{}).([]string)
+	for _, target := range databases {
+		if target == database {
+			return true
+		}
+	}
+	return false
+}
+
+// HasExplicitReplicaWriterAdmin reports whether an authenticated session may
+// bypass database read-only checks. SUPER and internal sessions do not imply it.
+func HasExplicitReplicaWriterAdmin(ctx interface {
+	Value(fmt.Stringer) any
+	GetSessionVars() *variable.SessionVars
+}) bool {
+	vars := ctx.GetSessionVars()
+	if vars.User == nil {
+		return false
+	}
+	manager := GetPrivilegeManager(ctx)
+	return manager != nil && manager.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, ReplicaWriterAdminPriv, false)
+}
+
 const key keyType = 0
 
 // BindPrivilegeManager binds Manager to context.
