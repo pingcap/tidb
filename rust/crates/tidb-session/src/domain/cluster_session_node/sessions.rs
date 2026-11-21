@@ -1254,7 +1254,10 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
 /// Go `pkg/ddl/session`'s `sessionctx.Context`: the node's pooled system
 /// session as the DDL packages' sessions see it.
 impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
-    fn new_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_ddl_session::Result<()> {
+    fn new_txn(&self, context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_ddl_session::Result<()> {
+        // Go activates the transaction on the first statement, after its
+        // context's source type reached the session.
+        self.state.adopt_request_source(context);
         self.with_session(|session| {
             session
                 .new_txn(tidb_ast::TransactionMode::Optimistic)
@@ -1265,8 +1268,9 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
 
     fn enter_new_pessimistic_txn(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
     ) -> tidb_ddl_session::Result<()> {
+        self.state.adopt_request_source(context);
         self.with_session(|session| {
             session
                 .new_txn(tidb_ast::TransactionMode::Pessimistic)
@@ -1399,7 +1403,8 @@ impl tidb_domain_core::sys_session::DomainSysSession for ClusterStatsSessionCont
         self
     }
 
-    fn new_txn(&self, pessimistic: bool) -> Result<(), String> {
+    fn new_txn(&self, source: &str, pessimistic: bool) -> Result<(), String> {
+        self.state.adopt_request_source_type(source);
         let mode = if pessimistic {
             tidb_ast::TransactionMode::Pessimistic
         } else {

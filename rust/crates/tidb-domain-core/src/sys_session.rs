@@ -33,7 +33,14 @@ pub trait DomainSysSession:
     /// Go `sessiontxn.NewTxn` (`pessimistic`: `EnterNewTxn` pessimistic), as
     /// `pkg/ddl/session.Session.Begin` / `BeginPessimistic` call it: the
     /// session's API, not a statement.
-    fn new_txn(&self, pessimistic: bool) -> Result<(), String>;
+    ///
+    /// `source` is the internal source type of the caller's context (Go
+    /// `kv.WithInternalSourceType(ctx, source)`). Go activates the
+    /// transaction on the first statement, whose `setRequestSource` has put
+    /// that type on the session by then (`baseTxnContextProvider.ActivateTxn`
+    /// reads `SessionVars.RequestSourceType`); this session's transaction
+    /// starts here, so it takes the type first.
+    fn new_txn(&self, source: &str, pessimistic: bool) -> Result<(), String>;
 
     /// Go `StmtCommit` + `CommitTxn` (`pkg/ddl/session.Session.Commit`).
     fn commit_txn(&self) -> Result<(), String>;

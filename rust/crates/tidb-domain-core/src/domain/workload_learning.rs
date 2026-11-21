@@ -58,7 +58,7 @@ impl Session for PooledSession<'_> {
     fn new_txn(&self) -> Result<(), String> {
         // Go `sessiontxn.NewTxn`: `EnterNewTxnDefault`, the session's
         // `tidb_txn_mode` -- pessimistic for an internal session.
-        self.with_context(|context| context.new_txn(true))
+        self.with_context(|context| context.new_txn(tidb_txnkv::INTERNAL_TXN_WORKLOAD_LEARNING, true))
     }
 
     fn txn_start_ts(&self) -> Result<u64, String> {

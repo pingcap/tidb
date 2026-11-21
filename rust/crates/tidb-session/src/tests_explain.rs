@@ -9130,7 +9130,7 @@ fn a_pushed_projection_runs_in_the_coprocessor_like_go() {
     let projection = row("Projection_5");
     assert_eq!((projection[2].as_str(), projection[3].as_str()), ("49", "cop[tikv]"), "{rows:?}");
     assert!(projection[5].starts_with("tikv_task:"), "{rows:?}");
-    assert_eq!(row("IndexReader_9")[7], "641 Bytes", "{rows:?}");
+    assert_response_memory(&row("IndexReader_9")[7], "641 Bytes", &format!("{rows:?}"));
     let mut answer = row_text(session.run(sql));
     answer.sort();
     assert_eq!(answer.len(), 49);
@@ -9180,7 +9180,7 @@ fn an_index_lookup_pushes_its_table_side_partial_aggregate_like_go() {
             .unwrap_or_else(|| panic!("{label}: {rows:?}"))
             .clone()
     };
-    assert_eq!(row("IndexLookUp_14")[7], "5.29 KB", "{rows:?}");
+    assert_response_memory(&row("IndexLookUp_14")[7], "5.29 KB", &format!("{rows:?}"));
     let aggregate = row("HashAgg_7");
     assert_eq!(aggregate[2], "1", "{rows:?}");
     assert!(aggregate[5].contains("cop_task: {num: 1"), "{rows:?}");
@@ -9209,7 +9209,7 @@ fn a_pushed_projection_over_a_pushed_selection_runs_in_the_coprocessor_like_go()
             .unwrap_or_else(|| panic!("{label}: {rows:?}"))
             .clone()
     };
-    assert_eq!(row("IndexReader_11")[7], "469 Bytes", "{rows:?}");
+    assert_response_memory(&row("IndexReader_11")[7], "469 Bytes", &format!("{rows:?}"));
     let projection = row("Projection_5");
     assert_eq!(projection[2], "28", "{rows:?}");
     assert!(projection[5].starts_with("tikv_task:"), "{rows:?}");
@@ -9571,7 +9571,7 @@ fn an_index_lookup_releases_its_drained_index_response_before_the_task_like_go()
         .iter()
         .find(|row| row[0] == "IndexLookUp_7")
         .unwrap_or_else(|| panic!("{rows:?}"));
-    assert_eq!(lookup[7], "2.58 KB", "{rows:?}");
+    assert_response_memory(&lookup[7], "2.58 KB", &format!("{rows:?}"));
     // One table task: `table_task: {total_num: 1, ...` without a task time,
     // `{total_time: ..., num: 1, ...` with one.
     assert!(lookup[5].contains("num: 1, concurrency: "), "{rows:?}");
@@ -9751,7 +9751,7 @@ fn an_index_lookup_pushes_its_table_side_topn_into_each_task_like_go() {
     };
     assert_eq!(row("TopN_9")[7], "1.77 KB", "{rows:?}");
     assert_eq!(row("IndexLookUp_19")[2], "5", "{rows:?}");
-    assert_eq!(row("IndexLookUp_19")[7], "6.31 KB", "{rows:?}");
+    assert_response_memory(&row("IndexLookUp_19")[7], "6.31 KB", &format!("{rows:?}"));
     assert_eq!(row_text(session.run(sql)).len(), 5);
 }
 
@@ -9782,7 +9782,7 @@ fn an_index_merge_charges_its_partial_workers_like_go() {
             .unwrap_or_else(|| panic!("{operator}: {rows:?}"))
     };
     assert_eq!(row("IndexMerge_8")[2], "37", "{rows:?}");
-    assert_eq!(row("IndexMerge_8")[7], "32.5 KB", "{rows:?}");
+    assert_response_memory(&row("IndexMerge_8")[7], "32.5 KB", &format!("{rows:?}"));
     // The response's execution summaries carry processing times as varints:
     // Go's 289 Bytes moves by a few bytes with timing.
     let partial = &row("TableRangeScan_5(Build)")[7];
@@ -10108,7 +10108,7 @@ fn a_reader_pushes_its_computing_projection_into_the_request_like_go() {
             .unwrap_or_else(|| panic!("{name}: {rows:?}"))
             .clone()
     };
-    assert_eq!(row("TableReader_8")[7], "1.96 KB", "{rows:?}");
+    assert_response_memory(&row("TableReader_8")[7], "1.96 KB", &format!("{rows:?}"));
     let projection = row("Projection_4");
     assert_eq!(projection[2], "100", "{rows:?}");
     assert!(projection[5].contains("scan_detail: {total_process_keys: 100,"), "{rows:?}");

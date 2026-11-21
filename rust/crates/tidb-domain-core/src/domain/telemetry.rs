@@ -62,7 +62,7 @@ impl tidb_telemetry::Session for TelemetrySession {
         // `sessiontxn.NewTxn` (pessimistic for an internal session).
         self.with_context(|context| {
             context.commit_txn()?;
-            context.new_txn(true)
+            context.new_txn(tidb_txnkv::INTERNAL_TXN_TELEMETRY, true)
         })
     }
 

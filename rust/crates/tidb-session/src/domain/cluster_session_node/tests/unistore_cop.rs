@@ -2424,6 +2424,68 @@ fn stop_domain_ddl_notifier(factory: &Arc<Domain>) {
     }
 }
 
+/// Go's notifier begins its transaction under
+/// `kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)` and activates it
+/// on its first statement, so its commit is labelled as its reads are. A
+/// pooled session whose last work had another source used to start the
+/// transaction with that one (a fresh session prewrote as `unknown`).
+#[test]
+fn an_internal_transaction_takes_its_callers_request_source() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    stop_domain_ddl_notifier(&stack.factory);
+    let mut session = stack
+        .factory
+        .open_session(session_context(87))
+        .expect("session opens");
+    rows(&mut session, "USE test");
+    rows(&mut session, "CREATE TABLE internal_request_source (a INT)");
+    let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let recorded = Arc::clone(&sent);
+    stack.rpc.set_send_hook(Some(Arc::new(move |request| {
+        if let Some(request) =
+            request.as_any().downcast_ref::<tikv_client::proto::kvrpcpb::PrewriteRequest>()
+        {
+            recorded.lock().unwrap().push(
+                request
+                    .context
+                    .as_ref()
+                    .map(|context| context.request_source.clone())
+                    .unwrap_or_default(),
+            );
+        }
+    })));
+    let pool = stack.factory.advanced_sys_session_pool();
+    tidb_stats_handle_util::call_with_sctx(
+        pool.as_ref(),
+        |sctx| {
+            let run = |source: &str, sql: &str| {
+                tidb_domain_core::sys_session::exec_sql(sctx, source, sql, &[])
+                    .map(|_| ())
+                    .map_err(tidb_domain_core::sys_session::stats_session_error)
+            };
+            // The session's previous work ran under another source.
+            run(tidb_txnkv::INTERNAL_TXN_TTL, "SELECT 1")?;
+            sctx.new_txn(tidb_txnkv::INTERNAL_DDL_NOTIFIER, true)
+                .map_err(tidb_domain_core::sys_session::stats_session_error)?;
+            run(
+                tidb_txnkv::INTERNAL_DDL_NOTIFIER,
+                "INSERT INTO test.internal_request_source VALUES (1)",
+            )?;
+            sctx.commit_txn().map_err(tidb_domain_core::sys_session::stats_session_error)
+        },
+        &[],
+    )
+    .expect("the internal transaction commits");
+    stack.rpc.set_send_hook(None);
+    let sent = sent.lock().unwrap().clone();
+    assert!(sent.iter().any(|source| source == "internal_DDLNotifier"), "{sent:?}");
+    assert!(
+        !sent.iter().any(|source| source == "internal_TTL" || source == "unknown"),
+        "{sent:?}"
+    );
+}
+
 fn drain_stats_ddl_events_with_notifier(
     session: &mut Session,
     notifier: Arc<tidb_ddl_notifier::DdlNotifier>,
@@ -25204,23 +25266,22 @@ fn modify_column_runs_as_a_persisted_job_like_go() {
     // issue 56051; oracle: both answer 0).
     rows(&mut session, "create table tz (a int, b int)");
     rows(&mut session, "insert into tz values (null, null)");
+    // The filled-in time lies between the clock readings around the ALTER,
+    // however long the job took (a zone applied wrongly is hours off).
+    let seconds = |session: &mut Session, sql: &str| -> i64 {
+        displayed(rows(session, sql))[0][0].parse().expect("a unix timestamp")
+    };
+    let before = seconds(&mut session, "select unix_timestamp()");
     rows(&mut session, "alter table tz modify a timestamp not null");
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "select floor((unix_timestamp() - unix_timestamp(a)) / 2) from tz",
-        )),
-        [["0"]]
-    );
+    let filled = seconds(&mut session, "select unix_timestamp(a) from tz");
+    let after = seconds(&mut session, "select unix_timestamp()");
+    assert!((before..=after).contains(&filled), "{before} <= {filled} <= {after}");
     rows(&mut session, "set @@time_zone = 'Asia/Tokyo'");
+    let before = seconds(&mut session, "select unix_timestamp()");
     rows(&mut session, "alter table tz modify b timestamp not null");
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "select floor((unix_timestamp() - unix_timestamp(b)) / 2) from tz",
-        )),
-        [["0"]]
-    );
+    let filled = seconds(&mut session, "select unix_timestamp(b) from tz");
+    let after = seconds(&mut session, "select unix_timestamp()");
+    assert!((before..=after).contains(&filled), "{before} <= {filled} <= {after}");
 }
 
 /// DROP TABLE / VIEW / SEQUENCE / DATABASE run as Go's persisted jobs, one
@@ -28842,7 +28903,7 @@ fn ttl_job_manager_runs_scheduled_and_triggered_jobs_like_go() {
     let recorded = Arc::clone(&sources);
     stack.rpc.set_send_hook(Some(Arc::new(move |request| {
         use tikv_client::proto::kvrpcpb;
-        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+        if let Some(request) = request.as_any().downcast_ref::<tikv_client::proto::kvrpcpb::PrewriteRequest>() {
             recorded
                 .lock()
                 .unwrap()
@@ -28944,7 +29005,7 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let reorg_table =
         tidb_tablecodec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLREORG_TABLE_ID);
     stack.rpc.set_send_hook(Some(Arc::new(move |request| {
-        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+        if let Some(request) = request.as_any().downcast_ref::<tikv_client::proto::kvrpcpb::PrewriteRequest>() {
             let source = request.context.as_ref().map(|context| context.request_source.clone()).unwrap_or_default();
             // Go's `NextGlobalID` meta key, memcomparable-encoded.
             if request.mutations.iter().any(|mutation| logical_rpc_key(&mutation.key).starts_with(b"mNextGlob")) {
@@ -29051,7 +29112,7 @@ fn a_statements_requests_carry_its_label_as_their_source() {
     let sent: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
     let recorded = Arc::clone(&sent);
     stack.rpc.set_send_hook(Some(Arc::new(move |request| {
-        if let Some(request) = request.as_any().downcast_ref::<kvrpcpb::PrewriteRequest>() {
+        if let Some(request) = request.as_any().downcast_ref::<tikv_client::proto::kvrpcpb::PrewriteRequest>() {
             recorded
                 .lock()
                 .unwrap()

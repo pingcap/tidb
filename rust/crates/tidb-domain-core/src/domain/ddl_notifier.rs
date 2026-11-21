@@ -77,7 +77,7 @@ impl NotifierSession for ClusterNotifierSession {
     }
 
     fn begin_pessimistic(&mut self) -> Result<(), NotifierError> {
-        self.with_context(|context| context.new_txn(true))
+        self.with_context(|context| context.new_txn(tidb_txnkv::INTERNAL_DDL_NOTIFIER, true))
     }
 
     fn commit(&mut self) -> Result<(), NotifierError> {
