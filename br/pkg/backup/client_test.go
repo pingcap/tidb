@@ -271,10 +271,6 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 		"PARTITION BY RANGE (stu_id) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))")
 	tk.MustExec("ALTER TABLE tb attributes \"merge_option=allow\"")
 	tk.MustExec("ALTER TABLE tb PARTITION p0 attributes \"merge_option=deny\"")
-	// Masking policy jobs are not backed up.
-	tk.MustExec("CREATE MASKING POLICY p ON test_table(c2) AS MASK_FULL(c2)")
-	tk.MustExec("ALTER TABLE test_table MODIFY MASKING POLICY p SET EXPRESSION = MASK_NULL(c2)")
-	tk.MustExec("ALTER TABLE test_table DROP MASKING POLICY p")
 
 	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	require.NoErrorf(t, err, "Error get ts: %s", err)
@@ -305,11 +301,6 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
 	require.NoError(t, err)
 	require.Len(t, allDDLJobs, 8)
-	for _, job := range allDDLJobs {
-		require.NotContains(t, []model.ActionType{
-			model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy,
-		}, job.Type)
-	}
 }
 
 func TestCheckBackupIsLocked(t *testing.T) {

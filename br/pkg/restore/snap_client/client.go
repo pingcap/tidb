@@ -1545,14 +1545,6 @@ func (rc *SnapClient) EnsureNoUserTables() error {
 	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
-func isMaskingPolicyDDLJob(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
-		return true
-	}
-	return false
-}
-
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
@@ -1561,14 +1553,6 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	})
 
 	for _, job := range ddlJobs {
-		if isMaskingPolicyDDLJob(job) {
-			// BR does not restore masking policies. An incremental backup made
-			// by another build may still carry their jobs.
-			log.Info("skip masking policy ddl job",
-				zap.String("db", job.SchemaName),
-				zap.String("query", job.Query))
-			continue
-		}
 		err := rc.db.ExecDDL(ctx, job)
 		if err != nil {
 			return errors.Trace(err)

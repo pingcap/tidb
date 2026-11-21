@@ -526,9 +526,8 @@ func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
 		Check(testkit.Rows("Y"))
 }
 
-// BR does not restore masking policies. A backup may still carry
-// mysql.tidb_masking_policy (an old backup, or one made by another build), so
-// the rows staged in the temporary system database must never reach the target:
+// BR does not restore masking policies. A backup carries
+// mysql.tidb_masking_policy like the other system tables, so the rows staged in the temporary system database must never reach the target:
 // the policies of the target cluster stay as they are and none is created.
 func TestRestoreSystemSchemasSkipsMaskingPolicyTable(t *testing.T) {
 	cluster := mc
@@ -604,28 +603,6 @@ func TestRestoreSystemSchemasSkipsMaskingPolicyTable(t *testing.T) {
 			require.Equal(t, shownBefore, tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows())
 		})
 	}
-
-	// The DDL jobs of an incremental backup are replayed by their queries. Those
-	// of masking policies are skipped.
-	require.NoError(t, client.ExecDDLs(ctx, []*model.Job{
-		{
-			Type: model.ActionCreateMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
-			Query:      "CREATE MASKING POLICY p_backup ON br_masking_restore.t(d) AS MASK_FULL(d)",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 1},
-		},
-		{
-			Type: model.ActionAlterMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
-			Query:      "ALTER TABLE br_masking_restore.t MODIFY MASKING POLICY p_target SET EXPRESSION = MASK_NULL(c)",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 2},
-		},
-		{
-			Type: model.ActionDropMaskingPolicy, SchemaName: "br_masking_restore", TableName: "t",
-			Query:      "ALTER TABLE br_masking_restore.t DROP MASKING POLICY p_target",
-			BinlogInfo: &model.HistoryInfo{SchemaVersion: 3},
-		},
-	}))
-	require.Equal(t, before, tk.MustQuery(policyRows).Rows())
-	require.Equal(t, shownBefore, tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows())
 
 	// The physical path renames only the tables it lists; the policy table is not one of them.
 	require.False(t, snapclient.IsRenameableSysTemporaryTable(utils.TemporaryDBName(mysql.SystemDB).O, policyTable))

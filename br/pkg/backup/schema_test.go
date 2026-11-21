@@ -18,9 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -318,71 +316,5 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 	for _, schema := range schemas2 {
 		require.Equal(t, utils.TemporaryDBName("mysql"), schema.DB.Name)
 		require.Equal(t, true, strings.HasPrefix(schema.Info.Name.O, tablePrefix))
-	}
-}
-
-// BR does not back up masking policies: mysql.tidb_masking_policy is left out of
-// full, database and table backups, and no filter can select it.
-func TestBackupSkipsMaskingPolicyTable(t *testing.T) {
-	m := createMockCluster(t)
-	tk := testkit.NewTestKit(t, m.Storage)
-	tk.MustExec("create database br_masking")
-	tk.MustExec("create table br_masking.t (id int primary key, c varchar(32))")
-	tk.MustExec("insert into br_masking.t values (1, 'secret')")
-	tk.MustExec("create masking policy p on br_masking.t(c) as mask_full(c) enable")
-	tk.MustQuery("select count(*) from mysql.tidb_masking_policy").Check(testkit.Rows("1"))
-
-	const policyTable = "tidb_masking_policy"
-	policyTableID := tk.MustQuery(
-		"select tidb_table_id from information_schema.tables where table_schema = 'mysql' and table_name = '" + policyTable + "'").Rows()[0][0].(string)
-	userTableID := tk.MustQuery(
-		"select tidb_table_id from information_schema.tables where table_schema = 'mysql' and table_name = 'user'").Rows()[0][0].(string)
-	tablePrefix := func(id string) []byte {
-		var tableID int64
-		_, err := fmt.Sscanf(id, "%d", &tableID)
-		require.NoError(t, err)
-		return tablecodec.EncodeTablePrefix(tableID)
-	}
-
-	for _, tc := range []struct {
-		name         string
-		filter       []string
-		isFullBackup bool
-		// the tables that must be in the backup, as "db.table"
-		expected []string
-	}{
-		{name: "full", filter: []string{"*.*"}, isFullBackup: true, expected: []string{"mysql.user", "br_masking.t"}},
-		{name: "system database", filter: []string{"mysql.*"}, expected: []string{"mysql.user"}},
-		{name: "user database", filter: []string{"br_masking.*"}, expected: []string{"br_masking.t"}},
-		{name: "user table", filter: []string{"br_masking.t"}, expected: []string{"br_masking.t"}},
-		{name: "policy table named in the filter", filter: []string{"mysql." + policyTable, "br_masking.t"}, expected: []string{"br_masking.t"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f, err := filter.Parse(tc.filter)
-			require.NoError(t, err)
-
-			tables := make(map[string]struct{})
-			require.NoError(t, backup.BuildBackupSchemas(m.Storage, f, math.MaxUint64, tc.isFullBackup,
-				func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-					if tableInfo != nil {
-						tables[dbInfo.Name.L+"."+tableInfo.Name.L] = struct{}{}
-					}
-				}))
-			require.NotContains(t, tables, "mysql."+policyTable)
-			for _, table := range tc.expected {
-				require.Contains(t, tables, table)
-			}
-
-			ranges, _, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, tc.isFullBackup)
-			require.NoError(t, err)
-			hasUserTableRange := false
-			for _, r := range ranges {
-				require.False(t, strings.HasPrefix(string(r.StartKey), string(tablePrefix(policyTableID))),
-					"the key range of mysql.%s must not be backed up", policyTable)
-				hasUserTableRange = hasUserTableRange || strings.HasPrefix(string(r.StartKey), string(tablePrefix(userTableID)))
-			}
-			_, expectUserTable := tables["mysql.user"]
-			require.Equal(t, expectUserTable, hasUserTableRange)
-		})
 	}
 }

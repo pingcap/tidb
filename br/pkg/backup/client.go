@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -794,16 +793,6 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	return ranges, schemas, policies, errors.Trace(err)
 }
 
-// isTableNotBackedUp reports whether BR leaves the table out of every backup,
-// whatever the table filter says.
-//
-// mysql.tidb_masking_policy binds each masking policy to a table ID and a
-// column ID. Those IDs are not kept by a restore, so BR neither backs up nor
-// restores masking policies; they are recreated on the target cluster.
-func isTableNotBackedUp(dbNameL, tableNameL string) bool {
-	return dbNameL == mysql.SystemDB && tableNameL == "tidb_masking_policy"
-}
-
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
@@ -881,8 +870,7 @@ func BuildBackupRangeAndInitSchema(
 					tableInfo.Version,
 				)
 			}
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) ||
-				isTableNotBackedUp(dbInfo.Name.L, tableInfo.Name.L) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
 			}
@@ -953,8 +941,7 @@ func BuildBackupSchemas(
 
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) ||
-				isTableNotBackedUp(dbInfo.Name.L, tableInfo.Name.L) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
 			}
@@ -1060,12 +1047,6 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 		model.ActionAlterTablePlacement,
 		model.ActionAlterTableAttributes,
 		model.ActionAlterTablePartitionAttributes:
-		return true
-	// BR does not back up masking policies, see isTableNotBackedUp. Replaying
-	// these jobs in an incremental restore would create policies on the target.
-	case model.ActionCreateMaskingPolicy,
-		model.ActionAlterMaskingPolicy,
-		model.ActionDropMaskingPolicy:
 		return true
 	default:
 		return false

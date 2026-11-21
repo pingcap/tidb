@@ -167,8 +167,8 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_restore_registry": {},
 		// tidb_masking_policy contains table_id and column_id that reference other tables.
 		// Since BR may rewrite table IDs during restore, directly restoring this table's data
-		// would result in mismatched IDs. BR does not back up or restore masking policies;
-		// they are recreated on the target cluster.
+		// would result in mismatched IDs. BR backs it up with the other system tables but
+		// does not restore it; masking policies are recreated on the target cluster.
 		"tidb_masking_policy": {},
 	},
 	"sys": {

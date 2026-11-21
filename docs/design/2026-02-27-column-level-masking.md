@@ -134,7 +134,7 @@ This section describes how the feature is expected to be wired in code, so imple
 - DDL: target validation, metadata writes, lifecycle synchronization, schema actions.
 - InfoSchema: delayed loading and cache invalidation model for masking metadata.
 - Planner/Executor: AT RESULT expression rewrite and restricted-operation enforcement.
-- BR: does not back up or restore masking policies (see `BR backup and restore` below).
+- BR: backs up `mysql.tidb_masking_policy` with the other system tables but does not restore masking policies (see `BR backup and restore` below).
 
 Primary code ownership map (for implementation navigation):
 
@@ -142,16 +142,17 @@ Primary code ownership map (for implementation navigation):
 - DDL path: `pkg/ddl/executor.go`, `pkg/ddl/masking_policy.go`, `pkg/ddl/table.go`, `pkg/ddl/modify_column.go`
 - InfoSchema loading/cache: `pkg/infoschema/masking_policy.go`, `pkg/infoschema/masking_policy_loader.go`, `pkg/infoschema/builder.go`
 - Planner/executor behavior: `pkg/planner/core/point_get_plan.go`, `pkg/planner/core/masking_policy_restrict.go`, `pkg/executor/show.go`
-- BR: `br/pkg/backup/client.go` (the policy table is left out of backups), `br/pkg/restore/snap_client/systable_restore.go` (the policy table is not restored)
+- BR: `br/pkg/restore/snap_client/systable_restore.go` (the policy table is not restored)
 
 #### BR backup and restore
 
 BR behavior in 8.5:
 
-- BR does not back up masking policies. `mysql.tidb_masking_policy` is left out of full, database and table backups, whatever the table filter selects.
-- BR does not restore masking policies. If a backup in a supported format contains `mysql.tidb_masking_policy` (for example, a full backup made by an earlier BR, or its incremental backup with masking policy DDL), restore skips that table and those DDL statements: it does not create or change any policy on the target cluster, and policies that already exist there are kept as they are.
+- BR backs up `mysql.tidb_masking_policy` like the other system tables, whenever the table filter selects it (a full backup does by default).
+- A snapshot restore does not restore masking policies. It skips `mysql.tidb_masking_policy`, also with `--with-sys-table`: it does not create or change any policy on the target cluster, and policies that already exist there are kept as they are.
+- Masking policy DDL in an incremental backup is not handled specially: an incremental restore replays it like other DDL, so it can create, change or drop policies on the target cluster. Incremental backup is deprecated.
 - A backup with backup schema version 3, which development builds of this feature wrote for backups with masking policies, is rejected before any data is imported: BR supports at most version 2.
-- Restore brings back table data only. A restored table has no masking policy unless one is created on the target cluster.
+- A snapshot restore brings back table data only. A restored table has no masking policy unless one is created on the target cluster.
 - Point-in-time recovery does not rebuild the policies of the source cluster on the target cluster either. This says nothing about the content of a log backup: log backup records the changes of the whole data key range, so its raw files may contain masking policy data and must be protected like the protected data itself.
 
 Reason: each row of `mysql.tidb_masking_policy` binds a policy to a table ID and a column ID. Restored tables and columns can get different IDs, so copying the rows would bind policies to the wrong objects.
@@ -486,7 +487,7 @@ SELECT salary FROM employees WHERE id = 1;
 ## Compatibility
 
 - Syntax and behavior are TiDB-specific (not MySQL-compatible feature parity).
-- BR in 8.5 does not back up or restore masking policies. Recreate the policies on the target cluster before opening restored tables to users (see `BR backup and restore`).
+- BR in 8.5 does not restore masking policies. Recreate the policies on the target cluster before opening restored tables to users (see `BR backup and restore`).
 - Replication of masking policies by TiCDC is not part of this design and is not verified. Automatic masking on a downstream cluster depends on the policies, and the users and roles their expressions refer to, existing there.
 - Runtime masking decisions depend on identity evaluation (`current_user()` / `current_role()`), so missing or diverged user/role state in downstream clusters can change effective masking behavior.
 - Dump/validation tools may see masked values if executed by non-exempt users.
