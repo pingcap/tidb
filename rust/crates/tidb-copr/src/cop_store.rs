@@ -168,14 +168,36 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                 _=>None,
             };
             let mut regions: Vec<tikv_client::RegionWithLeader> = Vec::new();
+            // The physical bounds of the location in use (Go's `loc`).
+            let mut current: Option<(Vec<u8>, Vec<u8>)> = None;
             for (start, end) in ranges {
                 // Go `CodecPDClient`: TiDB sees logical boundaries, while
                 // the native client's region cache retains physical keys.
                 let (start,end)=codec.as_ref().map_or_else(||(start.clone(),end.clone()),|codec|codec.encode_range(start,end));
                 let mut next = start;
                 loop {
+                    // Go `SplitKeyRangesByLocations`: a key the current
+                    // location contains stays with it, and only a key past it
+                    // is located again. Two locations therefore never overlap,
+                    // however the region cache changed between two lookups (a
+                    // split of the table being read).
+                    if let Some((_, current_end)) =
+                        current.as_ref().filter(|bounds| location_contains(bounds, &next))
+                    {
+                        if current_end.is_empty() || (!end.is_empty() && *current_end >= end) {break;}
+                        next = current_end.clone();
+                        continue;
+                    }
                     let mut region = pd.region_for_key(&next.clone().into()).await?;
                     let region_end = region.region.end_key.clone();
+                    // A location refreshed since the previous one was read may
+                    // begin before that one ends; it is used from this key on.
+                    if region.region.start_key < next
+                        && current.as_ref().is_some_and(|(_, current_end)| region.region.start_key < *current_end)
+                    {
+                        region.region.start_key.clone_from(&next);
+                    }
+                    current = Some((region.region.start_key.clone(), region_end.clone()));
                     if regions.last().is_none_or(|last| last.region.id != region.region.id) {
                         if let Some(codec)=&codec {
                             (region.region.start_key,region.region.end_key)=codec.decode_range(&region.region.start_key,&region.region.end_key)?;
@@ -326,5 +348,27 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                 .await
                 .map_err(tikv_client::Error::from)
         })
+    }
+}
+
+/// Go `KeyLocation.Contains`: whether `key` is in `[start, end)`, an empty
+/// end being unbounded.
+fn location_contains((start, end): &(Vec<u8>, Vec<u8>), key: &[u8]) -> bool {
+    key >= start.as_slice() && (end.is_empty() || key < end.as_slice())
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::location_contains;
+
+    #[test]
+    fn a_location_contains_its_half_open_range() {
+        let bounded = (b"b".to_vec(), b"d".to_vec());
+        assert!(location_contains(&bounded, b"b"));
+        assert!(location_contains(&bounded, b"c"));
+        assert!(!location_contains(&bounded, b"d"));
+        assert!(!location_contains(&bounded, b"a"));
+        let unbounded = (b"b".to_vec(), Vec::new());
+        assert!(location_contains(&unbounded, b"zz"));
     }
 }

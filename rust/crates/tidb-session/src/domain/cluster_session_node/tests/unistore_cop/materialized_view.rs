@@ -728,7 +728,10 @@ fn drop_jobs_carry_fk_check_only_for_a_table_as_go() {
 /// MATERIALIZED VIEW and DROP MATERIALIZED VIEW LOG leave the dropped
 /// table's key range for GC, as DROP TABLE does (`gc_delete_range`, or
 /// `gc_delete_range_done` once deleted). Go's unistore deletes the ranges
-/// asynchronously, so its answers race; the rule is Go's source.
+/// asynchronously, so its answers race; the rule is Go's source. The worker
+/// (`delRange.doTask`) moves a range's start key past each batch it deletes
+/// (`UpdateDeleteRange`) and records the finished range under that key, so
+/// the range is found by the table's prefix, not by its first key.
 #[test]
 fn materialized_view_drops_leave_their_ranges_for_gc_as_go_master() {
     let (_stack, mut session) = replay_go_master("");
@@ -736,7 +739,7 @@ fn materialized_view_drops_leave_their_ranges_for_gc_as_go_master() {
         answer(
             session,
             &format!(
-                "select (select count(*) from mysql.gc_delete_range where start_key = {key}) + (select count(*) from mysql.gc_delete_range_done where start_key = {key})"
+                "select (select count(*) from mysql.gc_delete_range where start_key like concat({key}, '%')) + (select count(*) from mysql.gc_delete_range_done where start_key like concat({key}, '%'))"
             ),
         )
     };
