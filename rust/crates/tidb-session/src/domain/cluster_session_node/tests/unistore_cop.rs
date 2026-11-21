@@ -54,6 +54,7 @@ mod materialized_view;
 mod ddl_executor;
 mod create_with_info;
 mod analyzetest;
+mod pointget;
 mod ddl_analyze;
 mod ddl_delivery;
 mod admin_alter_ddl_job;
