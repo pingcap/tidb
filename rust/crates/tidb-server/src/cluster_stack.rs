@@ -640,6 +640,22 @@ fn run_bootstrap_mode(
     tidb_session::upgrade_run::finish_bootstrap(&upgrade_store).map_err(engine_error)
 }
 
+/// Go `checkBootstrapped(s)` on a new internal session of the bootstrap
+/// domain.
+fn check_bootstrapped(
+    domain: &ClusterDomain,
+    store: &dyn tidb_session::bootstrap::UpgradeStore,
+) -> Result<bool, RunConfiguredNodeError> {
+    // Go `domain.GetDomain(s).DDL().StateSyncer()`.
+    let state_syncer = domain
+        .factory
+        .ddl
+        .state_syncer()
+        .expect("a started DDL has its state syncer");
+    tidb_session::domain::cluster_session_node::check_bootstrapped(&domain.factory, store, state_syncer.as_ref())
+        .map_err(engine_error)
+}
+
 /// Go `upgrade(s)` on a new internal session of the bootstrap domain.
 fn upgrade(
     domain: &ClusterDomain,
@@ -671,13 +687,9 @@ fn bootstrap(
     let boot_logger =
         tidb_logutil::sample_logger_factory(std::time::Duration::from_secs(30), 1, Vec::new())();
     loop {
-        let state = tidb_domain_core::real_tikv_privileges::read_bootstrap_state_from_cluster(
-            &opener,
-            COPROCESSOR_QUERY_TIMEOUT,
-        )
-        .map_err(|error| engine_error(format!("check bootstrap error: {error}")))?;
+        let b = check_bootstrapped(domain, upgrade_store)?;
         // For rolling upgrade, we can't do upgrade only in the owner.
-        if state.already_bootstrapped() {
+        if b {
             upgrade(domain, upgrade_store)?;
             tidb_logutil::bg_logger().info(
                 "upgrade successful in bootstrap",

@@ -199,6 +199,33 @@ fn upgrade_to_ver254_adds_the_runaway_watch_indexes_like_go() {
     assert!(show_create_table(&mut se_cur_ver, "tidb_runaway_watch_done").contains("idx_done_time"));
 }
 
+/// Go `checkBootstrapped`: the store is bootstrapped when `mysql.tidb`'s
+/// `bootstrapped` row is `True`, read with the bootstrap session's own
+/// statement -- a missing row or another value is not.
+#[test]
+fn check_bootstrapped_reads_the_flag_on_the_bootstrap_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut se = stack.factory.open_session(session_context(95)).expect("session opens");
+    let check = || {
+        crate::domain::cluster_session_node::check_bootstrapped(
+            &stack.factory,
+            &store(&stack),
+            &tidb_ddl_serverstate::MemSyncer::new(),
+        )
+        .expect("the check runs")
+    };
+    assert!(check());
+
+    rows(&mut se, "update mysql.tidb set variable_value='False' where variable_name='bootstrapped'");
+    assert!(!check());
+
+    rows(&mut se, "delete from mysql.tidb where variable_name='bootstrapped'");
+    assert!(!check());
+
+    rows(&mut se, "insert into mysql.tidb values ('bootstrapped', 'True', 'Bootstrap flag. Do not delete.')");
+    assert!(check());
+}
+
 #[test]
 fn upgrade_to_ver242_writes_the_cluster_id_like_go() {
     let (stack, _users) = cop_backed_stack();

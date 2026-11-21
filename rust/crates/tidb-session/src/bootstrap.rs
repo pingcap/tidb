@@ -184,6 +184,35 @@ pub(crate) fn execute_internal(
     s.execute_internal(&sql)
 }
 
+/// Go `checkBootstrapped`: whether `mysql.tidb` says the store is
+/// bootstrapped, asked with the bootstrap session's own statements.
+///
+/// # Errors
+///
+/// A statement failing for a reason other than the system database or the
+/// table not existing yet (Go ends the process on the first and returns the
+/// second).
+pub fn check_bootstrapped(s: &mut dyn UpgradeSession) -> Result<bool, String> {
+    //  Check if system db exists.
+    if let Err(error) = execute_internal(s, "USE %n", &[SqlArg::String(b"mysql")]) {
+        if error.code != tidb_mysql::errors::errcode::ErrBadDB {
+            return Err(format!("check bootstrap error: {}", error.error_string()));
+        }
+    }
+    // Check bootstrapped variable value in TiDB table.
+    let s_val = match get_tidb_var(s, crate::mysql_bootstrap::BOOTSTRAPPED_VAR) {
+        Ok(s_val) => s_val,
+        Err(error) if error.code == tidb_mysql::errors::errcode::ErrNoSuchTable => return Ok(false),
+        Err(error) => return Err(error.error_string()),
+    };
+    let is_bootstrapped = s_val.as_deref() == Some(crate::mysql_bootstrap::VAR_TRUE);
+    if is_bootstrapped {
+        // Make sure that doesn't affect the following operations.
+        execute_internal(s, "COMMIT", &[]).map_err(|error| error.error_string())?;
+    }
+    Ok(is_bootstrapped)
+}
+
 /// Go `getTiDBVar` gets variable value from mysql.tidb table; `None` is Go's
 /// `isNull`.
 pub(crate) fn get_tidb_var(

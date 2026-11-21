@@ -73,6 +73,31 @@ pub fn run_upgrade(
     store: &dyn UpgradeStore,
     state_syncer: &dyn tidb_ddl_serverstate::Syncer,
 ) -> Result<(), String> {
+    crate::upgrade_run::upgrade(&mut bootstrap_session(domain, store, state_syncer)?)
+}
+
+/// Go `bootstrap(s)`'s `checkBootstrapped(s)` over a new internal session of
+/// the domain.
+///
+/// # Errors
+///
+/// [`crate::bootstrap::check_bootstrapped`]'s, or the session could not be
+/// opened.
+pub fn check_bootstrapped(
+    domain: &Arc<Domain>,
+    store: &dyn UpgradeStore,
+    state_syncer: &dyn tidb_ddl_serverstate::Syncer,
+) -> Result<bool, String> {
+    crate::bootstrap::check_bootstrapped(&mut bootstrap_session(domain, store, state_syncer)?)
+}
+
+/// Go `runInBootstrapSession`'s `createSession(store)` and the settings it
+/// gives the session.
+fn bootstrap_session<'a>(
+    domain: &Arc<Domain>,
+    store: &'a dyn UpgradeStore,
+    state_syncer: &'a dyn tidb_ddl_serverstate::Syncer,
+) -> Result<BootstrapSession<'a>, String> {
     let context = super::open_pool_session(domain, 0)?;
     // Go's bootstrap and upgrade run under `kv.InternalTxnBootstrap`.
     cluster_stats_session(&*context).state.adopt_request_source_type(tidb_txnkv::INTERNAL_TXN_BOOTSTRAP);
@@ -81,12 +106,11 @@ pub fn run_upgrade(
         tidb_vardef::tidb_vars::TIDB_ENABLE_CLUSTERED_INDEX,
         "INT_ONLY",
     );
-    let mut session = BootstrapSession {
+    Ok(BootstrapSession {
         context,
         store,
         state_syncer,
-    };
-    crate::upgrade_run::upgrade(&mut session)
+    })
 }
 
 /// A single-quoted SQL string literal of `value`.

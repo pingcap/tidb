@@ -17,9 +17,8 @@
 //!
 //! Go source of truth is
 //! `pkg/statistics/handle/storage/save.go::SaveAnalyzeResultToStorage`, whose
-//! four statements this follows column for column, minus the SQL: the
-//! mutations go straight to the record and index keys, the way every
-//! `mysql.*` write on this node does (see [`tidb_syssession::system_row_write`]).
+//! four statements this builds, column for column, for the statistics
+//! session to run.
 //!
 //! # The two encodings that make or break the round trip
 //!
@@ -34,14 +33,6 @@
 //! `DATETIME` bound as `"2024-05-05 05:05:05"`. An index bound and a
 //! new-collation string bound are already bytes and convert to themselves.
 //! `read.go`'s `convertBoundFromBlob` is the inverse this must satisfy.
-//!
-//! # Which handle shape the four tables have
-//!
-//! Not a fixed answer. `mysql.stats_meta` and its histogram tables became
-//! `CLUSTERED` only in a recent TiDB; on a v8.5 cluster they are still a
-//! `UNIQUE INDEX` over a `_tidb_rowid`, which a writer that assumed the newer
-//! shape cannot address at all. This module reads the cluster's own
-//! `TableInfo` and writes whichever shape it finds -- see [`StatsRows`].
 //!
 //! Partition ANALYZE also writes `mysql.stats_fm_sketch`; logical/global
 //! writes delete stale sketches and leave no row, matching `needDumpFMS` in
