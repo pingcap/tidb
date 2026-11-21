@@ -495,6 +495,44 @@ func TestMaskingPolicyIdentityPlanCache(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyCurrentRoleFoldsOutsidePolicies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("use test")
+	root.MustExec("create user role_fold_user")
+	root.MustExec("create role role_fold_unmask")
+	root.MustExec("grant role_fold_unmask to role_fold_user")
+	root.MustExec("grant select on test.* to role_fold_user")
+	root.MustExec("create table role_fold_plain(id int primary key, c int)")
+	root.MustExec("insert into role_fold_plain values (1, 1)")
+	root.MustExec("create table role_fold_masked(id int primary key, c varchar(20))")
+	root.MustExec("insert into role_fold_masked values (1, 'secret')")
+	root.MustExec("create masking policy p on role_fold_masked(c) as case when current_role() != 'NONE' then c else mask_full(c) end enable")
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "role_fold_user", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("set role none")
+	// CURRENT_ROLE() stays a statement constant outside masking policies, so a
+	// constant false role guard reads no rows.
+	tk.MustQuery("explain format='brief' select * from role_fold_plain where current_role() <> 'NONE'").
+		Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustQuery("select * from role_fold_plain where current_role() <> 'NONE'").Check(testkit.Rows())
+	tk.MustExec("set role all")
+	tk.MustQuery("select * from role_fold_plain where current_role() <> 'NONE'").Check(testkit.Rows("1 1"))
+
+	// The policy still sees the role active for each statement.
+	for _, role := range []string{"all", "none", "all", "none"} {
+		tk.MustExec("set role " + role)
+		value := "secret"
+		if role == "none" {
+			value = "XXXXXX"
+		}
+		tk.MustQuery("select c from role_fold_masked").Check(testkit.Rows(value))
+		tk.MustQuery("select c from role_fold_masked where id = 1").Check(testkit.Rows(value))
+	}
+}
+
 func TestMaskingPolicyRoleResultPlanCache(t *testing.T) {
 	for _, instance := range []bool{false, true} {
 		t.Run(fmt.Sprint(instance), func(t *testing.T) {
