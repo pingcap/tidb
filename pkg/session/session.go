@@ -2148,7 +2148,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 					zap.String("SQL", sql))
 			}
 		}
-		return nil, err
+		// Compiling evaluates the subqueries and constants of the statement.
+		return nil, sessVars.StmtCtx.RedactExecError(err)
 	}
 
 	durCompile := time.Since(s.sessionVars.StartTime)

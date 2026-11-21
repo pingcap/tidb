@@ -397,3 +397,30 @@ func TestMaskingPolicyDiagnosticsCommit(t *testing.T) {
 func truncatedWarning(value string) string {
 	return fmt.Sprintf("Warning 1292 (22007): Truncated incorrect INTEGER value: '%s'", value)
 }
+
+// TestMaskingPolicyDiagnosticsCompile tests that an error raised while the
+// statement is compiled is redacted once a masked value has been evaluated,
+// such as the result of a scalar subquery.
+func TestMaskingPolicyDiagnosticsCompile(t *testing.T) {
+	root, _ := prepareMaskingDiagnostics(t)
+	root.MustExec("create table ts(c varchar(20))")
+	root.MustExec("insert into ts values ('secret')")
+	root.MustExec("create masking policy ps on ts(c) as case when current_user() = 'root@%' then c else mask_full(c) end" +
+		" restrict on (insert_into_select, update_select, delete_select, ctas) enable")
+	root.MustExec("create user u2")
+	root.MustExec("grant select on test.* to u2")
+	reader := testkit.NewTestKit(t, root.Session().GetStore())
+	require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "%"}, nil, nil, nil))
+	reader.MustExec("use test")
+	for _, tk := range []*testkit.TestKit{reader, root} {
+		tk.MustExec("set session tidb_enable_non_prepared_plan_cache = off")
+	}
+	for _, fn := range []string{"min", "max"} {
+		sql := fmt.Sprintf("select 1 where 'x' in (uuid_to_bin((select %s(c) from ts)), 'y')", fn)
+		require.Equal(t, []string{"Error 1411 (HY000): Incorrect string value: '?' for function uuid_to_bin"}, maskingDiagnostics(reader, sql), sql)
+		require.Equal(t, []string{"Error 1411 (HY000): Incorrect string value: 'secret' for function uuid_to_bin"}, maskingDiagnostics(root, sql), sql)
+	}
+	// An error raised before a masked value is read is kept.
+	require.Equal(t, []string{"Error 1054 (42S22): Unknown column 'nosuch' in 'where clause'"},
+		maskingDiagnostics(reader, "select 1 from ts where nosuch = (select min(c) from ts)"))
+}
