@@ -934,6 +934,51 @@ func TestMaskingPolicyPredicateSubqueryResults(t *testing.T) {
 	tk.MustQuery("select id from t_pred_dst where c = (select c from t_pred_src)").Check(testkit.Rows("1"))
 }
 
+func TestMaskingPolicyPredicateCTEFallbackKeepsSeedSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cte_seed(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_cte_seed values (1, 'secret')")
+	tk.MustExec("create masking policy p on t_cte_seed(c) as mask_full(c) enable")
+	// A recursive CTE result cannot carry a policy, so a predicate compares
+	// its original values. Tracing a derived seed result exposes raw inputs on
+	// the seed, which must be removed again: every part of a CTE must keep the
+	// columns of its consumers, or de-duplicating its rows reads past them.
+	for _, union := range []string{"union distinct", "union all"} {
+		for _, sql := range []string{
+			"with recursive r(x) as (select concat(c, '!') from t_cte_seed " + union + " select x from r where false) " +
+				"select 1 where 'secret!' in (select x from r)",
+			"with recursive r(x) as (select concat(c, '!') from t_cte_seed " + union + " select x from r where false) " +
+				"select 1 where 'secret!' in (select x from r) and 'secret!' = any (select x from r)",
+			"with recursive r(x, n) as (select concat(c, '!'), 1 from t_cte_seed " + union + " select x, n + 1 from r where n < 3) " +
+				"select count(*) from r where x in (select x from r) having 'secret!' in (select x from r)",
+			"with recursive r(x, y) as (select concat(c, '!'), concat(id, c) from t_cte_seed " + union + " select x, y from r where false) " +
+				"select 1 where ('secret!', '1secret') in (select x, y from r)",
+			"with recursive r(x) as (select concat(c, '!') from t_cte_seed " + union + " select x from r where false), " +
+				"s(z) as (select x from r " + union + " select z from s where false) " +
+				"select 1 where 'secret!' in (select z from s)",
+		} {
+			rows := tk.MustQuery(sql).Rows()
+			require.Len(t, rows, 1, sql)
+		}
+	}
+	recursive := "with recursive r(x, n) as (select concat(c, '!'), 1 from t_cte_seed union distinct select x, n + 1 from r where n < 3) "
+	tk.MustQuery(recursive + "select n from r where 'secret!' in (select x from r) order by n").Check(testkit.Rows("1", "2", "3"))
+	require.ErrorContains(t, tk.ExecToErr(recursive+"select x from r where 'secret!' in (select x from r)"), "masking policy cannot be preserved through recursive CTE")
+	// A materialized CTE: a derived seed result keeps its original value in
+	// the predicate, while its other column still carries the policy.
+	tk.MustExec("set tidb_opt_force_inline_cte=0")
+	sql := "with x as (select concat(c, '!') y, c from t_cte_seed) " +
+		"select count(*) from x where 'secret!' in (select y from x) and 'XXXXXX' in (select c from x)"
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain format='brief' "+sql).Rows()), "CTE")
+	tk.MustQuery(sql).Check(testkit.Rows("1"))
+	tk.MustQuery("with x as (select concat(c, '!') y, id from t_cte_seed) select id from x where 'secret!' in (select y from x)").Check(testkit.Rows("1"))
+	tk.MustQuery("with x as (select concat(c, '!') y, c from t_cte_seed) select c from x where 'secret!' in (select y from x)").Check(testkit.Rows("XXXXXX"))
+	tk.MustQuery("with x as (select concat(c, '!') y, c from t_cte_seed) select c from x where 'secret' in (select c from x)").Check(testkit.Rows())
+	tk.MustQuery("with x as (select c from t_cte_seed) select c from x where 'XXXXXX' in (select c from x)").Check(testkit.Rows("XXXXXX"))
+}
+
 func TestMaskingPolicyUsingNaturalJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

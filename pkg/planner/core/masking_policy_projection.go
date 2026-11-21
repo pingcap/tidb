@@ -756,6 +756,11 @@ func (m *maskingResultBuilder) predicatePolicySourceFromChildren(p base.LogicalP
 }
 
 func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingResult, error) {
+	// The seed and recursive parts are shared by every consumer of the CTE and
+	// must keep its columns. Tracing them may expose raw inputs on their plans,
+	// so they are restored whatever the outcome; a result that is preserved
+	// depends only on the consumer's column.
+	defer m.snapshotPlans(p.Cte.SeedPartLogicalPlan, p.Cte.RecursivePartLogicalPlan).restore(m)
 	col := p.Schema().Columns[idx]
 	seed := p.Cte.SeedPartLogicalPlan
 	input := seed.Schema().Columns[idx]
@@ -779,7 +784,97 @@ func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingRes
 		return result, &maskingNotPreservedError{shape: "materialized CTE"}
 	}
 	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	for _, dep := range expression.ExtractColumns(result.expr) {
+		if dep.UniqueID != col.UniqueID {
+			return result, &maskingNotPreservedError{shape: "materialized CTE"}
+		}
+	}
+	return result, nil
+}
+
+// maskingPlanState is the part of a plan that tracing may change.
+type maskingPlanState struct {
+	plan     base.LogicalPlan
+	schema   *expression.Schema
+	columns  []*expression.Column
+	names    types.NameSlice
+	children []base.LogicalPlan
+	exprs    []expression.Expression
+	aggFuncs []*aggregation.AggFuncDesc
+}
+
+type maskingPlanSnapshot []maskingPlanState
+
+// snapshotPlans records the plans reachable from roots, including the parts
+// of nested CTEs.
+func (*maskingResultBuilder) snapshotPlans(roots ...base.LogicalPlan) maskingPlanSnapshot {
+	var snapshot maskingPlanSnapshot
+	visited := make(map[int]struct{})
+	var walk func(base.LogicalPlan)
+	walk = func(p base.LogicalPlan) {
+		if p == nil {
+			return
+		}
+		if _, ok := visited[p.ID()]; ok {
+			return
+		}
+		visited[p.ID()] = struct{}{}
+		state := maskingPlanState{
+			plan:     p,
+			schema:   p.Schema(),
+			columns:  slices.Clone(p.Schema().Columns),
+			names:    slices.Clone(p.OutputNames()),
+			children: slices.Clone(p.Children()),
+		}
+		switch x := p.(type) {
+		case *logicalop.LogicalProjection:
+			state.exprs = slices.Clone(x.Exprs)
+		case *logicalop.LogicalAggregation:
+			state.aggFuncs = slices.Clone(x.AggFuncs)
+		case *logicalop.LogicalCTE:
+			walk(x.Cte.SeedPartLogicalPlan)
+			walk(x.Cte.RecursivePartLogicalPlan)
+		}
+		snapshot = append(snapshot, state)
+		for _, child := range p.Children() {
+			walk(child)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+	return snapshot
+}
+
+// restore undoes the changes of tracing and drops the results that may refer
+// to raw inputs it exposed.
+func (s maskingPlanSnapshot) restore(m *maskingResultBuilder) {
+	ids := make(map[int]struct{}, len(s))
+	for _, state := range s {
+		p := state.plan
+		ids[p.ID()] = struct{}{}
+		state.schema.Columns = state.columns
+		if x, ok := p.(interface{ SetSchema(*expression.Schema) }); ok {
+			x.SetSchema(state.schema)
+		}
+		p.SetOutputNames(state.names)
+		p.SetChildren(state.children...)
+		switch x := p.(type) {
+		case *logicalop.LogicalProjection:
+			x.Exprs = state.exprs
+		case *logicalop.LogicalAggregation:
+			x.AggFuncs = state.aggFuncs
+		}
+		delete(m.joinMatches, p.ID())
+	}
+	for key := range m.cache {
+		if _, ok := ids[key.planID]; ok {
+			delete(m.cache, key)
+		}
+	}
 }
 
 type maskingNotPreservedError struct{ shape string }
