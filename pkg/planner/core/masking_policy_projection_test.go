@@ -285,6 +285,43 @@ func TestMaskingPolicyUnsupportedResults(t *testing.T) {
 	tk.MustQuery("select id from t_unsupported where 'XXXXXX' = (select c from t_unsupported where id = 1)").Check(testkit.Rows("1"))
 }
 
+func TestMaskingPolicySequenceFunctionResults(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create sequence s_mask_seq start with 1 increment by 1 nocache")
+	tk.MustExec("create sequence s_mask_bounded start with 1 increment by 1 maxvalue 2 nocache")
+	tk.MustExec("create table t_mask_seq(id int primary key, c varchar(10))")
+	tk.MustExec("insert into t_mask_seq values (1, 'a'), (2, 'a')")
+	tk.MustExec("create masking policy p_mask_seq on t_mask_seq(c) as mask_full(c) enable")
+
+	// Rebuilding a masked result above the sort would evaluate the sequence
+	// function a second time for each row, so the result is rejected before
+	// the sequence is advanced.
+	for _, sql := range []string{
+		"select concat(c, nextval(s_mask_seq)) as x from t_mask_seq order by x",
+		"select concat(c, nextval(s_mask_seq)) from t_mask_seq order by 1",
+		"select concat(c, setval(s_mask_seq, 10)) as x from t_mask_seq order by x",
+		"select concat(c, lastval(s_mask_seq)) as x from t_mask_seq order by x",
+	} {
+		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through mutable expression", sql)
+	}
+	tk.MustQuery("select lastval(s_mask_seq)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select nextval(s_mask_seq)").Check(testkit.Rows("1"))
+
+	// A bounded sequence is not exhausted by the rejected query.
+	require.ErrorContains(t, tk.ExecToErr("select concat(c, nextval(s_mask_bounded)) as x from t_mask_seq order by x"),
+		"masking policy cannot be preserved through mutable expression")
+	tk.MustQuery("select nextval(s_mask_bounded)").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(s_mask_bounded)").Check(testkit.Rows("2"))
+
+	// A sequence function next to a masked column, not combined with it, is
+	// still evaluated once for each row.
+	tk.MustQuery("select c, nextval(s_mask_seq) as n from t_mask_seq order by n").Check(testkit.Rows("X 2", "X 3"))
+	tk.MustQuery("select lastval(s_mask_seq)").Check(testkit.Rows("3"))
+	tk.MustQuery("select nextval(s_mask_seq)").Check(testkit.Rows("4"))
+}
+
 func TestMaskingPolicyWindowResults(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

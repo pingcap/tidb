@@ -259,6 +259,11 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.Sleep:       {},
 	ast.SetVar:      {},
 	ast.GetVar:      {},
+	// The sequence functions advance or observe the position of a sequence:
+	// evaluating one again, or in another place, changes its result.
+	ast.NextVal: {},
+	ast.SetVal:  {},
+	ast.LastVal: {},
 	// The advisory lock functions change or observe the lock state of the
 	// session: each call has to be evaluated, in its own place.
 	ast.GetLock:         {},
