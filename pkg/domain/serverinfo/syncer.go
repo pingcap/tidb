@@ -310,9 +310,14 @@ func (s *Syncer) Restart(ctx context.Context) error {
 // cleanupStaleServerAndOwnerInfo removes stale server info and corresponding
 // DDL owner election key left behind by a previous instance of this server
 // that shared the same IP+Port but exited without proper cleanup (e.g. OOM,
-// kill -9). This is best-effort: any error is logged and startup continues.
+// kill -9). Assumed participants do not represent process incarnations, so
+// matching their addresses does not establish that another member is stale.
+// This is best-effort: any error is logged and startup continues.
 func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
 	info := s.info.Load()
+	if info.IsAssumed() {
+		return
+	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get all server info for stale cleanup", zap.Error(err))
@@ -320,7 +325,7 @@ func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
 	}
 
 	for id, si := range allInfo {
-		if id == info.ID {
+		if id == info.ID || si.IsAssumed() {
 			continue
 		}
 		if si.IP != info.IP || si.Port != info.Port {
@@ -618,6 +623,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, di
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
 			DisableRPC:      disableRPC,
+			SchemaReadOnly:  true,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),
