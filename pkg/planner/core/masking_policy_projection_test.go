@@ -2759,3 +2759,75 @@ func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
 	checkShowPolicies(reader, "mdl_kept")
 	reader.MustExec("rollback")
 }
+
+// TestMaskingPolicyExplainForConnectionInTxn tests that only a statement that
+// reads a masked column keeps its plan from other sessions: the diagnostics
+// of the later statements of its transaction are redacted, but their plans
+// hold no masked value.
+func TestMaskingPolicyExplainForConnectionInTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t_ef(id int primary key, c varchar(20), b varchar(20), key(c), key(b))")
+	root.MustExec("insert into t_ef values (1, 'secret', 'plainvalue')")
+	root.MustExec("create table t_empty(id int primary key, c varchar(20))")
+	root.MustExec("create masking policy p on t_ef(c) as case when current_user()='root@%' then c else mask_full(c) end" +
+		" restrict on (insert_into_select, update_select, delete_select, ctas) enable")
+	root.MustExec("create masking policy pe on t_empty(c) as mask_full(c) enable")
+	root.MustExec("create user u_ef")
+	root.MustExec("grant select on test.* to u_ef")
+	newUser := func() *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u_ef", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		tk.MustExec("set session tidb_redact_log = 'OFF'")
+		tk.MustExec("set session tidb_opt_enable_non_eval_scalar_subquery = OFF")
+		return tk
+	}
+	target, viewer := newUser(), newUser()
+	explainFor := func(format string) (string, error) {
+		pi := target.Session().ShowProcess()
+		viewer.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*util.ProcessInfo{pi}})
+		rs, err := viewer.Exec(fmt.Sprintf("explain %s for connection %d", format, pi.ID))
+		if err != nil || rs == nil {
+			return "", err
+		}
+		var sb strings.Builder
+		for _, row := range viewer.ResultSetToResult(rs, "").Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String(), nil
+	}
+	formats := []string{"", "format='brief'", "format='dot'"}
+	plain := "select count(*) from t_ef where b = (select max(b) from t_ef)"
+	for _, read := range []string{"select c from t_empty", "select count(*) from t_ef where c = (select min(c) from t_ef)"} {
+		target.MustExec("begin")
+		target.MustQuery(read)
+		target.MustQuery(plain).Check(testkit.Rows("1"))
+		for _, format := range formats {
+			out, err := explainFor(format)
+			require.NoError(t, err, format)
+			if format != "format='dot'" {
+				require.Contains(t, out, "plainvalue", format)
+			}
+		}
+		// The diagnostics of the statement are still redacted.
+		target.MustQuery("select 1 from t_ef where cast(b as signed) > 0").Check(testkit.Rows())
+		target.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect INTEGER value: '?'"))
+
+		// A statement of the transaction that reads a masked column keeps its
+		// plan as before.
+		target.MustQuery("select count(*) from t_ef where c = (select min(c) from t_ef)").Check(testkit.Rows("1"))
+		for _, format := range formats {
+			out, err := explainFor(format)
+			if format == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "statement that reads a masked column", format)
+			}
+			require.NotContains(t, out, "secret", format)
+		}
+		target.MustExec("commit")
+	}
+}

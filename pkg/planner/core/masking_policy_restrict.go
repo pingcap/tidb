@@ -470,7 +470,7 @@ func recordMaskingPolicyRead(ctx context.Context, sctx base.PlanContext, is info
 	if !slices.Contains(sv.StmtCtx.MaskingPolicyChecks, check) {
 		sv.StmtCtx.MaskingPolicyChecks = append(sv.StmtCtx.MaskingPolicyChecks, check)
 	}
-	if sv.StmtCtx.RedactDiagnostics {
+	if sv.StmtCtx.ReadsMaskedColumn {
 		return nil
 	}
 	allowed, err := canCurrentSessionReadUnmaskedColumn(sctx.GetExprCtx(), sv, is.SchemaMetaVersion(), policy, tblInfo, colInfo)
@@ -612,7 +612,7 @@ func checkCachedMaskingPolicyAccess(ctx context.Context, sctx sessionctx.Context
 		}
 		restricted := policy.RestrictOps&check.Operation != 0
 		// A column that is only read decides whether diagnostics are redacted.
-		if !restricted && (check.Operation != ast.MaskingPolicyRestrictOpNone || stmtCtx.RedactDiagnostics) {
+		if !restricted && (check.Operation != ast.MaskingPolicyRestrictOpNone || stmtCtx.ReadsMaskedColumn) {
 			continue
 		}
 		tbl, ok := is.TableByID(ctx, check.TableID)

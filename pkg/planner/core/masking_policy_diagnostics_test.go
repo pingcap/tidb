@@ -451,16 +451,16 @@ func TestMaskingPolicyDiagnosticsCop(t *testing.T) {
 	require.Equal(t, truncated("plain"), maskingDiagnostics(user, plain))
 
 	cases := []struct {
-		code     int32
 		original string
 		masked   string
+		code     int32
 	}{
 		// A code without a template of its own.
-		{mysql.ErrUnknown, "Warning 1105 (HY000): Truncated incorrect DOUBLE value: '%s'",
-			"Warning 1105 (HY000): the error message is hidden because the statement reads a column masked by a masking policy"},
+		{"Warning 1105 (HY000): Truncated incorrect DOUBLE value: '%s'",
+			"Warning 1105 (HY000): the error message is hidden because the statement reads a column masked by a masking policy", mysql.ErrUnknown},
 		// A code whose template holds no value: the message is rebuilt from it.
-		{mysql.ErrDivisionByZero, "Warning 1365 (22012): Truncated incorrect DOUBLE value: '%s'",
-			"Warning 1365 (22012): Division by 0"},
+		{"Warning 1365 (22012): Truncated incorrect DOUBLE value: '%s'",
+			"Warning 1365 (22012): Division by 0", mysql.ErrDivisionByZero},
 	}
 	var code int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/copResponseWarnings", func(warnings []*tipb.Error) {

@@ -3543,7 +3543,7 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 // evaluated while planning and the ranges built from it, so it is rendered as
 // with tidb_redact_log = ON, whatever the session has set.
 func (s *SessionVars) PlanRedactLog() string {
-	if s.StmtCtx != nil && s.StmtCtx.RedactDiagnostics {
+	if s.StmtCtx != nil && s.StmtCtx.ReadsMaskedColumn {
 		return errors.RedactLogEnable
 	}
 	return s.EnableRedactLog

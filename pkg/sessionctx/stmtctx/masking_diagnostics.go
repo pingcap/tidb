@@ -121,8 +121,18 @@ func init() {
 // SetRedactDiagnostics marks that the statement reads a column that a masking
 // policy masks for the current session. The statement evaluates predicates
 // and other internal expressions on the original values, so from now on the
-// data values in its warnings and execution errors are redacted.
+// data values in its warnings and execution errors are redacted, and so are
+// those in its plan.
 func (sc *StatementContext) SetRedactDiagnostics() {
+	sc.ReadsMaskedColumn = true
+	sc.SetRedactTxnDiagnostics()
+}
+
+// SetRedactTxnDiagnostics marks that an earlier statement of the transaction
+// reads a masked column. The data values in the warnings and execution errors
+// of the statement are redacted, as they may be about the rows that the
+// earlier statement read. The plan of the statement holds none of them.
+func (sc *StatementContext) SetRedactTxnDiagnostics() {
 	if sc.RedactDiagnostics {
 		return
 	}

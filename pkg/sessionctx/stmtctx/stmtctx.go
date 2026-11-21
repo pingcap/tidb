@@ -297,8 +297,11 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
-	// RedactDiagnostics is set by SetRedactDiagnostics.
+	// RedactDiagnostics is set by SetRedactDiagnostics and
+	// SetRedactTxnDiagnostics.
 	RedactDiagnostics bool
+	// ReadsMaskedColumn is set by SetRedactDiagnostics.
+	ReadsMaskedColumn bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler

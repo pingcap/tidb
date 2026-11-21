@@ -1442,7 +1442,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
-		RedactPlanValues:      p != nil && s.sessionVars.StmtCtx.RedactDiagnostics,
+		RedactPlanValues:      p != nil && s.sessionVars.StmtCtx.ReadsMaskedColumn,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -2040,7 +2040,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if sessVars.TxnCtx.RedactDiagnostics {
-		sessVars.StmtCtx.SetRedactDiagnostics()
+		sessVars.StmtCtx.SetRedactTxnDiagnostics()
 	}
 	s.rebindDroppedResourceGroup(ctx)
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
