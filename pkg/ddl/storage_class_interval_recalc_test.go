@@ -16,14 +16,14 @@ package ddl_test
 
 import (
 	"context"
-	"sync"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -74,6 +74,8 @@ func TestStorageClassIntervalSelector(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
+	// The DDL owner's recalculation would otherwise move partitions under the test.
+	tk.MustExec("SET GLOBAL tidb_storage_class_interval_recalc_period = 0")
 
 	tk.MustExec(storageClassIntervalTable)
 	require.Equal(t, map[string]string{"p202310": "IA", "p202311": "STANDARD", "p202312": "STANDARD", "pmax": "STANDARD"},
@@ -119,7 +121,6 @@ func TestStorageClassIntervalSelector(t *testing.T) {
 		{"ints", `{"tier": "IA", "less_than": "INTERVAL 3 YEAR"}`, "only supports RANGE COLUMNS"},
 		{"strs", `{"tier": "IA", "less_than": "INTERVAL 3 YEAR"}`, "only supports RANGE COLUMNS"},
 		{"plain", `{"tier": "IA", "less_than": "INTERVAL 3 YEAR"}`, "only supports RANGE COLUMNS"},
-		{"days", `{"tier": "IA", "less_than": "2023-02-01"}`, "is a date"},
 	}
 	tiersBefore := storageClassPartitionTiers(t, tk, "t")
 	for _, c := range invalid {
@@ -156,156 +157,202 @@ func TestStorageClassIntervalRecalcPeriodVariable(t *testing.T) {
 	tk.MustQuery("SELECT @@global.tidb_storage_class_interval_recalc_period").Check(testkit.Rows("8760h0m0s"))
 }
 
-type storageClassIntervalRecalcLoop struct {
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+// storageClassIntervalRecalcHooks drives the DDL owner's recalculation loop:
+// checks run every 10ms, and the period defaults to 1ms so each check runs a
+// round. They must be enabled before the store starts, as the owner reads the
+// check interval when its loop starts.
+type storageClassIntervalRecalcHooks struct {
+	now       *atomic.Pointer[time.Time]
+	ticks     atomic.Int64
+	period    atomic.Int64
+	submitted atomic.Int64
+	rounds    chan struct{}
+	// beforeSubmit runs once, before the next job is submitted.
+	beforeSubmit atomic.Pointer[func()]
 }
 
-func startStorageClassIntervalRecalcLoop(d ddl.DDL) *storageClassIntervalRecalcLoop {
-	ctx, cancel := context.WithCancel(context.Background())
-	loop := &storageClassIntervalRecalcLoop{cancel: cancel}
-	loop.wg.Add(1)
-	go func() {
-		defer loop.wg.Done()
-		ddl.RunStorageClassIntervalRecalcLoopForTest(ctx, d)
-	}()
-	return loop
+func enableStorageClassIntervalRecalcHooks(t *testing.T) *storageClassIntervalRecalcHooks {
+	h := &storageClassIntervalRecalcHooks{now: mockStorageClassIntervalNow(t), rounds: make(chan struct{}, 100000)}
+	setMockTime(h.now, "2026-10-31 18:00:00")
+	h.period.Store(int64(time.Millisecond))
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockStorageClassIntervalRecalcCheckInterval", func(interval *time.Duration) {
+		h.ticks.Add(1)
+		*interval = 10 * time.Millisecond
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockStorageClassIntervalRecalcPeriod", func(p *time.Duration) {
+		if overridden := time.Duration(h.period.Load()); overridden >= 0 {
+			*p = overridden
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterStorageClassIntervalRecalcRound", func() {
+		h.rounds <- struct{}{}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeStorageClassIntervalRecalcSubmit", func(int64) {
+		h.submitted.Add(1)
+		if fn := h.beforeSubmit.Swap(nil); fn != nil {
+			(*fn)()
+		}
+	})
+	return h
 }
 
-// stop simulates the DDL owner retiring: the loop must return promptly.
-func (l *storageClassIntervalRecalcLoop) stop() {
-	l.cancel()
-	l.wg.Wait()
+// waitFreshRounds waits for n rounds that start after the call.
+func (h *storageClassIntervalRecalcHooks) waitFreshRounds(t *testing.T, n int) {
+	for len(h.rounds) > 0 {
+		<-h.rounds
+	}
+	// A round may be in progress; it does not count.
+	n++
+	for range n {
+		select {
+		case <-h.rounds:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "storage class interval recalculation round did not run")
+		}
+	}
+}
+
+// waitTicks waits for n checks of the period. A round in progress when it is
+// called has finished when it returns.
+func (h *storageClassIntervalRecalcHooks) waitTicks(t *testing.T, n int64) {
+	ticksBefore := h.ticks.Load()
+	require.Eventually(t, func() bool { return h.ticks.Load() >= ticksBefore+n }, 10*time.Second, time.Millisecond)
+}
+
+// waitTicksWithoutRounds waits for several checks of the period and requires
+// that none of them started a round.
+func (h *storageClassIntervalRecalcHooks) waitTicksWithoutRounds(t *testing.T) {
+	h.waitTicks(t, 1)
+	for len(h.rounds) > 0 {
+		<-h.rounds
+	}
+	submittedBefore := h.submitted.Load()
+	h.waitTicks(t, 5)
+	require.Empty(t, h.rounds)
+	require.Equal(t, submittedBefore, h.submitted.Load())
+}
+
+func waitStorageClassJobsDone(t *testing.T, tk *testkit.TestKit) {
+	require.Eventually(t, func() bool {
+		return tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_ddl_job").Rows()[0][0] == "0"
+	}, 10*time.Second, 10*time.Millisecond)
+}
+
+// storageClassTransitionCount counts staged TiKV transitions, which exist only
+// in the next-gen kernel.
+func storageClassTransitionCount(t *testing.T, tk *testkit.TestKit) int {
+	if !kerneltype.IsNextGen() {
+		return 0
+	}
+	count, err := strconv.Atoi(tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_storage_class_transition_history").Rows()[0][0].(string))
+	require.NoError(t, err)
+	return count
 }
 
 func TestStorageClassIntervalRecalc(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("the DDL owner already runs the recalculation loop in the next-gen kernel")
-	}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableStorageClass = true
 	})
-	now := mockStorageClassIntervalNow(t)
-	setMockTime(now, "2026-10-31 18:00:00")
+	h := enableStorageClassIntervalRecalcHooks(t)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec(storageClassIntervalTable)
 
-	var ticks atomic.Int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockStorageClassIntervalRecalcCheckInterval", func(interval *time.Duration) {
-		ticks.Add(1)
-		*interval = 10 * time.Millisecond
-	})
-	var period atomic.Int64
-	period.Store(int64(time.Millisecond))
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockStorageClassIntervalRecalcPeriod", func(p *time.Duration) {
-		if overridden := time.Duration(period.Load()); overridden >= 0 {
-			*p = overridden
-		}
-	})
-	rounds := make(chan struct{}, 1000)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterStorageClassIntervalRecalcRound", func() {
-		rounds <- struct{}{}
-	})
-	var submitted atomic.Int64
-	var beforeSubmit atomic.Pointer[func()]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeStorageClassIntervalRecalcSubmit", func(int64) {
-		submitted.Add(1)
-		if fn := beforeSubmit.Load(); fn != nil {
-			(*fn)()
-		}
-	})
-	waitRounds := func(n int) {
-		for range n {
-			select {
-			case <-rounds:
-			case <-time.After(10 * time.Second):
-				require.FailNow(t, "storage class interval recalculation round did not run")
-			}
-		}
-	}
-	waitJobsDone := func() {
-		require.Eventually(t, func() bool {
-			return tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_ddl_job").Rows()[0][0] == "0"
-		}, 10*time.Second, 10*time.Millisecond)
-	}
-	drainRounds := func() {
-		for {
-			select {
-			case <-rounds:
-			default:
-				return
-			}
-		}
-	}
-
 	// Nothing crossed the cutoff, so nothing is submitted.
-	loop := startStorageClassIntervalRecalcLoop(dom.DDL())
-	waitRounds(2)
-	require.Zero(t, submitted.Load())
+	h.waitFreshRounds(t, 2)
+	require.Zero(t, h.submitted.Load())
 	require.Equal(t, "STANDARD", storageClassPartitionTiers(t, tk, "t")["p202311"])
 
 	// p202311 crosses the cutoff at 2026-11-01 UTC.
-	setMockTime(now, "2026-11-01 00:00:00")
+	transitionsBefore := storageClassTransitionCount(t, tk)
+	setMockTime(h.now, "2026-11-01 00:00:00")
 	require.Eventually(t, func() bool {
 		return storageClassPartitionTiers(t, tk, "t")["p202311"] == "IA"
 	}, 10*time.Second, 10*time.Millisecond)
-	waitJobsDone()
+	waitStorageClassJobsDone(t, tk)
 	require.Equal(t, map[string]string{"p202310": "IA", "p202311": "IA", "p202312": "STANDARD", "pmax": "STANDARD"},
 		storageClassPartitionTiers(t, tk, "t"))
+	if kerneltype.IsNextGen() {
+		require.NotEqual(t, transitionsBefore, storageClassTransitionCount(t, tk), "the job must stage a TiKV transition")
+	}
 
 	// The clock moves backwards: partitions would leave IA, so nothing is submitted.
-	submitted.Store(0)
-	setMockTime(now, "2026-01-01 00:00:00")
-	drainRounds()
-	waitRounds(3)
-	require.Zero(t, submitted.Load())
+	h.submitted.Store(0)
+	setMockTime(h.now, "2026-01-01 00:00:00")
+	h.waitFreshRounds(t, 3)
+	require.Zero(t, h.submitted.Load())
 	require.Equal(t, "IA", storageClassPartitionTiers(t, tk, "t")["p202311"])
 
-	// The user changes the rule after the round read it: the queued job is a no-op.
-	setMockTime(now, "2026-12-01 00:00:00")
+	// Jobs pile up while DDL execution is blocked. Only the first one applies;
+	// the duplicates finish without a schema version or a transition.
+	releaseJobs := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(*model.Job) {
+		<-releaseJobs
+	})
+	h.submitted.Store(0)
+	schemaVerBefore := dom.InfoSchema().SchemaMetaVersion()
+	transitionsBefore = storageClassTransitionCount(t, tk)
+	setMockTime(h.now, "2026-12-01 00:00:00")
+	require.Eventually(t, func() bool { return h.submitted.Load() >= 3 }, 10*time.Second, time.Millisecond)
+	close(releaseJobs)
+	waitStorageClassJobsDone(t, tk)
+	require.Equal(t, "IA", storageClassPartitionTiers(t, tk, "t")["p202312"])
+	require.Equal(t, schemaVerBefore+1, dom.InfoSchema().SchemaMetaVersion())
+	if kerneltype.IsNextGen() {
+		require.Equal(t, transitionsBefore+1, storageClassTransitionCount(t, tk))
+	}
+
+	// The user changes the rule after the round read it: the queued job is a
+	// no-op. The new owner runs a round right away despite the 1h period.
+	tk.MustExec(`ALTER TABLE t REORGANIZE PARTITION pmax INTO (PARTITION p202401 VALUES LESS THAN ('2024-01-01'), PARTITION pmax VALUES LESS THAN (MAXVALUE))`)
+	h.period.Store(int64(time.Hour))
+	h.waitTicks(t, 2)
+	setMockTime(h.now, "2027-01-01 00:00:00")
 	newRule := `{"storage_class": {"tier": "IA", "names_in": ["p202310"]}}`
 	var userAlterErr atomic.Pointer[error]
 	hook := func() {
-		beforeSubmit.Store(nil)
-		tk2 := testkit.NewTestKit(t, store)
-		err := tk2.ExecToErr("ALTER TABLE test.t ENGINE_ATTRIBUTE = '" + newRule + "'")
+		err := testkit.NewTestKit(t, store).ExecToErr("ALTER TABLE test.t ENGINE_ATTRIBUTE = '" + newRule + "'")
 		userAlterErr.Store(&err)
 	}
-	period.Store(int64(time.Hour))
-	loop.stop()
-	beforeSubmit.Store(&hook)
-	schemaVerBefore := dom.InfoSchema().SchemaMetaVersion()
-	// Owner change: the new owner runs a round right away despite the 1h period.
-	drainRounds()
-	loop = startStorageClassIntervalRecalcLoop(dom.DDL())
-	waitRounds(1)
-	waitJobsDone()
-	require.NotNil(t, userAlterErr.Load(), "the user ALTER must run before the job is submitted")
+	h.beforeSubmit.Store(&hook)
+	schemaVerBefore = dom.InfoSchema().SchemaMetaVersion()
+	require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+	require.Eventually(t, func() bool { return userAlterErr.Load() != nil }, 10*time.Second, 10*time.Millisecond)
+	waitStorageClassJobsDone(t, tk)
 	require.NoError(t, *userAlterErr.Load())
 	require.Equal(t, newRule, external.GetTableByName(t, tk, "test", "t").Meta().EngineAttribute)
-	require.Equal(t, map[string]string{"p202310": "IA", "p202311": "STANDARD", "p202312": "STANDARD", "pmax": "STANDARD"},
-		storageClassPartitionTiers(t, tk, "t"))
+	require.Equal(t, "STANDARD", storageClassPartitionTiers(t, tk, "t")["p202401"])
 	// Only the user's ALTER bumped the schema version.
 	require.Equal(t, schemaVerBefore+1, dom.InfoSchema().SchemaMetaVersion())
+}
+
+func TestStorageClassIntervalRecalcDisabled(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableStorageClass = true
+	})
+	h := enableStorageClassIntervalRecalcHooks(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec(storageClassIntervalTable)
+
+	// With storage class disabled, no round runs although p202311 crossed.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableStorageClass = false
+	})
+	h.waitTicks(t, 1)
+	setMockTime(h.now, "2026-11-01 00:00:00")
+	h.waitTicksWithoutRounds(t)
 
 	// A period of 0 disables recalculation.
-	loop.stop()
-	setMockTime(now, "2026-11-15 00:00:00")
-	tk.MustExec(`ALTER TABLE t ENGINE_ATTRIBUTE = '{"storage_class": {"tier": "IA", "less_than": "INTERVAL 3 YEAR"}}'`)
-	period.Store(-1)
+	h.period.Store(-1)
 	tk.MustExec("SET GLOBAL tidb_storage_class_interval_recalc_period = 0")
-	setMockTime(now, "2027-01-01 00:00:00")
-	submitted.Store(0)
-	drainRounds()
-	loop = startStorageClassIntervalRecalcLoop(dom.DDL())
-	// Wait for several checks of the period variable; none may start a round.
-	ticksBefore := ticks.Load()
-	require.Eventually(t, func() bool { return ticks.Load() >= ticksBefore+5 }, 10*time.Second, time.Millisecond)
-	loop.stop()
-	require.Empty(t, rounds)
-	require.Zero(t, submitted.Load())
-	require.Equal(t, "STANDARD", storageClassPartitionTiers(t, tk, "t")["p202312"])
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableStorageClass = true
+	})
+	h.waitTicksWithoutRounds(t)
+	require.Equal(t, "STANDARD", storageClassPartitionTiers(t, tk, "t")["p202311"])
 }

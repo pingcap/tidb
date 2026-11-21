@@ -211,7 +211,9 @@ func (s *jobScheduler) start() {
 			}
 		})
 	}
-	if kerneltype.IsNextGen() && s.storageClassIntervalRecalculator != nil {
+	// Unlike the transition poller, recalculation only submits DDL jobs, so it
+	// runs in both kernels; the jobs stage TiKV transitions only in next-gen.
+	if s.storageClassIntervalRecalculator != nil {
 		s.wg.RunWithLog(func() {
 			select {
 			case <-s.storageClassTransitionReadyCh:

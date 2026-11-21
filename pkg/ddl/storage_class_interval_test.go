@@ -110,7 +110,7 @@ func TestStorageClassIntervalPartitionKeys(t *testing.T) {
 	}
 	for _, sql := range supported {
 		tbInfo := buildStorageClassTableInfo(t, ctx, sql)
-		_, _, err := getStorageClassIntervalPartitionKey(tbInfo)
+		_, err := getStorageClassIntervalPartitionKey(tbInfo)
 		require.NoError(t, err, sql)
 	}
 
@@ -127,7 +127,7 @@ func TestStorageClassIntervalPartitionKeys(t *testing.T) {
 	}
 	for _, sql := range unsupported {
 		tbInfo := buildStorageClassTableInfo(t, ctx, sql)
-		_, _, err := getStorageClassIntervalPartitionKey(tbInfo)
+		_, err := getStorageClassIntervalPartitionKey(tbInfo)
 		require.ErrorContains(t, err, "'less_than' interval only supports", sql)
 	}
 }
@@ -237,10 +237,6 @@ partition p0 values less than ('2023-02-01'))`)
 		return fmt.Sprintf(`{"storage_class":{"tier":"IA","less_than":%q}}`, lessThan)
 	}
 
-	for _, lessThan := range []string{"2023-02-01", "'2023-02-01'", "2023-02-01 00:00:00", " '2023-02-01' "} {
-		err := checkStorageClassSelectorsForNewRequest(attr(lessThan), toDays)
-		require.ErrorContains(t, err, "is a date", lessThan)
-	}
 	for _, lessThan := range []string{"744913", "'744913'", "TO_DAYS('2023-02-01')", "MAXVALUE", "INTERVAL 3 YEAR"} {
 		require.NoError(t, checkStorageClassSelectorsForNewRequest(attr(lessThan), toDays), lessThan)
 	}
@@ -322,17 +318,17 @@ func FuzzStorageClassIntervalCutoff(f *testing.F) {
 		if boundary.Year() < 1 || boundary.Year() > 9999 {
 			return
 		}
-		columnsCutoff, err := newStorageClassIntervalCutoff(columns, interval, now)
+		columnsLessThan, err := storageClassIntervalLessThan(columns, interval, now)
 		if err != nil {
 			return
 		}
-		toDaysCutoff, err := newStorageClassIntervalCutoff(toDays, interval, now)
+		toDaysLessThan, err := storageClassIntervalLessThan(toDays, interval, now)
 		require.NoError(t, err)
 
 		boundaryTime := types.NewTime(types.FromGoTime(boundary), mysql.TypeDate, 0)
-		columnsMatched, err := columnsCutoff.matches(columns, "'"+boundary.Format(time.DateOnly)+"'")
+		columnsMatched, err := partitionValueLessThanOrEqual(columns, "'"+boundary.Format(time.DateOnly)+"'", columnsLessThan)
 		require.NoError(t, err)
-		toDaysMatched, err := toDaysCutoff.matches(toDays, fmt.Sprint(types.TimestampDiff("DAY", types.ZeroDate, boundaryTime)))
+		toDaysMatched, err := partitionValueLessThanOrEqual(toDays, fmt.Sprint(types.TimestampDiff("DAY", types.ZeroDate, boundaryTime)), toDaysLessThan)
 		require.NoError(t, err)
 		require.Equal(t, columnsMatched, toDaysMatched, "now %s, interval %+v, boundary %s", now, interval, boundary)
 	})

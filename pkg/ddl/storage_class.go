@@ -421,9 +421,10 @@ type storageClassPartitionEvaluator struct {
 	tbInfo     *model.TableInfo
 	defs       []*model.StorageClassDef
 	defaultDef *model.StorageClassDef
-	// intervalCutoffs[i] is the cutoff of defs[i], or nil if defs[i] is not an interval selector.
-	intervalCutoffs []*storageClassIntervalCutoff
-	hasInterval     bool
+	// lessThans[i] is the 'less_than' literal of defs[i]; an interval is
+	// converted to the literal it stands for at the evaluation time.
+	lessThans   []string
+	hasInterval bool
 }
 
 func newStorageClassPartitionEvaluator(
@@ -433,10 +434,10 @@ func newStorageClassPartitionEvaluator(
 	now time.Time,
 ) (*storageClassPartitionEvaluator, error) {
 	evaluator := &storageClassPartitionEvaluator{
-		tbInfo:          tbInfo,
-		defs:            settings.Defs,
-		defaultDef:      firstNoScopeStorageClassDef(settings.Defs),
-		intervalCutoffs: make([]*storageClassIntervalCutoff, len(settings.Defs)),
+		tbInfo:     tbInfo,
+		defs:       settings.Defs,
+		defaultDef: firstNoScopeStorageClassDef(settings.Defs),
+		lessThans:  make([]string, len(settings.Defs)),
 	}
 	for i, def := range settings.Defs {
 		if err := checkStorageClassPartitionScope(tbInfo, partitions, def); err != nil {
@@ -445,6 +446,7 @@ func newStorageClassPartitionEvaluator(
 		if def.LessThan == nil {
 			continue
 		}
+		evaluator.lessThans[i] = *def.LessThan
 		interval, isInterval, err := parseStorageClassInterval(*def.LessThan)
 		if err != nil {
 			return nil, err
@@ -452,11 +454,10 @@ func newStorageClassPartitionEvaluator(
 		if !isInterval {
 			continue
 		}
-		cutoff, err := newStorageClassIntervalCutoff(tbInfo, interval, now)
+		evaluator.lessThans[i], err = storageClassIntervalLessThan(tbInfo, interval, now)
 		if err != nil {
 			return nil, err
 		}
-		evaluator.intervalCutoffs[i] = cutoff
 		evaluator.hasInterval = true
 	}
 	return evaluator, nil
@@ -475,16 +476,7 @@ func (e *storageClassPartitionEvaluator) matchingDef(part *model.PartitionDefini
 		}
 
 		if def.LessThan != nil {
-			var matched bool
-			var err error
-			if cutoff := e.intervalCutoffs[i]; cutoff != nil {
-				matched = len(part.LessThan) == 1
-				if matched {
-					matched, err = cutoff.matches(e.tbInfo, part.LessThan[0])
-				}
-			} else {
-				matched, err = isPartitionMatchLessThan(e.tbInfo, part, *def.LessThan)
-			}
+			matched, err := isPartitionMatchLessThan(e.tbInfo, part, e.lessThans[i])
 			if err != nil {
 				return nil, err
 			}

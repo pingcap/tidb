@@ -200,6 +200,11 @@ func (r *storageClassIntervalRecalculator) runRound(ctx context.Context) {
 		return
 	}
 	now := storageClassIntervalNow()
+	var tables, submitted, failed int
+	defer func() {
+		logutil.DDLLogger().Info("storage class interval recalculation round finished",
+			zap.Time("now", now), zap.Int("tables", tables), zap.Int("submitted", submitted), zap.Int("failed", failed))
+	}()
 	for _, schema := range is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute) {
 		dbInfo, ok := is.SchemaByName(schema.DBName)
 		if !ok {
@@ -209,7 +214,13 @@ func (r *storageClassIntervalRecalculator) runRound(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if err := r.recalcTable(ctx, dbInfo, tblInfo, now); err != nil && ctx.Err() == nil {
+			tables++
+			isSubmitted, err := r.recalcTable(ctx, dbInfo, tblInfo, now)
+			if isSubmitted {
+				submitted++
+			}
+			if err != nil && ctx.Err() == nil {
+				failed++
 				logutil.DDLLogger().Warn("storage class interval recalculation failed",
 					zap.Int64("tableID", tblInfo.ID), zap.String("table", tblInfo.Name.O), zap.Error(err))
 				metrics.DDLCounter.WithLabelValues(storageClassIntervalRecalcFailedMetric).Inc()
@@ -218,12 +229,14 @@ func (r *storageClassIntervalRecalculator) runRound(ctx context.Context) {
 	}
 }
 
+// recalcTable submits a job if partitions of the table newly cross the cutoff,
+// and reports whether it did.
 func (r *storageClassIntervalRecalculator) recalcTable(
 	ctx context.Context,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
 	now time.Time,
-) (err error) {
+) (submitted bool, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			err = errors.Errorf("storage class interval recalculation panicked: %v", rec)
@@ -232,16 +245,19 @@ func (r *storageClassIntervalRecalculator) recalcTable(
 	}()
 	changes, err := evalStorageClassIntervalChanges(tblInfo, now)
 	if err != nil || !changes.hasInterval {
-		return err
+		return false, err
 	}
 	if len(changes.others) > 0 {
-		return errors.Errorf("partitions %v would leave IA, the clock may have moved backwards", changes.others)
+		return false, errors.Errorf("partitions %v would leave IA, the clock may have moved backwards", changes.others)
 	}
 	if len(changes.toIA) == 0 {
-		return nil
+		return false, nil
 	}
 	failpoint.InjectCall("beforeStorageClassIntervalRecalcSubmit", tblInfo.ID)
-	return r.submit(ctx, dbInfo, tblInfo, changes.toIA)
+	if err := r.submit(ctx, dbInfo, tblInfo, changes.toIA); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // submit enqueues the job without waiting for it to finish. A failed or
@@ -294,15 +310,4 @@ func (r *storageClassIntervalRecalculator) submit(
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// RunStorageClassIntervalRecalcLoopForTest runs the interval recalculation loop
-// of d until ctx is done, as the DDL owner does in the next-gen kernel.
-func RunStorageClassIntervalRecalcLoopForTest(ctx context.Context, d DDL) {
-	impl, ok := d.(*ddl)
-	if !ok {
-		return
-	}
-	r := &storageClassIntervalRecalculator{infoCache: impl.infoCache, sessPool: impl.sessPool, executor: impl.executor}
-	r.run(ctx)
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -120,109 +119,71 @@ func errStorageClassIntervalUnsupportedPartition() error {
 
 // getStorageClassIntervalPartitionKey returns how a cutoff time maps onto the
 // partition key of tbInfo, or an error if interval selectors are unsupported.
-func getStorageClassIntervalPartitionKey(tbInfo *model.TableInfo) (storageClassIntervalKeyKind, *model.ColumnInfo, error) {
+func getStorageClassIntervalPartitionKey(tbInfo *model.TableInfo) (storageClassIntervalKeyKind, error) {
 	pi := tbInfo.Partition
 	if pi == nil || pi.Type != ast.PartitionTypeRange {
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	if len(pi.Columns) > 0 {
 		if len(pi.Columns) != 1 {
-			return 0, nil, errStorageClassIntervalUnsupportedPartition()
+			return 0, errStorageClassIntervalUnsupportedPartition()
 		}
 		col := findColumnByName(pi.Columns[0].L, tbInfo)
 		if col == nil {
-			return 0, nil, errStorageClassIntervalUnsupportedPartition()
+			return 0, errStorageClassIntervalUnsupportedPartition()
 		}
 		switch col.GetType() {
 		case mysql.TypeDate, mysql.TypeDatetime:
-			return storageClassIntervalKeyColumnTime, col, nil
+			return storageClassIntervalKeyColumnTime, nil
 		}
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	stmts, _, err := parser.New().ParseSQL("SELECT " + pi.Expr)
 	if err != nil || len(stmts) != 1 {
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	sel, ok := stmts[0].(*ast.SelectStmt)
 	if !ok || sel.Fields == nil || len(sel.Fields.Fields) != 1 {
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	fn, ok := sel.Fields.Fields[0].Expr.(*ast.FuncCallExpr)
 	if !ok || len(fn.Args) != 1 {
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	if _, ok := fn.Args[0].(*ast.ColumnNameExpr); !ok {
-		return 0, nil, errStorageClassIntervalUnsupportedPartition()
+		return 0, errStorageClassIntervalUnsupportedPartition()
 	}
 	switch fn.FnName.L {
 	case ast.ToDays:
-		return storageClassIntervalKeyToDays, nil, nil
+		return storageClassIntervalKeyToDays, nil
 	case ast.UnixTimestamp:
-		return storageClassIntervalKeyUnixTimestamp, nil, nil
+		return storageClassIntervalKeyUnixTimestamp, nil
 	}
-	return 0, nil, errStorageClassIntervalUnsupportedPartition()
+	return 0, errStorageClassIntervalUnsupportedPartition()
 }
 
-// storageClassIntervalCutoff is a cutoff time converted once per table to the
-// partition key domain, so each partition boundary is compared by value.
-type storageClassIntervalCutoff struct {
-	kind storageClassIntervalKeyKind
-	col  *model.ColumnInfo
-	// time is used by storageClassIntervalKeyColumnTime.
-	time types.Time
-	// value is in days for TO_DAYS and in Unix seconds for UNIX_TIMESTAMP.
-	value int64
-}
-
-func newStorageClassIntervalCutoff(tbInfo *model.TableInfo, interval storageClassInterval, now time.Time) (*storageClassIntervalCutoff, error) {
-	kind, col, err := getStorageClassIntervalPartitionKey(tbInfo)
+// storageClassIntervalLessThan converts an interval to the 'less_than' literal
+// it stands for at now, in the partition key domain, so partitions are matched
+// exactly as for a literal selector.
+func storageClassIntervalLessThan(tbInfo *model.TableInfo, interval storageClassInterval, now time.Time) (string, error) {
+	kind, err := getStorageClassIntervalPartitionKey(tbInfo)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	cutoff, err := interval.cutoff(now)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	cutoffTime := types.NewTime(types.FromGoTime(cutoff), mysql.TypeDatetime, types.MaxFsp)
-	result := &storageClassIntervalCutoff{kind: kind, col: col, time: cutoffTime}
 	switch kind {
 	case storageClassIntervalKeyToDays:
 		// Same as TO_DAYS(cutoff): a partition matches only if all its dates
 		// are before the cutoff date.
-		result.value = types.TimestampDiff("DAY", types.ZeroDate, cutoffTime)
+		return strconv.FormatInt(types.TimestampDiff("DAY", types.ZeroDate, cutoffTime), 10), nil
 	case storageClassIntervalKeyUnixTimestamp:
-		result.value = cutoff.Unix()
+		return strconv.FormatInt(cutoff.Unix(), 10), nil
 	}
-	return result, nil
-}
-
-// matches reports whether a partition upper bound is <= the cutoff. MAXVALUE
-// never matches an interval.
-func (c *storageClassIntervalCutoff) matches(tbInfo *model.TableInfo, boundary string) (bool, error) {
-	if strings.EqualFold(boundary, partitionMaxValue) {
-		return false, nil
-	}
-	if c.kind != storageClassIntervalKeyColumnTime {
-		cmp, err := compareNumericRangePartitionValues(tbInfo, boundary, strconv.FormatInt(c.value, 10))
-		if err != nil {
-			return false, err
-		}
-		return cmp <= 0, nil
-	}
-	literal := boundary
-	if isSingleQuotedPartitionValue(literal) {
-		literal = driver.UnwrapFromSingleQuotes(literal)
-	}
-	boundaryTime, err := types.ParseTime(types.StrictContext, literal, c.col.GetType(), types.MaxFsp)
-	if err != nil {
-		// Boundaries that are not plain literals fall back to expression evaluation.
-		cmp, err := compareRangeColumnsPartitionValues(tbInfo, boundary, c.time.String())
-		if err != nil {
-			return false, err
-		}
-		return cmp <= 0, nil
-	}
-	return boundaryTime.Compare(c.time) <= 0, nil
+	return cutoffTime.String(), nil
 }
 
 // checkStorageClassIntervalDef validates the rule-level restrictions of an
@@ -270,31 +231,12 @@ func checkStorageClassSelectorsForNewRequest(engineAttribute string, tbInfo *mod
 		if err != nil {
 			return err
 		}
-		if isInterval {
-			if _, _, err := getStorageClassIntervalPartitionKey(tbInfo); err != nil {
-				return err
-			}
+		if !isInterval {
 			continue
 		}
-		pi := tbInfo.Partition
-		if pi != nil && pi.Type == ast.PartitionTypeRange && len(pi.Columns) == 0 && isStorageClassDateLiteral(*def.LessThan) {
-			msg := fmt.Sprintf("'less_than' value '%-.64s' is a date, but the RANGE partition key is an integer; use an integer or an interval", *def.LessThan)
-			return dbterror.ErrStorageClassInvalidSpec.GenWithStackByArgs(msg)
+		if _, err := getStorageClassIntervalPartitionKey(tbInfo); err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-// isStorageClassDateLiteral reports whether a 'less_than' value is a date or
-// datetime literal rather than an integer or an expression.
-func isStorageClassDateLiteral(value string) bool {
-	value = strings.TrimSpace(value)
-	if isSingleQuotedPartitionValue(value) {
-		value = driver.UnwrapFromSingleQuotes(value)
-	}
-	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return false
-	}
-	_, err := types.ParseDatetime(types.StrictContext, value)
-	return err == nil
 }
