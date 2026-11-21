@@ -647,16 +647,25 @@ fn a_string_extremum_projection_peaks_like_gos_ping_pong() {
 ///
 /// A clustered or partitioned table's tasks push the aggregate too, each
 /// reading its handles' `TableHandlesToKVRanges` in its own partition.
+///
+/// The figures are Go's under `tidb_executor_concurrency = 1`, where the
+/// root `HashAgg` runs unparallel. Under the default its partial worker
+/// releases its chunk right after handing its groups to the final workers
+/// (`finalizeWorkerProcess`, then `memTracker.Consume(-w.chk.MemoryUsage())`)
+/// while a final worker charges a group's partial results, so the peak is
+/// one group higher whenever the final worker gets there first -- in Go as
+/// here (Go's usual schedule: 17916, 27298, 21026, 32709, 42091, 35819,
+/// 28230).
 #[test]
 fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
     for (table, query, go_mem_max) in [
-        ("int", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "17916"),
-        ("int", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "27298"),
-        ("int", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "21026"),
-        ("clustered", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "32709"),
-        ("clustered", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "42091"),
-        ("clustered", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "35819"),
-        ("partitioned", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "28230"),
+        ("int", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "6432"),
+        ("int", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "8888"),
+        ("int", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "9442"),
+        ("clustered", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "21225"),
+        ("clustered", "SELECT c, count(c) FROM t USE INDEX(b) WHERE b > 1 GROUP BY c", "23681"),
+        ("clustered", "SELECT avg(c) FROM t USE INDEX(b) WHERE b > 1", "24235"),
+        ("partitioned", "SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "16754"),
     ] {
         let dir = log_dir("partial-aggregate-mem-max");
         let (slow, _) = install_loggers(&dir);
@@ -674,6 +683,7 @@ fn an_index_lookups_partial_aggregate_request_peaks_like_go() {
             (1..=100).map(|x| format!("({x}, {x}, {})", x % 5)).collect::<Vec<_>>().join(", ")
         };
         session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+        session.run("SET tidb_executor_concurrency = 1").unwrap();
         session.run("SET GLOBAL tidb_slow_log_threshold = 0").unwrap();
         let rows = row_text(session.run(query));
         if query.starts_with("SELECT count") {

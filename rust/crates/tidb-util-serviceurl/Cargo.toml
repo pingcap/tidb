@@ -1,0 +1,14 @@
+[package]
+name = "tidb-util-serviceurl"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "TiDB pkg/util service_url.go: supported service endpoint URLs (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-go-net = { path = "../tidb-go-net" }

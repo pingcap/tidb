@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 tidb-keyspace = { path = "../tidb-keyspace" }
+tidb-metaservice = { path = "../tidb-metaservice" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }

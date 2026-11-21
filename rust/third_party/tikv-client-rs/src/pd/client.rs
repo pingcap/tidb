@@ -2614,7 +2614,9 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         Ok(client)
     }
 
-    pub(crate) fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
+    /// client-go `codec.GetKeyspaceMeta()` of the PD client's codec: the
+    /// keyspace this client was connected for, `None` for API V1.
+    pub fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
         self.keyspace_meta.as_ref()
     }
 

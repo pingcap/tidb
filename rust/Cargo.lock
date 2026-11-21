@@ -8230,7 +8230,7 @@ dependencies = [
  "tidb-keyspace",
  "tidb-log",
  "tidb-logutil",
- "tidb-util",
+ "tidb-util-serviceurl",
  "tikv-client",
 ]
 
@@ -9555,7 +9555,6 @@ dependencies = [
  "tidb-memoryusagealarm",
  "tidb-meta",
  "tidb-metadef",
- "tidb-metaservice",
  "tidb-metrics",
  "tidb-model",
  "tidb-monotime",
@@ -11345,6 +11344,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-memory",
+ "tidb-metaservice",
  "tidb-metrics",
  "tidb-mysql",
  "tidb-paging",
@@ -11482,8 +11482,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
- "tidb-go-net",
- "tidb-go-url",
  "tidb-hack",
  "tidb-metrics",
  "tidb-model",
@@ -11493,6 +11491,7 @@ dependencies = [
  "tidb-store-driver-txn",
  "tidb-terror",
  "tidb-txnkv",
+ "tidb-util-serviceurl",
 ]
 
 [[package]]
@@ -11510,6 +11509,14 @@ name = "tidb-util-disttask"
 version = "0.0.0"
 dependencies = [
  "tidb-domain-serverinfo",
+]
+
+[[package]]
+name = "tidb-util-serviceurl"
+version = "0.0.0"
+dependencies = [
+ "tidb-go-net",
+ "tidb-go-url",
 ]
 
 [[package]]

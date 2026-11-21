@@ -69,7 +69,6 @@ tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-standby = { path = "../tidb-standby" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-extworkload = { path = "../tidb-extworkload" }
-tidb-metaservice = { path = "../tidb-metaservice" }
 tidb-tidbmanager = { path = "../tidb-tidbmanager" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }

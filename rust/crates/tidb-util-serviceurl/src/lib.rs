@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/service_url.go`.
+//! Go `pkg/util/service_url.go`, a crate of its own below `tidb-util`: the
+//! meta service reads it and the store driver reads the meta service, while
+//! `tidb-util` sits above the driver. `tidb_util::service_url` is this crate.
 
 use tidb_go_net::split_host_port;
 

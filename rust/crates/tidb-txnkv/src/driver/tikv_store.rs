@@ -70,6 +70,23 @@ pub struct TikvStore<PdC: PdClient = PdRpcClient> {
     /// an embedded store, which has no PD server (Go's mockstore has none
     /// either).
     pd_http_client: Option<pd_http::Client>,
+    /// Go `tikvStore.metaServiceInfo`: set when the driver opens the store,
+    /// built on first use otherwise.
+    meta_service_info: Arc<OnceLock<tidb_metaservice::Info>>,
+}
+
+/// Go `pd.Client` of a store's PD client as `pkg/metaservice` reads it.
+struct MetaServicePd<'a> {
+    runtime: &'a tokio::runtime::Runtime,
+    pd: &'a PdRpcClient,
+}
+
+impl tidb_metaservice::etcd::PdClient for MetaServicePd<'_> {
+    fn get_all_members(&self) -> Result<Vec<Vec<String>>, String> {
+        block_on_runtime(self.runtime, self.pd.get_all_members())
+            .map(|response| response.members.into_iter().map(|member| member.client_urls).collect())
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// Go `store/driver.mc`: one storage authority per cluster and keyspace.
@@ -89,6 +106,7 @@ impl<PdC: PdClient> Clone for TikvStore<PdC> {
             store: self.store.clone(),
             authority_id: self.authority_id,
             pd_http_client: self.pd_http_client.clone(),
+            meta_service_info: Arc::clone(&self.meta_service_info),
         }
     }
 }
@@ -153,7 +171,15 @@ impl TikvStore {
             return Ok(cached.clone());
         }
         cache.remove(&uuid);
-        let store = runtime.block_on(KvStore::new_with_connected_pd(Arc::new(pd), pd_endpoints, config))
+        // Go `newSafePointKV`: the safe point KV dials the keyspace's meta
+        // service group (`tikv.NewEtcdSafePointKV(groupAddrs, tlsConfig)`),
+        // which is PD's own members unless the keyspace has a dedicated one.
+        let (meta_service_info, group_addrs) = tidb_metaservice::etcd::get_info_and_group_addrs(
+            Some(&MetaServicePd { runtime: &runtime, pd: &pd }),
+            pd.keyspace_meta(),
+        )
+        .map_err(|error| error.to_string())?;
+        let store = runtime.block_on(KvStore::new_with_connected_pd(Arc::new(pd), group_addrs, config))
             .map_err(|error| error.to_string())?;
         let mut opts = Vec::new();
         if let Some(tls_config) = tls_config {
@@ -167,8 +193,48 @@ impl TikvStore {
         .map_err(|error| error.to_string())?;
         let mut store = Self::new(runtime, store);
         store.pd_http_client = Some(pd_http_client);
+        let _ = store.meta_service_info.set(meta_service_info);
         cache.insert(uuid, store.clone());
         Ok(store)
+    }
+
+    /// Go `tikvStore.EtcdAddrs` returns the etcd-compatible metadata endpoints
+    /// for the current keyspace. (Go's `ldflagGetEtcdAddrsFromConfig` test
+    /// build, which answers the configured path instead, has no counterpart.)
+    ///
+    /// # Errors
+    ///
+    /// [`Self::get_meta_service_info`]'s, annotated as Go's.
+    pub fn etcd_addrs(&self) -> Result<Vec<String>, String> {
+        let meta_service_info =
+            self.get_meta_service_info().map_err(|error| format!("get meta service info: {error}"))?;
+        Ok(meta_service_info.group_addrs().to_vec())
+    }
+
+    /// Go `tikvStore.GetPDAddrs` returns PD addresses for PD-aware callers.
+    ///
+    /// # Errors
+    ///
+    /// `metaservice.GetPDAddrs`'s.
+    pub fn get_pd_addrs(&self) -> Result<Vec<String>, String> {
+        let pd = self.store.pd_client();
+        tidb_metaservice::etcd::get_pd_addrs(Some(&MetaServicePd { runtime: &self.runtime, pd: &pd }), false)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Go `tikvStore.getMetaServiceInfo` returns the cached or lazily built
+    /// keyspace meta service info.
+    fn get_meta_service_info(&self) -> Result<tidb_metaservice::Info, String> {
+        if let Some(meta_service_info) = self.meta_service_info.get() {
+            return Ok(meta_service_info.clone());
+        }
+        let pd = self.store.pd_client();
+        let meta_service_info = tidb_metaservice::etcd::fetch_info(
+            Some(&MetaServicePd { runtime: &self.runtime, pd: &pd }),
+            self.store.keyspace_meta(),
+        )
+        .map_err(|error| format!("build meta service info: {error}"))?;
+        Ok(self.meta_service_info.get_or_init(|| meta_service_info).clone())
     }
 
     /// [`Self::connect`] with the TLS settings the node's other cluster
@@ -218,6 +284,7 @@ impl<PdC: PdClient> TikvStore<PdC> {
             store,
             authority_id: next_authority_id(),
             pd_http_client: None,
+            meta_service_info: Arc::default(),
         }
     }
 

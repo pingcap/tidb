@@ -355,6 +355,7 @@ members = [
     "crates/tidb-session",
     "crates/tidb-session-cursor",
     "crates/tidb-util-config",
+    "crates/tidb-util-serviceurl",
     "crates/tidb-variable",
     "crates/tidb-kv",
     "crates/tidb-autoid",

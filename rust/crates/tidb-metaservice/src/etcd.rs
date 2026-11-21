@@ -109,7 +109,7 @@ pub fn get_pd_addrs(pd_client: Option<&dyn PdClient>, with_scheme: bool) -> Resu
     let pd_addrs: Vec<String> = members
         .iter()
         .flatten()
-        .filter_map(|client_url| tidb_util::service_url::parse_service_url(client_url).ok())
+        .filter_map(|client_url| tidb_util_serviceurl::parse_service_url(client_url).ok())
         .map(|endpoint| endpoint.endpoint(with_scheme))
         .collect();
     if pd_addrs.is_empty() {
@@ -125,7 +125,7 @@ pub fn get_pd_addrs(pd_client: Option<&dyn PdClient>, with_scheme: bool) -> Resu
 ///
 /// The URL is not a supported service URL.
 pub fn parse_url(raw_url: &str) -> Result<(String, String), String> {
-    let endpoint = tidb_util::service_url::parse_service_url(raw_url)?;
+    let endpoint = tidb_util_serviceurl::parse_service_url(raw_url)?;
     Ok((endpoint.scheme_prefix(), endpoint.address().to_owned()))
 }
 

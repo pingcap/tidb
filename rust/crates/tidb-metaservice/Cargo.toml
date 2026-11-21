@@ -15,4 +15,4 @@ tikv-client.workspace = true
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-keyspace = { path = "../tidb-keyspace" }
-tidb-util = { path = "../tidb-util" }
+tidb-util-serviceurl = { path = "../tidb-util-serviceurl" }
