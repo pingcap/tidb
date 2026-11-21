@@ -213,6 +213,121 @@ pub fn check_bootstrapped(s: &mut dyn UpgradeSession) -> Result<bool, String> {
     Ok(is_bootstrapped)
 }
 
+/// Go `doDMLWorks`: the bootstrap's rows, written by statements in one
+/// transaction -- the root account, every GLOBAL variable at its initial
+/// value, the bootstrap flag and version, then `writeSystemTZ`,
+/// `writeNewCollationParameter`, `writeStmtSummaryVars`,
+/// `writeDDLTableVersion` and `writeClusterID`. A failed COMMIT is
+/// forgiven, after a second, when another node finished the bootstrap.
+///
+/// # Errors
+///
+/// A statement's error; the COMMIT's when the store is still not
+/// bootstrapped (where Go ends the process).
+pub fn do_dml_works(s: &mut dyn UpgradeSession) -> UpgradeResult {
+    use crate::mysql_bootstrap::{BOOTSTRAPPED_VAR, VAR_TRUE};
+    use crate::upgrade_def::{
+        write_cluster_id, write_ddl_table_version, write_new_collation_parameter, write_stmt_summary_vars,
+        write_system_tz,
+    };
+    must_execute(s, "BEGIN", &[])?;
+    let config = tidb_config::config_tree::config::get_global_config();
+    if config.security.secure_bootstrap {
+        // If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
+        // i.e. mysql -S /tmp/tidb.sock -uroot
+        // The auth_socket plugin will validate that the user matches $USER.
+        let user = nix::unistd::User::from_uid(nix::unistd::Uid::current())
+            .ok()
+            .flatten()
+            .ok_or_else(|| "failed to read current user. unable to secure bootstrap.".to_owned())?;
+        must_execute(
+            s,
+            r#"INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")"#,
+            &[SqlArg::String(user.name.as_bytes())],
+        )?;
+    } else {
+        must_execute(
+            s,
+            r#"INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")"#,
+            &[],
+        )?;
+    }
+
+    // For GLOBAL scoped system variables, insert the initial value
+    // into the mysql.global_variables table. This is only run on initial
+    // bootstrap, and in some cases we will use a different default value
+    // for new installs versus existing installs.
+    let values = tidb_variable::sysvar::sys_vars()
+        .iter()
+        .filter(|v| v.has_global_scope())
+        .map(|v| {
+            let v_val = tidb_variable::vars::global_system_variable_initial_value(v);
+            // sanitize k and vVal
+            format!(
+                r#"("{}", "{}")"#,
+                String::from_utf8_lossy(&tidb_sqlescape::escape_string(v.name)),
+                String::from_utf8_lossy(&tidb_sqlescape::escape_string(&v_val)),
+            )
+        })
+        .collect::<Vec<_>>();
+    let sql = format!("INSERT HIGH_PRIORITY INTO mysql.global_variables VALUES {};", values.join(", "));
+    must_execute(s, &sql, &[])?;
+
+    must_execute(
+        s,
+        r#"INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?"#,
+        &[
+            SqlArg::String(b"mysql"),
+            SqlArg::String(b"tidb"),
+            SqlArg::String(BOOTSTRAPPED_VAR.as_bytes()),
+            SqlArg::String(VAR_TRUE.as_bytes()),
+            SqlArg::String(VAR_TRUE.as_bytes()),
+        ],
+    )?;
+    must_execute(
+        s,
+        r#"INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")"#,
+        &[
+            SqlArg::String(b"mysql"),
+            SqlArg::String(b"tidb"),
+            SqlArg::String(TIDB_SERVER_VERSION_VAR.as_bytes()),
+            SqlArg::Signed(CURRENT_BOOTSTRAP_VERSION),
+        ],
+    )?;
+    write_system_tz(s)?;
+    write_new_collation_parameter(s, config.new_collations_enabled_on_first_bootstrap)?;
+    write_stmt_summary_vars(s)?;
+    write_ddl_table_version(s)?;
+    write_cluster_id(s)?;
+
+    if let Err(error) = execute_internal(s, "COMMIT", &[]) {
+        let sleep_time = Duration::from_secs(1);
+        tidb_logutil::bg_logger().info(
+            "doDMLWorks failed",
+            &[
+                tidb_log::Field::new("error", tidb_log::Value::Str(error.error_string())),
+                tidb_log::Field::new(
+                    "sleeping time",
+                    tidb_log::Value::Duration(i64::try_from(sleep_time.as_nanos()).unwrap_or(i64::MAX)),
+                ),
+            ],
+        );
+        std::thread::sleep(sleep_time);
+        // Check if TiDB is already bootstrapped.
+        if check_bootstrapped(s).map_err(|error1| format!("doDMLWorks failed: {error1}"))? {
+            return Ok(());
+        }
+        return Err(format!("doDMLWorks failed: {}", error.error_string()));
+    }
+    Ok(())
+}
+
 /// Go `getTiDBVar` gets variable value from mysql.tidb table; `None` is Go's
 /// `isNull`.
 pub(crate) fn get_tidb_var(

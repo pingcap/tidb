@@ -91,6 +91,24 @@ pub fn check_bootstrapped(
     crate::bootstrap::check_bootstrapped(&mut bootstrap_session(domain, store, state_syncer)?)
 }
 
+/// Go `bootstrap(s)`'s DML on a new internal session of the bootstrap
+/// domain, after `doDDLWorks`' jobs: `insertBuiltinBindInfoRow` (which Go
+/// runs between the table and view jobs; it touches neither) and
+/// `doDMLWorks`.
+///
+/// # Errors
+///
+/// A statement's error, or the session could not be opened.
+pub fn do_dml_works(
+    domain: &Arc<Domain>,
+    store: &dyn UpgradeStore,
+    state_syncer: &dyn tidb_ddl_serverstate::Syncer,
+) -> Result<(), String> {
+    let mut session = bootstrap_session(domain, store, state_syncer)?;
+    crate::upgrade_def::insert_builtin_bind_info_row(&mut session)?;
+    crate::bootstrap::do_dml_works(&mut session)
+}
+
 /// Go `runInBootstrapSession`'s `createSession(store)` and the settings it
 /// gives the session.
 fn bootstrap_session<'a>(

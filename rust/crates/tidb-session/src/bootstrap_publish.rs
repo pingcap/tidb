@@ -317,8 +317,8 @@ mod tests {
     /// Go `bootstrapSessionImpl` then `bootstrap(s)` on the bootstrap
     /// domain: `InitDDLTables` commits on its own first (a second node's run
     /// creates nothing), then the DDL jobs run through the given domain's
-    /// DDL. The store ends with the same `mysql` schema and seed rows as the
-    /// one-step publish.
+    /// DDL, and `doDMLWorks`' statements run on its session. The store ends
+    /// with the same `mysql` schema and rows as the one-step publish.
     #[test]
     fn bootstrap_on_domain_after_init_ddl_tables_matches_one_step_publish() {
         bootstrap_on_domain_matches_one_step_publish(BootstrapLayout::Classic, 0);
@@ -358,6 +358,14 @@ mod tests {
         assert!(published.splits.global_batches.is_empty(), "InitDDLTables already cut its tables");
         // Only the classic layout's `mysql.*` tables are `CREATE TABLE` jobs.
         assert_eq!(published.splits.table_ids.is_empty(), layout == BootstrapLayout::NextGen);
+        // Go `bootstrap(s)`'s `doDMLWorks(s)`, on the bootstrap domain's
+        // session as a server runs it.
+        crate::domain::cluster_session_node::do_dml_works(
+            &domain,
+            &crate::bootstrap::TxnUpgradeStore::new(&on_domain, timeout),
+            &tidb_ddl_serverstate::MemSyncer::new(),
+        )
+        .unwrap();
         drop(domain);
         drop(pool);
 

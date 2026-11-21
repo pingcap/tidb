@@ -503,7 +503,7 @@ fn upgrade_to_ver23(s: &mut dyn UpgradeSession, _ver: i64) -> UpgradeResult {
 }
 
 /// Go `writeSystemTZ` writes system timezone info into mysql.tidb.
-fn write_system_tz(s: &mut dyn UpgradeSession) -> UpgradeResult {
+pub(crate) fn write_system_tz(s: &mut dyn UpgradeSession) -> UpgradeResult {
     let tz = tidb_timeutil::infer_system_tz();
     must_execute(
         s,
@@ -613,7 +613,7 @@ fn upgrade_to_ver38(s: &mut dyn UpgradeSession, _ver: i64) -> UpgradeResult {
 }
 
 /// Go `writeNewCollationParameter`.
-fn write_new_collation_parameter(s: &mut dyn UpgradeSession, flag: bool) -> UpgradeResult {
+pub(crate) fn write_new_collation_parameter(s: &mut dyn UpgradeSession, flag: bool) -> UpgradeResult {
     let comment = "If the new collations are enabled. Do not edit it.";
     let b = if flag { VAR_TRUE } else { VAR_FALSE };
     must_execute(
@@ -656,7 +656,7 @@ fn upgrade_to_ver42(s: &mut dyn UpgradeSession, _ver: i64) -> UpgradeResult {
 }
 
 /// Go `writeStmtSummaryVars`: convert statement summary global variables to non-empty values.
-fn write_stmt_summary_vars(s: &mut dyn UpgradeSession) -> UpgradeResult {
+pub(crate) fn write_stmt_summary_vars(s: &mut dyn UpgradeSession) -> UpgradeResult {
     let sql = "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''";
     let on_off = |b: bool| if b { "ON" } else { "OFF" };
     let pairs = [
@@ -1475,7 +1475,7 @@ fn upgrade_to_ver177(s: &mut dyn UpgradeSession, _ver: i64) -> UpgradeResult {
 }
 
 /// Go `writeDDLTableVersion` writes mDDLTableVersion into mysql.tidb.
-fn write_ddl_table_version(s: &mut dyn UpgradeSession) -> UpgradeResult {
+pub(crate) fn write_ddl_table_version(s: &mut dyn UpgradeSession) -> UpgradeResult {
     let ddl_table_version = s.get_store().get_ddl_table_version()?;
     must_execute(
         s,
@@ -1673,7 +1673,7 @@ fn upgrade_to_ver241(s: &mut dyn UpgradeSession, _ver: i64) -> UpgradeResult {
 }
 
 /// Go `writeClusterID` writes cluster id into mysql.tidb.
-fn write_cluster_id(s: &mut dyn UpgradeSession) -> UpgradeResult {
+pub(crate) fn write_cluster_id(s: &mut dyn UpgradeSession) -> UpgradeResult {
     let cluster_id = s.get_store().get_cluster_id();
 
     must_execute(

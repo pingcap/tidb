@@ -9704,6 +9704,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "futures",
+ "nix 0.31.3",
  "openssl",
  "prometheus 0.14.0",
  "prost 0.14.4",

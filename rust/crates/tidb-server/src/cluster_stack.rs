@@ -717,6 +717,18 @@ fn bootstrap(
                 None,
             )
             .map_err(engine_error)?;
+            // Go `bootstrap(s)`: `doDMLWorks(s)` after `doDDLWorks(s)`.
+            let state_syncer = domain
+                .factory
+                .ddl
+                .state_syncer()
+                .expect("a started DDL has its state syncer");
+            tidb_session::domain::cluster_session_node::do_dml_works(
+                &domain.factory,
+                upgrade_store,
+                state_syncer.as_ref(),
+            )
+            .map_err(engine_error)?;
             split_bootstrap_tables(process, &published.splits);
             tidb_session::bootstrap_publish::log_bootstrap_successful(start_time);
             return Ok(());

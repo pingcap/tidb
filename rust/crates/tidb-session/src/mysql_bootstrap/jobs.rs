@@ -393,8 +393,10 @@ pub(super) fn plan<S: MetaSnapshot>(
 /// step has not), then execute each statement through `domain`'s DDL when
 /// given (Go `bootstrap(s)` on the bootstrap domain's session, whose DDL
 /// owner runs each job), else through a bootstrap domain of the DDL session
-/// pool's own. The returned write holds only `doDMLWorks` and schema-cache
-/// initialization, never active job rows.
+/// pool's own. The returned write holds the schema-cache initialization and,
+/// without `domain`, `doDMLWorks`' rows as data; never active job rows. With
+/// `domain`, the caller runs `doDMLWorks`' statements on the bootstrap
+/// session ([`crate::bootstrap::do_dml_works`]).
 pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
@@ -416,7 +418,7 @@ pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     let (start_ts, mut current) = snapshot()?;
     let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
     let mut started = false;
-    plan_with_executor(&mut current, start_ts, environment, layout, false, true,
+    plan_with_executor(&mut current, start_ts, environment, layout, false, true, domain.is_none(),
         &mut |overlay, _, last, sql, view| {
             if !started {
                 let txn = opener.begin().map_err(|e| error(e.to_string()))?;
@@ -494,7 +496,7 @@ fn plan_with<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
 ) -> Result<BootstrapWrite, BootstrapError> {
-    plan_with_executor(snapshot, start_ts, environment, layout, withhold_created_tables, false, &mut run)
+    plan_with_executor(snapshot, start_ts, environment, layout, withhold_created_tables, false, true, &mut run)
 }
 
 /// Go `doDDLWorks`: the ordered statements shared by bootstrap publication
@@ -506,6 +508,7 @@ fn plan_with_executor<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
     resume: bool,
+    seed_rows: bool,
     run: &mut impl FnMut(&mut Overlay<'_, S>, &mut Clock, &mut JobOutcome, &str, Option<&TableInfo>) -> Result<(), BootstrapError>,
 ) -> Result<BootstrapWrite, BootstrapError> {
     let classic = layout == BootstrapLayout::Classic;
@@ -704,9 +707,11 @@ fn plan_with_executor<S: MetaSnapshot>(
         ddl_table_version,
         ..environment.clone()
     };
-    let mut seeded = Vec::new();
-    rows::seed(database_id, &created_tables, &seed_environment, &mut seeded)?;
-    overlay.apply(&seeded);
+    if seed_rows {
+        let mut seeded = Vec::new();
+        rows::seed(database_id, &created_tables, &seed_environment, &mut seeded)?;
+        overlay.apply(&seeded);
+    }
 
     // Go `InitTiDBSchemaCacheSize`.
     if get_schema_cache_size(&mut overlay)?.is_none() {
