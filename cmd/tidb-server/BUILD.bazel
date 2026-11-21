@@ -86,6 +86,10 @@ go_library(
 go_binary(
     name = "tidb-server",
     embed = [":tidb-server_lib"],
+    gc_linkopts = [
+        "-X",
+        "runtime.godebugDefault=profstackdepth=32",
+    ],
     visibility = ["//visibility:public"],
     x_defs = {
         "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion": "{STABLE_TiDB_RELEASE_VERSION}",
