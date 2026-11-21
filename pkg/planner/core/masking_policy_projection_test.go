@@ -2290,6 +2290,91 @@ func TestMaskingPolicyRestrictDirectUpdateAssignment(t *testing.T) {
 	src("t_da").Check(testkit.Rows("1 secret secret", "2 hidden hidden"))
 }
 
+// TestMaskingPolicyRestrictLateralCorrelation tests that a LATERAL derived
+// table reading a protected column of its left side through a correlated
+// reference is a source of that column for the restrictions.
+func TestMaskingPolicyRestrictLateralCorrelation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	root.MustExec("use test")
+	root.MustExec("create table t(id int primary key, c varchar(20), copy_c varchar(20))")
+	root.MustExec("create table t_lat_dst(id int primary key, c varchar(20))")
+	root.MustExec("create masking policy p on test.t(c) as case when current_user() = 'root@%' then c else mask_full(c) end restrict on (update_select) enable")
+	root.MustExec("create user 'lateral_reader'@'%'")
+	root.MustExec("grant select, update on test.t to 'lateral_reader'@'%'")
+	root.MustExec("grant select, insert, update, delete on test.t_lat_dst to 'lateral_reader'@'%'")
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "lateral_reader", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	reset := func() {
+		root.MustExec("delete from t")
+		root.MustExec("insert into t values (1, 'secret', null)")
+		root.MustExec("delete from t_lat_dst")
+		root.MustExec("insert into t_lat_dst values (1, 'x')")
+	}
+	unchanged := func() {
+		root.MustQuery("select id, c, copy_c from t").Check(testkit.Rows("1 secret <nil>"))
+		root.MustQuery("select id, c from t_lat_dst").Check(testkit.Rows("1 x"))
+	}
+	reset()
+
+	for _, sql := range []string{
+		// The reported statement: the derived output is assigned to the
+		// target table.
+		"update test.t as s join lateral (select s.c as v) as d on true set s.copy_c = d.v where s.id = 1",
+		"update t s, lateral (select s.c as v) d set s.copy_c = d.v",
+		"update t s join lateral (select concat(s.c, '!') as v) d on true set s.copy_c = d.v",
+		"update t_lat_dst x join t s on s.id = x.id join lateral (select s.c as v) d on true set x.c = d.v",
+		// Nested LATERAL, and a LATERAL inside a derived table.
+		"update t s join lateral (select y.v from (select 1 as k) x join lateral (select s.c as v) y on true) d on true set s.copy_c = d.v",
+		"update t s join lateral (select v from (select s.c as v) i) d on true set s.copy_c = d.v",
+		// A subquery inside the LATERAL table.
+		"update t s join lateral (select (select s.c) as v) d on true set s.copy_c = d.v",
+	} {
+		tk.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		unchanged()
+	}
+
+	// The same holds for the other restricted operations.
+	root.MustExec("alter table t modify masking policy p set restrict on (insert_into_select, delete_select)")
+	for _, sql := range []string{
+		"insert into t_lat_dst select s.id + 1, d.v from t s join lateral (select s.c as v) d on true",
+		"insert into t_lat_dst select s.id + 1, d.v from t s, lateral (select y.v from (select 1) x, lateral (select s.c as v) y) d",
+		"delete x from t_lat_dst x join t s on s.id = x.id join lateral (select s.c as v) d on true where d.v = 'secret'",
+	} {
+		tk.MustGetErrCode(sql, errno.ErrAccessDeniedToMaskedColumn)
+		unchanged()
+	}
+	root.MustExec("alter table t modify masking policy p set restrict on (update_select)")
+
+	// A SELECT is not restricted, and it does not return the original value
+	// either: a correlated result of the protected column cannot be masked.
+	for _, sql := range []string{
+		"select d.v from t s join lateral (select s.c as v) d on true",
+		"select d.v from t s join lateral (select y.v from (select 1) x join lateral (select s.c as v) y on true) d on true",
+	} {
+		require.ErrorContains(t, tk.ExecToErr(sql), "masking policy cannot be preserved through scalar subquery", sql)
+	}
+
+	// Not restricted: LATERAL tables that read only unprotected columns, and a
+	// protected column compared but not returned.
+	tk.MustQuery("select d.v from t s join lateral (select s.id as v) d on true").Check(testkit.Rows("1"))
+	tk.MustExec("update t s join lateral (select concat(s.id, '!') as v) d on true set s.copy_c = d.v where s.id = 1")
+	root.MustQuery("select id, c, copy_c from t").Check(testkit.Rows("1 secret 1!"))
+	reset()
+	tk.MustExec("update t s join lateral (select 'hit' as v from dual where s.c = 'secret') d on true set s.copy_c = d.v")
+	root.MustQuery("select id, c, copy_c from t").Check(testkit.Rows("1 secret hit"))
+	reset()
+	tk.MustExec("update t_lat_dst x join t s on s.id = x.id join lateral (select s.id * 10 as v) d on true set x.c = d.v")
+	root.MustQuery("select id, c from t_lat_dst").Check(testkit.Rows("1 10"))
+	reset()
+
+	// An identity that the policy does not mask copies the original value.
+	root.MustExec("update test.t as s join lateral (select s.c as v) as d on true set s.copy_c = d.v where s.id = 1")
+	root.MustQuery("select id, c, copy_c from t").Check(testkit.Rows("1 secret secret"))
+}
+
 // TestMaskingPolicyRestrictOnDuplicateAssignment tests that an assignment of
 // INSERT ... ON DUPLICATE KEY UPDATE reading a protected column of the
 // existing row is restricted like an UPDATE assignment.

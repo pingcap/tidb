@@ -232,6 +232,10 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumns(
 	}
 
 	visited := make(map[[2]int]struct{}, 4)
+	// applyOuters holds the outer children of the Apply operators, such as
+	// those of LATERAL joins, whose inner side is being walked: they are the
+	// sources of its correlated columns.
+	var applyOuters []base.LogicalPlan
 	var walkByIndex func(plan base.LogicalPlan, colIdx int)
 	var walkByColumn func(plan base.LogicalPlan, col *expression.Column)
 	walkExpression := func(plan base.LogicalPlan, expr expression.Expression) {
@@ -242,7 +246,17 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumns(
 			for _, outer := range b.maskingOuterPlans {
 				walkByColumn(outer, &col.Column)
 			}
+			for i := len(applyOuters) - 1; i >= 0; i-- {
+				walkByColumn(applyOuters[i], &col.Column)
+			}
 		}
+	}
+	walkChild := func(plan base.LogicalPlan, childIdx int, walk func(base.LogicalPlan)) {
+		if ap, ok := plan.(*logicalop.LogicalApply); ok && childIdx == 1 {
+			applyOuters = append(applyOuters, ap.Children()[0])
+			defer func() { applyOuters = applyOuters[:len(applyOuters)-1] }()
+		}
+		walk(plan.Children()[childIdx])
 	}
 
 	walkByIndex = func(plan base.LogicalPlan, colIdx int) {
@@ -307,13 +321,13 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumns(
 		}
 
 		outputCol := plan.Schema().Columns[colIdx]
-		for _, child := range plan.Children() {
+		for i, child := range plan.Children() {
 			if child == nil {
 				continue
 			}
 			childColIdx := child.Schema().ColumnIndex(outputCol)
 			if childColIdx >= 0 {
-				walkByIndex(child, childColIdx)
+				walkChild(plan, i, func(child base.LogicalPlan) { walkByIndex(child, childColIdx) })
 			}
 		}
 	}
@@ -327,9 +341,9 @@ func (b *PlanBuilder) extractMaskingPolicySourceColumns(
 			walkByIndex(plan, colIdx)
 			return
 		}
-		for _, child := range plan.Children() {
+		for i, child := range plan.Children() {
 			if child != nil {
-				walkByColumn(child, col)
+				walkChild(plan, i, func(child base.LogicalPlan) { walkByColumn(child, col) })
 			}
 		}
 	}

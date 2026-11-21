@@ -858,6 +858,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
+		// The left side is also the source of the right side's correlated
+		// columns for masking, like the outer plan of a subquery.
+		b.maskingOuterPlans = append(b.maskingOuterPlans, leftPlan)
 		b.lateralOuterCount++
 		// Use a single defer to ensure consistent cleanup in all paths (success and error).
 		// Note: buildingLateralSubquery is NOT set here — it is set per-TableSource in
@@ -866,6 +869,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		defer func() {
 			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[:len(b.outerNames)-1]
+			b.maskingOuterPlans = b.maskingOuterPlans[:len(b.maskingOuterPlans)-1]
 			b.lateralOuterCount--
 		}()
 	}
