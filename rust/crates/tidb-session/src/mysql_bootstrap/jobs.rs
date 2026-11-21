@@ -393,17 +393,18 @@ pub(super) fn plan<S: MetaSnapshot>(
 /// step has not), then execute each statement through `domain`'s DDL when
 /// given (Go `bootstrap(s)` on the bootstrap domain's session, whose DDL
 /// owner runs each job), else through a bootstrap domain of the DDL session
-/// pool's own. The returned write holds the schema-cache initialization and,
-/// without `domain`, `doDMLWorks`' rows as data; never active job rows. With
-/// `domain`, the caller runs `doDMLWorks`' statements on the bootstrap
-/// session ([`crate::bootstrap::do_dml_works`]).
+/// pool's own, which is returned so the caller can run `doDMLWorks` on its
+/// domain (Go `bootstrap(s)`: `doDDLWorks(s)`, then `doDMLWorks(s)`); with
+/// `domain`, the caller runs it on that domain's bootstrap session. The
+/// returned write holds only the schema-cache initialization, never active
+/// job rows or seed rows.
 pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
     environment: &BootstrapEnvironment,
     layout: BootstrapLayout,
     domain: Option<&tidb_domain_core::domain::Domain>,
-) -> Result<BootstrapWrite, BootstrapError> {
+) -> Result<(BootstrapWrite, Option<std::sync::Arc<crate::ddl_session_pool::NodeDdlSessionPool>>), BootstrapError> {
     use std::sync::Arc;
     use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
     use tidb_domain_core::cluster_transactions::{ClusterTransactions, RealClusterTransactions};
@@ -418,7 +419,7 @@ pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     let (start_ts, mut current) = snapshot()?;
     let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
     let mut started = false;
-    plan_with_executor(&mut current, start_ts, environment, layout, false, true, domain.is_none(),
+    let write = plan_with_executor(&mut current, start_ts, environment, layout, false, true, false,
         &mut |overlay, _, last, sql, view| {
             if !started {
                 let txn = opener.begin().map_err(|e| error(e.to_string()))?;
@@ -450,7 +451,8 @@ pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
                 .as_deref().map(value::get_schema_diff).transpose()
                 .map_err(|e| error(e.to_string()))?.flatten();
             Ok(())
-        })
+        })?;
+    Ok((write, pool))
 }
 
 /// A `TableInfo` written into meta, as `createAndSplitTables` does.

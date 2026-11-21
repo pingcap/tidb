@@ -159,7 +159,7 @@ fn publish<S: StoreClient>(
         &mut TransactionMetaSnapshot::new(&mut transaction, timeout),
     ).map_err(|error| error.to_string())?;
     let _ = transaction.rollback(&UnaryCallContext::with_timeout(timeout));
-    let write = crate::mysql_bootstrap::jobs::execute_on(opener, timeout, &environment, layout(), domain)
+    let (write, bootstrap_pool) = crate::mysql_bootstrap::jobs::execute_on(opener, timeout, &environment, layout(), domain)
         .map_err(|error| error.to_string())?;
     let transaction = opener.begin().map_err(|error| error.to_string())?;
     let schema_version = write.schema_version;
@@ -170,6 +170,18 @@ fn publish<S: StoreClient>(
     let outcome = transaction
         .commit(write.mutations, &call)
         .map_err(|error| error.to_string())?;
+    // Go `bootstrap(s)`'s `doDMLWorks(s)` on the bootstrap domain the DDL ran
+    // on; a caller that brought its own domain runs it on that domain's
+    // session itself.
+    if let Some(pool) = bootstrap_pool {
+        commit_outcome_to_sql_error(&outcome).map_err(|error| error.message)?;
+        let bootstrap_domain = pool.store_domain().ok_or_else(|| "the bootstrap pool has no domain".to_owned())?;
+        crate::domain::cluster_session_node::do_dml_works(
+            &bootstrap_domain,
+            &crate::bootstrap::TxnUpgradeStore::new(opener, timeout),
+            &tidb_ddl_serverstate::MemSyncer::new(),
+        )?;
+    }
     Ok(PublishedBootstrap {
         outcome,
         schema_version,
@@ -264,8 +276,8 @@ mod tests {
             cluster_id: opener.cluster_id(), current_timestamp: tidb_datatype::current_time::utc_now_timestamp(),
             ddl_table_version: 0,
         };
-        // Deliberately lose the DML write, as Go's test stops after doDDLWorks.
-        let _uncommitted_dml = crate::mysql_bootstrap::jobs::execute_on(
+        // Stop after the DDL jobs, as Go's test stops after doDDLWorks.
+        let _ddl_only = crate::mysql_bootstrap::jobs::execute_on(
             &opener, timeout, &environment, super::layout(), None,
         ).unwrap();
         let (outcome, _) = super::publish_bootstrap(&opener, timeout).unwrap();

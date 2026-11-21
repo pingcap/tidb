@@ -187,7 +187,6 @@ impl NodeDdlSessionPool {
     }
 
     /// The domain [`Self::for_bootstrap`] built and owns.
-    #[cfg(test)]
     pub(crate) fn store_domain(&self) -> Option<Arc<Domain>> {
         self.store_domain.as_ref().map(|owned| Arc::clone(&owned.domain))
     }
