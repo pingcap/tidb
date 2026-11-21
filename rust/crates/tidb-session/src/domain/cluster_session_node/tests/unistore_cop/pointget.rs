@@ -229,3 +229,113 @@ fn test_point_get_plan_cache() {
     assert_eq!(select(&mut tk, "execute stmt7 using @p2"), [["1"]]);
     assert_eq!(counter.get(), 2.0);
 }
+
+// Point-get behavior the executor's in-memory tier used to check, over the
+// TestKit stack (X11).
+
+/// A non-clustered composite primary key with an extra conjunct is read and
+/// written through its point plan.
+#[test]
+fn composite_unique_prefix_is_not_a_point_get() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 459);
+    rows(&mut tk, "CREATE TABLE point_prefix (a BIGINT NOT NULL, b BIGINT NOT NULL, flag BIGINT UNSIGNED NOT NULL, PRIMARY KEY (a, b) NONCLUSTERED)");
+    rows(&mut tk, "INSERT INTO point_prefix VALUES (1,-1,0)");
+    rows(&mut tk, "UPDATE point_prefix SET flag = 1 WHERE a = 1 AND b = -1 AND flag = 0");
+    assert_eq!(tk.affected_rows(), 1);
+    assert_eq!(displayed(rows(&mut tk, "SELECT flag FROM point_prefix WHERE a = 1 AND b = -1")), [["1"]]);
+}
+
+/// A row `IN` over a composite primary key is a `Batch_Point_Get`.
+#[test]
+fn batch_point_get_accepts_row_in_on_a_composite_key() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 460);
+    rows(&mut tk, "CREATE TABLE c (a INT, b INT, v INT, PRIMARY KEY (a, b))");
+    rows(&mut tk, "INSERT INTO c VALUES (1, 1, 11), (1, 2, 12), (2, 1, 21)");
+    let sql = "SELECT v FROM c WHERE (a, b) IN ((1, 2), (2, 1))";
+    let plan = plan_tree(&mut tk, sql);
+    assert!(plan.iter().any(|row| row.contains("Batch_Point_Get")), "{plan:?}");
+    assert_eq!(displayed(rows(&mut tk, sql)), [["12"], ["21"]]);
+}
+
+/// Batch and single point reads of a clustered primary key find the rows by
+/// the key encoding their writes used, for decimal, string and unsigned keys.
+#[test]
+fn primary_batch_reads_use_written_common_handle_encoding() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 461);
+    for (name, key_type, inserted, predicate, key) in [
+        ("decimal_batch", "DECIMAL(8,2)", "(5.00,10),(6.00,20)", "k IN (5.00,6.00,5.00,9.00)", "5.00"),
+        ("string_batch", "VARCHAR(8)", "('a',10),('b',20)", "k IN ('a','b','a','z')", "'a'"),
+        ("unsigned_batch", "BIGINT UNSIGNED", "(0,10),(18446744073709551615,20)", "k IN (0,18446744073709551615,0,3)", "0"),
+    ] {
+        rows(&mut tk, &format!("CREATE TABLE {name} (k {key_type}, v INT, PRIMARY KEY(k) CLUSTERED)"));
+        rows(&mut tk, &format!("INSERT INTO {name} VALUES {inserted}"));
+        let mut batch = displayed(rows(&mut tk, &format!("SELECT v FROM {name} WHERE {predicate}")));
+        batch.sort();
+        assert_eq!(batch, [["10"], ["20"]], "{name}");
+        assert_eq!(displayed(rows(&mut tk, &format!("SELECT v FROM {name} WHERE k={key}"))), [["10"]], "single point: {name}");
+    }
+}
+
+/// A primary-key equality is a fast `Point_Get`.
+#[test]
+fn try_fast_plan_accepts_a_primary_key_point_read() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 462);
+    rows(&mut tk, "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)");
+    rows(&mut tk, "INSERT INTO fast_order VALUES (1, 'one')");
+    let sql = "SELECT c FROM fast_order WHERE id = 1";
+    assert_eq!(plan_tree(&mut tk, sql), ["Point_Get root table:fast_order handle:1"]);
+    assert_eq!(displayed(rows(&mut tk, sql)), [["one"]]);
+}
+
+/// Go `tryExtractRowChecksumColumn` + `fillRowChecksum`: in a fast point plan
+/// a bare `TIDB_ROW_CHECKSUM()` is the decimal CRC32 of the row's columns;
+/// anywhere else the function class refuses with 1235.
+#[test]
+fn row_checksum_is_a_fast_point_plan_select_field() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 463);
+    rows(&mut tk, "CREATE TABLE fast_checksum (id INT PRIMARY KEY, c VARCHAR(10))");
+    rows(&mut tk, "INSERT INTO fast_checksum VALUES (1, 'one')");
+    assert_eq!(
+        displayed(rows(&mut tk, "SELECT TIDB_ROW_CHECKSUM(), c FROM fast_checksum WHERE id = 1")),
+        [["3673005425", "one"]]
+    );
+    assert_eq!(
+        displayed(rows(&mut tk, "SELECT TIDB_ROW_CHECKSUM() FROM fast_checksum WHERE id IN (1, 2)")),
+        [["3673005425"]]
+    );
+    for sql in [
+        "SELECT TIDB_ROW_CHECKSUM() IS NULL FROM fast_checksum WHERE id = 1",
+        "SELECT TIDB_ROW_CHECKSUM() FROM fast_checksum",
+    ] {
+        let error = tk.node_conn().execute(sql).map(|_| ()).expect_err(sql);
+        assert_eq!(error.code, 1235, "{sql}");
+        assert_eq!(
+            error.message,
+            "FUNCTION tidb_row_checksum can only be used as a select field in a fast point plan",
+            "{sql}"
+        );
+    }
+}
+
+/// Go's fast point plan honors an index hint naming the unique index or the
+/// primary key exactly; a hint naming a prefix of the index still answers.
+#[test]
+fn fast_point_get_uses_gos_smaller_index_hint_check() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 464);
+    rows(&mut tk, "CREATE TABLE fast_hint (id INT PRIMARY KEY, code VARCHAR(8) UNIQUE)");
+    rows(&mut tk, "INSERT INTO fast_hint VALUES (1, 'one')");
+    let unique_sql = "SELECT /*+ USE_INDEX(fast_hint, code) */ id FROM fast_hint WHERE code = 'one'";
+    assert_eq!(plan_tree(&mut tk, unique_sql), ["Point_Get root table:fast_hint, index:code(code) "]);
+    assert_eq!(displayed(rows(&mut tk, unique_sql)), [["1"]]);
+    let order_sql = "SELECT /*+ ORDER_INDEX(fast_hint, PRIMARY) */ code FROM fast_hint WHERE id = 1";
+    assert_eq!(plan_tree(&mut tk, order_sql), ["Point_Get root table:fast_hint handle:1"]);
+    assert_eq!(displayed(rows(&mut tk, order_sql)), [["one"]]);
+    let prefix_sql = "SELECT /*+ USE_INDEX(fast_hint, co) */ id FROM fast_hint WHERE code = 'one'";
+    assert_eq!(displayed(rows(&mut tk, prefix_sql)), [["1"]]);
+}
