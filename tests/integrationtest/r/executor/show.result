@@ -1210,6 +1210,15 @@ t	1	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 t	1	i2	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 t	1	i3	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 t	1	i3	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+// a sequence has no columns, so the table privilege is checked.
+create sequence test_show_index_db.s;
+show index from test_show_index_db.s;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+show index from test_show_index_db.s;
+Error 1142 (42000): SELECT command denied to user 'test_show_index_user'@'%' for table 's'
+grant select on test_show_index_db.s to test_show_index_user;
+show index from test_show_index_db.s;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop database test_show_index_db;
 drop user test_show_index_user;
 set names utf8mb4 collate utf8mb4_bin;
