@@ -86,13 +86,18 @@ func (is *infoSchema) AllMaskingPolicies(ctx context.Context) ([]*model.MaskingP
 			policies = append(policies, policy)
 		}
 	}
+	sortMaskingPolicies(policies)
+	return policies, nil
+}
+
+// sortMaskingPolicies sorts policies by name, then by ID.
+func sortMaskingPolicies(policies []*model.MaskingPolicyInfo) {
 	sort.Slice(policies, func(i, j int) bool {
 		if policies[i].Name.L == policies[j].Name.L {
 			return policies[i].ID < policies[j].ID
 		}
 		return policies[i].Name.L < policies[j].Name.L
 	})
-	return policies, nil
 }
 
 // PreloadMaskingPolicies loads policies using the supplied schema before it is
@@ -107,7 +112,7 @@ func MaskingPoliciesLoaded(is InfoSchema) bool {
 	if ext, ok := is.(*SessionExtendedInfoSchema); ok {
 		// Lookups may also reach the schemas that replaced tables were taken from.
 		for _, src := range ext.mdlPolicySchemas {
-			if !MaskingPoliciesLoaded(src) {
+			if !MaskingPoliciesLoaded(src.schema) {
 				return false
 			}
 		}

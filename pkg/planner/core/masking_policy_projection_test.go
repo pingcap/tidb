@@ -2661,6 +2661,14 @@ func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
 		root.MustExec("alter table mdl_plain_pt exchange partition p0 with table mdl_plain_nt")
 	}
 	masked := testkit.Rows("XXXXXX")
+	checkShowPolicies := func(reader *testkit.TestKit, tbl string) {
+		policies := root.MustQuery("show masking policies for " + tbl).Rows()
+		require.Len(t, policies, 1)
+		reader.MustQuery("show masking policies for " + tbl).Check(policies)
+		createTable := root.MustQuery("show create table " + tbl).Rows()
+		require.Contains(t, createTable[0][1], "MASKING POLICY `p` ENABLED")
+		reader.MustQuery("show create table " + tbl).Check(createTable)
+	}
 	for _, tc := range []struct {
 		name string
 		run  func(reader *testkit.TestKit)
@@ -2689,6 +2697,12 @@ func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
 				}
 			}
 		}},
+		{"show first", func(reader *testkit.TestKit) {
+			// SHOW does not take a metadata lock, so it still sees the table
+			// of the transaction's schema. Its policies are listed either way.
+			checkShowPolicies(reader, "mdl_nt")
+			reader.MustQuery("select c from mdl_nt where id+0=1").Check(masked)
+		}},
 		{"restrict", func(reader *testkit.TestKit) {
 			reader.MustGetErrCode("insert into mdl_dst select c from mdl_nt", errno.ErrAccessDeniedToMaskedColumn)
 			reader.MustGetErrCode("update mdl_nt set c=concat(c,'x') where id+0=1", errno.ErrAccessDeniedToMaskedColumn)
@@ -2714,7 +2728,9 @@ func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
 			exchange()
 			// The first read in the transaction takes the replaced table.
 			tc.run(reader)
-			// Tables that keep their ID, or have no policy, are read as before.
+			// SHOW lists the policies of the replaced table as another session
+			// that reads the latest schema does.
+			checkShowPolicies(reader, "mdl_nt")
 			reader.MustQuery("select c from mdl_kept where id=1").Check(masked)
 			reader.MustQuery("select c from mdl_kept where id+0=1").Check(masked)
 			reader.MustQuery("select c from mdl_pt where id+0=1").Check(masked)
@@ -2740,5 +2756,6 @@ func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
 	reader.MustQuery("select c from mdl_kept where id+0=1").Check(masked)
 	reader.MustQuery("select c from mdl_kept where id=1").Check(masked)
 	reader.MustQuery("select c from mdl_plain_nt").Check(testkit.Rows("plain3"))
+	checkShowPolicies(reader, "mdl_kept")
 	reader.MustExec("rollback")
 }

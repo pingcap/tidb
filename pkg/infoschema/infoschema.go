@@ -836,7 +836,14 @@ type SessionExtendedInfoSchema struct {
 	MdlTables                *SessionTables
 	// mdlPolicySchemas holds, by table ID, the schema that a table in MdlTables
 	// was taken from when its ID differs from the one InfoSchema has for its name.
-	mdlPolicySchemas map[int64]InfoSchema
+	mdlPolicySchemas map[int64]mdlPolicySchema
+}
+
+// mdlPolicySchema is the schema a table replaced by MDL was taken from, and
+// the ID InfoSchema has for the table.
+type mdlPolicySchema struct {
+	schema InfoSchema
+	oldID  int64
 }
 
 // TableByName implements InfoSchema.TableByName
@@ -930,21 +937,15 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 	return nil
 }
 
-// SetMaskingPolicySchema records that the table in MdlTables with the given ID
-// was taken from src under an ID that InfoSchema does not have for it, as
-// after TRUNCATE TABLE or EXCHANGE PARTITION. The DDL moved the masking
-// policies of the table to that ID, so only src has them.
-func (ts *SessionExtendedInfoSchema) SetMaskingPolicySchema(tableID int64, src InfoSchema) {
+// SetMaskingPolicySchema records that the table in MdlTables with ID tableID
+// was taken from src, while InfoSchema has it under oldID, as after TRUNCATE
+// TABLE or EXCHANGE PARTITION. The DDL moved the masking policies of the
+// table to tableID, so only src has them.
+func (ts *SessionExtendedInfoSchema) SetMaskingPolicySchema(oldID, tableID int64, src InfoSchema) {
 	if ts.mdlPolicySchemas == nil {
-		ts.mdlPolicySchemas = make(map[int64]InfoSchema)
+		ts.mdlPolicySchemas = make(map[int64]mdlPolicySchema)
 	}
-	ts.mdlPolicySchemas[tableID] = src
-}
-
-// MaskingPolicySchema returns the schema recorded by SetMaskingPolicySchema.
-func (ts *SessionExtendedInfoSchema) MaskingPolicySchema(tableID int64) (InfoSchema, bool) {
-	src, ok := ts.mdlPolicySchemas[tableID]
-	return src, ok
+	ts.mdlPolicySchemas[tableID] = mdlPolicySchema{schema: src, oldID: oldID}
 }
 
 // MaskingPolicyByTableColumn implements InfoSchema.MaskingPolicyByTableColumn.
@@ -952,9 +953,65 @@ func (ts *SessionExtendedInfoSchema) MaskingPolicySchema(tableID int64) (InfoSch
 // the schema its definition was taken from.
 func (ts *SessionExtendedInfoSchema) MaskingPolicyByTableColumn(ctx stdctx.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error) {
 	if src, ok := ts.mdlPolicySchemas[tableID]; ok {
-		return src.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+		return src.schema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
 	}
 	return ts.InfoSchema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+}
+
+// AllMaskingPolicies implements InfoSchema.AllMaskingPolicies. The policies of
+// a table recorded by SetMaskingPolicySchema are taken from the schema its
+// definition was taken from, in place of those InfoSchema has under its old ID.
+func (ts *SessionExtendedInfoSchema) AllMaskingPolicies(ctx stdctx.Context) ([]*model.MaskingPolicyInfo, error) {
+	policies, err := ts.InfoSchema.AllMaskingPolicies(ctx)
+	if err != nil || len(ts.mdlPolicySchemas) == 0 {
+		return policies, err
+	}
+	replaced := make(map[int64]struct{}, 2*len(ts.mdlPolicySchemas))
+	for tableID, src := range ts.mdlPolicySchemas {
+		replaced[tableID] = struct{}{}
+		replaced[src.oldID] = struct{}{}
+	}
+	merged := make([]*model.MaskingPolicyInfo, 0, len(policies))
+	for _, policy := range policies {
+		if _, ok := replaced[policy.TableID]; !ok {
+			merged = append(merged, policy)
+		}
+	}
+	for tableID, src := range ts.mdlPolicySchemas {
+		srcPolicies, err := src.schema.AllMaskingPolicies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, policy := range srcPolicies {
+			if policy.TableID == tableID {
+				merged = append(merged, policy)
+			}
+		}
+	}
+	sortMaskingPolicies(merged)
+	return merged, nil
+}
+
+// MaskingPolicyByName implements InfoSchema.MaskingPolicyByName over the
+// policies returned by AllMaskingPolicies.
+func (ts *SessionExtendedInfoSchema) MaskingPolicyByName(ctx stdctx.Context, name pmodel.CIStr) (*model.MaskingPolicyInfo, bool, error) {
+	if len(ts.mdlPolicySchemas) == 0 {
+		return ts.InfoSchema.MaskingPolicyByName(ctx, name)
+	}
+	policies, err := ts.AllMaskingPolicies(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var found *model.MaskingPolicyInfo
+	for _, policy := range policies {
+		if policy.Name.L == name.L {
+			if found != nil {
+				return nil, false, nil
+			}
+			found = policy
+		}
+	}
+	return found, found != nil, nil
 }
 
 // HasMaskingPolicies implements InfoSchema.HasMaskingPolicies. It also counts
@@ -965,7 +1022,7 @@ func (ts *SessionExtendedInfoSchema) HasMaskingPolicies(ctx stdctx.Context) (boo
 		return hasPolicies, err
 	}
 	for _, src := range ts.mdlPolicySchemas {
-		if hasPolicies, err = src.HasMaskingPolicies(ctx); err != nil || hasPolicies {
+		if hasPolicies, err = src.schema.HasMaskingPolicies(ctx); err != nil || hasPolicies {
 			return hasPolicies, err
 		}
 	}

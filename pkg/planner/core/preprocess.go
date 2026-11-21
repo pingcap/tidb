@@ -2194,7 +2194,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			// The table was replaced under a new ID, for example by TRUNCATE
 			// TABLE or EXCHANGE PARTITION, and its masking policies moved to
 			// that ID. The transaction's schema has no policy for the new ID.
-			se.SetMaskingPolicySchema(tbl.Meta().ID, domainSchema)
+			se.SetMaskingPolicySchema(tableInfo.ID, tbl.Meta().ID, domainSchema)
 		}
 		curTxn, err := sctx.Txn(false)
 		if err != nil {
