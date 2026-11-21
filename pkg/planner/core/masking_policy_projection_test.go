@@ -2305,6 +2305,12 @@ func TestMaskingPolicyExplainForConnection(t *testing.T) {
 		require.NotContains(t, out, "secret", after)
 		if after == "" {
 			require.Contains(t, out, "IndexRangeScan")
+			// The viewer gets a snapshot of the rows: its own process info
+			// does not hold the plan of the other session.
+			explain, ok := viewer.Session().ShowProcess().Plan.(*core.Explain)
+			require.True(t, ok)
+			require.Nil(t, explain.TargetPlan)
+			require.NotEmpty(t, explain.Rows)
 		}
 		for _, format := range []string{"format='brief'", "format='verbose'", "format='dot'", "format='tidb_json'"} {
 			out, err = explainFor(viewer, target, format)

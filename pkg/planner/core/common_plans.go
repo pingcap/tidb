@@ -845,9 +845,6 @@ type Explain struct {
 
 	Rows        [][]string
 	ExplainRows [][]string
-	// redactedRowsOnly makes an operator that is not in ExplainRows show no
-	// operator info, instead of rendering it from TargetPlan.
-	redactedRowsOnly bool
 }
 
 // GetExplainRowsForPlan get explain rows for plan.
@@ -1206,9 +1203,6 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 		if row[0] == id {
 			return row[1], "N/A", "N/A", row[3], row[4]
 		}
-	}
-	if e.redactedRowsOnly {
-		return "N/A", "N/A", "N/A", "N/A", "N/A"
 	}
 
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
