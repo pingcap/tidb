@@ -261,21 +261,6 @@ func CreateJob(
 	return rows[0].GetInt64(0), nil
 }
 
-// LockPendingJob locks a pending import job until the caller ends its pessimistic
-// transaction. Mode claiming must hold this lock so cancellation cannot finish
-// before a late claim. The job must already be committed before calling this.
-func LockPendingJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	rows, err := sqlexec.ExecSQL(ctx, conn, "SELECT id FROM mysql.tidb_import_jobs WHERE id = %? AND status = %? FOR UPDATE", jobID, jobStatusPending)
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		return errors.Errorf("import job %d is no longer pending", jobID)
-	}
-	return nil
-}
-
 // StartJob tries to start a pending job with jobID, change its status/step to running/input step.
 // It will not return error when there's no matched job or the job has already started.
 func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {

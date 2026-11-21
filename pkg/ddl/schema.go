@@ -267,25 +267,10 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		// Table mode outlives the import submission transaction. Check it while
-		// this database-wide job excludes mode changes, before publishing ReadOnly;
-		// otherwise ingestion can continue and its mode-restoration DDL is blocked.
-		err = jobCtx.metaMut.IterTables(dbInfo.ID, func(tblInfo *model.TableInfo) error {
-			if tblInfo.Mode == model.TableModeImport {
-				return infoschema.ErrProtectedTableMode.FastGenByArgs(tblInfo.Name, tblInfo.Mode)
-			}
-			return nil
-		})
-		if err != nil {
-			if infoschema.ErrProtectedTableMode.Equal(err) {
-				job.State = model.JobStateCancelled
-			}
-			return ver, errors.Trace(err)
-		}
-		if err := w.checkUnfinishedSchemaImports(jobCtx, dbInfo); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
+		// In-flight physical ingestion may continue writing after the database
+		// becomes read-only. This is expected behavior in the current version:
+		// IMPORT INTO checks read-only mode only at statement entry. This behavior
+		// may change in future versions.
 		// Rollback can skip StateNone only because all mutations follow this assignment.
 		job.SchemaState = model.StatePendingReadOnly
 		dbInfo.ReadOnly = args.ReadOnly
@@ -362,32 +347,6 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	}
 	return ver, nil
-}
-
-// Older NextGen submissions did not set table mode. Their durable job rows
-// remain after all nodes upgrade, so capability checks alone cannot fence them.
-func (w *worker) checkUnfinishedSchemaImports(jobCtx *jobContext, db *model.DBInfo) error {
-	sctx, err := w.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.Put(sctx)
-	rows, err := sess.NewSession(sctx).Execute(jobCtx.stepCtx,
-		"SELECT id, table_id FROM mysql.tidb_import_jobs WHERE status IN ('pending', 'running')",
-		"check unfinished schema imports")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, row := range rows {
-		tbl, err := jobCtx.metaMut.GetTable(db.ID, row.GetInt64(1))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if tbl != nil {
-			return errors.Errorf("cannot enable database read-only mode while unfinished import job %d targets %s.%s", row.GetInt64(0), db.Name.O, tbl.Name.O)
-		}
-	}
-	return nil
 }
 
 func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {

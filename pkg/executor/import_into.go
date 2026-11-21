@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -47,12 +47,10 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -292,7 +290,7 @@ func SubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string) (in
 	return doSubmitImportTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (jobResultID int64, taskResult *proto.TaskBase, resultErr error) {
+func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	var instances []*serverinfo.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
@@ -301,22 +299,6 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	taskManager, err := dxfstorage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
-		return 0, nil, err
-	}
-
-	dxfTaskMgr := taskManager
-	if kerneltype.IsNextGen() {
-		dxfTaskMgr, err = dxfstorage.GetDXFSvcTaskMgr()
-		if err != nil {
-			return 0, nil, err
-		}
-		// SYSTEM/DXF owns completion and cleanup, independently of the user nodes.
-		if err := checkImportTableModeOwnership(ctx, dxfTaskMgr, "SYSTEM/DXF"); err != nil {
-			return 0, nil, err
-		}
-	}
-	// The target keyspace's DDL owner must understand the ownership argument.
-	if err := checkImportTableModeOwnership(ctx, taskManager, "TiDB"); err != nil {
 		return 0, nil, err
 	}
 
@@ -344,89 +326,64 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 		jobID, taskID int64
 	)
 	var runningOnUserKS bool
-	var taskSubmitted, jobCommitted bool
-	defer func() {
-		if !jobCommitted || taskSubmitted {
-			return
-		}
-		cleanupCtx := context.WithoutCancel(ctx)
-		if taskID != 0 {
-			if terror.ErrResultUndetermined.Equal(resultErr) {
-				return // CANCEL IMPORT JOB can reconcile this after its outcome is known.
-			}
-			_, lookupErr := dxfTaskMgr.GetTaskBaseByIDWithHistory(cleanupCtx, taskID)
-			if lookupErr == nil {
-				return // A committed task owns its scheduler/cleaner protection.
-			}
-			if !goerrors.Is(lookupErr, dxfstorage.ErrTaskNotFound) {
-				resultErr = errors.Annotatef(resultErr, "confirm import task registration failed: %v", lookupErr)
-				return
-			}
-		}
-		if err := cancelAndWaitImportJob(cleanupCtx, jobID); err != nil {
-			resultErr = errors.Annotatef(resultErr, "cancel unregistered import job failed: %v", err)
-		}
-	}()
-	claimTableMode := func(se sessionctx.Context) error {
-		if plan.SchemaReadOnlyBypass {
-			defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
-		}
-		err := domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
-			SchemaID: plan.DBID, TableID: plan.TableInfo.ID,
-			TableMode: model.TableModeImport, ImportJobID: jobID,
-		})
-		failpoint.InjectCall("afterImportTableModeClaimed", jobID, &err)
-		if err == nil {
-			taskMeta.TableModeOwner = jobID
-		}
-		return err
-	}
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		runningOnUserKS = kv.IsUserKS(se.GetStore())
-		var err error
-		jobID, err = importer.CreateJob(ctx, se.GetSQLExecutor(), plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
+		var err2 error
+		exec := se.GetSQLExecutor()
+		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
 			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
-		return err
+		if err2 != nil {
+			return err2
+		}
+		if kerneltype.IsClassic() {
+			if plan.SchemaReadOnlyBypass {
+				defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
+			}
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
+		}
+		// in classical kernel or if we are inside SYSTEM keyspace itself, we
+		// submit the task to DXF in the same transaction as creating the job.
+		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
+				return err2
+			}
+		}
+		return nil
 	}); err != nil {
 		return 0, nil, err
 	}
-	// Mode DDL commits independently, so every kernel needs a durable recovery
-	// job before claiming. Cancellation serializes with the pending row lock.
-	jobCommitted = true
-	failpoint.InjectCall("beforeImportTableModeClaim", jobID)
-	if err := taskManager.WithNewSession(func(se sessionctx.Context) error {
-		if _, err := se.GetSQLExecutor().ExecuteInternal(ctx, "begin pessimistic"); err != nil {
-			return err
-		}
-		defer se.RollbackTxn(context.WithoutCancel(ctx))
-		if err := importer.LockPendingJob(ctx, se.GetSQLExecutor(), jobID); err != nil {
-			return err
-		}
-		if err := claimTableMode(se); err != nil {
-			return err
-		}
-		return se.CommitTxn(ctx)
-	}); err != nil {
-		return 0, nil, err
-	}
+	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
+	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
+	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
+	dxfTaskMgr := taskManager
 	if runningOnUserKS {
 		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
-	}
-	if err = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		taskMeta.JobID = jobID
-		planCtx.SessionCtx = se
-		planCtx.TaskKey = taskkey.ForJob(jobID)
-		planCtx.Keyspace = plan.Keyspace
-		var err error
-		if taskID, err = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err != nil {
-			return err
+		var err2 error
+		dxfTaskMgr, err2 = dxfstorage.GetDXFSvcTaskMgr()
+		if err2 != nil {
+			return 0, nil, err2
 		}
-		failpoint.InjectCall("afterImportTaskIDAllocated", taskID, &err)
-		return err
-	}); err != nil {
-		return 0, nil, err
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			taskMeta.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = taskkey.ForJob(jobID)
+			planCtx.Keyspace = plan.Keyspace
+			var err2 error
+			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
+				return err2
+			}
+			return nil
+		}); err2 != nil {
+			return 0, nil, err2
+		}
 	}
-	taskSubmitted = true
 	handle.NotifyTaskChange()
 	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
 	if err != nil {
@@ -449,51 +406,6 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
-}
-
-func checkImportTableModeOwnership(ctx context.Context, manager *dxfstorage.TaskManager, component string) error {
-	return manager.WithNewSession(func(se sessionctx.Context) error {
-		servers, err := getImportLifecycleServers(ctx, se)
-		if err != nil {
-			return err
-		}
-		failpoint.InjectCall("afterGetImportLifecycleServers", component, servers)
-		if len(servers) == 0 {
-			return errors.Errorf("cannot determine %s import table-mode ownership support", component)
-		}
-		var hasNativeServer bool
-		for _, server := range servers {
-			if server == nil || !server.SchemaReadOnly {
-				return errors.Errorf("finish upgrading all %s nodes before submitting an import with table-mode ownership", component)
-			}
-			if !server.IsAssumed() {
-				hasNativeServer = true
-			}
-		}
-		if !hasNativeServer {
-			return errors.Errorf("cannot determine %s import table-mode ownership support", component)
-		}
-		return nil
-	})
-}
-
-func getImportLifecycleServers(ctx context.Context, sctx sessionctx.Context) (map[string]*serverinfo.ServerInfo, error) {
-	if dom := domain.GetDomain(sctx); dom != nil {
-		return dom.InfoSyncer().ServerInfoSyncer().GetAllServerInfo(ctx)
-	}
-	cli, err := store.NewEtcdCli(sctx.GetStore())
-	if err != nil {
-		return nil, err
-	}
-	if cli == nil {
-		return nil, errors.New("cannot determine SYSTEM/DXF capabilities without a server registry")
-	}
-	defer func() {
-		if closeErr := cli.Close(); closeErr != nil {
-			logutil.BgLogger().Info("close etcd client error", zap.Error(closeErr))
-		}
-	}()
-	return serverinfo.GetAllServerInfoFromEtcd(ctx, cli)
 }
 
 func submitTask2DXF(taskMeta *taskinfo.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
@@ -548,12 +460,6 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
-	// The outer statement owns this transaction until all physical ingestion and
-	// post-processing finish. Precheck sessions commit their own short SQL txns.
-	if err := activateSchemaReadOnlyWrite(e.userSctx, e.tbl.Meta()); err != nil {
-		return err
-	}
-	failpoint.InjectCall("afterImportFromSelectPrecheck", e.userSctx)
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
@@ -659,7 +565,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	}); err != nil {
 		return err
 	}
-	if !info.CanCancel() && !info.IsCancelled() {
+	if !info.CanCancel() {
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
 	}
 	return nil
@@ -670,25 +576,6 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
-	}
-	// A previous attempt can have committed cancellation before cleanup failed.
-	// Retry only its cleanup; do not turn a terminal task into a new cancellation.
-	jobManager, err := dxfstorage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	var cancelled bool
-	if err := jobManager.WithNewSession(func(se sessionctx.Context) error {
-		job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
-		if err == nil {
-			cancelled = job.IsCancelled()
-		}
-		return err
-	}); err != nil {
-		return err
-	}
-	if cancelled {
-		return cleanCancelledImportJob(ctx, jobID)
 	}
 	taskKey := taskkey.ForJob(jobID)
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
@@ -705,7 +592,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	}
 	failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
 
-	// The import job and DXF task are created in separate
+	// In next-gen, the import job and DXF task are created in separate
 	// transactions. The job row can exist before the DXF task row is committed,
 	// or the task submission can fail after the job is created. The task lookup
 	// distinguishes a missing task from one outside the cancel update's
@@ -728,74 +615,14 @@ func cancelDanglingImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := manager.WithNewSession(func(se sessionctx.Context) error {
+	return manager.WithNewSession(func(se sessionctx.Context) error {
 		if err2 := importer.CancelPendingJob(ctx, se.GetSQLExecutor(), jobID); err2 != nil {
 			return err2
 		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			// Another canceller, including submission compensation, may have won.
-			job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
-			if err != nil {
-				return err
-			}
-			if !job.IsCancelled() {
-				return errors.New("job state changed during cancel, please try again later")
-			}
+			return errors.New("job state changed during cancel, please try again later")
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	return cleanCancelledImportJob(ctx, jobID)
-}
-
-// cleanCancelledImportJob can be retried after cancellation is durable. Unknown
-// DXF state retains protection; only a confirmed missing task permits release.
-func cleanCancelledImportJob(ctx context.Context, jobID int64) error {
-	manager, err := dxfstorage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	failpoint.InjectCall("beforeImportCancelCleanup", &err)
-	if err != nil {
-		return err
-	}
-	// Cancel the durable pending job before rechecking DXF. A task that is
-	// committed later will see cancellation before it can start ingestion. A
-	// task already visible here retains protection until its normal cleanup.
-	dxfManager, err := dxfstorage.GetDXFSvcTaskMgr()
-	if err != nil {
-		return err
-	}
-	_, err = dxfManager.GetTaskBaseByKeyWithHistory(ctx, taskkey.ForJob(jobID))
-	if err == nil {
-		return nil
-	}
-	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
-		return err
-	}
-	return manager.WithNewSession(func(se sessionctx.Context) error {
-		job, err := importer.GetJob(ctx, se.GetSQLExecutor(), jobID, "", true)
-		if err != nil {
-			return err
-		}
-		dom := domain.GetDomain(se)
-		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(job.TableSchema))
-		if !ok {
-			return nil
-		}
-		failpoint.InjectCall("beforeImportCancelModeRelease", &err)
-		if err != nil {
-			return err
-		}
-		err = dom.DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
-			SchemaID: db.ID, TableID: job.TableID,
-			TableMode: model.TableModeNormal, ImportJobID: jobID,
-		})
-		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
-			return nil
-		}
-		return err
 	})
 }
 

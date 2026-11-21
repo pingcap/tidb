@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -34,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -104,7 +102,7 @@ func (*ImportCleaner) BatchClean(ctx context.Context, tasks []*proto.Task) error
 		isGlobalSort := taskMeta.Plan.IsGlobalSort()
 		redactSensitiveInfo(task, taskMeta)
 
-		if err = cleanTableMode(ctx, task, taskMeta); err != nil {
+		if err = cleanTableMode(ctx, taskMeta); err != nil {
 			return err
 		}
 		failpoint.InjectCall("mockCleanupError", &err)
@@ -176,38 +174,21 @@ func sendMeterOnCleanInParallel(ctx context.Context, tasks []*proto.Task, sendFn
 	return eg.Wait()
 }
 
-func cleanTableMode(ctx context.Context, task *proto.Task, taskMeta *taskinfo.TaskMeta) error {
-	if taskMeta.Plan.TableInfo == nil || taskMeta.Plan.DBID == 0 || taskMeta.Plan.TableInfo.ID == 0 {
+func cleanTableMode(ctx context.Context, taskMeta *taskinfo.TaskMeta) error {
+	if !kerneltype.IsClassic() {
 		return nil
 	}
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	if kerneltype.IsNextGen() {
-		runtime, release, runtimeErr := dxfutil.AcquireTaskRuntime(taskManager, task.Keyspace, dxfutil.GenHolderID("import-cleaner", task.ID))
-		if runtimeErr != nil {
-			return runtimeErr
-		}
-		defer release()
-		var target model.AlterTableModeTarget
-		target, err = tableModeResetTarget(ctx, runtime.Store(), taskMeta)
-		if err == nil {
-			err = runtime.AlterTableMode(ctx, target)
-		}
-	} else {
-		err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return domain.GetDomain(se).DDLExecutor().AlterTableMode(se, &model.AlterTableModeArgs{
-				SchemaID: taskMeta.Plan.DBID, TableID: taskMeta.Plan.TableInfo.ID,
-				TableMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
-			})
-		})
-	}
-	if err != nil {
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+	}); err != nil {
 		// If the table is not found, it means the table has been either
 		// dropped or truncated. In such cases, the table mode has already
 		// been reset to normal, so we can ignore this error.
-		if !goerrors.Is(err, infoschema.ErrTableNotExists) && !goerrors.Is(err, infoschema.ErrDatabaseNotExists) {
+		if !goerrors.Is(err, infoschema.ErrTableNotExists) {
 			return err
 		}
 
@@ -217,35 +198,6 @@ func cleanTableMode(ctx context.Context, task *proto.Task, taskMeta *taskinfo.Ta
 		)
 	}
 	return nil
-}
-
-// tableModeResetTarget uses stable IDs because a table can be renamed after
-// OnDone restores Normal but before the archival cleaner retries its reset.
-func tableModeResetTarget(ctx context.Context, store kv.Storage, taskMeta *taskinfo.TaskMeta) (model.AlterTableModeTarget, error) {
-	target := model.AlterTableModeTarget{
-		SchemaID: taskMeta.Plan.DBID, TableID: taskMeta.Plan.TableInfo.ID,
-		TargetMode: model.TableModeNormal, ImportJobID: taskMeta.TableModeOwner,
-	}
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
-		reader := meta.NewReader(txn)
-		db, err := reader.GetDatabase(target.SchemaID)
-		if err != nil {
-			return err
-		}
-		if db == nil {
-			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(taskMeta.Plan.DBName)
-		}
-		tbl, err := reader.GetTable(target.SchemaID, target.TableID)
-		if err != nil {
-			return err
-		}
-		if tbl == nil {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(db.Name.O, taskMeta.Plan.TableInfo.Name.O)
-		}
-		target.SchemaName, target.TableName = db.Name, tbl.Name
-		return nil
-	})
-	return target, err
 }
 
 func cleanExternalFiles(ctx context.Context, fileGroup cleanFileGroup) error {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -91,6 +92,7 @@ func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
 	s.tk.MustExec("create database read_only_import")
 	s.tk.MustExec("create table read_only_import.t(id int primary key)")
+	s.tk.MustExec("create table read_only_import.authorized(id int primary key)")
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "read-only-import", Name: "t.csv"},
 		Content:     []byte("1\n2\n"),
@@ -111,11 +113,11 @@ func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
 	case <-time.After(maxWaitTime):
 		s.T().Fatal("background import did not reach SST ingestion")
 	}
-	// The submission transaction is over; the physical writer is still paused before ingestion.
-	s.tk.MustGetErrCode("alter database read_only_import read only = 1", 8258)
+	// Entry-only checks let read-only succeed while physical ingestion is still paused.
+	s.tk.MustExec("alter database read_only_import read only = 1")
 	db, ok := domain.GetDomain(s.tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("read_only_import"))
 	s.Require().True(ok)
-	s.Require().False(db.ReadOnly)
+	s.Require().True(db.ReadOnly)
 	release()
 	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
 	s.Require().Eventually(func() bool {
@@ -123,8 +125,14 @@ func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
 	}, maxWaitTime, 100*time.Millisecond)
 	// Successful SELECT also verifies that the internal completion DDL restored normal mode.
 	s.tk.MustQuery("select * from read_only_import.t order by id").Check(testkit.Rows("1", "2"))
-	s.tk.MustExec("alter database read_only_import read only = 1")
+	s.tk.MustGetErrCode("import into read_only_import.t from ''", 3989)
 	s.tk.MustGetErrCode("insert into read_only_import.t values(3)", 3989)
+	// A caller's explicit bypass must survive the trusted internal mode claim.
+	s.Require().NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	s.tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
+	defer s.tk.MustExec("revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from 'root'@'%'")
+	s.tk.MustQuery(fmt.Sprintf("import into read_only_import.authorized from 'gs://read-only-import/t.csv?endpoint=%s' with thread=1", gcsEndpoint))
+	s.tk.MustQuery("select * from read_only_import.authorized order by id").Check(testkit.Rows("1", "2"))
 	s.tk.MustExec("alter database read_only_import read only = 0")
 	s.tk.MustExec("drop database read_only_import")
 }

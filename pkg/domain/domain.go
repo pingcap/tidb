@@ -1329,10 +1329,7 @@ func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeT
 		return errors.Trace(err)
 	}
 	defer do.sysSessionPool.Put(se)
-	return do.ddlExecutor.AlterTableMode(se.(sessionctx.Context), &model.AlterTableModeArgs{
-		SchemaID: target.SchemaID, TableID: target.TableID,
-		TableMode: target.TargetMode, ImportJobID: target.ImportJobID,
-	})
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
 }
 
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect

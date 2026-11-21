@@ -24,10 +24,8 @@ import (
 type TaskMeta struct {
 	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID int64
-	// TableModeOwner is zero for tasks submitted with the legacy unowned mode.
-	TableModeOwner int64 `json:"table_mode_owner,omitempty"`
-	Plan           importer.Plan
-	Stmt           string
+	Plan  importer.Plan
+	Stmt  string
 
 	// Summary is the summary of the whole import task.
 	Summary importer.Summary

@@ -30,23 +30,19 @@ package importinto
 //     keyspace. In nextgen user keyspace mode this row lives in the SYSTEM
 //     keyspace, because DXF runs as a SYSTEM service.
 //
-// Submission intentionally commits the recovery job before the independent
-// table-mode DDL, then registers the DXF task in a separate transaction:
+// The normal nextgen submit path is intentionally not atomic across these two
+// rows:
 //
 //   1. Create the import job in the current/user keyspace with
 //      storage.GetTaskManager().WithNewTxn.
 //   2. Commit the import job row as status=pending, step=''.
-//   3. Lock the pending job in a pessimistic transaction, claim table mode with
-//      that job ID via independent DDL, and release the row lock. A crash after
-//      the DDL leaves a durable job recoverable through CANCEL IMPORT JOB.
-//      A cancel that wins before the lock prevents a late mode claim.
-//   4. Open the DXF service task manager with storage.GetDXFSvcTaskMgr().
-//   5. Create the SYSTEM keyspace DXF task in a second WithNewTxn.
-//   6. Commit the DXF task row as state=pending, step=StepInit.
+//   3. Open the DXF service task manager with storage.GetDXFSvcTaskMgr().
+//   4. Create the SYSTEM keyspace DXF task in a second WithNewTxn.
+//   5. Commit the DXF task row as state=pending, step=StepInit.
 //
-// Classic and NextGen SYSTEM imports use the same durable-job/claim/task order.
-// Their rows share a keyspace, but the mode DDL still commits independently, so
-// combining the job and task transactions would leave an unrecoverable claim.
+// Classic kernel mode and SYSTEM keyspace mode do not have this split: job
+// creation and task creation are in the same transaction there. The split only
+// exists for nextgen user keyspace imports.
 //
 // This split is a consequence of how nextgen DXF service and IMPORT INTO
 // evolved from the Classic kernel implementation. Classic kernel DXF and
@@ -78,8 +74,8 @@ package importinto
 //
 //   C0
 //     CANCEL IMPORT JOB runs checkPrivilegeAndStatus. This reads the import
-//     job row and requires caller privilege. Pending/running jobs follow C1.
-//     Cancelled jobs directly retry cleanup; finished/failed jobs are rejected.
+//     job row and allows cancellation only when the job status is pending or
+//     running and the caller has privilege.
 //
 //   C1
 //     CANCEL IMPORT JOB checks the live and history task tables by task key in
@@ -104,8 +100,7 @@ package importinto
 //     changes the import job from pending to cancelled in the user keyspace.
 //     Unlike most scheduler writes, this path checks affected rows and returns
 //     "job state changed during cancel, please try again later" if the job is
-//     neither pending nor already cancelled. Concurrent cancellers that find
-//     durable cancellation can retry its cleanup.
+//     no longer pending.
 //
 //   S0
 //     The import scheduler runs checkImportJobNotCancelled. It reads only the
@@ -114,9 +109,8 @@ package importinto
 //
 //   S1
 //     The import scheduler runs StartJob. It updates pending -> running and
-//     sets the first import job step. The SQL predicate requires status pending.
-//     A zero-row update checks durable state: running is an idempotent retry,
-//     while cancelled stops planning immediately without SQL retries.
+//     sets the first import job step. The SQL predicate requires status
+//     pending, but the affected row count is ignored.
 //
 //   S2
 //     The import scheduler runs Job2Step. It updates the import job step when
@@ -181,9 +175,8 @@ package importinto
 //      terminal completion, which can look like cancel success even though
 //      this cancel did not change the task.
 //
-//   9. C0 reads a cancelled import job
-//      CANCEL retries cleanup without restarting task cancellation. Other
-//      terminal states and callers without privilege stop at C0.
+//   9. C0 reads a terminal import job, or the caller lacks privilege
+//      Cancellation stops before touching the DXF task.
 //
 // Scheduler and DXF framework interleavings after T is visible.
 //
@@ -195,10 +188,8 @@ package importinto
 //     S0 can still pass, because C1 changed the DXF task state but did not
 //     change the import job status.
 //
-//   - Between S0 and S1, direct import-job cancellation makes S1 affect zero
-//     rows and stop before dispatch. S2 applies only after a successful start,
-//     when dangling cancellation can no longer update the running job.
-//     A normal visible-task cancellation does not affect the job row; S1/S2 can
+//   - Between S0 and S1 or S2, a direct import-job cancellation makes S1/S2
+//     affect zero rows. A normal visible-task cancellation does not; S1/S2 can
 //     still advance the import job status or step before the DXF cancellation
 //     is processed.
 //

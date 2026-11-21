@@ -71,53 +71,6 @@ func newImportTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool *p
 	return runtime
 }
 
-func TestSchedulerStartCancelledJob(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create table test.cancelled_start(a int primary key)")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("cancelled_start"))
-	require.NoError(t, err)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewTestKit(t, store).Session(), nil
-	}, 2, 2, time.Second)
-	defer pool.Close()
-	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-	mgr := storage.NewTaskManager(pool)
-	storage.SetTaskManager(mgr)
-	conn := tk.Session().GetSQLExecutor()
-	require.NoError(t, mgr.InitMeta(ctx, ":4000", "dxf_service"))
-	jobID, err := importer.CreateJob(ctx, conn, "test", tbl.Meta().Name.L, tbl.Meta().ID, "root", "", &importer.ImportParameters{}, 1)
-	require.NoError(t, err)
-	meta, err := (&importinto.LogicalPlan{
-		JobID:    jobID,
-		Plan:     importer.Plan{DBName: "test", TableInfo: tbl.Meta(), DisableTiKVImportMode: true},
-		ChunkMap: map[int32][]importer.Chunk{1: {{Path: "local.csv"}}},
-	}).ToTaskMeta()
-	require.NoError(t, err)
-	task := &proto.Task{TaskBase: proto.TaskBase{Type: proto.ImportInto, Step: proto.StepInit, State: proto.TaskStatePending}, Meta: meta}
-	task.ID, err = mgr.CreateTask(ctx, taskkey.ForJob(jobID), proto.ImportInto, store.GetKeyspace(), 1, "", 1, proto.ExtraParams{}, meta)
-	require.NoError(t, err)
-	manager := scheduler.NewManager(ctx, store, mgr, "host:port", proto.NodeResourceForTest)
-	ext := importinto.NewImportSchedulerForTest(proto.ImportStepImport, task, scheduler.NewParamForTest(mgr, newImportTestRuntime(gomock.NewController(t), store, pool)))
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted", func(id int64) {
-		require.Equal(t, jobID, id)
-		require.NoError(t, importer.CancelPendingJob(ctx, conn, id))
-	})
-	metas, err := ext.OnNextSubtasksBatch(ctx, manager.MockScheduler(task), task, []string{":4000"}, proto.ImportStepImport)
-	require.ErrorContains(t, err, "cancelled by user")
-	require.Empty(t, metas, "cancelled imports must not produce writable subtasks")
-	job, err := importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.True(t, job.IsCancelled())
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted")
-	// A previous successful start can be retried after an uncertain response.
-	tk.MustExec("update mysql.tidb_import_jobs set status = 'running' where id = ?", jobID)
-	metas, err = ext.OnNextSubtasksBatch(ctx, manager.MockScheduler(task), task, []string{":4000"}, proto.ImportStepImport)
-	require.NoError(t, err)
-	require.Len(t, metas, 1)
-}
-
 func TestSchedulerExtLocalSort(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -283,21 +236,30 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	task.Meta = bs
 	task.Step = proto.StepInit
 	task.State = proto.TaskStatePending
-	// If a dangling import job was already cancelled before scheduler
-	// admission, the scheduler should enter the existing cancel/revert path
-	// without planning work or generating subtasks.
-	err = ext.OnPrepare(ctx, d, task)
-	require.Error(t, err)
-	require.True(t, storage.IsCancelledErr(err), err)
-	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, "cancelled", gotJobInfo.Status)
-	require.Equal(t, "", gotJobInfo.Step)
+	if kerneltype.IsNextGen() {
+		// If a nextgen dangling import job was already cancelled before scheduler
+		// admission, the scheduler should enter the existing cancel/revert path
+		// without planning work or generating subtasks.
+		err = ext.OnPrepare(ctx, d, task)
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, "cancelled", gotJobInfo.Status)
+		require.Equal(t, "", gotJobInfo.Step)
 
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
-	require.Error(t, err)
-	require.True(t, storage.IsCancelledErr(err), err)
-	require.Nil(t, subtaskMetas)
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.Error(t, err)
+		require.True(t, storage.IsCancelledErr(err), err)
+		require.Nil(t, subtaskMetas)
+	} else {
+		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
+		// DXF task to cancelling, so this import-job status check must not reject
+		// scheduler planning if a test calls the hook directly.
+		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+		require.NoError(t, err)
+		require.NotNil(t, subtaskMetas)
+	}
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)

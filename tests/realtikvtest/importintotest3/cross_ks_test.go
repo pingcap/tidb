@@ -32,10 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -608,22 +606,6 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			require.Greater(t, taskRefreshCnt.Load(), before)
 
 			collate.SetNewCollationEnabledForTest(false)
-			// This test hosts both keyspaces in one process. Completion's mode
-			// DDL can rebuild user tables while the global flag models SYSTEM.
-			// Restore user table objects as well as the flag before testing DML.
-			userDom := runtimes[userKeyspace].Dom
-			cache := userDom.InfoCache()
-			if isV2, _ := infoschema.IsV2(userDom.InfoSchema()); isV2 {
-				capacity := cache.Data.CacheCapacity()
-				cache.Data.SetCacheCapacity(0)
-				cache.Data.SetCacheCapacity(capacity)
-			} else {
-				cache.Reset(cache.Size())
-				require.NoError(t, userDom.Reload())
-			}
-			tbl, err := userDom.InfoSchema().TableByName(ctx, ast.NewCIStr("cross_ks_collate"), ast.NewCIStr(tc.table))
-			require.NoError(t, err)
-			require.False(t, tbl.UseNewCollate())
 			checkImportTableAndIndexes(userTK, tc.table, tc.indexes, "3")
 			for _, sql := range tc.postDMLSQL {
 				userTK.MustExec(sql)

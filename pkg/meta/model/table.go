@@ -241,9 +241,6 @@ type TableInfo struct {
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
-	// ImportJobID owns Import mode within this table's keyspace. Zero denotes
-	// legacy protection and must not authorize releasing a nonzero owner.
-	ImportJobID int64 `json:"import_job_id,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.

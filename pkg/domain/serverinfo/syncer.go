@@ -287,16 +287,11 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", info.DisableRPC)
 		return allInfo, nil
 	}
-	return GetAllServerInfoFromEtcd(ctx, s.etcdCli)
-}
-
-// GetAllServerInfoFromEtcd reads the registry in the client's keyspace namespace.
-// Cross-keyspace sessions can use it without a local Domain or owner runtime.
-func GetAllServerInfoFromEtcd(ctx context.Context, cli *clientv3.Client) (map[string]*ServerInfo, error) {
-	if cli == nil {
-		return nil, errors.New("server information requires an etcd client")
+	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
 	}
-	return getInfo(ctx, cli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
+	return allInfo, nil
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.

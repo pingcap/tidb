@@ -539,6 +539,10 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 			}
 		}
 	case *ast.ImportIntoStmt:
+		// An in-flight physical import may keep writing after a later read-only
+		// transition succeeds. This is expected behavior in the current version:
+		// read-only mode is checked only at statement entry. This behavior may
+		// change in future versions.
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.TruncateTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)

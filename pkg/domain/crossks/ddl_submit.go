@@ -153,7 +153,6 @@ func (c *ddlClient) resolveAlterTableModeTarget(
 		SchemaName:  req.SchemaName,
 		TableID:     req.TableID,
 		TableName:   req.TableName,
-		ImportJobID: req.ImportJobID,
 		CurrentMode: tblInfo.Mode,
 		TargetMode:  req.TargetMode,
 	}, nil

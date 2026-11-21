@@ -6787,7 +6787,6 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		SchemaName:  schema.Name,
 		TableID:     args.TableID,
 		TableName:   table.Meta().Name,
-		ImportJobID: args.ImportJobID,
 		CurrentMode: table.Meta().Mode,
 		TargetMode:  args.TableMode,
 	})

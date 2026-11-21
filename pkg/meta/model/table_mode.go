@@ -86,7 +86,4 @@ type AlterTableModeTarget struct {
 	// TargetMode is required input for AlterTableMode requests. It is the table
 	// mode requested by the caller.
 	TargetMode TableMode
-	// ImportJobID identifies the import claiming or releasing this mode.
-	// Ownership is checked against current metadata by the DDL worker.
-	ImportJobID int64
 }
