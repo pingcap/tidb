@@ -57,14 +57,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use tidb_tablecodec::table_key::cut_row_key_prefix;
-use tidb_tablecodec::table_key::encode_index_seek_key;
 use tidb_codec::{decode as decode_datums, encode_key};
 use tidb_tablecodec::table_key::{encode_row_key, gen_table_record_prefix};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
-use tidb_txnkv::Handle;
+use tidb_tablecodec::decode_table_row_to_map;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs, MetaSnapshot};
 use tidb_infoschema::SessionExtendedInfoSchema;
@@ -424,14 +422,6 @@ impl SystemTableView {
     }
 }
 
-fn record_key_for_handle(table_id: i64, handle: &Handle) -> Vec<u8> {
-    match handle {
-        Handle::Int(handle) => encode_row_key(table_id, &handle.encoded()),
-        Handle::Common(handle) => encode_row_key(table_id, handle.encoded()),
-        Handle::Partition(handle) => record_key_for_handle(handle.partition_id(), handle.inner()),
-    }
-}
-
 /// Reads every row in one `mysql.*` table's record range, in key order.
 ///
 /// Both halves of each pair matter and neither may be dropped: the key carries
@@ -477,62 +467,6 @@ pub fn scan_system_table_from_int_handle<S: MetaSnapshot>(
         SystemTableError::Snapshot("system-table record prefix has no finite scan end".to_owned())
     })?;
     Ok(snapshot.scan_range(&start, &end)?)
-}
-
-/// Reads rows through one named secondary index whose leading indexed values
-/// equal `prefix`.
-///
-/// Go's restricted SQL uses this path for
-/// `mysql.stats_top_n INDEX(tbl) (table_id, is_index, hist_id)`. Returning
-/// record key/value pairs keeps [`SystemRow::parse`] independent of whether a
-/// caller reached the record directly or through an index lookup.
-pub fn scan_system_table_index_prefixed<S: MetaSnapshot>(
-    snapshot: &mut S,
-    view: &SystemTableView,
-    index_name: &str,
-    prefix: &[Datum],
-) -> Result<MetaPairs, SystemTableError> {
-    let Some((index_id, column_count)) = view.indexes.get(&index_name.to_ascii_lowercase()) else {
-        return Err(SystemTableError::Missing {
-            name: format!("{} index `{index_name}`", view.name()),
-        });
-    };
-    if prefix.len() > *column_count {
-        return Err(SystemTableError::Decode {
-            name: view.name().to_owned(),
-            detail: format!(
-                "index `{index_name}` has {column_count} columns but received a {}-column prefix",
-                prefix.len()
-            ),
-        });
-    }
-    let encoded = encode_key(prefix).map_err(|error| SystemTableError::Decode {
-        name: view.name().to_owned(),
-        detail: error.to_string(),
-    })?;
-    let index_prefix = encode_index_seek_key(view.table_id(), *index_id, &encoded);
-    let entries = snapshot.scan_prefix(&index_prefix)?;
-    let mut rows = Vec::with_capacity(entries.len());
-    for (index_key, index_value) in entries {
-        let handle = decode_index_handle(&index_key, &index_value, *column_count)
-            .map_err(|error| SystemTableError::Decode {
-                name: view.name().to_owned(),
-                detail: format!("index `{index_name}` entry has no valid row handle: {error}"),
-            })?
-            .ok_or_else(|| SystemTableError::Decode {
-                name: view.name().to_owned(),
-                detail: format!("index `{index_name}` entry has no row handle"),
-            })?;
-        let record_key = record_key_for_handle(view.table_id(), &handle);
-        let record_value = snapshot
-            .get(&record_key)?
-            .ok_or_else(|| SystemTableError::Decode {
-                name: view.name().to_owned(),
-                detail: format!("index `{index_name}` refers to a missing record"),
-            })?;
-        rows.push((record_key, record_value));
-    }
-    Ok(rows)
 }
 
 /// Decodes the clustered key columns one record key carries.

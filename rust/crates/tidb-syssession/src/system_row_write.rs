@@ -63,10 +63,8 @@ use tidb_table::origin_default::{
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tidb_tablecodec::table_key::encode_row_key_with_handle;
 #[cfg(test)]
 use tidb_datatype::FieldTypeCode;
-use tidb_goruntime::GoString;
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone, Time};
 use tidb_table::tables::{TableCommon, TableHandle};
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
@@ -434,7 +432,7 @@ pub fn insert_row_with_collation(
 /// key as the handle, or a common handle) rather than by an allocated
 /// `_tidb_rowid`: Go's `tbl.Meta().PKIsHandle || IsCommonHandle`.
 #[must_use]
-pub fn is_clustered(table: &TableInfo) -> bool {
+fn is_clustered(table: &TableInfo) -> bool {
     table.pk_is_handle || table.is_common_handle
 }
 
@@ -510,28 +508,6 @@ pub fn delete_row(
     TableWriter::open(table, new_collation_enabled())?.remove(Some(handle), values, true)
 }
 
-/// The record key one row of a CLUSTERED table lives under.
-///
-/// A clustered table's primary key *is* its handle: `mysql.stats_meta` keys
-/// on `table_id`, `mysql.stats_histograms` and `mysql.stats_buckets` on their
-/// whole `(table_id, is_index, hist_id[, bucket_id])` tuple. Nothing
-/// allocates a `_tidb_rowid` for them, and nothing needs to: a row's identity
-/// is its own values, so an `ANALYZE` that rewrites a table's statistics
-/// overwrites exactly the keys the previous one wrote. Only the key columns
-/// need a value.
-pub fn clustered_record_key(
-    table: &TableInfo,
-    values: &RowValues,
-) -> Result<Vec<u8>, RowEncodeError> {
-    let mut writer = TableWriter::open(table, new_collation_enabled())?;
-    let row = writer.row(values, false)?;
-    let handle = writer.clustered_handle(&row)?;
-    Ok(encode_row_key_with_handle(
-        table.id,
-        &handle.record_handle(),
-    ))
-}
-
 /// The mutations that store one row of a clustered table.
 ///
 /// `existing` is the row already living under that key, as this planner's own
@@ -556,25 +532,6 @@ pub fn store_clustered_row(
         Some(existing) => writer.update(None, existing, values),
         None => writer.add(values, None),
     }
-}
-
-/// The mutations that rewrite one row of a `_tidb_rowid` table in place,
-/// keeping its handle (Go `UpdateRecord`).
-///
-/// Keeping the handle is the point. Deleting the row and inserting a
-/// replacement under a fresh handle would touch every index entry twice --
-/// and for an index whose columns did not move, that is a delete and a put of
-/// the *same key* in one transaction, which the mutation set rejects. A
-/// rewrite under the same handle leaves those entries alone, exactly as Go's
-/// `UPDATE` does.
-pub fn rewrite_rowid_row(
-    table: &TableInfo,
-    key: &[u8],
-    existing: &RowValues,
-    values: &RowValues,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let handle = TableHandle::Int(row_id_of(key)?);
-    TableWriter::open(table, new_collation_enabled())?.update(Some(handle), existing, values)
 }
 
 /// The mutations that remove one row of a clustered table and every index
@@ -642,7 +599,7 @@ fn unasserted(mutations: Vec<BufferMutation>) -> Result<Vec<BufferMutation>, Row
 /// The key is `t{table_id}_r{handle}` with the handle written by
 /// [`tidb_codec`]'s signed-int encoder, so this is that encoder read backwards
 /// rather than a second guess at the layout.
-pub fn row_id_of(key: &[u8]) -> Result<i64, RowEncodeError> {
+fn row_id_of(key: &[u8]) -> Result<i64, RowEncodeError> {
     let suffix: [u8; 8] = key
         .get(key.len().saturating_sub(8)..)
         .and_then(|tail| tail.try_into().ok())
@@ -650,22 +607,6 @@ pub fn row_id_of(key: &[u8]) -> Result<i64, RowEncodeError> {
     // `EncodeInt` flips the sign bit so the big-endian order is the signed
     // order; reading it back flips it again.
     Ok((u64::from_be_bytes(suffix) ^ (1u64 << 63)) as i64)
-}
-
-/// The lowercase names of every column a public index of `table` covers.
-///
-/// A caller that wants to rewrite a row in place asks this first: an update
-/// that touches one of these columns is an index move, which
-/// [`update_row`] does not perform.
-pub fn indexed_columns(table: &TableInfo) -> Vec<String> {
-    let mut names = Vec::new();
-    for index in table.indices.iter_deref() {
-        let index = index.read();
-        for column in index.columns.iter_deref() {
-            names.push(column.read().name.lowercase().to_owned());
-        }
-    }
-    names
 }
 
 /// A string value re-tagged with the collation of the column it belongs to.
@@ -723,30 +664,6 @@ pub fn declared_default(
         table,
         Some(current_timestamp),
     )
-}
-
-/// The byte-authoritative spelling a value reads back with after column
-/// typing. ENUM/SET declarations and stored values are Go strings, so this
-/// path deliberately retains invalid UTF-8 instead of manufacturing text.
-pub fn canonical_bytes(field_type: &FieldType, bytes: &[u8]) -> Result<Vec<u8>, RowEncodeError> {
-    match typed_value(&Datum::Bytes(bytes.to_vec()), field_type)? {
-        Datum::Set(members, _) => Ok(members.name_bytes().to_vec()),
-        Datum::Enum(member, _) => Ok(member.name_bytes().to_vec()),
-        _ => Ok(bytes.to_vec()),
-    }
-}
-
-/// The spelling a value of this column reads back as once stored.
-///
-/// A `SET` is why this exists: the row stores it as a bit mask, so it always
-/// reads back with its element names in *declaration* order, whatever order
-/// the caller wrote them in. A writer comparing a desired value against a
-/// stored one has to compare the two in the same spelling or it rewrites the
-/// row forever.
-pub fn canonical_text(field_type: &FieldType, text: &str) -> Result<String, RowEncodeError> {
-    String::from_utf8(canonical_bytes(field_type, text.as_bytes())?).map_err(|_| {
-        RowEncodeError("the canonical ENUM/SET spelling is not valid UTF-8".to_owned())
-    })
 }
 
 /// The tablecodec view of one stored `TableInfo`.
@@ -820,6 +737,7 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_goruntime::GoString;
     use tidb_tablecodec::table_key::{encode_row_key_with_handle, RecordHandle};
 
     /// Go `GetColOriginDefaultValueWithoutStrictSQLMode` casts the stored text
@@ -943,32 +861,6 @@ mod tests {
     }
 
     #[test]
-    fn system_index_move_checks_destination_and_preserves_unchanged_keys() {
-        let (table, values) = indexed_fixture(true, false);
-        let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
-        let unchanged = rewrite_rowid_row(&table, &key, &values, &values).unwrap();
-        assert_eq!(unchanged.len(), 1);
-        let changed = [(1, Datum::Int(8))].into();
-        let moved = rewrite_rowid_row(&table, &key, &values, &changed).unwrap();
-        assert_eq!(moved.len(), 3);
-        // Go's optimistic `UPDATE` checks the moved entry in place
-        // (`optimizeDupKeyCheckForUpdate`): no lazy check, and the destination
-        // is asserted absent.
-        let prefix = tidb_tablecodec::table_key::encode_table_index_prefix(42, 2);
-        let entry = |kind: BufferMutationOp| {
-            moved
-                .iter()
-                .find(|mutation| mutation.key().starts_with(&prefix) && mutation.kind() == kind)
-                .expect("an index write of that kind")
-        };
-        let retracted = entry(BufferMutationOp::Delete);
-        assert_eq!(retracted.assertion(), tidb_txnkv::AssertionOp::AssertExist);
-        let stored = entry(BufferMutationOp::Set);
-        assert!(!stored.presume_not_exists());
-        assert_eq!(stored.assertion(), tidb_txnkv::AssertionOp::AssertNotExist);
-    }
-
-    #[test]
     fn system_nonpublic_index_suppresses_assertions_but_keeps_unique_check() {
         let (table, values) = indexed_fixture(true, false);
         table.indices.get(0).unwrap().write().state = tidb_model::SchemaState::WRITE_ONLY;
@@ -986,87 +878,6 @@ mod tests {
             index_write(&deleted).assertion(),
             tidb_txnkv::AssertionOp::AssertNone
         );
-    }
-
-    /// `mysql.column_stats_usage`'s shape: `PRIMARY KEY (table_id, column_id)
-    /// CLUSTERED`, plus a secondary index so the test also sees an entry that
-    /// must be written.
-    fn clustered_fixture() -> (TableInfo, RowValues) {
-        use tidb_model::index::{IndexColumn, IndexInfo};
-        let column = |id: i64, name: &str| ColumnInfo {
-            id,
-            name: tidb_ast::CiString::new(name),
-            offset: id - 1,
-            state: tidb_model::SchemaState::PUBLIC,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            ..Default::default()
-        };
-        let index_column = |name: &str, offset: i64| IndexColumn {
-            name: tidb_ast::CiString::new(name),
-            offset,
-            length: -1,
-            ..Default::default()
-        };
-        let primary = IndexInfo {
-            id: 1,
-            name: tidb_ast::CiString::new("PRIMARY"),
-            primary: true,
-            unique: true,
-            state: tidb_model::SchemaState::PUBLIC,
-            columns: vec![index_column("table_id", 0), index_column("column_id", 1)].into(),
-            ..Default::default()
-        };
-        let secondary = IndexInfo {
-            id: 2,
-            name: tidb_ast::CiString::new("v_idx"),
-            state: tidb_model::SchemaState::PUBLIC,
-            columns: vec![index_column("v", 2)].into(),
-            ..Default::default()
-        };
-        (
-            TableInfo {
-                id: 42,
-                state: tidb_model::SchemaState::PUBLIC,
-                is_common_handle: true,
-                common_handle_version: 1,
-                columns: vec![
-                    column(1, "table_id"),
-                    column(2, "column_id"),
-                    column(3, "v"),
-                ]
-                .into(),
-                indices: vec![primary, secondary].into(),
-                ..Default::default()
-            },
-            [(1, Datum::Int(2)), (2, Datum::Int(1)), (3, Datum::Int(7))].into(),
-        )
-    }
-
-    #[test]
-    fn a_clustered_primary_index_owns_no_entry_on_store_or_delete() {
-        let (table, values) = clustered_fixture();
-        let record_key = clustered_record_key(&table, &values).unwrap();
-        for mutations in [
-            store_clustered_row(&table, None, &values).unwrap(),
-            delete_clustered_row(&table, &values).unwrap(),
-        ] {
-            // The record itself and the secondary entry; nothing under the
-            // primary index's id.
-            assert_eq!(mutations.len(), 2, "{mutations:?}");
-            assert!(
-                mutations
-                    .iter()
-                    .any(|mutation| mutation.key() == record_key.as_slice()),
-                "{mutations:?}"
-            );
-            let primary_prefix = tidb_tablecodec::table_key::encode_table_index_prefix(42, 1);
-            assert!(
-                mutations
-                    .iter()
-                    .all(|mutation| !mutation.key().starts_with(&primary_prefix)),
-                "{mutations:?}"
-            );
-        }
     }
 
     #[test]
@@ -1124,8 +935,6 @@ mod tests {
             }
             other => panic!("the raw ENUM did not survive typing: {other:?}"),
         }
-        assert_eq!(canonical_bytes(&enum_type, &[0xff]).unwrap(), [0xff]);
-        assert!(canonical_text(&enum_type, "\u{fffd}").is_err());
 
         let mut set_type = FieldType::new(FieldTypeCode::Set);
         set_type.set_elems(vec![GoString::from([0xfe])]);
