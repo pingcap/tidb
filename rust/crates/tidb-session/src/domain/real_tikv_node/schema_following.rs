@@ -20,9 +20,9 @@ use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 /// and it carries on when a PUT fails (`pkg/ddl/job_worker.go` logs "update
 /// latest schema version failed" and continues outside MDL). The consumers
 /// that cannot run without etcd refuse on their own.
-pub fn connect_etcd_client(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
+pub fn connect_etcd_client(config: &NodeConfig, etcd_addrs: &[String]) -> Option<Arc<EtcdClient>> {
     match EtcdClient::connect_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
+        etcd_addrs.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
         Arc::new(config.cluster_security.clone()),
     ) {

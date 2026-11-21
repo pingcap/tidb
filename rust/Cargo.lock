@@ -8217,8 +8217,10 @@ dependencies = [
 name = "tidb-metaservice"
 version = "0.0.0"
 dependencies = [
+ "tidb-keyspace",
  "tidb-log",
  "tidb-logutil",
+ "tidb-util",
  "tikv-client",
 ]
 
@@ -9540,6 +9542,7 @@ dependencies = [
  "tidb-memoryusagealarm",
  "tidb-meta",
  "tidb-metadef",
+ "tidb-metaservice",
  "tidb-metrics",
  "tidb-model",
  "tidb-monotime",

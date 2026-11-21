@@ -1048,7 +1048,7 @@ mod latch_config_tests {
         let read_timestamp = client.current_timestamp().await.unwrap();
         client.attach_safe_point_cache(Arc::new(crate::tikv::TxnSafePointCache::new(
             read_timestamp.version() + 1,
-            std::time::SystemTime::now(),
+            std::time::Instant::now(),
         )));
         let snapshot = client.kv_snapshot(read_timestamp);
         assert!(matches!(

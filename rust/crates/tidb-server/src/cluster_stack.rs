@@ -135,7 +135,10 @@ pub fn cluster_session_stack(
     // Go `domain.NewDomain`'s `etcdClient`: the node's etcd client, which
     // every syncer, notifier, watch and owner below but the DDL owner
     // manager shares.
-    let unprefixed_etcd = tidb_session::domain::real_tikv_node::connect_etcd_client(config);
+    let etcd_addrs = etcd_addrs(&tikv_store)
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let unprefixed_etcd =
+        tidb_session::domain::real_tikv_node::connect_etcd_client(config, &etcd_addrs);
     // Go `Domain.Init`: KV, transactions and watches use the opened store's
     // namespace. Keep an unprefixed handle for cluster-wide metadata.
     let etcd = unprefixed_etcd.as_ref().map(|client| {
@@ -1292,4 +1295,30 @@ impl tidb_domain_infosync::min_start_ts::InfoschemaMinTs for InfoCacheMinTs {
     fn get_and_reset_recent_info_schema_ts(&self, now: u64) -> u64 {
         self.0.get_and_reset_recent_info_schema_ts(now)
     }
+}
+
+/// Go `tikvStore.EtcdAddrs`: the etcd-compatible metadata endpoints for the
+/// current keyspace -- its meta service group's addresses, PD's own members
+/// for a keyspace of the global group.
+fn etcd_addrs(store: &tidb_txnkv::driver::tikv_store::TikvStore) -> Result<Vec<String>, String> {
+    struct StorePdClient<'a>(&'a tidb_txnkv::driver::tikv_store::TikvStore);
+
+    impl tidb_metaservice::etcd::PdClient for StorePdClient<'_> {
+        fn get_all_members(&self) -> Result<Vec<Vec<String>>, String> {
+            let pd = self.0.store().pd_client();
+            self.0
+                .block_on(async move { pd.get_all_members().await })
+                .map(|response| {
+                    response.members.iter().map(|member| member.client_urls.clone()).collect()
+                })
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    let (_, group_addrs) = tidb_metaservice::etcd::get_info_and_group_addrs(
+        Some(&StorePdClient(store)),
+        store.store().keyspace_meta(),
+    )
+    .map_err(|error| format!("get meta service info: {error}"))?;
+    Ok(group_addrs)
 }

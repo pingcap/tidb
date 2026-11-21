@@ -20,7 +20,7 @@
 
 #![allow(missing_docs)]
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use tidb_terror::TerrorClass;
 use tidb_errno as tidb;
@@ -34,7 +34,7 @@ use tikv_client::tikv::{TxnSafePointCache, GC_CPU_TIME_INACCURACY_BOUND, GC_STAT
 fn a_read_below_the_safe_point_reaches_sql_as_its_own_error_code() {
     // The whole point of the classification: this must not arrive as a generic
     // transport or region failure that a caller would retry forever.
-    let cache = TxnSafePointCache::new(450_000_000_000, SystemTime::now());
+    let cache = TxnSafePointCache::new(450_000_000_000, Instant::now());
     let violation = VisibilityError::from_client_error(
         cache
             .check_visibility(440_000_000_000)
@@ -74,7 +74,7 @@ fn a_read_below_the_safe_point_reaches_sql_as_its_own_error_code() {
 fn a_stale_cache_is_a_pd_timeout_not_a_gc_abort() {
     // client-go returns ErrPDServerTimeout, not ErrTxnAbortedByGC, when it
     // cannot prove either way: the two are diagnosed differently.
-    let seeded_at = SystemTime::now();
+    let seeded_at = Instant::now();
     let cache = TxnSafePointCache::new(450, seeded_at);
     let violation = VisibilityError::from_client_error(
         cache

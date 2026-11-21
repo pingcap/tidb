@@ -107,7 +107,7 @@ mod transaction_buffer_tests {
 
         store
             .store()
-            .update_txn_safe_point_cache(500, std::time::SystemTime::now());
+            .update_txn_safe_point_cache(500, std::time::Instant::now());
         assert_eq!(visibility(500), Ok(()));
         assert_eq!(
             visibility(499),

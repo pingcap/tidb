@@ -38,6 +38,8 @@ pub enum MetaServiceError {
     /// Go `ErrNilKeyspaceMeta`: the caller passed a nil keyspace meta to
     /// `GetGroup`.
     NilKeyspaceMeta,
+    /// An error of the PD client or of the keyspace codec, with Go's text.
+    Other(String),
     /// Go `ErrInvalidGroupID`.
     InvalidGroupId,
     /// Go `ErrKeyspaceLevelGCRequired`, annotated with the keyspace and the
@@ -60,6 +62,7 @@ impl std::fmt::Display for MetaServiceError {
             Self::InvalidGroupId => f.write_str(
                 "invalid meta service group id: it must contain at least one letter and only contain letters, digits, '-' or '_'",
             ),
+            Self::Other(message) => f.write_str(message),
             Self::KeyspaceLevelGcRequired { keyspace, group_id } => write!(
                 f,
                 "keyspace {keyspace:?} configured meta service group {group_id:?}: meta service group requires keyspace-level GC"
@@ -69,6 +72,8 @@ impl std::fmt::Display for MetaServiceError {
 }
 
 impl std::error::Error for MetaServiceError {}
+
+pub mod etcd;
 
 /// Go `validateGroupID` (`groupIDPattern`): only ASCII letters, digits, '-'
 /// and '_', with at least one letter, so pure numeric IDs are rejected. The

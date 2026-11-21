@@ -1369,7 +1369,7 @@ mod tests {
     /// requires, instead of becoming a generic read diagnostic.
     #[test]
     fn a_gc_aborted_snapshot_read_keeps_its_identity() {
-        let cache = tikv_client::tikv::TxnSafePointCache::new(450, std::time::SystemTime::now());
+        let cache = tikv_client::tikv::TxnSafePointCache::new(450, std::time::Instant::now());
         let aborted = cache.check_visibility(449).unwrap_err();
         let expected = OptimisticCoordinatorError::Visibility(VisibilityError::TxnAbortedByGc {
             txn_start_ts: 449,

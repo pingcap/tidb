@@ -17104,7 +17104,7 @@ mod tests {
                 panic!("unexpected safe-point request")
             },
         )));
-        let cache = Arc::new(crate::tikv::TxnSafePointCache::new(0, SystemTime::now()));
+        let cache = Arc::new(crate::tikv::TxnSafePointCache::new(0, Instant::now()));
         let make_transaction = |start_timestamp| {
             let mut transaction = Transaction::new(
                 Timestamp::from_version(start_timestamp),
@@ -17122,7 +17122,7 @@ mod tests {
         let key = b"~safepoint/key00000000".to_vec();
         let mut get_transaction = make_transaction(100);
         assert!(get_transaction.get(key.clone()).await.unwrap().is_some());
-        cache.update(110, SystemTime::now());
+        cache.update(110, Instant::now());
         get_transaction.clean_snapshot_cache([Key::from(key.clone())]);
         assert!(matches!(
             get_transaction.get(key.clone()).await.unwrap_err(),
@@ -17130,7 +17130,7 @@ mod tests {
         ));
 
         let mut scan_transaction = make_transaction(200);
-        cache.update(210, SystemTime::now());
+        cache.update(210, Instant::now());
         let scan_error = match scan_transaction.scan(b"~safepoint/".to_vec().., 10).await {
             Ok(_) => panic!("scan older than the safe point must fail"),
             Err(error) => error,
@@ -17138,7 +17138,7 @@ mod tests {
         assert!(matches!(scan_error, Error::TransactionAbortedByGc(_)));
 
         let mut batch_transaction = make_transaction(300);
-        cache.update(310, SystemTime::now());
+        cache.update(310, Instant::now());
         let batch_error = match batch_transaction
             .batch_get((0..10).map(|index| format!("~safepoint/key{index:08}")))
             .await

@@ -11,7 +11,7 @@ use std::future::Future;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -475,18 +475,22 @@ pub async fn load_safe_point(kv: &dyn SafePointKv) -> Result<u64> {
 }
 
 /// Cached transaction safe point and its source freshness timestamp.
+///
+/// The freshness is a monotonic reading, as client-go's `spTime` under
+/// `time.Since`: a wall-clock step (a suspended machine, a clock adjustment)
+/// does not age the cache.
 pub struct TxnSafePointCache {
-    state: RwLock<(u64, SystemTime)>,
+    state: RwLock<(u64, Instant)>,
 }
 
 impl TxnSafePointCache {
-    pub fn new(safe_point: u64, now: SystemTime) -> Self {
+    pub fn new(safe_point: u64, now: Instant) -> Self {
         Self {
             state: RwLock::new((safe_point, now)),
         }
     }
 
-    pub fn update(&self, safe_point: u64, now: SystemTime) {
+    pub fn update(&self, safe_point: u64, now: Instant) {
         *self.state.write().expect("safe-point cache lock poisoned") = (safe_point, now);
     }
 
@@ -494,9 +498,9 @@ impl TxnSafePointCache {
         self.state.read().expect("safe-point cache lock poisoned").0
     }
 
-    pub fn check_visibility_at(&self, start_timestamp: u64, now: SystemTime) -> Result<()> {
+    pub fn check_visibility_at(&self, start_timestamp: u64, now: Instant) -> Result<()> {
         let (safe_point, updated) = *self.state.read().expect("safe-point cache lock poisoned");
-        let elapsed = now.duration_since(updated).unwrap_or_default();
+        let elapsed = now.saturating_duration_since(updated);
         if elapsed > GC_STATE_CACHE_INTERVAL - GC_CPU_TIME_INACCURACY_BOUND {
             return Err(crate::error::new_pd_server_timeout(
                 "start timestamp may fall behind safe point",
@@ -516,7 +520,7 @@ impl TxnSafePointCache {
     }
 
     pub fn check_visibility(&self, start_timestamp: u64) -> Result<()> {
-        self.check_visibility_at(start_timestamp, SystemTime::now())
+        self.check_visibility_at(start_timestamp, Instant::now())
     }
 }
 
@@ -612,7 +616,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
             uuid: format!("tikv-{cluster_id}"),
             cluster_id,
             pd,
-            safe_point: Arc::new(TxnSafePointCache::new(0, SystemTime::now())),
+            safe_point: Arc::new(TxnSafePointCache::new(0, Instant::now())),
             safe_ts: RwLock::new(SafeTsState::default()),
             provider: RwLock::new(None),
             compatible_loader: AsyncMutex::new(None),
@@ -626,7 +630,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
             keyspace_meta,
         });
         let safe_point = runtime.load_txn_safe_point().await?;
-        runtime.safe_point.update(safe_point, SystemTime::now());
+        runtime.safe_point.update(safe_point, Instant::now());
         runtime.start_workers().await;
         Ok(runtime)
     }
@@ -649,7 +653,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
             uuid: format!("tikv-{cluster_id}"),
             cluster_id,
             pd,
-            safe_point: Arc::new(TxnSafePointCache::new(0, SystemTime::now())),
+            safe_point: Arc::new(TxnSafePointCache::new(0, Instant::now())),
             safe_ts: RwLock::new(SafeTsState::default()),
             provider: RwLock::new(None),
             compatible_loader: AsyncMutex::new(Some(safe_point_kv)),
@@ -663,7 +667,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
             keyspace_meta,
         });
         let safe_point = runtime.load_txn_safe_point().await?;
-        runtime.safe_point.update(safe_point, SystemTime::now());
+        runtime.safe_point.update(safe_point, Instant::now());
         runtime.start_workers().await;
         Ok(runtime)
     }
@@ -683,7 +687,7 @@ impl<PdC: PdClient> StoreRuntime<PdC> {
                 };
                 match runtime.load_txn_safe_point().await {
                     Ok(value) => {
-                        runtime.safe_point.update(value, SystemTime::now());
+                        runtime.safe_point.update(value, Instant::now());
                         delay = POLL_TXN_SAFE_POINT_INTERVAL;
                     }
                     // `load_txn_safe_point` logs its failure as client-go does.
@@ -1574,7 +1578,7 @@ impl<PdC: PdClient> KvStore<PdC> {
     }
 
     #[doc(hidden)]
-    pub fn update_txn_safe_point_cache(&self, safe_point: u64, now: SystemTime) {
+    pub fn update_txn_safe_point_cache(&self, safe_point: u64, now: Instant) {
         self.runtime.safe_point_cache().update(safe_point, now);
     }
 
@@ -2775,7 +2779,7 @@ mod tests {
 
     #[test]
     fn visibility_rejects_stale_cache_and_old_transactions() {
-        let now = SystemTime::now();
+        let now = Instant::now();
         let cache = TxnSafePointCache::new(100, now);
         assert!(cache.check_visibility_at(100, now).is_ok());
         assert!(matches!(
@@ -3347,7 +3351,7 @@ mod tests {
         transaction.set_snapshot_runtime_stats(Some(stats.clone()));
         store.update_txn_safe_point_cache(
             transaction.start_timestamp().version() + 1,
-            SystemTime::now(),
+            Instant::now(),
         );
 
         let error = transaction.get(b"k".to_vec()).await.unwrap_err();

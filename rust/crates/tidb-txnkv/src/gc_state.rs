@@ -161,7 +161,7 @@ mod tests {
     /// each keeps its own tier.
     #[test]
     fn client_store_failures_become_the_driver_tiers() {
-        let cache = tikv_client::tikv::TxnSafePointCache::new(450, std::time::SystemTime::now());
+        let cache = tikv_client::tikv::TxnSafePointCache::new(450, std::time::Instant::now());
         let aborted = cache.check_visibility(449).unwrap_err();
         assert_eq!(
             VisibilityError::from_client_error(aborted),
@@ -173,7 +173,7 @@ mod tests {
         let stale = cache
             .check_visibility_at(
                 u64::MAX,
-                std::time::SystemTime::now() + std::time::Duration::from_secs(100),
+                std::time::Instant::now() + std::time::Duration::from_secs(100),
             )
             .unwrap_err();
         assert_eq!(
