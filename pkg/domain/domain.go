@@ -460,7 +460,10 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
+// fetchAllSchemasWithTables fetches the databases and their tables from m in
+// the form a builder of the given schema kind needs: for v2, only the names of
+// the tables of the databases that are loaded on demand.
+func (do *Domain) fetchAllSchemasWithTables(m meta.Reader, useV2 bool) ([]*model.DBInfo, error) {
 	var allSchemas []*model.DBInfo
 	var err error
 	if do.schemaFilter != nil {
@@ -481,7 +484,7 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 		return nil, nil
 	}
 
-	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
+	splittedSchemas := do.splitForConcurrentFetch(allSchemas, useV2)
 	concurrency := min(len(splittedSchemas), 128)
 
 	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
@@ -489,7 +492,7 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		eg.Go(func() error {
-			return do.fetchSchemasWithTables(ectx, ss, m)
+			return do.fetchSchemasWithTables(ectx, ss, m, useV2)
 		})
 	}
 	if err := eg.Wait(); err != nil {
@@ -503,10 +506,10 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 // so we decrease the concurrency.
 const fetchSchemaConcurrency = 1
 
-func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
+func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo, useV2 bool) [][]*model.DBInfo {
 	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+	if useV2 && schemaCnt > 1000 {
 		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupCnt = 8
 	}
@@ -523,7 +526,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader) error {
+func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, useV2 bool) error {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
@@ -535,7 +538,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if useV2 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
@@ -684,9 +687,11 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 
 // fullLoadInfoSchema builds the schema of neededSchemaVersion from m into
 // data. It neither preloads masking policies nor inserts the schema into the
-// cache.
+// cache. The tables are fetched in the form of the schema kind useV2 is built
+// as, even if tidb_schema_cache_size changes during the load.
 func (do *Domain) fullLoadInfoSchema(m meta.Reader, neededSchemaVersion int64, startTS uint64, data *infoschema.Data, useV2 bool, startTime time.Time) (infoschema.InfoSchema, error) {
-	schemas, err := do.fetchAllSchemasWithTables(m)
+	failpoint.InjectCall("beforeFullLoadFetchSchemas")
+	schemas, err := do.fetchAllSchemasWithTables(m, useV2)
 	if err != nil {
 		return nil, err
 	}
@@ -790,9 +795,7 @@ func (do *Domain) GetHistoricalInfoSchema(snapshotTS uint64) (infoschema.InfoSch
 		return is, err
 	}
 	// Build the newer schema on its own data, so neither the cache nor the
-	// data shared by infoschema v2 sees it before this node reloads. The
-	// schema kind follows how fullLoadInfoSchema fetches the tables: with
-	// the schema cache enabled, it only fetches their names for v2 to load.
+	// data shared by infoschema v2 sees it before this node reloads.
 	useV2 := variable.SchemaCacheSize.Load() > 0
 	is, err := do.fullLoadInfoSchema(m, neededSchemaVersion, snapshotTS, infoschema.NewData(), useV2, time.Now())
 	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()

@@ -34,6 +34,7 @@ import (
 	core "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -431,9 +432,10 @@ func TestMaskingPolicyUnverifiedSnapshotKeepsPolicyTS(t *testing.T) {
 	historical.MustQuery("select c from t_unverified").Check(testkit.Rows("XXXXXX"))
 }
 
-func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
-	// Keep the newest cached schema stale, as on a node that has not yet
-	// loaded the schema versions committed by another node.
+// newLaggingSchemaCache returns a node whose newest cached schema is the one
+// at t0, as on a node that has not yet loaded the schema versions another
+// node committed after t0: tables t_new and t_mask, and a policy on t_mask.
+func newLaggingSchemaCache(t *testing.T) (kv.Storage, *domain.Domain, infoschema.InfoSchema, uint64) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -464,6 +466,12 @@ func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
 	stale := b.Build(t0.Ver)
 	dom.InfoCache().Reset(16)
 	dom.InfoCache().Insert(stale, t0.Ver)
+	return store, dom, stale, t0.Ver
+}
+
+func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
+	store, dom, stale, t0Ver := newLaggingSchemaCache(t)
+	ctx := context.Background()
 	// Let tidb_read_staleness pick a time after the tables were created.
 	time.Sleep(1500 * time.Millisecond)
 	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -502,7 +510,7 @@ func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
 	historical.MustQuery(fmt.Sprintf(tablesSQL, "")).Check(testkit.Rows("0"))
 
 	// A historical read at t0 still gets the cached schema of t0.
-	is, err := dom.GetHistoricalInfoSchema(t0.Ver)
+	is, err := dom.GetHistoricalInfoSchema(t0Ver)
 	require.NoError(t, err)
 	require.Same(t, stale, is)
 
@@ -514,4 +522,26 @@ func TestHistoricalReadLaggingSchemaCache(t *testing.T) {
 	is, err = dom.GetSnapshotInfoSchema(t1.Ver)
 	require.NoError(t, err)
 	require.Same(t, stale, is)
+}
+
+func TestHistoricalReadSchemaCacheSizeChange(t *testing.T) {
+	store, dom, stale, _ := newLaggingSchemaCache(t)
+	original := variable.SchemaCacheSize.Load()
+	t.Cleanup(func() { variable.SchemaCacheSize.Store(original) })
+	variable.SchemaCacheSize.Store(0)
+	// tidb_schema_cache_size is enabled after the historical read has decided
+	// to build a v1 schema, but before it fetches the tables.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/beforeFullLoadFetchSchemas", func() {
+		variable.SchemaCacheSize.Store(512 << 20)
+	})
+	t1, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+
+	historical := testkit.NewTestKit(t, store)
+	historical.MustExec("use test")
+	historical.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", t1.Ver))
+	historical.MustQuery("select count(*) from t_new").Check(testkit.Rows("0"))
+	historical.MustQuery("select c from t_mask").Check(testkit.Rows("XXXXXX"))
+	require.Same(t, stale, dom.InfoSchema())
+	require.Same(t, stale, dom.InfoCache().GetLatest())
 }

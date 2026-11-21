@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,5 +55,5 @@ func (do *Domain) MustGetPartitionAt(t *testing.T, dbName, tableName string, idx
 
 // FetchAllSchemasWithTables calls the internal function. Only used in unit tests.
 func (do *Domain) FetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
-	return do.fetchAllSchemasWithTables(m)
+	return do.fetchAllSchemasWithTables(m, variable.SchemaCacheSize.Load() > 0)
 }
