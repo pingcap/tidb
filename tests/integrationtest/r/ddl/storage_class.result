@@ -181,6 +181,17 @@ table_name	partition_name	TIDB_STORAGE_CLASS
 t	p2000	IA
 t	pmax	STANDARD
 drop table if exists t;
+create table t (dt date) ENGINE_ATTRIBUTE = '{"storage_class": [{"tier":"STANDARD", "names_in":["p1999"]}, {"tier":"IA", "less_than":"INTERVAL 1 DAY"}]}' partition by range columns (dt) (partition p1999 values less than ('1999-01-01'), partition p2000 values less than ('2000-01-01'));
+alter table t add partition (partition p2001 values less than ('2001-01-01'), partition p9000 values less than ('9000-01-01'));
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+table_name	partition_name	TIDB_STORAGE_CLASS
+t	p1999	STANDARD
+t	p2000	IA
+t	p2001	IA
+t	p9000	STANDARD
+alter table t partition by range (year(dt)) (partition q0 values less than (2000), partition qmax values less than maxvalue);
+Error 8271 (HY000): Invalid storage class: 'less_than' interval only supports RANGE COLUMNS(DATE/DATETIME), RANGE(TO_DAYS(col)) or RANGE(UNIX_TIMESTAMP(col)) partitions
+drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 1 DAY"}}' partition by range (id) (partition p0 values less than (100));
 Error 8271 (HY000): Invalid storage class: 'less_than' interval only supports RANGE COLUMNS(DATE/DATETIME), RANGE(TO_DAYS(col)) or RANGE(UNIX_TIMESTAMP(col)) partitions
 select @@global.tidb_storage_class_interval_recalc_period;
