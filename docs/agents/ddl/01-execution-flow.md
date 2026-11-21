@@ -56,6 +56,7 @@ Entry: `pkg/ddl/job_scheduler.go:OnBecomeOwner`
 
 - DDL uses an owner manager (`owner.Manager`, etcd-backed) to elect exactly one owner.
 - When a node becomes owner, it starts `jobScheduler` and worker pools.
+- The owner also runs background loops for storage class: the transition poller (next-gen only) and the interval recalculation (`storage_class_interval_recalc.go`). Recalculation submits `ActionModifyEngineAttribute` jobs straight into `limitJobCh`; no session waits for them, so they skip the `DoDDLJobWrapper` wait loop above.
 - When it retires, scheduler/workers are stopped; another node will take over.
 
 This is why DDL execution must be resumable and driven by persistent job state.

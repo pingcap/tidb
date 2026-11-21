@@ -176,7 +176,7 @@ partition by range (id) (partition p0 values less than (100), partition p1 value
 	require.NoError(t, err)
 }
 
-func buildStorageClassTableInfo(t *testing.T, ctx *metabuild.Context, sql string) *model.TableInfo {
+func buildStorageClassTableInfo(t testing.TB, ctx *metabuild.Context, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	createStmt, ok := stmt.(*ast.CreateTableStmt)

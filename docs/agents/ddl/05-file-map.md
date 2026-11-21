@@ -28,6 +28,7 @@ This is a pragmatic map from common DDL areas to `pkg/ddl/` files. It’s intent
 | Table locks | `pkg/ddl/table_lock.go` |
 | Table mode (e.g. cache) | `pkg/ddl/table_mode.go` |
 | TTL | `pkg/ddl/ttl.go` |
+| Storage class (rules, transitions, interval recalculation) | `pkg/ddl/storage_class*.go`, `pkg/ddl/engine_attribute.go` |
 | Split region for table/index | `pkg/ddl/split_region.go`, `pkg/ddl/table_split_test.go` |
 | Repair table | `pkg/ddl/repair_table*.go` |
 | Rolling back / error handling helpers | `pkg/ddl/rollingback*.go` |

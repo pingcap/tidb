@@ -112,6 +112,11 @@ func (l *ownerListener) OnBecomeOwner() {
 		eventPublishStore:             l.ddl.eventPublishStore,
 		storageClassTransitionManager: l.ddl.storageClassTransitionManager,
 		storageClassTransitionReadyCh: make(chan struct{}),
+		storageClassIntervalRecalculator: &storageClassIntervalRecalculator{
+			infoCache: l.ddl.infoCache,
+			sessPool:  l.ddl.sessPool,
+			executor:  l.ddlExecutor,
+		},
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -150,6 +155,9 @@ type jobScheduler struct {
 	storageClassTransitionManager *storageClassTransitionManager
 	storageClassTransitionReady   atomic.Bool
 	storageClassTransitionReadyCh chan struct{}
+	// storageClassIntervalRecalculator runs separately from the transition
+	// poller so a slow round does not delay transition progress.
+	storageClassIntervalRecalculator *storageClassIntervalRecalculator
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -199,6 +207,17 @@ func (s *jobScheduler) start() {
 			select {
 			case <-s.storageClassTransitionReadyCh:
 				s.storageClassTransitionManager.run(s.schCtx, s.sessPool)
+			case <-s.schCtx.Done():
+			}
+		})
+	}
+	// Unlike the transition poller, recalculation only submits DDL jobs, so it
+	// runs in both kernels; the jobs stage TiKV transitions only in next-gen.
+	if s.storageClassIntervalRecalculator != nil {
+		s.wg.RunWithLog(func() {
+			select {
+			case <-s.storageClassTransitionReadyCh:
+				s.storageClassIntervalRecalculator.run(s.schCtx)
 			case <-s.schCtx.Done():
 			}
 		})

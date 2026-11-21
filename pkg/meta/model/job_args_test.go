@@ -1450,3 +1450,24 @@ func TestModifyColumnsArgs(t *testing.T) {
 	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
 	require.Len(t, rawArgs, 5)
 }
+
+func TestModifyTableEngineAttributeArgs(t *testing.T) {
+	for _, inArgs := range []*ModifyTableEngineAttributeArgs{
+		{EngineAttribute: `{"storage_class":"IA"}`},
+		{EngineAttribute: `{"storage_class":{"tier":"IA","less_than":"INTERVAL 1 YEAR"}}`, IntervalRecalculation: true},
+	} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyEngineAttribute)))
+			args, err := GetModifyTableEngineAttributeArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
+	}
+
+	// A V1 job submitted by an older version has only the engine attribute.
+	oldJob := &Job{Version: JobVersion1, Type: ActionModifyEngineAttribute, RawArgs: json.RawMessage(`["{\"storage_class\":\"IA\"}"]`)}
+	args, err := GetModifyTableEngineAttributeArgs(oldJob)
+	require.NoError(t, err)
+	require.Equal(t, &ModifyTableEngineAttributeArgs{EngineAttribute: `{"storage_class":"IA"}`}, args)
+}
