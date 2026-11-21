@@ -20,6 +20,13 @@ select _tidb_rowid from s;
 update s set a = 2 where _tidb_rowid = 1;
 -- error 1054
 delete from s where _tidb_rowid = 1;
+create table cs (id varchar(10) primary key clustered);
+-- error 1054
+insert cs (id, _tidb_rowid) values ('x', 1);
+-- error 1054
+insert cs (id, _tidb_rowid) values ('x', null);
+-- error 1054
+replace cs (id, _tidb_rowid) values ('x', 1);
 # Make sure "AllowWriteRowID" is a session variable.
 connect (conn1, localhost, root,, executor__rowid);
 connection conn1;
