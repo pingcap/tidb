@@ -44,11 +44,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/mock/gomock"
@@ -302,6 +304,22 @@ func TestProcessChunkWith(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 
 	keyspace := store.GetCodec().GetKeyspace()
+	// Build the expected KVs from explicit rows and the actual table ID, since
+	// bootstrap system tables can change the ID assigned to t.
+	expectedChecksum := func(t *testing.T, tableID int64, rows [][]types.Datum) verify.KVChecksum {
+		t.Helper()
+		checksum := verify.NewKVChecksumWithKeyspace(keyspace)
+		encoder := rowcodec.Encoder{Enable: true}
+		for i, row := range rows {
+			value, err := encoder.Encode(time.UTC, []int64{1, 2, 3}, row, nil, nil)
+			require.NoError(t, err)
+			checksum.UpdateOne(common.KvPair{
+				Key: tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i+1)),
+				Val: value,
+			})
+		}
+		return *checksum
+	}
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
@@ -317,7 +335,10 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, expectedChecksum(t, ti.Table.Meta().ID, [][]types.Datum{
+			types.MakeDatums(4, 5, 6),
+			types.MakeDatums(7, 8, 9),
+		}), *checksumMap[verify.DataKVGroupID])
 	})
 
 	t.Run("query chunk", func(t *testing.T) {
@@ -347,7 +368,11 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 3659398730398772588), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, expectedChecksum(t, ti.Table.Meta().ID, [][]types.Datum{
+			types.MakeDatums(1, 2, 3),
+			types.MakeDatums(4, 5, 6),
+			types.MakeDatums(7, 8, 9),
+		}), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

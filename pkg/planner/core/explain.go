@@ -80,7 +80,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
@@ -194,7 +194,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
 		if !normalized {
@@ -412,7 +412,7 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	enableRedactLog := p.SCtx().GetSessionVars().PlanRedactLog()
 	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.schema, enableRedactLog)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
@@ -423,7 +423,7 @@ func (p *PhysicalProjection) ExplainInfo() string {
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	enableRedactLog := p.SCtx().GetSessionVars().PlanRedactLog()
 	for i, oneL := range p.LevelExprs {
 		if i == 0 {
 			sb.WriteString("level-projection:")
@@ -475,7 +475,7 @@ func (p *PhysicalSort) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
 		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
@@ -655,7 +655,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {
@@ -798,7 +798,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 		}
 		buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	}
-	switch p.SCtx().GetSessionVars().EnableRedactLog {
+	switch p.SCtx().GetSessionVars().PlanRedactLog() {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 		if p.PrefixCol != nil {
@@ -858,7 +858,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop
 			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo(evalCtx))
 		}
 	} else {
-		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		switch p.SCtx().GetSessionVars().PlanRedactLog() {
 		case perrors.RedactLogDisable:
 			fmt.Fprintf(buffer, "%d", bound.Num)
 		case perrors.RedactLogMarker:

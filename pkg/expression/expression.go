@@ -62,6 +62,10 @@ type BuildOptions struct {
 	SourceTable *model.TableInfo
 	// AllowCastArray specifies whether to allow casting to an array type.
 	AllowCastArray bool
+	// DisableFold preserves the expression tree while a caller classifies its dependencies.
+	DisableFold bool
+	// DeferredFunctions are evaluated in the execution context rather than at build time.
+	DeferredFunctions map[string]struct{}
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
 }
@@ -85,6 +89,17 @@ func WithInputSchemaAndNames(schema *Schema, names types.NameSlice, table *model
 		options.InputNames = names
 		options.SourceTable = table
 	}
+}
+
+// WithDisableConstantFolding preserves functions when building a simple expression.
+func WithDisableConstantFolding() BuildOption {
+	return func(options *BuildOptions) { options.DisableFold = true }
+}
+
+// WithDeferredFunctions keeps the specified functions as deferred constants.
+// Callers must ensure each function is constant within a statement and has no column arguments.
+func WithDeferredFunctions(functions map[string]struct{}) BuildOption {
+	return func(options *BuildOptions) { options.DeferredFunctions = functions }
 }
 
 // WithAllowCastArray specifies whether to allow casting to an array type.

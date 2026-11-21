@@ -78,6 +78,11 @@ type ProcessInfo struct {
 	MaxExecutionTime uint64
 	State            uint16
 	Command          byte
+	// RedactPlanValues is set when the statement of Plan reads a column that
+	// a masking policy masks for the session. PlanExplainRows was rendered
+	// without the data values then; Plan itself still holds them and must
+	// not be rendered again by another session.
+	RedactPlanValues bool
 }
 
 // Clone return a shallow clone copy of this processInfo.

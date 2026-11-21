@@ -38,7 +38,7 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
 	require.NotEmpty(t, names)
-	require.Equal(t, "12dd16fda61c67b3dd74d38e0408df30855afaa5781dbdc14348987c59d7167c", hex.EncodeToString(sum[:]))
+	require.Equal(t, "4fa92d19decd40417f3a65fa797971780504db624602ea4220724dde11927090", hex.EncodeToString(sum[:]))
 
 	internalScalarNames := map[string]struct{}{
 		ast.Cast: {},

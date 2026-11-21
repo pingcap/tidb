@@ -80,6 +80,8 @@ const GlobalWithoutColumnPos = -1
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoids the optimization and coprocessor cost.
 type PointGetPlan struct {
+	// MaskingExprs are evaluated only when returning SELECT results.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
 	baseimpl.Plan
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
@@ -214,7 +216,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("handle:?")
 		} else {
-			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
+			redactMode := p.SCtx().GetSessionVars().PlanRedactLog()
 			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
 			if redactOn {
@@ -311,6 +313,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 		sum += p.handleFieldType.MemoryUsage()
 	}
 
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	for _, datum := range p.IndexValues {
 		sum += datum.MemUsage()
 	}
@@ -446,6 +449,8 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
+	// MaskingExprs are evaluated only when returning SELECT results.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
 	baseSchemaProducer
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
@@ -645,6 +650,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 		sum += p.HandleType.MemoryUsage()
 	}
 
+	sum += maskingExprsMemoryUsage(p.MaskingExprs)
 	for _, constant := range p.HandleParams {
 		sum += constant.MemoryUsage()
 	}
@@ -942,6 +948,13 @@ func appendVisitInfo4Test(vs []visitInfo) {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
+	// Fast plans return before the normal planner's table-mode check. A table
+	// that is not in Normal mode must remain inaccessible on these paths too.
+	for _, tbl := range node.GetResolveContext().GetTableNames() {
+		if tbl.TableInfo != nil && tbl.TableInfo.Mode != model.TableModeNormal {
+			return nil
+		}
+	}
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		// or Fix52592 is turn on to disable fast path for select, update and delete
@@ -1429,6 +1442,18 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	p.dbName = dbName
 	p.unfoldFromWildCard = unfold
 	p.colsInWhereClause = whereColNames
+
+	// Build masking expressions for columns with masking policies.
+	// Only apply masking for real SELECT queries (not DML synthetic SELECTs
+	// which have empty Fields).
+	if is := ctx.GetInfoSchema(); is != nil && len(selStmt.Fields.Fields) > 0 {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+
 	return p
 }
 
@@ -1495,6 +1520,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}()
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
+	isSelect := len(selStmt.Fields.Fields) > 0
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
 		indexIsAvailableByHints(
 			ctx.GetSessionVars().CurrentDB,
@@ -1507,7 +1533,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
-			return p
+			return maybeApplyPointGetMasking(ctx, p, isSelect, schema, names, tbl)
 		}
 
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
@@ -1517,12 +1543,13 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		p.HandleConstant = handlePair.con
 		p.HandleColOffset = pkColOffset
 		p.PartitionNames = tblName.PartitionNames
-		return p
+		return maybeApplyPointGetMasking(ctx, p, isSelect, schema, names, tbl)
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
+	p = checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
+	return maybeApplyPointGetMasking(ctx, p, isSelect, schema, names, tbl)
 }
 
 func pairsToColumnNames(pairs []nameValuePair) (res []string) {
@@ -1708,6 +1735,9 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	}
 	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
+
+	// Build masking expressions for columns with masking policies.
+	// Only apply masking for top-level result-producing SELECT statements.
 	return p
 }
 
@@ -2480,4 +2510,130 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	return &col.Name.Name
+}
+
+// maskingExprsMemoryUsage returns the memory usage of the masking expressions
+// that a point get plan retains, for plan cache accounting.
+func maskingExprsMemoryUsage(exprs []expression.Expression) (sum int64) {
+	sum = int64(cap(exprs)) * size.SizeOfInterface
+	for _, expr := range exprs {
+		if expr != nil {
+			sum += expr.MemoryUsage()
+		}
+	}
+	return sum
+}
+
+// buildMaskingExprsForPointGet builds masking expressions for PointGetPlan/BatchPointGetPlan.
+// Their result datums must fit the fast executor's original column representation.
+func buildMaskingExprsForPointGet(
+	ctx context.Context,
+	sctx base.PlanContext,
+	is infoschema.InfoSchema,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	tbl *model.TableInfo,
+) ([]expression.Expression, error) {
+	if is == nil || schema == nil || len(names) == 0 || tbl == nil || tbl.TempTableType != model.TempTableNone {
+		return nil, nil
+	}
+	sv := sctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		return nil, nil
+	}
+	if !infoschema.MaskingPoliciesLoaded(is) {
+		return nil, errors.New("masking policy cache requires normal planning")
+	}
+	hasPolicies, err := is.HasMaskingPolicies(ctx)
+	if err != nil || !hasPolicies {
+		return nil, err
+	}
+	cols := schema.Columns
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := is.SchemaMetaVersion()
+	hasMask := false
+	for i, col := range cols {
+		policy, colInfo, err := findMaskingPolicyForColumn(ctx, is, tbl, names[i])
+		if err != nil {
+			return nil, err
+		}
+		if policy == nil || colInfo == nil {
+			continue
+		}
+		if policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(sctx.GetExprCtx(), sv, schemaVersion, policy, tbl, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+		failed, masked := expression.ColumnSubstituteAll(sctx.GetExprCtx(), expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		if failed {
+			return nil, errors.New("masking policy cannot be preserved through expression substitution")
+		}
+		maskedType := masked.GetType(sctx.GetExprCtx().GetEvalCtx())
+		// Fast executors retain both the original chunk layout and result metadata,
+		// including integer width, string length/charset and temporal precision.
+		// Scalar real expressions produce float64 datums even for FLOAT columns.
+		if !maskedType.Equal(col.RetType) || col.RetType.GetType() == mysql.TypeFloat ||
+			mysql.HasNotNullFlag(maskedType.GetFlag()) != mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+			return nil, errors.New("masking result requires a different column representation")
+		}
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
+// maybeApplyPointGetMasking builds and assigns masking expressions to a PointGetPlan.
+// It only applies masking for real SELECT queries (isSelect=true), not for DML
+// synthetic SELECTs used by UPDATE/DELETE fast paths.
+func maybeApplyPointGetMasking(ctx base.PlanContext, p *PointGetPlan, isSelect bool, schema *expression.Schema, names []*types.FieldName, tbl *model.TableInfo) *PointGetPlan {
+	if p == nil || !isSelect {
+		return p
+	}
+	if is := ctx.GetInfoSchema(); is != nil && len(names) > 0 {
+		maskExprs, err := buildMaskingExprsForPointGet(context.Background(), ctx, is.(infoschema.InfoSchema), schema, names, tbl)
+		if err != nil {
+			// Fail-closed: do not use PointGet fast path when masking cannot be applied.
+			// The query will fall back to the normal planner path.
+			return nil
+		}
+		p.MaskingExprs = maskExprs
+	}
+	return p
+}
+
+func findMaskingPolicyForColumn(ctx context.Context, is infoschema.InfoSchema, tbl *model.TableInfo, name *types.FieldName) (*model.MaskingPolicyInfo, *model.ColumnInfo, error) {
+	if tbl == nil || name == nil {
+		return nil, nil, nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	colInfo := tbl.FindPublicColumnByName(colName.L)
+	if colInfo == nil {
+		return nil, nil, nil
+	}
+	policy, ok, err := is.MaskingPolicyByTableColumn(ctx, tbl.ID, colInfo.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok || policy == nil {
+		return nil, nil, nil
+	}
+	return policy, colInfo, nil
 }

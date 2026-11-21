@@ -931,7 +931,6 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
-
 	if e.Analyze && e.Format == types.ExplainFormatTrueCardCost {
 		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
