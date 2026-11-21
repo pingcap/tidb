@@ -298,6 +298,9 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sessVars.EnablePreparedPlanCache
 	}
+	if stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache {
+		cacheEnabled = false
+	}
 	if cacheEnabled && stmt.UncacheableReason == "" &&
 		sessVars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
 		!stmt.HasUsePlanCacheHint {

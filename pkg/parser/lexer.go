@@ -192,6 +192,7 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 
 func (s *Scanner) getNextToken() int {
 	r := s.r
+	inBangComment := s.inBangComment
 	tok, pos, lit := s.scan()
 	if tok == identifier {
 		tok = s.handleIdent(&yySymType{})
@@ -202,6 +203,7 @@ func (s *Scanner) getNextToken() int {
 		}
 	}
 	s.r = r
+	s.inBangComment = inBangComment
 	return tok
 }
 
@@ -270,6 +272,18 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 		if tok1 == outer && tok2 == join {
 			tok = fullJoinType
 			s.lastKeyword = fullJoinType
+		}
+	}
+
+	// Disambiguate `EXPLAIN EXECUTE <stmt>` from `EXPLAIN <table> <column>` when
+	// `EXECUTE` immediately follows `EXPLAIN`/`DESCRIBE`/`DESC` and is followed by
+	// an argument rather than end-of-statement or `.` (e.g. `EXPLAIN execute;` or
+	// `EXPLAIN execute.col;` still describes the table named `execute`).
+	if tok == execute && (s.lastKeyword2 == explain || s.lastKeyword2 == describe || s.lastKeyword2 == desc) {
+		nextTok := s.getNextToken()
+		if nextTok != 0 && nextTok != ';' && nextTok != '.' && nextTok != ',' && nextTok != ')' {
+			tok = explainExecute
+			s.lastKeyword = explainExecute
 		}
 	}
 

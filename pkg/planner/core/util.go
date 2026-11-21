@@ -111,6 +111,9 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 
 // IsReadOnlyInternal is that If checkGlobalVars is true, false will be returned when there are updates to global variables.
 func IsReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
+	if explainStmt, isExplain := node.(*ast.ExplainStmt); isExplain {
+		return !explainStmt.Analyze || IsReadOnlyInternal(explainStmt.Stmt, vars, checkGlobalVars)
+	}
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 		prepareStmt, err := GetPreparedStmt(execStmt, vars)
 		if err != nil {
