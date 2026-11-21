@@ -17,6 +17,7 @@ package sortexec
 import (
 	"container/heap"
 	"context"
+	"math"
 	"math/rand"
 	"slices"
 	"sync"
@@ -361,7 +362,10 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		}
 	}
 
-	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
+	// The offset is a uint64 and may not fit in an int. Saturate it so that
+	// a huge offset just skips every row instead of becoming a negative index.
+	idx := int(min(e.Limit.Offset, math.MaxInt))
+	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, idx, e.greaterRow, e.RetFieldTypes())
 	return nil
 }
 
@@ -785,7 +789,7 @@ func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
 			// spilled to disk.
 			if skippedRowNum < offset {
 				rowNumNeedSkip := offset - skippedRowNum
-				if rowNum <= int(rowNumNeedSkip) {
+				if uint64(rowNum) <= rowNumNeedSkip {
 					// All rows in this chunk should be skipped
 					skippedRowNum += uint64(rowNum)
 					continue
@@ -815,7 +819,7 @@ func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 	if inDiskNum == 1 {
 		return e.GenerateTopNResultsWhenSpillOnlyOnce()
 	}
-	return e.generateResultWithMultiWayMerge(int64(e.Limit.Offset), int64(e.Limit.Offset+e.Limit.Count))
+	return e.generateResultWithMultiWayMerge(int64(min(e.Limit.Offset, math.MaxInt64)), int64(min(e.Limit.Offset+e.Limit.Count, math.MaxInt64)))
 }
 
 func (e *TopNExec) generateTopNResults() {
