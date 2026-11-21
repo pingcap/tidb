@@ -95,6 +95,22 @@ impl NodeDdlSessionPool {
         )
     }
 
+    /// Go `initGlobalVarFromSystemDB`'s `domap.GetOrCreateWithFilter(store,
+    /// systemDBFilter{})`: a separate domain over the store, neither started
+    /// nor campaigning for DDL, whose sessions read `mysql.tidb` before the
+    /// serving domain exists. (Go's filter loads only the system schemas;
+    /// this one loads the whole catalog.)
+    pub(crate) fn for_global_var_init<S: tidb_store_driver_txn::transaction::StoreClient>(
+        opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
+        timeout: std::time::Duration,
+    ) -> Result<Arc<Self>, String> {
+        let lease = tidb_domain_core::node_config::parse_file_schema_lease(
+            &tidb_config::config_tree::config::get_global_config().lease,
+        ).map_err(|error| error.to_string())?;
+        let row_ids = Arc::new(tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), timeout));
+        Self::for_store_with_mode(opener, timeout, row_ids, false, lease, false)
+    }
+
     fn for_store_with_mode<S: tidb_store_driver_txn::transaction::StoreClient>(
         opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
         timeout: std::time::Duration,

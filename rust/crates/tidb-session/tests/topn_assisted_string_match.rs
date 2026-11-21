@@ -69,8 +69,8 @@ fn fixture_cases<'a>(fixture: &'a Value, section_name: &str, key: &str) -> &'a [
 }
 
 fn run_collation_column_fixture(input: &Value, output: &Value) {
-    set_new_collation_enabled_for_test(true);
     let mut session = Session::new();
+    set_new_collation_enabled_for_test(true);
     for sql in [
         "CREATE TABLE t(a VARCHAR(20) COLLATE utf8mb4_general_ci)",
         "INSERT INTO t VALUES ('aaa'), ('bbb'), ('AAA'), ('BBB')",
@@ -99,8 +99,10 @@ fn run_collation_column_fixture(input: &Value, output: &Value) {
 }
 
 fn run_topn_fixture(enabled: bool, input: &Value, output: &Value) {
-    set_new_collation_enabled_for_test(enabled);
+    // Go sets the mode after `CreateMockStoreAndDomain`, whose bootstrap
+    // (`initGlobalVarFromSystemDB`) sets it from the store.
     let mut session = Session::new();
+    set_new_collation_enabled_for_test(enabled);
     session
         .run("SET tidb_default_string_match_selectivity = 0")
         .unwrap();

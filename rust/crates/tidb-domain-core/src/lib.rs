@@ -32,4 +32,3 @@ pub mod schema_sync;
 pub mod session_transaction;
 pub mod sys_session;
 pub mod util;
-pub mod real_tikv_privileges;

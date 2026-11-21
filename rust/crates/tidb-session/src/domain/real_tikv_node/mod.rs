@@ -192,12 +192,26 @@ pub fn init_global_var_from_system_db<S>(
 where
     S: StoreClient,
 {
-    let system_tz = tidb_domain_core::real_tikv_privileges::load_system_tz_from_cluster(
-        opener,
+    let engine = |error: String| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error));
+    // we have to use a separate Domain to init the global variables, and then
+    // close it. as we are using a captured new_collate setting inside TableCommon
+    // now, otherwise, the captured new_collate setting in TableCommon is still
+    // cached in the Domain schema cache and is invalid.
+    let pool = crate::ddl_session_pool::NodeDdlSessionPool::for_global_var_init(
+        opener.clone(),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    initialize_cluster_system_tz_with_read(|| Ok(system_tz))
+    .map_err(engine)?;
+    let domain = pool.store_domain().ok_or_else(|| engine("the global variable domain was not built".to_owned()))?;
+    let loaded = crate::domain::cluster_session_node::load_global_vars_from_system_db(&domain);
+    // Go `defer dom.Close()`.
+    domain.close();
+    drop(domain);
+    drop(pool);
+    let (tz, new_collation_enabled) = loaded.map_err(engine)?;
+    initialize_cluster_system_tz_with_read(|| Ok(tz))?;
+    tidb_datatype::set_new_collation_enabled_for_test(new_collation_enabled);
+    Ok(())
 }
 
 /// Go `session.InitMDLVariable`: the metadata-lock switch is its meta key

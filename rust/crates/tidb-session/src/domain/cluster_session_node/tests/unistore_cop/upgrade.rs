@@ -226,6 +226,40 @@ fn check_bootstrapped_reads_the_flag_on_the_bootstrap_session() {
     assert!(check());
 }
 
+/// Go `initGlobalVarFromSystemDB`: a starting node takes, through
+/// `loadCollationParameter`, the new-collation switch from `mysql.tidb`,
+/// read on a separate domain's session (the system time zone beside it is
+/// set once per process, Go's `sync.Once`) -- a store bootstrapped
+/// with `new_collations_enabled_on_first_bootstrap = false` keeps the old
+/// collations on every later start.
+#[test]
+fn init_global_var_from_system_db_loads_the_collation_switch() {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_datatype::set_new_collation_enabled_for_test(self.0);
+        }
+    }
+    let _restore = Restore(tidb_datatype::new_collation_enabled());
+    let (stack, _users) = cop_backed_stack();
+    let mut se = stack.factory.open_session(session_context(94)).expect("session opens");
+    rows(&mut se, "update mysql.tidb set variable_value='False' where variable_name='new_collation_enabled'");
+    tidb_datatype::set_new_collation_enabled_for_test(true);
+
+    crate::domain::real_tikv_node::init_global_var_from_system_db(&stack.opener).expect("the variables load");
+    assert!(!tidb_datatype::new_collation_enabled());
+
+    // Go `loadCollationParameter`: any other value reads as False.
+    rows(&mut se, "update mysql.tidb set variable_value='maybe' where variable_name='new_collation_enabled'");
+    tidb_datatype::set_new_collation_enabled_for_test(true);
+    crate::domain::real_tikv_node::init_global_var_from_system_db(&stack.opener).expect("the variables load");
+    assert!(!tidb_datatype::new_collation_enabled());
+
+    rows(&mut se, "update mysql.tidb set variable_value='True' where variable_name='new_collation_enabled'");
+    crate::domain::real_tikv_node::init_global_var_from_system_db(&stack.opener).expect("the variables load");
+    assert!(tidb_datatype::new_collation_enabled());
+}
+
 #[test]
 fn upgrade_to_ver242_writes_the_cluster_id_like_go() {
     let (stack, _users) = cop_backed_stack();

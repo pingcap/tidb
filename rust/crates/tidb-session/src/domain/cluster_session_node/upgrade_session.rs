@@ -91,6 +91,59 @@ pub fn check_bootstrapped(
     crate::bootstrap::check_bootstrapped(&mut bootstrap_session(domain, store, state_syncer)?)
 }
 
+/// Go `initGlobalVarFromSystemDB`'s reads, on a new internal session of
+/// `domain`: `mysql.tidb`'s `system_tz` and, through `loadCollationParameter`,
+/// whether the store's new collations are enabled.
+///
+/// # Errors
+///
+/// A statement's error, or Go's `errResultIsEmpty` for a missing row.
+pub fn load_global_vars_from_system_db(domain: &Arc<Domain>) -> Result<(String, bool), String> {
+    let context = super::open_pool_session(domain, 0)?;
+    // Go `getTableValue`: `kv.InternalTxnSysVar` unless the caller set one.
+    cluster_stats_session(&*context).state.adopt_request_source_type(tidb_txnkv::INTERNAL_TXN_SYS_VAR);
+    let get_table_value = |var_name: &str| -> Result<String, String> {
+        let sql = tidb_sqlexec::sql_with_params(
+            "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?",
+            &[
+                tidb_sqlescape::SqlArg::String(b"mysql"),
+                tidb_sqlescape::SqlArg::String(b"tidb"),
+                tidb_sqlescape::SqlArg::String(var_name.as_bytes()),
+            ],
+        )
+        .map_err(|error| error.to_string())?
+        .into_owned();
+        let mut result = None;
+        cluster_stats_session(&*context)
+            .with_session(|session| {
+                result = Some(session.execute_internal(&sql));
+                Ok(())
+            })
+            .map_err(|error| error.to_string())?;
+        let rows = result.expect("the session ran the statement").map_err(|error| error.error_string())?;
+        let Some(row) = rows.first() else {
+            return Err(crate::session_errors::ERR_RESULT_IS_EMPTY.to_string());
+        };
+        Ok(crate::upgrade_def::get_string(row, 0))
+    };
+    // get system tz from mysql.tidb
+    let tz = get_table_value(crate::mysql_bootstrap::SYSTEM_TZ_VAR)?;
+    // Go `loadCollationParameter`.
+    let para = get_table_value(crate::mysql_bootstrap::NEW_COLLATION_ENABLED_VAR)?;
+    let new_collation_enabled = match para.as_str() {
+        crate::mysql_bootstrap::VAR_TRUE => true,
+        crate::mysql_bootstrap::VAR_FALSE => false,
+        _ => {
+            tidb_logutil::bg_logger().warn(
+                "Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
+                &[tidb_log::Field::new("value", tidb_log::Value::Str(para.clone()))],
+            );
+            false
+        }
+    };
+    Ok((tz, new_collation_enabled))
+}
+
 /// Go `bootstrap(s)`'s DML on a new internal session of the bootstrap
 /// domain, after `doDDLWorks`' jobs: `insertBuiltinBindInfoRow` (which Go
 /// runs between the table and view jobs; it touches neither) and
