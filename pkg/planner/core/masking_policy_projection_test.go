@@ -2544,3 +2544,124 @@ func TestMaskingPolicyRestrictDirectUpdateAssignmentPlanCache(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskingPolicyMDLTableIDReplacement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	root := testkit.NewTestKit(t, store)
+	root.MustExec("use test")
+	root.MustExec("create table mdl_pt(id int primary key,c varchar(20)) partition by range(id) (partition p0 values less than (10))")
+	root.MustExec("create table mdl_nt(id int primary key,c varchar(20))")
+	root.MustExec("create table mdl_plain_pt(id int primary key,c varchar(20)) partition by range(id) (partition p0 values less than (10))")
+	root.MustExec("create table mdl_plain_nt(id int primary key,c varchar(20))")
+	root.MustExec("create table mdl_kept(id int primary key,c varchar(20))")
+	root.MustExec("create table mdl_dst(c varchar(20))")
+	root.MustExec("insert into mdl_pt values(1,'secret'),(2,'hidden')")
+	root.MustExec("insert into mdl_nt values(1,'public'),(2,'closed')")
+	root.MustExec("insert into mdl_plain_pt values(1,'plain1')")
+	root.MustExec("insert into mdl_plain_nt values(1,'plain2')")
+	root.MustExec("insert into mdl_kept values(1,'secret')")
+	root.MustExec("create masking policy p on mdl_pt(c) as mask_full(c) restrict on (insert_into_select, update_select)")
+	root.MustExec("create masking policy p on mdl_nt(c) as mask_full(c) restrict on (insert_into_select, update_select)")
+	root.MustExec("create masking policy p on mdl_kept(c) as mask_full(c)")
+	root.MustExec("create user mdl_reader")
+	root.MustExec("grant select, insert, update on test.* to mdl_reader")
+	instanceCtx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+
+	newReader := func(t *testing.T) *testkit.TestKit {
+		reader := testkit.NewTestKit(t, store)
+		require.NoError(t, reader.Session().Auth(&auth.UserIdentity{Username: "mdl_reader", Hostname: "%"}, nil, nil, nil))
+		reader.MustExec("use test")
+		reader.MustExec("set @id=1")
+		// A failed check must not leave a transaction holding a metadata lock
+		// that blocks the next exchange.
+		t.Cleanup(func() { reader.MustExec("rollback") })
+		return reader
+	}
+	// The exchanged table keeps its name and its policy but gets the ID of the
+	// partition, and with it the rows the transaction can still read.
+	exchange := func() {
+		root.MustExec("alter table mdl_pt exchange partition p0 with table mdl_nt")
+		root.MustExec("alter table mdl_plain_pt exchange partition p0 with table mdl_plain_nt")
+	}
+	masked := testkit.Rows("XXXXXX")
+	for _, tc := range []struct {
+		name string
+		run  func(reader *testkit.TestKit)
+	}{
+		{"scan", func(reader *testkit.TestKit) {
+			reader.MustQuery("select c from mdl_nt where id+0=1").Check(masked)
+			reader.MustQuery("select concat(c,'') from mdl_nt order by id").Check(testkit.Rows("XXXXXX", "XXXXXX"))
+		}},
+		{"point get", func(reader *testkit.TestKit) {
+			reader.MustQuery("select c from mdl_nt where id=1").Check(masked)
+		}},
+		{"batch point get", func(reader *testkit.TestKit) {
+			reader.MustQuery("select c from mdl_nt where id in (1,2)").Check(testkit.Rows("XXXXXX", "XXXXXX"))
+		}},
+		{"session plan cache", func(reader *testkit.TestKit) {
+			for _, st := range []string{"st_scan", "st_point"} {
+				for range 3 {
+					reader.MustQuery("execute " + st + " using @id").Check(masked)
+				}
+			}
+		}},
+		{"instance plan cache", func(reader *testkit.TestKit) {
+			for _, st := range []string{"st_scan", "st_point"} {
+				for range 3 {
+					reader.MustQueryWithContext(instanceCtx, "execute "+st+" using @id").Check(masked)
+				}
+			}
+		}},
+		{"restrict", func(reader *testkit.TestKit) {
+			reader.MustGetErrCode("insert into mdl_dst select c from mdl_nt", errno.ErrAccessDeniedToMaskedColumn)
+			reader.MustGetErrCode("update mdl_nt set c=concat(c,'x') where id+0=1", errno.ErrAccessDeniedToMaskedColumn)
+			reader.MustGetErrCode("update mdl_nt set c=concat(c,'x') where id=1", errno.ErrAccessDeniedToMaskedColumn)
+			reader.MustGetErrCode("insert into mdl_nt values(1,'a') on duplicate key update c=concat(c,'x')", errno.ErrAccessDeniedToMaskedColumn)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := newReader(t)
+			ctx := context.Background()
+			if tc.name == "instance plan cache" {
+				ctx = instanceCtx
+			}
+			reader.MustExecWithContext(ctx, "prepare st_scan from 'select c from mdl_nt where id>=? and id<2'")
+			reader.MustExecWithContext(ctx, "prepare st_point from 'select c from mdl_nt where id=?'")
+			// Warm the policy cache and the plan caches before the table is replaced.
+			reader.MustQuery("select c from mdl_nt where id=1").Check(masked)
+			for range 2 {
+				reader.MustQueryWithContext(ctx, "execute st_scan using @id").Check(masked)
+				reader.MustQueryWithContext(ctx, "execute st_point using @id").Check(masked)
+			}
+			reader.MustExec("begin pessimistic")
+			exchange()
+			// The first read in the transaction takes the replaced table.
+			tc.run(reader)
+			// Tables that keep their ID, or have no policy, are read as before.
+			reader.MustQuery("select c from mdl_kept where id=1").Check(masked)
+			reader.MustQuery("select c from mdl_kept where id+0=1").Check(masked)
+			reader.MustQuery("select c from mdl_pt where id+0=1").Check(masked)
+			reader.MustQuery("select count(*) from mdl_plain_nt where c like 'plain%'").Check(testkit.Rows("1"))
+			reader.MustQuery("select count(*) from mdl_plain_pt where c like 'plain%'").Check(testkit.Rows("1"))
+			reader.MustExec("rollback")
+			// A new transaction reads the replaced table with its moved policy.
+			reader.MustQuery("select c from mdl_nt where id=1").Check(masked)
+			root.MustQuery("select count(*) from mdl_dst").Check(testkit.Rows("0"))
+		})
+	}
+
+	// TRUNCATE TABLE gives the table a new ID. A read-committed transaction
+	// that started earlier reads the rows written to the new table.
+	reader := newReader(t)
+	reader.MustExec("set transaction_isolation='READ-COMMITTED'")
+	reader.MustQuery("select c from mdl_kept where id=1").Check(masked)
+	reader.MustExec("begin pessimistic")
+	root.MustExec("truncate table mdl_kept")
+	root.MustExec("insert into mdl_kept values(1,'secret')")
+	root.MustExec("truncate table mdl_plain_nt")
+	root.MustExec("insert into mdl_plain_nt values(1,'plain3')")
+	reader.MustQuery("select c from mdl_kept where id+0=1").Check(masked)
+	reader.MustQuery("select c from mdl_kept where id=1").Check(masked)
+	reader.MustQuery("select c from mdl_plain_nt").Check(testkit.Rows("plain3"))
+	reader.MustExec("rollback")
+}
