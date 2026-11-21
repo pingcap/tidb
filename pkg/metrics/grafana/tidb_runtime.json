@@ -216,13 +216,23 @@
             },
             {
               "exemplar": true,
-              "expr": "go_memory_classes_os_stacks_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_other_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_profiling_buckets_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "expr": "go_memory_classes_os_stacks_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_other_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
               "interval": "",
               "intervalFactor": 1,
               "legendFormat": "other_memory",
               "refId": "F"
+            },
+            {
+              "exemplar": true,
+              "expr": "go_memory_classes_profiling_buckets_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "profiling_buckets",
+              "refId": "J"
             },
             {
               "exemplar": true,
