@@ -91,8 +91,8 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(GITB
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 # Cap the runtime profiler stack depth at 32 (the Go default is 128 since Go 1.23); GODEBUG=profstackdepth still overrides it.
 GODEBUG_DEFAULT := profstackdepth=32
-# -X replaces the value the Go toolchain computes, so keep fips140=on when GOFIPS140 asks for it.
-ifneq ($(filter-out off,$(GOFIPS140)),)
+# -X replaces the value the Go toolchain computes, so keep fips140=on when GOFIPS140 asks for it, from the environment or from go env -w.
+ifneq ($(filter-out off,$(shell $(GO) env GOFIPS140)),)
 GODEBUG_DEFAULT := fips140=on,$(GODEBUG_DEFAULT)
 endif
 LDFLAGS += -X "runtime.godebugDefault=$(GODEBUG_DEFAULT)"
