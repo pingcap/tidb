@@ -23,10 +23,9 @@
 //! `MySQLPrivilege.LoadAll`, which issues one `SELECT` per table:
 //! `mysql.user`, `mysql.global_priv`, `mysql.db`, `mysql.tables_priv`,
 //! `mysql.columns_priv`, `mysql.default_roles`, `mysql.role_edges`, and
-//! `mysql.global_grants`. [`load_privileges`] reads the same tables through
-//! any [`PrivilegeTables`]: the domain's system sessions running Go's
-//! `SELECT`s (the node's startup load and `LoadPrivilegeLoop`), or the raw
-//! record range of one catalog snapshot ([`load_cluster_privileges`]).
+//! `mysql.global_grants`. [`load_all`] reads the same tables through any
+//! [`PrivilegeTables`]: the domain's system sessions running Go's `SELECT`s
+//! (the node's startup load and `LoadPrivilegeLoop`).
 //!
 //! `password_last_changed` is returned in UTC so publication preserves the
 //! stored instant rather than interpreting it in a session timezone.
@@ -34,13 +33,8 @@
 //! Connection-policy text is loaded independently, including orphan rows.
 
 use std::collections::BTreeSet;
-use std::fmt;
 
-
-
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
 
 /// Maps one `mysql.user` privilege column to the privilege name
 /// `GlobalPriv::from_grant_name` resolves.
@@ -192,132 +186,8 @@ const DB_COLUMNS: &[&str] = &[
 
 pub use crate::loaded::{LoadedUser, LoadedDbGrant, LoadedTableGrant, LoadedColumnGrant, LoadedDynamicGrant, LoadedRoleEdge, LoadedDefaultRole, LoadedGlobalPriv, ClusterPrivileges};
 
-/// Whether a cluster's `mysql.tidb` says Go's bootstrap already ran.
-///
-/// Go `pkg/session/bootstrap.go`: `doDMLWorks` writes `bootstrapped = "True"`
-/// and `tidb_server_version = <currentBootstrapVersion>` into `mysql.tidb` in
-/// the same transaction as the root account, and `getStoreBootstrapVersion`
-/// reads them back to decide whether to bootstrap at all.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ClusterBootstrapState {
-    /// `mysql.tidb` holds `bootstrapped = 'True'`. Re-seeding is refused.
-    Bootstrapped {
-        /// `tidb_server_version` as stored, when it parses as an integer.
-        version: Option<i64>,
-    },
-    /// The `mysql` schema exists but carries no bootstrap flag.
-    Unflagged,
-    /// The cluster catalog has no `mysql.tidb` at all: no TiDB ever
-    /// bootstrapped this keyspace.
-    NotBootstrapped,
-}
-
-impl ClusterBootstrapState {
-    /// Whether a bootstrap must not run against this cluster.
-    #[must_use]
-    pub const fn already_bootstrapped(&self) -> bool {
-        matches!(self, Self::Bootstrapped { .. })
-    }
-}
-
-impl fmt::Display for ClusterBootstrapState {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Bootstrapped {
-                version: Some(version),
-            } => write!(formatter, "bootstrapped at version {version}"),
-            Self::Bootstrapped { version: None } => {
-                formatter.write_str("bootstrapped at an unparsable version")
-            }
-            Self::Unflagged => formatter.write_str("mysql.tidb carries no bootstrap flag"),
-            Self::NotBootstrapped => formatter.write_str("the cluster has no mysql.tidb"),
-        }
-    }
-}
-
-/// Go `bootstrappedVar`.
-const BOOTSTRAPPED_VAR: &str = "bootstrapped";
-/// Go `tidbServerVersionVar`.
-const TIDB_SERVER_VERSION_VAR: &str = "tidb_server_version";
-/// Go `tidbSystemTZ`.
-const SYSTEM_TZ_VAR: &str = "system_tz";
-/// Go `varTrue`.
-const VAR_TRUE: &str = "True";
-
-/// Reads `mysql.tidb`'s bootstrap flag from one catalog snapshot.
-pub fn read_bootstrap_state<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-) -> Result<ClusterBootstrapState, SystemTableError> {
-    let Ok(view) = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])
-    else {
-        return Ok(ClusterBootstrapState::NotBootstrapped);
-    };
-    let mut bootstrapped = false;
-    let mut version = None;
-    for (key, value) in scan_system_table(snapshot, &view)? {
-        let row = SystemRow::parse(&view, &key, &value)?;
-        let Some(name) = row.text("variable_name")? else {
-            continue;
-        };
-        let stored = row.text("variable_value")?.unwrap_or_default();
-        if name == BOOTSTRAPPED_VAR {
-            bootstrapped = stored == VAR_TRUE;
-        } else if name == TIDB_SERVER_VERSION_VAR {
-            version = stored.parse::<i64>().ok();
-        }
-    }
-    Ok(if bootstrapped {
-        ClusterBootstrapState::Bootstrapped { version }
-    } else {
-        ClusterBootstrapState::Unflagged
-    })
-}
-
-/// Reads the process-wide system time zone persisted by TiDB bootstrap.
-///
-/// Go installs this value from `mysql.tidb` before it creates ordinary
-/// sessions. A missing row is a startup error rather than permission to use
-/// the local host's zone, because every node in one cluster must agree.
-pub fn read_system_tz<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-) -> Result<String, SystemTableError> {
-    let view = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])?;
-    for (key, value) in scan_system_table(snapshot, &view)? {
-        let row = SystemRow::parse(&view, &key, &value)?;
-        if row.text("variable_name")?.as_deref() == Some(SYSTEM_TZ_VAR) {
-            return row
-                .text("variable_value")?
-                .ok_or_else(|| SystemTableError::Decode {
-                    name: "mysql.tidb".to_owned(),
-                    detail: "the system_tz row has a NULL value".to_owned(),
-                });
-        }
-    }
-    Err(SystemTableError::Decode {
-        name: "mysql.tidb".to_owned(),
-        detail: "the system_tz row is missing".to_owned(),
-    })
-}
-
-/// Reads every account and grant from one catalog snapshot.
-///
-/// A table the catalog does not carry at all is read as empty rather than as
-/// an error: Go's own bootstrap adds `mysql.global_grants` and the role tables
-/// in later versions, so an older cluster legitimately has accounts and no
-/// dynamic privileges. A table that *is* present but whose columns this reader
-/// does not recognize is still a hard error — that is a schema this node would
-/// otherwise misread.
-pub fn load_cluster_privileges<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-) -> Result<ClusterPrivileges, SystemTableError> {
-    load_all(&mut ClusterPrivilegeTables { snapshot, catalog })
-}
-
-/// Where [`load_privileges`] reads `mysql.<table>` from: a cluster snapshot
-/// ([`load_cluster_privileges`]), or a session's own catalog.
+/// Where [`load_all`] reads `mysql.<table>` from: Go's `loadTable` statements
+/// on a system session.
 pub trait PrivilegeTables {
     /// `mysql.<table>` projected to `columns`, with each row's decoded column
     /// values keyed by column ID, or `None` when the table does not exist.
@@ -342,30 +212,6 @@ pub type PrivilegeTableRows = (
     SystemTableView,
     Vec<std::collections::BTreeMap<i64, tidb_datatype::Datum>>,
 );
-
-struct ClusterPrivilegeTables<'a, S> {
-    snapshot: &'a mut S,
-    catalog: &'a SessionExtendedInfoSchema,
-}
-
-impl<S: MetaSnapshot> PrivilegeTables for ClusterPrivilegeTables<'_, S> {
-    fn rows(
-        &mut self,
-        table: &str,
-        columns: &[&str],
-        timezone: Option<&tidb_datatype::SessionTimeZone>,
-        _users: Option<&BTreeSet<String>>,
-    ) -> Result<Option<PrivilegeTableRows>, SystemTableError> {
-        let Ok(view) = SystemTableView::locate(self.catalog, table, columns) else {
-            return Ok(None);
-        };
-        let mut rows = Vec::new();
-        for (key, value) in scan_system_table(self.snapshot, &view)? {
-            rows.push(SystemRow::parse_in_timezone(&view, &key, &value, timezone)?.into_values());
-        }
-        Ok(Some((view, rows)))
-    }
-}
 
 /// Go `MySQLPrivilege.LoadAll` over any [`PrivilegeTables`]: one read per
 /// `mysql.*` table, `mysql.user` required and every other table optional.
@@ -700,52 +546,7 @@ fn granted_names(
 
 #[cfg(test)]
 mod tests {
-    use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaPairs};
-
     use super::*;
-
-    /// A snapshot of an empty keyspace: no meta keys, no record ranges.
-    struct EmptySnapshot;
-
-    impl MetaSnapshot for EmptySnapshot {
-        fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
-            Ok(None)
-        }
-
-        fn scan_prefix(&mut self, _prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
-            Ok(Vec::new())
-        }
-    }
-
-    #[test]
-    fn a_keyspace_with_no_mysql_tidb_is_reported_as_never_bootstrapped() {
-        // This is the distinction the seeding decision rests on: an empty
-        // catalog must not read as "bootstrapped with no accounts", which
-        // would make a node either re-seed a live cluster or start with a
-        // table nobody can log in to.
-        let catalog = SessionExtendedInfoSchema::init_with_db_infos(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            0,
-        );
-        let state = read_bootstrap_state(&mut EmptySnapshot, &catalog).expect("the read succeeds");
-        assert_eq!(state, ClusterBootstrapState::NotBootstrapped);
-        assert!(!state.already_bootstrapped());
-    }
-
-    #[test]
-    fn only_gos_own_true_spelling_counts_as_bootstrapped() {
-        // Go writes `varTrue`, the exact string "True"; the flag is a string
-        // column, so a node must not treat any other truthy spelling as the
-        // bootstrap marker.
-        assert!(ClusterBootstrapState::Bootstrapped { version: Some(232) }.already_bootstrapped());
-        assert!(!ClusterBootstrapState::Unflagged.already_bootstrapped());
-        assert_eq!(
-            ClusterBootstrapState::Bootstrapped { version: Some(232) }.to_string(),
-            "bootstrapped at version 232"
-        );
-    }
 
     #[test]
     fn the_user_and_db_privilege_columns_all_name_a_privilege_this_node_models() {

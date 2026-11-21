@@ -378,30 +378,13 @@ fn the_first_user_table_is_117() {
     assert_eq!((database.read().id, table.id), (114, 117));
 }
 
-/// A node joining a bootstrapped cluster of either layout reads `mysql.*` by
-/// name: the bootstrap marker, the system time zone, the seeded account and
-/// the tables the DDL owner and the advisory locks use.
+/// A node joining a bootstrapped cluster of either layout finds `mysql.*` by
+/// name: the tables the DDL owner and the advisory locks use.
 #[test]
 fn a_keyspace_of_either_layout_is_served_by_name() {
-    use tidb_privilege::cluster_privilege_load::{
-        load_cluster_privileges, read_bootstrap_state, read_system_tz,
-    };
-
     for layout in [BootstrapLayout::Classic, BootstrapLayout::NextGen] {
         let (mut store, _) = bootstrapped_with(layout);
         let catalog = load_info_schema(&mut store).expect("the catalog loads");
-        let state = read_bootstrap_state(&mut store, &catalog).expect("the marker reads back");
-        assert!(state.already_bootstrapped(), "{layout:?}: {state}");
-        assert_eq!(
-            read_system_tz(&mut store, &catalog).expect("system_tz reads back"),
-            "Asia/Shanghai"
-        );
-        let privileges =
-            load_cluster_privileges(&mut store, &catalog).expect("the seed row reads back");
-        let [root] = privileges.users.as_slice() else {
-            panic!("a bootstrap seeds exactly one account");
-        };
-        assert_eq!((root.user.as_str(), root.host.as_str()), ("root", "%"));
         tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
         DdlHistoryTable::locate(&catalog).expect("mysql.tidb_ddl_history");
 

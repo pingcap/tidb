@@ -263,15 +263,13 @@ pub fn do_dml_works(s: &mut dyn UpgradeSession) -> UpgradeResult {
     // into the mysql.global_variables table. This is only run on initial
     // bootstrap, and in some cases we will use a different default value
     // for new installs versus existing installs.
-    let values = tidb_variable::sysvar::sys_vars()
-        .iter()
-        .filter(|v| v.has_global_scope())
-        .map(|v| {
-            let v_val = tidb_variable::vars::global_system_variable_initial_value(v);
+    let values = crate::mysql_bootstrap::global_variables()
+        .into_iter()
+        .map(|(k, v_val)| {
             // sanitize k and vVal
             format!(
                 r#"("{}", "{}")"#,
-                String::from_utf8_lossy(&tidb_sqlescape::escape_string(v.name)),
+                String::from_utf8_lossy(&tidb_sqlescape::escape_string(&k)),
                 String::from_utf8_lossy(&tidb_sqlescape::escape_string(&v_val)),
             )
         })

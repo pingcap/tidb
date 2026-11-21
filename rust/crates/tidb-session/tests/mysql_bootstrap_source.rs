@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A bootstrap is only real if this node's OWN readers can read it back.
-//!
-//! Every assertion here goes through the code paths that serve a live cluster —
-//! [`tidb_infoschema::cluster_catalog::load_info_schema`],
-//! [`tidb_privilege::cluster_privilege_load::read_bootstrap_state`], and
-//! [`tidb_privilege::cluster_privilege_load::load_cluster_privileges`] — rather than
-//! inspecting the mutation list. Writing bytes only this test understands would
-//! prove nothing.
+//! A bootstrap plan is only real if this node's OWN catalog loader reads it
+//! back: assertions go through
+//! [`tidb_infoschema::cluster_catalog::load_info_schema`] rather than the
+//! mutation list. (The rows `doDMLWorks` writes are statements on the
+//! bootstrap session, tested with the published bootstrap.)
 //!
 //! This file pins the NEXT-GEN layout (`BootstrapLayout::NextGen`: reserved
 //! ids, the tables written straight into meta, four DDL jobs); the Classic
@@ -30,9 +27,6 @@ use std::collections::BTreeMap;
 use tidb_datatype::{Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
     load_info_schema, ClusterCatalogError, MetaPairs, MetaSnapshot,
-};
-use tidb_privilege::cluster_privilege_load::{
-    load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
 };
 use tidb_session::mysql_bootstrap::{
     plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapError, BootstrapLayout,
@@ -178,8 +172,6 @@ fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
         4
     );
     let catalog = load_info_schema(&mut store).expect("the catalog loads");
-    let state = read_bootstrap_state(&mut store, &catalog).expect("bootstrap state reads");
-    assert!(state.already_bootstrapped());
     let mysql = catalog
         .schema_by_name("mysql")
         .expect("mysql database");
@@ -190,55 +182,6 @@ fn bootstrap_creates_all_ddl_tables_and_advances_their_version() {
         .expect("DDL notifier table");
     let notifier = notifier.read();
     assert_eq!(notifier.id, tidb_metadef::system::TI_DBDDLNOTIFIER_TABLE_ID);
-}
-
-#[test]
-fn the_bootstrap_marker_is_the_one_the_detector_reads() {
-    // This is the whole point of writing `mysql.tidb`: the detector that
-    // decides whether to bootstrap at all must see it as bootstrapped.
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the catalog loads");
-    let state = read_bootstrap_state(&mut store, &catalog).expect("the marker reads back");
-    assert!(state.already_bootstrapped(), "{state}");
-    assert!(matches!(
-        state,
-        ClusterBootstrapState::Bootstrapped { version: Some(_) }
-    ));
-}
-
-#[test]
-fn the_seeded_system_timezone_is_the_one_startup_reads() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the catalog loads");
-    assert_eq!(
-        read_system_tz(&mut store, &catalog).expect("system_tz reads back"),
-        "Asia/Shanghai"
-    );
-}
-
-#[test]
-fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the catalog loads");
-    let privileges =
-        load_cluster_privileges(&mut store, &catalog).expect("the seed row reads back");
-    let [root] = privileges.users.as_slice() else {
-        panic!(
-            "a bootstrap seeds exactly one account, got {:?}",
-            privileges.users.len()
-        );
-    };
-    assert_eq!(root.host, "%");
-    assert_eq!(root.user, "root");
-    // An EMPTY password, not a missing column: Go's own bootstrap stores the
-    // empty string, and that is what makes a fresh cluster reachable.
-    assert_eq!(root.authentication_string, "");
-    assert_eq!(root.plugin, "mysql_native_password");
-    assert!(!root.account_locked);
-    assert!(
-        root.privileges.contains(&"OPERATE VIEW"),
-        "the bootstrap root row must include Go master's OPERATE VIEW grant"
-    );
 }
 
 #[test]
@@ -435,34 +378,3 @@ fn the_next_gen_layout_is_what_go_creates() {
     }
 }
 
-#[test]
-fn every_seeded_row_carries_the_index_entries_its_table_declares() {
-    // `mysql.user` and `mysql.tidb` are both NON-clustered, so a row with no
-    // index entry is a row half of TiDB cannot find. Nothing backfills them
-    // later, so the bootstrap that writes the row must write them.
-    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7, &environment())
-        .expect("the keyspace bootstraps");
-    let index_entries = write
-        .mutations
-        .iter()
-        .filter(|mutation| tidb_tablecodec::table_key::is_index_key(mutation.key()))
-        .count();
-    let records = write
-        .mutations
-        .iter()
-        .filter(|mutation| tidb_tablecodec::is_record_key(mutation.key()))
-        .count();
-    // One `mysql.user` row, six `mysql.tidb` rows and one
-    // `mysql.global_variables` row per global-scope system variable (Go
-    // `doDMLWorks`). Their primary keys are common handles (the key IS the
-    // record, no index entry), so only `mysql.user`'s `i_user` and the builtin
-    // binding lock row's three indexes (sql_index, time_index, digest_index)
-    // remain. The four DDL jobs file four `mysql.tidb_ddl_history` rows, whose
-    // integer primary key is the handle.
-    let global_variable_rows = tidb_variable::sysvar::sys_vars()
-        .iter()
-        .filter(|definition| definition.has_global_scope())
-        .count();
-    assert_eq!(records, 8 + global_variable_rows + 4);
-    assert_eq!(index_entries, 4);
-}

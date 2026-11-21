@@ -40,7 +40,7 @@ use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
 
 use super::{
     bootstrap_default_resource_group, build_bootstrap_table, build_bootstrap_view, encode_error,
-    get_schema_cache_size, rows, schema_cache_size_kv_key, BootstrapEnvironment, BootstrapError,
+    get_schema_cache_size, schema_cache_size_kv_key, BootstrapEnvironment, BootstrapError,
     BootstrapLayout, BootstrapSplits, BootstrapWrite, BOOTSTRAP_VIEWS, SYSTEM_DB,
     SYSTEM_DB_CHARSET, SYSTEM_DB_COLLATION, SYS_DB,
 };
@@ -419,7 +419,7 @@ pub(crate) fn execute_on<S: tidb_store_driver_txn::transaction::StoreClient>(
     let (start_ts, mut current) = snapshot()?;
     let mut pool: Option<Arc<crate::ddl_session_pool::NodeDdlSessionPool>> = None;
     let mut started = false;
-    let write = plan_with_executor(&mut current, start_ts, environment, layout, false, true, false,
+    let write = plan_with_executor(&mut current, start_ts, environment, layout, false, true,
         &mut |overlay, _, last, sql, view| {
             if !started {
                 let txn = opener.begin().map_err(|e| error(e.to_string()))?;
@@ -498,7 +498,7 @@ fn plan_with<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
 ) -> Result<BootstrapWrite, BootstrapError> {
-    plan_with_executor(snapshot, start_ts, environment, layout, withhold_created_tables, false, true, &mut run)
+    plan_with_executor(snapshot, start_ts, environment, layout, withhold_created_tables, false, &mut run)
 }
 
 /// Go `doDDLWorks`: the ordered statements shared by bootstrap publication
@@ -510,7 +510,6 @@ fn plan_with_executor<S: MetaSnapshot>(
     layout: BootstrapLayout,
     withhold_created_tables: bool,
     resume: bool,
-    seed_rows: bool,
     run: &mut impl FnMut(&mut Overlay<'_, S>, &mut Clock, &mut JobOutcome, &str, Option<&TableInfo>) -> Result<(), BootstrapError>,
 ) -> Result<BootstrapWrite, BootstrapError> {
     let classic = layout == BootstrapLayout::Classic;
@@ -704,17 +703,8 @@ fn plan_with_executor<S: MetaSnapshot>(
         created_tables = tidb_infoschema::cluster_catalog::list_tables(&mut overlay, database_id)?;
     }
 
-    // Go `doDMLWorks`.
-    let seed_environment = BootstrapEnvironment {
-        ddl_table_version,
-        ..environment.clone()
-    };
-    if seed_rows {
-        let mut seeded = Vec::new();
-        rows::seed(database_id, &created_tables, &seed_environment, &mut seeded)?;
-        overlay.apply(&seeded);
-    }
-
+    // Go `doDMLWorks` runs as statements after the jobs
+    // ([`crate::bootstrap::do_dml_works`]); the plan writes no rows.
     // Go `InitTiDBSchemaCacheSize`.
     if get_schema_cache_size(&mut overlay)?.is_none() {
         let schema_cache_size = u64::try_from(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE)

@@ -45,36 +45,32 @@
 //! **Idempotence is refusal, not merge.** If the `mysql` database is already
 //! present (found by name: no id is reserved for it under the classic kernel),
 //! [`plan_mysql_bootstrap`] fails and writes nothing: deciding what to do with
-//! a half-bootstrapped or already-bootstrapped cluster is
-//! [`tidb_privilege::cluster_privilege_load::read_bootstrap_state`]'s job, and it reads
-//! exactly the `mysql.tidb` marker this writes.
+//! a half-bootstrapped or already-bootstrapped cluster is Go's
+//! `checkBootstrapped`'s job ([`crate::bootstrap::check_bootstrapped`]).
 
 use std::fmt;
 
 use tidb_ast::{CiString, DdlStmt, Stmt};
-use tidb_codec::Encoder;
-use tidb_datatype::{new_collation_enabled, Datum};
 use tidb_meta::{key, value};
 use tidb_metadef::BootstrapTable;
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
 use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use tidb_ddl::pre_split::BootstrapSplits;
-use tidb_syssession::advisory_locks::{find_system_table, SystemTableLookupError};
+use tidb_syssession::advisory_locks::SystemTableLookupError;
 use tidb_syssession::mysql_system_tables::SYSTEM_DB;
-use tidb_syssession::system_row_write::codec_table_info;
 use tidb_ddl_build::table_info_build::{build_table_info_from_ast, DdlAdmissionError};
 
 pub(crate) mod jobs;
 mod rows;
 #[cfg(test)]
 pub(crate) use rows::bootstrapped_global_variables;
+pub(crate) use rows::global_variables;
 
-pub use rows::{BootstrapEnvironment, SeedRow, SeedValue};
+pub use rows::BootstrapEnvironment;
 
 /// Go `mysql.DefaultCharset` / the collation TiDB's own `mysql` schema carries.
 const SYSTEM_DB_CHARSET: &str = "utf8mb4";
@@ -662,11 +658,6 @@ fn build_bootstrap_table(
 
 fn encode_error(error: impl fmt::Display) -> BootstrapError {
     BootstrapError::Encode(error.to_string())
-}
-
-/// One `Datum` for a seed row's character column.
-fn text(value: &str) -> Datum {
-    Datum::Bytes(value.as_bytes().to_vec())
 }
 
 #[cfg(test)]
