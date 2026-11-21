@@ -9852,6 +9852,25 @@ fn a_v1_hash_join_charges_its_shards_bitmaps_and_build_chunks_like_go() {
     }
 }
 
+/// A reader's memory is the bytes of its coprocessor responses, and a
+/// response carries the store's execution times as varints
+/// (`ExecutorExecutionSummary.time_processed_ns`, the scan and time details).
+/// Each is one byte longer once its duration crosses a power of 128, so the
+/// figure is Go's recorded one give or take those bytes -- in Go too.
+fn assert_response_memory(actual: &str, go: &str, context: &str) {
+    fn bytes(text: &str) -> f64 {
+        let (number, unit) = text.split_once(' ').unwrap_or_else(|| panic!("memory {text:?}"));
+        let number: f64 = number.parse().unwrap_or_else(|_| panic!("memory {text:?}"));
+        match unit {
+            "Bytes" => number,
+            "KB" => number * 1024.0,
+            _ => panic!("memory {text:?}"),
+        }
+    }
+    // A handful of timing varints, plus the two-decimal KB rounding.
+    assert!((bytes(actual) - bytes(go)).abs() <= 24.0, "{actual} vs Go {go}: {context}");
+}
+
 /// Go builds an index join's inner double read as an `IndexLookUpExecutor`
 /// per inner task (`buildIndexLookUpReaderForIndexJoin`): its tracker,
 /// labelled with the plan, attaches to the statement's; its index worker cuts
@@ -10232,7 +10251,7 @@ fn a_readers_pushed_projection_is_a_coprocessor_executor_like_go() {
                 .unwrap_or_else(|| panic!("{sql}: {name}: {plan:?}"))
                 .clone()
         };
-        assert_eq!(row(reader)[7], memory, "{sql}: {plan:?}");
+        assert_response_memory(&row(reader)[7], memory, &format!("{sql}: {plan:?}"));
         assert_eq!(row(reader)[2], rows, "{sql}: {plan:?}");
         let pushed = row(projection);
         assert_eq!((pushed[2].as_str(), pushed[3].as_str()), (rows, "cop[tikv]"), "{sql}: {plan:?}");

@@ -2961,6 +2961,22 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             .map_or(0, |pipeline| pipeline.in_flight);
         let output_types = self.meta.ret_field_types().to_vec();
         let (init_cap, max_chunk_size) = (self.meta.init_cap(), self.meta.max_chunk_size());
+        // Go `initializeForProbe`: `joinChkResourceCh[i] <-
+        // exec.NewFirstChunk(e)` for each of the `Concurrency` workers. A
+        // worker's first result chunk is its own; the chunk a `Next` swapped
+        // out holds the parent's columns (the session allocator's, when the
+        // parent drew its chunk there) and goes back to the worker it came
+        // from (`result.src <- result.chk`), which writes into it only for a
+        // later probe chunk. Handing that chunk to the next run instead grew
+        // the allocator's columns by whatever that run produced, so the next
+        // statement's reuse -- and its memory accounting -- depended on which
+        // run finished first.
+        if let Some(pipeline) = self.parallel_probe.as_mut() {
+            if pipeline.outputs_allocated < concurrency {
+                pipeline.outputs_allocated += 1;
+                return Some(Chunk::new(&output_types, init_cap, max_chunk_size));
+            }
+        }
         let reused = {
             let hash = self
                 .hash
