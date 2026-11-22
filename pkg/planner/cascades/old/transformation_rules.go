@@ -903,10 +903,10 @@ func (*pushDownJoin) predicatePushDown(
 		nullSensitive := join.JoinType == base.AntiLeftOuterSemiJoin || join.JoinType == base.LeftOuterSemiJoin
 		if join.JoinType == base.RightOuterJoin {
 			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema,
-				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
+				join.SCtx().GetSessionVars().GetAlwaysKeepJoinKey(), nullSensitive, nil)
 		} else {
 			joinConds, remainCond = expression.PropConstForOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema,
-				join.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, nil)
+				join.SCtx().GetSessionVars().GetAlwaysKeepJoinKey(), nullSensitive, nil)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)
