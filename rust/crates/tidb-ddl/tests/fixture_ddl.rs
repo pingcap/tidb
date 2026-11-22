@@ -13,7 +13,7 @@ use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_ddl::{ClusterDdl, ExecutorStore};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use tidb_ddl_build::session_context::DdlSessionContext;
-use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
+use tidb_ddl_jobsubmit::JobSpec;
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
@@ -212,19 +212,20 @@ impl ExecutorStore for FixtureDdl<'_> {
                 warnings,
             });
         }
-        let catalog = match load_info_schema(&mut **store) {
-            Ok(catalog) => catalog,
-            Err(error) => return refuse(error.into()),
-        };
-        let mut before_insert_with_assigned_ids = |_: &[JobSpec]| Option::<fn()>::None;
-        let mutations = match plan_insert_attempt(
-            &mut **store,
-            &catalog,
-            std::slice::from_mut(&mut spec),
-            &mut before_insert_with_assigned_ids,
-        ) {
-            Ok((mutations, _)) => mutations,
-            Err(error) => return refuse(error.into()),
+        // Go `GenGIDAndInsertJobsWithRetry`: the IDs, then
+        // `insertDDLJobs2Table` on the submitting session.
+        let row_ids = store.row_ids.clone();
+        let submitted = (|| {
+            let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(&mut **store, row_ids)?;
+            let mut mutations = tidb_ddl_jobsubmit::plan_assign_global_ids(&mut **store, std::slice::from_mut(&mut spec))
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            sessions.insert_jobs(self.start_ts, std::slice::from_mut(&mut spec))?;
+            sessions.append_mutations(&mut mutations)?;
+            Ok::<_, DdlPlanError>(mutations)
+        })();
+        let mutations = match submitted {
+            Ok(mutations) => mutations,
+            Err(error) => return refuse(error),
         };
         let mut write = tidb_ddl::cluster_ddl::job_only_write(spec.job.id, mutations);
         apply(&mut **store, &write);

@@ -169,7 +169,7 @@ fn analyze_table_inner(
     tbl_info: &TableInfo,
     db_name: &str,
 ) -> (bool, bool, bool) {
-    let pool = txn.session().map(|session| session.pool);
+    let pool = txn.session().pool;
     let tbl_name = tbl_info.name.lowercase().to_owned();
     let mut cumulative_timeout =
         match with_job_ctx(job.id, |ctx| ctx.analyze_cumulative_timeout) {
@@ -192,11 +192,7 @@ fn analyze_table_inner(
 
     let has_done_ch = with_job_ctx(job.id, |ctx| ctx.analyze_done.is_some());
     if !has_done_ch {
-        let status = match pool
-            .as_deref()
-            .ok_or_else(|| "no DDL session pool".to_owned())
-            .and_then(|pool| query_analyze_status_since(pool, job.start_ts, db_name, &tbl_name))
-        {
+        let status = match query_analyze_status_since(pool.as_ref(), job.start_ts, db_name, &tbl_name) {
             Ok(status) => status,
             Err(error) => {
                 tidb_ddl_logutil::ddl_logger().warn(
@@ -234,9 +230,6 @@ fn analyze_table_inner(
         let db = db_name.to_owned();
         let table = tbl_name.clone();
         std::thread::spawn(tidb_cpuprofile::labels::inherit(move || {
-            let Some(pool) = pool else {
-                return;
-            };
             // Go `statsutil.UpdateSCtxVarsForStats`: the system session
             // loads the statistics variables from the global ones itself.
             tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", &mut ());

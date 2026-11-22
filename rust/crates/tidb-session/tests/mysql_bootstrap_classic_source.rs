@@ -36,8 +36,6 @@ use tidb_infoschema::cluster_catalog::{
 };
 use tidb_ddl::cluster_ddl::add_index::AddIndexSubmission;
 use tidb_ddl::cluster_ddl::{plan_persisted_ddl_job_step, PersistedDdlJobPlan};
-use tidb_ddl::ddl_history_table::DdlHistoryTable;
-use tidb_ddl_jobsubmit::{plan_insert_attempt, JobSpec};
 use tidb_session::mysql_bootstrap::{
     plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapLayout, BootstrapWrite,
 };
@@ -241,9 +239,7 @@ fn table_infos_are_what_the_classic_go_server_stores() {
 #[test]
 fn history_rows_are_the_classic_go_jobs() {
     let (mut store, _) = bootstrapped();
-    let catalog = load_info_schema(&mut store).unwrap();
-    let history = DdlHistoryTable::locate(&catalog).unwrap();
-    let jobs = history.load(&mut store).unwrap();
+    let jobs = history_jobs(&mut store);
     let go: BTreeMap<String, Value> = serde_json::from_str(GO_JOBS).unwrap();
     assert_eq!(jobs.len(), go.len());
     let mut previous_sequence = None;
@@ -337,19 +333,20 @@ fn the_first_user_table_is_117() {
     let Some(AddIndexSubmission::Job(mut spec, _)) = submission else {
         panic!("CREATE TABLE queues a job");
     };
-    let catalog = load_info_schema(&mut store).unwrap();
-    let mut before_insert = |_: &[JobSpec]| Option::<fn()>::None;
-    let (mutations, _) = plan_insert_attempt(
-        &mut store,
-        &catalog,
-        std::slice::from_mut(&mut spec),
-        &mut before_insert,
-    )
-    .unwrap();
+    let row_ids = std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
+    // Go `GenGIDAndInsertJobsWithRetry`: the IDs, then `insertDDLJobs2Table`
+    // on the submitting session.
+    let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+        &mut store, row_ids.clone(),
+    ).unwrap();
+    let mut mutations =
+        tidb_ddl_jobsubmit::plan_assign_global_ids(&mut store, std::slice::from_mut(&mut spec)).unwrap();
+    sessions.insert_jobs(467_996_279_696_262_000, std::slice::from_mut(&mut spec)).unwrap();
+    sessions.append_mutations(&mut mutations).unwrap();
+    drop(sessions);
     apply_mutations(&mut store, &mutations);
     assert_eq!(spec.job.id, 118);
     let mut version = 0;
-    let row_ids = std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default());
     for tick in 1..=2 {
         let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
             &mut store, row_ids.clone(),
@@ -361,7 +358,6 @@ fn the_first_user_table_is_117() {
             467_996_279_696_262_000 + tick,
             state,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-            None,
         )
         .unwrap();
         let PersistedDdlJobPlan::Step(mut step) = plan else {
@@ -385,8 +381,8 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
     for layout in [BootstrapLayout::Classic, BootstrapLayout::NextGen] {
         let (mut store, _) = bootstrapped_with(layout);
         let catalog = load_info_schema(&mut store).expect("the catalog loads");
-        tidb_ddl_systable::ddl_job_table::DdlJobTable::locate(&catalog).expect("mysql.tidb_ddl_job");
-        DdlHistoryTable::locate(&catalog).expect("mysql.tidb_ddl_history");
+        catalog.table_info_by_name("mysql", "tidb_ddl_job").expect("mysql.tidb_ddl_job");
+        catalog.table_info_by_name("mysql", "tidb_ddl_history").expect("mysql.tidb_ddl_history");
 
         let table = tidb_syssession::advisory_locks::find_system_table(&mut store, "advisory_locks")
             .unwrap()
@@ -438,4 +434,15 @@ fn a_second_classic_bootstrap_is_refused() {
 /// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
 fn ddl_context(context: &tidb_sessionctx::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
     std::sync::Arc::new(context.clone())
+}
+
+/// The bootstrap's DDL history, read with SQL (Go `GetAllHistoryDDLJobs`).
+fn history_jobs(store: &mut MetaStore) -> Vec<tidb_model::Job> {
+    tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+        store,
+        std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+    )
+    .unwrap()
+    .history_jobs()
+    .unwrap()
 }

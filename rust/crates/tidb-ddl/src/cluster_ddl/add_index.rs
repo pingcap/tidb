@@ -1283,11 +1283,9 @@ fn move_and_update_hidden_columns_to_public(info: &mut TableInfo, index: &GoShar
 /// the reorganization the owner ran since the last step, if any.
 pub(super) fn plan_persisted_add_index_job_step(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return plan_rollback_add_index(txn, active, start_ts);
@@ -1389,7 +1387,13 @@ pub(super) fn plan_persisted_add_index_job_step(
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => plan_write_reorganization(
-            txn, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
+            txn,
+            active,
+            info,
+            indexes,
+            outcome,
+            start_ts,
+            is_pk,
         ),
         state => Err(DdlPlanError::from(
             tidb_dbterror::ERR_INVALID_DDL_STATE.gen_with_stack_by_args(&[
@@ -1607,9 +1611,9 @@ fn check_columnar_index_process_once(
         "select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = {table_id} and index_id = {index_id};"
     );
     let rows = match txn.execute(&sql, &[]) {
-        Some(Ok(rows)) if !rows.is_empty() => rows,
-        Some(Err(error)) => return Err(DdlPlanError::from_mysql_error(error)),
-        _ => return Ok((false, 0, 0)),
+        Ok(rows) if !rows.is_empty() => rows,
+        Err(error) => return Err(DdlPlanError::from_mysql_error(error)),
+        Ok(_) => return Ok((false, 0, 0)),
     };
     // Get and process info from multiple TiFlash nodes.
     let int = |datum: &tidb_datatype::Datum| match datum {
@@ -1657,14 +1661,12 @@ fn check_primary_key_not_null(info: &mut TableInfo, index: &IndexInfo) {
 #[allow(clippy::too_many_arguments)]
 fn plan_write_reorganization(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     mut info: TableInfo,
     indexes: Vec<GoShared<IndexInfo>>,
     outcome: Option<&ReorgOutcome>,
     start_ts: u64,
     is_pk: bool,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
     let analyze_state = active
@@ -1676,7 +1678,12 @@ fn plan_write_reorganization(
         });
     if analyze_state == tidb_model::reorg::analyze_state::NONE {
         match do_reorg_work_for_create_index(
-            txn, catalog, active, &info, &indexes, outcome, start_ts,
+            txn,
+            active,
+            &info,
+            &indexes,
+            outcome,
+            start_ts,
         )? {
             CreateIndexReorg::Step(step) => return Ok(step),
             CreateIndexReorg::Failed(error) => {
@@ -1739,17 +1746,10 @@ fn plan_write_reorganization(
             .iter()
             .map(|index| index.read().clone_like_go())
             .collect();
-        append_schema_change_mutations(
-            txn,
-            catalog,
-            active.job.id,
-            &[(
+        append_schema_change_mutations(txn, active.job.id, &[(
                 notifier_sub_job_id(&active.job),
                 SchemaChangeEvent::add_indexes(info.clone_like_go(), added, analyzed),
-            )],
-            &mut write.mutations,
-            row_ids,
-        )?;
+            )])?;
     }
     let finished_args = GoShared::new(tidb_model::ModifyIndexArgs {
         partition_ids: partition_ids(&info).into(),
@@ -1805,7 +1805,6 @@ pub(super) enum CreateIndexReorg {
 /// reorganization and hands its [`ReorgOutcome`] to the next visit.
 pub(super) fn do_reorg_work_for_create_index(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     indexes: &[GoShared<IndexInfo>],
@@ -1865,7 +1864,7 @@ pub(super) fn do_reorg_work_for_create_index(
             return Ok(CreateIndexReorg::Step(action_step(write)));
         }
         None | Some(ReorgResult::Interrupted) => {
-            let handle = get_ddl_reorg_handle(txn, catalog, active)?;
+            let handle = get_ddl_reorg_handle(txn, active)?;
             let reorg = request(active, ReorgStageRequest::Run(handle));
             return Ok(CreateIndexReorg::Step(reorg_step(&active.job, reorg)));
         }
@@ -2270,35 +2269,26 @@ pub(super) fn rollingback_add_index(
 }
 
 /// Go `getDDLReorgHandle`: the job's `mysql.tidb_ddl_reorg` row, selected on
-/// the step's session; a step without one reads the row off its snapshot.
+/// the step's session.
 pub(super) fn get_ddl_reorg_handle(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
 ) -> Result<ReorgHandle, DdlPlanError> {
     let sql = format!(
         "select ele_id, ele_type, start_key, end_key, physical_id, reorg_meta from mysql.tidb_ddl_reorg where job_id = {}",
         active.job.id
     );
-    let handle = match txn.execute(&sql, &[]) {
-        Some(rows) => rows
-            .map_err(DdlPlanError::from_mysql_error)?
-            .first()
-            .map(|row| ReorgHandle {
-                element_id: row[0].get_int64(),
-                element_type: row[1].go_bytes().to_vec(),
-                start_key: row[2].go_bytes().to_vec(),
-                end_key: row[3].go_bytes().to_vec(),
-                physical_id: row[4].get_int64(),
-            }),
-        None => crate::ddl_reorg_table::DdlReorgTable::locate(catalog)
-            .map_err(DdlPlanError::Encode)?
-            .load(txn, active.job.id)
-            .map_err(DdlPlanError::Encode)?
-            .into_iter()
-            .next()
-            .map(|row| row.handle),
-    };
+    let handle = txn
+        .execute(&sql, &[])
+        .map_err(DdlPlanError::from_mysql_error)?
+        .first()
+        .map(|row| ReorgHandle {
+            element_id: row[0].get_int64(),
+            element_type: row[1].go_bytes().to_vec(),
+            start_key: row[2].go_bytes().to_vec(),
+            end_key: row[3].go_bytes().to_vec(),
+            physical_id: row[4].get_int64(),
+        });
     handle
         .ok_or_else(|| {
             // Go `meta.ErrDDLReorgElementNotExist`.

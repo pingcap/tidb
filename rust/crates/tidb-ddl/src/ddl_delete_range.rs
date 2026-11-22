@@ -21,14 +21,9 @@
 use std::collections::HashMap;
 
 use tidb_datatype::Datum;
-use tidb_model::{ActionType, Job, JobState, TableInfo};
-use tidb_txnkv::transaction::BufferMutation;
+use tidb_model::{ActionType, Job, JobState};
 
-use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ddl_build::plan_error::DdlPlanError;
-use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
-use tidb_syssession::system_row_write::{insert_row, RowValues};
 
 /// Go `batchInsertDeleteRangeSize`: drop schema records its tables in
 /// batches of this many.
@@ -795,21 +790,6 @@ pub fn update_delete_range(
     Ok(())
 }
 
-/// One stored `gc_delete_range` / `gc_delete_range_done` row.
-pub struct StoredDelRange {
-    /// The range.
-    pub task: DelRangeTask,
-    /// `ts`.
-    pub ts: u64,
-}
-
-/// `mysql.gc_delete_range` or `mysql.gc_delete_range_done`, located.
-pub struct DelRangeTable {
-    table: Box<TableInfo>,
-    view: SystemTableView,
-    db_id: i64,
-}
-
 /// Go `hex.EncodeToString`: lowercase.
 fn hex_encode(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -839,115 +819,6 @@ fn hex_decode(text: &[u8]) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn text(message: impl std::fmt::Display) -> String {
-    message.to_string()
-}
-
-impl DelRangeTable {
-    /// Finds `mysql.<name>` in the catalog.
-    pub fn locate(catalog: &SessionExtendedInfoSchema, name: &str) -> Result<Self, String> {
-        let (database, table) = catalog
-            .table_info_by_name("mysql", name)
-            .ok_or_else(|| format!("mysql.{name} does not exist"))?;
-        let table = table.read();
-        let db_id = database.read().id;
-        let table = table.clone_like_go();
-        let view = SystemTableView::project(
-            &format!("mysql.{name}"),
-            &table,
-            &["job_id", "element_id", "start_key", "end_key", "ts"],
-        );
-        Ok(Self {
-            table: Box::new(table),
-            view,
-            db_id,
-        })
-    }
-
-    /// The table's metadata, for allocating a row id.
-    #[must_use]
-    pub fn table(&self) -> &TableInfo {
-        &self.table
-    }
-
-    /// The id of the database holding the table.
-    #[must_use]
-    pub fn db_id(&self) -> i64 {
-        self.db_id
-    }
-
-    fn column_id(&self, column: &str) -> Result<i64, String> {
-        self.table
-            .columns
-            .iter_deref()
-            .find(|candidate| candidate.read().name.lowercase() == column)
-            .map(|candidate| candidate.read().id)
-            .ok_or_else(|| format!("{} has no column `{column}`", self.table.name))
-    }
-
-    /// Go `loadDeleteRangesFromTable`: every row whose `ts` is below
-    /// `safe_point`, in the table's order.
-    pub fn load<S: MetaSnapshot>(
-        &self,
-        snapshot: &mut S,
-        safe_point: u64,
-    ) -> Result<Vec<StoredDelRange>, String> {
-        let mut rows = Vec::new();
-        for (key, value) in scan_system_table(snapshot, &self.view).map_err(text)? {
-            let row = SystemRow::parse(&self.view, &key, &value).map_err(text)?;
-            let ts = row.i64("ts").map_err(text)?.unwrap_or(0) as u64;
-            if ts >= safe_point {
-                continue;
-            }
-            let hex_column = |column: &str| -> Result<Vec<u8>, String> {
-                let raw = row.bytes(column).map_err(text)?.unwrap_or_default();
-                hex_decode(&raw).ok_or_else(|| format!("{column} is not hex"))
-            };
-            let task = DelRangeTask {
-                job_id: row.i64("job_id").map_err(text)?.unwrap_or(0),
-                element_id: row.i64("element_id").map_err(text)?.unwrap_or(0),
-                start_key: hex_column("start_key")?,
-                end_key: hex_column("end_key")?,
-            };
-            rows.push(StoredDelRange { task, ts });
-        }
-        Ok(rows)
-    }
-
-    fn values(&self, task: &DelRangeTask, ts: u64) -> Result<RowValues, String> {
-        let mut values = RowValues::new();
-        values.insert(self.column_id("job_id")?, Datum::Int(task.job_id));
-        values.insert(self.column_id("element_id")?, Datum::Int(task.element_id));
-        values.insert(
-            self.column_id("start_key")?,
-            Datum::Bytes(hex_encode(&task.start_key).into_bytes()),
-        );
-        values.insert(
-            self.column_id("end_key")?,
-            Datum::Bytes(hex_encode(&task.end_key).into_bytes()),
-        );
-        values.insert(self.column_id("ts")?, Datum::Int(ts as i64));
-        Ok(values)
-    }
-
-    /// `INSERT IGNORE`: one row, unless `(job_id, element_id)` is taken.
-    pub fn insert_ignore_mutations(
-        &self,
-        existing: &[StoredDelRange],
-        task: &DelRangeTask,
-        ts: u64,
-        row_id: i64,
-    ) -> Result<Vec<BufferMutation>, String> {
-        if existing
-            .iter()
-            .any(|row| row.task.job_id == task.job_id && row.task.element_id == task.element_id)
-        {
-            return Ok(Vec::new());
-        }
-        insert_row(&self.table, row_id, &self.values(task, ts)?).map_err(text)
-    }
-}
-
 /// Go `delRange.addDelRangeJob`: the job's ranges inserted by Go's
 /// statements on a session of the worker's pool, each statement in its own
 /// transaction -- not the finishing step's.
@@ -963,57 +834,3 @@ pub fn add_del_range_job(
     add_del_range_job_internal(&mut wrapper, job)
 }
 
-/// The `gc_delete_range` rows a finished job owes, staged by a step whose
-/// worker has no pooled sessions yet ([`add_del_range_job`] otherwise),
-/// allocated from the node's row-ID allocators and stamped with the step's
-/// start timestamp.
-pub fn finish_ddl_job<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    job: &Job,
-    ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<Vec<BufferMutation>, DdlPlanError> {
-    if !job_need_gc(job) {
-        return Ok(Vec::new());
-    }
-    let mut staged = StagedDelRanges::default();
-    add_del_range_job_internal(&mut staged, job)?;
-    del_range_rows_mutations(snapshot, catalog, &staged.ranges, ts, row_ids)
-}
-
-/// The `gc_delete_range` rows (`INSERT IGNORE`) for `ranges`.
-pub fn del_range_rows_mutations<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    ranges: &[DelRangeTask],
-    ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<Vec<BufferMutation>, DdlPlanError> {
-    if ranges.is_empty() {
-        return Ok(Vec::new());
-    }
-    let table = DelRangeTable::locate(catalog, "gc_delete_range").map_err(DdlPlanError::Encode)?;
-    let existing = table
-        .load(snapshot, u64::MAX)
-        .map_err(DdlPlanError::Encode)?;
-    let ids = row_ids.ok_or_else(|| {
-        DdlPlanError::Encode("mysql.gc_delete_range has no row-ID allocator".into())
-    })?;
-    let allocator = ids.row_allocator_for(table.db_id(), table.table());
-    let mut mutations = Vec::new();
-    for range in ranges {
-        let id = allocator.alloc_next().map_err(|error| {
-            DdlPlanError::Encode(format!("mysql.gc_delete_range's row-ID allocator: {error}"))
-        })?;
-        let row_id = i64::try_from(id).map_err(|_| {
-            DdlPlanError::Encode("mysql.gc_delete_range's row-ID allocator overflowed".into())
-        })?;
-        mutations.extend(
-            table
-                .insert_ignore_mutations(&existing, range, ts, row_id)
-                .map_err(DdlPlanError::Encode)?,
-        );
-    }
-    Ok(mutations)
-}

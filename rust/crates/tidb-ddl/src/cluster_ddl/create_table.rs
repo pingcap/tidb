@@ -191,7 +191,6 @@ pub(super) fn on_create_table(
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_create_table_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -291,14 +290,7 @@ pub(super) fn on_create_table(
     *table_handle.write() = info.clone_like_go();
     if finished {
         if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-            append_schema_change_mutations(
-                txn,
-                catalog,
-                active.job.id,
-                &[(-1, SchemaChangeEvent::create_table(info.clone_like_go()))],
-                &mut mutations,
-                row_ids,
-            )?;
+            append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::create_table(info.clone_like_go()))])?;
         }
         active.job.finish_table_job(
             JobState::DONE,

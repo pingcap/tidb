@@ -528,11 +528,9 @@ fn reorg_table_step(
 /// Go `onReorganizePartition`.
 pub(super) fn on_reorganize_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_table_partition_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -764,7 +762,7 @@ pub(super) fn on_reorganize_partition(
             Ok(action_step(write))
         }
         SchemaState::WRITE_REORGANIZATION => {
-            match do_partition_reorg_work(txn, catalog, active, &info, reorg_outcome)? {
+            match do_partition_reorg_work(txn, active, &info, reorg_outcome)? {
                 PartitionReorgWork::Step(step) => return Ok(step),
                 PartitionReorgWork::Failed(error) => {
                     return rollback_reorganize_partition_with_err(
@@ -943,14 +941,7 @@ pub(super) fn on_reorganize_partition(
                         event_partition_info(dropped),
                     ),
                 };
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(-1, event)],
-                    &mut write.mutations,
-                    row_ids,
-                )?;
+                append_schema_change_mutations(txn, active.job.id, &[(-1, event)])?;
             }
             active.job.finish_table_job(
                 JobState::DONE,
@@ -1037,7 +1028,6 @@ fn phase_scope(info: &TableInfo, phase: PartitionReorgPhase) -> (Vec<i64>, Vec<i
 /// between steps.
 fn do_partition_reorg_work(
     snapshot: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
     outcome: Option<&ReorgOutcome>,
@@ -1115,7 +1105,7 @@ fn do_partition_reorg_work(
             ))))
         }
         None | Some((ReorgResult::Interrupted, _)) => {
-            let handle = get_ddl_reorg_handle(snapshot, catalog, active)?;
+            let handle = get_ddl_reorg_handle(snapshot, active)?;
             // The handle names the phase it is in.
             let adding = phase_scope(info, PartitionReorgPhase::AddingIndexes).0;
             let phase = if handle.element_type == COLUMN_ELEMENT_KEY {

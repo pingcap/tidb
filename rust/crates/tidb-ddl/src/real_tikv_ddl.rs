@@ -45,7 +45,6 @@ use tidb_ddl_build::plan_error::DdlPlanError;
 
 use tidb_store_driver_txn::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use tidb_ddl_jobsubmit::finish_insert_attempt;
-use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
@@ -1609,7 +1608,6 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
         }),
     )?;
     let start_ts = transaction.start_ts();
-    let row_ids = backfiller.system_row_ids();
     // Go `w.sess`'s membuffer for this step: the step's session statements
     // stage into it, and it commits with the step's meta writes.
     let mut buffer = MutationBuffer::new();
@@ -1636,7 +1634,6 @@ fn commit_cluster_ddl_phase<S: StoreClient>(
             start_ts,
             schema_state,
             &|| refresh_ddl_error_count_limit(&*sess_pool, phase.ddl_job_id),
-            Some(row_ids.as_ref()),
         ) {
             Ok(PersistedDdlJobPlan::Paused) => {
                 transaction

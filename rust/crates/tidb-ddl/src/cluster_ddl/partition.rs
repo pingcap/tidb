@@ -500,7 +500,6 @@ fn table_info_with_dropping_partitions(info: &TableInfo) -> TableInfo {
 /// asks for (or records) the next part of it.
 fn clean_global_index_entries_from_dropped_partitions(
     snapshot: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     old_info: &TableInfo,
     old_ids: &[i64],
@@ -551,7 +550,7 @@ fn clean_global_index_entries_from_dropped_partitions(
             Ok(Some(action_step(job_only_write(active.job.id, Vec::new()))))
         }
         None | Some(ReorgResult::Interrupted) => {
-            let handle = get_ddl_reorg_handle(snapshot, catalog, active)?;
+            let handle = get_ddl_reorg_handle(snapshot, active)?;
             let reorg = request(active, ReorgStageRequest::Run(handle));
             Ok(Some(reorg_step(&active.job, reorg)))
         }
@@ -685,10 +684,8 @@ fn check_add_partition_name_unique(
 /// Go `onAddTablePartition`.
 pub(super) fn on_add_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     if active.job.is_rollingback() {
@@ -844,20 +841,13 @@ pub(super) fn on_add_table_partition(
             }
             let mut write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(
+                append_schema_change_mutations(txn, active.job.id, &[(
                         -1,
                         SchemaChangeEvent::new_add_partition_event(
                             info.clone_like_go(),
                             event_partition_info(part_info.definitions.snapshot()),
                         ),
-                    )],
-                    &mut write.mutations,
-                    row_ids,
-                )?;
+                    )])?;
             }
             active.job.finish_table_job(
                 JobState::DONE,
@@ -1045,11 +1035,9 @@ fn update_dropping_partition_info(
 /// Go `onDropTablePartition`.
 pub(super) fn on_drop_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     let names = args
@@ -1129,7 +1117,6 @@ pub(super) fn on_drop_table_partition(
                 let old_info = table_info_with_dropping_partitions(&info);
                 if let Some(step) = clean_global_index_entries_from_dropped_partitions(
                     txn,
-                    catalog,
                     active,
                     &old_info,
                     &physical_table_ids,
@@ -1157,20 +1144,13 @@ pub(super) fn on_drop_table_partition(
                 |diff| diff.affected_options = affects.into(),
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(
+                append_schema_change_mutations(txn, active.job.id, &[(
                         -1,
                         SchemaChangeEvent::new_drop_partition_event(
                             info.clone_like_go(),
                             event_partition_info(dropped),
                         ),
-                    )],
-                    &mut write.mutations,
-                    row_ids,
-                )?;
+                    )])?;
             }
             active.job.finish_table_job(
                 JobState::DONE,
@@ -1193,11 +1173,9 @@ pub(super) fn on_drop_table_partition(
 /// Go `onTruncateTablePartition`.
 pub(super) fn on_truncate_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // Only the first step may still cancel the job on a fault.
     let can_cancel = active.job.schema_state == SchemaState::PUBLIC;
@@ -1328,7 +1306,6 @@ pub(super) fn on_truncate_table_partition(
         SchemaState::DELETE_REORGANIZATION => {
             if let Some(step) = clean_global_index_entries_from_dropped_partitions(
                 txn,
-                catalog,
                 active,
                 &table_info_with_dropping_partitions(&info),
                 &old_ids,
@@ -1375,21 +1352,14 @@ pub(super) fn on_truncate_table_partition(
                 |diff| diff.affected_options = affects.into(),
             )?;
             if !tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(
+                append_schema_change_mutations(txn, active.job.id, &[(
                         -1,
                         SchemaChangeEvent::new_truncate_partition_event(
                             info.clone_like_go(),
                             event_partition_info(new_definitions),
                             event_partition_info(old_definitions),
                         ),
-                    )],
-                    &mut write.mutations,
-                    row_ids,
-                )?;
+                    )])?;
             }
             active.job.finish_table_job(
                 JobState::DONE,

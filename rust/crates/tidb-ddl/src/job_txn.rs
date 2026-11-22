@@ -30,9 +30,8 @@ pub struct JobTxn<'a> {
     inner: &'a mut dyn MetaSnapshot,
     start_ts: u64,
     /// Go `w.sess`: the session whose transaction the step is, through which
-    /// the step's system-table statements run. `None` for a run without a
-    /// session pool (bootstrap, planner tests).
-    session: Option<StepSession>,
+    /// the step's system-table statements run.
+    session: StepSession,
     /// Go `jobCtx.store`'s region cache and PD client; `None` for a run
     /// without one.
     region_store: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
@@ -49,22 +48,15 @@ pub type JobMeta<'t, 'a> = tidb_meta::transaction::Mutator<&'t mut JobTxn<'a>>;
 impl<'a> JobTxn<'a> {
     /// The transaction of one step over `inner` (the job's snapshot, or a
     /// multi-schema change's transaction for one of its sub-jobs).
-    pub fn new(inner: &'a mut dyn MetaSnapshot, start_ts: u64) -> Self {
+    pub fn new(inner: &'a mut dyn MetaSnapshot, start_ts: u64, session: StepSession) -> Self {
         Self {
             inner,
             start_ts,
-            session: None,
+            session,
             region_store: None,
             writes: BTreeMap::new(),
             failed: None,
         }
-    }
-
-    /// The step's session (see [`StepSession`]).
-    #[must_use]
-    pub fn with_session(mut self, session: Option<StepSession>) -> Self {
-        self.session = session;
-        self
     }
 
     /// The step's region store (see [`Self::region_store`]).
@@ -85,20 +77,17 @@ impl<'a> JobTxn<'a> {
 
     /// The step's session, for a transaction nested in this one.
     #[must_use]
-    pub fn session(&self) -> Option<StepSession> {
+    pub fn session(&self) -> StepSession {
         self.session.clone()
     }
 
     /// Go `jobCtx.oldDDLCtx.startMode`.
     #[must_use]
     pub fn start_mode(&self) -> crate::StartMode {
-        self.session
-            .as_ref()
-            .map_or(crate::StartMode::Normal, |session| session.start_mode)
+        self.session.start_mode
     }
 
-    /// Go `w.sess.Execute(ctx, sql, label)` in the step's transaction;
-    /// `None` when the step runs without a session.
+    /// Go `w.sess.Execute(ctx, sql, label)` in the step's transaction.
     ///
     /// # Errors
     ///
@@ -107,26 +96,21 @@ impl<'a> JobTxn<'a> {
         &self,
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Option<Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>> {
-        let session = self.session.as_ref()?;
-        Some(session.execute(self.start_ts, sql, args))
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        self.session.execute(self.start_ts, sql, args)
     }
 
     /// Go `jobCtx.mustRollbackTxnOnError = true`: an errored or cancelled
     /// step discards all its mutations, its session's statements included.
     pub fn set_must_rollback_txn_on_error(&self) {
-        if let Some(session) = &self.session {
-            session.step_ctx.must_rollback_txn_on_error.store(true, std::sync::atomic::Ordering::Release);
-        }
+        self.session.step_ctx.must_rollback_txn_on_error.store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Go `updateVersionAndTableInfo`'s `if jobCtx.multiSchemaDiff != nil {
     /// SetSchemaDiffForMultiInfos(jobCtx.multiSchemaDiff, multiInfos...) }`.
     pub fn record_multi_schema_infos(&self, infos: &[(i64, i64)]) {
-        if let Some(session) = &self.session {
-            if let Some(collected) = session.step_ctx.multi_schema_diff.lock().unwrap().as_mut() {
-                collected.extend_from_slice(infos);
-            }
+        if let Some(collected) = self.session.step_ctx.multi_schema_diff.lock().unwrap().as_mut() {
+            collected.extend_from_slice(infos);
         }
     }
 
@@ -135,9 +119,8 @@ impl<'a> JobTxn<'a> {
         &self,
         sql: &str,
         args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Option<Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError>> {
-        let session = self.session.as_ref()?;
-        Some(session.execute_in_mview_maintenance(self.start_ts, sql, args))
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+        self.session.execute_in_mview_maintenance(self.start_ts, sql, args)
     }
 
     /// Go `meta.NewMutator(txn)`.
@@ -379,4 +362,29 @@ impl tidb_meta::transaction::MetaTransaction for JobTxn<'_> {
     /// Go `NewMutator`'s priority and disk-full options are the worker
     /// transaction's own here.
     fn configure_meta_mutator(&mut self) {}
+}
+
+/// A step session over a pool no statement reaches, for a test that drives a
+/// step's meta writes alone (Go `kv.RunInNewTxn` + `meta.NewMutator`).
+#[cfg(test)]
+pub(crate) fn unused_step_session(start_mode: crate::StartMode) -> StepSession {
+    struct UnusedPool;
+
+    impl tidb_ddl_build::session_pool::DdlSessionPool for UnusedPool {
+        fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
+            unreachable!("the test's step runs no statement")
+        }
+
+        fn restricted_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
+            unreachable!("the test's step runs no statement")
+        }
+    }
+
+    StepSession {
+        pool: std::sync::Arc::new(UnusedPool),
+        buffer: Default::default(),
+        sql: Default::default(),
+        start_mode,
+        step_ctx: Default::default(),
+    }
 }

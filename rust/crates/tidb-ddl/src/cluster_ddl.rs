@@ -2690,7 +2690,6 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     start_ts: u64,
     schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let reorg_outcomes = schema_state.reorg.clone();
     let sessions = &schema_state.worker.clone();
@@ -2708,8 +2707,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
                 active,
                 start_ts,
                 &reorg_outcomes,
-                row_ids,
-                Some(sessions),
+                sessions,
             )
         },
     )
@@ -2726,25 +2724,23 @@ fn plan_persisted_action<S: MetaSnapshot>(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     run_in_job_txn(snapshot, start_ts, sessions, |txn| {
-        dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, row_ids, sessions)
+        dispatch_persisted_action(txn, catalog, active, start_ts, reorg_outcomes, sessions)
     })
 }
 
 /// The step's session (Go `w.sess`) from the worker's pool and the step's
 /// buffer.
-fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSession> {
-    worker
-        .map(|worker| crate::job_txn::StepSession {
+fn step_session(worker: &DdlStepWorker) -> crate::job_txn::StepSession {
+    crate::job_txn::StepSession {
         pool: std::sync::Arc::clone(&worker.sess_pool),
         buffer: worker.step_buffer.clone(),
         sql: std::sync::Arc::clone(&worker.step_sql),
         start_mode: worker.start_mode,
         step_ctx: std::sync::Arc::clone(&worker.step_ctx),
-    })
+    }
 }
 
 /// Runs one handler in a step transaction over `snapshot`: its meta writes
@@ -2752,14 +2748,14 @@ fn step_session(worker: Option<&DdlStepWorker>) -> Option<crate::job_txn::StepSe
 fn run_in_job_txn(
     snapshot: &mut dyn MetaSnapshot,
     start_ts: u64,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
     handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     run_in_job_txn_with(
         snapshot,
         start_ts,
         step_session(worker),
-        worker.and_then(|worker| worker.region_store.clone()),
+        worker.region_store.clone(),
         handler,
     )
 }
@@ -2768,13 +2764,11 @@ fn run_in_job_txn(
 fn run_in_job_txn_with(
     snapshot: &mut dyn MetaSnapshot,
     start_ts: u64,
-    session: Option<crate::job_txn::StepSession>,
+    session: crate::job_txn::StepSession,
     region_store: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
     handler: impl FnOnce(&mut JobTxn<'_>) -> Result<PersistedDdlActionStep, DdlPlanError>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
-    let mut txn = JobTxn::new(snapshot, start_ts)
-        .with_session(session)
-        .with_region_store(region_store);
+    let mut txn = JobTxn::new(snapshot, start_ts, session).with_region_store(region_store);
     let mut step = handler(&mut txn)?;
     let mut mutations = txn.into_mutations()?;
     mutations.append(&mut step.write.mutations);
@@ -2788,8 +2782,7 @@ fn dispatch_persisted_action(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // A job of its own reads the latest outcome; a multi-schema change hands
     // each sub-job its own.
@@ -2805,25 +2798,28 @@ fn dispatch_persisted_action(
             plan_persisted_create_schema_job_step(txn, catalog, active)
         }
         ActionType::ACTION_CREATE_TABLE => create_table::on_create_table(
-            txn, catalog, active, start_ts, row_ids,
+            txn,
+            catalog,
+            active,
+            start_ts,
         ),
         ActionType::ACTION_MVIEW_REFRESH_OUT_OF_PLACE_CUTOVER => {
-            materialized_view::on_refresh_materialized_view_complete_out_of_place_cutover(txn, catalog, active, start_ts, row_ids, sessions)
+            materialized_view::on_refresh_materialized_view_complete_out_of_place_cutover(txn, active, start_ts, sessions)
         }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_SHADOW => {
             materialized_view::on_create_materialized_view_shadow(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW_LOG => {
-            materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, row_ids, sessions)
+            materialized_view::on_create_materialized_view_log(txn, catalog, active, start_ts, sessions)
         }
         ActionType::ACTION_ALTER_MATERIALIZED_VIEW_LOG_PURGE => {
-            materialized_view::on_alter_materialized_view_log_purge(txn, catalog, active, start_ts, row_ids)
+            materialized_view::on_alter_materialized_view_log_purge(txn, active, start_ts)
         }
         ActionType::ACTION_ALTER_MATERIALIZED_VIEW_REFRESH => {
-            materialized_view::on_alter_materialized_view_refresh(txn, catalog, active, start_ts, row_ids)
+            materialized_view::on_alter_materialized_view_refresh(txn, active, start_ts)
         }
         ActionType::ACTION_ALTER_MATERIALIZED_VIEW_ATTRIBUTES => {
-            materialized_view::on_alter_materialized_view_attributes(txn, catalog, active, start_ts, row_ids)
+            materialized_view::on_alter_materialized_view_attributes(txn, active, start_ts)
         }
         ActionType::ACTION_CREATE_MATERIALIZED_VIEW => materialized_view::on_create_materialized_view(
             txn,
@@ -2831,11 +2827,10 @@ fn dispatch_persisted_action(
             active,
             start_ts,
             reorg_outcome,
-            row_ids,
             sessions,
         ),
         ActionType::ACTION_CREATE_TABLES => {
-            plan_persisted_create_tables_job_step(txn, catalog, active, start_ts, row_ids)
+            plan_persisted_create_tables_job_step(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_RECOVER_TABLE => {
             recover_table::on_recover_table(txn, catalog, active, start_ts, sessions)
@@ -2844,7 +2839,7 @@ fn dispatch_persisted_action(
             recover_table::on_recover_schema(txn, active, start_ts, sessions)
         }
         ActionType::ACTION_FLASHBACK_CLUSTER => {
-            flashback_cluster::on_flashback_cluster(txn, catalog, active, row_ids, sessions)
+            flashback_cluster::on_flashback_cluster(txn, catalog, active, sessions)
         }
         ActionType::ACTION_CREATE_VIEW => {
             create_object::on_create_view(txn, active, start_ts)
@@ -2900,17 +2895,17 @@ fn dispatch_persisted_action(
         }
         ActionType::ACTION_ADD_TABLE_PARTITION => {
             partition::on_add_table_partition(
-                txn, catalog, active, start_ts, row_ids,
+                txn,
+                active,
+                start_ts,
             )
         }
         ActionType::ACTION_DROP_TABLE_PARTITION => {
             partition::on_drop_table_partition(
                 txn,
-                catalog,
                 active,
                 start_ts,
                 reorg_outcome,
-                row_ids,
             )
         }
         ActionType::ACTION_REORGANIZE_PARTITION
@@ -2918,30 +2913,24 @@ fn dispatch_persisted_action(
         | ActionType::ACTION_REMOVE_PARTITIONING => {
             reorganize_partition::on_reorganize_partition(
                 txn,
-                catalog,
                 active,
                 start_ts,
                 reorg_outcome,
-                row_ids,
             )
         }
         ActionType::ACTION_EXCHANGE_TABLE_PARTITION => {
             exchange_partition::on_exchange_table_partition(
                 txn,
-                catalog,
                 active,
                 reorg_outcome,
-                row_ids,
             )
         }
         ActionType::ACTION_TRUNCATE_TABLE_PARTITION => {
             partition::on_truncate_table_partition(
                 txn,
-                catalog,
                 active,
                 start_ts,
                 reorg_outcome,
-                row_ids,
             )
         }
         ActionType::ACTION_RENAME_TABLE | ActionType::ACTION_RENAME_TABLES => {
@@ -2953,7 +2942,7 @@ fn dispatch_persisted_action(
         ActionType::ACTION_REFRESH_META => table_mode::on_refresh_meta(txn, active),
         ActionType::ACTION_REPAIR_TABLE => repair_table::on_repair_table(txn, active, start_ts),
         ActionType::ACTION_DROP_SCHEMA => {
-            plan_persisted_drop_schema_job_step(txn, catalog, active, row_ids)
+            plan_persisted_drop_schema_job_step(txn, catalog, active)
         }
         ActionType::ACTION_DROP_TABLE
         | ActionType::ACTION_DROP_VIEW
@@ -2961,7 +2950,7 @@ fn dispatch_persisted_action(
         | ActionType::ACTION_DROP_MATERIALIZED_VIEW_LOG
         | ActionType::ACTION_DROP_MATERIALIZED_VIEW
         | ActionType::ACTION_DROP_MATERIALIZED_VIEW_SHADOW => {
-            plan_persisted_drop_table_job_step(txn, catalog, active, row_ids)
+            plan_persisted_drop_table_job_step(txn, catalog, active)
         }
         ActionType::ACTION_ADD_COLUMNAR_INDEX => {
             add_index::on_create_columnar_index(txn, active, start_ts)
@@ -2969,21 +2958,21 @@ fn dispatch_persisted_action(
         ActionType::ACTION_ADD_INDEX | ActionType::ACTION_ADD_PRIMARY_KEY => {
             add_index::plan_persisted_add_index_job_step(
                 txn,
-                catalog,
                 active,
                 start_ts,
                 reorg_outcome,
-                row_ids,
             )
         }
         ActionType::ACTION_DROP_INDEX | ActionType::ACTION_DROP_PRIMARY_KEY => {
             drop_index::on_drop_index(txn, catalog, active, start_ts)
         }
         ActionType::ACTION_TRUNCATE_TABLE => truncate::on_truncate_table(
-            txn, catalog, active, row_ids,
+            txn,
+            catalog,
+            active,
         ),
         ActionType::ACTION_ADD_COLUMN => {
-            add_column::on_add_column(txn, catalog, active, start_ts, row_ids, sessions)
+            add_column::on_add_column(txn, catalog, active, start_ts, sessions)
         }
         ActionType::ACTION_DROP_COLUMN => {
             drop_column::on_drop_column(txn, catalog, active, start_ts)
@@ -2995,7 +2984,6 @@ fn dispatch_persisted_action(
                 active,
                 start_ts,
                 reorg_outcomes,
-                row_ids,
                 sessions,
             )
         }
@@ -3012,7 +3000,6 @@ fn dispatch_persisted_action(
             active,
             start_ts,
             reorg_outcome,
-            row_ids,
         ),
         action if alter_table::ALTER_TABLE_ACTIONS.contains(&action) => {
             alter_table::plan_persisted_alter_table_job_step(txn, catalog, active, start_ts)
@@ -3028,35 +3015,22 @@ pub fn schema_sync_before_step<S: MetaSnapshot>(
     schema_state: &DdlJobSchemaState,
     job: &tidb_model::Job,
 ) -> Result<Option<PersistedDdlJobPlan>, DdlPlanError> {
-    // Go's barrier reads no schema at the step's snapshot: the MDL branch
-    // only needs `mysql.tidb_mdl_info` from the published image
-    // (`jobCtx.infoCache.GetLatest()`), and `waitVersionSyncedWithoutMDL`
-    // reads the meta's version itself. Loading the snapshot's version here
-    // would put it in the node's `InfoCache` ahead of the node's syncer,
-    // whose reload then hits the cache and records no changed tables for the
-    // schema validator (`Update(ts, 0, ver, nil)`): a transaction planned
-    // before the step would pass its commit-time schema check.
-    let catalog = match &schema_state.info_cache {
-        Some(cache) => cache.get_latest(),
-        None => std::sync::Arc::new(load_info_schema(snapshot)?),
-    };
+    // Go's barrier reads no schema at the step's snapshot.
     let active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job.clone());
-    recover_schema_before_step(snapshot, &catalog, &active, schema_state, true).map(|(_, sync)| sync)
+    recover_schema_before_step(snapshot, &active, schema_state, true).map(|(_, sync)| sync)
 }
 
 fn recover_schema_before_step<S: MetaSnapshot>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     schema_state: &DdlJobSchemaState,
     check_barrier: bool,
 ) -> Result<(Option<MdlInfoUpdate>, Option<PersistedDdlJobPlan>), DdlPlanError> {
     let ddl_job_id = active.job.id;
     let mdl_info = if schema_state.mdl_enabled {
-        let mut info = mdl_info_update(&catalog, active.job.table_id)?;
-        info.table_ids = active.table_ids.clone();
-        info.omit_owner_id =
-            tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower());
+        let info = MdlInfoUpdate {
+            omit_owner_id: tidb_metadef::is_system_related_db(&active.job.schema_name.to_string().go_to_lower()),
+        };
         if !check_barrier { return Ok((Some(info), None)); }
         // Go `sysTblMgr.GetMDLVer` on the scheduler's session pool.
         let pool = schema_state.worker.sess_pool.sess_pool().ok_or_else(||
@@ -3151,12 +3125,15 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         )));
     }
     let (mdl_info, schema_sync) = recover_schema_before_step(
-        snapshot, &catalog, &active, &schema_state, false,
+        snapshot,
+        &active,
+        &schema_state,
+        false,
     )?;
     if let Some(schema_sync) = schema_sync { return Ok(schema_sync); }
     // Go `worker.transitOneJobStep`: compare the exact bytes on w.sess,
     // but execute the delivered object, never a decoded transaction row.
-    let session = step_session(Some(&schema_state.worker)).expect("worker session");
+    let session = step_session(&schema_state.worker);
     let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {ddl_job_id}");
     let rows = session.execute(start_ts, &sql, &[]).map_err(DdlPlanError::from_mysql_error)?;
     let bytes = rows.first().and_then(|row| row.first())
@@ -3198,8 +3175,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         }
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
-        recover_table::finish_recover(&mut active.job, Some(&schema_state.worker))?;
-        flashback_cluster::finish_flashback_cluster(&mut active.job, Some(&schema_state.worker))?;
+        recover_table::finish_recover(&mut active.job, &schema_state.worker)?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, &schema_state.worker)?;
         return finish_persisted_ddl_job(
             &mut active,
             start_ts,
@@ -3242,7 +3219,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     let previous_schema_version = active.job.last_schema_version;
     let outcome = recover_ddl_action(|| {
         if cancelling {
-            run_in_job_txn(snapshot, start_ts, Some(&schema_state.worker), |txn| {
+            run_in_job_txn(snapshot, start_ts, &schema_state.worker, |txn| {
                 plan_cancel_persisted_ddl_job(txn, &catalog, &mut active, start_ts)
             })
         } else {
@@ -3308,8 +3285,8 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     if active.job.state == JobState::CANCELLED {
         // Go `finishDDLJob`'s `finishRecoverTable` / `finishRecoverSchema` /
         // `finishFlashbackCluster`.
-        recover_table::finish_recover(&mut active.job, Some(&schema_state.worker))?;
-        flashback_cluster::finish_flashback_cluster(&mut active.job, Some(&schema_state.worker))?;
+        recover_table::finish_recover(&mut active.job, &schema_state.worker)?;
+        flashback_cluster::finish_flashback_cluster(&mut active.job, &schema_state.worker)?;
         return finish_persisted_ddl_job(
             &mut active,
             start_ts,
@@ -3983,7 +3960,6 @@ fn plan_persisted_create_tables_job_step(
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -4104,7 +4080,7 @@ fn plan_persisted_create_tables_job_step(
                 (position as i64, SchemaChangeEvent::create_table(info.clone_like_go()))
             })
             .collect();
-        append_schema_change_mutations(txn, catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
+        append_schema_change_mutations(txn, ddl_job_id, &events)?;
     }
 
     active.job.state = JobState::DONE;
@@ -4152,7 +4128,6 @@ fn plan_persisted_drop_schema_job_step(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
     let mut mutations = Vec::new();
@@ -4274,7 +4249,7 @@ fn plan_persisted_drop_schema_job_step(
                     )
                 })
                 .collect();
-            append_schema_change_mutations(txn, catalog, ddl_job_id, &events, &mut mutations, row_ids)?;
+            append_schema_change_mutations(txn, ddl_job_id, &events)?;
         }
         // Go `getIDs(tables)`: each table's id, then its partitions'.
         let dropped_ids: Vec<i64> = tables
@@ -4331,7 +4306,6 @@ fn plan_persisted_drop_table_job_step(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
     let mut mutations = Vec::new();
@@ -4449,14 +4423,7 @@ fn plan_persisted_drop_table_job_step(
             && !table.is_view()
             && !tidb_metadef::is_mem_or_sys_db(&database.read().name.lowercase().go_to_lower())
         {
-            append_schema_change_mutations(
-                txn,
-                catalog,
-                ddl_job_id,
-                &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))],
-                &mut mutations,
-                row_ids,
-            )?;
+            append_schema_change_mutations(txn, ddl_job_id, &[(-1, SchemaChangeEvent::drop_table(table.clone_like_go()))])?;
         }
         // Go `onDropTableOrView`'s `deleteTableAffinityGroupsInPD`.
         affinity_groups.delete_table_affinity_groups_in_pd(&table, None);
@@ -5222,11 +5189,6 @@ pub struct ExchangePartitionValidation {
 /// schema phase.
 #[derive(Clone, Debug)]
 pub struct MdlInfoUpdate {
-    /// Stored `mysql.tidb_mdl_info` table definition used by the ordinary
-    /// clustered-row encoder.
-    pub table: Box<TableInfo>,
-    /// Tables touched by the job, stored as Go's comma-separated ID list.
-    pub table_ids: String,
     /// System-table upgrades must not depend on the owner_id column.
     pub omit_owner_id: bool,
 }
@@ -5292,98 +5254,6 @@ impl MdlInfoUpdate {
         }
     }
 
-    fn row_values(
-        &self,
-        ddl_job_id: i64,
-        schema_version: i64,
-        owner_id: &str,
-    ) -> Result<tidb_syssession::system_row_write::RowValues, DdlPlanError> {
-        let column_id = |name: &str| {
-            self.table
-                .cols()
-                .iter_deref()
-                .find(|column| column.read().name.lowercase() == name)
-                .map(|column| column.read().id)
-                .ok_or_else(|| {
-                    DdlPlanError::Encode(format!("mysql.tidb_mdl_info has no column `{name}`"))
-                })
-        };
-        let mut values = tidb_syssession::system_row_write::RowValues::new();
-        values.insert(column_id("job_id")?, Datum::Int(ddl_job_id));
-        values.insert(column_id("version")?, Datum::Int(schema_version));
-        values.insert(
-            column_id("table_ids")?,
-            Datum::Bytes(self.table_ids.as_bytes().to_vec()),
-        );
-        // Go omits `owner_id` from a system database's `REPLACE INTO`, so
-        // the column takes its `DEFAULT ''`.
-        let owner_id = if self.omit_owner_id { "" } else { owner_id };
-        values.insert(
-            column_id("owner_id")?,
-            Datum::Bytes(owner_id.as_bytes().to_vec()),
-        );
-        Ok(values)
-    }
-
-    /// Appends the clustered system-row mutations for this phase.
-    ///
-    /// Go deletes the row after every successful schema-sync wait, so each
-    /// following phase inserts a fresh row rather than updating the preceding
-    /// phase's value.
-    pub fn append_mutations(
-        &self,
-        ddl_job_id: i64,
-        schema_version: i64,
-        owner_id: &str,
-        mutations: &mut Vec<BufferMutation>,
-    ) -> Result<(), DdlPlanError> {
-        let values = self.row_values(ddl_job_id, schema_version, owner_id)?;
-        mutations.extend(
-            tidb_syssession::system_row_write::replace_unindexed_clustered_row(&self.table, &values)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-        );
-        Ok(())
-    }
-
-    /// Appends Go `cleanMDLInfo`'s clustered-row deletion after a successful
-    /// schema-sync wait.
-    pub fn append_delete_mutations<S: MetaSnapshot>(
-        &self,
-        snapshot: &mut S,
-        ddl_job_id: i64,
-        owner_id: &str,
-        mutations: &mut Vec<BufferMutation>,
-    ) -> Result<(), DdlPlanError> {
-        use tidb_syssession::mysql_system_tables::{scan_system_table_prefixed, SystemRow, SystemTableView};
-        let columns: &[&str] = if self.omit_owner_id {
-            &["job_id"]
-        } else {
-            &["job_id", "owner_id"]
-        };
-        let view = SystemTableView::project("mysql.tidb_mdl_info", &self.table, columns);
-        let pairs = scan_system_table_prefixed(snapshot, &view, &[Datum::Int(ddl_job_id)])
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-        for (key, value) in pairs {
-            let row = SystemRow::parse(&view, &key, &value)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            let matches_owner = self.omit_owner_id
-                || row
-                    .text("owner_id")
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?
-                    .as_deref()
-                    == Some(owner_id);
-            if matches_owner {
-                mutations.extend(
-                    tidb_syssession::system_row_write::delete_unindexed_clustered_row(
-                        &self.table,
-                        &row.into_values(),
-                    )
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-                );
-            }
-        }
-        Ok(())
-    }
 }
 
 /// The names and post-exchange physical IDs Go uses to swap the standalone
@@ -6575,12 +6445,8 @@ fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
 /// itself, which Go never does.
 fn append_schema_change_mutations(
     txn: &JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     ddl_job_id: i64,
-    events: &[(i64, SchemaChangeEvent)],
-    writes: &mut Vec<BufferMutation>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) -> Result<(), DdlPlanError> {
+    events: &[(i64, SchemaChangeEvent)]) -> Result<(), DdlPlanError> {
     if events.is_empty() {
         return Ok(());
     }
@@ -6590,7 +6456,7 @@ fn append_schema_change_mutations(
     // channels. In production, DDL events are handled by the notifier system
     // instead."
     if tidb_intest::IN_TEST {
-        if let Some(ch) = txn.session().and_then(|session| session.pool.ddl_event_ch()) {
+        if let Some(ch) = txn.session().pool.ddl_event_ch() {
             for (_, event) in events {
                 // Try sending the event to the channel with a backoff strategy
                 // to avoid blocking indefinitely. Since most unit tests don't
@@ -6616,102 +6482,24 @@ fn append_schema_change_mutations(
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/asyncNotifyEventError").is_some() {
         return Err(DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown("mock publish event error")));
     }
-    if txn.session().is_some() {
-        let sql = format!(
-            "INSERT INTO mysql.{NOTIFIER_TABLE_NAME} (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \
-             VALUES (%?, %?, %?, 0)"
-        );
-        for (sub_job_id, event) in events {
-            let event =
-                serde_json::to_vec(event).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            txn.execute(
-                &sql,
-                &[
-                    tidb_sqlescape::SqlArg::Signed(ddl_job_id),
-                    tidb_sqlescape::SqlArg::Signed(*sub_job_id),
-                    tidb_sqlescape::SqlArg::Bytes(Some(&event)),
-                ],
-            )
-            .expect("the step has a session")
-            .map_err(DdlPlanError::from_mysql_error)?;
-        }
-        return Ok(());
-    }
-    let (system_database, table) = catalog
-        .table_info_by_name("mysql", NOTIFIER_TABLE_NAME)
-        .ok_or_else(|| {
-            DdlPlanError::Encode(format!("mysql.{} does not exist", NOTIFIER_TABLE_NAME))
-        })?;
-    let table = table.read();
-    let column_id = |name: &str| {
-        table
-            .cols()
-            .iter_deref()
-            .find(|column| column.read().name.lowercase() == name)
-            .map(|column| column.read().id)
-            .ok_or_else(|| {
-                DdlPlanError::Encode(format!(
-                    "mysql.{} has no column `{name}`",
-                    NOTIFIER_TABLE_NAME
-                ))
-            })
-    };
-    let ddl_job_id_column = column_id("ddl_job_id")?;
-    let sub_job_id_column = column_id("sub_job_id")?;
-    let schema_change_column = column_id("schema_change")?;
-    let processed_by_column = column_id("processed_by_flag")?;
-    // Go's internal INSERT allocates `_tidb_rowid` from the node's
-    // allocator, whose reservation commits on its own.
-    let allocator = if !table.pk_is_handle && !table.is_common_handle {
-        let ids = row_ids.ok_or_else(|| {
-            DdlPlanError::Encode(format!("mysql.{NOTIFIER_TABLE_NAME} has no row-ID allocator"))
-        })?;
-        Some(ids.row_allocator_for(system_database.read().id, &table))
-    } else {
-        None
-    };
+    let sql = format!(
+        "INSERT INTO mysql.{NOTIFIER_TABLE_NAME} (ddl_job_id, sub_job_id, schema_change, processed_by_flag) \
+         VALUES (%?, %?, %?, 0)"
+    );
     for (sub_job_id, event) in events {
-        let mut values = tidb_syssession::system_row_write::RowValues::new();
-        values.insert(ddl_job_id_column, Datum::Int(ddl_job_id));
-        values.insert(sub_job_id_column, Datum::Int(*sub_job_id));
-        values.insert(
-            schema_change_column,
-            Datum::Bytes(
-                serde_json::to_vec(event)
-                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
-            ),
-        );
-        values.insert(processed_by_column, Datum::UInt(0));
-        // Go inserts through the table's stored handle layout. Existing clusters
-        // can use a clustered primary key even when our bootstrap uses row IDs.
-        let mutations = match &allocator {
-            Some(allocator) => {
-                let id = allocator.alloc_next().map_err(|error| {
-                    DdlPlanError::Encode(format!(
-                        "mysql.{NOTIFIER_TABLE_NAME}'s row-ID allocator: {error}"
-                    ))
-                })?;
-                let row_id = i64::try_from(id)
-                    .map_err(|_| DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
-                tidb_syssession::system_row_write::insert_row(&table, row_id, &values)
-            }
-            None => tidb_syssession::system_row_write::store_clustered_row(&table, None, &values),
-        };
-        writes.extend(mutations.map_err(|error| DdlPlanError::Encode(error.to_string()))?);
+        let event =
+            serde_json::to_vec(event).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        txn.execute(
+            &sql,
+            &[
+                tidb_sqlescape::SqlArg::Signed(ddl_job_id),
+                tidb_sqlescape::SqlArg::Signed(*sub_job_id),
+                tidb_sqlescape::SqlArg::Bytes(Some(&event)),
+            ],
+        )
+        .map_err(DdlPlanError::from_mysql_error)?;
     }
     Ok(())
-}
-
-fn mdl_info_update(catalog: &SessionExtendedInfoSchema, table_id: i64) -> Result<MdlInfoUpdate, DdlPlanError> {
-    let (_, table) = catalog
-        .table_info_by_name("mysql", "tidb_mdl_info")
-        .ok_or_else(|| DdlPlanError::Encode("mysql.tidb_mdl_info does not exist".to_owned()))?;
-    let table = table.read();
-    Ok(MdlInfoUpdate {
-        table: Box::new(table.clone_like_go()),
-        table_ids: table_id.to_string(),
-        omit_owner_id: false,
-    })
 }
 
 fn event_partition_info(definitions: Vec<PartitionDefinition>) -> PartitionInfo {

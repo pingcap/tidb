@@ -50,7 +50,6 @@ pub mod job_txn;
 mod job_submitter;
 pub mod ddl_affinity;
 pub mod ddl_delete_range;
-pub mod ddl_history_table;
 pub mod ddl_job_scheduler;
 pub mod ddl_reorg_table;
 pub mod foreign_key_build;

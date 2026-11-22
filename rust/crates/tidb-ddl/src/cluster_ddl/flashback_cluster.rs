@@ -15,7 +15,7 @@
 //! Go `pkg/ddl/cluster.go`: FLASHBACK CLUSTER's job (`onFlashbackCluster`,
 //! `finishFlashbackCluster`) and the checks and key ranges it runs over.
 
-use super::recover_table::{gc_error, worker_sessions, WorkerGcContext};
+use super::recover_table::{gc_error, WorkerGcContext};
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
@@ -536,14 +536,9 @@ pub(super) fn on_flashback_cluster(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let in_flashback_test = in_flashback_test();
-    let sessions = match worker_sessions(sessions) {
-        Ok(sessions) => sessions,
-        Err(error) => return Err(cancel_ddl_job(active, error)),
-    };
     // TODO: Support flashback in unistore.
     if sessions.sess_pool.store_name() != "TiKV" && !in_flashback_test {
         return Err(cancel_ddl_job(
@@ -649,14 +644,7 @@ pub(super) fn on_flashback_cluster(
             let mut mutations = Vec::new();
             // TODO: Support flashback in unistore.
             if in_flashback_test {
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(-1, SchemaChangeEvent::flashback_cluster())],
-                    &mut mutations,
-                    row_ids,
-                )?;
+                append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::flashback_cluster())])?;
                 active.job.state = JobState::DONE;
                 active.job.schema_state = SchemaState::PUBLIC;
                 return Ok(args_step(job_only_write(active.job.id, mutations)));
@@ -671,14 +659,7 @@ pub(super) fn on_flashback_cluster(
                     .flashback_to_version(flashback_ts, start_ts, commit_ts, start_key, end_key, concurrency)
                     .map_err(unknown)?;
             }
-            append_schema_change_mutations(
-                txn,
-                catalog,
-                active.job.id,
-                &[(-1, SchemaChangeEvent::flashback_cluster())],
-                &mut mutations,
-                row_ids,
-            )?;
+            append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::flashback_cluster())])?;
             active.job.state = JobState::DONE;
             active.job.schema_state = SchemaState::PUBLIC;
             flashback_schema_version_step(txn, active, mutations)
@@ -728,7 +709,7 @@ fn split_regions_by_key_ranges(region_store: &dyn tidb_kv::region_map::RegionSto
 
 /// Go `finishFlashbackCluster`: whatever the job closed is restored, however
 /// the job ended.
-pub(super) fn finish_flashback_cluster(job: &mut Job, sessions: Option<&DdlStepWorker>) -> Result<(), DdlPlanError> {
+pub(super) fn finish_flashback_cluster(job: &mut Job, sessions: &DdlStepWorker) -> Result<(), DdlPlanError> {
     if job.type_ != ActionType::ACTION_FLASHBACK_CLUSTER {
         return Ok(());
     }
@@ -740,7 +721,7 @@ pub(super) fn finish_flashback_cluster(job: &mut Job, sessions: Option<&DdlStepW
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .ok_or_else(|| DdlPlanError::Encode("FLASHBACK CLUSTER job has nil args".to_owned()))?;
     let args = args.read().clone();
-    let pool = worker_sessions(sessions)?.sess_pool.as_ref();
+    let pool = sessions.sess_pool.as_ref();
 
     recover_pd_schedule(args.pd_schedule_value.as_ref())?;
     if args.enable_gc {

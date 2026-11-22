@@ -243,7 +243,7 @@ fn acquire_mlog_base_mv_refresh_lock(
     txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     info: &TableInfo,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> Result<(), DdlPlanError> {
     let Some(log) = &info.materialized_view_log else {
         return Ok(());
@@ -253,9 +253,6 @@ fn acquire_mlog_base_mv_refresh_lock(
     if base.materialized_view.is_none() {
         return Ok(());
     }
-    let worker = worker.ok_or_else(|| {
-        DdlPlanError::plain_refusal("alter materialized view log: the DDL step has no worker session")
-    })?;
     let lock_name = tidb_mviewutil::refresh_advisory_lock_name(active.job.schema_id, base.id);
     match worker.get_advisory_lock(&lock_name, 1) {
         Ok(()) => Ok(()),
@@ -302,8 +299,7 @@ pub(super) fn on_add_column(
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return drop_column::on_drop_column(txn, catalog, active, start_ts);
@@ -405,20 +401,13 @@ pub(super) fn on_add_column(
         return Ok(action_step(write));
     }
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
-        append_schema_change_mutations(
-            txn,
-            catalog,
-            active.job.id,
-            &[(
+        append_schema_change_mutations(txn, active.job.id, &[(
                 notifier_sub_job_id(&active.job),
                 SchemaChangeEvent::add_columns(
                     info.clone_like_go(),
                     vec![column.read().clone_like_go()],
                 ),
-            )],
-            &mut write.mutations,
-            row_ids,
-        )?;
+            )])?;
     }
     active.job.finish_table_job(
         JobState::DONE,

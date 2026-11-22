@@ -296,7 +296,6 @@ fn run_ddl_job<S: MetaSnapshot>(
             clock.tick(),
             schema_state,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-            None,
         )
         .map_err(|error| job_error(error.to_string()))?;
         let PersistedDdlJobPlan::Step(step) = plan else {

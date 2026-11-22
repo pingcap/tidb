@@ -1395,7 +1395,6 @@ pub(super) fn on_modify_column(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // The AUTO_RANDOM counters the step bumped commit with it.
     let mut counter_writes = Vec::new();
@@ -1406,7 +1405,6 @@ pub(super) fn on_modify_column(
         start_ts,
         outcome,
         &mut counter_writes,
-        row_ids,
     )?;
     step.write.mutations.extend(counter_writes);
     Ok(step)
@@ -1419,7 +1417,6 @@ fn plan_modify_column_step(
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
     counter_writes: &mut Vec<BufferMutation>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_modify_column_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -1591,7 +1588,6 @@ fn plan_modify_column_step(
             .map_err(|error| cancel_ddl_job(active, error))?;
         return do_modify_column_index_reorg(
             txn,
-            catalog,
             active,
             &mut target,
             &mut args,
@@ -1603,14 +1599,12 @@ fn plan_modify_column_step(
         .map_err(|error| cancel_ddl_job(active, error))?;
     do_modify_column_type_with_data(
         txn,
-        catalog,
         active,
         &mut target,
         &mut args,
         changing,
         outcome,
         start_ts,
-        row_ids,
     )
 }
 
@@ -2757,7 +2751,6 @@ fn remove_old_objects(
 /// Go `doModifyColumnIndexReorg`.
 fn do_modify_column_index_reorg(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
@@ -2883,7 +2876,6 @@ fn do_modify_column_index_reorg(
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_RECREATE_INDEX {
                     match do_reorg_work_for_create_index(
                         txn,
-                        catalog,
                         active,
                         &target.info,
                         &changing_indexes,
@@ -3030,14 +3022,12 @@ fn do_modify_column_index_reorg(
 #[allow(clippy::too_many_arguments)]
 fn do_modify_column_type_with_data(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &mut ModifyTarget,
     args: &mut tidb_model::ModifyColumnArgs,
     changing: GoShared<tidb_model::ColumnInfo>,
     outcome: Option<&ReorgOutcome>,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
     let new = args
@@ -3142,7 +3132,11 @@ fn do_modify_column_type_with_data(
                 let stage = reorg_stage(&active.job);
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_UPDATE_COLUMN {
                     match do_reorg_work_for_modify_column(
-                        txn, catalog, active, target, &changing, outcome,
+                        txn,
+                        active,
+                        target,
+                        &changing,
+                        outcome,
                     )? {
                         ColumnReorgVisit::Step(step) => return Ok(with_args(active, args, step)),
                         ColumnReorgVisit::Failed(error) => {
@@ -3174,7 +3168,6 @@ fn do_modify_column_type_with_data(
                 if stage == tidb_model::reorg::ReorgStage::MODIFY_COLUMN_RECREATE_INDEX {
                     match do_reorg_work_for_create_index(
                         txn,
-                        catalog,
                         active,
                         &target.info,
                         &changing_indexes,
@@ -3291,21 +3284,14 @@ fn do_modify_column_type_with_data(
             // Go `asyncNotifyEvent(NewModifyColumnEvent(...))`.
             if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
                 let analyzed = analyze_state(&active.job) == tidb_model::reorg::analyze_state::DONE;
-                append_schema_change_mutations(
-                    txn,
-                    catalog,
-                    active.job.id,
-                    &[(
+                append_schema_change_mutations(txn, active.job.id, &[(
                         notifier_sub_job_id(&active.job),
                         SchemaChangeEvent::modify_columns(
                             target.info.clone_like_go(),
                             vec![changing.read().clone_like_go()],
                             analyzed,
                         ),
-                    )],
-                    &mut write.mutations,
-                    row_ids,
-                )?;
+                    )])?;
             }
             active.job.finish_table_job(
                 JobState::DONE,
@@ -3346,7 +3332,6 @@ enum ColumnReorgVisit {
 /// merged into the job's `ReorgMeta`.
 fn do_reorg_work_for_modify_column(
     snapshot: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     target: &ModifyTarget,
     changing: &GoShared<tidb_model::ColumnInfo>,
@@ -3393,7 +3378,7 @@ fn do_reorg_work_for_modify_column(
             ColumnReorgVisit::Step(action_step(job_only_write(active.job.id, Vec::new())))
         }
         None | Some(ReorgResult::Interrupted) => {
-            let handle = add_index::get_ddl_reorg_handle(snapshot, catalog, active)?;
+            let handle = add_index::get_ddl_reorg_handle(snapshot, active)?;
             ColumnReorgVisit::Step(reorg_request(
                 &active.job,
                 request(active, ReorgStageRequest::Run(handle)),

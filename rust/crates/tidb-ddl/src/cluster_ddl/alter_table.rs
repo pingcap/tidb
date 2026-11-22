@@ -2144,19 +2144,17 @@ pub(super) fn plan_persisted_alter_table_job_step(
                     tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE.clone(),
                 ));
             }
-            // Go `w.checkTiFlashReplicaCount` over a session of `w.sessPool`;
-            // a run without a session pool (bootstrap, planner tests) has no
-            // store to count.
-            if let Some(session) = txn.session() {
-                let stores = || {
-                    session
-                        .pool
-                        .tiflash_store_count()
-                        .map_err(|error| error.message.to_string())
-                };
-                check_tiflash_replica_count(spec.count, &stores)
-                    .map_err(|error| cancel_ddl_job(active, error))?;
-            }
+            // Go `w.checkTiFlashReplicaCount` over a session of `w.sessPool`.
+            let session = txn.session();
+            let stores = || {
+                session
+                    .pool
+                    .tiflash_store_count()
+                    .map_err(|error| error.message.to_string())
+            };
+            check_tiflash_replica_count(spec.count, &stores)
+                .map_err(|error| cancel_ddl_job(active, error))?;
+
             // Go: the PD rules before the table info; a refusal cancels.
             let labels = spec.labels.clone().unwrap_or_default();
             if let Some(partition) = info.get_partition_info() {

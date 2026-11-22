@@ -169,4 +169,61 @@ impl RecordedDdlSession {
         }
         Ok(())
     }
+
+    /// Go `tk.MustQuery(sql)` over the fixture: a restricted statement on a
+    /// pooled session, reading the store the fixture was imported into.
+    ///
+    /// # Errors
+    ///
+    /// The statement's error.
+    pub fn query(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, DdlPlanError> {
+        use tidb_ddl_build::session_pool::DdlSessionPool as _;
+        self.pool.exec_restricted_sql(sql).map_err(DdlPlanError::from_mysql_error)
+    }
+
+    /// Go `GetAllHistoryDDLJobs`' statement: every `mysql.tidb_ddl_history`
+    /// job, in job order.
+    ///
+    /// # Errors
+    ///
+    /// The statement's error, or a `job_meta` that does not decode.
+    pub fn history_jobs(&self) -> Result<Vec<tidb_model::Job>, DdlPlanError> {
+        self.query("select job_meta from mysql.tidb_ddl_history order by job_id")?
+            .into_iter()
+            .map(|row| {
+                let mut job = tidb_model::Job::default();
+                job.decode(row[0].go_bytes()).map_err(error)?;
+                Ok(job)
+            })
+            .collect()
+    }
+
+    /// Go `systable.Manager.GetJobByID` with the row's scheduling columns:
+    /// the `mysql.tidb_ddl_job` row of `job_id`, `None` when there is none.
+    ///
+    /// # Errors
+    ///
+    /// The statement's error, or a `job_meta` that does not decode.
+    pub fn active_job(
+        &self,
+        job_id: i64,
+    ) -> Result<Option<tidb_ddl_systable::ddl_job_table::ActiveDdlJob>, DdlPlanError> {
+        let rows = self.query(&format!(
+            "select job_meta, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = {job_id}"
+        ))?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let mut job = tidb_model::Job::default();
+        job.decode(row[0].go_bytes()).map_err(error)?;
+        let text = |datum: &tidb_datatype::Datum| String::from_utf8_lossy(datum.go_bytes()).into_owned();
+        let mut active = tidb_ddl_systable::ddl_job_table::ActiveDdlJob::from_job(job);
+        active.reorg = row[1].get_int64() != 0;
+        active.schema_ids = text(&row[2]);
+        active.table_ids = text(&row[3]);
+        active.type_ = row[4].get_int64();
+        active.processing = row[5].get_int64() != 0;
+        Ok(Some(active))
+    }
 }
+

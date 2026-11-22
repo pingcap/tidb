@@ -1162,12 +1162,7 @@ fn convert_purge_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlPla
 }
 
 fn execute_job_sql(txn: &JobTxn<'_>, sql: &str) -> Result<(), tidb_terror::MysqlError> {
-    match txn.execute(sql, &[]) {
-        Some(result) => result.map(|_| ()),
-        None => Err(tidb_terror::MysqlError::unknown(
-            "a materialized view log job step needs the DDL session".to_owned(),
-        )),
-    }
+    txn.execute(sql, &[]).map(|_| ())
 }
 
 /// Go `upsertCreateMaterializedViewLogPurgeInfo`: the log's purge schedule
@@ -1220,8 +1215,7 @@ pub(super) fn on_create_materialized_view_log(
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let invalid_args = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob| {
         cancel_ddl_job(
@@ -1296,9 +1290,6 @@ pub(super) fn on_create_materialized_view_log(
         // rest of the job's delivery, so no refresh writes the view without
         // the new log; the scheduler releases it after the delivery.
         let lock_name = tidb_mviewutil::refresh_advisory_lock_name(schema_id, log_info.base_table_id);
-        let worker = worker.ok_or_else(|| {
-            DdlPlanError::plain_refusal("create materialized view log: the DDL step has no worker session")
-        })?;
         match worker.get_advisory_lock(&lock_name, 1) {
             Ok(()) => {}
             Err(tidb_sessionctx::advisory_lock_state::AdvisoryLockError::Timeout) => {
@@ -1363,14 +1354,7 @@ pub(super) fn on_create_materialized_view_log(
     let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
     *table_handle.write() = mlog.clone_like_go();
     let mut mutations = Vec::new();
-    append_schema_change_mutations(
-        txn,
-        catalog,
-        active.job.id,
-        &[(-1, SchemaChangeEvent::create_table(mlog.clone_like_go()))],
-        &mut mutations,
-        row_ids,
-    )?;
+    append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::create_table(mlog.clone_like_go()))])?;
     active.job.finish_multiple_table_job(
         JobState::DONE,
         SchemaState::PUBLIC,
@@ -1554,10 +1538,8 @@ fn rollback_create_materialized_view_log(
 /// schedule, with a notifier event.
 pub(super) fn on_alter_materialized_view_log_purge(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_alter_materialized_view_log_purge_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -1593,17 +1575,10 @@ pub(super) fn on_alter_materialized_view_log_purge(
     let mut write = super::add_index::update_version_and_table_info(txn, active, schema_id, &table, true, start_ts)?;
     let schema_version = write.schema_version;
     let mut mutations = Vec::new();
-    append_schema_change_mutations(
-        txn,
-        catalog,
-        active.job.id,
-        &[(
+    append_schema_change_mutations(txn, active.job.id, &[(
             -1,
             SchemaChangeEvent::alter_materialized_view_log_purge(table.clone_like_go(), old_table),
-        )],
-        &mut mutations,
-        row_ids,
-    )?;
+        )])?;
     active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(table)));
     write.mutations.extend(mutations);
     Ok(super::add_index::action_step(write))
@@ -2372,11 +2347,9 @@ fn convert_refresh_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlP
 /// row, read TS its own transaction's start TS, in a transaction of a pooled
 /// session.
 fn prewrite_create_materialized_view_refresh_info(
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
     mview_id: i64,
 ) -> Result<(), DdlPlanError> {
-    let sessions =
-        sessions.ok_or_else(|| DdlPlanError::Encode("the DDL step has no session pool".to_owned()))?;
     let pool = sessions
         .sess_pool
         .sess_pool()
@@ -2534,8 +2507,7 @@ pub(super) fn on_create_materialized_view(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&super::add_index::ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let invalid_args = |active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob, message: &str| {
         cancel_ddl_job(active, DdlPlanError::from_mysql_error(invalid_ddl_job(message)))
@@ -2619,14 +2591,7 @@ pub(super) fn on_create_materialized_view(
             let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
             *table_handle.write() = mview.clone_like_go();
             let mut mutations = Vec::new();
-            append_schema_change_mutations(
-                txn,
-                catalog,
-                active.job.id,
-                &[(-1, SchemaChangeEvent::create_table(mview.clone_like_go()))],
-                &mut mutations,
-                row_ids,
-            )?;
+            append_schema_change_mutations(txn, active.job.id, &[(-1, SchemaChangeEvent::create_table(mview.clone_like_go()))])?;
             if let Err(error) = prewrite_create_materialized_view_refresh_info(sessions, mview.id) {
                 active.job.state = JobState::ROLLINGBACK;
                 return Err(error);
@@ -2650,13 +2615,13 @@ pub(super) fn on_create_materialized_view(
                 ];
                 // Go master `mview_worker.go`: in materialized view maintenance.
                 match txn.execute_in_mview_maintenance("SELECT 1 FROM %n.%n LIMIT 1", &check_args) {
-                    Some(Ok(rows)) if !rows.is_empty() => {
+                    Ok(rows) if !rows.is_empty() => {
                         active.job.state = JobState::ROLLINGBACK;
                         return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
                             "create materialized view: detected residual build rows on retry",
                         )));
                     }
-                    Some(Err(error)) => {
+                    Err(error) => {
                         active.job.state = JobState::ROLLINGBACK;
                         return Err(DdlPlanError::from_mysql_error(error));
                     }
@@ -2952,10 +2917,8 @@ fn rollback_create_materialized_view(
 /// the view's refresh schedule or alert attributes, with a notifier event.
 fn on_alter_materialized_view(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
     apply: impl FnOnce(&mut tidb_model::table::MaterializedViewInfo),
     event: fn(TableInfo, TableInfo) -> SchemaChangeEvent,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
@@ -2981,14 +2944,7 @@ fn on_alter_materialized_view(
     let mut write = super::add_index::update_version_and_table_info(txn, active, schema_id, &table, true, start_ts)?;
     let schema_version = write.schema_version;
     let mut mutations = Vec::new();
-    append_schema_change_mutations(
-        txn,
-        catalog,
-        active.job.id,
-        &[(-1, event(table.clone_like_go(), old_table))],
-        &mut mutations,
-        row_ids,
-    )?;
+    append_schema_change_mutations(txn, active.job.id, &[(-1, event(table.clone_like_go(), old_table))])?;
     active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(table)));
     write.mutations.extend(mutations);
     Ok(super::add_index::action_step(write))
@@ -2997,10 +2953,8 @@ fn on_alter_materialized_view(
 /// Go master `onAlterMaterializedViewRefresh`.
 pub(super) fn on_alter_materialized_view_refresh(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_alter_materialized_view_refresh_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -3008,10 +2962,8 @@ pub(super) fn on_alter_materialized_view_refresh(
     let args = args.read().clone();
     on_alter_materialized_view(
         txn,
-        catalog,
         active,
         start_ts,
-        row_ids,
         |info| {
             info.refresh_method = args.refresh_method;
             info.refresh_start_with = args.refresh_start_with;
@@ -3027,10 +2979,8 @@ pub(super) fn on_alter_materialized_view_refresh(
 /// Go master `onAlterMaterializedViewAttributes`.
 pub(super) fn on_alter_materialized_view_attributes(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_alter_materialized_view_attributes_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -3038,10 +2988,8 @@ pub(super) fn on_alter_materialized_view_attributes(
     let args = args.read().clone();
     on_alter_materialized_view(
         txn,
-        catalog,
         active,
         start_ts,
-        row_ids,
         |info| {
             info.alert_warning_sec = args.alert_warning_sec;
             info.alert_overdue_sec = args.alert_overdue_sec;
@@ -3085,9 +3033,7 @@ fn job_sql_rows(
     sql: &str,
     args: &[tidb_sqlescape::SqlArg<'_>],
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-    txn.execute(sql, args).unwrap_or_else(|| {
-        Err(tidb_terror::MysqlError::unknown("a materialized view job step needs the DDL session".to_owned()))
-    })
+    txn.execute(sql, args)
 }
 
 /// Go master `migrateMViewRefreshInfoForOutOfPlaceCutover`: the view's
@@ -3207,11 +3153,9 @@ fn migrate_mview_refresh_source_info(
 /// point at the new view; the refresh rows move with it.
 pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = tidb_model::get_refresh_materialized_view_complete_out_of_place_cutover_args(&mut active.job)
         .map_err(|error| cancel_ddl_job(active, DdlPlanError::Encode(error.to_string())))?
@@ -3306,9 +3250,6 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
         // "Drain old purges before taking the shared schema-version mutex.
         // The advisory lock also excludes new purges until this job
         // finishes."
-        let worker = worker.ok_or_else(|| {
-            DdlPlanError::plain_refusal("refresh materialized view complete OUT OF PLACE cutover: the DDL step has no worker session")
-        })?;
         if let Err(error) = acquire_mlog_purge_advisory_lock_for_cutover(worker, active, args.old_mlog_id) {
             if error.equal(&tidb_exeerrors::ERR_MV_ADVISORY_LOCK_CONFLICT) {
                 // "Retrying this job would reset the total purge-lock wait
@@ -3515,11 +3456,7 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
     set_schema_diff_for_multi_infos(&mut diff, &info_ids);
     let (schema_version, diff) = update_schema_version(&txn.meta(), active, diff)?;
     let mut mutations = Vec::new();
-    append_schema_change_mutations(
-        txn,
-        catalog,
-        active.job.id,
-        &[(
+    append_schema_change_mutations(txn, active.job.id, &[(
             -1,
             SchemaChangeEvent::mview_refresh_out_of_place_cutover(
                 new_mview.clone_like_go(),
@@ -3527,10 +3464,7 @@ pub(super) fn on_refresh_materialized_view_complete_out_of_place_cutover(
                 new_mlog.as_ref().map(TableInfo::clone_like_go),
                 old_mlog.as_ref().map(TableInfo::clone_like_go),
             ),
-        )],
-        &mut mutations,
-        row_ids,
-    )?;
+        )])?;
     active.job.finish_table_job(JobState::DONE, SchemaState::PUBLIC, schema_version, Some(GoShared::new(new_mview.clone_like_go())));
     let mut write = job_only_write(active.job.id, mutations);
     write.schema_version = schema_version;
@@ -3879,7 +3813,7 @@ mod mview_worker_tests {
     /// Go `mockstore.NewMockStore()` + `kv.RunInNewTxn` + `meta.NewMutator`.
     fn run_in_new_txn(f: impl FnOnce(&mut super::JobTxn<'_>)) {
         let mut store = EmptySnapshot;
-        let mut txn = super::JobTxn::new(&mut store, 1);
+        let mut txn = super::JobTxn::new(&mut store, 1, crate::job_txn::unused_step_session(crate::StartMode::Normal));
         f(&mut txn);
     }
 

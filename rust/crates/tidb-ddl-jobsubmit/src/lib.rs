@@ -39,8 +39,6 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
-use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 
 /// Go `JobSpec`: the durable envelope plus its source-typed private arguments.
 #[derive(Clone, Debug)]
@@ -867,87 +865,29 @@ fn fill_args_with_sub_jobs(spec: &mut JobSpec) {
     }
 }
 
-/// Plans pinned Go `insertDDLJobs2Table` after IDs and any caller callback
-/// have been applied, as raw rows for a submission without a session (the
-/// bootstrap's).
-pub fn plan_insert_job_rows(
-    catalog: &SessionExtendedInfoSchema,
-    specs: &mut [JobSpec],
-    mutations: &mut Vec<BufferMutation>,
-) -> Result<(), JobSubmitError> {
-    if specs.is_empty() {
-        return Ok(());
-    }
-    let job_table =
-        DdlJobTable::locate(catalog).map_err(|error| JobSubmitError::Encode(error.to_string()))?;
-    for spec in specs {
-        fill_args_with_sub_jobs(spec);
-        let reorg = spec.job.may_need_reorg();
-        let schema_ids = job_2_schema_ids(spec);
-        let table_ids = job_2_table_ids(spec);
-        job_table
-            .append_insert(
-                &mut spec.job,
-                reorg,
-                &schema_ids,
-                &table_ids,
-                false,
-                mutations,
-            )
-            .map_err(|error| JobSubmitError::Encode(error.to_string()))?;
-    }
-    Ok(())
-}
-
-/// Plans the ID-allocation and row-encoding portion of one pinned Go
-/// `GenGIDAndInsertJobsWithRetry` transaction attempt.
+/// Plans the ID-allocation portion of one pinned Go
+/// `GenGIDAndInsertJobsWithRetry` transaction attempt, then runs Go's
+/// `insertDDLJobs2Table` through `execute` (the submitting session's
+/// statements).
 ///
 /// The callback runs at the same source boundary as Go: every ID is already
-/// assigned, but no job row has been encoded. Its cleanup runs immediately if
-/// row planning fails; callers pass it to [`finish_insert_attempt`] so a
-/// failed commit performs the same cleanup while a successful commit disarms
-/// it.
-pub fn plan_insert_attempt<S, F, Cleanup>(
-    snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
-    specs: &mut [JobSpec],
-    before_insert_with_assigned_ids: &mut F,
-) -> Result<(Vec<BufferMutation>, Option<Cleanup>), JobSubmitError>
-where
-    S: MetaSnapshot,
-    F: FnMut(&[JobSpec]) -> Option<Cleanup>,
-    Cleanup: FnOnce(),
-{
-    plan_insert_attempt_with(
-        snapshot,
-        catalog,
-        specs,
-        before_insert_with_assigned_ids,
-        None,
-    )
-}
-
-/// [`plan_insert_attempt`] whose job insert is Go's `insertDDLJobs2Table`
-/// run by `execute` (the submitting session's statements) when given; the
-/// jobs are staged as raw rows without it.
+/// assigned, but no job row has been inserted. Its cleanup runs immediately if
+/// the insert fails; callers pass it to [`finish_insert_attempt`] so a failed
+/// commit performs the same cleanup while a successful commit disarms it.
 pub fn plan_insert_attempt_with<S, F, Cleanup>(
     snapshot: &mut S,
-    catalog: &SessionExtendedInfoSchema,
     specs: &mut [JobSpec],
     before_insert_with_assigned_ids: &mut F,
-    execute: Option<&mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>>,
+    execute: &mut dyn FnMut(&str) -> Result<(), tidb_terror::MysqlError>,
 ) -> Result<(Vec<BufferMutation>, Option<Cleanup>), JobSubmitError>
 where
     S: MetaSnapshot,
     F: FnMut(&[JobSpec]) -> Option<Cleanup>,
     Cleanup: FnOnce(),
 {
-    let mut mutations = plan_assign_global_ids(snapshot, specs)?;
+    let mutations = plan_assign_global_ids(snapshot, specs)?;
     let cleanup = before_insert_with_assigned_ids(specs);
-    let inserted = match execute {
-        Some(execute) => insert_ddl_jobs_2_table(execute, specs),
-        None => plan_insert_job_rows(catalog, specs, &mut mutations),
-    };
+    let inserted = insert_ddl_jobs_2_table(execute, specs);
     if let Err(error) = inserted {
         if let Some(cleanup) = cleanup {
             cleanup();

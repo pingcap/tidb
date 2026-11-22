@@ -970,7 +970,6 @@ mod tests {
         if crate::isolate_process_globals() {
             return;
         }
-        use crate::cluster_ddl::MdlInfoUpdate;
         use tidb_schemaver::{AllServerInfo, Context, DoneCh, GlobalVerRx, SyncSummary};
         struct Reporter {
             inner: tidb_schemaver::mem_syncer::MemSyncer,
@@ -1029,22 +1028,20 @@ mod tests {
         tidb_vardef::set_enable_mdl(false);
         let mut loaded =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
-        let (_, table) = loaded.table_info_by_name("mysql", "tidb_mdl_info").unwrap();
-        let table = table.read();
-        let info = MdlInfoUpdate {
-            table: Box::new(table.clone_like_go()),
-            table_ids: "0".into(),
-            omit_owner_id: false,
-        };
-        let mut mutations = Vec::new();
-        info.append_mutations(700, 1, "old-owner", &mut mutations)
-            .unwrap();
-        opener
-            .begin()
-            .unwrap()
-            .commit(
-                mutations,
-                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+        // Go's syncer reads `mysql.tidb_mdl_info` on a system session.
+        let sessions = tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+            opener.clone(),
+            timeout,
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true,
+            Duration::from_millis(500),
+        )
+        .unwrap();
+        // Go `registerMDLInfo`'s statement, from an earlier owner.
+        use tidb_ddl_build::session_pool::DdlSessionPool as _;
+        sessions
+            .exec_restricted_sql(
+                "replace into mysql.tidb_mdl_info (job_id, version, table_ids, owner_id) values (700, 1, '0', 'old-owner')",
             )
             .unwrap();
         loaded.set_schema_meta_version(5);
@@ -1062,15 +1059,6 @@ mod tests {
         };
         let context = Context::background();
         reporter.init(&context).unwrap();
-        // Go's syncer reads `mysql.tidb_mdl_info` on a system session.
-        let sessions = tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
-            opener.clone(),
-            timeout,
-            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
-            true,
-            Duration::from_millis(500),
-        )
-        .unwrap();
         run_ack_loop(
             &catalog,
             &SchemaPinRegistry::default(),

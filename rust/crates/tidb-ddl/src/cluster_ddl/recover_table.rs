@@ -159,21 +159,13 @@ pub(super) fn gc_error(error: tidb_gcutil::Error<tidb_terror::MysqlError>) -> Dd
     }
 }
 
-pub(super) fn worker_sessions(sessions: Option<&DdlStepWorker>) -> Result<&DdlStepWorker, DdlPlanError> {
-    sessions.ok_or_else(|| {
-        DdlPlanError::from_mysql_error(tidb_terror::MysqlError::unknown(
-            "the DDL worker has no session pool to reach GC through",
-        ))
-    })
-}
-
 /// Go `onRecoverTable`.
 pub(super) fn on_recover_table(
     txn: &mut JobTxn<'_>,
     catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = match tidb_model::get_recover_args(&mut active.job) {
         Ok(Some(args)) => args,
@@ -206,7 +198,6 @@ pub(super) fn on_recover_table(
     }
 
     // Check GC and the safe point.
-    let sessions = worker_sessions(sessions)?;
     let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()))
         .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
 
@@ -347,7 +338,7 @@ pub(super) fn on_recover_schema(
     txn: &mut JobTxn<'_>,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = match tidb_model::get_recover_args(&mut active.job) {
         Ok(Some(args)) => args,
@@ -371,7 +362,6 @@ pub(super) fn on_recover_schema(
         .clone()
         .ok_or_else(|| DdlPlanError::Encode("RECOVER SCHEMA job has nil DBInfo".to_owned()))?;
     // Check GC and the safe point.
-    let sessions = worker_sessions(sessions)?;
     let gc_enable = tidb_gcutil::check_gc_enable(&mut WorkerGcContext::new(sessions.sess_pool.as_ref()))
         .map_err(|error| cancel_ddl_job(active, gc_error(error)))?;
     let state = schema_info.read().state;
@@ -640,10 +630,7 @@ fn recover_schema_materialized_view_infos(
                 columns.join(", "),
                 format!("{values},").repeat(rows.len() - 1)
             );
-            let mut result = match txn.execute(&insert_sql, &write_args) {
-                Some(result) => result.map(|_| ()),
-                None => Err(tidb_terror::MysqlError::unknown("a recover schema job step needs the DDL session".to_owned())),
-            };
+            let mut result = txn.execute(&insert_sql, &write_args).map(|_| ());
             if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockRecoverSchemaMaterializedViewInfoError") {
                 result = Err(tidb_terror::MysqlError::unknown(value.string()));
             }
@@ -833,7 +820,7 @@ fn recover_table(
 /// GC on enables it again, however it ended.
 pub(super) fn finish_recover(
     job: &mut Job,
-    sessions: Option<&DdlStepWorker>,
+    sessions: &DdlStepWorker,
 ) -> Result<(), DdlPlanError> {
     if !matches!(
         job.type_,
@@ -845,7 +832,7 @@ pub(super) fn finish_recover(
         .map_err(|error| DdlPlanError::Encode(error.to_string()))?
         .map_or(0, |args| args.read().check_flag);
     if check_flag == RECOVER_CHECK_FLAG_ENABLE_GC {
-        tidb_gcutil::enable_gc(&mut WorkerGcContext::new(worker_sessions(sessions)?.sess_pool.as_ref())).map_err(gc_error)?;
+        tidb_gcutil::enable_gc(&mut WorkerGcContext::new(sessions.sess_pool.as_ref())).map_err(gc_error)?;
     }
     Ok(())
 }

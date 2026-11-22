@@ -243,8 +243,7 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     // The four jobs are the bootstrap's whole history.
     assert_eq!(BOOTSTRAP_VIEW_COUNT, 2);
     let catalog = load_info_schema(&mut store).expect("the catalog loads");
-    let history = tidb_ddl::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
-    assert_eq!(history.load(&mut store).unwrap().len(), 4);
+    assert_eq!(history_jobs(&mut store).len(), 4);
     // Go draws an id per object and per job from 1: the views are 1 and 3,
     // `test` is 5, the jobs are 2, 4, 6 and 7.
     let (mysql, mdl_view) = catalog.table_info_by_name("mysql", "tidb_mdl_view").unwrap();
@@ -355,8 +354,7 @@ fn the_next_gen_layout_is_what_go_creates() {
         store.pairs[&key::next_global_id_kv_key()],
         go["head"]["next_global_id"].to_string().into_bytes()
     );
-    let history = tidb_ddl::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
-    let jobs = history.load(&mut store).unwrap();
+    let jobs = history_jobs(&mut store);
     let expected = go["jobs"].as_array().unwrap();
     assert_eq!(jobs.len(), expected.len());
     for (job, expected) in jobs.iter().zip(expected) {
@@ -378,3 +376,13 @@ fn the_next_gen_layout_is_what_go_creates() {
     }
 }
 
+/// The bootstrap's DDL history, read with SQL (Go `GetAllHistoryDDLJobs`).
+fn history_jobs(store: &mut MetaStore) -> Vec<tidb_model::Job> {
+    tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
+        store,
+        std::sync::Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+    )
+    .unwrap()
+    .history_jobs()
+    .unwrap()
+}

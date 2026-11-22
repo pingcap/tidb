@@ -42,7 +42,6 @@ use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, InfoCache};
 use crate::cluster_ddl::{CheckConstraintValidation, ExchangePartitionValidation};
 use tidb_ddl_build::plan_error::DdlPlanError;
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
-use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 use tidb_ddl_systable::MinJobIdRefresher;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload;
@@ -1995,6 +1994,79 @@ fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManag
 mod schema_sync_tests {
     use super::*;
 
+    /// A pooled session on the test's store (Go `testkit.CreateSession` /
+    /// `w.sessPool`), for Go's own statements on the DDL tables.
+    fn sql_pool<S: StoreClient>(
+        opener: &RealOptimisticTransactionOpener<S>,
+        timeout: Duration,
+    ) -> Arc<tidb_session::ddl_session_pool::NodeDdlSessionPool> {
+        tidb_session::ddl_session_pool::NodeDdlSessionPool::for_store(
+            opener.clone(),
+            timeout,
+            Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
+            true,
+            Duration::from_millis(500),
+        )
+        .unwrap()
+    }
+
+    /// Go `tk.MustQuery` / `tk.MustExec` on the test's store.
+    fn sql<S: StoreClient>(
+        opener: &RealOptimisticTransactionOpener<S>,
+        timeout: Duration,
+        sql: &str,
+    ) -> Vec<Vec<tidb_datatype::Datum>> {
+        use tidb_ddl_build::session_pool::DdlSessionPool as _;
+        sql_pool(opener, timeout).exec_restricted_sql(sql).unwrap()
+    }
+
+    /// Go `insertDDLJobs2Table` for one test job.
+    fn insert_job_row<S: StoreClient>(
+        opener: &RealOptimisticTransactionOpener<S>,
+        timeout: Duration,
+        job: &mut tidb_model::Job,
+        reorg: bool,
+        schema_ids: &str,
+        table_ids: &str,
+        processing: bool,
+    ) {
+        let encoded = job.encode(true).unwrap();
+        sql(
+            opener,
+            timeout,
+            &format!(
+                "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values ({}, {}, '{schema_ids}', '{table_ids}', {}, {}, {})",
+                job.id,
+                i32::from(reorg),
+                tidb_ddl_jobsubmit::wrap_key_2_string(&encoded),
+                job.type_.0,
+                i32::from(processing),
+            ),
+        );
+    }
+
+    /// Go `updateDDLJob2Table` of the queued job `job_id` in `state`.
+    fn set_job_row_state<S: StoreClient>(
+        opener: &RealOptimisticTransactionOpener<S>,
+        timeout: Duration,
+        job_id: i64,
+        state: tidb_model::JobState,
+    ) {
+        let rows = sql(opener, timeout, &format!("select job_meta from mysql.tidb_ddl_job where job_id = {job_id}"));
+        let mut job = tidb_model::Job::default();
+        job.decode(rows[0][0].go_bytes()).unwrap();
+        job.state = state;
+        let encoded = job.encode(false).unwrap();
+        sql(
+            opener,
+            timeout,
+            &format!(
+                "update mysql.tidb_ddl_job set job_meta = {} where job_id = {job_id}",
+                tidb_ddl_jobsubmit::wrap_key_2_string(&encoded),
+            ),
+        );
+    }
+
     fn run_persisted_ddl_job<S: StoreClient>(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
         job_id: i64,
@@ -2237,10 +2309,7 @@ mod schema_sync_tests {
             db_info: GoField::new(Some(GoShared::new(database.clone_like_go()))),
         })));
         let mut mutations = Vec::new();
-        DdlJobTable::locate(&catalog)
-            .unwrap()
-            .append_insert(&mut job, false, "601", "0", false, &mut mutations)
-            .unwrap();
+        insert_job_row(&opener, timeout, &mut job, false, "601", "0", false);
         if remove_mdl_table {
             let (schema, table) = catalog.table_info_by_name("mysql", "tidb_mdl_info").unwrap();
             let table = table.read();
@@ -2358,10 +2427,7 @@ mod schema_sync_tests {
         )
         .unwrap();
         let mut mutations = Vec::new();
-        DdlJobTable::locate(&current)
-            .unwrap()
-            .append_insert(&mut job, false, "601", "0", false, &mut mutations)
-            .unwrap();
+        insert_job_row(&opener, timeout, &mut job, false, "601", "0", false);
         tx.commit(
             mutations,
             &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
@@ -2450,24 +2516,7 @@ mod schema_sync_tests {
         let timeout = Duration::from_secs(5);
         let (outcome, _) = tidb_session::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
         assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
-        let seed = |job: &mut Job| {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            let table = DdlJobTable::locate(&catalog).unwrap();
-            let mut mutations = Vec::new();
-            table
-                .append_insert(job, false, "501", "0", false, &mut mutations)
-                .unwrap();
-            assert!(matches!(
-                tx.commit(
-                    mutations,
-                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-                )
-                .unwrap(),
-                OptimisticCommitOutcome::Committed(_)
-            ));
-        };
+        let seed = |job: &mut Job| insert_job_row(&opener, timeout, job, false, "501", "0", false);
         let mut job = Job::default();
         job.id = 500;
         job.schema_id = 501;
@@ -2732,24 +2781,7 @@ mod schema_sync_tests {
         // Resume to QUEUEING as Go does (this job has no pause reason or
         // prior error to clear). The next worker reads the original arguments
         // and follows the normal schema barrier.
-        let mut tx = opener.begin().unwrap();
-        let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-        let table = DdlJobTable::locate(&catalog).unwrap();
-        let mut active = table.load_by_id(&mut snapshot, 504).unwrap().unwrap();
-        active.job.state = JobState::QUEUEING;
-        let mut mutations = Vec::new();
-        table
-            .append_update(&mut active, false, &mut mutations)
-            .unwrap();
-        assert!(matches!(
-            tx.commit(
-                mutations,
-                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-            )
-            .unwrap(),
-            OptimisticCommitOutcome::Committed(_)
-        ));
+        set_job_row_state(&opener, timeout, 504, JobState::QUEUEING);
         assert_eq!(
             run(504, None, &|| Ok(())).unwrap(),
             PersistedDdlJobOutcome::Finished
@@ -3016,24 +3048,7 @@ mod schema_sync_tests {
         })));
         seed(&mut check_job);
         let validator = PauseDuringValidation(|_: &MutationBuffer| {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            let queue = DdlJobTable::locate(&catalog).unwrap();
-            let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
-            active.job.state = JobState::PAUSING;
-            let mut mutations = Vec::new();
-            queue
-                .append_update(&mut active, false, &mut mutations)
-                .unwrap();
-            assert!(matches!(
-                tx.commit(
-                    mutations,
-                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-                )
-                .unwrap(),
-                OptimisticCommitOutcome::Committed(_)
-            ));
+            set_job_row_state(&opener, timeout, 700, JobState::PAUSING);
         });
         let result = run_persisted_ddl_job(
             opener.clone(),
@@ -3057,24 +3072,7 @@ mod schema_sync_tests {
         assert!(load_history_persisted_ddl_job(opener.clone(), 700, timeout)
             .unwrap()
             .is_none());
-        let mut tx = opener.begin().unwrap();
-        let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-        let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
-        let mut active = queue.load_by_id(&mut snapshot, 700).unwrap().unwrap();
-        active.job.state = JobState::QUEUEING;
-        let mut mutations = Vec::new();
-        queue
-            .append_update(&mut active, false, &mut mutations)
-            .unwrap();
-        assert!(matches!(
-            tx.commit(
-                mutations,
-                &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-            )
-            .unwrap(),
-            OptimisticCommitOutcome::Committed(_)
-        ));
+        set_job_row_state(&opener, timeout, 700, JobState::QUEUEING);
         // Without a racing control command, the very same error checkpoint
         // drives ordinary rollback and history, even with the retry limit 0.
         set_limit(0);
@@ -3272,24 +3270,7 @@ mod schema_sync_tests {
         check_job.id = 703;
         seed(&mut check_job);
         let set_job_state = |state| {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            let queue = DdlJobTable::locate(&catalog).unwrap();
-            let mut active = queue.load_by_id(&mut snapshot, 703).unwrap().unwrap();
-            active.job.state = state;
-            let mut mutations = Vec::new();
-            queue
-                .append_update(&mut active, false, &mut mutations)
-                .unwrap();
-            assert!(matches!(
-                tx.commit(
-                    mutations,
-                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-                )
-                .unwrap(),
-                OptimisticCommitOutcome::Committed(_)
-            ));
+            set_job_row_state(&opener, timeout, 703, state);
         };
         let pause_then_panic = PauseDuringValidation(|buffer: &MutationBuffer| {
             set_job_state(JobState::PAUSING);
@@ -3378,7 +3359,6 @@ mod schema_sync_tests {
             return;
         }
         tidb_vardef::set_enable_mdl(true);
-        use crate::ddl_reorg_table::DdlReorgTable;
         use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
         use crate::real_tikv_ddl::{load_history_persisted_ddl_job, JobDoneCh};
         use tidb_model::{
@@ -3419,54 +3399,29 @@ mod schema_sync_tests {
             }))),
         })));
         // The job and a reorg handle of its own, as a backfill leaves one.
+        insert_job_row(&opener, timeout, &mut job, false, "701", "0", false);
         {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            let mut mutations = Vec::new();
-            DdlJobTable::locate(&catalog)
-                .unwrap()
-                .append_insert(&mut job, false, "701", "0", false, &mut mutations)
-                .unwrap();
-            mutations.extend(
-                DdlReorgTable::locate(&catalog)
-                    .unwrap()
-                    .init_ddl_reorg_handle(
-                        &[],
-                        job.id,
-                        &crate::cluster_ddl::add_index::ReorgHandle {
-                            element_id: 1,
-                            element_type: b"_idx_".to_vec(),
-                            start_key: Vec::new(),
-                            end_key: Vec::new(),
-                            physical_id: 701,
-                        },
-                        1,
-                    )
-                    .unwrap(),
-            );
-            assert!(matches!(
-                tx.commit(
-                    mutations,
-                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
-                )
-                .unwrap(),
-                OptimisticCommitOutcome::Committed(_)
-            ));
+            use tidb_ddl_build::session_pool::DdlSessionPool as _;
+            let mut se = sql_pool(&opener, timeout).open_sql_session().unwrap();
+            crate::ddl_reorg_table::init_ddl_reorg_handle(
+                se.as_mut(),
+                job.id,
+                &crate::cluster_ddl::add_index::ReorgHandle {
+                    element_id: 1,
+                    element_type: b"_idx_".to_vec(),
+                    start_key: Vec::new(),
+                    end_key: Vec::new(),
+                    physical_id: 701,
+                },
+            )
+            .unwrap();
         }
         let reorg_rows = move |opener: &Arc<
             tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<
                 tidb_unistore::mock::StorePdClient,
             >,
         >| {
-            let mut tx = opener.begin().unwrap();
-            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
-            let catalog = tidb_infoschema::cluster_catalog::load_info_schema(&mut snapshot).unwrap();
-            DdlReorgTable::locate(&catalog)
-                .unwrap()
-                .load(&mut snapshot, 700)
-                .unwrap()
-                .len()
+            sql(opener, timeout, "select count(*) from mysql.tidb_ddl_reorg where job_id = 700")[0][0].get_int64()
         };
         assert_eq!(reorg_rows(&opener), 1);
 

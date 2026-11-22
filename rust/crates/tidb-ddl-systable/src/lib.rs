@@ -27,7 +27,6 @@ use tidb_datatype::Datum;
 use tidb_model::{GoShared, Job, JobW};
 use tidb_goruntime::go_runtime::GoSharedSlice;
 
-use crate::ddl_job_table::DdlJobTableError;
 use tidb_syssession::mysql_system_tables::SystemTableError;
 
 /// Go `session.Session` over a session of the DDL's pool.
@@ -58,8 +57,6 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 pub enum SystemTableManagerError {
     /// The requested job or MDL row does not exist.
     NotFound,
-    /// The active DDL table could not be read.
-    JobTable(DdlJobTableError),
     /// The MDL table could not be read.
     MdlTable(SystemTableError),
     /// Stored job metadata could not be decoded.
@@ -72,7 +69,6 @@ impl fmt::Display for SystemTableManagerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => formatter.write_str("not found"),
-            Self::JobTable(error) => write!(formatter, "{error}"),
             Self::MdlTable(error) => write!(formatter, "{error}"),
             Self::Job(error) => write!(formatter, "{error}"),
             Self::Sql(error) => formatter.write_str(error),
@@ -84,16 +80,9 @@ impl std::error::Error for SystemTableManagerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::NotFound | Self::Sql(_) => None,
-            Self::JobTable(error) => Some(error),
             Self::MdlTable(error) => Some(error),
             Self::Job(error) => Some(error),
         }
-    }
-}
-
-impl From<DdlJobTableError> for SystemTableManagerError {
-    fn from(error: DdlJobTableError) -> Self {
-        Self::JobTable(error)
     }
 }
 

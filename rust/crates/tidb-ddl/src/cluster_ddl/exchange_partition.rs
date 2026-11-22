@@ -242,10 +242,8 @@ fn exchange_step(
 /// Go `onExchangeTablePartition`.
 pub(super) fn on_exchange_table_partition(
     txn: &mut JobTxn<'_>,
-    catalog: &SessionExtendedInfoSchema,
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     reorg_outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (raw_args, args) = exchange_args(active)?;
     // `checkSchemaExistAndCancelNotExistJob` and the partitioned table's
@@ -545,21 +543,14 @@ pub(super) fn on_exchange_table_partition(
     check_table_info_valid(&standalone)?;
     let mut write = exchange_step(txn, active, &args, &standalone, None)?;
     if !tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string()) {
-        append_schema_change_mutations(
-            txn,
-            catalog,
-            active.job.id,
-            &[(
+        append_schema_change_mutations(txn, active.job.id, &[(
                 -1,
                 SchemaChangeEvent::exchange_partition(
                     partitioned.clone_like_go(),
                     event_partition_info(vec![definition]),
                     original_standalone,
                 ),
-            )],
-            &mut write.mutations,
-            row_ids,
-        )?;
+            )])?;
     }
     active.job.finish_table_job(
         JobState::DONE,

@@ -132,11 +132,7 @@ fn execute(
     sql: &str,
     args: &[SqlArg<'_>],
 ) -> Result<Vec<Vec<Datum>>, MysqlError> {
-    txn.execute(sql, args).unwrap_or_else(|| {
-        Err(MysqlError::unknown(
-            "the masking policy step has no session",
-        ))
-    })
+    txn.execute(sql, args)
 }
 
 /// Go `queryMaskingPoliciesFromSysTable`.
@@ -399,9 +395,6 @@ fn policies_of_hook(
     txn: &JobTxn<'_>,
     policies: impl FnOnce(&JobTxn<'_>) -> Result<Vec<MaskingPolicyInfo>, MysqlError>,
 ) -> Result<Option<Vec<MaskingPolicyInfo>>, DdlPlanError> {
-    if txn.session().is_none() {
-        return Ok(None);
-    }
     match policies(txn) {
         Ok(policies) => Ok(Some(policies)),
         Err(error) if allow_missing_masking_policy_table_during_bootstrap(txn, &error) => Ok(None),
@@ -436,7 +429,7 @@ pub(super) fn drop_masking_policies_by_db_name(
         "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?",
         &[SqlArg::from(db_name)],
     ) {
-        Some(Err(error)) if error.code != tidb_errno::errcode::ErrNoSuchTable => Err(error),
+        Err(error) if error.code != tidb_errno::errcode::ErrNoSuchTable => Err(error),
         _ => Ok(()),
     }
 }
@@ -938,18 +931,6 @@ mod tests {
     }
 
     /// A session pool the failpoint answers before any statement reaches.
-    struct UnusedPool;
-
-    impl tidb_ddl_build::session_pool::DdlSessionPool for UnusedPool {
-        fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
-            unreachable!("the failpoint answers before a session is needed")
-        }
-
-        fn restricted_sql_executor(&self) -> std::sync::Arc<dyn tidb_sqlexec::RestrictedSqlExecutor> {
-            unreachable!("the failpoint answers before a statement runs")
-        }
-    }
-
     /// Go `TestMaskingPolicyMissingSysTableRequiresBootstrapOrUpgrade`: a
     /// table or column job's masking-policy hook tolerates a missing
     /// `mysql.tidb_masking_policy` only during a bootstrap or an upgrade.
@@ -989,13 +970,7 @@ mod tests {
                 (crate::StartMode::Upgrade, false),
             ] {
                 let mut snapshot = EmptySnapshot;
-                let txn = JobTxn::new(&mut snapshot, 1).with_session(Some(crate::job_txn::StepSession {
-                    pool: std::sync::Arc::new(UnusedPool),
-                    buffer: Default::default(),
-                    sql: Default::default(),
-                    start_mode: mode,
-                    step_ctx: Default::default(),
-                }));
+                let txn = JobTxn::new(&mut snapshot, 1, crate::job_txn::unused_step_session(mode));
                 let result = helper(&txn);
                 if want_err {
                     let error = result.expect_err(name).to_string();

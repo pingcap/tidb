@@ -34,16 +34,109 @@ use tidb_ddl::ClusterDdl as _;
 use tidb_ddl_build::plan_error::DdlPlanError;
 
 use tidb_ddl::cluster_ddl::DdlJobSchemaState;
-use tidb_ddl::ddl_history_table::DdlHistoryTable;
-use tidb_ddl_jobsubmit::{finish_insert_attempt, plan_insert_attempt};
-use tidb_ddl_systable::ddl_job_table::DdlJobTable;
+use tidb_ddl_jobsubmit::finish_insert_attempt;
 use tidb_ddl_systable::{Manager, SystemTableManager, SystemTableManagerError};
-use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableView};
-use tidb_syssession::system_row_write::store_clustered_row;
 use tidb_ddl_build::table_info_build::{build_table_info, build_table_info_from_ast};
 use tidb_meta::{key, value};
 use tidb_model::{ActionType, DBInfo, GoAnyView, GoShared, Job, JobState, JobVersion, SchemaState};
 use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp};
+
+/// The fixture store under a SQL session (Go `testkit.CreateMockStore` +
+/// `CreateSession`): the DDL tables are read and written through Go's
+/// statements, never decoded off the store's keys.
+fn recorded(store: &mut MetaStore) -> tidb_session::ddl_session_pool::recorded::RecordedDdlSession {
+    let row_ids = store.row_ids.clone();
+    tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(store, row_ids).unwrap()
+}
+
+/// Go `tk.MustExec(sql)` on the fixture store: the statement's writes land
+/// in the store.
+fn exec_sql(store: &mut MetaStore, sql: &str) {
+    let session = recorded(store);
+    session.query(sql).unwrap();
+    let mut mutations = Vec::new();
+    session.append_mutations(&mut mutations).unwrap();
+    drop(session);
+    apply_mutations(store, &mutations);
+}
+
+/// The `mysql.tidb_ddl_job` row of `job_id` with its scheduling columns.
+fn stored_job(store: &mut MetaStore, job_id: i64) -> Option<tidb_ddl_systable::ddl_job_table::ActiveDdlJob> {
+    recorded(store).active_job(job_id).unwrap()
+}
+
+/// Go `registerMDLInfo` on the step's session, its writes landed in the
+/// fixture store.
+fn register_mdl(store: &mut MetaStore, mdl: &MdlInfoUpdate, job_id: i64, version: i64, owner: &str) {
+    let session = recorded(store);
+    let state = session.schema_state(job_id, true).unwrap();
+    let step = tidb_ddl::job_txn::StepSession {
+        pool: state.worker.sess_pool.clone(),
+        buffer: state.worker.step_buffer.clone(),
+        sql: state.worker.step_sql.clone(),
+        start_mode: state.worker.start_mode,
+        step_ctx: state.worker.step_ctx.clone(),
+    };
+    mdl.register(&step, 30_000, job_id, version, owner).unwrap();
+    drop(step);
+    drop(state);
+    let mut mutations = Vec::new();
+    session.append_mutations(&mut mutations).unwrap();
+    drop(session);
+    apply_mutations(store, &mutations);
+}
+
+/// Every `mysql.tidb_ddl_job` row, in job order.
+fn stored_jobs(store: &mut MetaStore) -> Vec<tidb_ddl_systable::ddl_job_table::ActiveDdlJob> {
+    let session = recorded(store);
+    session
+        .query("select job_id from mysql.tidb_ddl_job order by job_id")
+        .unwrap()
+        .into_iter()
+        .map(|row| session.active_job(row[0].get_int64()).unwrap().unwrap())
+        .collect()
+}
+
+/// Every `mysql.tidb_ddl_history` job, in job order.
+fn stored_history(store: &mut MetaStore) -> Vec<Job> {
+    recorded(store).history_jobs().unwrap()
+}
+
+/// Go `insertDDLJobs2Table` for one fixture job.
+fn insert_job_row(
+    store: &mut MetaStore,
+    job: &mut Job,
+    reorg: bool,
+    schema_ids: &str,
+    table_ids: &str,
+    processing: bool,
+) {
+    let encoded = job.encode(true).unwrap();
+    exec_sql(
+        store,
+        &format!(
+            "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values ({}, {}, '{schema_ids}', '{table_ids}', {}, {}, {})",
+            job.id,
+            i32::from(reorg),
+            tidb_ddl_jobsubmit::wrap_key_2_string(&encoded),
+            job.type_.0,
+            i32::from(processing),
+        ),
+    );
+}
+
+/// Go `updateDDLJob2Table`.
+fn update_job_row(store: &mut MetaStore, job: &mut Job, update_raw_args: bool) {
+    let encoded = job.encode(update_raw_args).unwrap();
+    exec_sql(
+        store,
+        &format!(
+            "update mysql.tidb_ddl_job set job_meta = {} where job_id = {}",
+            tidb_ddl_jobsubmit::wrap_key_2_string(&encoded),
+            job.id,
+        ),
+    );
+}
 
 /// Go `jobScheduler.deliveryJob`: refresh on pooled SQL before a fixture step.
 fn plan_persisted_ddl_job_step(
@@ -52,7 +145,6 @@ fn plan_persisted_ddl_job_step(
     ts: u64,
     configure: impl FnOnce(&mut DdlJobSchemaState),
     error_limit: &dyn Fn() -> i64,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let owned_row_ids = store.row_ids.clone();
     let sessions = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(
@@ -64,7 +156,11 @@ fn plan_persisted_ddl_job_step(
         store, &state, &state.delivered_job.job.as_ref().unwrap().read(),
     )? { return Ok(sync); }
     let mut plan = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_step(
-        store, job_id, ts, state, error_limit, row_ids,
+        store,
+        job_id,
+        ts,
+        state,
+        error_limit,
     )?;
     if let PersistedDdlJobPlan::Step(step) = &mut plan {
         sessions.append_writes(&mut step.write)?;
@@ -103,14 +199,12 @@ fn plan_worker_step(
     job_id: i64,
     ts: u64,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
     match plan_persisted_ddl_job_step(
         store,
         job_id,
         ts,
         |_| {},
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        Some(&*row_ids),
     )? {
         PersistedDdlJobPlan::Step(step) => Ok(step),
         PersistedDdlJobPlan::Paused => panic!("paused job has no worker transaction"),
@@ -198,7 +292,7 @@ pub(crate) struct MetaStore {
     last_range: Option<(Vec<u8>, Vec<u8>)>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: std::sync::Arc<tidb_table::table_from_meta::LocalTableAutoIds>,
+    pub(crate) row_ids: std::sync::Arc<tidb_table::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaStore {
@@ -308,15 +402,13 @@ fn plan_check_constraint_job_submission(
     let Some(mut spec) = submit_job(store, statement, start_ts, false)? else {
         return Ok(None);
     };
-    let catalog = load_info_schema(store)?;
-    let mut before_insert_with_assigned_ids =
-        |_: &[tidb_ddl_jobsubmit::JobSpec]| Option::<fn()>::None;
-    let (mutations, _) = plan_insert_attempt(
-        store,
-        &catalog,
-        std::slice::from_mut(&mut spec),
-        &mut before_insert_with_assigned_ids,
-    )?;
+    // Go `GenGIDAndInsertJobsWithRetry`: the IDs, then `insertDDLJobs2Table`
+    // on the submitting session.
+    let session = recorded(store);
+    let mut mutations = tidb_ddl_jobsubmit::plan_assign_global_ids(store, std::slice::from_mut(&mut spec))
+        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    session.insert_jobs(start_ts, std::slice::from_mut(&mut spec))?;
+    session.append_mutations(&mut mutations)?;
     Ok(Some(PlannedCheckSubmission {
         job: spec.job,
         mutations,
@@ -369,154 +461,6 @@ fn refusal(sql: &str) -> String {
     refusal_with_code(sql).1
 }
 
-#[test]
-fn active_ddl_jobs_use_the_go_job_table_lifecycle() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
-    let table = DdlJobTable::locate(&catalog).expect("the Go active-job table exists");
-    assert!(
-        table.table().indices.is_empty(),
-        "the pinned integer primary key is the record handle"
-    );
-
-    let mut job = Job::default();
-    job.id = 117;
-    job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
-    job.schema_id = 112;
-    job.table_id = 116;
-    job.state = JobState::QUEUEING;
-    job.version = JobVersion::V1;
-    job.start_ts = 1_001;
-    let mut insert = Vec::new();
-    table
-        .append_insert(&mut job, false, "112", "116", false, &mut insert)
-        .expect("Go job submission row encodes");
-    assert_eq!(insert.len(), 1);
-    assert_eq!(insert[0].kind(), BufferMutationOp::Set);
-    apply_mutations(&mut store, &insert);
-
-    let mut active = table.load(&mut store).expect("the owner scans jobs");
-    assert_eq!(active.len(), 1);
-    assert_eq!(active[0].job.id, 117);
-    assert_eq!(active[0].job.type_, job.type_);
-    assert_eq!(active[0].job.raw_args.as_ref().unwrap().get(), "null");
-    assert_eq!(active[0].schema_ids, "112");
-    assert_eq!(active[0].table_ids, "116");
-    assert!(!active[0].reorg);
-    assert!(!active[0].processing);
-
-    active[0].job.state = JobState::RUNNING;
-    active[0].job.schema_state = SchemaState::WRITE_ONLY;
-    active[0].job.last_schema_version = 61;
-    let mut update = Vec::new();
-    table
-        .append_update(&mut active[0], false, &mut update)
-        .expect("Go worker job update encodes");
-    assert_eq!(update.len(), 1);
-    assert_eq!(update[0].kind(), BufferMutationOp::Set);
-    apply_mutations(&mut store, &update);
-
-    let active = table
-        .load(&mut store)
-        .expect("the new owner resumes the job");
-    assert_eq!(active[0].job.state, JobState::RUNNING);
-    assert_eq!(active[0].job.schema_state, SchemaState::WRITE_ONLY);
-    assert_eq!(active[0].job.last_schema_version, 61);
-    assert_eq!(active[0].job.raw_args.as_ref().unwrap().get(), "null");
-
-    let mut delete = Vec::new();
-    table
-        .append_delete(&active[0], &mut delete)
-        .expect("Go terminal deletion encodes");
-    assert_eq!(delete.len(), 1);
-    assert_eq!(delete[0].kind(), BufferMutationOp::Delete);
-    apply_mutations(&mut store, &delete);
-    assert!(table.load(&mut store).unwrap().is_empty());
-}
-
-#[test]
-fn flashback_admission_reads_only_the_go_query_columns() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
-    let table = DdlJobTable::locate(&catalog).expect("the Go active-job table exists");
-
-    let mut ordinary = Job::default();
-    ordinary.id = 117;
-    ordinary.type_ = ActionType::ACTION_CREATE_TABLE;
-    let mut insert = Vec::new();
-    table
-        .append_insert(&mut ordinary, false, "112", "116", false, &mut insert)
-        .expect("the ordinary row encodes");
-    apply_mutations(&mut store, &insert);
-
-    let view = SystemTableView::project(
-        "mysql.tidb_ddl_job",
-        table.table(),
-        &[
-            "job_id",
-            "reorg",
-            "schema_ids",
-            "table_ids",
-            "job_meta",
-            "type",
-            "processing",
-        ],
-    );
-    let row = SystemRow::parse(&view, insert[0].key(), insert[0].value())
-        .expect("the inserted row decodes");
-    let mut corrupt = row.into_values();
-    let existing = corrupt.clone();
-    let job_meta_id = table
-        .table()
-        .cols()
-        .iter_deref()
-        .find(|column| column.read().name.lowercase() == "job_meta")
-        .expect("the job table has job_meta")
-        .read()
-        .id;
-    corrupt.insert(job_meta_id, Datum::Bytes(b"{".to_vec()));
-    let rewrite = store_clustered_row(table.table(), Some(&existing), &corrupt)
-        .expect("the malformed fixture row encodes");
-    apply_mutations(&mut store, &rewrite);
-
-    assert!(
-        table.load(&mut store).is_err(),
-        "the full scheduler load decodes job_meta"
-    );
-    assert!(
-        !table
-            .has_flashback_cluster_job(&mut store, 0)
-            .expect("Go's admission query does not read job_meta"),
-        "an unrelated malformed job is not a flashback job"
-    );
-
-    let mut flashback = Job::default();
-    flashback.id = 118;
-    flashback.type_ = ActionType::ACTION_FLASHBACK_CLUSTER;
-    let mut insert = Vec::new();
-    table
-        .append_insert(&mut flashback, false, "0", "0", false, &mut insert)
-        .expect("the flashback row encodes");
-    apply_mutations(&mut store, &insert);
-    assert!(table
-        .has_flashback_cluster_job(&mut store, 118)
-        .expect("the source-shaped query reads the action column"));
-    assert!(!table
-        .has_flashback_cluster_job(&mut store, 119)
-        .expect("the source-shaped query honors its minimum job ID"));
-    let jobs = table
-        .load_from(&mut store, 118)
-        .expect("the scheduler lower bound skips older malformed metadata");
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].job.id, 118);
-    let view = SystemTableView::project("mysql.tidb_ddl_job", table.table(), &["job_id"]);
-    let expected_start = view
-        .record_prefix(&[Datum::Int(118)])
-        .expect("the integer clustered handle encodes");
-    let expected_end = prefix_scan_end(&view.record_prefix(&[]).unwrap()).unwrap();
-    assert_eq!(store.last_range, Some((expected_start, expected_end)));
-}
-
 /// Go `TestManager` (`pkg/ddl/systable/manager_test.go`), on a store-owned
 /// SQL session pool whose DDL owner is not campaigned.
 #[test]
@@ -564,44 +508,6 @@ fn test_manager() {
 }
 
 #[test]
-fn ddl_sql_history_uses_go_insert_ignore_semantics() {
-    let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).expect("the bootstrap catalog loads");
-    let history = DdlHistoryTable::locate(&catalog).expect("the Go history table exists");
-    let mut job = Job::default();
-    job.id = 117;
-    job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
-    job.schema_id = 112;
-    job.table_id = 116;
-    job.schema_name = "u6".into();
-    job.table_name = "t".into();
-    job.state = JobState::QUEUEING;
-    job.start_ts = 1_001;
-    let first = job.encode(true).expect("the submitted job encodes");
-    let mut insert = Vec::new();
-    history
-        .append_insert_ignore(&mut store, &job, &first, &mut insert)
-        .expect("the first INSERT IGNORE plans");
-    assert_eq!(insert.len(), 1);
-    assert_eq!(insert[0].kind(), BufferMutationOp::Set);
-    apply_mutations(&mut store, &insert);
-
-    job.state = JobState::DONE;
-    let second = job.encode(true).expect("the terminal job encodes");
-    let mut duplicate = Vec::new();
-    history
-        .append_insert_ignore(&mut store, &job, &second, &mut duplicate)
-        .expect("a duplicate INSERT IGNORE succeeds");
-    assert!(
-        duplicate.is_empty(),
-        "the existing SQL history row is preserved"
-    );
-    let stored = history.load(&mut store).expect("SQL history scans");
-    assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].state, JobState::QUEUEING);
-}
-
-#[test]
 fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     use tidb_model::{
         BatchCreateTableArgs, CreateSchemaArgs, CreateTableArgs, GoField, HistoryInfo,
@@ -609,8 +515,6 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
     };
     fn execute(store: &mut MetaStore, job: &mut Job, ids: &str, expected_phases: usize) {
         let row_ids = std::sync::Arc::clone(&store.row_ids);
-        let catalog = load_info_schema(store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         // Go retains earlier retry diagnostics on the job. A later successful
         // action must finish normally, not treat this as a fresh cancellation.
         job.error = Some(GoShared::new(tidb_terror::TerrorError::compatible(
@@ -618,11 +522,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             "earlier retry failed",
         )));
         job.error_count = 2;
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(job, false, "112", ids, false, &mut mutations)
-            .unwrap();
-        apply_mutations(store, &mutations);
+        insert_job_row(store, job, false, "112", ids, false);
         let mut phases = 0;
         loop {
             let step = plan_worker_step(store, job.id, 10_000 + phases as u64).unwrap();
@@ -636,7 +536,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                 .pairs
                 .contains_key(&key::ddl_job_history_kv_key(job.id)));
             assert_eq!(
-                queue.load_by_id(store, job.id).unwrap().unwrap().table_ids,
+                stored_job(store, job.id).unwrap().table_ids,
                 ids
             );
             let mdl = step
@@ -666,7 +566,6 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                 11_000,
                 |_| {},
                 &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-                Some(&*row_ids),
             )
             .unwrap()
             {
@@ -675,19 +574,20 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
                 }
                 _ => panic!("a restarted owner must recover MDL before advancing"),
             }
-            let mut cleanup = Vec::new();
-            mdl.append_delete_mutations(store, job.id, "replacement-owner", &mut cleanup)
-                .unwrap();
-            assert!(
-                cleanup.is_empty(),
-                "an owner must not delete a different owner's MDL row"
-            );
-            mdl.append_delete_mutations(store, job.id, "first-owner", &mut cleanup)
-                .unwrap();
-            apply_mutations(store, &cleanup);
+            // Go `cleanMDLInfo`.
+            let mdl_rows = |store: &mut MetaStore| {
+                recorded(store)
+                    .query(&format!("select count(*) from mysql.tidb_mdl_info where job_id = {}", job.id))
+                    .unwrap()[0][0]
+                    .get_int64()
+            };
+            exec_sql(store, &mdl.clean_sql(job.id, "replacement-owner"));
+            assert_eq!(mdl_rows(store), 1, "an owner must not delete a different owner's MDL row");
+            exec_sql(store, &mdl.clean_sql(job.id, "first-owner"));
+            assert_eq!(mdl_rows(store), 0);
         }
         assert_eq!(phases, expected_phases);
-        assert!(queue.load_by_id(store, job.id).unwrap().is_none());
+        assert!(stored_job(store, job.id).is_none());
         if matches!(
             job.type_,
             ActionType::ACTION_DROP_SCHEMA | ActionType::ACTION_DROP_TABLE
@@ -718,10 +618,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             }
         }
 
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(store)
-            .unwrap();
+        let history = stored_history(store);
         assert_eq!(
             history
                 .iter()
@@ -839,8 +736,6 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
 #[test]
 fn a_worker_step_runs_under_the_jobs_sql_digest() {
     let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).unwrap();
-    let queue = DdlJobTable::locate(&catalog).unwrap();
     let mut job = Job::default();
     job.id = 950;
     job.schema_id = 112;
@@ -849,24 +744,18 @@ fn a_worker_step_runs_under_the_jobs_sql_digest() {
     job.version = JobVersion::V2;
     job.query = "CREATE DATABASE attach_step".into();
     job.fill_v2_arg(serde_json::from_str("123").unwrap());
-    let mut mutations = Vec::new();
-    queue
-        .append_insert(&mut job, false, "112", "0", true, &mut mutations)
-        .unwrap();
-    apply_mutations(&mut store, &mutations);
+    insert_job_row(&mut store, &mut job, false, "112", "0", true);
     tidb_topsql_state::enable_top_sql();
     // Go `prepareTxn` also tags the step's transaction with the job's SQL
     // (`txn.SetOption(kv.ResourceGroupTagger, ...)`).
     let step_kv_context = tidb_txnkv::StatementKvContextCell::default();
     let configure = |state: &mut DdlJobSchemaState| state.step_kv_context = Some(step_kv_context.clone());
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
     plan_persisted_ddl_job_step(
         &mut store,
         job.id,
         10_000,
         configure,
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-        Some(&*row_ids),
     )
     .unwrap();
     tidb_topsql_state::disable_top_sql();
@@ -903,7 +792,6 @@ fn the_step_barrier_leaves_the_next_schema_version_to_the_syncer() {
     let cache = std::sync::Arc::new(tidb_infoschema_issyncer::catalog_watch::InfoCache::new(
         load_info_schema(&mut store).unwrap(),
     ));
-    let queue = DdlJobTable::locate(&cache.get_latest()).unwrap();
     let mut job = Job::default();
     job.id = 970;
     job.schema_id = 112;
@@ -920,9 +808,7 @@ fn the_step_barrier_leaves_the_next_schema_version_to_the_syncer() {
         }))),
         ..Default::default()
     })));
-    let mut mutations = Vec::new();
-    queue.append_insert(&mut job, false, "112", "971", false, &mut mutations).unwrap();
-    apply_mutations(&mut store, &mutations);
+    insert_job_row(&mut store, &mut job, false, "112", "971", false);
     let row_ids = std::sync::Arc::clone(&store.row_ids);
     let mut state = tidb_session::ddl_session_pool::recorded::RecordedDdlSession::new(&mut store, row_ids)
         .unwrap()
@@ -948,8 +834,6 @@ fn the_step_barrier_leaves_the_next_schema_version_to_the_syncer() {
 #[test]
 fn persisted_cancellation_precedes_forward_action() {
     let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).unwrap();
-    let queue = DdlJobTable::locate(&catalog).unwrap();
     for (offset, action) in [
         ActionType::ACTION_CREATE_SCHEMA,
         ActionType::ACTION_CREATE_TABLE,
@@ -968,14 +852,8 @@ fn persisted_cancellation_precedes_forward_action() {
         // Conversion must not decode forward CREATE/RENAME arguments.
         job.fill_v2_arg(serde_json::from_str("123").unwrap());
         job.error_count = 2;
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "112", "0", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
-        let raw = queue
-            .load_by_id(&mut store, job.id)
-            .unwrap()
+        insert_job_row(&mut store, &mut job, false, "112", "0", true);
+        let raw = stored_job(&mut store, job.id)
             .unwrap()
             .job
             .raw_args;
@@ -983,10 +861,7 @@ fn persisted_cancellation_precedes_forward_action() {
         assert!(step.terminal);
         assert_eq!(step.write.schema_version, 0);
         apply(&mut store, &step.write);
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let job = history.iter().find(|j| j.id == job.id).unwrap();
         assert_eq!(job.state, JobState::CANCELLED);
         assert_eq!(job.error_count, 3);
@@ -1031,8 +906,6 @@ fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
         ),
     ] {
         let mut store = bootstrapped();
-        let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
         job.schema_id = 112;
@@ -1040,18 +913,11 @@ fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
         job.version = JobVersion::V2;
         job.state = JobState::CANCELLING;
         job.error = Some(GoShared::new(original));
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "112", "0", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "112", "0", true);
         let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
         assert!(step.terminal);
         apply(&mut store, &step.write);
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let saved = history.iter().find(|j| j.id == job.id).unwrap();
         let error = saved.error.as_ref().unwrap().read();
         assert_eq!(error.rfc_code(), expected_rfc);
@@ -1064,7 +930,6 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
     for limit in [5, 0] {
         let mut store = bootstrapped();
         let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
         job.schema_id = 991;
@@ -1081,14 +946,8 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
                 ..Default::default()
             }))),
         })));
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "991", "0", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
-        let raw = queue
-            .load_by_id(&mut store, job.id)
-            .unwrap()
+        insert_job_row(&mut store, &mut job, false, "991", "0", true);
+        let raw = stored_job(&mut store, job.id)
             .unwrap()
             .job
             .raw_args;
@@ -1098,7 +957,6 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
             10_000,
             |_| {},
             &|| limit,
-            None,
         )
         .unwrap() else {
             panic!("panic recovery must checkpoint")
@@ -1112,7 +970,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         assert_eq!(after.schema_meta_version(), catalog.schema_meta_version());
         assert!(!after.stored_schemas().iter().any(|db| db.read().id == 991));
         if limit > 0 {
-            let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+            let active = stored_job(&mut store, job.id).unwrap();
             assert_eq!(active.job.state, JobState::CANCELLING);
             assert_eq!(active.job.error_count, 1);
             assert!(active.job.error.is_none());
@@ -1122,10 +980,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
             assert!(done.terminal);
             apply(&mut store, &done.write);
         }
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let history = history.iter().find(|j| j.id == job.id).unwrap();
         assert_eq!(history.state, JobState::CANCELLED);
         assert_eq!(history.error_count, if limit == 0 { 1 } else { 2 });
@@ -1177,7 +1032,6 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             key::table_kv_key(112, table_id),
             value::serialize_table_info(&table).unwrap(),
         );
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
         job.schema_id = 112;
@@ -1193,21 +1047,8 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
         job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
             constraint: tidb_model::GoField::new(Some(GoShared::new(constraint))),
         })));
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(
-                &mut job,
-                false,
-                "112",
-                &table_id.to_string(),
-                true,
-                &mut mutations,
-            )
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
-        let raw = queue
-            .load_by_id(&mut store, job.id)
-            .unwrap()
+        insert_job_row(&mut store, &mut job, false, "112", &table_id.to_string(), true);
+        let raw = stored_job(&mut store, job.id)
             .unwrap()
             .job
             .raw_args;
@@ -1223,7 +1064,11 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             let sessions = sessions.unwrap();
             let state = sessions.schema_state(job.id, true).unwrap();
             let mut plan = tidb_ddl::cluster_ddl::plan_persisted_ddl_job_step(
-                store, job.id, ts, state, &|| 3, None,
+                store,
+                job.id,
+                ts,
+                state,
+                &|| 3,
             ).unwrap();
             if let PersistedDdlJobPlan::Step(step) = &mut plan {
                 sessions.append_writes(&mut step.write).unwrap();
@@ -1238,7 +1083,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
         assert_eq!(step.write.schema_version, 0);
         apply(&mut store, &step.write);
         if initial_state == JobState::CANCELLING {
-            let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+            let active = stored_job(&mut store, job.id).unwrap();
             assert_eq!(active.job.state, JobState::CANCELLING);
             assert_eq!(active.job.error_count, 3);
             assert_eq!(
@@ -1252,10 +1097,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             assert!(step.terminal);
             apply(&mut store, &step.write);
         }
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let history = history.iter().find(|j| j.id == job.id).unwrap();
         assert_eq!(history.state, JobState::CANCELLED);
         assert_eq!(history.raw_args, raw);
@@ -1415,17 +1257,12 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
     for (error, code) in cases {
         let mut store = bootstrapped();
         let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
         job.type_ = ActionType::ACTION_CREATE_SCHEMA;
         job.version = JobVersion::V2;
         job.state = JobState::RUNNING;
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "991", "0", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "991", "0", true);
         let message = error.to_job_error().message().to_owned();
         let expected_rfc = match &error {
             DdlPlanError::Source(source) => {
@@ -1451,7 +1288,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         )
         .unwrap();
         apply(&mut store, &step.write);
-        let mut active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let mut active = stored_job(&mut store, job.id).unwrap();
         assert_eq!(active.job.error_count, 1);
         let saved = active.job.error.as_ref().unwrap().read();
         assert_eq!(saved.code().value(), code, "{message}");
@@ -1469,18 +1306,11 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         // Finalization and a fresh history decode must retain the same error;
         // no statement-local value supplies the submitting connection's result.
         active.job.state = JobState::CANCELLED;
-        mutations.clear();
-        queue
-            .append_update(&mut active, false, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        update_job_row(&mut store, &mut active.job, false);
         let finished = plan_worker_step(&mut store, job.id, 20_000).unwrap();
         assert!(finished.terminal);
         apply(&mut store, &finished.write);
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let history = history.iter().find(|stored| stored.id == job.id).unwrap();
         assert_eq!(history.error_count, 1);
         let restored = history.error.as_ref().unwrap().read();
@@ -1528,17 +1358,11 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
         ),
     ] {
         let mut store = bootstrapped();
-        let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 990;
         job.type_ = ActionType::ACTION_ADD_CHECK_CONSTRAINT;
         job.state = JobState::RUNNING;
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "112", "116", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "112", "116", true);
         let step = plan_persisted_ddl_job_failure(
             &mut store,
             job.id,
@@ -1549,7 +1373,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
         )
         .unwrap();
         apply(&mut store, &step.write);
-        let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let active = stored_job(&mut store, job.id).unwrap();
         assert_eq!(active.job.state, state, "{rfc}");
         assert_eq!(active.job.error_count, 1);
         assert_eq!(active.job.error.as_ref().unwrap().read().rfc_code(), rfc);
@@ -1559,8 +1383,6 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
 #[test]
 fn persisted_action_error_is_checkpointed_before_retry() {
     let mut store = bootstrapped();
-    let catalog = load_info_schema(&mut store).unwrap();
-    let queue = DdlJobTable::locate(&catalog).unwrap();
     let mut job = Job::default();
     job.id = 990;
     job.schema_id = 991;
@@ -1569,14 +1391,8 @@ fn persisted_action_error_is_checkpointed_before_retry() {
     // Existing planner rejects a missing db_info without cancelling; the
     // shared worker must still persist its error and untouched raw arguments.
     job.fill_v2_arg(serde_json::from_str("{}").unwrap());
-    let mut mutations = Vec::new();
-    queue
-        .append_insert(&mut job, false, "991", "0", true, &mut mutations)
-        .unwrap();
-    apply_mutations(&mut store, &mutations);
-    let raw = queue
-        .load_by_id(&mut store, job.id)
-        .unwrap()
+    insert_job_row(&mut store, &mut job, false, "991", "0", true);
+    let raw = stored_job(&mut store, job.id)
         .unwrap()
         .job
         .raw_args;
@@ -1585,7 +1401,7 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         assert!(!step.terminal);
         assert_eq!(step.write.schema_version, 0);
         apply(&mut store, &step.write);
-        let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let active = stored_job(&mut store, job.id).unwrap();
         assert_eq!(active.job.error_count, count as i64);
         assert_eq!(active.job.state, JobState::RUNNING);
         assert_eq!(active.job.raw_args, raw);
@@ -1599,14 +1415,13 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         20_000,
         |_| {},
         &|| 2,
-        None,
     )
     .unwrap() else {
         panic!("error must checkpoint")
     };
     assert!(step.run_error.is_some());
     apply(&mut store, &step.write);
-    let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+    let active = stored_job(&mut store, job.id).unwrap();
     assert_eq!(active.job.error_count, 3);
     assert_eq!(active.job.state, JobState::CANCELLING);
     let original = active
@@ -1623,17 +1438,13 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         30_000,
         |_| {},
         &|| panic!("normal cancellation must not reload the limit"),
-        None,
     )
     .unwrap() else {
         panic!("cancellation must reach history")
     };
     assert!(step.terminal);
     apply(&mut store, &step.write);
-    let history = DdlHistoryTable::locate(&catalog)
-        .unwrap()
-        .load(&mut store)
-        .unwrap();
+    let history = stored_history(&mut store);
     let history = history.iter().find(|j| j.id == job.id).unwrap();
     assert_eq!(history.error_count, 4);
     assert_eq!(history.state, JobState::CANCELLED);
@@ -1677,7 +1488,6 @@ fn persisted_cancel_uses_physical_drop_state() {
                     value::serialize_table_info(&table).unwrap(),
                 );
             }
-            let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut job = Job::default();
             job.id = 990;
             job.schema_id = 112;
@@ -1686,24 +1496,13 @@ fn persisted_cancel_uses_physical_drop_state() {
             job.state = JobState::CANCELLING;
             // Stale job state must not override the actual schema object.
             job.schema_state = SchemaState::NONE;
-            let mut mutations = Vec::new();
-            queue
-                .append_insert(
-                    &mut job,
-                    false,
-                    "112",
-                    &id.to_string(),
-                    true,
-                    &mut mutations,
-                )
-                .unwrap();
-            apply_mutations(&mut store, &mutations);
+            insert_job_row(&mut store, &mut job, false, "112", &id.to_string(), true);
             let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
             assert_eq!(step.terminal, state == SchemaState::PUBLIC);
             assert_eq!(step.write.schema_version, 0);
             apply(&mut store, &step.write);
             if !step.terminal {
-                let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                let active = stored_job(&mut store, job.id).unwrap();
                 assert_eq!(active.job.state, JobState::RUNNING);
                 assert_eq!(active.job.error_count, 0);
                 assert!(active.job.error.is_none());
@@ -1752,7 +1551,6 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 key::table_kv_key(112, table_id),
                 value::serialize_table_info(&table).unwrap(),
             );
-            let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut job = Job::default();
             job.id = 990;
             job.schema_id = 112;
@@ -1775,21 +1573,8 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     enforced: tidb_model::GoField::new(true),
                 })));
             }
-            let mut mutations = Vec::new();
-            queue
-                .append_insert(
-                    &mut job,
-                    false,
-                    "112",
-                    &table_id.to_string(),
-                    true,
-                    &mut mutations,
-                )
-                .unwrap();
-            apply_mutations(&mut store, &mutations);
-            let raw = queue
-                .load_by_id(&mut store, job.id)
-                .unwrap()
+            insert_job_row(&mut store, &mut job, false, "112", &table_id.to_string(), true);
+            let raw = stored_job(&mut store, job.id)
                 .unwrap()
                 .job
                 .raw_args;
@@ -1802,9 +1587,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 assert!(!step.terminal);
                 assert_eq!(step.write.schema_version, 0);
                 assert_eq!(
-                    queue
-                        .load_by_id(&mut store, job.id)
-                        .unwrap()
+                    stored_job(&mut store, job.id)
                         .unwrap()
                         .job
                         .state,
@@ -1817,14 +1600,13 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                         20_000,
                         |_| {},
                         &|| 0,
-                        None,
                     )
                     .unwrap() else {
                         panic!("invalid forward state must checkpoint")
                     };
                     assert!(retry.run_error.is_some());
                     apply(&mut store, &retry.write);
-                    let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                    let active = stored_job(&mut store, job.id).unwrap();
                     assert_eq!(active.job.error_count, 1);
                     assert_eq!(
                         active.job.state,
@@ -1835,7 +1617,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
             } else {
                 assert!(!step.terminal);
                 assert_eq!(step.write.schema_version, catalog.schema_meta_version() + 1);
-                let active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+                let active = stored_job(&mut store, job.id).unwrap();
                 assert_eq!(active.job.state, JobState::CANCELLING);
                 assert_eq!(active.job.raw_args, raw);
                 let after = load_info_schema(&mut store).unwrap();
@@ -1851,10 +1633,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     );
                 }
                 let mdl = step.write.mdl_info_update.unwrap();
-                let mut mutations = Vec::new();
-                mdl.append_mutations(job.id, step.write.schema_version, "owner", &mut mutations)
-                    .unwrap();
-                apply_mutations(&mut store, &mutations);
+                register_mdl(&mut store, &mdl, job.id, step.write.schema_version, "owner");
                 assert!(matches!(
                     plan_persisted_ddl_job_step(
                         &mut store,
@@ -1862,7 +1641,6 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                         20_000,
                         |_| {},
                         &|| 512,
-                        None,
                     )
                     .unwrap(),
                     PersistedDdlJobPlan::SchemaSync { .. }
@@ -1873,17 +1651,13 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                     30_000,
                     |state| state.synced_version = Some(step.write.schema_version),
                     &|| 512,
-                    None,
                 )
                 .unwrap() else {
                     panic!("cancel after sync")
                 };
                 assert!(done.terminal);
                 apply(&mut store, &done.write);
-                let history = DdlHistoryTable::locate(&after)
-                    .unwrap()
-                    .load(&mut store)
-                    .unwrap();
+                let history = stored_history(&mut store);
                 let history = history.iter().find(|j| j.id == job.id).unwrap();
                 assert_eq!(history.state, JobState::CANCELLED);
                 assert_eq!(
@@ -1954,33 +1728,17 @@ fn persisted_check_source_state_errors() {
                 enforced: tidb_model::GoField::new(true),
             })));
         }
-        let queue = DdlJobTable::locate(&catalog).unwrap();
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(
-                &mut job,
-                false,
-                "112",
-                &table_id.to_string(),
-                true,
-                &mut mutations,
-            )
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "112", &table_id.to_string(), true);
         let before_table = store.pairs[&key::table_kv_key(112, table_id)].clone();
         // A successful Go action re-encodes decoded args even without a
         // schema mutation. Failed actions must keep the original raw args.
-        let mut active = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let mut active = stored_job(&mut store, job.id).unwrap();
         let mut raw: serde_json::Value =
             serde_json::from_str(&active.job.raw_args.as_ref().unwrap().get()).unwrap();
         raw["unknown"] = serde_json::json!("retained only on error");
         active.job.raw_args =
             Some(tidb_model::PersistedRawJson::from_string(raw.to_string()).unwrap());
-        mutations.clear();
-        queue
-            .append_update(&mut active, false, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        update_job_row(&mut store, &mut active.job, false);
         let step = plan_worker_step(&mut store, job.id, 2_000).unwrap();
         assert!(!step.terminal, "{action}");
         assert_eq!(step.write.schema_version, 0, "{action}");
@@ -2006,7 +1764,7 @@ fn persisted_check_source_state_errors() {
             before_table,
             "{action}"
         );
-        let reloaded = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let reloaded = stored_job(&mut store, job.id).unwrap();
         assert_eq!(reloaded.job.error_count, i64::from(code != 0), "{action}");
         assert_eq!(reloaded.job.state, JobState::RUNNING, "{action}");
         let raw: serde_json::Value =
@@ -2036,7 +1794,6 @@ fn persisted_check_source_missing_constraint_keeps_original_name() {
         let create = plan(&mut store, "CREATE TABLE checked_table (a INT)", 1_000);
         let table_id = create.created_id.unwrap();
         apply(&mut store, &create);
-        let catalog = load_info_schema(&mut store).unwrap();
         let mut job = Job::default();
         job.id = 992;
         job.schema_id = 112;
@@ -2049,26 +1806,11 @@ fn persisted_check_source_missing_constraint_keeps_original_name() {
             constraint_name: tidb_model::GoField::new(tidb_ast::CiString::new("MissingCheck")),
             enforced: tidb_model::GoField::new(true),
         })));
-        let queue = DdlJobTable::locate(&catalog).unwrap();
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(
-                &mut job,
-                false,
-                "112",
-                &table_id.to_string(),
-                true,
-                &mut mutations,
-            )
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "112", &table_id.to_string(), true);
         let step = plan_worker_step(&mut store, job.id, 2_000).unwrap();
         assert!(step.terminal);
         apply(&mut store, &step.write);
-        let history = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap();
+        let history = stored_history(&mut store);
         let history = history.iter().find(|j| j.id == job.id).unwrap();
         let error = history.error.as_ref().unwrap().read();
         assert_eq!(error.rfc_code(), "ddl:3940");
@@ -2125,13 +1867,8 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
                     enforced: tidb_model::GoField::new(true),
                 })));
             }
-            let queue = DdlJobTable::locate(&catalog).unwrap();
-            let mut mutations = Vec::new();
             let table_ids = job.table_id.to_string();
-            queue
-                .append_insert(&mut job, false, "112", &table_ids, true, &mut mutations)
-                .unwrap();
-            apply_mutations(&mut store, &mutations);
+            insert_job_row(&mut store, &mut job, false, "112", &table_ids, true);
             let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
             assert!(
                 step.terminal,
@@ -2139,10 +1876,7 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
             );
             assert_eq!(step.write.schema_version, 0);
             apply(&mut store, &step.write);
-            let history = DdlHistoryTable::locate(&catalog)
-                .unwrap()
-                .load(&mut store)
-                .unwrap();
+            let history = stored_history(&mut store);
             let history = history.iter().find(|j| j.id == job.id).unwrap();
             assert_eq!(history.error_count, 1);
             assert_eq!(history.state, JobState::CANCELLED);
@@ -2183,7 +1917,6 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
     ] {
         let mut store = bootstrapped();
         let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
         job.schema_id = 112;
@@ -2200,32 +1933,15 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
             "earlier retry failed",
         )));
         job.error_count = 2;
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, true, "112", "901,902", true, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
-        let original = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
-        let mdl = MdlInfoUpdate {
-            table: Box::new(
-                catalog
-                    .table_info_by_name("mysql", "tidb_mdl_info")
-                    .unwrap()
-                    .1
-                    .read().clone_like_go(),
-            ),
-            table_ids: original.table_ids.clone(),
-            omit_owner_id: false,
-        };
+        insert_job_row(&mut store, &mut job, true, "112", "901,902", true);
+        let original = stored_job(&mut store, job.id).unwrap();
+        let mdl = MdlInfoUpdate { omit_owner_id: false };
         let version = catalog.schema_meta_version();
-        let mut registration = Vec::new();
-        mdl.append_mutations(job.id, version, "owner", &mut registration)
-            .unwrap();
-        apply_mutations(&mut store, &registration);
+        register_mdl(&mut store, &mdl, job.id, version, "owner");
         let before = store.pairs.clone();
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 9_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: acknowledge the previous publication before pausing"
@@ -2237,7 +1953,6 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
             10_000,
             |state| state.synced_version = Some(version),
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-            None,
         )
         .unwrap() else {
             panic!("{action}: an acknowledged pause must checkpoint")
@@ -2249,7 +1964,7 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         assert!(step.write.placement_bundles.is_empty());
         assert_eq!(store.pairs, before, "planning must not mutate storage");
         apply(&mut store, &step.write);
-        let paused = queue.load_by_id(&mut store, job.id).unwrap().unwrap();
+        let paused = stored_job(&mut store, job.id).unwrap();
         assert_eq!(paused.job.state, JobState::PAUSED, "{action}");
         assert_eq!(paused.job.real_start_ts, 10_000);
         assert_eq!(paused.job.schema_state, job.schema_state);
@@ -2265,27 +1980,40 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         let mut expected = original;
         expected.job.state = JobState::PAUSED;
         expected.job.real_start_ts = 10_000;
-        let mut checkpoint = Vec::new();
-        queue
-            .append_update(&mut expected, false, &mut checkpoint)
-            .unwrap();
         let mut expected_store = MetaStore {
             pairs: before,
             ..Default::default()
         };
-        apply_mutations(&mut expected_store, &checkpoint);
+        update_job_row(&mut expected_store, &mut expected.job, false);
         // SQL can rewrite V2 fixture bytes using the session's row format.
         // Compare every stored column, and keep every other KV byte exact.
-        let row_key = checkpoint[0].key();
-        let view = SystemTableView::project("mysql.tidb_ddl_job", queue.table(),
-            &["job_id", "reorg", "schema_ids", "table_ids", "job_meta", "type", "processing"]);
+        let job_row = |store: &mut MetaStore| {
+            format!(
+                "{:?}",
+                recorded(store)
+                    .query(&format!(
+                        "select job_id, reorg, schema_ids, table_ids, job_meta, type, processing from mysql.tidb_ddl_job where job_id = {}",
+                        job.id
+                    ))
+                    .unwrap()
+            )
+        };
         assert_eq!(
-            SystemRow::parse(&view, row_key, &store.pairs[row_key]).unwrap().into_values(),
-            SystemRow::parse(&view, row_key, &expected_store.pairs[row_key]).unwrap().into_values(),
+            job_row(&mut store),
+            job_row(&mut expected_store),
             "{action}: every job-row column is preserved except the checkpoint",
         );
-        expected_store.pairs.insert(row_key.to_vec(), store.pairs[row_key].clone());
-        assert_eq!(store.pairs, expected_store.pairs, "{action}");
+        let job_table_id = catalog.table_info_by_name("mysql", "tidb_ddl_job").unwrap().1.read().id;
+        let row_prefix = tidb_tablecodec::table_key::gen_table_record_prefix(job_table_id);
+        let keys: std::collections::BTreeSet<_> = store.pairs.keys().chain(expected_store.pairs.keys()).cloned().collect();
+        let differing: Vec<_> = keys
+            .into_iter()
+            .filter(|key| store.pairs.get(key) != expected_store.pairs.get(key))
+            .collect();
+        assert!(
+            differing.len() <= 1 && differing.iter().all(|key| key.starts_with(&row_prefix)),
+            "{action}: only the job row's bytes may differ",
+        );
         let before = store.pairs.clone();
         assert!(matches!(
             plan_persisted_ddl_job_step(
@@ -2294,7 +2022,6 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
                 20_000,
                 |state| state.synced_version = Some(version),
                 &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT },
-                None,
             )
             .unwrap(),
             PersistedDdlJobPlan::Paused
@@ -2305,15 +2032,12 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         );
         assert!(
             matches!(
-                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT, None).unwrap(),
+                plan_persisted_ddl_job_step(&mut store, job.id, 30_000, |_| {}, &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT).unwrap(),
                 PersistedDdlJobPlan::SchemaSync { version: actual, .. } if actual == version
             ),
             "{action}: replacement owner must recover an uncleaned MDL row"
         );
-        let mut cleanup = Vec::new();
-        mdl.append_delete_mutations(&mut store, job.id, "owner", &mut cleanup)
-            .unwrap();
-        apply_mutations(&mut store, &cleanup);
+        exec_sql(&mut store, &mdl.clean_sql(job.id, "owner"));
         let before = store.pairs.clone();
         assert!(matches!(
             plan_persisted_ddl_job_step(
@@ -2322,7 +2046,6 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
                 40_000,
                 |_| {},
                 &|| { tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT },
-                None,
             )
             .unwrap(),
             PersistedDdlJobPlan::Paused
@@ -2351,7 +2074,6 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
         );
         apply(&mut store, &create);
         let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
         job.schema_id = 112;
@@ -2401,14 +2123,8 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
                 tidb_errno::errcode::ErrNoSuchTable
             }
         };
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "112", "901", false, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
-        let raw_args = queue
-            .load_by_id(&mut store, 900)
-            .unwrap()
+        insert_job_row(&mut store, &mut job, false, "112", "901", false);
+        let raw_args = stored_job(&mut store, 900)
             .unwrap()
             .job
             .raw_args
@@ -2423,11 +2139,8 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
         assert!(step.write.mdl_info_update.is_none());
         assert_eq!(store.pairs, before);
         apply(&mut store, &step.write);
-        assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
-        let finished = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap()
+        assert!(stored_job(&mut store, 900).is_none());
+        let finished = stored_history(&mut store)
             .into_iter()
             .find(|job| job.id == 900)
             .unwrap();
@@ -2468,7 +2181,6 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         );
         apply(&mut store, &create);
         let catalog = load_info_schema(&mut store).unwrap();
-        let queue = DdlJobTable::locate(&catalog).unwrap();
         let mut job = Job::default();
         job.id = 900;
         job.schema_id = 112;
@@ -2477,11 +2189,7 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         job.version = JobVersion::V2;
         job.binlog_info = Some(GoShared::new(tidb_model::HistoryInfo::default()));
         job.fill_v2_arg(serde_json::from_str("123").unwrap());
-        let mut mutations = Vec::new();
-        queue
-            .append_insert(&mut job, false, "112", "116", false, &mut mutations)
-            .unwrap();
-        apply_mutations(&mut store, &mutations);
+        insert_job_row(&mut store, &mut job, false, "112", "116", false);
         let raw_args = job.raw_args.clone();
         let step = plan_worker_step(&mut store, 900, 10_000).unwrap();
         assert!(
@@ -2490,11 +2198,8 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         );
         assert_eq!(step.write.schema_version, 0);
         apply(&mut store, &step.write);
-        assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
-        let finished = DdlHistoryTable::locate(&catalog)
-            .unwrap()
-            .load(&mut store)
-            .unwrap()
+        assert!(stored_job(&mut store, 900).is_none());
+        let finished = stored_history(&mut store)
             .into_iter()
             .find(|job| job.id == 900)
             .unwrap();
@@ -2524,16 +2229,11 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
         for state in [JobState::DONE, JobState::ROLLBACK_DONE, JobState::CANCELLED] {
             let mut store = bootstrapped();
             let catalog = load_info_schema(&mut store).unwrap();
-            let queue = DdlJobTable::locate(&catalog).unwrap();
             let mut job = Job::default();
             job.id = 900;
             job.type_ = action;
             job.state = state;
-            let mut mutations = Vec::new();
-            queue
-                .append_insert(&mut job, false, "0", "0", false, &mut mutations)
-                .unwrap();
-            apply_mutations(&mut store, &mutations);
+            insert_job_row(&mut store, &mut job, false, "0", "0", false);
             let (db, table) = catalog.table_info_by_name("mysql", "tidb_ddl_history").unwrap();
             let table = table.read();
             store.pairs.remove(&key::table_kv_key(db.read().id, table.id));
@@ -2541,7 +2241,7 @@ fn history_table_failure_is_logged_and_the_job_still_finishes() {
             assert!(step.terminal);
             apply(&mut store, &step.write);
             assert!(store.pairs.contains_key(&key::ddl_job_history_kv_key(900)));
-            assert!(queue.load_by_id(&mut store, 900).unwrap().is_none());
+            assert!(stored_job(&mut store, 900).is_none());
         }
     }
 }
@@ -2568,11 +2268,7 @@ fn completed_check_schema_stays_active_until_schema_sync() {
         );
         apply(&mut store, &step.write);
     }
-    let catalog = load_info_schema(&mut store).unwrap();
-    let jobs = DdlJobTable::locate(&catalog)
-        .unwrap()
-        .load(&mut store)
-        .unwrap();
+    let jobs = stored_jobs(&mut store);
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].job.state, JobState::DONE);
     assert!(!store
@@ -2580,7 +2276,7 @@ fn completed_check_schema_stays_active_until_schema_sync() {
         .contains_key(&key::ddl_job_history_kv_key(job_id)));
     // The completed CREATE remains in history while this CHECK still waits
     // for schema synchronization; only the CHECK must be absent.
-    let history = DdlHistoryTable::locate(&catalog).unwrap().load(&mut store).unwrap();
+    let history = stored_history(&mut store);
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].type_, ActionType::ACTION_CREATE_TABLE);
     assert_ne!(history[0].id, job_id);
@@ -2666,9 +2362,7 @@ fn check_job_submission_precedes_every_schema_transition() {
         "submission does not publish candidate table metadata"
     );
 
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after submission");
-    let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    let mut active = table.load(&mut store).expect("owner sees submitted job");
+    let mut active = stored_jobs(&mut store);
     assert_eq!(active.len(), 1);
     let args = tidb_model::get_add_check_constraint_args(&mut active[0].job)
         .expect("Go args decode")
@@ -2701,9 +2395,7 @@ fn check_job_submission_precedes_every_schema_transition() {
     let constraint = table_info.constraints.iter_deref().last().unwrap();
     assert_eq!(constraint.read().state, SchemaState::WRITE_ONLY);
     assert_eq!(constraint.read().id, 1);
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after first step");
-    let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    let mut active = table.load(&mut store).expect("next owner reloads the job");
+    let mut active = stored_jobs(&mut store);
     assert_eq!(active[0].job.state, JobState::RUNNING);
     assert_eq!(active[0].job.schema_state, SchemaState::WRITE_ONLY);
     assert_eq!(active[0].job.last_schema_version, 62);
@@ -2761,14 +2453,11 @@ fn check_job_submission_precedes_every_schema_transition() {
             .state,
         SchemaState::PUBLIC
     );
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after finish");
-    let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
     assert!(
-        table.load(&mut store).expect("active jobs scan").is_empty(),
+        stored_jobs(&mut store).is_empty(),
         "terminal handling removes the active row"
     );
-    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
-    let history_jobs = history.load(&mut store).expect("SQL history scans");
+    let history_jobs = stored_history(&mut store);
     assert_eq!(history_jobs.len(), 2, "both CREATE and CHECK retain history");
     assert_eq!(history_jobs.iter().filter(|job| job.type_ == ActionType::ACTION_CREATE_TABLE).count(), 1);
     let finished = history_jobs.iter().find(|job| job.id == job_id).expect("CHECK history exists");
@@ -2810,7 +2499,6 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let mut spec = submit_job(&mut store, &statement, 2_101, false)
         .expect("Go submission preflight succeeds")
         .expect("ADD CHECK creates a job spec");
-    let catalog = load_info_schema(&mut store).expect("catalog loads");
 
     let assigned_ids = Rc::new(RefCell::new(Vec::new()));
     let cleanup_ids = Rc::new(RefCell::new(Vec::new()));
@@ -2827,11 +2515,12 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
         }
     };
 
-    let (_, cleanup) = plan_insert_attempt(
+    let session = recorded(&mut store);
+    let (_, cleanup) = tidb_ddl_jobsubmit::plan_insert_attempt_with(
         &mut store,
-        &catalog,
         std::slice::from_mut(&mut spec),
         &mut before_insert_with_assigned_ids,
+        &mut |sql: &str| session.query(sql).map(drop).map_err(|error| tidb_terror::MysqlError::unknown(error.to_string())),
     )
     .expect("the first insertion attempt plans");
     assert_eq!(
@@ -2839,11 +2528,12 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
         Err("retryable")
     );
 
-    let (_, cleanup) = plan_insert_attempt(
+    let session = recorded(&mut store);
+    let (_, cleanup) = tidb_ddl_jobsubmit::plan_insert_attempt_with(
         &mut store,
-        &catalog,
         std::slice::from_mut(&mut spec),
         &mut before_insert_with_assigned_ids,
+        &mut |sql: &str| session.query(sql).map(drop).map_err(|error| tidb_terror::MysqlError::unknown(error.to_string())),
     )
     .expect("the retry insertion attempt plans");
     finish_insert_attempt::<_, &str, _>(Ok(()), cleanup).expect("the retry commits");
@@ -2918,9 +2608,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     )
     .expect("countForError persists Running to Rollingback");
     apply(&mut store, &rollingback.write);
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after error");
-    let table = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    let mut active = table.load(&mut store).expect("new owner sees Rollingback");
+    let mut active = stored_jobs(&mut store);
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].job.state, JobState::ROLLINGBACK);
     assert_eq!(active[0].job.error_count, 1);
@@ -2979,14 +2667,9 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         table_info.max_constraint_id, 1,
         "Go does not reuse the allocated constraint ID after rollback"
     );
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after rollback");
-    let active_table = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    assert!(active_table
-        .load(&mut store)
-        .expect("active jobs scan")
+    assert!(stored_jobs(&mut store)
         .is_empty());
-    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
-    let history_jobs = history.load(&mut store).expect("history scans");
+    let history_jobs = stored_history(&mut store);
     let history_job = history_jobs
         .iter()
         .find(|job| job.id == job_id)
@@ -3140,14 +2823,9 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     assert!(!toggle.read().enforced);
     assert_eq!(toggle.read().state, SchemaState::PUBLIC);
 
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after jobs finish");
-    let active = DdlJobTable::locate(&catalog).expect("active-job table exists");
-    assert!(active
-        .load(&mut store)
-        .expect("active jobs scan")
+    assert!(stored_jobs(&mut store)
         .is_empty());
-    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
-    let jobs = history.load(&mut store).expect("history scans");
+    let jobs = stored_history(&mut store);
     for (job_id, action, schema_state) in [
         (
             drop_job_id,
@@ -3236,9 +2914,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     let constraint = table.constraints.iter_deref().next().unwrap();
     assert!(!constraint.read().enforced);
     assert_eq!(constraint.read().state, SchemaState::PUBLIC);
-    let catalog = load_info_schema(&mut store).expect("catalog reloads after rollback");
-    let history = DdlHistoryTable::locate(&catalog).expect("history table exists");
-    let jobs = history.load(&mut store).expect("history scans");
+    let jobs = stored_history(&mut store);
     let job = jobs
         .iter()
         .find(|job| job.id == job_id)
@@ -3258,13 +2934,18 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
 /// The `mysql.gc_delete_range` rows the applied changes recorded, as
 /// `(element_id, start_key, end_key)`.
 pub(crate) fn delete_ranges(store: &mut MetaStore) -> Vec<(i64, Vec<u8>, Vec<u8>)> {
-    let catalog = load_info_schema(store).unwrap();
-    tidb_ddl::ddl_delete_range::DelRangeTable::locate(&catalog, "gc_delete_range")
+    let hex = |datum: &Datum| {
+        let text = datum.go_bytes();
+        (0..text.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(std::str::from_utf8(&text[at..at + 2]).unwrap(), 16).unwrap())
+            .collect::<Vec<u8>>()
+    };
+    recorded(store)
+        .query("select element_id, start_key, end_key from mysql.gc_delete_range order by job_id, element_id")
         .unwrap()
-        .load(store, u64::MAX)
-        .unwrap()
-        .into_iter()
-        .map(|row| (row.task.element_id, row.task.start_key, row.task.end_key))
+        .iter()
+        .map(|row| (row[0].get_int64(), hex(&row[1]), hex(&row[2])))
         .collect()
 }
 
@@ -3322,7 +3003,6 @@ pub(crate) fn run_inserted_job(
     start_ts: u64,
     mut write: tidb_ddl::cluster_ddl::DdlWrite,
 ) -> Result<tidb_ddl::cluster_ddl::DdlWrite, DdlPlanError> {
-    let row_ids = std::sync::Arc::clone(&store.row_ids);
     let mut failure = None;
     let mut outcomes = Vec::new();
     let mut ts = start_ts;
@@ -3335,7 +3015,6 @@ pub(crate) fn run_inserted_job(
             ts,
             configure,
             &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
-            Some(&*row_ids),
         )? {
             PersistedDdlJobPlan::Step(step) => step,
             // The fixture tables hold no rows: a reorganization has nothing
@@ -6307,8 +5986,6 @@ fn a_create_tables_job_creates_each_table_as_create_table_does() {
         })),
         ..Default::default()
     };
-    let catalog = load_info_schema(&mut store).unwrap();
-    let queue = DdlJobTable::locate(&catalog).unwrap();
     let mut job = Job::default();
     job.id = 900;
     job.schema_id = 112;
@@ -6329,11 +6006,7 @@ fn a_create_tables_job_creates_each_table_as_create_table_does() {
                 .into(),
         ),
     })));
-    let mut mutations = Vec::new();
-    queue
-        .append_insert(&mut job, false, "112", "501,502,503", true, &mut mutations)
-        .unwrap();
-    apply_mutations(&mut store, &mutations);
+    insert_job_row(&mut store, &mut job, false, "112", "501,502,503", true);
     let step = plan_worker_step(&mut store, job.id, 10_000).unwrap();
     apply(&mut store, &step.write);
 

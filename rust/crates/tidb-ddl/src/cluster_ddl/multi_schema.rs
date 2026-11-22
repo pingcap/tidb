@@ -584,8 +584,7 @@ fn run_sub_job_step(
     skip_version: bool,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> SubJobStep {
     let proxy_job = sub.read().to_proxy_job(&active.job, seq as i64);
     if skip_version {
@@ -644,7 +643,6 @@ fn run_sub_job_step(
         &mut proxy,
         start_ts,
         outcome.map(std::slice::from_ref).unwrap_or_default(),
-        row_ids,
         // Go: a sub-job runs on the parent's `w.sess`.
         worker,
     ) {
@@ -750,8 +748,7 @@ pub(super) fn on_multi_schema_change(
     active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-    worker: Option<&DdlStepWorker>,
+    worker: &DdlStepWorker,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {
         return Err(cancel_ddl_job(
@@ -786,7 +783,6 @@ pub(super) fn on_multi_schema_change(
                     false,
                     start_ts,
                     outcomes,
-                    row_ids,
                     worker,
                 );
                 update_parent_job_from_proxy(&active.job, &proxy.job);
@@ -842,7 +838,6 @@ pub(super) fn on_multi_schema_change(
                 false,
                 start_ts,
                 outcomes,
-                row_ids,
                 worker,
             );
             update_parent_job_from_proxy(&active.job, &proxy.job);
@@ -883,13 +878,9 @@ pub(super) fn on_multi_schema_change(
         // involving set. Collect updates even from sub-jobs that skip schema
         // version generation" (`jobCtx.multiSchemaDiff`).
         let involving_infos = collect_affected_table_infos_from_involving(catalog, &active.job);
-        let step_ctx = txn.session().map(|session| std::sync::Arc::clone(&session.step_ctx));
-        if let Some(step_ctx) = &step_ctx {
-            *step_ctx.multi_schema_diff.lock().unwrap() = Some(Vec::new());
-        }
-        let take_multi_schema_infos = || {
-            step_ctx.as_ref().and_then(|step_ctx| step_ctx.multi_schema_diff.lock().unwrap().take()).unwrap_or_default()
-        };
+        let step_ctx = std::sync::Arc::clone(&txn.session().step_ctx);
+        *step_ctx.multi_schema_diff.lock().unwrap() = Some(Vec::new());
+        let take_multi_schema_infos = || step_ctx.multi_schema_diff.lock().unwrap().take().unwrap_or_default();
         // Step every sub-job past its revertible point at once, under the
         // one schema version the first of them publishes.
         let mut merged = job_only_write(active.job.id, Vec::new());
@@ -899,9 +890,7 @@ pub(super) fn on_multi_schema_change(
         // them stepped (a failed one restores the table alone).
         let session = txn.session();
         let region_store = txn.region_store();
-        let mut subs = JobTxn::new(txn, start_ts)
-            .with_session(session)
-            .with_region_store(region_store);
+        let mut subs = JobTxn::new(txn, start_ts, session).with_region_store(region_store);
         for (seq, sub) in sub_jobs.iter().enumerate() {
             if sub.read().is_finished() {
                 continue;
@@ -920,7 +909,6 @@ pub(super) fn on_multi_schema_change(
                 version != 0,
                 start_ts,
                 outcomes,
-                row_ids,
                 worker,
             );
             // Go's `(job, &proxyJob)`, as a snapshot the callback reads.
@@ -1045,7 +1033,6 @@ pub(super) fn on_multi_schema_change(
             false,
             start_ts,
             outcomes,
-            row_ids,
             worker,
         );
         update_parent_job_from_proxy(&active.job, &proxy.job);
