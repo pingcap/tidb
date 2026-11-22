@@ -452,7 +452,11 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
-	if deleteStmt, ok := stmtAst.Stmt.(*ast.DeleteStmt); ok && deleteStmt.Tables != nil {
+	stmtNode := stmtAst.Stmt
+	if explainStmt, ok := stmtNode.(*ast.ExplainStmt); ok {
+		stmtNode = explainStmt.Stmt
+	}
+	if deleteStmt, ok := stmtNode.(*ast.DeleteStmt); ok && deleteStmt.Tables != nil {
 		ctx = context.WithValue(ctx, preparedMultiDeleteDBKey{}, stmt.StmtDB)
 	}
 	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)

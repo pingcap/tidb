@@ -34,6 +34,7 @@ func TestPreparedMultiDeleteDatabaseBinding(t *testing.T) {
 				{"unqualified", "delete t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id where bind_a.t.id = ?"},
 				{"qualified", "delete bind_a.t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id where bind_a.t.id = ?"},
 				{"alias", "delete x from bind_a.t x join bind_b.t y on x.id = y.id where x.id = ?"},
+				{"explain analyze", "explain analyze delete t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id where bind_a.t.id = ?"},
 			} {
 				t.Run(fmt.Sprintf("cache=%d/%s/%s", cache, phase, target.name), func(t *testing.T) {
 					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
@@ -52,16 +53,23 @@ func TestPreparedMultiDeleteDatabaseBinding(t *testing.T) {
 					tk.MustExec("set @id = 1")
 					tk.MustExec("prepare d from '" + target.sql + "'")
 					tk.MustExec("prepare db from 'select database()'")
+					execute := func() {
+						if target.name == "explain analyze" {
+							tk.MustQuery("execute d using @id")
+						} else {
+							tk.MustExec("execute d using @id")
+						}
+					}
 					if phase == "warmed cache" {
-						tk.MustExec("execute d using @id")
+						execute()
 						tk.MustExec("insert into bind_a.t values (1)")
 					}
 					tk.MustExec("use bind_b")
 					if phase == "schema change" {
 						tk.MustExec("alter table bind_a.t add column extra int")
 					}
-					tk.MustExec("execute d using @id")
-					if phase == "warmed cache" && target.name != "alias" {
+					execute()
+					if phase == "warmed cache" && (target.name == "unqualified" || target.name == "qualified") {
 						tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(cache)))
 					}
 					tk.MustQuery("select id from bind_a.t").Check(testkit.Rows())
