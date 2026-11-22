@@ -973,7 +973,6 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		require.ErrorContains(t, <-done, "read only state has changed")
 		alter.MustQuery("select * from ro.t").Check(testkit.Rows())
 	})
-
 }
 
 func TestSchemaReadOnlyIncompleteTransactionScan(t *testing.T) {
