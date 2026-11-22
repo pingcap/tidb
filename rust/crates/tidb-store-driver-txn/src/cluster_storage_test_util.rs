@@ -108,6 +108,13 @@ pub fn storage(
     )
 }
 
+/// An empty mock store's transaction: [`storage`] over no rows, with the
+/// mock store's coprocessor (Go's `mockstore` over unistore) answering its
+/// requests from an empty region.
+pub fn empty_mock_store() -> ClusterTableStorage {
+    storage(&[]).0.with_client(Arc::new(UnistoreCoprocessor::new(|_| Vec::new())))
+}
+
 /// Go's mock store coprocessor (`mockstore` over unistore): each request's
 /// DAG answered by unistore's cop handler over the rows its source holds at
 /// the request's start ts, committed in one transaction (versions 1, 2) the

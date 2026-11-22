@@ -20,8 +20,14 @@
 use super::sql_kit::*;
 use super::*;
 
+/// The TestKit stack's global OOM action is LOG; Go's memory tests set
+/// CANCEL explicitly, as these do.
 fn seeded(tk: &mut Session) {
-    exec_all(tk, &["CREATE TABLE t (a BIGINT, b BIGINT)", "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)"]);
+    exec_all(tk, &[
+        "SET GLOBAL tidb_mem_oom_action = 'CANCEL'",
+        "CREATE TABLE t (a BIGINT, b BIGINT)",
+        "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)",
+    ]);
 }
 
 /// Runs `sql` under a one-byte quota and answers its error code.
@@ -77,6 +83,7 @@ fn a_cancelled_cascade_repoints_no_child_row() {
     let (stack, _users) = cop_backed_stack();
     let mut tk = session(&stack, 683);
     exec_all(&mut tk, &[
+        "SET GLOBAL tidb_mem_oom_action = 'CANCEL'",
         "CREATE TABLE p (id BIGINT PRIMARY KEY)",
         "CREATE TABLE c (id BIGINT PRIMARY KEY, pid BIGINT, FOREIGN KEY (pid) REFERENCES p (id) ON UPDATE CASCADE)",
         "INSERT INTO p VALUES (1)",
@@ -95,7 +102,7 @@ fn log_lets_an_over_quota_write_finish() {
     let (stack, _users) = cop_backed_stack();
     let mut tk = session(&stack, 684);
     seeded(&mut tk);
-    exec_all(&mut tk, &["SET tidb_mem_oom_action = 'LOG'", "SET tidb_mem_quota_query = 1"]);
+    exec_all(&mut tk, &["SET GLOBAL tidb_mem_oom_action = 'LOG'", "SET tidb_mem_quota_query = 1"]);
     assert_eq!(affected(&mut tk, "UPDATE t SET b = b + 1"), 3);
 }
 
@@ -110,6 +117,7 @@ fn selection_cached_chunk_is_part_of_the_query_quota() {
 }
 
 fn table_of(tk: &mut Session, n: i64) {
+    rows(tk, "SET GLOBAL tidb_mem_oom_action = 'CANCEL'");
     rows(tk, "CREATE TABLE t (a BIGINT, b BIGINT)");
     let values = (0..n).map(|i| format!("({i}, {})", i * 10)).collect::<Vec<_>>().join(", ");
     rows(tk, &format!("INSERT INTO t VALUES {values}"));
@@ -132,3 +140,4 @@ fn ordinary_joins_are_unaffected_by_the_same_quota() {
     assert_eq!(rows(&mut tk, "SELECT t1.a FROM t t1 JOIN t t2 ON t1.a = t2.a").len(), 48);
     assert_eq!(rows(&mut tk, "SELECT t1.a FROM t t1, t t2").len(), 48 * 48);
 }
+

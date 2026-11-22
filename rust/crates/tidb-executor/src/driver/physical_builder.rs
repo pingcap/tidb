@@ -8723,7 +8723,8 @@ use super::*;
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
-        let ctx = crate::StmtContext::for_query_with_memory(session.statement());
+        let ctx = crate::StmtContext::for_query_with_memory(session.statement())
+            .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
         let _executor = build(&plan, &catalog, &ctx).expect("build physical table reader");
 
         // Building the physical table reader is Go's non-empty
