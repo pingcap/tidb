@@ -188,6 +188,80 @@ func TestMatchAgainstTiDBFallbackWhenTiFlashIsNotSelected(t *testing.T) {
 	require.NotContains(t, plan, "mpp[tiflash]")
 }
 
+func TestMatchAgainstSubqueryClauseContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	newTestKit := func(t *testing.T) *testkit.TestKit {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_local_match_against=ON,tidb_enable_fts_like_fallback=OFF,innodb_ft_enable_stopword=OFF,tidb_isolation_read_engines='tikv'")
+		return tk
+	}
+	tk := newTestKit(t)
+	tk.MustExec("create table clause_docs(id int primary key,body text,fulltext ft(body))")
+	tk.MustExec("insert into clause_docs values(1,'cat'),(2,'dog'),(3,'cat dog'),(4,'other')")
+
+	selectWhere := "select o.id from clause_docs o where "
+	match := "match(o.body) against('+cat' in boolean mode)"
+	in := "o.id in (select id from clause_docs where id<=2)"
+	for _, tc := range []struct {
+		name      string
+		predicate string
+		rows      []string
+	}{
+		{"in_before_match", in + " and " + match, []string{"1"}},
+		{"match_before_in", match + " and " + in, []string{"1"}},
+		// OR keeps the subquery and MATCH in the same expression rewrite.
+		{"or_in_before_match", "o.id in (select id from clause_docs where id=2) or " + match, []string{"1", "2", "3"}},
+		{"exists_before_match", "exists (select 1 from clause_docs s where s.id=o.id and s.id<=2) and " + match, []string{"1"}},
+		{"scalar_before_match", "o.id=(select min(id) from clause_docs) and " + match, []string{"1"}},
+		{"any_before_match", "o.id=any (select id from clause_docs where id<=2) and " + match, []string{"1"}},
+		{"not_in_before_match", "o.id not in (select id from clause_docs where id=2) and " + match, []string{"1", "3"}},
+		{"not_or", "not (o.id in (select id from clause_docs where id=2) or not (" + match + "))", []string{"1", "3"}},
+		{"nested_subqueries", "o.id in (select s.id from clause_docs s where s.id in (select id from clause_docs where id<=2)) and " + match, []string{"1"}},
+		{"interleaved_subqueries_and_matches", "o.id in (select id from clause_docs where id<=3) and " + match +
+			" and exists (select 1 from clause_docs s where s.id=o.id) and match(o.body) against('+dog' in boolean mode)", []string{"3"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newTestKit(t).MustQuery(selectWhere + tc.predicate + " order by o.id").Check(testkit.Rows(tc.rows...))
+		})
+	}
+	t.Run("having", func(t *testing.T) {
+		newTestKit(t).MustQuery("select o.id,o.body from clause_docs o having " + in + " and " + match + " order by o.id").Check(testkit.Rows("1 cat"))
+	})
+
+	// An inner HAVING must not make MATCH legal in the outer SELECT list,
+	// either in a later field or in the same expression as the subquery.
+	const unsupportedContext = "[expression:1235]This version of TiDB doesn't yet support 'MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context'"
+	for _, tc := range []struct{ name, sql string }{
+		{"reject_select_match", "select " + match + " from clause_docs o"},
+		{"reject_scalar_comparison", selectWhere + "(" + match + ") > 0"},
+		{"reject_after_having_subquery_field", "select (select 1 having 1)," + match + " from clause_docs o"},
+		{"reject_after_having_subquery_expression", "select ((select 1 having 1) or " + match + ") from clause_docs o"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newTestKit(t).MustGetErrMsg(tc.sql, unsupportedContext)
+		})
+	}
+
+	preparedMatch := "match(o.body) against(? in boolean mode)"
+	for _, tc := range []struct{ name, predicate string }{
+		{"prepared_in_before_match", in + " and " + preparedMatch},
+		{"prepared_match_before_in", preparedMatch + " and " + in},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := newTestKit(t)
+			tk.MustExec("prepare p from '" + selectWhere + tc.predicate + " order by o.id'")
+			for _, tc := range []struct{ search, id string }{{"+cat", "1"}, {"+dog", "2"}} {
+				tk.MustExec("set @q='" + tc.search + "'")
+				for range 2 {
+					tk.MustQuery("execute p using @q").Check(testkit.Rows(tc.id))
+				}
+			}
+			tk.MustExec("deallocate prepare p")
+		})
+	}
+}
+
 func TestMatchAgainstLocalPlanCacheDisabled(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
