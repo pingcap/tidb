@@ -316,3 +316,63 @@ fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
     assert_eq!(operators(&explain_brief(&mut tk, sql)), ["StreamAgg", "└─Point_Get"]);
     assert_eq!(displayed(rows(&mut tk, sql)), [["1"]]);
 }
+
+/// Go `buildProjectionField`: a computed field's column has no `OrigName`,
+/// so its alias never reaches the operator text.
+#[test]
+fn a_computed_projection_column_explains_as_column_not_its_alias() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 484);
+    rows(&mut tk, "CREATE TABLE alias_agg (g BIGINT, v BIGINT)");
+    let text: Vec<String> = explain_brief(&mut tk, "SELECT v + 0 AS revenue FROM alias_agg")
+        .into_iter()
+        .map(|row| row.join("\t"))
+        .collect();
+    assert!(text.iter().any(|line| line.contains("Projection") && line.contains("->Column#")), "{text:#?}");
+    assert!(!text.iter().any(|line| line.contains("->revenue")), "{text:#?}");
+}
+
+/// A constant DATE_ADD under an AND folds to a literal before push-down.
+#[test]
+fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 485);
+    rows(&mut tk, "CREATE TABLE t (d DATE NOT NULL)");
+    let info: Vec<String> = explain_brief(
+        &mut tk,
+        "SELECT * FROM t WHERE d >= '1996-01-01' AND d < DATE_ADD('1996-12-01', INTERVAL 1 MONTH)",
+    )
+    .into_iter()
+    .map(|row| row[4].clone())
+    .collect();
+    assert!(info.iter().any(|line| line.contains("lt(test.t.d, 1997-01-01 00:00:00.000000)")), "{info:?}");
+    assert!(!info.iter().any(|line| line.contains("date_add")), "{info:?}");
+}
+
+/// A computed DISTINCT argument rides through the cop partial aggregation's
+/// group key, beside a real aggregate and beside a GROUP BY column.
+#[test]
+fn a_computed_distinct_argument_round_trips_through_the_cop_partial_aggregation() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 486);
+    rows(&mut tk, "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)");
+    rows(&mut tk, "INSERT INTO g VALUES ('a'), ('B'), ('A')");
+    assert_eq!(displayed(rows(&mut tk, "SELECT COUNT(DISTINCT CONCAT(s, '')), COUNT(*) FROM g")), [["2", "3"]]);
+    let answer = displayed(rows(&mut tk, "SELECT s, COUNT(DISTINCT CONCAT(s, '')) FROM g GROUP BY s ORDER BY s"));
+    assert_eq!(answer.len(), 2);
+    assert_eq!(answer[0][1], "1");
+    assert_eq!(answer[1][0], "B");
+    assert_eq!(answer[1][1], "1");
+}
+
+/// A grouped aggregate answers its group key in the SELECT list's position.
+#[test]
+fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 487);
+    rows(&mut tk, "CREATE TABLE cost_receipt (id INT PRIMARY KEY, k INT, c VARCHAR(20))");
+    rows(&mut tk, "INSERT INTO cost_receipt VALUES (1, 10, 'a'), (2, 10, 'b'), (3, 20, 'a')");
+    let mut answer = displayed(rows(&mut tk, "SELECT k, SUM(id) FROM cost_receipt WHERE id BETWEEN 1 AND 100 GROUP BY k"));
+    answer.sort();
+    assert_eq!(answer, [["10", "3"], ["20", "3"]]);
+}
