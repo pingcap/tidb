@@ -1036,21 +1036,6 @@ func TestSpaceSig(t *testing.T) {
 // which EvalInt delivers as negative int64 values. They must be treated as
 // huge counts and return NULL with warning 1301 (max_allowed_packet exceeded),
 // matching MySQL, while signed negative counts still return an empty string.
-//
-// Validation (exact command and result; the script enables failpoints via
-// `make failpoint-enable` and runs `go test -tags=intest,deadlock`):
-//
-//	./tools/check/failpoint-go-test.sh pkg/expression -run 'TestRepeatAndSpaceUnsignedCount|TestRepeat|TestSpace' -count=1 -v
-//	--- PASS: TestRepeat (0.01s)
-//	--- PASS: TestRepeatSig (0.00s)
-//	--- PASS: TestSpace (0.00s)
-//	--- PASS: TestSpaceSig (0.00s)
-//	--- PASS: TestRepeatAndSpaceUnsignedCount (0.00s)
-//	PASS
-//	ok  	github.com/pingcap/tidb/pkg/expression	2.358s
-//
-//	./tools/check/failpoint-go-test.sh pkg/expression -count=1
-//	ok  	github.com/pingcap/tidb/pkg/expression	24.666s
 func TestRepeatAndSpaceUnsignedCount(t *testing.T) {
 	ctx := createContext(t)
 	strTp := types.NewFieldType(mysql.TypeVarchar)
