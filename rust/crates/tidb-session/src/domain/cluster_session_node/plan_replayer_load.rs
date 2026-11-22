@@ -45,6 +45,20 @@ fn unknown(message: impl Into<String>) -> SqlQueryError {
 }
 
 impl ClusterServerSession<'_> {
+    /// Go `loadPlanReplayerForExplainExplore`: the replayer file's
+    /// environment loaded into this session, and its target SQL.
+    pub(super) fn load_plan_replayer_for_explain_explore(&mut self, path: &str) -> Result<String, SqlQueryError> {
+        if path.trim().is_empty() {
+            return Err(unknown("plan replayer: file path is empty"));
+        }
+        let data = std::fs::read(path).map_err(|error| {
+            unknown(format!("open {path}: {}", tidb_executor::select_into::go_errno_text(&error)))
+        })?;
+        let target_sql = extract_plan_replayer_target_sql(&data)?;
+        self.plan_replayer_load_update(&data)?;
+        Ok(target_sql)
+    }
+
     /// Go `PlanReplayerLoadInfo.Update` updates the data of the
     /// corresponding table.
     pub(super) fn plan_replayer_load_update(&mut self, data: &[u8]) -> Result<(), SqlQueryError> {
@@ -313,4 +327,20 @@ impl ClusterServerSession<'_> {
             }
         }
     }
+}
+
+/// Go `extractPlanReplayerTargetSQL`: the archive's `sql/sql0.sql`, trimmed.
+fn extract_plan_replayer_target_sql(data: &[u8]) -> Result<String, SqlQueryError> {
+    let z = tidb_replayer::zip::read_zip(data).map_err(|error| unknown(error.to_string()))?;
+    for (name, contents) in &z {
+        if name != "sql/sql0.sql" {
+            continue;
+        }
+        let target_sql = String::from_utf8_lossy(contents).trim().to_owned();
+        if target_sql.is_empty() {
+            return Err(unknown("plan replayer: target SQL is empty"));
+        }
+        return Ok(target_sql);
+    }
+    Err(unknown("plan replayer: target SQL file sql/sql0.sql not found"))
 }

@@ -88,14 +88,9 @@
 //! * **`intest.Assert`** is dropped; the assertion it makes (a batched usage
 //!   record always has a `LastUsedAt`) is a type invariant here instead.
 //!
-//! # Skipped
-//!
-//! * **`getBindingPlanDigest` (lines 316-347).** It needs
-//!   `CalculatePlanDigest` and a planner that emits plan digests; this tier
-//!   emits none. Stored plan digests are retained for usage updates; new
-//!   binding plan-digest calculation remains a separate planner obligation.
-//! * **`hasParam` (`binding.go:560`)**, reached only from
-//!   `getBindingPlanDigest`, goes with it.
+//! `getBindingPlanDigest` (lines 316-347) and `hasParam` (`binding.go:560`),
+//! reached only from `EXPLAIN EXPLORE`, are in [`crate::binding_auto`] and
+//! [`crate::binding_plan_generation`].
 
 use std::time::Duration;
 

@@ -1741,7 +1741,8 @@ impl Parser {
             self.advance();
             return Err(self.err_here("legacy EXPLAIN PARTITIONS is not supported"));
         }
-        let mut format = "row".to_string();
+        // Go: "Format is empty for EXPLORE".
+        let mut format = if explore { String::new() } else { "row".to_string() };
         if self.is_kw("FORMAT") {
             self.advance();
             self.expect_op("=")?;

@@ -430,6 +430,10 @@ pub(super) fn build_converged_union_index_merge_task(
             has_filters && !table,
             ctx.ordering_index_selectivity_ratio,
         );
+        if table && matched && rows > adjusted {
+            // Go `AdjustRowCountForTableScanByLimit`'s ordered branch.
+            crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO);
+        }
         if table && matched && ctx.ordering_index_selectivity_ratio > 0.0 {
             adjusted += (rows - adjusted).max(0.0) * ctx.ordering_index_selectivity_ratio;
         }

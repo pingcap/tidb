@@ -1232,7 +1232,44 @@ pub(crate) struct InternalBindingWriter {
     pub(crate) connection_id: u64,
 }
 
+/// Go `bindingAuto`'s session pool: the handle's storage sessions.
+impl tidb_bindinfo::binding_auto::PlanExploreSessionPool for InternalBindingWriter {
+    fn call_with_sctx(
+        &self,
+        body: &mut dyn FnMut(
+            &mut dyn tidb_bindinfo::binding_auto::PlanExploreSession,
+        ) -> Result<(), tidb_driver_error::DriverError>,
+    ) -> Result<(), tidb_driver_error::DriverError> {
+        let factory = self.factory.upgrade().ok_or_else(|| {
+            tidb_driver_error::DriverError::unsupported("global binding session factory is stopped")
+        })?;
+        let mut internal_session = factory.open_storage_session(self.connection_id).map_err(|error| {
+            tidb_driver_error::DriverError::Mysql(
+                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
+                    .with_identity_opt(error.identity),
+            )
+        })?;
+        // Go bindinfo's `kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)`.
+        internal_session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_BIND_INFO);
+        internal_session.set_global_binding_cache(self.bindings.cache());
+        internal_session.enable_privilege_bypass();
+        let mut sctx = super::binding_maintenance::BindingRunner(super::SystemSqlExecutor::new(internal_session));
+        body(&mut sctx)
+    }
+}
+
 impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
+    fn explore_plans_for_sql(
+        &self,
+        current_db: &str,
+        charset: &str,
+        collation: &str,
+        sql_or_digest: &str,
+        analyze: bool,
+    ) -> Result<Vec<tidb_bindinfo::binding_auto::BindingPlanInfo>, tidb_driver_error::DriverError> {
+        tidb_bindinfo::binding_auto::explore_plans_for_sql(self, current_db, charset, collation, sql_or_digest, analyze)
+    }
+
     fn reload(&self) -> Result<(), tidb_driver_error::DriverError> {
         self.bindings
             .reload(true)

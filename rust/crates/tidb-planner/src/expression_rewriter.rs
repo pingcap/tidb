@@ -1077,6 +1077,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 signals.semi_join_rewrite.store(true, std::sync::atomic::Ordering::Release);
             }
         }
+        // Make the session variable behave like the hint by setting the same
+        // prefer bit.
+        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE);
         if force_rewrite || self.env.flags.enable_semi_join_rewrite {
             join.prefer_join_type |= tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN;
             self.env
@@ -1687,12 +1690,11 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         // Go: keeping a correlated subquery as an Apply preserves the index
         // lookups the correlate alternative round wants. The SEMI_JOIN_REWRITE
         // hint is excluded because it explicitly asks for decorrelation.
-        if !no_decorrelate
-            && !cor_cols.is_empty()
-            && !semi_join_rewrite_hint
-            && self.env.flags.enable_correlate_subquery
-        {
-            no_decorrelate = true;
+        if !no_decorrelate && !cor_cols.is_empty() && !semi_join_rewrite_hint {
+            crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS);
+            if self.env.flags.enable_correlate_subquery {
+                no_decorrelate = true;
+            }
         }
         let mut np = np;
         if no_decorrelate && !has_limit(&np) {
@@ -1832,6 +1834,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             &mut self.hint_warnings,
         );
         if !no_decorrelate && !cor_cols.is_empty() && !not {
+            crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS);
             if let Some(signals) = self.env.alternative_logical_plan_signals() {
                 signals.prefer_correlate.store(true, std::sync::atomic::Ordering::Release);
             }
@@ -1846,6 +1849,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             && cor_cols.is_empty()
             && collations_compatible;
         if can_rewrite_to_join_agg {
+            // Go: toggling the variable changes whether the InnerJoin+Agg
+            // path or the SemiApply path is taken.
+            crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS);
             // Go: "Signal that a correlate alternative round is worth
             // attempting."
             if let Some(signals) = self.env.alternative_logical_plan_signals() {
@@ -1868,9 +1874,12 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             )?;
             // Go: mark an uncorrelated semi join so `CorrelateSolver` can turn
             // it into a correlated apply in the alternative round.
-            if cor_cols.is_empty() && !not && self.env.flags.enable_correlate_subquery {
-                if let LogicalPlan::Apply(apply) = &mut plan {
-                    apply.join.prefer_correlate = true;
+            if cor_cols.is_empty() && !not {
+                crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS);
+                if self.env.flags.enable_correlate_subquery {
+                    if let LogicalPlan::Apply(apply) = &mut plan {
+                        apply.join.prefer_correlate = true;
+                    }
                 }
             }
             plan
@@ -2315,12 +2324,12 @@ pub fn is_no_decorrelate(
     }
     let valid_subq_type =
         subquery_ctx == SubQueryCtx::Scalar || subquery_ctx == SubQueryCtx::Exists;
-    if valid_subq_type
-        && cur_clause == ClauseCode::FieldList
-        && !no_decorrelate
-        && flags.enable_no_decorrelate_in_select
-    {
-        no_decorrelate = true;
+    if valid_subq_type && cur_clause == ClauseCode::FieldList {
+        // The subquery is in the select list.
+        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT);
+        if !no_decorrelate && flags.enable_no_decorrelate_in_select {
+            no_decorrelate = true;
+        }
     }
     no_decorrelate
 }

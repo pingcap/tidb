@@ -36,7 +36,7 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| R02 | open | `EXPLAIN EXPLORE <sql>` is answered as a plain EXPLAIN: Go's binding exploration (`ExplorePlansForSQL`, `getBindingPlanInfo`, `runToGetExecInfo`, `fillRecommendation`) and plan generation over hint states (`generatePlanWithSCtx`, `breadthFirstPlanSearch`, `genPlanUnderState`) have no Rust counterpart. Rust: no module; the statement reaches the ordinary EXPLAIN path | `pkg/bindinfo/binding_auto.go`, `pkg/bindinfo/binding_plan_generation.go`, `pkg/executor/explain.go` (explore) |
+| R05 | open | Go's `findBestTask` compares data-source cop tasks through `getTaskPlanCost` (an index-lookup cop task's table side priced without `isChildOfINL`, the result cached on each operator by `PlanCostInit`, which the IndexLookUp reader then reuses); this planner converts candidates to root tasks before `compare_task_cost`, so no cop task is ever compared. Plans matched on every probe, but the pricing calls differ: EXPLAIN EXPLORE's recorded variables miss `tidb_opt_table_range_scan_cost_factor` for an index-lookup TopN query, and per-operator cost caching is not reproduced. Rust: `tidb-planner/src/find_best_task/dispatch.rs` (only root tasks reach `compare_task_cost` for the TestRelevantOptVarsAndFixes queries), `find_best_task/coster.rs` (no per-operator cost cache) | `pkg/planner/core/find_best_task.go` (`findBestTask4LogicalDataSource`, `compareTaskCost`, `getTaskPlanCost`), `operator/physicalop` `PlanCostInit` |
 
 ### Executor, DML and expressions
 

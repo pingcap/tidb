@@ -476,6 +476,12 @@ impl Default for CostFactorVars {
 // Primitive cost expressions
 // ---------------------------------------------------------------------------
 
+/// Go `SessionVars.RecordRelevantOptVar` at the cost-factor multiply.
+pub(crate) fn record_relevant_opt_var(var_name: &str) {
+    tidb_variable::relevant_opt::record_relevant_opt_var(var_name);
+}
+
+
 /// `scanCostVer2`: `rows * max(log2(row-size), 0) * scan-factor`, with a
 /// row size below one byte raised to one byte first.
 #[must_use]
@@ -734,6 +740,7 @@ pub fn index_scan_cost(
 ) -> CostVer2 {
     let cost = scan_cost(option, rows, row_size, scan_factor);
     let cost = mul_cost_ver2(&cost, index_scan_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_SCAN_COST_FACTOR);
     match index_id {
         Some(id) => add_cost_without_trace(cost, (id % 100) as f64 / 1_000_000.0),
         None => cost,
@@ -753,6 +760,8 @@ pub fn table_scan_penalty(
     if input.has_range_info {
         return 0.0;
     }
+    // Go `SessionVars.GetAllowPreferRangeScan` records the variable.
+    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN);
     let has_unreliable_stats = input.pseudo_stats || input.analyze_row_count < 1;
     let has_high_modify_count = input.modify_count > input.analyze_row_count;
     let has_low_estimate = rows > 1.0
@@ -823,14 +832,16 @@ pub fn table_scan_cost(
             cost = sum_cost_ver2(&[cost, scan_cost(option, penalty_rows, row_size, scan_factor)]);
         }
     }
-    let cost_factor = if is_row_id_scan {
-        factors.table_row_id_scan
+    let (cost_factor, var_name) = if is_row_id_scan {
+        (factors.table_row_id_scan, tidb_vardef::tidb_vars::TIDB_OPT_TABLE_ROW_ID_SCAN_COST_FACTOR)
     } else if input.has_full_range_scan {
-        factors.table_full_scan
+        (factors.table_full_scan, tidb_vardef::tidb_vars::TIDB_OPT_TABLE_FULL_SCAN_COST_FACTOR)
     } else {
-        factors.table_range_scan
+        (factors.table_range_scan, tidb_vardef::tidb_vars::TIDB_OPT_TABLE_RANGE_SCAN_COST_FACTOR)
     };
-    mul_cost_ver2(&cost, cost_factor)
+    let cost = mul_cost_ver2(&cost, cost_factor);
+    record_relevant_opt_var(var_name);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalTableScan` for TiFlash: under late
@@ -899,7 +910,9 @@ pub fn tiflash_table_scan_cost(
             cost
         }
     });
-    mul_cost_ver2(&cost, table_tiflash_scan_cost_factor)
+    let cost = mul_cost_ver2(&cost, table_tiflash_scan_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_TABLE_TIFLASH_SCAN_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalTableScan`'s late-materialization branch: the
@@ -1092,8 +1105,11 @@ pub fn index_merge_reader_cost(
     if has_pushed_limit {
         cost = mul_cost_ver2(&cost, 0.99);
         cost = mul_cost_ver2(&cost, cost_factors.limit);
+        record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_COST_FACTOR);
     }
-    mul_cost_ver2(&cost, cost_factors.index_merge)
+    let cost = mul_cost_ver2(&cost, cost_factors.index_merge);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_MERGE_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalSort`. Spilling replaces the in-memory row cost
@@ -1148,7 +1164,9 @@ pub fn sort_cost(
         )
     };
     let cost = sum_cost_ver2(&[child_cost.clone(), sort_cpu, sort_mem, sort_disk]);
-    mul_cost_ver2(&cost, cost_factors.sort)
+    let cost = mul_cost_ver2(&cost, cost_factors.sort);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_SORT_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalTopN`. `n` is `count + offset`, raised off small
@@ -1186,7 +1204,9 @@ pub fn top_n_cost(
         || format!("topMem({n}*{row_size}*{mem_factor})"),
     );
     let cost = sum_cost_ver2(&[child_cost.clone(), topn_cpu, topn_mem]);
-    mul_cost_ver2(&cost, topn_cost_factor)
+    let cost = mul_cost_ver2(&cost, topn_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_TOP_N_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalStreamAgg`: child cost plus per-row aggregate and
@@ -1210,7 +1230,9 @@ pub fn stream_agg_cost(
         cpu_factor,
     );
     let cost = sum_cost_ver2(&[child_cost.clone(), agg, group]);
-    mul_cost_ver2(&cost, stream_agg_cost_factor)
+    let cost = mul_cost_ver2(&cost, stream_agg_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_STREAM_AGG_COST_FACTOR);
+    cost
 }
 
 /// Everything `getPlanCostVer24PhysicalHashAgg` reads.
@@ -1313,7 +1335,9 @@ pub fn hash_agg_cost(
             ),
         ])
     };
-    mul_cost_ver2(&cost, hash_agg_cost_factor)
+    let cost = mul_cost_ver2(&cost, hash_agg_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_HASH_AGG_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalMergeJoin`: both child costs, the three condition
@@ -1345,7 +1369,9 @@ pub fn merge_join_cost(
         group_cost(option, right_rows, &right_keys, cpu_factor),
     ]);
     let cost = sum_cost_ver2(&[child_costs.0.clone(), child_costs.1.clone(), filter, group]);
-    mul_cost_ver2(&cost, merge_join_cost_factor)
+    let cost = mul_cost_ver2(&cost, merge_join_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_MERGE_JOIN_COST_FACTOR);
+    cost
 }
 
 /// Everything `getPlanCostVer24PhysicalHashJoin` reads, already resolved to
@@ -1426,7 +1452,9 @@ pub fn hash_join_cost(
             ),
         ])
     };
-    mul_cost_ver2(&cost, hash_join_cost_factor)
+    let cost = mul_cost_ver2(&cost, hash_join_cost_factor);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_HASH_JOIN_COST_FACTOR);
+    cost
 }
 
 /// Everything `getIndexJoinCostVer24PhysicalIndexJoin` reads.
@@ -1549,7 +1577,9 @@ pub fn index_join_cost(
             probe_concurrency,
         ),
     ]);
-    mul_cost_ver2(&cost, cost_factors.index_join)
+    let cost = mul_cost_ver2(&cost, cost_factors.index_join);
+    record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_JOIN_COST_FACTOR);
+    cost
 }
 
 /// `getPlanCostVer24PhysicalApply`: unlike an index join, the probe side is

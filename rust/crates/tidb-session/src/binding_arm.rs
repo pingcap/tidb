@@ -284,6 +284,56 @@ impl Session {
         })
     }
 
+    /// Plans `query` the way the planner hooks of `EXPLAIN EXPLORE` do
+    /// (Go `Preprocess` + `Optimize` over the session's variables and its
+    /// latest catalog).
+    pub(crate) fn plan_explore_query<T>(
+        &mut self,
+        mut plan: impl FnMut(
+            &tidb_ast::QueryStmt,
+            &tidb_infoschema::SessionExtendedInfoSchema,
+            &str,
+            &tidb_sessionctx::StmtContext,
+        ) -> Result<T, DriverError>,
+        query: &tidb_ast::QueryStmt,
+    ) -> Result<T, DriverError> {
+        let current_db = self.vars.current_db.clone();
+        let ctx = self.statement_context(false);
+        self.with_catalog_retrieving(&ctx, |catalog| plan(query, catalog, &current_db, &ctx))
+    }
+
+    /// Go `GetLatestInfoSchema().TableInfoByName(schema, table)`.
+    pub(crate) fn latest_table_info_by_name(
+        &mut self,
+        schema: &str,
+        table: &str,
+    ) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        self.with_catalog_mut(|catalog| Ok(catalog.table_info_by_name(schema, table).map(|(_, info)| info)))
+            .ok()
+            .flatten()
+    }
+
+    /// Go `StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys` of the last
+    /// statement.
+    pub(crate) fn statement_processed_keys(&self) -> u64 {
+        self.statement_keys_read.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Go `BindingHandle().ExplorePlansForSQL(sctx, sqlOrDigest, analyze)`
+    /// with the session's current database and connection charset.
+    pub(crate) fn explore_plans_for_sql(
+        &mut self,
+        sql_or_digest: &str,
+        analyze: bool,
+    ) -> Result<Vec<tidb_bindinfo::binding_auto::BindingPlanInfo>, DriverError> {
+        let writer = self.global_binding_writer.clone().ok_or_else(|| {
+            DriverError::unsupported("the session's node has no binding handle")
+        })?;
+        let current_db = self.vars.current_db.clone();
+        let (charset, collation) = (self.binding_charset(), self.binding_collation());
+        writer.explore_plans_for_sql(&current_db, &charset, &collation, sql_or_digest, analyze)
+    }
+
     /// Go stores `types.NewTime(FromGoTime(now.In(tz)), TypeTimestamp, 3)`,
     /// which prints with three fractional digits.
     pub(crate) fn binding_timestamp(&self) -> String {
@@ -393,6 +443,17 @@ pub trait GlobalBindingWriter: Send + Sync {
     /// Go `BindingHandle().LoadFromStorageToCache(true, ...)`: the node's
     /// binding cache refreshed in full from `mysql.bind_info`.
     fn reload(&self) -> Result<(), tidb_driver_error::DriverError>;
+
+    /// Go `BindingHandle().ExplorePlansForSQL`: `EXPLAIN EXPLORE`'s plan
+    /// candidates, on the handle's own sessions.
+    fn explore_plans_for_sql(
+        &self,
+        current_db: &str,
+        charset: &str,
+        collation: &str,
+        sql_or_digest: &str,
+        analyze: bool,
+    ) -> Result<Vec<tidb_bindinfo::binding_auto::BindingPlanInfo>, tidb_driver_error::DriverError>;
 }
 
 impl Session {

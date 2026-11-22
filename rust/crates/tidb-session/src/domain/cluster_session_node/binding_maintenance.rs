@@ -195,3 +195,126 @@ pub fn init_binding_handle(
     domain.init_binding_handle(bindings);
     Ok(reloader)
 }
+
+/// Go `bindingAuto`'s `sctx` from `callWithSCtx(sPool, false, f)`: the
+/// storage session plans and runs the plan candidates of `EXPLAIN EXPLORE`.
+impl tidb_bindinfo::binding_auto::PlanExploreSession for BindingRunner {
+    fn current_db(&self) -> String {
+        self.0.with_session(|session| session.vars.current_db.clone())
+    }
+
+    fn set_current_db(&mut self, db: &str) {
+        self.0.with_session(|session| db.clone_into(&mut session.vars.current_db));
+    }
+
+    fn use_plan_baselines(&self) -> bool {
+        self.0.with_session(|session| session.session_bool(tidb_vardef::tidb_vars::TIDB_USE_PLAN_BASELINES, true))
+    }
+
+    fn set_use_plan_baselines(&mut self, enabled: bool) {
+        let value = if enabled { "ON" } else { "OFF" };
+        let _ = self.0.with_session(|session| {
+            session.set_session_sys_var(tidb_vardef::tidb_vars::TIDB_USE_PLAN_BASELINES, value.to_owned())
+        });
+    }
+
+    fn set_cost_model_version(&mut self, version: i64) {
+        let _ = self.0.with_session(|session| {
+            session.set_session_sys_var(tidb_vardef::tidb_vars::TIDB_COST_MODEL_VERSION, version.to_string())
+        });
+    }
+
+    fn set_opt_var(
+        &mut self,
+        var_name: &str,
+        value: tidb_bindinfo::binding_plan_generation::OptVarValue,
+    ) -> Result<(), tidb_driver_error::DriverError> {
+        use tidb_bindinfo::binding_plan_generation::OptVarValue;
+        let text = match value {
+            OptVarValue::Float(value) => value.to_string(),
+            OptVarValue::Bool(value) => if value { "ON" } else { "OFF" }.to_owned(),
+        };
+        self.0.with_session(|session| session.set_session_sys_var(var_name, text))
+    }
+
+    fn set_optimizer_fix_control(&mut self, fixes: &str) -> Result<(), tidb_driver_error::DriverError> {
+        self.0.with_session(|session| {
+            session.set_session_sys_var(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL, fixes.to_owned())
+        })
+    }
+
+    fn record_relevant_opt_vars_and_fixes(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(Vec<String>, Vec<u64>), tidb_driver_error::DriverError> {
+        let query = query_of(stmt)?;
+        self.0.with_session(|session| {
+            session.plan_explore_query(|query, catalog, current_db, ctx| {
+                tidb_executor::record_relevant_opt_vars_and_fixes(query, catalog, current_db, ctx)
+            }, query)
+        })
+    }
+
+    fn gen_brief_plan(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(String, String, Vec<Vec<String>>), tidb_driver_error::DriverError> {
+        let query = query_of(stmt)?;
+        self.0.with_session(|session| {
+            session.plan_explore_query(|query, catalog, current_db, ctx| {
+                tidb_executor::gen_brief_plan(query, catalog, current_db, ctx)
+            }, query)
+        })
+    }
+
+    fn calculate_plan_digest(&mut self, stmt: &tidb_ast::Stmt) -> Result<String, tidb_driver_error::DriverError> {
+        let query = query_of(stmt)?;
+        self.0.with_session(|session| {
+            session.plan_explore_query(|query, catalog, current_db, ctx| {
+                tidb_executor::calculate_plan_digest(query, catalog, current_db, ctx)
+            }, query)
+        })
+    }
+
+    fn check_binding_validation(&mut self, bind_sql: &str) -> Result<(), tidb_driver_error::DriverError> {
+        let hinted = tidb_parser::parse(bind_sql)
+            .map_err(|error| tidb_driver_error::DriverError::Mysql(tidb_terror::MysqlError::unknown(error.message)))?;
+        let original = self.use_plan_baselines();
+        self.set_use_plan_baselines(false);
+        let result = self.0.with_session(|session| session.validate_binding_statement(&hinted));
+        self.set_use_plan_baselines(original);
+        result
+    }
+
+    fn table_info_by_name(
+        &mut self,
+        schema: &str,
+        table: &str,
+    ) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        self.0.with_session(|session| session.latest_table_info_by_name(schema, table))
+    }
+
+    fn optimizer_use_invisible_indexes(&self) -> bool {
+        self.0.with_session(|session| {
+            session.session_bool(tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES, false)
+        })
+    }
+
+    fn exec_and_get_exec_info(&mut self, sql: &str) -> Result<(f64, Option<f64>, f64), tidb_driver_error::DriverError> {
+        let start = std::time::Instant::now();
+        let rows = tidb_bindinfo::binding_utils::exec_rows(&*self, sql, &[])?;
+        // Go `GetTotalCostDuration`: the statement's time since it started.
+        let latency = start.elapsed().as_nanos() as f64;
+        let processed_keys = self.0.with_session(|session| session.statement_processed_keys());
+        Ok((latency, Some(processed_keys as f64), rows.len() as f64))
+    }
+}
+
+fn query_of(stmt: &tidb_ast::Stmt) -> Result<&tidb_ast::QueryStmt, tidb_driver_error::DriverError> {
+    match stmt {
+        tidb_ast::Stmt::Query(query) => Ok(query),
+        _ => Err(tidb_driver_error::DriverError::unsupported(
+            "plan exploration plans only queries",
+        )),
+    }
+}

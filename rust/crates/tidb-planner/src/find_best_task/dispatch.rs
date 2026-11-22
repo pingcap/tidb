@@ -2940,6 +2940,7 @@ fn index_join_path_compare(
         return true;
     };
     if let (Some(current_candidate), Some(best_candidate)) = (&current.candidate, &best.candidate) {
+        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN);
         let comparison = crate::find_best_task::candidate::compare_candidates(
             current_candidate,
             best_candidate,
@@ -3178,7 +3179,13 @@ pub(super) fn adjust_index_scan_count_by_expected(
     has_residual_filters: bool,
     ordering_ratio: f64,
 ) -> f64 {
-    if count_after_access <= 0.0 || expected_count >= datasource_rows {
+    if expected_count >= datasource_rows {
+        return count_after_access;
+    }
+    // Go `AdjustRowCountForIndexScanByLimit` records the ratio whenever it
+    // runs.
+    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO);
+    if count_after_access <= 0.0 {
         return count_after_access;
     }
     let selectivity = datasource_rows / count_after_access;
@@ -3615,6 +3622,7 @@ fn original_table_scan_stats(
                     }
                 }
                 if keep_order && count_after_access > row_count {
+                    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO);
                     let ratio = ctx.ordering_index_selectivity_ratio;
                     if ratio > 0.0 {
                         row_count += (count_after_access - row_count).max(0.0) * ratio;
@@ -5155,6 +5163,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // larger than (total row count / NDV of join key
                     // columns)": only the join-key columns that are not a
                     // prefix column count.
+                    tidb_variable::relevant_opt::record_relevant_opt_fix(tidb_fixcontrol::FIX_44855);
                     let upper_bound = if ctx.index_join_row_count_upper_bound {
                         let used_columns = probe
                             .core
@@ -8505,6 +8514,9 @@ fn calc_child_expected_cnt(
     ordering_ratio: f64,
 ) -> f64 {
     let ordered = !prop.is_sort_item_empty();
+    if ordered {
+        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO);
+    }
     let ratio = if ordered { ordering_ratio } else { 0.0 };
     if prop.expected_cnt < estimated_rows
         || (ordered

@@ -271,6 +271,7 @@ pub(crate) fn generate_index_merge_path(
             // regular path after the first has access conditions.
             if source.index_merge_hints.is_empty() {
                 let mut need_consider_index_merge = true;
+                tidb_variable::relevant_opt::record_relevant_opt_fix(tidb_fixcontrol::FIX_52869);
                 if !index_merge_skip_range_scan_check {
                     need_consider_index_merge = !source
                         .possible_paths_or_all()

@@ -335,6 +335,7 @@ fn required_columns(
 ) -> Vec<Column> {
     match plan {
         LogicalPlan::Apply(apply) => {
+            crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT);
             if context.enable_no_decorrelate_in_select {
                 // Go indexes both children directly and derefs the left
                 // schema (`rule_join_elimination.go:329`, `:337`).
@@ -365,6 +366,9 @@ fn required_columns(
         }
         LogicalPlan::Projection(projection) => {
             let mut columns = columns_from(projection.exprs.clone());
+            if !projection.base.children().is_empty() {
+                crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT);
+            }
             if context.enable_no_decorrelate_in_select {
                 if let Some(child) = projection.base.children().first() {
                     append_unique(

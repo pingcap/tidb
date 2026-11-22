@@ -97,6 +97,8 @@ pub fn estimate_uniform_equality(stats: UniformEqualityStats) -> RowEstimate {
         not_null_count / hist_ndv
     };
 
+    // skewRatio determines how much of the potential skew should be considered.
+    tidb_variable::relevant_opt::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_RISK_EQ_SKEW_RATIO);
     if stats.risk_eq_skew_ratio > 0.0 {
         let mut skew_estimate = not_null_count - (hist_ndv - 1.0);
         if let Some(min_topn) = stats.topn_min_count {

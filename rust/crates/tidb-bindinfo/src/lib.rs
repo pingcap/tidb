@@ -24,4 +24,7 @@ pub mod binding;
 pub mod binding_cache;
 pub mod binding_operator;
 pub mod binding_utils;
+pub mod binding_auto;
+pub mod binding_plan_evolution;
+pub mod binding_plan_generation;
 pub mod cluster_binding_seam;

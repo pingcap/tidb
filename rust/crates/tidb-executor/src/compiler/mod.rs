@@ -177,6 +177,14 @@ pub trait CompilerSession: crate::admin::AdminExec {
     ) -> Result<crate::StmtContext, DriverError>;
     /// Session primitive.
     fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt>;
+
+    /// Go `domain.GetDomain(sctx).BindingHandle().ExplorePlansForSQL`:
+    /// `EXPLAIN EXPLORE`'s plan candidates.
+    fn explore_plans_for_sql(
+        &mut self,
+        sql_or_digest: &str,
+        analyze: bool,
+    ) -> Result<Vec<tidb_bindinfo::binding_auto::BindingPlanInfo>, DriverError>;
     /// Applies Go `optimize.go`'s `StmtHints.SetVars` after the canonical
     /// `hint.ParseStmtHints` pass: each `SET_VAR(name = value)` writes the
     /// session variable for the duration of THIS statement only, and where

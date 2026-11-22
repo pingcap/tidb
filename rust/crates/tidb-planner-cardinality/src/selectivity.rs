@@ -168,11 +168,9 @@ pub fn selectivity(
     }
     let realtime = realtime as f64;
     if exprs.len() > 63 || coll.has_no_column_or_index() {
-        return Ok(hist_coll_pseudo_selectivity(
-            coll,
-            exprs,
-            ctx.options.selectivity_factor,
-        ));
+        let ret = hist_coll_pseudo_selectivity(coll, exprs, ctx.options.selectivity_factor);
+        tidb_variable::relevant_opt::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR);
+        return Ok(ret);
     }
 
     let mut ret = 1.0_f64;
@@ -509,6 +507,7 @@ pub fn selectivity(
                 min_selectivity.min(ctx.options.get_negate_str_match_default_selectivity());
         }
         ret *= min_selectivity;
+        tidb_variable::relevant_opt::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_SELECTIVITY_FACTOR);
     }
 
     // Don't allow the result to be less than one row.

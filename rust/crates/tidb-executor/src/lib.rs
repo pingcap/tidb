@@ -224,7 +224,7 @@ use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;
-pub use explain::{brief_binary_plan, AnalyzedWrite, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_brief_plan, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_mview_complete_delta_apply, explain_mview_delta_merge, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
+pub use explain::{brief_binary_plan, calculate_plan_digest, gen_brief_plan, record_relevant_opt_vars_and_fixes, AnalyzedWrite, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_brief_plan, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_mview_complete_delta_apply, explain_mview_delta_merge, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
 use tidb_sessionctx::explain_format::ExplainFormat;
 pub use kv_table::{KvTableReader, RowDecodeContextExt};
 

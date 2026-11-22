@@ -40,6 +40,10 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-model = { path = "../tidb-model" }
+tidb-fixcontrol = { path = "../tidb-fixcontrol" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 chrono = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
 

@@ -4163,6 +4163,73 @@ pub fn query_plan_cost(
         .value())
 }
 
+/// Go `genBriefPlanWithSCtx` (`pkg/planner/optimize.go`): the optimized
+/// plan's digest (`NormalizeFlatPlan`), the hints that reproduce it
+/// (`GenHintsFromFlatPlan`, restored) and its `EXPLAIN FORMAT='brief'` rows.
+pub fn gen_brief_plan(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(String, String, Vec<Vec<String>>), DriverError> {
+    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    let (mut physical, scalar_subqueries) =
+        crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    let (_, digest) = normalize_flat_plan(ctx, &physical, catalog);
+    let hints = tidb_planner::plan_hint::gen_hints_from_physical_plan(
+        &physical,
+        &CatalogHints(catalog),
+        &ctx.block_as_names(),
+    );
+    // Go `ExplainFlatPlanInRowFormat(FlattenPhysicalPlan(p, false), brief)`
+    // with `IgnoreExplainIDSuffix`: the brief rows in plan order, not build
+    // side first.
+    let roots = physical_explain_roots(None, ctx, ctx, false, &physical, catalog, false, true, &scalar_subqueries);
+    let mut plan_text: Vec<Vec<String>> = Vec::new();
+    for root in roots.into_iter().map(into_plan_order) {
+        let mut explain = PlannerExplain::new(planner_explain_format(ExplainFormat::Brief), false, root);
+        let mut explain_context = PlannerExplainContext::default();
+        explain
+            .prepare_schema(&mut explain_context)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        let rendered = explain
+            .render_result(&mut explain_context)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        plan_text.extend(rendered.iter().map(|row| row.iter().map(ToString::to_string).collect()));
+    }
+    Ok((digest, tidb_hint::restore_optimizer_hints(&hints), plan_text))
+}
+
+/// Go `calculatePlanDigestFunc` (`pkg/planner/optimize.go`): the digest of
+/// the plan the optimizer picks for `query`.
+pub fn calculate_plan_digest(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<String, DriverError> {
+    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    let (mut physical, _) =
+        crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    Ok(normalize_flat_plan(ctx, &physical, catalog).1)
+}
+
+/// Go `recordRelevantOptVarsAndFixes` (`pkg/planner/optimize.go`): the
+/// optimizer variables and fixes `query`'s optimization consults, sorted.
+pub fn record_relevant_opt_vars_and_fixes(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(Vec<String>, Vec<u64>), DriverError> {
+    let scope = tidb_variable::relevant_opt::record_scope();
+    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
+    Ok(scope.recorded())
+}
+
 /// Plain `EXPLAIN` over a supported set operation.
 pub fn explain_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,

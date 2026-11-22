@@ -136,6 +136,9 @@ fn estimate_cols_ndv_with_matched_len_lookup(
         return (ndv, 1);
     }
 
+    // Go records the risk ratio once the multi-column estimate is reached.
+    tidb_variable::relevant_opt::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_RISK_GROUP_NDV_SKEW_RATIO);
+
     let values = ids
         .iter()
         .filter_map(|id| column_ndv(*id))

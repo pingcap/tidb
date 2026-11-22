@@ -130,6 +130,14 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::bind_statement_hints(self, stmt)
     }
 
+    fn explore_plans_for_sql(
+        &mut self,
+        sql_or_digest: &str,
+        analyze: bool,
+    ) -> Result<Vec<tidb_bindinfo::binding_auto::BindingPlanInfo>, DriverError> {
+        Session::explore_plans_for_sql(self, sql_or_digest, analyze)
+    }
+
     fn apply_set_var_hints(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         Session::apply_set_var_hints(self, stmt)
     }

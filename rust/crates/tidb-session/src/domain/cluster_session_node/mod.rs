@@ -496,6 +496,20 @@ impl<'s> ClusterServerSession<'s> {
     }
 }
 
+/// The server file an `EXPLAIN EXPLORE REPLAYER 'file'` loads.
+fn explore_replayer_file(stmt: &Stmt) -> Option<&str> {
+    let Stmt::Admin(admin) = stmt else {
+        return None;
+    };
+    let tidb_ast::AdminStmt::Explain(explain) = admin.as_ref() else {
+        return None;
+    };
+    match &explain.target {
+        tidb_ast::ExplainTarget::ExploreReplayer(path) => Some(path),
+        _ => None,
+    }
+}
+
 /// The client file a `PLAN REPLAYER LOAD 'file'` restores.
 fn plan_replayer_load_file(stmt: &Stmt) -> Option<&str> {
     let Stmt::Admin(admin) = stmt else {
@@ -1843,6 +1857,20 @@ impl<'s> ClusterServerSession<'s> {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<QueryResult<'s>>, SqlQueryError> {
+        // Go `Explain.renderResultForExplore`'s
+        // `LoadPlanReplayerForExplainExplore`: the replayer's environment is
+        // loaded here, then its target SQL is explored.
+        if let Some(path) = explore_replayer_file(stmt) {
+            let target_sql = self.load_plan_replayer_for_explain_explore(path)?;
+            let explore = Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::Explain(Box::new(
+                tidb_ast::ExplainStmt {
+                    analyze: false,
+                    format: String::new(),
+                    target: tidb_ast::ExplainTarget::ExploreDigest(target_sql),
+                },
+            ))));
+            return self.execute_stmt(sql, &explore);
+        }
         match self.run_statement(sql, stmt, true)? {
             Executed::Done(_) => Ok(None),
             Executed::Query(_execute_stmt) => self.open_query(sql, stmt).map(Some),

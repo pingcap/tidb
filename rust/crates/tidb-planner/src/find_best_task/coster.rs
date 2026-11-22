@@ -118,10 +118,12 @@ impl TaskCoster for Ver2Coster {
                 cost
             }
             Task::Cop(cop) => match (&cop.index_plan, &cop.table_plan) {
+                // Go `getTaskPlanCost` prices the table side with
+                // `getPlanCost(cop.TablePlan, ...)`, without `isChildOfINL`.
                 (Some(index), Some(table)) if cop.index_plan_finished => {
                     tidb_planner_costusage::sum_cost_ver2(&[
                         self.price(index, TaskType::CopMultiRead),
-                        self.price_with_scan_context(table, TaskType::CopMultiRead, Some(true)),
+                        self.price(table, TaskType::CopMultiRead),
                     ])
                     .value()
                 }
@@ -480,13 +482,13 @@ impl Ver2Coster {
                             rows,
                             row_size,
                             is_child_of_inl,
-                            // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
-                            // an unfilled range list reads as the full scan.
-                            has_full_range_scan: scan.ranges.is_empty()
-                                || tidb_ranger::types::has_full_range(
-                                    &scan.ranges,
-                                    scan.table_scan_penalty.unsigned_int_handle,
-                                ),
+                            // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`:
+                            // a scan without ranges (an index lookup's row-id
+                            // scan) has no full range.
+                            has_full_range_scan: tidb_ranger::types::has_full_range(
+                                &scan.ranges,
+                                scan.table_scan_penalty.unsigned_int_handle,
+                            ),
                             // Go `getTableScanPenalty`: no penalty for a scan
                             // whose `RangeInfo` an index join decides.
                             penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
@@ -583,7 +585,9 @@ impl Ver2Coster {
                         crate::plan_cost_ver2::MPP_ENFORCED_DISCOUNT,
                     );
                 }
-                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.table_reader)
+                let cost = tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.table_reader);
+                crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_TABLE_READER_COST_FACTOR);
+                cost
             }
             PhysicalPlan::ExchangeReceiver(_receiver) => {
                 let child = plan.children().first();
@@ -718,8 +722,11 @@ impl Ver2Coster {
                     .is_some_and(|limit| table_rows <= limit.count as f64)
                 {
                     cost = tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.limit);
+                    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_COST_FACTOR);
                 }
-                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_lookup)
+                let cost = tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_lookup);
+                crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_LOOKUP_COST_FACTOR);
+                cost
             }
             PhysicalPlan::IndexReader(reader) => {
                 let child_rows = reader
@@ -745,7 +752,9 @@ impl Ver2Coster {
                     ]),
                     self.session.distsql_scan_concurrency,
                 );
-                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_reader)
+                let cost = tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_reader);
+                crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_READER_COST_FACTOR);
+                cost
             }
             // `getPlanCostVer24PhysicalIndexMergeReader`: every partial and
             // the table side price as (net + child) / dist-concurrency.
@@ -781,7 +790,9 @@ impl Ver2Coster {
             }
             // `getPlanCostVer24PhysicalLimit` is the child's cost: a limit
             // adds no work of its own in ver2.
-            PhysicalPlan::Limit(_) => self.children_cost(plan, task_type, is_child_of_inl),
+            // Go's limit has no cost function of its own: `BasePhysicalPlan.
+            // GetPlanCostVer2` prices its children without `isChildOfINL`.
+            PhysicalPlan::Limit(_) => self.children_cost(plan, task_type, None),
             // `getPlanCostVer24PhysicalTopN`: the heap's CPU and memory.
             PhysicalPlan::TopN(topn) => {
                 let child_cost = self.children_cost(plan, task_type, is_child_of_inl);

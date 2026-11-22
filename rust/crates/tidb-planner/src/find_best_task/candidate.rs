@@ -301,6 +301,10 @@ pub fn compare_candidates(
         && !left.partial_paths
         && !right.partial_paths
         && expected_count == f64::MAX;
+    if uses_ratio {
+        // Go reads the fix control's threshold here.
+        tidb_variable::relevant_opt::record_relevant_opt_fix(tidb_fixcontrol::FIX_45132);
+    }
     if uses_ratio && row_count_ratio_threshold > 0.0 {
         if left.count_after_access / right.count_after_access > row_count_ratio_threshold
             && risk <= 0

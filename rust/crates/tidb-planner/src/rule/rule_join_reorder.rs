@@ -528,6 +528,8 @@ fn try_inline_projection(
     if !can_inline_projection(projection, &child_result) {
         return None;
     }
+    // Only record when projection inlining actually happens.
+    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ);
     let schema = projection.base.base.schema()?;
     let mut mappings = BTreeMap::new();
     for (output, expression) in schema.columns.iter().zip(&projection.exprs) {
@@ -827,6 +829,9 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                     else {
                         continue;
                     };
+                    if cartesian {
+                        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_CARTESIAN_JOIN_ORDER_THRESHOLD);
+                    }
                     if cartesian && self.context.cartesian_join_order_threshold <= 0.0 {
                         continue;
                     }

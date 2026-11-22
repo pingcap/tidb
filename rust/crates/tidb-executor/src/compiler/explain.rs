@@ -54,6 +54,31 @@ pub trait ExplainCompile: super::CompilerSession {
                 return self.run_planned_show(show).map(Some);
             }
         }
+        // Go `Explain.renderResultForExplore`: the target is explored, not
+        // planned (`buildExplain` builds no target plan for EXPLORE).
+        if let Some(sql_or_digest) = match &explain.target {
+            tidb_ast::ExplainTarget::ExploreStatement(statement) => {
+                let text = String::from_utf8_lossy(statement.text()).into_owned();
+                if text.is_empty() {
+                    return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
+                        "EXPLAIN EXPLORE target SQL is empty".to_owned(),
+                    )));
+                }
+                Some(text)
+            }
+            tidb_ast::ExplainTarget::ExploreDigest(digest) => Some(digest.clone()),
+            // The session's dispatch loads the replayer file and explores
+            // its target SQL; a session without that loader has none.
+            tidb_ast::ExplainTarget::ExploreReplayer(_) => {
+                return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
+                    "EXPLAIN EXPLORE REPLAYER is not available".to_owned(),
+                )));
+            }
+            _ => None,
+        } {
+            let plans = self.explore_plans_for_sql(&sql_or_digest, explain.analyze)?;
+            return Ok(Some(explore_output(&plans)));
+        }
         if explain.format.is_empty() {
             // go's schema builder answers an EMPTY format from its `default:`
             // arm with the unsupported-format 1105 (oracle:
@@ -452,4 +477,54 @@ pub fn stmt_kind_name(stmt: &tidb_ast::Stmt) -> String {
         tidb_ast::Stmt::Admin(admin) => variant_name(&**admin),
         tidb_ast::Stmt::Session(session) => variant_name(&**session),
     }
+}
+
+/// Go `Explain.prepareSchema`'s EXPLORE columns and `renderResultForExplore`'s
+/// rows.
+fn explore_output(plans: &[tidb_bindinfo::binding_auto::BindingPlanInfo]) -> StmtOutput {
+    const COLUMNS: [&str; 14] = [
+        "statement",
+        "binding_hint",
+        "plan",
+        "plan_digest",
+        "avg_latency",
+        "exec_times",
+        "avg_scan_rows",
+        "avg_returned_rows",
+        "latency_per_returned_row",
+        "scan_rows_per_returned_row",
+        "recommend",
+        "reason",
+        "explain_analyze",
+        "binding",
+    ];
+    let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+    let columns = COLUMNS.iter().map(|name| ((*name).to_owned(), field_type.clone())).collect();
+    // Go `strconv.FormatFloat(f, 'f', -1, 64)`.
+    let float = |value: f64| value.to_string();
+    let rows = plans
+        .iter()
+        .map(|p| {
+            [
+                p.binding.original_sql.clone(),
+                p.binding.hints.restore(),
+                p.plan.clone(),
+                p.binding.plan_digest.clone(),
+                float(p.avg_latency),
+                p.exec_times.to_string(),
+                float(p.avg_scan_rows),
+                float(p.avg_returned_rows),
+                float(p.latency_per_return_row),
+                float(p.scan_rows_per_return_row),
+                p.recommend.clone(),
+                p.reason.clone(),
+                format!("EXPLAIN ANALYZE {}", p.binding.bind_sql),
+                format!("CREATE GLOBAL BINDING USING {}", p.binding.bind_sql),
+            ]
+            .into_iter()
+            .map(|text| tidb_datatype::Datum::Bytes(text.into_bytes()))
+            .collect()
+        })
+        .collect();
+    StmtOutput::Rows { columns, rows }
 }

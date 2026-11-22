@@ -5038,14 +5038,18 @@ dependencies = [
  "tidb-datatype",
  "tidb-ddl",
  "tidb-driver-error",
+ "tidb-fixcontrol",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-hint",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
+ "tidb-intest",
  "tidb-kv",
  "tidb-lexer",
  "tidb-logutil",
  "tidb-metrics",
+ "tidb-model",
  "tidb-mysql",
  "tidb-owner",
  "tidb-parser",
@@ -8711,6 +8715,7 @@ dependencies = [
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-vardef",
+ "tidb-variable",
 ]
 
 [[package]]

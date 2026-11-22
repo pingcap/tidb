@@ -26,3 +26,4 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-variable = { path = "../tidb-variable" }

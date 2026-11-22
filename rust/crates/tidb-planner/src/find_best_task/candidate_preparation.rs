@@ -144,6 +144,8 @@ pub(super) fn prepare_ordinary_paths<'a>(
         let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
         candidates.push((path, metrics, flags));
     }
+    // Go `skylinePruning` reads `GetAllowPreferRangeScan`.
+    crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN);
     let mut skyline = Vec::new();
     let mut idx_missing_stats = false;
     for candidate in candidates {
@@ -302,6 +304,13 @@ pub(super) fn prepare_access_paths<'a>(
                     .is_none_or(|stats| stats.row_count() < 1.0));
         let has_range_scan_path = prepared.range_flags.iter().any(|(preferred, _)| *preferred)
             || (prefer_merge && !merges.is_empty());
+        // Go logs the fix control only when a candidate has several ranges.
+        if prefer_range
+            && prepared.paths.len() + merges.len() > 1
+            && prepared.paths.iter().any(|path| path.ranges.len() > 1)
+        {
+            tidb_variable::relevant_opt::record_relevant_opt_fix(tidb_fixcontrol::FIX_52869);
+        }
         if prefer_range
             && prepared.paths.len() + merges.len() > 1
             && has_range_scan_path

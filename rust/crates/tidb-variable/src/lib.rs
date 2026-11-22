@@ -30,6 +30,7 @@ pub mod mview_execution;
 pub mod variable_errors;
 pub mod hint_updatable_vars;
 pub mod phase_durations;
+pub mod relevant_opt;
 pub mod session_vars;
 pub mod set_hooks;
 pub mod slow_log;

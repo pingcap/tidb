@@ -286,7 +286,7 @@ impl SelectIntoExec {
 
 /// Go `os.OpenFile`'s error text without the Go path prefix: the errno's
 /// lowercase description (`file exists`, `no such file or directory`).
-fn go_errno_text(error: &std::io::Error) -> String {
+pub fn go_errno_text(error: &std::io::Error) -> String {
     match error.kind() {
         std::io::ErrorKind::AlreadyExists => "file exists".to_owned(),
         std::io::ErrorKind::NotFound => "no such file or directory".to_owned(),
