@@ -22993,14 +22993,20 @@ fn add_index_runs_as_a_persisted_job_like_go() {
         "add index|none|768|rollback done|txn-merge, max_node_count=3"
     );
     rows(&mut session, "admin check table big1");
-    // Go `cleanupDDLReorgHandles`: nothing is left behind.
-    assert_eq!(
-        displayed(rows(
-            &mut session,
-            "select count(*) from mysql.tidb_ddl_reorg"
-        )),
-        vec![vec!["0".to_owned()]]
-    );
+    // Go `cleanupDDLReorgHandles`: nothing is left behind. Go's
+    // `handleJobDone` cleans after the history commit and only then notifies
+    // the submitter, but the submitter's ticker (`getJobCheckInterval`, 500ms
+    // for ADD INDEX) may read the history row inside that window, so the
+    // cleanup is waited for rather than assumed to precede the answer.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let left = displayed(rows(&mut session, "select count(*) from mysql.tidb_ddl_reorg"));
+        if left == vec![vec!["0".to_owned()]] {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "reorg handles left behind: {left:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 /// Go runs ADD INDEX through delete-only, write-only and the txn-merge

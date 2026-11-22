@@ -972,49 +972,15 @@ pub(super) fn rollback_like_drop_partition(
     Ok(action_step(write))
 }
 
-/// Go `CheckDropTablePartition`, against the table the job steps.
+/// Go `onDropTablePartition`'s `CheckDropTablePartition`, against the table
+/// the job steps.
 fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), DdlPlanError> {
-    let Some(partition) = info.get_partition_info() else {
+    if info.get_partition_info().is_none() {
         return Err(admission(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .gen_with_stack_by_args(&[]),
-        )));
-    };
-    let partition = partition.read();
-    if !matches!(
-        partition.partition_type,
-        tidb_ast::PartitionType::RANGE | tidb_ast::PartitionType::LIST
-    ) {
-        return Err(admission(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
-                .gen_with_stack_by_args(&[("DROP").into()]),
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.gen_with_stack_by_args(&[]),
         )));
     }
-    if info.affinity.is_some() {
-        return Err(coded_refusal(
-            &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
-            "Unsupported DROP PARTITION of a table with AFFINITY option",
-        ));
-    }
-    let definitions = partition.definitions.snapshot();
-    if definitions.len() <= names.len() {
-        return Err(admission(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_DROP_LAST_PARTITION.gen_with_stack_by_args(&[]),
-        )));
-    }
-    let mut seen = std::collections::HashSet::new();
-    for name in names {
-        let found = definitions
-            .iter()
-            .any(|definition| definition.name.lowercase() == name);
-        if !found || !seen.insert(name.clone()) {
-            return Err(admission(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
-                    .gen_with_stack_by_args(&["DROP".into()]),
-            )));
-        }
-    }
-    Ok(())
+    tidb_ddl_build::partition_ddl::check_drop_table_partition(info, names).map_err(admission)
 }
 
 /// Go `updateDroppingPartitionInfo`.

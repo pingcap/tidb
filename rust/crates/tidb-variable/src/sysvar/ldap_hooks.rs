@@ -134,10 +134,6 @@ ldap_set_global! {
 /// Go `vardef.MaskPwd`.
 const MASK_PWD: &str = "******";
 
-/// Go `BoolToOnOff`.
-fn bool_to_on_off(value: bool) -> String {
-    if value { "ON" } else { "OFF" }.to_owned()
-}
 
 macro_rules! ldap_get_global {
     ($($name:ident => $body:expr;)*) => {
@@ -153,7 +149,7 @@ ldap_get_global! {
     get_sasl_auth_method_name => LDAP_SASL_AUTH_IMPL.get_sasl_auth_method();
     get_sasl_server_host => LDAP_SASL_AUTH_IMPL.get_ldap_server_host();
     get_sasl_server_port => LDAP_SASL_AUTH_IMPL.get_ldap_server_port().to_string();
-    get_sasl_tls => bool_to_on_off(LDAP_SASL_AUTH_IMPL.get_enable_tls());
+    get_sasl_tls => crate::vars::bool_to_on_off(LDAP_SASL_AUTH_IMPL.get_enable_tls()).to_owned();
     get_sasl_ca_path => LDAP_SASL_AUTH_IMPL.get_ca_path();
     get_sasl_user_search_attr => LDAP_SASL_AUTH_IMPL.get_search_attr();
     get_sasl_bind_base_dn => LDAP_SASL_AUTH_IMPL.get_bind_base_dn();
@@ -167,7 +163,7 @@ ldap_get_global! {
     get_sasl_max_pool_size => LDAP_SASL_AUTH_IMPL.get_max_capacity().to_string();
     get_simple_server_host => LDAP_SIMPLE_AUTH_IMPL.get_ldap_server_host();
     get_simple_server_port => LDAP_SIMPLE_AUTH_IMPL.get_ldap_server_port().to_string();
-    get_simple_tls => bool_to_on_off(LDAP_SIMPLE_AUTH_IMPL.get_enable_tls());
+    get_simple_tls => crate::vars::bool_to_on_off(LDAP_SIMPLE_AUTH_IMPL.get_enable_tls()).to_owned();
     get_simple_ca_path => LDAP_SIMPLE_AUTH_IMPL.get_ca_path();
     get_simple_user_search_attr => LDAP_SIMPLE_AUTH_IMPL.get_search_attr();
     get_simple_bind_base_dn => LDAP_SIMPLE_AUTH_IMPL.get_bind_base_dn();

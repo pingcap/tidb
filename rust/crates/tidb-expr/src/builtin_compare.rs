@@ -18,7 +18,7 @@
 //! [`CompareFunctionClass`] is Go `compareFunctionClass`: `refineArgs`, then
 //! `GetAccurateCmpType` over the refined arguments, then `generateCmpSigs`.
 
-use crate::builtin_arithmetic::new_return_field_type_for_base_builtin_func;
+use crate::builtin_arithmetic::numeric_return_field_type;
 use crate::builtin_ext::GlCmpStringMode;
 use crate::constant::Constant;
 use tidb_exprctx::context::{Columns, EvalError};
@@ -32,7 +32,7 @@ use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 pub fn infer_compare_type(name: &str) -> Option<FieldType> {
     match name {
         "eq" | "nulleq" | "ne" | "lt" | "le" | "gt" | "ge" => {
-            let mut ret = new_return_field_type_for_base_builtin_func(EvalType::Int);
+            let mut ret = numeric_return_field_type(EvalType::Int);
             // generateCmpSigs: bf.tp.SetFlen(1).
             ret.set_flen(1);
             // All comparison names are in Go's booleanFunctions map.

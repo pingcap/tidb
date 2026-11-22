@@ -180,10 +180,6 @@ pub(crate) fn materialized_view_log_involving_schema_info(
     involving
 }
 
-/// Go master `isNullToNotNullChange`.
-fn is_null_to_not_null_change(old: &tidb_model::ColumnInfo, new: &tidb_model::ColumnInfo) -> bool {
-    !old.field_type.has_flag(FieldTypeFlags::NOT_NULL) && new.field_type.has_flag(FieldTypeFlags::NOT_NULL)
-}
 
 /// Go master `isColumnCommentOnlyChange`: `reflect.DeepEqual` of the two
 /// columns once the comments agree, compared through their stored form.
@@ -457,7 +453,7 @@ fn visit_materialized_view_related_tables(
         let (schema_id, mlog) = related.load(mlog_id, "materialized view log")?;
         validate_materialized_view_log_info_for_modify_column(base, &mlog)?;
         if let Some(mlog_column) = tracked_materialized_view_log_column_for_modify_column(&mlog, old.name.lowercase())? {
-            if is_null_to_not_null_change(old, new) {
+            if tidb_ddl_build::modify_column_type::is_null_to_not_null_change(&old.field_type, &new.field_type) {
                 return Err(unsupported(format!(
                     "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
                 )));
@@ -736,7 +732,7 @@ pub(crate) fn validate_materialized_view_base_modify_column(
         }
         return Ok(());
     }
-    if tracked && is_null_to_not_null_change(old, new) {
+    if tracked && tidb_ddl_build::modify_column_type::is_null_to_not_null_change(&old.field_type, &new.field_type) {
         return Err(unsupported(format!(
             "{op} on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL"
         )));

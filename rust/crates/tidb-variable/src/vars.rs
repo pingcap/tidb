@@ -2162,7 +2162,7 @@ impl SessionVars {
 }
 
 /// Go `BoolToOnOff`.
-fn bool_to_on_off(value: bool) -> &'static str {
+pub(crate) fn bool_to_on_off(value: bool) -> &'static str {
     if value {
         "ON"
     } else {

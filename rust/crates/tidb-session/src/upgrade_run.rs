@@ -159,16 +159,6 @@ fn print_cluster_state(s: &mut dyn UpgradeSession, ver: i64) {
     }
 }
 
-/// Go `IsUpgradingClusterState` checks whether the global state is upgrading.
-pub fn is_upgrading_cluster_state(s: &dyn UpgradeSession) -> Result<bool, String> {
-    let context = tidb_timeutil::SleepContext::with_timeout(Duration::from_secs(3));
-    let state_info = s
-        .state_syncer()
-        .get_global_state(&context)
-        .map_err(|error| error.to_string())?;
-    Ok(state_info.state == tidb_ddl_serverstate::STATE_UPGRADING)
-}
-
 /// Go `isUpgradingClusterStateWithRetry`.
 fn is_upgrading_cluster_state_with_retry(
     s: &dyn UpgradeSession,
@@ -187,7 +177,7 @@ fn is_upgrading_cluster_state_with_retry(
         ]
     };
     for i in 0.. {
-        let error = match is_upgrading_cluster_state(s) {
+        let error = match crate::sync_upgrade::is_upgrading_cluster_state(s.state_syncer()) {
             Ok(is_upgrading) => {
                 let [old, latest] = versions();
                 logger.info(

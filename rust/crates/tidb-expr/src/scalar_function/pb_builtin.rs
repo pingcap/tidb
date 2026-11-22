@@ -530,10 +530,6 @@ fn floor_dec_to_dec(values: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum,
     crate::math_fn::ceil_floor_with_result_domain(values, false, Some(true), ctx)
 }
 
-/// Go `IsBinaryLiteral`.
-fn is_binary_literal(expr: &Expression) -> bool {
-    matches!(expr, Expression::Constant(constant) if matches!(constant.value, Datum::BinaryLiteral(_)))
-}
 
 /// Go `builtinConvSig.evalString`'s first switch: a binary literal, or a
 /// cast over a hybrid-typed or binary-literal argument, is read as its bits.
@@ -543,13 +539,13 @@ fn conv_bit_literal(
     row: Row<'_>,
 ) -> Result<Option<Datum>, EvalError> {
     match arg {
-        Expression::Constant(constant) => Ok(is_binary_literal(arg).then(|| constant.value.clone())),
+        Expression::Constant(constant) => Ok(crate::builtin::is_binary_literal(arg).then(|| constant.value.clone())),
         Expression::ScalarFunction(cast) if cast.is_cast() => {
             let Some(arg0) = cast.args.first() else {
                 return Ok(None);
             };
             let hybrid = arg0.static_type().is_some_and(FieldType::is_hybrid);
-            if !hybrid && !is_binary_literal(arg0) {
+            if !hybrid && !crate::builtin::is_binary_literal(arg0) {
                 return Ok(None);
             }
             // Go `Column.EvalString` of a hybrid column is `Datum.ToString`:

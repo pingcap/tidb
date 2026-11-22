@@ -1310,25 +1310,7 @@ pub fn build_final_mode_aggregation(
     })
 }
 
-/// Go `ContainVirtualColumn` (`pkg/expression/util.go:1635`): a column
-/// backed by a generating expression cannot be pushed.
-fn contain_virtual_column(exprs: &[Expression]) -> bool {
-    exprs.iter().any(|expr| match expr {
-        Expression::Column(col) => col.virtual_expr.is_some(),
-        Expression::ScalarFunction(func) => contain_virtual_column(func.get_args()),
-        _ => false,
-    })
-}
 
-/// Go `ContainCorrelatedColumn` (`pkg/expression/util.go:1652`). Note Go's
-/// switch does NOT look inside Constants — neither does this.
-fn contain_correlated_column(exprs: &[Expression]) -> bool {
-    exprs.iter().any(|expr| match expr {
-        Expression::CorrelatedColumn(_) => true,
-        Expression::ScalarFunction(func) => contain_correlated_column(func.get_args()),
-        _ => false,
-    })
-}
 
 /// Go `CheckAggCanPushCop` (`base_physical_agg.go:522`) for the TiKV store.
 ///
@@ -1372,8 +1354,8 @@ pub fn check_agg_can_push_cop(
     let mut reason = String::new();
     for agg_func in agg_funcs {
         // if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
-        if contain_virtual_column(&agg_func.base.args)
-            || contain_correlated_column(&agg_func.base.args)
+        if tidb_expr::expr_util::predicates::contain_virtual_column(&agg_func.base.args)
+            || tidb_expr::expr_util::predicates::contain_correlated_column(&agg_func.base.args)
         {
             reason = format!(
                 "expressions of AggFunc `{}` contain virtual column or correlated column, which is not supported now",
@@ -1437,7 +1419,7 @@ pub fn check_agg_can_push_cop(
             break;
         }
     }
-    if ret && contain_virtual_column(group_by_items) {
+    if ret && tidb_expr::expr_util::predicates::contain_virtual_column(group_by_items) {
         reason = "groupByItems contain virtual columns, which is not supported now".to_owned();
         ret = false;
     }

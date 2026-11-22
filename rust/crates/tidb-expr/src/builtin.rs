@@ -706,7 +706,7 @@ fn adjust_null_flag_for_return_type(func_name: &str, args: &[Expression], tp: &m
 }
 
 /// Go `newReturnFieldTypeForBaseBuiltinFunc`.
-fn new_return_field_type_for_base_builtin_func(
+pub(crate) fn new_return_field_type_for_base_builtin_func(
     func_name: &str,
     ret_type: EvalType,
     ec: &ExprCollation,

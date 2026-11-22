@@ -291,22 +291,6 @@ pub(crate) fn weight_string(
 /// to, which `builtinLpadUTF8Sig`/`builtinRpadUTF8Sig` multiply the requested
 /// character count by before testing `max_allowed_packet`.
 const MAX_BYTES_OF_CHARACTER: u64 = 4;
-/// Go `base64NeededEncodedLength`: the encoded width of `n` input bytes,
-/// including the newline every 76 output characters. `None` is Go's `-1`,
-/// the input width past which the answer would overflow a signed `int` --
-/// which `builtinToBase64Sig` answers NULL for WITHOUT a packet warning,
-/// since it never got as far as comparing a length.
-fn base64_needed_encoded_length(n: usize) -> Option<u64> {
-    // Go's 64-bit arm; the 32-bit constant is for a platform this crate does
-    // not build for, and `usize` here is the same width Go's `int` is there.
-    if n > 6_827_690_988_321_067_803 {
-        return None;
-    }
-    let length = (n as u64).div_ceil(3) * 4;
-    // Go computes `(length-1)/76` in signed `int`, where the empty input's
-    // `-1/76` truncates toward zero rather than wrapping.
-    Some(length + length.saturating_sub(1) / 76)
-}
 /// `TO_BASE64(str)`: standard base-64 encoding (with `=` padding) of the
 /// argument's bytes.  `builtinToBase64Sig.evalString` in
 /// `pkg/expression/builtin_string.go` inserts a newline after every 76
@@ -318,10 +302,13 @@ pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
     };
     // Go `base64NeededEncodedLength` then the packet check, both BEFORE any
     // encoding happens -- the point is not to allocate the oversized result.
-    let Some(needed) = base64_needed_encoded_length(bytes.len()) else {
+    // Go's `-1`: the answer would overflow a signed `int`, NULL without a
+    // packet warning.
+    let needed = crate::builtin_string::base64_needed_encoded_length(bytes.len() as i64);
+    if needed < 0 {
         return Ok(Datum::Null);
-    };
-    if needed > ctx.max_allowed_packet() {
+    }
+    if needed as u64 > ctx.max_allowed_packet() {
         crate::expression_errors::handle_allowed_packet_overflowed(ctx, "to_base64")?;
         return Ok(Datum::Null);
     }

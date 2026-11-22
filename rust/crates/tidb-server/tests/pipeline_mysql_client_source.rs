@@ -3514,13 +3514,18 @@ fn an_explain_result_is_written_through_its_pooled_chunk_like_go() {
     authenticate(&mut client, &mut reader);
     run_write(&mut client, &mut reader, "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))");
     run_write(&mut client, &mut reader, "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')");
+    // A parallel HashAgg's peak is one group higher when a final worker
+    // charges a group before the partial worker releases its chunk (the same
+    // goroutine race in Go), so the aggregation runs unparallel; the figures
+    // are Go's for that, from the same statement loop.
+    run_write(&mut client, &mut reader, "SET tidb_executor_concurrency = 1");
     for (sql, operator, memory) in [
         ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "2.10 KB"),
         ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "9.97 KB"),
-        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "32.8 KB"),
-        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "33.4 KB"),
-        ("SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a", "HashAgg_5", "33.9 KB"),
-        ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "2.72 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "1.75 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "HashAgg_9", "9.62 KB"),
+        ("SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a", "HashAgg_5", "2.31 KB"),
+        ("SELECT * FROM t USE INDEX(a) WHERE a > 0", "IndexLookUp_7", "2.10 KB"),
     ] {
         let plan = run_query(&mut client, &mut reader, &format!("EXPLAIN ANALYZE {sql}"));
         let row = plan

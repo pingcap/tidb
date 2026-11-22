@@ -346,7 +346,7 @@ pub fn plan_partition_change(
             query_rewrite = Some(rewrite);
         }
         tidb_ast::AlterPartitionAction::Drop { if_exists, names } => {
-            if let Some(ordinals) = check_drop_table_partition(table, *if_exists, names, ctx)? {
+            if let Some(ordinals) = drop_partition_ordinals(table, *if_exists, names, ctx)? {
                 drop_partitions(&mut definitions, &ordinals);
             }
         }
@@ -378,74 +378,77 @@ fn drop_partitions(definitions: &mut Vec<StoredDefinition>, ordinals: &[usize]) 
     });
 }
 
-/// Go `CheckDropTablePartition`: the ordinals of `table`'s partitions that
-/// `DROP PARTITION names` removes; `None` when `IF EXISTS` met a missing
-/// name (Go's note is left on `ctx`).
-pub fn check_drop_table_partition(
+/// Go `CheckDropTablePartition`.
+pub fn check_drop_table_partition(meta: &TableInfo, part_lower_names: &[String]) -> Result<(), MysqlError> {
+    let pi = meta
+        .get_partition_info()
+        .expect("CheckDropTablePartition runs on a partitioned table");
+    let pi = pi.read();
+    if !matches!(pi.partition_type, tidb_ast::PartitionType::RANGE | tidb_ast::PartitionType::LIST) {
+        return Err(MysqlError::from_terror(
+            &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION.gen_with_stack_by_args(&["DROP".into()]),
+        ));
+    }
+    if meta.affinity.is_some() {
+        return Err(MysqlError::from_terror(
+            &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                .gen_with_stack_by_args(&["DROP PARTITION of a table with AFFINITY option".into()]),
+        ));
+    }
+    // To be error compatible with MySQL, we need to do this first!
+    let old_defs = pi.definitions.snapshot();
+    if old_defs.len() <= part_lower_names.len() {
+        return Err(MysqlError::from_terror(
+            &tidb_dbterror::ERR_DROP_LAST_PARTITION.gen_with_stack_by_args(&[]),
+        ));
+    }
+    let mut dup_check = std::collections::HashSet::new();
+    for pn in part_lower_names {
+        let found = old_defs.iter().any(|def| def.name.lowercase() == pn);
+        if !found || !dup_check.insert(pn) {
+            return Err(MysqlError::from_terror(
+                &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT.gen_with_stack_by_args(&["DROP".into()]),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Go executor `DropTablePartition` around `CheckDropTablePartition`: the
+/// ordinals of the partitions `names` drops, or `None` when `IF EXISTS` met
+/// a missing one (its error left as a note).
+fn drop_partition_ordinals(
     table: &PartitionedTable<'_>,
     if_exists: bool,
     names: &[String],
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<Vec<usize>>, MysqlError> {
-    let Some(partition) = table.partition() else {
-        return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                .gen_with_stack_by_args(&[]),
-        ));
-    };
-    if !matches!(
-        partition.kind,
-        PartitionKind::Range { .. }
-            | PartitionKind::RangeColumns { .. }
-            | PartitionKind::List { .. }
-            | PartitionKind::ListColumns { .. }
-    ) {
-        return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
-                .gen_with_stack_by_args(&["DROP".into()]),
+    if table.partition().is_none() {
+        return Err(MysqlError::from_terror(
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.gen_with_stack_by_args(&[]),
         ));
     }
-    refuse_affinity(table, "DROP PARTITION")?;
-    if table.definitions().len() <= names.len() {
-        return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_dbterror::ERR_DROP_LAST_PARTITION.gen_with_stack_by_args(&[]),
-        ));
-    }
-    let mut ordinals = Vec::with_capacity(names.len());
-    for name in names {
-        let Some(ordinal) = table.definitions().iter().position(|definition| {
-            crate::table_partition::partition_names_equal(definition.name.original(), name)
-        }) else {
-            if if_exists {
-                note(
-                    ctx,
-                    &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT,
-                    "Error in list of partitions to DROP",
-                );
-                return Ok(None);
-            }
-            return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
-                    .gen_with_stack_by_args(&["DROP".into()]),
-            ));
-        };
-        if ordinals.contains(&ordinal) {
-            if if_exists {
-                note(
-                    ctx,
-                    &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT,
-                    "Error in list of partitions to DROP",
-                );
-                return Ok(None);
-            }
-            return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
-                    .gen_with_stack_by_args(&["DROP".into()]),
-            ));
+    let part_names: Vec<String> = names.iter().map(|name| tidb_hack::go_to_lower(name)).collect();
+    if let Err(error) = check_drop_table_partition(table.meta, &part_names) {
+        let non_existent = tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT.gen_with_stack_by_args(&["DROP".into()]);
+        if if_exists && error.code == MysqlError::from_terror(&non_existent).code {
+            ctx.append_note(tidb_context::WarnErr::Terror(non_existent));
+            return Ok(None);
         }
-        ordinals.push(ordinal);
+        return Err(error);
     }
-    Ok(Some(ordinals))
+    Ok(Some(
+        part_names
+            .iter()
+            .map(|pn| {
+                table
+                    .definitions()
+                    .iter()
+                    .position(|def| def.name.lowercase() == pn)
+                    .expect("CheckDropTablePartition found every name")
+            })
+            .collect(),
+    ))
 }
 
 /// The method Go prints for a RANGE or LIST table's partitioning (`RANGE`,
@@ -960,7 +963,7 @@ pub fn drop_table_partition(
         .iter()
         .map(|definition| definition.name.original().to_owned())
         .collect::<Vec<_>>();
-    let ordinals = check_drop_table_partition(table, false, &names, ctx)?
+    let ordinals = drop_partition_ordinals(table, false, &names, ctx)?
         .expect("without IF EXISTS a missing partition is an error");
     // Go `DropTablePartition` rewrites the job's query: the FIRST clause
     // becomes the partitions it names.

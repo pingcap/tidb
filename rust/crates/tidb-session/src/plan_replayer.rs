@@ -93,6 +93,17 @@ impl replayer::PlanReplayerSessionContext for SessionSql<'_> {
     }
 }
 
+/// Go `infosync.GetServerInfo()` for the plan replayer's `instance` column.
+struct SessionServerInfo(Option<std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>);
+
+impl replayer::ServerInfoSource for SessionServerInfo {
+    fn get_server_info(&self) -> Result<replayer::ServerInfo, replayer::PlanReplayerError> {
+        let syncer = self.0.as_ref().ok_or_else(|| replayer::PlanReplayerError::Other("the server info syncer is not set up".to_owned()))?;
+        let info = syncer.get_local_server_info();
+        Ok(replayer::ServerInfo { ip: info.static_info.ip.clone(), port: info.static_info.port as u64 })
+    }
+}
+
 /// Go `sctx.GetRestrictedSQLExecutor()` of the dumping session: on this
 /// session under `ExecOptionUseCurSession`, on a fresh internal session of
 /// its node otherwise (Go `withRestrictedSQLExecutor`).
@@ -696,48 +707,12 @@ impl Session {
         self.domain_services()?.domain.upgrade()?.plan_replayer_handle()
     }
 
-    /// Go `insertPlanReplayerStatus`: one row per record into
-    /// `mysql.plan_replayer_status`, failures logged.
+    /// Go `insertPlanReplayerStatus` on the dumping session's restricted
+    /// executor, the `instance` column from `infosync.GetServerInfo()`.
     fn insert_plan_replayer_status(&mut self, records: &[replayer::PlanReplayerStatusRecord]) {
-        let instance = self.plan_replayer_instance();
-        for record in records {
-            let sql = if record.failed_reason.is_empty() {
-                format!(
-                    "insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values ({}, {}, {}, {}, {})",
-                    quote(&record.sql_digest),
-                    quote(&record.plan_digest),
-                    quote(&record.origin_sql),
-                    quote(&record.token),
-                    quote(&instance)
-                )
-            } else {
-                format!(
-                    "insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values ({}, {}, {}, {}, {})",
-                    quote(&record.sql_digest),
-                    quote(&record.plan_digest),
-                    quote(&record.origin_sql),
-                    quote(&record.failed_reason),
-                    quote(&instance)
-                )
-            };
-            if let Err(error) = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &sql) {
-                tidb_logutil::bg_logger().warn(
-                    "insert mysql.plan_replayer_status record failed",
-                    &[tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))],
-                );
-            }
-        }
-    }
-
-    /// Go's `instance` column: `infosync.GetServerInfo()`'s IP and port.
-    fn plan_replayer_instance(&self) -> String {
-        match &self.server_info_syncer {
-            Some(syncer) => {
-                let info = syncer.get_local_server_info();
-                replayer::join_host_port(&info.static_info.ip, info.static_info.port as u64)
-            }
-            None => String::new(),
-        }
+        let info = SessionServerInfo(self.server_info_syncer.clone());
+        let exec = SessionSql(std::sync::Mutex::new(self));
+        replayer::insert_plan_replayer_status(&exec, &info, records);
     }
 
     /// Go `PlanReplayerExec.registerCaptureTask`.
