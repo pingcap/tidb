@@ -49,7 +49,7 @@ func collectGeneratedColumnRefs(node ast.Node) map[string]struct{} {
 		return nil
 	}
 	c := &generatedColumnRefCollector{names: make(map[string]struct{})}
-	node.Accept(c)
+	ast.Walk(node, c)
 	if c.buildAll {
 		return nil
 	}
@@ -64,7 +64,7 @@ func (b *PlanBuilder) addGeneratedColumnRefs(node ast.Node) {
 		return
 	}
 	c := &generatedColumnRefCollector{names: b.gcColumnRefs}
-	node.Accept(c)
+	ast.Walk(node, c)
 	if c.buildAll {
 		b.gcColumnRefs = nil
 	}
@@ -75,13 +75,13 @@ type generatedColumnRefCollector struct {
 	buildAll bool
 }
 
-// Enter implements ast.Visitor.
-func (c *generatedColumnRefCollector) Enter(n ast.Node) (ast.Node, bool) {
+// Enter implements ast.InPlaceVisitor.
+func (c *generatedColumnRefCollector) Enter(n ast.Node) bool {
 	switch x := n.(type) {
 	case *ast.ColumnName:
 		c.names[x.Name.L] = struct{}{}
 	case *ast.DefaultExpr:
-		// DefaultExpr.Accept does not visit its column name.
+		// DefaultExpr's traversal does not visit its column name.
 		if x.Name != nil {
 			c.names[x.Name.Name.L] = struct{}{}
 		}
@@ -98,12 +98,12 @@ func (c *generatedColumnRefCollector) Enter(n ast.Node) (ast.Node, bool) {
 			c.buildAll = true
 		}
 	}
-	return n, c.buildAll
+	return c.buildAll
 }
 
-// Leave implements ast.Visitor.
-func (*generatedColumnRefCollector) Leave(n ast.Node) (ast.Node, bool) {
-	return n, true
+// Leave implements ast.InPlaceVisitor.
+func (*generatedColumnRefCollector) Leave(ast.Node) bool {
+	return true
 }
 
 // virtualGeneratedColumnsToSkip returns, for each entry of columns, whether

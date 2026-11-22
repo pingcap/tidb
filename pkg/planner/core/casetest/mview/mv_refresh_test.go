@@ -49,6 +49,17 @@ func mviewRefreshTestContext() *mock.Context {
 	return sctx
 }
 
+type mviewRefreshZeroStartTSTxn struct{ kv.Transaction }
+
+func (mviewRefreshZeroStartTSTxn) StartTS() uint64 { return 0 }
+
+type mviewRefreshZeroStartTSContext struct{ *mock.Context }
+
+func (ctx mviewRefreshZeroStartTSContext) Txn(active bool) (kv.Transaction, error) {
+	txn, err := ctx.Context.Txn(active)
+	return mviewRefreshZeroStartTSTxn{txn}, err
+}
+
 func TestMViewSelectLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -459,6 +470,11 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 		[]string{"MViewDeltaMerge", "N/A", "root", "", "agg_deps:[count(*)@1->[0], count(b)@2->[1], sum(b)@3->[2,5]]"},
 		explain.Rows[0],
 	)
+
+	builder, _ = plannercore.NewPlanBuilder().Init(mviewRefreshZeroStartTSContext{sctx}, is, hint.NewQBHintHandler(nil))
+	p, err = builder.Build(context.Background(), resolve.NewNodeW(implementStmt))
+	require.EqualError(t, err, "RefreshMaterializedViewImplementStmt: invalid transaction start tso")
+	require.Nil(t, p)
 }
 
 func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -842,6 +844,61 @@ func TestDMLMaxExecutionTimeExpiresBeforeExecutorOpen(t *testing.T) {
 type canceledBuildTxnManager struct {
 	sessiontxn.TxnManager
 	onGetForUpdateTS func()
+}
+
+type batchActivationErrorTxnManager struct {
+	sessiontxn.TxnManager
+	failActivation *bool
+}
+
+func (m batchActivationErrorTxnManager) ActivateTxn() (kv.Transaction, error) {
+	if *m.failActivation {
+		return nil, fmt.Errorf("injected transaction activation failure")
+	}
+	return m.TxnManager.ActivateTxn()
+}
+
+func TestBatchReadOnlyActivationError(t *testing.T) {
+	for _, operation := range []string{"Insert", "Delete"} {
+		for _, afterBatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/afterBatch=%t", operation, afterBatch), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				writer := testkit.NewTestKit(t, store)
+				writer.MustExec("create table test.batch_activation(a int primary key)")
+				writer.MustExec("set global tidb_enable_batch_dml = 1")
+				defer writer.MustExec("set global tidb_enable_batch_dml = 0")
+				writer.MustExec("set tidb_dml_batch_size = 1")
+				sql := "insert into test.batch_activation values (1), (2)"
+				if operation == "Delete" {
+					writer.MustExec(sql)
+					sql = "delete from test.batch_activation"
+				}
+				writer.MustExec("set tidb_batch_" + strings.ToLower(operation) + " = 1")
+				failActivation := !afterBatch
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterBatch"+operation+"NewTxn", func(sessionctx.Context) {
+					failActivation = true
+				})
+				vars := writer.Session().GetSessionVars()
+				manager := sessiontxn.GetTxnManager(writer.Session())
+				defer func() { vars.TxnManager = manager }()
+				vars.TxnManager = batchActivationErrorTxnManager{TxnManager: manager, failActivation: &failActivation}
+				err := writer.ExecToErr(sql)
+				vars.TxnManager = manager
+				require.ErrorContains(t, err, "injected transaction activation failure")
+				require.Equal(t, afterBatch, exeerrors.ErrBatchInsertFail.Equal(err), "%v", err)
+				var expected []string
+				if operation == "Delete" {
+					expected = []string{"1", "2"}
+					if afterBatch {
+						expected = []string{"2"}
+					}
+				} else if afterBatch {
+					expected = []string{"1"}
+				}
+				writer.MustQuery("select * from test.batch_activation order by a").Check(testkit.Rows(expected...))
+			})
+		}
+	}
 }
 
 func (m canceledBuildTxnManager) GetStmtForUpdateTS() (uint64, error) {

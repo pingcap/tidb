@@ -245,6 +245,10 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+	// relatedTableForReadOnly maps table IDs to database names for read-only
+	// draining and lazy activation checks, including when MDL is enabled:
+	// database read-only jobs do not acquire table metadata locks.
+	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
 	// fair locking mode.
@@ -421,6 +425,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.relatedTableForReadOnly = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -1502,9 +1507,6 @@ type SessionVars struct {
 	// EnableMView indicates whether to enable materialized view DDL.
 	EnableMView bool
 
-	// EnableHistoricalStats indicates whether to enable historical statistics.
-	EnableHistoricalStats bool
-
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
 
@@ -1715,9 +1717,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-
-	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
-	EnableAsyncMergeGlobalStats bool
 
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
@@ -2959,15 +2958,15 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 }
 
 // PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
-// Including charset, collation, currentDB and sqlMode ensures that the cached
+// Including connection/client charsets, collation, currentDB and sqlMode ensures that the cached
 // PlanCacheStmt is only reused when the session context that affects parsing,
 // name-resolution and cacheability decisions is identical. sqlMode is included
 // because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
 // IsASTCacheable (which computes StmtCacheable) runs on that AST.
-func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+func PrepareDedupCacheKey(sql, charset, collation, currentDB, clientCharset string, sqlMode mysql.SQLMode) string {
 	var modeBuf [8]byte
 	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
-	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + clientCharset + "\x00" + string(modeBuf[:])
 }
 
 // GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
@@ -3767,6 +3766,20 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
 	return s.TxnCtx.relatedTableForMDL
+}
+
+// GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
+// drain transactions before a database read-only transition finishes.
+func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForReadOnly == nil {
+		txnCtx.relatedTableForReadOnly = new(sync.Map)
+	}
+	return txnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.

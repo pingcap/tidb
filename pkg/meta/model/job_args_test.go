@@ -132,6 +132,18 @@ func TestModifySchemaArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.PolicyRef, args.PolicyRef)
 		}
 	}
+	inArgs = &ModifySchemaArgs{
+		ReadOnly:   true,
+		DDLStartTS: 123,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaReadOnly)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.ReadOnly)
+		require.Equal(t, uint64(123), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {
@@ -678,9 +690,12 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 	revision := uint64(789)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
+			OldMLogID:                          501,
+			NewMLogID:                          502,
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			BuildSources:                       []MViewRefreshSource{{TableID: 20, MLogID: 30}, {TableID: 21}},
 			ExpectedOldMViewRevision:           &revision,
 			ExpectedLastSuccessReadTSO:         404,
 			ExpectedLastSuccessReadTSONull:     false,
@@ -690,7 +705,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 		{
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
 			ExpectedLastSuccessReadTSONull:     true,
 			NextRefreshUnixSeconds:             nil,
 			ShouldUpdateNextRefreshUnixSeconds: true,
@@ -698,7 +713,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 		{
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
-			BuildReadTSO:                       303,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
 			ExpectedLastSuccessReadTSONull:     true,
 			NextRefreshUnixSeconds:             nil,
 			ShouldUpdateNextRefreshUnixSeconds: false,

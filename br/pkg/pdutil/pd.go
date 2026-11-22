@@ -572,6 +572,9 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 	ctx context.Context,
 	pdConfigGenerators map[string]pauseConfigGenerator,
 ) (origin ClusterConfig, modified ClusterConfig, err error) {
+	failpoint.Inject("removeSchedulersError", func() {
+		failpoint.Return(ClusterConfig{}, ClusterConfig{}, errors.New("injected scheduler removal failure"))
+	})
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
 			opentracing.ChildOf(span.Context()))

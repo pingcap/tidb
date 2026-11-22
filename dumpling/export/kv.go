@@ -161,14 +161,21 @@ func (d *Dumper) loadKVTables(reader tidbmeta.Reader) ([]kvDatabaseTables, error
 		if database.State != model.StatePublic || !d.conf.TableFilter.MatchSchema(database.Name.O) {
 			continue
 		}
-		tables, err := reader.ListTables(d.tctx, database.ID)
+		tables := make([]*model.TableInfo, 0)
+		err := reader.IterTables(database.ID, func(table *model.TableInfo) error {
+			if err := d.tctx.Err(); err != nil {
+				return err
+			}
+			if table.State != model.StatePublic || table.IsView() || table.IsSequence() ||
+				!d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O) {
+				return nil
+			}
+			tables = append(tables, table)
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		tables = slices.DeleteFunc(tables, func(table *model.TableInfo) bool {
-			return table.State != model.StatePublic || table.IsView() || table.IsSequence() ||
-				!d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O)
-		})
 		if len(tables) == 0 && !d.conf.DumpEmptyDatabase {
 			continue
 		}

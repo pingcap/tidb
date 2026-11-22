@@ -87,6 +87,7 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionReadOnly
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -133,6 +134,10 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case DatabaseOptionReadOnly:
+		ctx.WriteKeyWord("READ ONLY")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -1805,18 +1810,22 @@ func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewStmt struct {
 	ddlNode
 
-	ViewName   *TableName
-	Cols       []CIStr
-	Comment    string
-	Refresh    *MViewRefreshClause
-	Attributes string
-	Options    []*TableOption
-	Select     ResultSetNode
+	IfNotExists bool
+	ViewName    *TableName
+	Cols        []CIStr
+	Comment     string
+	Refresh     *MViewRefreshClause
+	Attributes  string
+	Options     []*TableOption
+	Select      ResultSetNode
 }
 
 // Restore implements Node interface.
 func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
 	if err := n.ViewName.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
 	}
@@ -1949,6 +1958,7 @@ func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
+	IfNotExists       bool
 	Table             *TableName
 	Cols              []CIStr
 	Options           []*TableOption
@@ -1958,7 +1968,11 @@ type CreateMaterializedViewLogStmt struct {
 
 // Restore implements Node interface.
 func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteKeyWord("ON ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
 	}

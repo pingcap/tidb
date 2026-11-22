@@ -747,6 +747,8 @@ type RefreshMaterializedViewImplementStmt struct {
 	LastSuccessfulRefreshReadTSO uint64
 	TargetRefreshReadTSO         uint64
 	MLogRetainedLowerTSO         uint64
+	// RegisteredMLogIDs is the FAST baseline read under the refresh-info row lock.
+	RegisteredMLogIDs []int64
 }
 
 // Restore implements Node interface.

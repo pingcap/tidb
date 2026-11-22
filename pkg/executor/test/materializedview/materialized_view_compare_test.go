@@ -26,16 +26,58 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestCompareMaterializedView(t *testing.T) {
+	t.Run("OutputReadOnlyTransition", func(t *testing.T) {
+		for _, switchAt := range []int{1, 2, 0} {
+			authorized := switchAt == 0
+			store := testkit.CreateMockStore(t)
+			tk, alter := newMViewTestKit(t, store), testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create database output_db")
+			tk.MustExec("create table compare_source(a int not null)")
+			tk.MustExec("insert into compare_source values (1), (2)")
+			tk.MustExec("create materialized view log on compare_source(a)")
+			tk.MustExec("create materialized view compare_mv(a,cnt) as select a,count(1) from compare_source group by a")
+			tk.Session().GetSessionVars().InMViewMaintenance = true
+			mustExecRefreshInternal(t, tk, "delete from compare_mv")
+			mustExecRefreshInternal(t, tk, "commit")
+			tk.Session().GetSessionVars().InMViewMaintenance = false
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+			if authorized {
+				tk.MustExec("alter database output_db read only = 1")
+				t.Cleanup(privilege.WithInternalSchemaReadOnlyBypass(tk.Session(), "output_db"))
+			}
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/compareOutputBatchSize", "return(1)")
+			calls := 0
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeCompareOutputWriteTxn", func(sessionctx.Context) {
+				calls++
+				if calls == switchAt {
+					alter.MustExec("alter database output_db read only = 1")
+				}
+			})
+			sql := fmt.Sprintf("compare materialized view compare_mv as of timestamp '%s' output into table output_db.diff", nextCompareTimestamp(t, tk))
+			if authorized {
+				tk.MustExec(sql)
+				tk.MustQuery("select count(*) from output_db.diff").Check(testkit.Rows("2"))
+			} else {
+				require.ErrorContains(t, tk.ExecToErr(sql), "read only mode")
+				tk.MustQuery("select count(*) from output_db.diff").Check(testkit.Rows(fmt.Sprint(switchAt - 1)))
+			}
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/executor/beforeCompareOutputWriteTxn")
+		}
+	})
 	t.Run("PrivilegeSkeleton", testCompareMaterializedViewPrivilegeSkeleton)
 	t.Run("PrivilegeCheckBeforeSnapshotResolution", testCompareMaterializedViewPrivilegeCheckBeforeSnapshotResolution)
 	t.Run("SummaryAndOutput", testCompareMaterializedViewSummaryAndOutput)
+	t.Run("StaleReadOnlyTransaction", testCompareMaterializedViewStaleReadOnlyTransaction)
 	t.Run("UsesSnapshotMetadataAfterOutOfPlaceCutover", testCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover)
 	t.Run("OutputWriterBatchesByTxnSize", testCompareMaterializedViewOutputWriterBatchesByTxnSize)
 	t.Run("DropsOutputTableOnWriteFailure", testCompareMaterializedViewDropsOutputTableOnWriteFailure)
@@ -183,6 +225,57 @@ func testCompareMaterializedViewSummaryAndOutput(t *testing.T) {
 			"2 20 1 mview_vacuum",
 			"3 30 1 mview_excessive",
 		))
+}
+
+func testCompareMaterializedViewStaleReadOnlyTransaction(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := newMViewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_stale (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_stale values (1, 10)")
+	tk.MustExec("create materialized view log on t_compare_stale (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_stale (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_stale group by a")
+
+	compareTS := nextCompareTimestamp(t, tk)
+	compareSQL := fmt.Sprintf("compare materialized view test.mv_compare_stale as of timestamp '%s'", compareTS)
+	outputSQL := compareSQL + " output into table test.mv_compare_stale_output"
+	observer := newMViewTestKit(t, store)
+	observer.MustExec("insert into test.t_compare_stale values (2, 20)")
+	tk.MustExec(outputSQL)
+	observer.MustQuery("select count(*) from test.mv_compare_stale_output").Check(testkit.Rows("0"))
+	tk.MustExec("drop table mv_compare_stale_output")
+
+	for _, tc := range []struct {
+		name       string
+		statements []string
+	}{
+		{"StartTransaction", []string{fmt.Sprintf("start transaction read only as of timestamp '%s'", compareTS)}},
+		{"SetTransaction", []string{fmt.Sprintf("set transaction read only as of timestamp '%s'", compareTS), "begin"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := newMViewTestKit(t, store)
+			tk.MustExec("use test")
+			for _, stmt := range tc.statements {
+				tk.MustExec(stmt)
+			}
+			defer tk.MustExec("rollback")
+			vars := tk.Session().GetSessionVars()
+			startTS := vars.TxnCtx.StartTS
+			require.NotZero(t, startTS)
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10"))
+			require.Len(t, tk.MustQuery(compareSQL).Rows(), 1)
+
+			tk.MustGetErrMsg(outputSQL, "only support read-only statement during read-only staleness transactions")
+			require.True(t, vars.InTxn())
+			require.True(t, vars.TxnCtx.IsStaleness)
+			require.Equal(t, startTS, vars.TxnCtx.StartTS)
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10"))
+			observer.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 'mv_compare_stale_output'").Check(testkit.Rows("0"))
+
+			tk.MustExec("rollback")
+			tk.MustQuery("select a, b from t_compare_stale order by a").Check(testkit.Rows("1 10", "2 20"))
+		})
+	}
 }
 
 func testCompareMaterializedViewUsesSnapshotMetadataAfterOutOfPlaceCutover(t *testing.T) {

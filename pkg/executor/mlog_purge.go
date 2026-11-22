@@ -41,9 +41,12 @@ import (
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -246,7 +249,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	// history row. Once a running row exists, finalizeFailure updates that row.
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.Errorf("purge materialized view log: panic: %v", r)
+			err = util.GetRecoverError(r)
 		}
 		if err == nil || purgeHistRunningInserted || mlogID == 0 {
 			return
@@ -290,12 +293,28 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	failpoint.InjectCall("mvMaintainIsolationReadEnginesAppliedOnPurgeSession", variable.GetIsolationReadEnginesString(purgeSessVars), vars.MViewMaintainIsolationReadEngines)
 	purgeSQLExec := purgeSctx.GetSQLExecutor()
 
+	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
+	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
+				schemaName.O, baseTable.Name.O))
+		}
+		return errors.Trace(err)
+	}
+	// Do not retry acquisition: this statement may hold MDL needed by cutover.
+	// The later transaction cleanup runs before this advisory lock is released.
+	defer purgeSctx.ReleaseAdvisoryLock(advisoryLockName)
+
 	deleteSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
 	defer e.ReleaseSysSession(releaseCtx, deleteSctx)
 	deleteVars := deleteSctx.GetSessionVars()
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), schemaName.L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(deleteSctx, schemaName.L)()
+	}
 	restoreDeleteVars, err := applyMLogPurgeMaintenanceSessionVars(
 		deleteVars,
 		vars.MViewMaintainMemQuota,
@@ -308,15 +327,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	defer restoreDeleteVars()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeDeleteSession", deleteVars.MemQuotaQuery, vars.MViewMaintainMemQuota)
 	failpoint.InjectCall("mvMaintainIsolationReadEnginesAppliedOnPurgeDeleteSession", variable.GetIsolationReadEnginesString(deleteVars), vars.MViewMaintainIsolationReadEngines)
-	restoreTiFlashThreads, err := applyMLogPurgeDeleteTiFlashThreads(
-		deleteVars,
-		vars.MLogPurgeDeleteTiFlashThreads,
-		isInternalSQL,
-	)
-	if err != nil {
-		return err
-	}
-	defer restoreTiFlashThreads()
 	deleteSQLExec := statshandle.AttachStatsCollector(deleteSctx.GetSQLExecutor())
 	defer statshandle.DetachStatsCollector(deleteSQLExec)
 
@@ -473,6 +483,18 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			schemaName.O, mlogName.O, mlogShardRowIDBits, lockedLastPurgedTSO,
 			lockedLastPurgedTSOReady, safePurgeTSO, lockedNextTime,
 		)
+		// Keep COUNT at the session's original TiFlash concurrency.
+		if deletePlan == nil || deletePlan.pendingRows > 0 {
+			restoreTiFlashThreads, err := applyMLogPurgeDeleteTiFlashThreads(
+				deleteVars,
+				vars.MLogPurgeDeleteTiFlashThreads,
+				isInternalSQL,
+			)
+			if err != nil {
+				return finalizeFailure(err)
+			}
+			defer restoreTiFlashThreads()
+		}
 		if deletePlan == nil || (deletePlan.pendingRows > 0 && len(deletePlan.rowIDRanges) == 0) {
 			effectiveBatchSize = batchSize
 			for {
