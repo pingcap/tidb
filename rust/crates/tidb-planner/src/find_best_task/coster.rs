@@ -104,22 +104,11 @@ impl TaskCoster for Ver2Coster {
             Task::Mpp(_) => task
                 .plan()
                 .map_or(f64::MAX, |plan| self.price(plan, TaskType::Mpp).value()),
-            // Go getTaskPlanCost prices unfinished merge partials alone;
-            // after table-side attachment it includes both phases.
-            Task::Cop(cop) if !cop.idx_merge_part_plans.is_empty() => {
-                let mut cost = cop.idx_merge_part_plans.iter()
-                    .map(|partial| self.price(partial, TaskType::CopSingleRead).value())
-                    .sum::<f64>();
-                if cop.index_plan_finished {
-                    if let Some(table) = &cop.table_plan {
-                        cost += self.price(table, TaskType::CopSingleRead).value();
-                    }
-                }
-                cost
-            }
             Task::Cop(cop) => match (&cop.index_plan, &cop.table_plan) {
-                // Go `getTaskPlanCost` prices the table side with
-                // `getPlanCost(cop.TablePlan, ...)`, without `isChildOfINL`.
+                // Go `getTaskPlanCost` handles an index lookup specially: only
+                // the index side until it is finished, then both sides (the
+                // table side through `getPlanCost(cop.TablePlan, ...)`,
+                // without `isChildOfINL`).
                 (Some(index), Some(table)) if cop.index_plan_finished => {
                     tidb_planner_costusage::sum_cost_ver2(&[
                         self.price(index, TaskType::CopMultiRead),
@@ -128,9 +117,41 @@ impl TaskCoster for Ver2Coster {
                     .value()
                 }
                 (Some(index), Some(_)) => self.price(index, TaskType::CopMultiRead).value(),
-                (Some(index), None) => self.price(index, TaskType::CopSingleRead).value(),
-                (None, Some(table)) => self.price(table, TaskType::CopSingleRead).value(),
-                (None, None) => f64::MAX,
+                _ => {
+                    // Go: "TiFlash can run cop task as well, check whether this
+                    // cop task will run on TiKV or TiFlash."
+                    let mut task_type = TaskType::CopSingleRead;
+                    if let Some(table) = cop.table_plan.as_deref() {
+                        let mut leaf = table;
+                        while let Some(child) = leaf.children().first() {
+                            leaf = child;
+                        }
+                        if let PhysicalPlan::TableScan(scan) = leaf {
+                            if scan.store_type == tidb_kv::store_type::StoreType::TiFlash {
+                                task_type = TaskType::Mpp;
+                            }
+                        }
+                    }
+                    let partial_cost = || {
+                        cop.idx_merge_part_plans
+                            .iter()
+                            .map(|partial| self.price(partial, task_type).value())
+                            .sum::<f64>()
+                    };
+                    match task.plan() {
+                        // Go: "t.plan() == nil in index merge COP case, it
+                        // means indexPlanFinished is false".
+                        None => partial_cost(),
+                        Some(plan) => {
+                            let index_partial_cost = if cop.index_plan_finished && !cop.idx_merge_part_plans.is_empty() {
+                                partial_cost()
+                            } else {
+                                0.0
+                            };
+                            self.price(plan, task_type).value() + index_partial_cost
+                        }
+                    }
+                }
             },
         };
         Ok(cost)
@@ -234,67 +255,6 @@ impl Ver2Coster {
                 & (tidb_planner_costusage::COST_FLAG_RECALCULATE | tidb_planner_costusage::COST_FLAG_TRACE)
                 != 0
         })
-    }
-
-    /// Costs `plan` once, as `findBestTask` did when it enumerated it, and keeps
-    /// each operator's cost on the operator (Go's `PlanCostInit` /
-    /// `PlanCostVer2`). The coster must have its explain cache enabled: that
-    /// cache is how every priced node is found again.
-    pub fn record_enumeration_costs(&self, plan: &mut PhysicalPlan) {
-        let Some(cache) = &self.explain_costs else {
-            return;
-        };
-        let _ = self.plan_cost(plan, TaskType::Root, false);
-        fn record(
-            node: &mut PhysicalPlan,
-            cache: &std::collections::HashMap<usize, CostVer2>,
-        ) {
-            let key = std::ptr::from_ref::<PhysicalPlan>(node) as usize;
-            if let Some(cost) = cache.get(&key) {
-                node.base_mut().plan_cost_ver2 = Some(cost.clone());
-                node.base_mut().plan_cost_init = true;
-            }
-            for child in node.base_mut().children_mut() {
-                record(child, cache);
-            }
-            match node {
-                PhysicalPlan::TableReader(reader) => {
-                    if let Some(plan) = reader.table_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                }
-                PhysicalPlan::IndexReader(reader) => {
-                    if let Some(plan) = reader.index_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                }
-                PhysicalPlan::IndexLookUpReader(reader) => {
-                    if let Some(plan) = reader.index_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                    if let Some(plan) = reader.table_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                }
-                PhysicalPlan::IndexMergeReader(reader) => {
-                    for plan in &mut reader.partial_plans_raw {
-                        record(plan, cache);
-                    }
-                    if let Some(plan) = reader.table_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                }
-                PhysicalPlan::CTE(cte) => {
-                    record(&mut cte.seed_plan, cache);
-                    if let Some(plan) = cte.recur_plan.as_deref_mut() {
-                        record(plan, cache);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let costs = cache.borrow().clone();
-        record(plan, &costs);
     }
 
     /// Pins the cost option for every pricing this coster performs — the
@@ -402,9 +362,9 @@ impl Ver2Coster {
         // was enumerated keeps that cost, so an operator injected afterwards
         // (`InjectExtraProjection`) is priced against its children but never
         // adds to its ancestors' displayed cost.
-        if plan.base().plan_cost_init && !self.recalculates() {
-            if let Some(cost) = plan.base().plan_cost_ver2.as_ref() {
-                return cost.clone();
+        if !self.recalculates() {
+            if let Some(cost) = plan.base().plan_cost_ver2.get() {
+                return cost;
             }
         }
         let key = std::ptr::from_ref(plan) as usize;
@@ -421,6 +381,10 @@ impl Ver2Coster {
         if let Some(cache) = &self.explain_costs {
             cache.borrow_mut().insert(key, cost.clone());
         }
+        // Go: "p.PlanCostVer2 = ...; p.PlanCostInit = true", on every pricing,
+        // so a cop task priced by `getTaskPlanCost` keeps that cost when the
+        // reader built from it prices it again.
+        plan.base().plan_cost_ver2.set(cost.clone());
         cost
     }
 
@@ -1342,24 +1306,116 @@ mod tests {
             base: union_base,
             mpp: false,
         });
-        Ver2Coster::default()
-            .with_explain_cache()
-            .record_enumeration_costs(&mut union);
-        assert!(union.base().plan_cost_init);
-        let recorded = union
-            .base()
-            .plan_cost_ver2
-            .as_ref()
-            .expect("recorded cost")
-            .value();
+        let coster = Ver2Coster::default();
+        let priced = coster.plan_cost(&union, TaskType::Root, false).value();
+        let recorded = union.base().plan_cost_ver2.get().expect("recorded cost").value();
+        assert_eq!(recorded, priced);
         assert!(recorded > 0.0);
         // Go `GetPlanCostVer2`: an operator put under it after enumeration
         // (`InjectExtraProjection`) does not move the cost EXPLAIN shows.
         union.base_mut().children_mut()[1] = point(5, false);
-        let coster = Ver2Coster::default();
         assert_eq!(coster.plan_cost(&union, TaskType::Root, false).value(), recorded);
-        union.base_mut().plan_cost_init = false;
-        assert_ne!(coster.plan_cost(&union, TaskType::Root, false).value(), recorded);
+        let recalculated = coster
+            .plan_cost_with_option(
+                &union,
+                TaskType::Root,
+                false,
+                *PlanCostOption::new().with_cost_flag(tidb_planner_costusage::COST_FLAG_RECALCULATE),
+            )
+            .value();
+        assert_ne!(recalculated, recorded);
+    }
+
+    /// Go `getTaskPlanCost`: a single-read cop task whose leaf is a TiFlash
+    /// scan is priced as `MppTaskType`, and its operators keep that cost.
+    #[test]
+    fn tiflash_cop_task_is_priced_as_mpp() {
+        let mut base = BasePhysicalPlan::with_id(1, "TableScan", 0);
+        base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+        base.base.set_schema(Some(Schema::new(vec![Column::new(
+            1, FieldType::new(FieldTypeCode::LongLong),
+        )])));
+        let scan = || {
+            let mut topn_base = BasePhysicalPlan::with_id(2, "TopN", 0);
+            topn_base.base.set_stats(Some(StatsInfo::new(10.0, [])));
+            topn_base.base.set_schema(base.base.schema().cloned());
+            topn_base.set_children(vec![PhysicalPlan::TableScan(
+                tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    base: base.clone(),
+                    store_type: tidb_kv::store_type::StoreType::TiFlash,
+                    ..Default::default()
+                },
+            )]);
+            PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
+                base: topn_base,
+                count: 10,
+                ..Default::default()
+            })
+        };
+        let coster = Ver2Coster::default();
+        let cop = Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+            table_plan: Some(Box::new(scan())),
+            index_plan_finished: true,
+            ..Default::default()
+        });
+        let cost = coster.task_cost(&cop).unwrap();
+        assert_eq!(cost, Ver2Coster::default().plan_cost(&scan(), TaskType::Mpp, false).value());
+        assert_ne!(cost, Ver2Coster::default().plan_cost(&scan(), TaskType::CopSingleRead, false).value());
+    }
+
+    /// Go `getTaskPlanCost` prices an index-lookup cop task's row-id scan
+    /// without `isChildOfINL` and the scan keeps that cost (`PlanCostInit`),
+    /// so the `IndexLookUpReader` later built from the task reuses it instead
+    /// of the row-id formula, which skips the `MinNumRows` clamp.
+    #[test]
+    fn index_lookup_reader_reuses_the_cop_task_cost_of_its_table_side() {
+        fn scan(index: bool) -> PhysicalPlan {
+            let mut base = BasePhysicalPlan::with_id(if index { 1 } else { 2 }, "Scan", 0);
+            base.base.set_stats(Some(StatsInfo::new(0.5, [])));
+            base.base.set_schema(Some(Schema::new(vec![Column::new(
+                1, FieldType::new(FieldTypeCode::LongLong),
+            )])));
+            if index {
+                PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
+                    base,
+                    ..Default::default()
+                })
+            } else {
+                PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
+                    base,
+                    ..Default::default()
+                })
+            }
+        }
+        fn reader(index: PhysicalPlan, table: PhysicalPlan) -> PhysicalPlan {
+            PhysicalPlan::IndexLookUpReader(tidb_planner_core_operator_physicalop::PhysicalIndexLookUpReader {
+                index_plan: Some(Box::new(index)),
+                table_plan: Some(Box::new(table)),
+                ..Default::default()
+            })
+        }
+        let coster = Ver2Coster::default();
+        let cop = Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+            index_plan: Some(Box::new(scan(true))),
+            table_plan: Some(Box::new(scan(false))),
+            index_plan_finished: true,
+            ..Default::default()
+        });
+        coster.task_cost(&cop).unwrap();
+        let Task::Cop(cop) = cop else { unreachable!() };
+        let table = *cop.table_plan.unwrap();
+        let task_priced = table.base().plan_cost_ver2.get().expect("priced by the task").value();
+        let row_id_priced = coster.plan_cost(&scan(false), TaskType::CopMultiRead, true).value();
+        assert_ne!(task_priced, row_id_priced);
+
+        let from_task = reader(*cop.index_plan.unwrap(), table);
+        let fresh = reader(scan(true), scan(false));
+        let from_task_cost = coster.plan_cost(&from_task, TaskType::Root, false).value();
+        let fresh_cost = coster.plan_cost(&fresh, TaskType::Root, false).value();
+        let PhysicalPlan::IndexLookUpReader(built) = &from_task else { unreachable!() };
+        let table = built.table_plan.as_deref().unwrap();
+        assert_eq!(table.base().plan_cost_ver2.get().unwrap().value(), task_priced);
+        assert_ne!(from_task_cost, fresh_cost);
     }
 
     #[test]

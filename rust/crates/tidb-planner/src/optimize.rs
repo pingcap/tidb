@@ -613,17 +613,14 @@ pub fn physical_optimize<C: OptimizeContext>(
             ]),
         )
     })?;
+    // Go physicalOptimize: "cost, err = getPlanCost(t.Plan(), ...)". Each
+    // operator keeps the cost it was first priced with (`PlanCostInit`), while
+    // `findBestTask` compared tasks or here, and EXPLAIN shows that cost even
+    // where `postOptimize` later puts an operator between a parent and its
+    // child.
     let cost = coster
         .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
         .value();
-    // Go caches each operator's cost while `findBestTask` compares tasks
-    // (`PlanCostInit`), and EXPLAIN shows that cost for the finished plan even
-    // where `postOptimize` later put an operator between a parent and its
-    // child. Keep the enumeration-time costs on the nodes the same way.
-    Ver2Coster::from_env(optimizer_cost_env)
-        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force())
-        .with_explain_cache()
-        .record_enumeration_costs(&mut physical);
     // Go physicalOptimize: "collect the warnings from task". Every task
     // warning is a planner `ErrInternal` (hint warnings), code 1815.
     for warning in task.warnings().get_warnings() {

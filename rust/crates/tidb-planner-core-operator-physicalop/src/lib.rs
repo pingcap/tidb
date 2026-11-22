@@ -96,14 +96,43 @@ pub struct BasePhysicalPlan {
     pub plan_cost_init: bool,
     /// Go `PlanCost`, the model-ver1 cost.
     pub plan_cost: f64,
-    /// Go `PlanCostVer2`, `plan-cache-clone:"shallow"`.
-    pub plan_cost_ver2: Option<CostVer2>,
+    /// Go `PlanCostVer2`, `plan-cache-clone:"shallow"`, with the
+    /// `PlanCostInit` that guards it (see [`PlanCostVer2Cache`]).
+    pub plan_cost_ver2: PlanCostVer2Cache,
     /// Go `probeParents`: the index joins and applies with this operator on
     /// their inner side, which is what makes a `StatsInfo` row count a
     /// per-probe rather than a total count.
     probe_parents: Vec<i32>,
     /// Go `TiFlashFineGrainedShuffleStreamCount`.
     pub tiflash_fine_grained_shuffle_stream_count: u64,
+}
+
+/// Go `PlanCostInit` + `PlanCostVer2`: `GetPlanCostVer2` stores the cost on
+/// the operator the first time it prices it, and every later pricing returns
+/// that cost unless `CostFlagRecalculate` is set. Go writes the fields through
+/// the operator pointer the task holds; pricing here reads the plan through a
+/// shared reference, so the cache is interior-mutable. A clone copies the
+/// cached cost, as Go's shallow copy does.
+#[derive(Debug, Default)]
+pub struct PlanCostVer2Cache(std::sync::Mutex<Option<CostVer2>>);
+
+impl PlanCostVer2Cache {
+    /// The cached cost, `None` while `PlanCostInit` is false.
+    #[must_use]
+    pub fn get(&self) -> Option<CostVer2> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    /// Go `p.PlanCostVer2 = cost; p.PlanCostInit = true`.
+    pub fn set(&self, cost: CostVer2) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cost);
+    }
+}
+
+impl Clone for PlanCostVer2Cache {
+    fn clone(&self) -> Self {
+        Self(std::sync::Mutex::new(self.get()))
+    }
 }
 
 impl BasePhysicalPlan {

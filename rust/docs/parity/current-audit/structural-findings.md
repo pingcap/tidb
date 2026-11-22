@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-22; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-22.md](structural-audit-2026-11-22.md).
 
-**2 unresolved: 2 open, 0 partial.**
+**1 unresolved: 1 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -36,7 +36,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| R05 | open | Go caches each operator's ver2 cost on its first pricing (`PlanCostInit`) and returns the cached value in later contexts unless `CostFlagRecalculate` is set: an index-lookup cop task compared through `getTaskPlanCost` prices its row-id scan without `isChildOfINL` (range-scan factor, `MinNumRows`/`MinRowSize` clamps), and the IndexLookUp reader built from that task reuses the cached value. This coster prices every context afresh, so the reader's table side uses the row-id formula without the clamps (the costs differ when the row-id scan estimates fewer than one row or a narrow row, or when the row-id and range factors differ). Rust: `tidb-planner/src/find_best_task/coster.rs` (no per-operator cost cache outside EXPLAIN's) | `pkg/planner/core/plan_cost_ver2.go` (`PlanCostInit` checks), `pkg/planner/core/find_best_task.go` (`getTaskPlanCost`) |
 
 ### Executor, DML and expressions
 
