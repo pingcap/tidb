@@ -3759,13 +3759,21 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	mu := &s.TxnCtx.tdmLock
-	mu.Lock()
-	defer mu.Unlock()
-	if s.TxnCtx.relatedTableForMDL == nil {
-		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	return txnCtx.GetRelatedTableForMDL()
+}
+
+// GetRelatedTableForMDL returns the table set belonging to this transaction.
+// Callers holding SessionVars.TxnCtxMu can use it without acquiring that mutex again.
+func (tc *TransactionContext) GetRelatedTableForMDL() *sync.Map {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+	if tc.relatedTableForMDL == nil {
+		tc.relatedTableForMDL = new(sync.Map)
 	}
-	return s.TxnCtx.relatedTableForMDL
+	return tc.relatedTableForMDL
 }
 
 // GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
@@ -4020,7 +4028,7 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 	if sv.TxnCtx == nil {
 		return
 	}
-	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+	sv.TxnCtx.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
 		for jobID, jobMDL := range jobs {
 			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
 				delete(jobs, jobID)

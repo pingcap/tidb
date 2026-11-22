@@ -904,7 +904,7 @@ func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 // countForPanic records the error count for DDL job.
 func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
-	if job.State == model.JobStateRollingback {
+	if job.State == model.JobStateRollingback && !needsSchemaReadOnlyRollback(job) {
 		job.State = model.JobStateCancelled
 	} else {
 		job.State = model.JobStateCancelling
@@ -918,7 +918,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	}
 	errorCount := vardef.GetDDLErrorCountLimit()
 
-	if job.ErrorCount > errorCount {
+	if job.ErrorCount > errorCount && !needsSchemaReadOnlyRollback(job) {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
 		logger.Warn(msg)
 		job.Error = toTError(errors.New(msg))
@@ -998,6 +998,7 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
+			err = errors.New("panic in handling DDL job")
 			w.countForPanic(jobCtx, job)
 		}, false)
 

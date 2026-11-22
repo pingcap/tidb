@@ -325,11 +325,6 @@ func (e *executor) CreateSchemaWithInfo(
 	dbInfo *model.DBInfo,
 	onExist OnExist,
 ) error {
-	if dbInfo.ReadOnly {
-		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
-			return err
-		}
-	}
 	is := e.infoCache.GetLatest()
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
@@ -341,6 +336,12 @@ func (e *executor) CreateSchemaWithInfo(
 			return nil
 		case OnExistError, OnExistReplace:
 			// FIXME: can we implement MariaDB's CREATE OR REPLACE SCHEMA?
+			return err
+		}
+	}
+
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
 			return err
 		}
 	}

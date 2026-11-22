@@ -131,6 +131,11 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 		schema              string
 		checkSchemaReadOnly bool
 	}
+	type tableKey struct {
+		schema string
+		name   string
+	}
+	seenTables := make(map[tableKey]struct{}, len(jobWs))
 	mergeableJobWs := make(map[mergeKey][]*JobWrapper, len(jobWs))
 	for _, jobW := range jobWs {
 		// we don't merge jobs with ID pre-allocated.
@@ -144,6 +149,13 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 			resJobWs = append(resJobWs, jobW)
 			continue
 		}
+		// Duplicate creates must retain submission order even when their
+		// read-only checks put them into different merge groups.
+		table := tableKey{schema: jobW.SchemaName, name: args.TableInfo.Name.L}
+		if _, exists := seenTables[table]; exists {
+			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+		}
+		seenTables[table] = struct{}{}
 		// CreateTables only support tables of same schema now.
 		key := mergeKey{schema: jobW.SchemaName, checkSchemaReadOnly: jobW.CheckSchemaReadOnly}
 		mergeableJobWs[key] = append(mergeableJobWs[key], jobW)

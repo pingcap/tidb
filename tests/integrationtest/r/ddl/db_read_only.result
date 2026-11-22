@@ -30,58 +30,38 @@ Field	Type	Null	Key	Default	Extra
 CATALOG_NAME	varchar(64)	YES		NULL	
 SCHEMA_NAME	varchar(64)	YES		NULL	
 OPTIONS	varchar(256)	YES		NULL	
-select * from information_schema.schemata_extensions;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
 CATALOG_NAME	SCHEMA_NAME	OPTIONS
 def	db_read_only	
 def	db_read_only_1	
-def	ddl__db_read_only	
-def	INFORMATION_SCHEMA	
-def	METRICS_SCHEMA	
-def	mysql	
-def	PERFORMANCE_SCHEMA	
-def	sys	
-def	test	
-create schema aa;
-create schema bb;
-create schema cc;
-alter schema bb read only 1;
-select * from information_schema.schemata_extensions;
+create schema db_read_only_meta_a;
+create schema db_read_only_meta_b;
+create schema db_read_only_meta_c;
+alter schema db_read_only_meta_b read only 1;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
 CATALOG_NAME	SCHEMA_NAME	OPTIONS
-def	aa	
-def	bb	READ ONLY=1
-def	cc	
 def	db_read_only	
 def	db_read_only_1	
-def	ddl__db_read_only	
-def	INFORMATION_SCHEMA	
-def	METRICS_SCHEMA	
-def	mysql	
-def	PERFORMANCE_SCHEMA	
-def	sys	
-def	test	
-alter schema bb read only 0;
-select * from information_schema.schemata_extensions;
+def	db_read_only_meta_a	
+def	db_read_only_meta_b	READ ONLY=1
+def	db_read_only_meta_c	
+alter schema db_read_only_meta_b read only 0;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
 CATALOG_NAME	SCHEMA_NAME	OPTIONS
-def	aa	
-def	bb	
-def	cc	
 def	db_read_only	
 def	db_read_only_1	
-def	ddl__db_read_only	
-def	INFORMATION_SCHEMA	
-def	METRICS_SCHEMA	
-def	mysql	
-def	PERFORMANCE_SCHEMA	
-def	sys	
-def	test	
+def	db_read_only_meta_a	
+def	db_read_only_meta_b	
+def	db_read_only_meta_c	
 alter schema db_read_only read only 1;
 alter database db_read_only charset gbk;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter database db_read_only collate utf8mb4_roman_ci;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
-create placement policy p1 followers=4;
-alter database db_read_only placement policy p1;
+create placement policy db_read_only_policy followers=4;
+alter database db_read_only placement policy db_read_only_policy;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
+drop placement policy db_read_only_policy;
 alter database db_read_only set tiflash replica 1;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 drop database db_read_only;
@@ -130,12 +110,9 @@ alter table members truncate partition p1980;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table members add partition (partition `p1990to2010` values less than (2010));
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
-alter table members reorganize partition `p1990to2010` into
-(partition p1990 values less than (2000),
-partition p2000 values less than (2010),
-partition p2010 values less than (2020),
-partition p2020 values less than (2030),
-partition pMax values less than (maxvalue));
+alter table members reorganize partition p1990 into
+(partition p1990_1995 values less than (1995),
+partition p1995_2000 values less than (2000));
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 rename table t to t_old;
 Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
@@ -171,6 +148,9 @@ Error 3989 (HY000): Schema 'db_read_only' is in read only mode.
 alter table t compact tiflash replica;
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
+alter table members reorganize partition p1990 into
+(partition p1990_1995 values less than (1995),
+partition p1995_2000 values less than (2000));
 drop database if exists db1;
 create database db1;
 use db1;
@@ -236,7 +216,7 @@ Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete db2.t2 from db1.t1, db2.t2;
 delete db1.t1 from db1.t1, db2.t2;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
-delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+delete t1 from t1, t1 as t2 where t1.a = t2.a and t1.id > t2.id;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
@@ -254,7 +234,7 @@ update temp set a = 1;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
-update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
+update t1 join db2.t2 set t1.a=1 where t1.id=db2.t2.id;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 analyze table t1;
 with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
@@ -311,6 +291,8 @@ Error 3989 (HY000): Schema 'db1' is in read only mode.
 update db2.parent_3 set id = 10;
 Error 3989 (HY000): Schema 'db1' is in read only mode.
 alter schema db1 read only 0;
+delete t1 from t1, t1 as t2 where t1.a = t2.a and t1.id > t2.id;
+update t1 join db2.t2 set t1.a=1 where t1.id=db2.t2.id;
 drop database if exists read_only;
 create database read_only;
 use read_only;
@@ -642,3 +624,12 @@ purge materialized view log on ro_maintenance.t;
 Error 3989 (HY000): Schema 'ro_maintenance' is in read only mode.
 alter database ro_maintenance read only = 0;
 drop database ro_maintenance;
+use test;
+drop database read_only;
+drop database db1;
+drop database db2;
+drop database db_read_only;
+drop database db_read_only_1;
+drop database db_read_only_meta_a;
+drop database db_read_only_meta_b;
+drop database db_read_only_meta_c;

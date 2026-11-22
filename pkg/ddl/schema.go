@@ -56,12 +56,6 @@ func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	dbInfo := args.DBInfo
-	if dbInfo.ReadOnly {
-		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-	}
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
@@ -72,6 +66,13 @@ func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			job.State = model.JobStateCancelled
 		}
 		return ver, errors.Trace(err)
+	}
+
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(jobCtx.ctx); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
@@ -219,6 +220,9 @@ func checkSchemaReadOnlyCompatibility(ctx context.Context) error {
 }
 
 func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// Publish the database flag and its schema diff atomically, including when
+	// a step panics after updating the database metadata.
+	jobCtx.mustRollbackTxnOnError = true
 	args, err := model.GetModifySchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled

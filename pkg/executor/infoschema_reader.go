@@ -4278,6 +4278,7 @@ func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context
 		} else {
 			record = append(record, types.NewStringDatum(""))
 		}
+		e.recordMemoryConsume(record)
 		rows = append(rows, record)
 	}
 	e.rows = rows

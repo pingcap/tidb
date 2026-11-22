@@ -18,6 +18,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,50 +105,58 @@ func TestNewSessionVars(t *testing.T) {
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
 
-	t.Run("read-only tracking waits for transaction replacement", func(t *testing.T) {
-		vars := NewSessionVars(nil)
-		vars.TxnCtxMu.Lock()
-		done := make(chan struct{})
-		go func() {
-			vars.GetRelatedTableForReadOnly()
-			close(done)
-		}()
-		select {
-		case <-done:
-			vars.TxnCtxMu.Unlock()
-			t.Fatal("transaction tracking accessed TxnCtx without its mutex")
-		case <-time.After(50 * time.Millisecond):
-		}
-		vars.TxnCtx = &TransactionContext{}
-		vars.TxnCtxMu.Unlock()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatal("tracking did not resume after transaction replacement")
-		}
-		require.NotNil(t, vars.TxnCtx.relatedTableForReadOnly)
-	})
-
-	t.Run("read-only tracking during transaction replacement", func(t *testing.T) {
-		vars := NewSessionVars(nil)
-		done := make(chan struct{}, 2)
-		go func() {
-			defer func() { done <- struct{}{} }()
-			for range 1000 {
+	for name, getTables := range map[string]func(*SessionVars) *sync.Map{
+		"read-only": (*SessionVars).GetRelatedTableForReadOnly,
+		"MDL":       (*SessionVars).GetRelatedTableForMDL,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Run("tracking waits for transaction replacement", func(t *testing.T) {
+				vars := NewSessionVars(nil)
 				vars.TxnCtxMu.Lock()
+				done := make(chan struct{})
+				go func() {
+					getTables(vars)
+					close(done)
+				}()
+				select {
+				case <-done:
+					vars.TxnCtxMu.Unlock()
+					t.Fatal("transaction tracking accessed TxnCtx without its mutex")
+				case <-time.After(50 * time.Millisecond):
+				}
 				vars.TxnCtx = &TransactionContext{}
 				vars.TxnCtxMu.Unlock()
-			}
-		}()
-		go func() {
-			defer func() { done <- struct{}{} }()
-			for range 1000 {
-				vars.GetRelatedTableForReadOnly().Store(int64(1), "test")
-			}
-		}()
-		<-done
-		<-done
-	})
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Fatal("tracking did not resume after transaction replacement")
+				}
+				require.Same(t, getTables(vars), getTables(vars))
+			})
+
+			t.Run("tracking during transaction replacement", func(t *testing.T) {
+				vars := NewSessionVars(nil)
+				done := make(chan struct{}, 2)
+				go func() {
+					defer func() { done <- struct{}{} }()
+					for range 1000 {
+						vars.TxnCtxMu.Lock()
+						vars.TxnCtx = &TransactionContext{}
+						vars.TxnCtxMu.Unlock()
+					}
+				}()
+				go func() {
+					defer func() { done <- struct{}{} }()
+					for range 1000 {
+						getTables(vars).Store(int64(1), "test")
+					}
+				}()
+				<-done
+				<-done
+			})
+
+		})
+	}
 
 	// MDL cleanup must not discard the independent read-only tracking set,
 	// while ending the transaction must discard it.

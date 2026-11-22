@@ -30,6 +30,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -74,6 +75,36 @@ func waitSchemaReadOnlyJobs(t *testing.T, tk *testkit.TestKit, sql string, ready
 		case <-ctx.Done():
 			t.Fatal("DDL job was not observed before the deadline")
 		}
+	}
+}
+
+// waitSchemaReadOnlyWorkers also stops the DDL executor on failure: cancelling
+// a statement context alone does not cancel its outstanding background DDL job.
+func waitSchemaReadOnlyWorkers(t *testing.T, wg *sync.WaitGroup, store kv.Storage) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return
+	case <-time.After(time.Second):
+	}
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	stopped := make(chan error, 1)
+	go func() { stopped <- dom.DDL().Stop() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Error("read-only test workers did not stop after DDL shutdown")
+	}
+	select {
+	case err := <-stopped:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Error("DDL shutdown exceeded the cleanup deadline")
 	}
 }
 
@@ -128,7 +159,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					var wg sync.WaitGroup
-					defer func() { release(); conn.Close(); cancel(); wg.Wait() }()
+					defer func() { release(); cancel(); waitSchemaReadOnlyWorkers(t, &wg, store); conn.Close() }()
 					viewDone := make(chan error, 1)
 					alterDone := make(chan error, 1)
 					wg.Add(1)
@@ -236,7 +267,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 					}
 				})
 				var wg sync.WaitGroup
-				defer func() { release(); wg.Wait() }()
+				defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 				writeDone := make(chan error, 1)
 				alterDone := make(chan error, 1)
 				wg.Add(1)
@@ -328,7 +359,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			_, err := querySchemaReadOnlyTest(ctx, writer, "select nextval(ro.s)")
 			done <- err
 		}()
-		defer func() { release(); wg.Wait() }()
+		defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
@@ -342,7 +373,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			require.NoError(t, err)
 		case <-time.After(5 * time.Second):
 			release()
-			wg.Wait()
+			waitSchemaReadOnlyWorkers(t, &wg, store)
 			t.Fatal("ALTER waited for the paused writer")
 		}
 		release()
@@ -605,7 +636,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			for _, txn := range txns {
 				txn.MustExec("rollback")
 			}
-			wg.Wait()
+			waitSchemaReadOnlyWorkers(t, &wg, store)
 		}()
 		done := make(chan error, 1)
 		wg.Add(1)
@@ -642,7 +673,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			<-resume
 		})
 		var wg sync.WaitGroup
-		defer func() { release(); wg.Wait() }()
+		defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		done := make(chan error, 1)
 		wg.Add(1)
 		go func() { defer wg.Done(); done <- writer.ExecToErr("insert into ro.t values (1)") }()
@@ -665,7 +696,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 			require.NoError(t, err)
 		case <-time.After(5 * time.Second):
 			release()
-			wg.Wait()
+			waitSchemaReadOnlyWorkers(t, &wg, store)
 			t.Fatal("ALTER waited for the paused writer")
 		}
 		release()
@@ -696,7 +727,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 					}
 				})
 				var wg sync.WaitGroup
-				defer func() { release(); wg.Wait() }()
+				defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 				alterDone := make(chan error, 1)
 				createDone := make(chan error, 1)
 				wg.Add(1)
@@ -741,7 +772,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		release := sync.OnceFunc(func() { close(resume) })
 		var txnID atomic.Uint64
 		var wg sync.WaitGroup
-		defer func() { release(); wg.Wait() }()
+		defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		ttlDone := make(chan error, 1)
 		wg.Add(1)
 		go func() {
@@ -820,7 +851,7 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		firstDone := make(chan error, 1)
 		secondDone := make(chan error, 1)
 		var wg sync.WaitGroup
-		defer func() { txn.MustExec("rollback"); wg.Wait() }()
+		defer func() { txn.MustExec("rollback"); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		wg.Add(1)
 		go func() { defer wg.Done(); firstDone <- first.ExecToErr("alter database ro read only = 1") }()
 		require.Eventually(t, observed.Load, 5*time.Second, 10*time.Millisecond)
@@ -879,7 +910,11 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		var wg sync.WaitGroup
-		defer func() { txn.Session().RollbackTxn(context.Background()); cancel(); wg.Wait() }()
+		defer func() {
+			txn.Session().RollbackTxn(context.Background())
+			cancel()
+			waitSchemaReadOnlyWorkers(t, &wg, store)
+		}()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -961,7 +996,7 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() { defer wg.Done(); done <- writer.ExecToErr("insert into ro.t values (1)") }()
-		defer func() { release(); wg.Wait() }()
+		defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		select {
 		case <-planned:
 		case <-time.After(5 * time.Second):
@@ -975,7 +1010,7 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 			require.NoError(t, err)
 		case <-time.After(5 * time.Second):
 			release()
-			wg.Wait()
+			waitSchemaReadOnlyWorkers(t, &wg, store)
 			t.Fatal("ALTER waited for the paused writer")
 		}
 		release()
@@ -1039,6 +1074,22 @@ func TestSchemaReadOnlyRollbackAfterPanic(t *testing.T) {
 			if !readOnly {
 				tk.MustExec("alter database ro read only = 1")
 			}
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+			require.True(t, ok)
+			observed := make(chan bool, 1)
+			var checked atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type == model.ActionModifySchemaReadOnly && job.IsCancelling() && checked.CompareAndSwap(false, true) {
+					err := kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+						info, err := meta.NewMutator(txn).GetDatabase(db.ID)
+						if err == nil {
+							observed <- info.ReadOnly
+						}
+						return err
+					})
+					require.NoError(t, err)
+				}
+			})
 			var panicked atomic.Bool
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, _ *error) {
 				if job.Type == model.ActionModifySchemaReadOnly && panicked.CompareAndSwap(false, true) {
@@ -1052,9 +1103,79 @@ func TestSchemaReadOnlyRollbackAfterPanic(t *testing.T) {
 			err := tk.ExecToErr(fmt.Sprintf("alter database ro read only = %d", readOnlyValue))
 			require.Error(t, err)
 			require.True(t, panicked.Load())
-			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+			select {
+			case flag := <-observed:
+				require.Equal(t, !readOnly, flag, "a panic must discard metadata before starting rollback")
+			default:
+				t.Fatal("rollback was not observed")
+			}
+			db, ok = dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
 			require.True(t, ok)
 			require.Equal(t, !readOnly, db.ReadOnly)
+		})
+	}
+}
+
+func TestSchemaReadOnlyRollbackRetries(t *testing.T) {
+	for _, panicOnRollback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("panic=%t", panicOnRollback), func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create database ro")
+			tk.MustExec("set global tidb_ddl_error_count_limit = 1")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrorOnModifySchemaReadOnlyStatePendingReadOnly", "return(true)")
+			var injected atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+				if job.Type == model.ActionModifySchemaReadOnly && job.IsCancelling() && injected.CompareAndSwap(false, true) {
+					if panicOnRollback {
+						panic("transient read-only rollback panic")
+					}
+					*err = errors.New("transient read-only rollback error")
+				}
+			})
+			require.Error(t, tk.ExecToErr("alter database ro read only = 1"))
+			require.True(t, injected.Load())
+			tk.MustQuery("show create database ro").Check(testkit.Rows("ro CREATE DATABASE `ro` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+			tk.MustExec("create table ro.writable(a int)")
+		})
+	}
+}
+
+func TestSchemaReadOnlyBatchDeleteForeignKeys(t *testing.T) {
+	for _, cascade := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cascade=%t", cascade), func(t *testing.T) {
+			enableReadOnlyDDLFp(t)
+			store := testkit.CreateMockStore(t)
+			writer, alter := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+			writer.MustExec("create database ro")
+			writer.MustExec("create table ro.p(id int primary key)")
+			onDelete := "restrict"
+			if cascade {
+				onDelete = "cascade"
+			}
+			writer.MustExec("create table ro.c(id int, foreign key(id) references ro.p(id) on delete " + onDelete + ")")
+			writer.MustExec("insert into ro.p values (1), (2)")
+			writer.MustExec("insert into ro.c values (2)")
+			writer.MustExec("set global tidb_enable_batch_dml = 1")
+			defer writer.MustExec("set global tidb_enable_batch_dml = 0")
+			writer.MustExec("set tidb_batch_delete = 1")
+			writer.MustExec("set tidb_dml_batch_size = 1")
+			var once sync.Once
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterBatchDeleteNewTxn", func(sessionctx.Context) {
+				if cascade {
+					once.Do(func() { alter.MustExec("alter database ro read only = 1") })
+				}
+			})
+			if cascade {
+				writer.MustExec("delete from ro.p order by id")
+				writer.MustQuery("select * from ro.p").Check(testkit.Rows())
+				writer.MustQuery("select * from ro.c").Check(testkit.Rows())
+			} else {
+				writer.MustGetErrCode("delete from ro.p order by id", 1451)
+				writer.MustQuery("select * from ro.p order by id").Check(testkit.Rows("1", "2"))
+				writer.MustQuery("select * from ro.c").Check(testkit.Rows("2"))
+			}
 		})
 	}
 }
@@ -1103,7 +1224,7 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 				<-releaseFirst
 			}
 		})
-		t.Cleanup(func() { release(); wg.Wait() })
+		t.Cleanup(func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) })
 		firstDone := make(chan error, 1)
 		secondDone := make(chan error, 1)
 		wg.Add(1)
@@ -1295,10 +1416,12 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 	})
 	t.Run("MixedVersion", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
-		store := testkit.CreateMockStore(t)
+		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("create database ro")
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", "return(`{\"new\":{\"schema_read_only\":true},\"old\":{}}`)")
+		err := dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), &model.DBInfo{Name: ast.NewCIStr("ro"), ReadOnly: true}, ddl.OnExistIgnore)
+		require.NoError(t, err)
 		require.ErrorContains(t, tk.ExecToErr("alter database ro read only = 1"), "do not support database read-only")
 		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
 		tk.MustExec("alter database ro read only = 1")
@@ -1456,7 +1579,7 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			once.Do(func() { close(started); <-resume })
 		})
 		var wg sync.WaitGroup
-		defer func() { release(); wg.Wait() }()
+		defer func() { release(); waitSchemaReadOnlyWorkers(t, &wg, store) }()
 		refreshDone, alterDone := make(chan error, 1), make(chan error, 1)
 		wg.Add(1)
 		go func() { defer wg.Done(); refreshDone <- writer.ExecToErr("refresh materialized view ro.mv fast") }()

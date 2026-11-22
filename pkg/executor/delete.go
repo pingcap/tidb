@@ -93,7 +93,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDMLSize := e.Ctx().GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
-		vardef.EnableBatchDML.Load() && batchDMLSize > 0
+		vardef.EnableBatchDML.Load() && batchDMLSize > 0 &&
+		// FK checks and cascades run after Next; committing batches first could
+		// leave parent deletions committed without their required child changes.
+		len(e.fkChecks) == 0 && len(e.fkCascades) == 0
 	fields := exec.RetTypes(e.Children(0))
 	datumRow := make([]types.Datum, 0, len(fields))
 	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
