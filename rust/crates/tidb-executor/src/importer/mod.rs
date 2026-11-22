@@ -8,6 +8,7 @@ pub mod engine_process;
 pub mod job;
 pub mod kv_encode;
 pub mod precheck;
+pub mod query_source;
 pub mod sampler;
 pub mod table_import;
 #[cfg(test)]

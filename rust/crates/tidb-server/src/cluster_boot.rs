@@ -145,6 +145,8 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Go `importinto`'s `init` registers the IMPORT INTO task type; its
     // tasks import into this node's TiKV store.
     tidb_dxf_importinto::register();
+    // Go `executor.RunImportQuery`, which the query step's workers call.
+    tidb_session::import_query::register_import_query_runner();
     // Go `handle.GetCloudStorageURI` reads the cluster ID from the store.
     tidb_dxf_handle::set_cluster_id(authority.tikv_store().cluster_id());
     tidb_dxf_importinto::set_import_store(Some(Arc::new(crate::import_store::TikvImportStore::new(

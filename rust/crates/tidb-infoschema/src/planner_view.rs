@@ -43,6 +43,9 @@ pub struct PlannerCatalog {
     privilege_verifier: Option<DefinerVerifier>,
     /// The statement's metadata-lock map, which `buildDataSource` fills.
     mdl_related_table: Option<MdlRelatedTableRecorder>,
+    /// The statement's `StmtCtx.RelatedTableIDs`, which `buildDataSource`
+    /// fills.
+    related_table_ids: Option<MdlRelatedTableRecorder>,
 }
 
 /// [`crate::table_source::PrivilegeVerifier`] over the
@@ -109,6 +112,14 @@ impl PlannerCatalog {
     #[must_use]
     pub fn with_related_tables_for_mdl(mut self, recorder: Option<MdlRelatedTableRecorder>) -> Self {
         self.mdl_related_table = recorder;
+        self
+    }
+
+    /// The statement's `StmtCtx.RelatedTableIDs`, which the planner fills
+    /// with every object it resolves, a view's body included.
+    #[must_use]
+    pub fn with_related_table_ids(mut self, recorder: Option<MdlRelatedTableRecorder>) -> Self {
+        self.related_table_ids = recorder;
         self
     }
 
@@ -220,7 +231,7 @@ pub struct PlannerSchemaImage {
     views: HashMap<CatalogTableKey, crate::table_source::SourceView>,
     /// The sequences (Go `TableInfo.IsSequence()`), which a FROM reads as a
     /// one-row dual and so carry no planner table.
-    sequences: HashMap<CatalogTableKey, String>,
+    sequences: HashMap<CatalogTableKey, (String, i64)>,
     /// The same image with the session's local temporary tables detached
     /// (Go `temptable.DetachLocalTemporaryTableInfoSchema`), present only
     /// while one is attached.
@@ -231,7 +242,8 @@ pub struct PlannerSchemaImage {
 enum LazySource {
     Table(crate::table_source::SourceTable),
     View(crate::table_source::SourceView),
-    Sequence(String),
+    /// The sequence's name and Go `TableInfo.ID`.
+    Sequence(String, i64),
 }
 #[derive(Debug)]
 struct LazyPlannerSchema {
@@ -260,7 +272,7 @@ impl LazyPlannerSchema {
                     definer_user: view.definer_user.clone(), definer_host: view.definer_host.clone(), security_definer: view.security.eq_ignore_ascii_case("DEFINER"),
                     ..Default::default()
                 }),
-                TableEntry::Sequence(sequence) => LazySource::Sequence(sequence.name.clone()),
+                TableEntry::Sequence(sequence) => LazySource::Sequence(sequence.name.clone(), sequence.id),
             };
             Ok(Some(self.entries.insert(key.clone(), value).1))
         }
@@ -298,8 +310,8 @@ impl PlannerSchemaView {
     fn find_view<'a>(&'a self, image: &'a PlannerSchemaImage, key: &CatalogTableKey) -> Option<&'a crate::table_source::SourceView> {
         image.views.get(key).or_else(|| match self.lazy_source(image, key)? { LazySource::View(view) => Some(view), _ => None })
     }
-    fn find_sequence(&self, key: &CatalogTableKey) -> Option<&str> {
-        self.image.sequences.get(key).map(String::as_str).or_else(|| match self.lazy_source(&self.image, key)? { LazySource::Sequence(name) => Some(name.as_str()), _ => None })
+    fn find_sequence(&self, key: &CatalogTableKey) -> Option<(&str, i64)> {
+        self.image.sequences.get(key).map(|(name, id)| (name.as_str(), *id)).or_else(|| match self.lazy_source(&self.image, key)? { LazySource::Sequence(name, id) => Some((name.as_str(), *id)), _ => None })
     }
 }
 
@@ -417,9 +429,20 @@ impl crate::table_source::TableSource for PlannerCatalog {
         }
     }
 
+    fn record_related_table(&self, table_id: i64) {
+        if let Some(record) = &self.related_table_ids {
+            record(table_id);
+        }
+    }
+
     fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
         self.view
             .find_sequence(&CatalogTableKey::new(db_name, table_name))
+            .map(|(name, _)| name)
+    }
+
+    fn sequence_id(&self, db_name: &str, table_name: &str) -> Option<i64> {
+        self.view.find_sequence(&CatalogTableKey::new(db_name, table_name)).map(|(_, id)| id)
     }
 }
 
@@ -442,6 +465,7 @@ impl SessionExtendedInfoSchema {
             dirty_tables: Vec::new(),
             privilege_verifier: None,
             mdl_related_table: None,
+            related_table_ids: None,
         }
     }
 
@@ -585,7 +609,7 @@ impl SessionExtendedInfoSchema {
                         );
                     }
                     TableEntry::Sequence(sequence) => {
-                        sequences.insert(key(), sequence.name.clone());
+                        sequences.insert(key(), (sequence.name.clone(), sequence.id));
                     }
                 }
             }

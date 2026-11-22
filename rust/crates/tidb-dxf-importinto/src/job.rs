@@ -276,7 +276,7 @@ mod tests {
         let mut plan = tidb_executor::importer::Plan { cloud_storage_uri: "s3://b/p".into(), ..Default::default() };
         let next_gen = tidb_config_kerneltype::is_next_gen();
         assert_eq!(super::should_use_async_prepare(&plan), next_gen);
-        plan.query_source = Some(serde_json::json!({}));
+        plan.query_source = Some(tidb_executor::importer::query_source::QuerySource::default());
         assert!(!super::should_use_async_prepare(&plan));
         plan.query_source = None;
         plan.cloud_storage_uri.clear();

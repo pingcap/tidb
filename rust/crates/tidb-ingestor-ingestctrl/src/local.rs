@@ -82,6 +82,20 @@ impl Backend {
         })
     }
 
+    /// Go `NewBackendForTest`: a backend over `store_helper` (Go
+    /// `StoreHelper`: the store's codec and timestamp), without PD or the
+    /// multi-ingest probe.
+    pub fn new_for_test(cfg: BackendConfig, store_helper: Arc<dyn ImportClient>) -> Result<Self> {
+        let engine_mgr = crate::engine_mgr::EngineManager::new(cfg.clone(), Some(tikv_codec(&store_helper)))?;
+        Ok(Self {
+            cfg,
+            engine_mgr,
+            importer: store_helper,
+            write_limiter: crate::localhelper::StoreWriteLimiter::new(0),
+            collector: Mutex::new(None),
+        })
+    }
+
     /// Go `Backend.GetTiKVCodec`: the store's key codec, which the local
     /// engine's and the global-sort writers encode keys with.
     #[must_use]

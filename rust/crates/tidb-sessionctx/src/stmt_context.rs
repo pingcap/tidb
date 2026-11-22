@@ -600,6 +600,10 @@ pub struct StmtContextSessionState {
     /// statement locks nothing (no metadata-lock gate, or Go's autocommit
     /// read-only exemption).
     pub mdl_related_table: Option<MdlRelatedTableRecorder>,
+    /// Go `StmtCtx.RelatedTableIDs` as the planner fills it: every table,
+    /// view and sequence it resolves (`tryLockMDLAndUpdateSchemaIfNecessary`'s
+    /// deferred record); `None` records nothing.
+    pub related_table_ids: Option<MdlRelatedTableRecorder>,
     /// Go `sessionexpr`'s SQL-executor property (`SQLExecutorPropProvider`):
     /// the session's restricted SQL executor, which `TIDB_DECODE_SQL_DIGESTS`
     /// runs its summary queries through; `None` is a context with no session
@@ -658,6 +662,7 @@ impl Default for StmtContextSessionState {
             view_definer_privilege: None,
             session_privilege: None,
             mdl_related_table: None,
+            related_table_ids: None,
             sql_executor: None,
             ddl_owner_info: None,
             min_safe_ts_provider: None,
@@ -1349,6 +1354,8 @@ pub struct StmtContextData {
     plan_privilege_check: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// See [`StmtContextSessionState::mdl_related_table`].
     mdl_related_table: Option<MdlRelatedTableRecorder>,
+    /// See [`StmtContextSessionState::related_table_ids`].
+    related_table_ids: Option<MdlRelatedTableRecorder>,
     /// Go `StmtCtx.GetOrStoreStmtCache(StmtSafeTSCacheKey, ...)`: the min
     /// SafeTS the statement's first `GetStmtMinSafeTime` read.
     stmt_safe_ts: Arc<std::sync::OnceLock<u64>>,
@@ -3368,6 +3375,14 @@ context_configuration! {
         self
     }
 
+    /// Go `updateStateFromStaleReadProcessor`'s `StmtCtx.IsStaleness =
+    /// true`: the preprocessor found a stale read in the statement.
+    #[must_use]
+    pub fn with_staleness(mut self, is_staleness: bool) -> Self {
+        self.is_staleness = is_staleness;
+        self
+    }
+
     /// Retains the transaction provider's scope and stale-read mode.
     #[must_use]
     pub fn with_read_consistency(mut self, scope: impl Into<String>, is_staleness: bool) -> Self {
@@ -3655,6 +3670,7 @@ impl StmtContext {
             session_privilege: session.session_privilege,
             plan_privilege_check: None,
             mdl_related_table: session.mdl_related_table,
+            related_table_ids: session.related_table_ids,
             stmt_safe_ts: Arc::default(),
             locked_tables: session.locked_tables,
             protected_table_mode: None,
@@ -5163,6 +5179,11 @@ impl StmtContext {
     /// Where the planner records the tables this statement locks.
     pub fn mdl_related_table(&self) -> Option<&MdlRelatedTableRecorder> {
         self.mdl_related_table.as_ref()
+    }
+
+    /// Where the planner records the statement's `RelatedTableIDs`.
+    pub fn related_table_ids(&self) -> Option<&MdlRelatedTableRecorder> {
+        self.related_table_ids.as_ref()
     }
 
     /// The connection charset/collation used while building expressions.

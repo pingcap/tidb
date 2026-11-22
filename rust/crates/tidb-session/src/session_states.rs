@@ -83,8 +83,9 @@ impl Session {
         std::mem::replace(&mut self.vars.current_db, database)
     }
 
-    /// Exports the state owned by this SQL session and its connection handlers.
-    pub fn encode_session_states(&self) -> Result<SessionStates, DriverError> {
+    /// Go `session.CheckCanMigrateStates`: whether the session's state can
+    /// move to another session.
+    pub fn check_can_migrate_states(&self) -> Result<(), DriverError> {
         if self.in_transaction() {
             return Err(DriverError::Mysql(MysqlError::from_terror(
                 &tidb_sessionstates::sessionstates_errors::ERR_CANNOT_MIGRATE_SESSION
@@ -123,6 +124,12 @@ impl Session {
                     .gen_with_stack_by_args(&[reason.to_string().into()]),
             )));
         }
+        Ok(())
+    }
+
+    /// Go `session.EncodeStates`: exports the state owned by this SQL
+    /// session and its connection handlers.
+    pub fn encode_session_states(&self) -> Result<SessionStates, DriverError> {
         let mut system_vars = BTreeMap::new();
         for definition in tidb_variable::sysvar::sys_vars() {
             if !definition.has_session_scope() || definition.is_read_only() {
@@ -231,6 +238,7 @@ impl Session {
     /// Go `ShowExec.fetchShowSessionStates`: the encoded session state, and
     /// a session token for the logged-in user.
     pub(crate) fn fetch_show_session_states(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.check_can_migrate_states()?;
         let text = serde_json::to_string(&self.encode_session_states()?).map_err(invalid_state)?;
         let state = tidb_datatype::BinaryJSON::parse(&text).map_err(invalid_state)?;
         // A session with no user has no token. A failure to sign is only
@@ -258,7 +266,11 @@ impl Session {
 
     /// Restores portable SQL state. Connection handlers rebuild binary handles first.
     pub fn decode_session_states(&mut self, text: &str) -> Result<(), DriverError> {
-        let states = parse_session_states(text)?;
+        self.decode_states(parse_session_states(text)?)
+    }
+
+    /// Go `session.DecodeStates`: restores the decoded states.
+    pub fn decode_states(&mut self, states: SessionStates) -> Result<(), DriverError> {
         let old_id = self.vars.prepared_statement_id;
         let old_db = self.vars.current_db.clone();
         let prepare_result = (|| {

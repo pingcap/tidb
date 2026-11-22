@@ -25,6 +25,8 @@ tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-dxfutil = { path = "../tidb-dxf-dxfutil" }
+tidb-syssession = { path = "../tidb-syssession" }
 tidb-dxf-importinto-conflictedkv = { path = "../tidb-dxf-importinto-conflictedkv" }
 tidb-dxf-importinto-conflictpath = { path = "../tidb-dxf-importinto-conflictpath" }
 tidb-dxf-importinto-conflictrows = { path = "../tidb-dxf-importinto-conflictrows" }

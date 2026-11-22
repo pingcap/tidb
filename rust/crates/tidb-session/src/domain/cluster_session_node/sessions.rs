@@ -1648,6 +1648,39 @@ pub fn get_snapshot_info_schema(
     )
 }
 
+/// Go `QuerySource.BuildMinimalInfoSchema(store, parent)`: the schema of
+/// the import query's source tables at its read timestamp, with the
+/// domain's tables built over it.
+///
+/// # Errors
+/// The snapshot could not be read, or a source table changed.
+pub fn build_import_query_info_schema(
+    domain: &Domain,
+    q: &tidb_executor::importer::query_source::QuerySource,
+    parent: &tidb_infoschema::SessionExtendedInfoSchema,
+) -> Result<tidb_infoschema::SessionExtendedInfoSchema, tidb_driver_error::DriverError> {
+    let _hold = tidb_txnkv::ACTIVE_START_TS.hold(q.read_ts);
+    let snapshot = domain
+        .transactions
+        .open_snapshot_at(q.read_ts, tidb_model::DEFAULT_RESOURCE_GROUP_NAME)
+        .map_err(tidb_driver_error::DriverError::unsupported)?;
+    let mut metadata = SnapshotMetaSnapshot::new(snapshot);
+    let loaded = q
+        .build_minimal_info_schema(&mut metadata, parent)
+        .map_err(|e| tidb_driver_error::DriverError::from(tidb_terror::MysqlError::unknown(e)))?;
+    drop(metadata);
+    let cached_table_session: Arc<tidb_domain_core::cluster_session::CachedTableSessionFactory> =
+        Arc::from(domain.cached_table_session_factory());
+    let built = cluster_session_catalog_with_templates(
+        &loaded,
+        Some(Arc::clone(&domain.statistics_view)),
+        domain.auto_ids.as_ref(),
+        None,
+        Some(cached_table_session.as_ref()),
+    );
+    Ok(built.catalog)
+}
+
 /// Go `ctx.Value(kv.RequestSourceKey)`: the request source a caller's
 /// context carries.
 pub(super) fn context_request_source(context: &dyn tidb_sqlexec::ExecutionContext) -> Option<&tikv_client::util::RequestSource> {

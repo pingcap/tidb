@@ -592,6 +592,22 @@ pub fn plan_statement(
         .map_err(planner_error_to_driver)
 }
 
+/// Go `Compiler.Compile` of the SELECT of an import query: its physical
+/// plan over this catalog.
+///
+/// # Errors
+///
+/// The builder's or optimizer's own refusals.
+pub fn plan_import_query(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    planner_bridge::import_query_plan(query, catalog, current_db, ctx, session_ctx).map_err(planner_error_to_driver)
+}
+
 /// Go `Compile` for `SET`: `buildSet` over this catalog, with the
 /// statement's visit infos (Go `CheckPrivilege` reads them before the
 /// executor runs). `set` is the statement with its system variables already

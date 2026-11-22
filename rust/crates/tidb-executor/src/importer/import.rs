@@ -19,8 +19,8 @@ pub enum PostOpLevel {
 #[derive(Clone, Debug, Default)]
 pub struct Plan {
     /// Go `QuerySource`: the captured query of an IMPORT FROM SELECT that
-    /// runs on workers, kept as its Go JSON.
-    pub query_source: Option<serde_json::Value>,
+    /// runs on workers.
+    pub query_source: Option<super::query_source::QuerySource>,
     /// Go `TableInfo`.
     pub table_info: Option<tidb_model::TableInfo>,
     /// Go `DesiredTableInfo`.
@@ -746,7 +746,7 @@ impl Plan {
         };
         let mut m = Map::new();
         if let Some(q) = &self.query_source {
-            m.insert("QuerySource".into(), q.clone());
+            m.insert("QuerySource".into(), serde_json::to_value(q).unwrap_or(Value::Null));
         }
         let fields = json!({
             "DBName": self.db_name, "DBID": self.db_id,
@@ -811,7 +811,10 @@ impl Plan {
             Some(text) => PostOpLevel::from_string_value(text)?,
         };
         Ok(Self {
-            query_source: v.get("QuerySource").filter(|q| !q.is_null()).cloned(),
+            query_source: match v.get("QuerySource").filter(|q| !q.is_null()) {
+                Some(q) => Some(serde_json::from_value(q.clone()).map_err(|e| e.to_string())?),
+                None => None,
+            },
             table_info: table("TableInfo")?,
             desired_table_info: table("DesiredTableInfo")?,
             db_name: s("DBName"),

@@ -774,6 +774,9 @@ pub struct Session {
     /// The tables the running statement has already locked: Go's
     /// `GetRelatedTableForMDL().Load(id)` check, so each is recorded once.
     mdl_statement_tables: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
+    /// Go `StmtCtx.RelatedTableIDs`: the tables, views and sequences the
+    /// statement's planner resolved; a statement starts with none.
+    pub(crate) stmt_related_table_ids: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<i64>>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_sessionctx::StmtContext`] the statement builds, so an allocating
@@ -1146,6 +1149,7 @@ impl Session {
             mdl_related_tables: None,
             mdl_statement_locks: false,
             mdl_statement_tables: std::sync::Arc::default(),
+            stmt_related_table_ids: std::sync::Arc::default(),
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
@@ -1357,6 +1361,7 @@ pub mod domain_services;
 pub mod stored_state_service;
 pub mod analyze_service;
 mod import_into;
+pub mod import_query;
 mod load_data;
 pub mod stats_statement_service;
 mod dispatch;

@@ -110,6 +110,8 @@ impl tidb_dxf_planner::LogicalPlan for LogicalPlan {
         let mut physical = PhysicalPlan::default();
         let mut input_links = Vec::new();
         let specs = match ctx.next_task_step {
+            // Go: one spec runs the whole query.
+            tidb_dxf::IMPORT_STEP_QUERY => Some(vec![StepSpec::Import(ImportStepMeta { id: 1, ..ImportStepMeta::default() })]),
             IMPORT_STEP_IMPORT | IMPORT_STEP_ENCODE_AND_SORT => Some(generate_import_specs(ctx, self).map_err(boxed)?),
             IMPORT_STEP_MERGE_SORT => Some(generate_merge_sort_specs(ctx, self).map_err(boxed)?),
             IMPORT_STEP_WRITE_AND_INGEST => Some(generate_write_ingest_specs(ctx, self).map_err(boxed)?),
@@ -759,3 +761,116 @@ fn int_field(key: &'static str, value: i64) -> tidb_log::Field {
 }
 
 use tidb_ingestor_globalsort::SortedKVMeta;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_ingestor_globalsort::SortedKVMeta;
+    use tidb_ingestor_simplesst::MultipleFilesStat;
+
+    fn files_stat(prefix: &str) -> Option<Vec<MultipleFilesStat>> {
+        Some(vec![MultipleFilesStat {
+            filenames: vec![[format!("{prefix}/1"), format!("{prefix}/1.stat")]],
+            ..MultipleFilesStat::default()
+        }])
+    }
+
+    fn kv_meta(prefix: &str) -> SortedKVMeta {
+        SortedKVMeta {
+            start_key: format!("{prefix}a").into_bytes(),
+            end_key: format!("{prefix}c").into_bytes(),
+            total_kv_size: 12,
+            multiple_files_stats: files_stat(prefix),
+            ..SortedKVMeta::default()
+        }
+    }
+
+    /// Go `genEncodeStepMetas`.
+    fn gen_encode_step_metas(cnt: usize) -> Vec<Vec<u8>> {
+        (0..cnt)
+            .map(|i| {
+                ImportStepMeta {
+                    sorted_data_meta: Some(kv_meta(&format!("d_{i}_"))),
+                    sorted_index_metas: Some(BTreeMap::from([(1, kv_meta(&format!("i1_{i}_")))])),
+                    ..ImportStepMeta::default()
+                }
+                .marshal()
+            })
+            .collect()
+    }
+
+    /// Go `genMergeStepMetas`.
+    fn gen_merge_step_metas(cnt: usize) -> Vec<Vec<u8>> {
+        (0..cnt)
+            .map(|i| {
+                MergeSortStepMeta {
+                    kv_group: "data".to_owned(),
+                    sorted_kv_meta: kv_meta(&format!("x_{i}_")),
+                    ..MergeSortStepMeta::default()
+                }
+                .marshal()
+            })
+            .collect()
+    }
+
+    /// Go `TestPlanReadsQueryStepMetas`.
+    #[test]
+    fn test_plan_reads_query_step_metas() {
+        let mut query_metas = gen_encode_step_metas(1);
+        let mut source_meta: ImportStepMeta = proto::unmarshal(&query_metas[0]).unwrap();
+        source_meta.checksum = Some(BTreeMap::from([(-1, Checksum { sum: 42, kvs: 3, size: 90 })]));
+        source_meta.max_ids = Some(BTreeMap::from([(0, 123)]));
+        source_meta.recorded_conflict_kv_count = 2;
+        source_meta.sorted_data_meta.as_mut().unwrap().conflict_info =
+            tidb_ingestor_engineapi::ConflictInfo { count: 2, files: vec!["query-conflicts".to_owned()] };
+        query_metas[0] = source_meta.marshal();
+        let mut plan_ctx = PlanCtx {
+            global_sort: true,
+            thread_cnt: 16,
+            previous_subtask_metas: std::collections::HashMap::from([
+                (tidb_dxf::IMPORT_STEP_QUERY, query_metas),
+                // The query step, not the encode step, holds the source metas.
+                (IMPORT_STEP_ENCODE_AND_SORT, vec![b"unexpected encode metadata".to_vec()]),
+            ]),
+            ..Default::default()
+        };
+        let p = LogicalPlan {
+            plan: Plan {
+                query_source: Some(tidb_executor::importer::query_source::QuerySource::default()),
+                cloud_storage_uri: "noop://sort".to_owned(),
+                ..Plan::default()
+            },
+            ..LogicalPlan::default()
+        };
+        let store = sort_store(&plan_ctx.ctx, &p.plan).unwrap();
+
+        let specs = generate_merge_sort_specs(&plan_ctx, &p).unwrap();
+        assert!(specs.is_empty());
+        let kvs = get_sorted_kv_metas_for_ingest(&plan_ctx, &p, store.as_ref()).unwrap();
+        assert_eq!(kvs.len(), 2);
+        assert_eq!(kvs[tidb_ingestor_globalsort::DATA_KV_GROUP].start_key, b"d_0_a");
+        assert_eq!(kvs["1"].start_key, b"i1_0_a");
+
+        // Merge only the data group.
+        let _merge = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", r#"return("data")"#);
+        let specs = generate_merge_sort_specs(&plan_ctx, &p).unwrap();
+        assert_eq!(specs.len(), 1);
+        let StepSpec::MergeSort(spec) = &specs[0] else { panic!("a merge-sort spec") };
+        assert_eq!(spec.data_files.as_deref(), Some(&["d_0_/1".to_owned()][..]));
+        plan_ctx.previous_subtask_metas.insert(IMPORT_STEP_MERGE_SORT, gen_merge_step_metas(1));
+        let kvs = get_sorted_kv_metas_for_ingest(&plan_ctx, &p, store.as_ref()).unwrap();
+        assert_eq!(kvs.len(), 2);
+        assert_eq!(kvs[tidb_ingestor_globalsort::DATA_KV_GROUP].start_key, b"x_0_a");
+        assert_eq!(kvs["1"].start_key, b"i1_0_a");
+
+        let conflicts = collect_conflict_infos(&plan_ctx, store.as_ref(), get_step_of_encode(&p.plan)).unwrap();
+        assert_eq!(
+            conflicts.infos().get(tidb_ingestor_globalsort::DATA_KV_GROUP),
+            Some(&source_meta.sorted_data_meta.as_ref().unwrap().conflict_info)
+        );
+        let post = PostProcessSpec { encode_step: get_step_of_encode(&p.plan) };
+        let result: PostProcessStepMeta = proto::unmarshal(&post.to_subtask_meta(&plan_ctx).unwrap()).unwrap();
+        assert_eq!(result.checksum, source_meta.checksum);
+        assert_eq!(result.max_ids, source_meta.max_ids);
+    }
+}

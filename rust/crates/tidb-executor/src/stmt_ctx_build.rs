@@ -1655,6 +1655,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
             mdl_related_table: self.mdl_related_table_recorder(),
+            related_table_ids: self.related_table_ids_recorder(),
             sql_executor: self.sql_executor(),
             ddl_owner_info: self.ddl_owner_info(),
             min_safe_ts_provider: self.min_safe_ts_provider(),
@@ -2800,6 +2801,11 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// view's body included -- joins the transaction's map at the node's
     /// schema version then. `None` when this statement locks nothing.
     fn mdl_related_table_recorder(&self) -> Option<crate::MdlRelatedTableRecorder>;
+    /// Go `StmtCtx.RelatedTableIDs`, which the planner fills with every
+    /// table, view and sequence it resolves. `None` records nothing.
+    fn related_table_ids_recorder(&self) -> Option<crate::MdlRelatedTableRecorder> {
+        None
+    }
     /// Go `StmtCtx.GetStaleTSO` as `getStmtTimestamp` reads it before
     /// `@@timestamp`: the statement's stale-read TSO, in seconds, once an
     /// `AS OF` expression installed its provider.

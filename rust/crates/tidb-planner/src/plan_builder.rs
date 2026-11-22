@@ -3432,6 +3432,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // id before it looks at what kind of object the name is.
             if view.table_id != 0 {
                 self.source.record_related_table_for_mdl(view.table_id);
+                self.source.record_related_table(view.table_id);
             }
             // Go `buildDataSource` appends the SELECT visit before it looks at
             // what kind of object the name is.
@@ -3474,6 +3475,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(table) = found else {
             if let Some(sequence_name) = self.source.find_sequence(&db_name, &table_name) {
                 let sequence_name = sequence_name.to_owned();
+                // Go `tryLockMDLAndUpdateSchemaIfNecessary`'s deferred
+                // `RelatedTableIDs` record runs for a sequence too.
+                if let Some(id) = self.source.sequence_id(&db_name, &table_name) {
+                    self.source.record_related_table(id);
+                }
                 self.append_select_visit(&db_name, &sequence_name);
                 return self.build_sequence_data_source(table_ref, sequence_name);
             }
@@ -3494,6 +3500,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !table.is_temporary() && !table.is_memory_table {
             self.source.record_related_table_for_mdl(table.table_id());
         }
+        // Its deferred `StmtCtx.RelatedTableIDs` record takes every resolved
+        // table, a temporary or virtual one included.
+        self.source.record_related_table(table.table_id());
         // `:4967` a view definition is shared by every session, while a LOCAL
         // temporary table belongs to one connection and dies with it.
         if self.is_create_view && table.is_local_temporary() {

@@ -123,6 +123,44 @@ pub fn import_store() -> Result<Arc<dyn ImportStore>, Error> {
         .ok_or_else(|| plain("IMPORT INTO needs a TiKV store, and this instance has none"))
 }
 
+/// Go `executor.RunImportQuery(ctx, sctx, q, importSQL, memQuota, output)`:
+/// runs the SELECT of the IMPORT INTO statement `import_sql` at
+/// `q.ReadTS` in the worker session `sctx`, sending the result chunks to
+/// `output`. The executor's session tier provides it
+/// ([`set_import_query_runner`]); `sctx` takes the submitter's session
+/// states, so the caller destroys it.
+pub type ImportQueryRunner = fn(
+    ctx: &tidb_gocontext::Context,
+    sctx: &dyn tidb_dxf_storage::SessionContext,
+    q: &tidb_executor::importer::query_source::QuerySource,
+    import_sql: &str,
+    mem_quota: i64,
+    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+) -> Result<(), Error>;
+
+static IMPORT_QUERY_RUNNER: RwLock<Option<ImportQueryRunner>> = RwLock::new(None);
+
+/// Sets the runner of import queries ([`ImportQueryRunner`]).
+pub fn set_import_query_runner(runner: ImportQueryRunner) {
+    *IMPORT_QUERY_RUNNER.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(runner);
+}
+
+/// Go `executor.RunImportQuery`, through the runner the session tier set.
+pub(crate) fn run_import_query(
+    ctx: &tidb_gocontext::Context,
+    sctx: &dyn tidb_dxf_storage::SessionContext,
+    q: &tidb_executor::importer::query_source::QuerySource,
+    import_sql: &str,
+    mem_quota: i64,
+    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+) -> Result<(), Error> {
+    let runner = IMPORT_QUERY_RUNNER
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .ok_or_else(|| plain("this instance cannot run import queries"))?;
+    runner(ctx, sctx, q, import_sql, mem_quota, output)
+}
+
 /// Go `importinto`'s `init`: registers the task type's scheduler,
 /// executor and cleanup factories.
 pub fn register() {

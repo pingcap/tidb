@@ -1905,6 +1905,8 @@ impl Session {
         if let Ok(mut locked) = self.mdl_statement_tables.lock() {
             locked.clear();
         }
+        // Go `ResetContextOfStmt`'s new `StmtCtx`: no related tables yet.
+        self.stmt_related_table_ids.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         self.check_sem_stmt(sql, &stmt)?;
         for warning in filter_sem_restricted_hints(&mut stmt) {
             self.append_warning(WarningLevel::Warning, 1105, warning);

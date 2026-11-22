@@ -137,7 +137,99 @@ impl LoadDataController {
     }
 }
 
+/// Go `storeHelper`: the store's codec (`GetTiKVCodec`) and a zero
+/// timestamp (`GetTS`), which a test backend reads instead of PD's. It has no
+/// TiKV import service.
+pub struct StoreHelper {
+    /// Go `kvStore.GetCodec().GetKeyspace()`: the codec's keyspace prefix.
+    keyspace: Vec<u8>,
+}
+
+fn no_import_service<T>() -> tidb_ingestor_ingestctrl::Result<T> {
+    Err(tidb_ingestor_ingestctrl::Error::Other("the store helper has no TiKV import service".into()))
+}
+
+impl tidb_ingestor_ingestctrl::localhelper::SplitClient for StoreHelper {
+    fn split_keys_and_scatter(&self, _: &Context, _: &[Vec<u8>]) -> tidb_ingestor_ingestctrl::Result<Vec<u64>> {
+        no_import_service()
+    }
+    fn wait_regions_scattered(&self, _: &Context, _: &[u64]) -> tidb_ingestor_ingestctrl::Result<usize> {
+        no_import_service()
+    }
+}
+
+impl tidb_ingestor_ingestctrl::region_job::ImportClient for StoreHelper {
+    fn get_region(&self, _: &[u8]) -> tidb_ingestor_ingestctrl::Result<tidb_ingestor_ingestctrl::region_job::RegionInfo> {
+        no_import_service()
+    }
+    fn invalidate_region(&self, _: &tidb_ingestor_ingestctrl::region_job::RegionInfo) {}
+    fn write(
+        &self,
+        _: u64,
+        _: Vec<tidb_proto::import_sstpb::WriteRequest>,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::WriteResponse> {
+        no_import_service()
+    }
+    fn multi_ingest(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::MultiIngestRequest,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::IngestResponse> {
+        no_import_service()
+    }
+    fn ingest(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::IngestRequest,
+    ) -> tidb_ingestor_ingestctrl::Result<tidb_proto::import_sstpb::IngestResponse> {
+        no_import_service()
+    }
+    fn duplicate_detect(
+        &self,
+        _: u64,
+        _: tidb_proto::import_sstpb::DuplicateDetectRequest,
+        _: &mut (dyn FnMut(tidb_proto::import_sstpb::DuplicateDetectResponse) -> tidb_ingestor_ingestctrl::Result<()> + Send),
+    ) -> tidb_ingestor_ingestctrl::Result<()> {
+        no_import_service()
+    }
+    /// Go `GetTS`: zero.
+    fn get_ts(&self) -> tidb_ingestor_ingestctrl::Result<u64> {
+        Ok(0)
+    }
+    /// Go `tikv.Codec.GetAPIVersion`: V2 under a keyspace, else V1.
+    fn api_version(&self) -> i32 {
+        if self.keyspace.is_empty() { 0 } else { 2 }
+    }
+    /// Go `tikv.Codec.EncodeKey`: the keyspace prefix, then the key.
+    fn encode_key(&self, key: &[u8]) -> Vec<u8> {
+        [self.keyspace.as_slice(), key].concat()
+    }
+}
+
 impl TableImporter {
+    /// Go `NewTableImporterForTest`: a table importer over a test backend
+    /// (`NewBackendForTest` over the store helper of `keyspace`).
+    pub fn new_for_test(controller: LoadDataController, id: &str, keyspace: Vec<u8>) -> Result<Self, String> {
+        let meta = controller.table.meta().read().clone();
+        let allocators = PanickingAllocators::new(meta.sep_auto_inc());
+        let cfg = tidb_config::config_tree::config::get_global_config();
+        let dir = prepare_sort_dir(id, &cfg)?;
+        let backend_config = controller.get_local_backend_cfg(dir.clone());
+        let helper = Arc::new(StoreHelper { keyspace: keyspace.clone() });
+        let backend = tidb_ingestor_ingestctrl::local::Backend::new_for_test(backend_config, helper).map_err(|e| e.to_string())?;
+        let disk_quota = adjust_disk_quota(controller.plan.disk_quota, &dir);
+        Ok(Self {
+            table_info: TableInfo { id: meta.id, name: meta.name.original().to_owned() },
+            controller,
+            id: id.to_owned(),
+            backend: Arc::new(backend),
+            keyspace,
+            allocators,
+            region_split_size: 2 * SPLIT_REGION_SIZE,
+            region_split_keys: 2 * SPLIT_REGION_KEYS,
+            disk_quota,
+        })
+    }
     /// Go `NewTableImporter` over the store's import client. `keyspace` is
     /// the store codec's keyspace prefix.
     pub fn new(

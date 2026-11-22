@@ -2551,6 +2551,37 @@ pub(crate) fn statement_plan(
     Ok((plan, visits))
 }
 
+/// Go `Compiler.Compile` of the SELECT of an import query
+/// (`buildImportQueryExecutor`): the query built as `buildImportInto` builds
+/// its source, then optimized into a physical plan.
+pub(crate) fn import_query_plan(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, tidb_planner_core_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: Some(session_ctx),
+    };
+    let (logical, opt_flag) = parts.build(None, None, |builder| {
+        let logical = builder.build_query_stmt(query, false)?;
+        Ok((logical, builder.get_opt_flag()))
+    })?;
+    let logical = optimize_built_logical(logical, opt_flag, catalog, ctx, false, &plan_ids, &column_ids, &ctx.session_zone())?;
+    physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
+}
+
 /// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:
 /// `buildAdmin`'s `LogicalShowDDLJobs` under its selection, optimized.
 pub(crate) fn physical_admin_show_ddl_jobs_plan(

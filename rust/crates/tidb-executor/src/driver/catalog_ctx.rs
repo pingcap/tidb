@@ -190,6 +190,7 @@ impl PlannerCatalogContext for PlannerCatalog {
 
     fn with_statement_related_tables_for_mdl(self, ctx: &StmtContext) -> Self {
         self.with_related_tables_for_mdl(ctx.mdl_related_table().cloned())
+            .with_related_table_ids(ctx.related_table_ids().cloned())
     }
 
     fn with_statement_hypo_state(self, ctx: &StmtContext) -> Self {

@@ -2363,7 +2363,7 @@ impl SessionVars {
     }
 
     /// Go `tidb_partition_prune_mode`'s `SetSession` store.
-    pub(crate) fn store_partition_prune_mode(&mut self, mode: String) {
+    pub fn store_partition_prune_mode(&mut self, mode: String) {
         self.partition_prune_mode = mode;
     }
 

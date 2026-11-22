@@ -242,6 +242,39 @@ impl Session {
         let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
         self.build_import_into_checks(plan)?;
         let from_select = plan.select_plan.is_some();
+        let enable_dist_task = self.enable_dist_task();
+        let import_plan = self.new_import_plan(&ctx, plan, stmt)?;
+        let table_info = import_plan.table_info.clone().ok_or_else(|| other("import preparation requires target table metadata"))?;
+        let new_collate = import_plan.get_use_new_collate_or_default(tidb_datatype::new_collation_enabled());
+        let table = tidb_table::table_from_meta::table_from_meta(
+            &table_info,
+            &tidb_table::table_from_meta::AutoIdSource::Unavailable,
+        )
+        .map_err(other)?
+        .with_new_collation_mode(new_collate);
+        let mut controller = LoadDataController::new(import_plan, table, ASTArgs::from_import_plan(plan))?;
+        if from_select {
+            // Go `runsQueryOnWorker`: a next-gen kernel runs the SELECT on a
+            // DXF worker (`ImportStepQuery`).
+            if tidb_config_kerneltype::is_next_gen() {
+                self.prepare_query(&ctx, plan, &mut controller)?;
+            } else {
+                // `import from select` doesn't return rows.
+                return self.import_from_select(&ctx, plan, controller);
+            }
+        }
+        let result = self.import_into_with_controller(&ctx, plan, &mut controller, enable_dist_task);
+        controller.close();
+        result
+    }
+
+    /// Go `NewImportPlan`: the import plan of the IMPORT INTO plan `plan`.
+    pub(crate) fn new_import_plan(
+        &self,
+        ctx: &Context,
+        plan: &tidb_planner::common_plans::ImportInto,
+        stmt: &tidb_ast::ImportIntoStmt,
+    ) -> Result<ImportPlan, DriverError> {
         let table_info = plan
             .table
             .table_info
@@ -257,43 +290,75 @@ impl Session {
                 (d.id, d.name.lowercase().to_owned())
             })
             .ok_or_else(|| other("import preparation requires target database metadata"))?;
-        let enable_dist_task = self.enable_dist_task();
-        let cpu = get_target_node_cpu_cnt(&ctx, from_select, &plan.path, enable_dist_task)?;
+        let cpu = get_target_node_cpu_cnt(ctx, plan.select_plan.is_some(), &plan.path, self.enable_dist_task())?;
         let cluster_id = tidb_dxf_importinto::import_store().ok().and_then(|s| s.cluster_id());
         let cloud_uri = tidb_dxf_importinto::job::get_cloud_storage_uri(cluster_id);
-        let import_plan = ImportPlan::new_import_plan_from_input(
+        Ok(ImportPlan::new_import_plan_from_input(
             stmt,
             &db_name,
             db_id,
-            table_info.clone(),
+            table_info,
             &self.import_session_info(),
             cpu,
             &cloud_uri,
-        )?;
-        let new_collate = import_plan.get_use_new_collate_or_default(tidb_datatype::new_collation_enabled());
-        let table = tidb_table::table_from_meta::table_from_meta(
-            &table_info,
-            &tidb_table::table_from_meta::AutoIdSource::Unavailable,
-        )
-        .map_err(other)?
-        .with_new_collation_mode(new_collate);
-        let mut controller = LoadDataController::new(import_plan, table, ASTArgs::from_import_plan(plan))?;
-        if from_select {
-            // Go `runsQueryOnWorker`: a next-gen kernel runs the SELECT on a
-            // DXF worker, which `prepareQuery` only allows during
-            // materialized-view maintenance, which this port's IMPORT INTO
-            // never runs in (`ImportStepQuery` is not ported), so it refuses.
-            if tidb_config_kerneltype::is_next_gen() {
-                return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
-                    "IMPORT INTO FROM SELECT outside materialized view maintenance".into(),
-                ])));
-            }
-            return self.import_from_select(&ctx, plan, controller);
+        )?)
+    }
+
+    /// Go `executor.Compiler.Compile` and `NewImportPlan` of the IMPORT INTO
+    /// statement `sql`, as Go's `newQueryStepExecutor` test helper builds
+    /// the plan the executor submits.
+    pub fn new_import_plan_for_test(&mut self, sql: &str) -> Result<ImportPlan, DriverError> {
+        let (stmt, _) = self.parse_import_query(sql)?;
+        let node = tidb_ast::Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::ImportInto(Box::new(stmt.clone()))));
+        let Some((tidb_planner::common_plans::Plan::ImportInto(plan), _, _)) = self.build_statement_plan(&node)? else {
+            return Err(other("IMPORT INTO compiles to an import plan"));
+        };
+        let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
+        self.new_import_plan(&ctx, &plan, &stmt)
+    }
+
+    /// Go `ImportIntoExec.prepareQuery`: captures the SELECT for the query
+    /// step on a DXF worker.
+    fn prepare_query(
+        &mut self,
+        ctx: &Context,
+        plan: &tidb_planner::common_plans::ImportInto,
+        controller: &mut LoadDataController,
+    ) -> Result<(), DriverError> {
+        if !self.vars.in_mview_maintenance {
+            return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
+                "IMPORT INTO FROM SELECT outside materialized view maintenance".into(),
+            ])));
         }
-        let result = self.import_into_with_controller(&ctx, plan, &mut controller, enable_dist_task);
-        controller.close();
-        let row = result?;
-        Ok(StmtOutput::Rows { columns: plan_columns(&plan.names, &plan.schema), rows: row.into_iter().collect() })
+        if controller.plan.is_local_sort() {
+            return Err(DriverError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.gen_with_stack_by_args(&[
+                "IMPORT INTO FROM SELECT without global sort storage".into(),
+            ])));
+        }
+        let stmt_ctx = self.statement_context(false);
+        controller.plan.query_source = Some(self.capture_query_source(&plan.stmt, &stmt_ctx)?);
+        // TODO: split I/O-bound single-table queries into range subtasks,
+        // and remove this cap, which also keeps the later steps on one node.
+        controller.plan.max_node_cnt = 1;
+        // The query takes all slots of a DXF node.
+        let cpu_cnt = tidb_dxf_handle::get_cpu_count_of_node(ctx).map_err(other)?;
+        controller.plan.thread_cnt = usize::try_from(cpu_cnt).unwrap_or_default();
+        Ok(())
+    }
+
+    /// Go `ImportIntoExec.fillQueryInfo`: the affected-row response of
+    /// IMPORT FROM SELECT.
+    fn fill_query_info(&mut self, ctx: &Context, job_id: i64, task_id: i64) -> Result<StmtOutput, DriverError> {
+        let mgr = tidb_dxf_storage::get_dxf_svc_task_mgr().map_err(other)?;
+        let finished = mgr.get_task_by_id_with_history(ctx, task_id).map_err(other)?;
+        // waitTask also returns when the task is paused.
+        if finished.base.state != tidb_dxf::TASK_STATE_SUCCEED {
+            return Err(other(format!("import task {task_id} stopped in state {}", finished.base.state)));
+        }
+        let meta = tidb_dxf_importinto::proto::TaskMeta::from_json(&finished.meta).map_err(|e| import_error(&e))?;
+        let imported = meta.summary.imported_rows;
+        self.statement_message = format!("Records: {imported}, ID: {job_id}");
+        Ok(StmtOutput::Affected(u64::try_from(imported).unwrap_or_default()))
     }
 
     /// Go `executorBuilder.buildImportInto`'s target checks on the latest
@@ -325,11 +390,12 @@ impl Session {
         plan: &tidb_planner::common_plans::ImportInto,
         controller: &mut LoadDataController,
         enable_dist_task: bool,
-    ) -> Result<Option<Vec<Datum>>, DriverError> {
+    ) -> Result<StmtOutput, DriverError> {
         // Go `ShouldUseAsyncPrepare`: a next-gen global-sort import lists
         // its files in the task's prepare stage instead.
         let use_async_prepare = tidb_dxf_importinto::job::should_use_async_prepare(&controller.plan);
-        if !use_async_prepare {
+        let from_query = controller.plan.query_source.is_some();
+        if !from_query && !use_async_prepare {
             controller.init_data_files(ctx)?;
             if tidb_config_kerneltype::is_next_gen() {
                 let keyspace = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?.keyspace();
@@ -357,12 +423,16 @@ impl Session {
         if !controller.plan.detached {
             self.wait_import_task(job_id, &task)?;
         }
+        if from_query {
+            return self.fill_query_info(ctx, job_id, task.id);
+        }
         // Go `fillJobInfo`.
         let user = self.import_user();
         let info = with_task_manager_session(|se| {
             importer_job::get_job(ctx, se.sql_executor().as_ref(), job_id, &user, false)
         })?;
-        Ok(Some(fill_one_import_job_info(&info, None, &self.vars.session_time_zone())))
+        let row = fill_one_import_job_info(&info, None, &self.vars.session_time_zone());
+        Ok(StmtOutput::Rows { columns: plan_columns(&plan.names, &plan.schema), rows: vec![row] })
     }
 
     /// Go `ImportIntoExec.importFromSelect`: the SELECT's rows are encoded

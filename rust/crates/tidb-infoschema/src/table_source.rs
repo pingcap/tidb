@@ -586,6 +586,11 @@ pub trait TableSource {
         None
     }
 
+    /// Go `TableInfo.ID` of the sequence [`Self::find_sequence`] resolves.
+    fn sequence_id(&self, _db_name: &str, _table_name: &str) -> Option<i64> {
+        None
+    }
+
     /// [`Self::find_table`] over Go's `temptable.DetachLocalTemporaryTableInfoSchema`:
     /// a session's local temporary table neither resolves nor hides the
     /// permanent table it shadows. Tables inside a view resolve this way.
@@ -615,6 +620,11 @@ pub trait TableSource {
     /// (`GetRelatedTableForMDL`). The default records nothing, a source with
     /// no transaction to lock for.
     fn record_related_table_for_mdl(&self, _table_id: i64) {}
+
+    /// Go `tryLockMDLAndUpdateSchemaIfNecessary`'s deferred
+    /// `StmtCtx.RelatedTableIDs[id]`: every object `buildDataSource` resolves
+    /// joins the statement's related tables. The default records nothing.
+    fn record_related_table(&self, _table_id: i64) {}
 
     /// [`Self::find_view`] over the same detached schema.
     fn find_view_ignoring_local_temporary(

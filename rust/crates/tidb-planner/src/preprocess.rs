@@ -133,6 +133,32 @@ pub fn readonly_user_vars(stmt: &tidb_ast::Stmt) -> std::collections::HashSet<St
     vars.readonly
 }
 
+/// Go `preprocessor.Leave`'s `*driver.ParamMarkerExpr` case: a parameter
+/// marker in a statement that is not being prepared is a syntax error.
+pub fn check_param_marker<N: Visitable + Clone>(node: &N) -> Result<(), tidb_terror::TerrorError> {
+    struct Finder {
+        found: bool,
+    }
+    impl Visitor for Finder {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if matches!(node.downcast_ref::<tidb_ast::Expr>(), Some(tidb_ast::Expr::ParamMarker { .. })) {
+                self.found = true;
+            }
+            self.found
+        }
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            !self.found
+        }
+    }
+    let mut node = node.clone();
+    let mut finder = Finder { found: false };
+    node.accept(&mut finder);
+    if finder.found {
+        return Err(tidb_parser::parser_errors::ERR_SYNTAX.gen_with_stack("syntax error, unexpected '?'"));
+    }
+    Ok(())
+}
+
 pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result<(), PlanError> {
     struct Pinner<'a> {
         current_db: &'a str,

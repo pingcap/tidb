@@ -464,7 +464,7 @@ fn old_utf8_to_utf8mb4(table: &mut TableInfo) {
 /// pre-version-2 table stored as `UTF8` stays `utf8` here (the conversion's
 /// case-sensitive comparison misses it), where the diff path below makes it
 /// `utf8mb4`.
-pub(crate) fn normalize_full_loaded_table_info(table: &mut TableInfo) {
+pub fn normalize_full_loaded_table_info(table: &mut TableInfo) {
     old_utf8_to_utf8mb4(table);
     lower_case_charsets(table);
 }

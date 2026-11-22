@@ -325,6 +325,7 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
 use tidb_domain_core::domain::*;
 pub(crate) use tidb_domain_core::sys_session::stats_session_error;
 mod dxf_sessions;
+pub(crate) use dxf_sessions::run_import_query_on_worker;
 mod sessions;
 mod ttl_sessions;
 mod mv_service_sessions;

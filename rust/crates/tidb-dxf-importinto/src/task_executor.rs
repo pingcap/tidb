@@ -54,15 +54,15 @@ impl std::error::Error for ArcStepError {
 
 /// Go `importinto`'s `init`: the task executor factory.
 pub(crate) fn register() {
-    tidb_dxf_taskexecutor::register_task_type(
-        IMPORT_INTO,
-        Arc::new(|ctx, task, param| {
-            let executor = Arc::new(ImportExecutor { base: BaseTaskExecutor::new(ctx, task, param) });
-            let extension: Arc<dyn tidb_dxf_taskexecutor::Extension> = executor.clone();
-            executor.base.set_extension(Arc::downgrade(&extension));
-            executor
-        }),
-    );
+    tidb_dxf_taskexecutor::register_task_type(IMPORT_INTO, Arc::new(|ctx, task, param| new_import_executor(ctx, task, param)));
+}
+
+/// Go `NewImportExecutor`.
+pub fn new_import_executor(ctx: &Context, task: Task, param: tidb_dxf_taskexecutor::Param) -> Arc<ImportExecutor> {
+    let executor = Arc::new(ImportExecutor { base: BaseTaskExecutor::new(ctx, task, param) });
+    let extension: Arc<dyn tidb_dxf_taskexecutor::Extension> = executor.clone();
+    executor.base.set_extension(Arc::downgrade(&extension));
+    executor
 }
 
 /// Go `importExecutor`.
@@ -104,12 +104,13 @@ impl tidb_dxf_taskexecutor::Extension for ImportExecutor {
     fn get_step_executor(&self, task: &Task) -> Result<Arc<dyn StepExecutor>, Error> {
         let meta = TaskMeta::from_json(&task.meta)?;
         match task.base.step {
-            IMPORT_STEP_IMPORT | IMPORT_STEP_ENCODE_AND_SORT => Ok(Arc::new(ImportStepExecutor {
+            IMPORT_STEP_IMPORT | IMPORT_STEP_ENCODE_AND_SORT | IMPORT_STEP_QUERY => Ok(Arc::new(ImportStepExecutor {
                 info: FrameworkInfoSlot::default(),
                 task_id: task.base.id,
                 meta,
                 table_importer: Mutex::new(None),
                 summary: Arc::new(SubtaskSummary::default()),
+                query_runtime: self.base.param.task_runtime.clone(),
             })),
             IMPORT_STEP_MERGE_SORT => Ok(Arc::new(MergeSortStepExecutor {
                 info: FrameworkInfoSlot::default(),
@@ -159,7 +160,14 @@ struct ImportStepExecutor {
     meta: TaskMeta,
     table_importer: Mutex<Option<Arc<TableImporter>>>,
     summary: Arc<SubtaskSummary>,
+    /// Go `queryRuntime`: the task runtime whose system sessions run the
+    /// SELECT of a query import.
+    query_runtime: Option<tidb_dxf_dxfutil::TaskRuntime>,
 }
+
+/// Go `queryMemBudgetRatio`: the share of subtask memory for the SELECT of
+/// a query import, leaving the rest to encoding and sort writers.
+const QUERY_MEM_BUDGET_RATIO: f64 = 0.25;
 
 impl StepExecFrameworkInfo for ImportStepExecutor {
     fn framework_info_slot(&self) -> &FrameworkInfoSlot {
@@ -210,15 +218,23 @@ impl ImportStepExecutor {
         } else {
             None
         };
-        let chunks = meta.chunks.clone().unwrap_or_default();
         let concurrency = (self.get_resource().cpu.capacity() as usize).max(1);
+        let mut chunks = meta.chunks.clone().unwrap_or_default();
+        // Go: a query import's encoders all read the query's chunks, one
+        // task per worker, at the captured statement time.
+        let query = self.meta.plan.query_source.as_ref();
+        if let Some(q) = query {
+            chunks = (0..concurrency)
+                .map(|_| tidb_executor::importer::chunk_process::Chunk { timestamp: q.encode_timestamp, ..Default::default() })
+                .collect();
+        }
         let checksum = Mutex::new(tidb_lightning_verification::KvGroupChecksum::with_keyspace(ti.key_space()));
         let collector = SummaryCollector(self.summary.clone());
         let shared = Arc::new(Mutex::new(SortedMetas::default()));
         match &sort_store {
             None => self.encode_local(ctx, &ti, &meta, &chunks, concurrency, &checksum, &collector)?,
             Some(store) => {
-                self.encode_and_sort(ctx, &ti, subtask.base.id, store, &chunks, concurrency, &checksum, &collector, &shared)?;
+                self.encode_and_sort(ctx, &ti, subtask.base.id, store, &chunks, concurrency, &checksum, &collector, &shared, query)?;
             }
         }
         let checksum = checksum.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -259,6 +275,7 @@ impl ImportStepExecutor {
             }
         };
         let result = run_chunks(ctx, chunks, concurrency, |worker_ctx, chunk| {
+            sort_chunk_failpoint()?;
             let mut chunk_checksum = tidb_lightning_verification::KvGroupChecksum::with_keyspace(ti.key_space());
             tidb_executor::importer::engine_process::process_chunk(
                 worker_ctx,
@@ -299,6 +316,7 @@ impl ImportStepExecutor {
         checksum: &Mutex<tidb_lightning_verification::KvGroupChecksum>,
         collector: &SummaryCollector,
         shared: &Arc<Mutex<SortedMetas>>,
+        query: Option<&tidb_executor::importer::query_source::QuerySource>,
     ) -> Result<(), Error> {
         let plan = &self.meta.plan;
         let (data_mem, index_mem) = get_writer_memory_size_limit(&self.get_resource(), plan);
@@ -319,7 +337,23 @@ impl ImportStepExecutor {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let failure: Mutex<Option<Error>> = Mutex::new(None);
         let (worker_ctx, cancel) = Context::with_cancel(ctx);
+        // Go `importQueryOperator`: the query sends its chunks to the
+        // encoders, which read them until the query closes the channel.
+        let (selected_tx, selected_rx) = crossbeam_channel::bounded::<tidb_executor::importer::chunk_process::QueryChunk>(1);
+        let mut selected_tx = query.map(|_| selected_tx);
         std::thread::scope(|scope| {
+            if let (Some(q), Some(tx)) = (query, selected_tx.take()) {
+                let (worker_ctx, cancel, failure) = (&worker_ctx, &cancel, &failure);
+                scope.spawn(move || {
+                    if let Err(e) = self.read_query(worker_ctx, q, &tx) {
+                        // Stop the encode workers before they see the end of
+                        // the output.
+                        failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(e);
+                        cancel.cancel();
+                    }
+                    drop(tx);
+                });
+            }
             for _ in 0..workers {
                 scope.spawn(|| {
                     // Go `newChunkWorker`.
@@ -370,15 +404,32 @@ impl ImportStepExecutor {
                             break;
                         }
                         let mut chunk_checksum = tidb_lightning_verification::KvGroupChecksum::with_keyspace(ti.key_space());
-                        let r = tidb_executor::importer::engine_process::process_chunk_with_writer(
-                            &worker_ctx,
-                            &chunks[i],
-                            ti,
-                            &mut data_writer,
-                            &mut index_writer,
-                            &mut chunk_checksum,
-                            Some(collector),
-                        );
+                        if let Err(e) = sort_chunk_failpoint() {
+                            result = Err(e);
+                            break;
+                        }
+                        let r = if query.is_some() {
+                            tidb_executor::importer::engine_process::process_query_chunk_with_writer(
+                                &worker_ctx,
+                                &chunks[i],
+                                selected_rx.clone(),
+                                ti,
+                                &mut data_writer,
+                                &mut index_writer,
+                                &mut chunk_checksum,
+                                Some(collector),
+                            )
+                        } else {
+                            tidb_executor::importer::engine_process::process_chunk_with_writer(
+                                &worker_ctx,
+                                &chunks[i],
+                                ti,
+                                &mut data_writer,
+                                &mut index_writer,
+                                &mut chunk_checksum,
+                                Some(collector),
+                            )
+                        };
                         match r {
                             Ok(()) => checksum.lock().unwrap_or_else(std::sync::PoisonError::into_inner).add(&chunk_checksum),
                             Err(e) => {
@@ -407,6 +458,47 @@ impl ImportStepExecutor {
         }
         Ok(())
     }
+}
+
+impl ImportStepExecutor {
+    /// Go `importStepExecutor.readQuery`: runs the SELECT on a session of
+    /// the task runtime's system session pool, which is destroyed after.
+    fn read_query(
+        &self,
+        ctx: &Context,
+        q: &tidb_executor::importer::query_source::QuerySource,
+        selected: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+    ) -> Result<(), Error> {
+        let runtime = self.query_runtime.as_ref().ok_or_else(|| plain("the import query step has no task runtime"))?;
+        let session = runtime.sys_session_pool().get().map_err(|e| plain(e.to_string()))?;
+        let mem_quota = (self.get_resource().mem.capacity() as f64 * QUERY_MEM_BUDGET_RATIO) as i64;
+        let result = session
+            .with_session_context(|se: &dyn SessionContext| {
+                Ok::<_, tidb_syssession::SysSessionError>(crate::run_import_query(
+                    ctx,
+                    se,
+                    q,
+                    &self.meta.stmt,
+                    mem_quota,
+                    selected,
+                ))
+            })
+            .map_err(|e| plain(e.to_string()))
+            .and_then(|r| r);
+        // Go `pool.Destroy(resource)`: the session took the submitter's
+        // states.
+        session.close();
+        result
+    }
+}
+
+/// Go `importMinimalTaskExecutor.Run`'s `errorWhenSortChunk` failpoint
+/// before a chunk is encoded.
+fn sort_chunk_failpoint() -> Result<(), Error> {
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk").is_some() {
+        return Err(plain("occur an error when sort chunk"));
+    }
+    Ok(())
 }
 
 /// Runs `f` on every chunk with up to `concurrency` workers; the first
@@ -556,6 +648,15 @@ fn cleanup_engine(ctx: &Context, engine: tidb_lightning_backend::OpenedEngine<'_
 impl StepExecutor for ImportStepExecutor {
     /// Go `Init`: the table importer over a new local backend.
     fn init(&self, ctx: &Context) -> StepResult<()> {
+        if self.meta.plan.query_source.is_some() {
+            let node_new_collate = tidb_datatype::new_collation_enabled();
+            let task_new_collate = self.meta.plan.get_use_new_collate_or_default(node_new_collate);
+            if task_new_collate != node_new_collate {
+                return Err(step_err(plain(format!(
+                    "import query needs new collation {task_new_collate}, but this node has {node_new_collate}"
+                ))));
+            }
+        }
         let ti = new_table_importer(ctx, self.task_id, &self.meta).map_err(step_err)?;
         *self.table_importer.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(ti));
         Ok(())
@@ -834,9 +935,15 @@ impl StepExecutor for WriteAndIngestStepExecutor {
 
 /// Go `getTableImporter`.
 pub(crate) fn new_table_importer(ctx: &Context, task_id: i64, meta: &TaskMeta) -> Result<TableImporter, Error> {
-    let store = crate::import_store()?;
     let mut controller = build_controller_for_plan(&meta.plan, &meta.stmt)?;
     controller.init_data_store(ctx).map_err(crate::driver)?;
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest").is_some() {
+        // Go `NewTableImporterForTest` over the store's codec: a mock store
+        // has no import store, and its codec has no keyspace.
+        let keyspace = crate::import_store().map(|store| store.keyspace()).unwrap_or_default();
+        return TableImporter::new_for_test(controller, &task_id.to_string(), keyspace).map_err(plain);
+    }
+    let store = crate::import_store()?;
     let client = store.import_client().map_err(plain)?;
     TableImporter::new(controller, &task_id.to_string(), client, store.keyspace()).map_err(plain)
 }

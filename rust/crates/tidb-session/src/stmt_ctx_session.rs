@@ -549,6 +549,13 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::mdl_related_table_recorder(self)
     }
 
+    fn related_table_ids_recorder(&self) -> Option<tidb_variable::MdlRelatedTableRecorder> {
+        let ids = std::sync::Arc::clone(&self.stmt_related_table_ids);
+        Some(std::sync::Arc::new(move |id| {
+            ids.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id);
+        }))
+    }
+
     fn locked_tables(&self) -> Option<tidb_sessionctx::LockedTables> {
         Session::statement_locked_tables(self)
     }

@@ -79,3 +79,31 @@ impl tidb_dxf_storage::SessionContext for ClusterStatsSessionContext {
         .map_err(|error| StorageError::Other(error.to_string()))
     }
 }
+
+/// Go `executor.RunImportQuery` on a DXF worker's system session `sctx`: the
+/// session tier's [`tidb_dxf_importinto::ImportQueryRunner`].
+pub(crate) fn run_import_query_on_worker(
+    ctx: &tidb_gocontext::Context,
+    sctx: &dyn tidb_dxf_storage::SessionContext,
+    q: &tidb_executor::importer::query_source::QuerySource,
+    import_sql: &str,
+    mem_quota: i64,
+    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+) -> std::result::Result<(), tidb_dxf_importinto::Error> {
+    let error = |e: String| -> tidb_dxf_importinto::Error { std::sync::Arc::new(tidb_terror::MysqlError::unknown(e)) };
+    let any: &dyn std::any::Any = sctx;
+    let sctx = any
+        .downcast_ref::<ClusterStatsSessionContext>()
+        .ok_or_else(|| error("the import query needs a system session of this node".to_owned()))?;
+    let mut result = None;
+    sctx.with_session(|conn| {
+        result = Some(conn.session.run_import_query(ctx, q, import_sql, mem_quota, output));
+        Ok(())
+    })
+    .map_err(|e| error(e.to_string()))?;
+    match result {
+        Some(Ok(())) => Ok(()),
+        Some(Err(e)) => Err(std::sync::Arc::new(e.to_mysql_error())),
+        None => Err(error("the system session is closed".to_owned())),
+    }
+}
