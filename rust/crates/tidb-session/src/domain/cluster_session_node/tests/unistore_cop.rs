@@ -20888,6 +20888,17 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             1054,
             "Unknown column 'a' in 'expression'",
         ),
+        // Go `expressionRewriter.requirePlanCtx` with no plan.
+        (
+            "CREATE TABLE q4 (a INT DEFAULT (@@max_connections))",
+            1105,
+            "planCtx is required when rewriting node: '*ast.VariableExpr', accessing system variable requires plan context",
+        ),
+        (
+            "CREATE TABLE q6 (a INT DEFAULT ((SELECT 1)))",
+            1105,
+            "planCtx is required when rewriting node: '*ast.SubqueryExpr'",
+        ),
         (
             "ALTER TABLE ge ADD COLUMN cc INT, AUTO_ID_CACHE = 10",
             8200,

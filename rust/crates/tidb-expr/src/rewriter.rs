@@ -2528,6 +2528,33 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             tidb_mysql::to_lowercase(schema),
             tidb_mysql::to_lowercase(name)
         ))),
+        // Go `expressionRewriter.requirePlanCtx`: a node that needs the
+        // plan is an error when the rewriter has none (`EvalSimpleAst`, a
+        // column DEFAULT, a generated column, a partition expression).
+        Expr::Subquery(_) => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.SubqueryExpr'",
+        )),
+        Expr::Exists { .. } => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.ExistsSubqueryExpr'",
+        )),
+        Expr::InSubquery { .. } => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.PatternInExpr'",
+        )),
+        Expr::CompareSubquery { .. } => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.CompareSubqueryExpr'",
+        )),
+        Expr::SysVar { .. } => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.VariableExpr', \
+             accessing system variable requires plan context",
+        )),
+        Expr::Window { .. } => Err(EvalError::Unsupported(
+            "planCtx is required when rewriting node: '*ast.WindowFuncExpr'",
+        )),
+        // Go `expression_rewriter.go:1835`, with neither a plan nor a source
+        // table to read a default from.
+        Expr::Default(_) => Err(EvalError::Unsupported(
+            "Unsupported expr *ast.DefaultExpr when source table not provided",
+        )),
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),
