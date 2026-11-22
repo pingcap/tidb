@@ -814,6 +814,10 @@ func TestIssue73529(t *testing.T) {
 		tk.MustGetErrCode(sql, errno.ErrWarnDataOutOfRange)
 	}
 
+	// Operand overflow is not a target-column conversion, so it must keep its own error code
+	// instead of being rewritten to 1264.
+	tk.MustGetErrCode("update t set c = id + 9223372036854775807 where id = 1", errno.ErrDataOutOfRange)
+
 	// Valid assignments still work through both paths.
 	tk.MustExec("update t set c = 12.34 where id = 1")
 	tk.MustExec("update t set c = 56.78 where id >= 2")
