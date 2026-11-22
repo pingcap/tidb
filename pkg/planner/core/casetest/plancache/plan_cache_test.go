@@ -15,15 +15,84 @@
 package plancache
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPreparedMultiDeleteDatabaseBinding(t *testing.T) {
+	for _, cache := range []int{0, 1} {
+		for _, phase := range []string{"first execution", "warmed cache", "schema change"} {
+			for _, target := range []struct{ name, sql string }{
+				{"unqualified", "delete t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id where bind_a.t.id = ?"},
+				{"qualified", "delete bind_a.t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id where bind_a.t.id = ?"},
+				{"alias", "delete x from bind_a.t x join bind_b.t y on x.id = y.id where x.id = ?"},
+			} {
+				t.Run(fmt.Sprintf("cache=%d/%s/%s", cache, phase, target.name), func(t *testing.T) {
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+					store := testkit.CreateMockStore(t)
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("create database bind_a")
+					tk.MustExec("create database bind_b")
+					tk.MustExec("create table bind_a.t(id int primary key)")
+					tk.MustExec("create table bind_b.t(id int primary key)")
+					tk.MustExec("insert into bind_a.t values (1)")
+					tk.MustExec("insert into bind_b.t values (1)")
+					tk.MustExec("alter database bind_b read only = 1")
+					tk.MustExec("use bind_a")
+					tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+					tk.MustExec("set @id = 1")
+					tk.MustExec("prepare d from '" + target.sql + "'")
+					tk.MustExec("prepare db from 'select database()'")
+					if phase == "warmed cache" {
+						tk.MustExec("execute d using @id")
+						tk.MustExec("insert into bind_a.t values (1)")
+					}
+					tk.MustExec("use bind_b")
+					if phase == "schema change" {
+						tk.MustExec("alter table bind_a.t add column extra int")
+					}
+					tk.MustExec("execute d using @id")
+					if phase == "warmed cache" && target.name != "alias" {
+						tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(fmt.Sprint(cache)))
+					}
+					tk.MustQuery("select id from bind_a.t").Check(testkit.Rows())
+					tk.MustQuery("select id from bind_b.t").Check(testkit.Rows("1"))
+					tk.MustQuery("execute db").Check(testkit.Rows("bind_b"))
+					tk.MustGetErrCode("delete from bind_b.t", 3989)
+				})
+			}
+		}
+		t.Run(fmt.Sprintf("cache=%d/read-only target", cache), func(t *testing.T) {
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("create database bind_a")
+			tk.MustExec("create database bind_b")
+			tk.MustExec("create table bind_a.t(id int primary key)")
+			tk.MustExec("create table bind_b.t(id int primary key)")
+			tk.MustExec("insert into bind_a.t values (1)")
+			tk.MustExec("insert into bind_b.t values (1)")
+			tk.MustExec("use bind_a")
+			tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+			tk.MustExec("prepare d from 'delete t from bind_a.t join bind_b.t on bind_a.t.id = bind_b.t.id'")
+			tk.MustExec("alter database bind_a read only = 1")
+			tk.MustExec("use bind_b")
+			tk.MustGetErrCode("execute d", 3989)
+			tk.MustQuery("select * from bind_a.t").Check(testkit.Rows("1"))
+			tk.MustQuery("select * from bind_b.t").Check(testkit.Rows("1"))
+		})
+	}
+}
 
 func TestNullSafeDurationPlanCache(t *testing.T) {
 	t.Run("issue70681", func(t *testing.T) {
