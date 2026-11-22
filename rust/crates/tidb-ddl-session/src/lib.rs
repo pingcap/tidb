@@ -138,6 +138,12 @@ pub trait SessionContext: Send + Sync + 'static {
     fn swap_in_mview_maintenance(&self, _enabled: bool) -> bool {
         false
     }
+    /// Go `sessionctx.Context.GetSessionVars()`: runs `f` on the session's
+    /// variables, answering whether the session has any (a test double
+    /// keeps none).
+    fn with_session_vars(&self, _f: &mut dyn FnMut(&mut tidb_variable::SessionVars)) -> bool {
+        false
+    }
     /// Copies the session location to the statement context.
     fn set_statement_timezone_to_session_location(&self);
     /// Sets `DiskFullOpt_AllowedOnAlmostFull`.

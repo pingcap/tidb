@@ -5829,6 +5829,7 @@ dependencies = [
  "tidb-resolve",
  "tidb-sqlescape",
  "tidb-sqlexec",
+ "tidb-variable",
  "tracing",
 ]
 

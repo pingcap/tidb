@@ -1347,6 +1347,14 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
             .unwrap_or_default()
     }
 
+    fn with_session_vars(&self, f: &mut dyn FnMut(&mut tidb_variable::SessionVars)) -> bool {
+        self.with_session(|session| {
+            f(&mut session.session.vars);
+            Ok(())
+        })
+        .is_ok()
+    }
+
     /// Go copies `SessionVars.Location()` into the statement context; this
     /// session's statements read the session's zone directly.
     fn set_statement_timezone_to_session_location(&self) {}

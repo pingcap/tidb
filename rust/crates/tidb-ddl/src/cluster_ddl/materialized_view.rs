@@ -1836,11 +1836,98 @@ pub fn init_m_view_session(
     Ok(restore)
 }
 
-/// Go master `initCreateMaterializedViewBuildSession`
-/// (`ApplyMViewExecutionSessionVars` then `InitMViewSession`) on a session
-/// of the pool: the settings it applies, the session's own values to
-/// restore afterwards.
-fn create_materialized_view_build_session_vars(build: &MViewBuild) -> Result<Vec<(String, String)>, tidb_terror::MysqlError> {
+/// Go master `MViewExecutionSessionVarsFromJob`: the session's applied
+/// execution settings, overridden by those the job carries.
+///
+/// # Errors
+///
+/// The job's `tiflash_query_spill_ratio` is not a number.
+pub fn m_view_execution_session_vars_from_job(
+    job_vars: &[(String, String)],
+    default_vars: &tidb_variable::SessionVars,
+) -> Result<tidb_variable::mview_execution::MViewExecutionSessionVars, tidb_terror::MysqlError> {
+    use tidb_vardef::tidb_vars;
+    use tidb_variable::varsutil::tidb_opt_int64;
+    let mut target = tidb_variable::mview_execution::capture_applied_m_view_execution_session_vars(default_vars);
+    let get = |name: &str| job_vars.iter().find(|(var, _)| var == name).map(|(_, value)| value.as_str());
+    if let Some(val) = get(tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA) {
+        target.maintain_mem_quota = tidb_opt_int64(val, target.maintain_mem_quota);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES) {
+        val.clone_into(&mut target.isolation_read_engines);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MAX_TIFLASH_THREADS) {
+        target.tiflash_max_threads = tidb_opt_int64(val, target.tiflash_max_threads);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN) {
+        target.tiflash_max_bytes_before_ext_join = tidb_opt_int64(val, target.tiflash_max_bytes_before_ext_join);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY) {
+        target.tiflash_max_bytes_before_ext_agg = tidb_opt_int64(val, target.tiflash_max_bytes_before_ext_agg);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT) {
+        target.tiflash_max_bytes_before_ext_sort = tidb_opt_int64(val, target.tiflash_max_bytes_before_ext_sort);
+    }
+    if let Some(val) = get(tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE) {
+        target.tiflash_mem_quota_query_per_node = tidb_opt_int64(val, target.tiflash_mem_quota_query_per_node);
+    }
+    if let Some(val) = get(tidb_vars::TIFLASH_QUERY_SPILL_RATIO) {
+        target.tiflash_query_spill_ratio = val.parse::<f64>().map_err(|error| {
+            tidb_terror::MysqlError::unknown(error.to_string())
+                .annotate(&format!("invalid {}", tidb_vars::TIFLASH_QUERY_SPILL_RATIO))
+        })?;
+    }
+    if let Some(val) = get(tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT) {
+        target.fine_grained_stream_count = tidb_opt_int64(val, target.fine_grained_stream_count);
+    }
+    if let Some(val) = get(tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE) {
+        target.fine_grained_batch_size =
+            tidb_opt_int64(val, target.fine_grained_batch_size as i64) as u64;
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS) {
+        target.import_threads = tidb_variable::varsutil::tidb_opt_int(val, target.import_threads);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA) {
+        val.clone_into(&mut target.import_disk_quota);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE) {
+        target.track_aggregate_memory_usage = tidb_vardef::option_values::tidb_opt_on(val);
+    }
+    if let Some(val) = get(tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL) {
+        target.enable_parallel_hashagg_spill = tidb_vardef::option_values::tidb_opt_on(val);
+    }
+    Ok(target)
+}
+
+/// The restore closure Go master `initCreateMaterializedViewBuildSession`
+/// answers: the view's settings, then the execution ones.
+#[must_use = "the build session keeps the view's settings until it is restored"]
+pub struct CreateMViewBuildSessionRestore {
+    execution: tidb_variable::mview_execution::MViewExecutionSessionVarsRestore,
+    mview: MViewSessionRestore,
+}
+
+impl CreateMViewBuildSessionRestore {
+    /// Runs the restore closure.
+    pub fn restore(self, vars: &mut tidb_variable::SessionVars) {
+        self.mview.restore(vars);
+        self.execution.restore(vars);
+    }
+}
+
+/// Go master `initCreateMaterializedViewBuildSession`: the job's execution
+/// settings (`ApplyMViewExecutionSessionVars`) and the view's definition
+/// settings (`InitMViewSession`) on the build session's variables.
+///
+/// # Errors
+///
+/// The view has no metadata, a setting failed to apply, or the definition
+/// is invalid; the session is restored.
+pub fn init_create_materialized_view_build_session(
+    vars: &mut tidb_variable::SessionVars,
+    build: &MViewBuild,
+    current_db: &str,
+) -> Result<CreateMViewBuildSessionRestore, tidb_terror::MysqlError> {
     let info = build
         .mview
         .materialized_view
@@ -1848,37 +1935,37 @@ fn create_materialized_view_build_session_vars(build: &MViewBuild) -> Result<Vec
         .ok_or_else(|| invalid_ddl_job("create materialized view: invalid materialized view metadata"))?
         .read()
         .clone();
-    let job_var = |name: &str| build.job_session_vars.iter().find(|(var, _)| var == name).map(|(_, value)| value.clone());
-    let mut vars = Vec::new();
-    // Go `ApplyMViewExecutionSessionVars`: the maintenance memory quota and
-    // read engines as the session's own, and the rest by name.
-    use tidb_vardef::tidb_vars;
-    for (from, to) in [
-        (tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA, "tidb_mem_quota_query"),
-        (tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES, "tidb_isolation_read_engines"),
-        (tidb_vars::TIDB_MAX_TIFLASH_THREADS, tidb_vars::TIDB_MAX_TIFLASH_THREADS),
-        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_JOIN),
-        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_GROUP_BY),
-        (tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT, tidb_vars::TIDB_MAX_BYTES_BEFORE_TIFLASH_EXTERNAL_SORT),
-        (tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE, tidb_vars::TIFLASH_MEM_QUOTA_QUERY_PER_NODE),
-        (tidb_vars::TIFLASH_QUERY_SPILL_RATIO, tidb_vars::TIFLASH_QUERY_SPILL_RATIO),
-        (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT, tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_STREAM_COUNT),
-        (tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE, tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE),
-        (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS, tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_THREADS),
-        (tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA, tidb_vars::TIDB_MVIEW_MAINTAIN_IMPORT_DISK_QUOTA),
-        (tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE, tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE),
-        (tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL),
-    ] {
-        if let Some(value) = job_var(from) {
-            vars.push((to.to_owned(), value));
+    let target = m_view_execution_session_vars_from_job(&build.job_session_vars, vars)?;
+    let execution = apply_m_view_execution_session_vars(vars, &target)?;
+    let mview = match init_m_view_session(vars, &info, current_db, &build.resource_group) {
+        Ok(restore) => restore,
+        Err(error) => {
+            execution.restore(vars);
+            return Err(error);
         }
-    }
-    // Go `InitMViewSession`.
-    vars.push((tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned()));
-    vars.push(("sql_mode".to_owned(), format_sql_mode(info.definition_sql_mode)));
-    vars.push(("time_zone".to_owned(), definition_time_zone_value(&info.definition_time_zone)));
-    vars.push(("div_precision_increment".to_owned(), info.definition_div_precision_increment.to_string()));
-    Ok(vars)
+    };
+    let applied = tidb_variable::mview_execution::capture_applied_m_view_execution_session_vars(vars);
+    const DDL_FP: &str = "github.com/pingcap/tidb/pkg/ddl/";
+    tidb_failpoint::inject_call(&format!("{DDL_FP}createMaterializedViewBuildMaintainMemQuotaApplied"), &mut applied.maintain_mem_quota.clone());
+    tidb_failpoint::inject_call(
+        &format!("{DDL_FP}createMaterializedViewBuildTiFlashSessionVarsApplied"),
+        &mut (applied.tiflash_max_threads, applied.fine_grained_stream_count, applied.fine_grained_batch_size),
+    );
+    tidb_failpoint::inject_call(
+        &format!("{DDL_FP}createMaterializedViewBuildTiFlashSpillSessionVarsApplied"),
+        &mut (
+            applied.tiflash_max_bytes_before_ext_join,
+            applied.tiflash_max_bytes_before_ext_agg,
+            applied.tiflash_max_bytes_before_ext_sort,
+            applied.tiflash_mem_quota_query_per_node,
+            applied.tiflash_query_spill_ratio,
+        ),
+    );
+    tidb_failpoint::inject_call(
+        &format!("{DDL_FP}createMaterializedViewBuildImportSessionVarsApplied"),
+        &mut (applied.import_threads, applied.import_disk_quota.clone()),
+    );
+    Ok(CreateMViewBuildSessionRestore { execution, mview })
 }
 
 /// Go `TimeZoneLocation.GetLocation` as a `time_zone` value: a fixed offset,
@@ -1919,85 +2006,26 @@ pub fn build_create_materialized_view_data(
         }
         return Err(tidb_terror::MysqlError::unknown("mock create materialized view build error"));
     }
-    let info = build
+    build
         .mview
         .materialized_view
         .as_ref()
         .filter(|info| !info.read().sql_content.is_empty())
-        .ok_or_else(|| invalid_ddl_job("create materialized view: invalid select sql"))?
-        .read()
-        .clone();
-    let vars = create_materialized_view_build_session_vars(build)?;
+        .ok_or_else(|| invalid_ddl_job("create materialized view: invalid select sql"))?;
     let pool = sess_pool
         .sess_pool()
         .ok_or_else(|| tidb_terror::MysqlError::unknown("the DDL session pool has no sessions"))?;
     let session = pool.get().map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
     let result = (|| {
-        let select = format!(
-            "SELECT {}",
-            vars.iter().map(|(name, _)| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", ")
-        );
-        let original: Vec<String> = ddl_session_sql(&*session, &select, &[])?
-            .first()
-            .map(|row| row.iter().map(datum_as_text).collect())
-            .unwrap_or_default();
-        let set = |pairs: &[(String, String)]| -> Result<(), tidb_terror::MysqlError> {
-            for (name, value) in pairs {
-                ddl_session_sql(
-                    &*session,
-                    &format!("SET @@SESSION.{name} = %?"),
-                    &[tidb_sqlescape::SqlArg::String(value.as_bytes())],
-                )?;
-            }
-            Ok(())
-        };
-        // Go `ApplyMViewExecutionSessionVars` (not best effort): an execution
-        // setting that fails to apply fails the build, annotated with its
-        // assignment's message.
-        let assignments = tidb_variable::mview_execution::MViewExecutionSessionVars::default()
-            .assignments(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY, tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES);
-        for (name, _) in &vars {
-            let Some(assignment) = assignments.iter().find(|assignment| assignment.name == name) else { continue };
-            if let Some(message) = maybe_mock_mview_execution_session_var_apply_error(name) {
-                return Err(tidb_terror::MysqlError::unknown(message).annotate(assignment.failure_message));
-            }
+        // Go master `initCreateMaterializedViewBuildSession(sessCtx, job,
+        // mviewTableInfo, schemaName)`.
+        let mut init = None;
+        if !session.with_session_vars(&mut |vars| {
+            init = Some(init_create_materialized_view_build_session(vars, build, &build.schema_name));
+        }) {
+            return Err(tidb_terror::MysqlError::unknown("the DDL session has no session variables"));
         }
-        set(&vars)?;
-        // Go `initCreateMaterializedViewBuildSession`'s InjectCalls with the
-        // settings the build session now runs under.
-        let applied_names: Vec<&str> = assignments.iter().map(|assignment| assignment.name).collect();
-        let applied_row = ddl_session_sql(
-            &*session,
-            &format!("SELECT {}", applied_names.iter().map(|name| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", ")),
-            &[],
-        )?;
-        let applied_values: Vec<String> = applied_row.first().map(|row| row.iter().map(datum_as_text).collect()).unwrap_or_default();
-        let applied = tidb_variable::mview_execution::MViewExecutionSessionVars::capture_applied(|name| {
-            applied_names.iter().position(|applied| *applied == name).and_then(|index| applied_values.get(index).cloned())
-        });
-        const DDL_FP: &str = "github.com/pingcap/tidb/pkg/ddl/";
-        tidb_failpoint::inject_call(&format!("{DDL_FP}createMaterializedViewBuildMaintainMemQuotaApplied"), &mut applied.maintain_mem_quota.clone());
-        tidb_failpoint::inject_call(
-            &format!("{DDL_FP}createMaterializedViewBuildTiFlashSessionVarsApplied"),
-            &mut (applied.tiflash_max_threads, applied.fine_grained_stream_count, applied.fine_grained_batch_size),
-        );
-        tidb_failpoint::inject_call(
-            &format!("{DDL_FP}createMaterializedViewBuildTiFlashSpillSessionVarsApplied"),
-            &mut (
-                applied.tiflash_max_bytes_before_ext_join,
-                applied.tiflash_max_bytes_before_ext_agg,
-                applied.tiflash_max_bytes_before_ext_sort,
-                applied.tiflash_mem_quota_query_per_node,
-                applied.tiflash_query_spill_ratio,
-            ),
-        );
-        tidb_failpoint::inject_call(
-            &format!("{DDL_FP}createMaterializedViewBuildImportSessionVarsApplied"),
-            &mut (applied.import_threads, applied.import_disk_quota.clone()),
-        );
-        // Go master `InitMViewSession`: the build runs in materialized view
-        // maintenance.
-        let original_maintenance = session.swap_in_mview_maintenance(true);
+        let restore = init.expect("the session ran the initialization")?;
         let built = (|| {
             // Go master `buildCreateMaterializedViewData`: a TiKV store builds
             // by IMPORT INTO (`buildCreateMaterializedViewImportSQL`, with the
@@ -2050,10 +2078,12 @@ pub fn build_create_materialized_view_data(
             }
             Ok(read_ts)
         })();
-        session.swap_in_mview_maintenance(original_maintenance);
-        let restore: Vec<(String, String)> =
-            vars.iter().map(|(name, _)| name.clone()).zip(original).collect();
-        let _ = set(&restore);
+        let mut restore = Some(restore);
+        session.with_session_vars(&mut |vars| {
+            if let Some(restore) = restore.take() {
+                restore.restore(vars);
+            }
+        });
         built
     })();
     pool.put(session);
@@ -3737,6 +3767,79 @@ mod mview_worker_tests {
         ] {
             assert!(!new_field_type.has_flag(cleared), "{cleared:#x}");
         }
+    }
+
+    /// Go master `TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncrement`.
+    #[test]
+    fn test_init_create_materialized_view_build_session_applies_definition_div_precision_increment() {
+        use tidb_vardef::tidb_vars;
+        let mut sess_vars = tidb_variable::SessionVars::new();
+        sess_vars.set_system_var("div_precision_increment", "2".to_owned()).unwrap();
+        sess_vars.current_db = "before".to_owned();
+        let mview = tidb_model::TableInfo {
+            materialized_view: Some(tidb_model::GoShared::new(tidb_model::table::MaterializedViewInfo {
+                definition_div_precision_increment: 9,
+                definition_sql_mode: i64::try_from(tidb_mysql::consts::ModePadCharToFullLength.0).unwrap(),
+                definition_time_zone: tidb_model::TimeZoneLocation::new("UTC", 0),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        // The submitter has loaded the global variables that track and spill
+        // the memory of aggregations, while the internal session has not.
+        let mut submitter = tidb_variable::SessionVars::new();
+        submitter.set_system_var(tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE, "ON".to_owned()).unwrap();
+        submitter.set_system_var(tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, "ON".to_owned()).unwrap();
+        let job_session_vars = tidb_variable::mview_execution::capture_m_view_execution_session_vars(&submitter)
+            .job_system_vars()
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect();
+        sess_vars.set_system_var(tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE, "OFF".to_owned()).unwrap();
+        sess_vars.set_system_var(tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL, "OFF".to_owned()).unwrap();
+        let build = super::MViewBuild {
+            job_id: 1,
+            schema_name: "test".to_owned(),
+            mview: Box::new(mview),
+            job_session_vars,
+            resource_group: "rg1".to_owned(),
+        };
+        let names = ["div_precision_increment", "sql_mode", "time_zone"];
+        let before: Vec<String> = names.iter().map(|name| sess_vars.get_system(name).unwrap()).collect();
+        let sql_mode = sess_vars.sql_mode();
+        let original_in_mview_maintenance = sess_vars.in_mview_maintenance;
+        let original_resource_group = sess_vars.resource_group.clone();
+
+        let restore = super::init_create_materialized_view_build_session(&mut sess_vars, &build, "test").unwrap();
+        assert!(sess_vars.in_mview_maintenance);
+        assert_eq!("test", sess_vars.current_db);
+        assert_eq!("9", sess_vars.get_system("div_precision_increment").unwrap());
+        assert_eq!("PAD_CHAR_TO_FULL_LENGTH", sess_vars.get_system("sql_mode").unwrap());
+        assert_eq!("UTC", sess_vars.get_system("time_zone").unwrap());
+        assert_eq!("rg1", sess_vars.resource_group);
+        assert_eq!("ON", sess_vars.get_system(tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE).unwrap());
+        assert_eq!("ON", sess_vars.get_system(tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL).unwrap());
+
+        restore.restore(&mut sess_vars);
+        assert_eq!(original_in_mview_maintenance, sess_vars.in_mview_maintenance);
+        assert_eq!("2", sess_vars.get_system("div_precision_increment").unwrap());
+        assert_eq!("before", sess_vars.current_db);
+        assert_eq!(sql_mode, sess_vars.sql_mode());
+        assert_eq!(original_resource_group, sess_vars.resource_group);
+        assert_eq!("OFF", sess_vars.get_system(tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE).unwrap());
+        assert_eq!("OFF", sess_vars.get_system(tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL).unwrap());
+        // Restore the original cached values independently of the session fields.
+        for (name, value) in names.iter().zip(&before) {
+            assert_eq!(value, &sess_vars.get_system(name).unwrap(), "{name}");
+        }
+
+        // The cached value is synchronized even when it already differs from
+        // the definition's.
+        let mut sess_vars = tidb_variable::SessionVars::new();
+        sess_vars.set_system_var("div_precision_increment", "4".to_owned()).unwrap();
+        let restore = super::init_create_materialized_view_build_session(&mut sess_vars, &build, "test").unwrap();
+        assert_eq!("9", sess_vars.get_system("div_precision_increment").unwrap());
+        restore.restore(&mut sess_vars);
     }
 
     #[test]
