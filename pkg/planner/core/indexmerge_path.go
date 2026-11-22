@@ -693,7 +693,7 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
 	// try to derive index filters for each path
 	for _, path := range combinedPartialPaths {
-		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
+		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.Index, path.FullIdxCols, path.FullIdxColLens)
 		idxFilters = util.CloneExprs(idxFilters)
 		path.IndexFilters = append(path.IndexFilters, idxFilters...)
 		for _, idxFilter := range idxFilters {
@@ -772,6 +772,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 		idxFilters, tableFilters := splitIndexFilterConditions(
 			ds,
 			remainingFilters,
+			firstPath.Index,
 			firstPath.FullIdxCols,
 			firstPath.FullIdxColLens,
 		)

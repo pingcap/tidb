@@ -155,6 +155,15 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 	if len(prePredicates) != 1 {
 		return false
 	}
+	// A filter that is the same as the index condition and has no constants that may change
+	// between executions meets the condition for any parameters, e.g. `j IS NOT NULL` on a
+	// JSON column, which is `not(isnull(cast(j)))` and is not handled by the check below.
+	for _, filter := range filters {
+		if filter.Equal(sctx.GetExprCtx().GetEvalCtx(), prePredicates[0]) &&
+			!expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), filter) {
+			return true
+		}
+	}
 	sf, ok := prePredicates[0].(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.UnaryNot {
 		return false

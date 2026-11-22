@@ -1187,7 +1187,7 @@ func constructDS2IndexScanTask(
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.Index, path.FullIdxCols, path.FullIdxColLens)
 	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
 	// Range-deriving predicates are decided earlier and remain unchanged.
 	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)
