@@ -72,8 +72,8 @@ probes a Go and a Rust server side by side.
 
 ## Duplicate scan (X01, X02)
 
-All but two were collapsed to one body in this pass; `InferType4ControlFuncs`
-(X01) and `getJobsBySQL` (X02, two DDL session ports) remain. `AggFunctionModeToPB`
+All but one were collapsed to one body in this pass (X01 closed); `getJobsBySQL`
+(X02, two DDL session ports) remains. `AggFunctionModeToPB`
 was the visible end of a whole second ToPB family in `builder_utils.rs` for
 TiDB-store readers, removed with it.
 

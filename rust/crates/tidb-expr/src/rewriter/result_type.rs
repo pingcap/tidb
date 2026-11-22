@@ -19,7 +19,7 @@
 //! the second job -- the per-builtin result-type table
 //! ([`builtin_return_type`]), the literal type rules Go's
 //! `types.DefaultTypeForValue` applies, and the flen/decimal arithmetic those
-//! two share (`concat_flen`, `string_cast_flen`, `set_numeric_len_from_args`
+//! two share (`concat_flen`, `string_cast_flen`
 //! and friends).
 //!
 //! It is kept apart from the tree building because a wrong type here is a

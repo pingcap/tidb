@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-22; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-22.md](structural-audit-2026-11-22.md).
 
-**6 unresolved: 5 open, 1 partial.**
+**5 unresolved: 5 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -16,7 +16,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| X01 | partial | `InferType4ControlFuncs` with its `setDecimalFromArgs` / `setFlenFromArgs` has two Rust implementations: `builtin_control.rs` (the function classes, with collation derivation) and `rewriter/control_type.rs` (LEAD/LAG's `typeInfer4LeadLag` and the windows' `set_numeric_len_from_args`, without it, plus per-function tails Go keeps in each `getFunction`). (Done 2026-11-22: the TiDB-store DAG goes through the one `ConstructDAGReq`, so `builder_utils.rs`'s second ToPB family (`AggFuncToPBExpr`, `AggFunctionModeToPB`, `GetTiPBExpr`, the table scan / selection / limit / TopN / aggregation / projection `ToPB`) is gone; one body each for `BoolToOnOff`, `CheckDropTablePartition`, `ContainCorrelatedColumn`, `ContainVirtualColumn`, `IsBinaryLiteral`, `base64NeededEncodedLength`, `newReturnFieldTypeForBaseBuiltinFunc`, `IsUpgradingClusterState`, `insertPlanReplayerStatus`, `isNullToNotNullChange`; the unused `Table::verify_no_overflow_shard_bits` is removed.) Rust: `tidb-expr/src/builtin_control.rs`, `tidb-expr/src/rewriter/control_type.rs`, `tidb-expression-aggregation/src/base_func.rs` (`type_infer_4_lead_lag`) | `pkg/expression/builtin_control.go` (`InferType4ControlFuncs`, `setDecimalFromArgs`, `setFlenFromArgs`) |
 | X02 | open | Go's DDL `sess.Session` (`Execute`, `Begin`, `Commit`, `Rollback`) has two Rust ports: `tidb_ddl_session::Session` over a session context, and the `StepSqlSession` trait (with its own `execute`, `begin`, ...) that job steps hold, so code that runs on either is written twice (`getJobsBySQL` in `ddl_history.rs` and in `job_control.rs`). Rust: `tidb-ddl-session/src/lib.rs` (`Session`), `tidb-ddl-build/src/session_pool.rs` (`StepSqlSession`), `tidb-ddl/src/ddl_history.rs`, `tidb-ddl/src/job_control.rs` | `pkg/ddl/session` (`Session`), `pkg/ddl/job_worker.go` (`w.sess`), `pkg/ddl/ddl_history.go` (`getJobsBySQL`) |
 
 ### System tables and startup

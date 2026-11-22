@@ -654,10 +654,12 @@ impl BaseFuncDesc {
             return self.type_infer_4_max_min(ctx);
         }
         // Merge the type of the first and third argument.
-        let merged = tidb_expr::rewriter::infer_type_4_control_funcs(
+        let merged = tidb_expr::infer_type_4_control_funcs(
+            &tidb_expr::UnfoldedBuildContext,
             &self.name,
             &[self.args[0].clone(), self.args[2].clone()],
-        );
+        )
+        .ok();
         // Go ignores the second (error) return and keeps whatever type came
         // back, including a nil one.
         self.ret_type = merged.unwrap_or_else(|| FieldType::new(FieldTypeCode::Unspecified));

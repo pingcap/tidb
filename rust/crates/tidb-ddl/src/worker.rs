@@ -2837,17 +2837,27 @@ mod schema_sync_tests {
             ).unwrap();
         let set_limit = |limit: i64| {
             let limit = limit.to_string();
-            limit_pool
-                // The bootstrap stored every GLOBAL variable's row; updating it
-                // in place takes no `_tidb_rowid` from this pool's allocator.
-                .exec_restricted_sql_with(
+            // The helper pool's domain answers Go's 8027 when its schema
+            // reload missed a lease (a starved reload tick under load, as
+            // Go's testkit lease would); the next tick reloads, so retry.
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            loop {
+                // The bootstrap stored every GLOBAL variable's row; updating
+                // it in place takes no `_tidb_rowid` from this pool's allocator.
+                match limit_pool.exec_restricted_sql_with(
                     "UPDATE HIGH_PRIORITY mysql.global_variables SET variable_value = %? WHERE variable_name = %?",
                     &[
                         tidb_sqlescape::SqlArg::String(limit.as_bytes()),
                         tidb_sqlescape::SqlArg::String(b"tidb_ddl_error_count_limit"),
                     ],
-                )
-                .unwrap();
+                ) {
+                    Ok(_) => break,
+                    Err(error) if error.code == 8027 && std::time::Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(error) => panic!("{error:?}"),
+                }
+            }
         };
         set_limit(1);
         let mut failed = Job::default();

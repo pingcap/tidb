@@ -37,11 +37,9 @@ use tidb_datatype::{
 const DEFAULT_DECIMAL_LITERAL: &str =
     "99999999999999999999999999999999999999999999999999999999999999999";
 
-pub(crate) mod control_type;
 mod fold_mode;
 pub(crate) mod result_type;
 
-pub use control_type::{infer_type_4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub(crate) use result_type::adjust_ret_ft_for_cast_string;
 use result_type::{

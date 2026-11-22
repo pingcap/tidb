@@ -40,6 +40,8 @@ mod chunk_executor;
 pub mod builtin_compare;
 mod builtin_cast;
 mod builtin_control;
+pub use builtin::UnfoldedBuildContext;
+pub use builtin_control::infer_type_4_control_funcs;
 mod builtin_encryption;
 mod builtin_ext;
 pub use builtin_ext::misc::{

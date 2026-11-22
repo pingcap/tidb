@@ -232,7 +232,7 @@ fn try_to_fix_flen_of_datetime(result_tp: &mut FieldType) {
 /// # Panics
 ///
 /// As Go does, when `args` is empty.
-pub(crate) fn infer_type_4_control_funcs(
+pub fn infer_type_4_control_funcs(
     ctx: &dyn BuildContext,
     func_name: &str,
     args: &[Expression],
@@ -428,5 +428,222 @@ impl FunctionClass for IfNullFunctionClass {
                 .then_some(crate::scalar_function::Kernel::IfNull(EvalType::VectorFloat32)),
             ..bf
         })
+    }
+}
+
+#[cfg(test)]
+mod infer_type_4_control_funcs_tests {
+    use super::*;
+    use tidb_datatype::{FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
+
+    /// The inference over `args` as a function class runs it.
+    fn infer_type_4_control_funcs(name: &str, args: &[Expression]) -> Option<FieldType> {
+        super::infer_type_4_control_funcs(&crate::builtin::UnfoldedBuildContext, name, args).ok()
+    }
+    use crate::constant::Constant;
+    use tidb_datatype::Datum;
+
+    fn arg(code: FieldTypeCode, flen: i64, decimal: i64) -> Expression {
+        let mut ft = FieldType::new(code);
+        ft.set_flen(flen);
+        ft.set_decimal(decimal);
+        Expression::Constant(Constant::new(Datum::Null, ft))
+    }
+
+    fn typed(code: FieldTypeCode) -> Expression {
+        arg(code, UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH)
+    }
+
+    /// The measured Rank-A case: a string branch beside an integer one is a
+    /// STRING result, not an integer one. Go, via `goeval`:
+    /// `IF(1,1,'a')` -> `STR:1`.
+    #[test]
+    fn an_integer_branch_beside_a_string_one_is_a_string_result() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::LongLong, 1, 0),
+                arg(FieldTypeCode::VarString, 1, UNSPECIFIED_LENGTH),
+            ],
+        )
+        .expect("both branches are typed");
+        assert_eq!(ft.eval_type(), EvalType::String);
+        // The ETString arm of `setFlenFromArgs`: the LONGLONG branch is 20
+        // wide whatever display width it declared.
+        assert_eq!(ft.flen(), 20);
+        assert_eq!(ft.decimal(), UNSPECIFIED_LENGTH);
+    }
+
+    /// Go's `len(notNullFields) == 1` shortcut copies the ONE typed branch
+    /// whole -- no re-derivation at all.
+    ///
+    /// The width is the boundary that shows it: an UNSIGNED `int(10)` spends
+    /// no digit on a sign, so running the merge over a one-element list
+    /// instead would put one back (`setFlenFromArgs` re-adds a sign digit
+    /// unconditionally) and report `int(11)`. A SIGNED branch, or a DECIMAL
+    /// one, round-trips through the merge unchanged and would agree either
+    /// way -- which is why this case is unsigned.
+    #[test]
+    fn one_typed_branch_beside_nulls_is_that_branch_exactly() {
+        let mut unsigned = FieldType::new(FieldTypeCode::Long);
+        unsigned.set_flen(10);
+        unsigned.set_decimal(0);
+        unsigned.add_flags(FieldTypeFlags::UNSIGNED);
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                typed(FieldTypeCode::Null),
+                Expression::Constant(Constant::new(Datum::Null, unsigned)),
+            ],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Long);
+        assert_eq!((ft.flen(), ft.decimal()), (10, 0));
+    }
+
+    // Go TestIssue46475: COALESCE(NULL, DATE, NULL) must preserve the lone
+    // typed branch as DATE instead of aggregating the NULL branches into a
+    // string result.
+    #[test]
+    fn test_issue_46475() {
+        let ft = infer_type_4_control_funcs(
+            "coalesce",
+            &[
+                typed(FieldTypeCode::Null),
+                typed(FieldTypeCode::Date),
+                typed(FieldTypeCode::Null),
+            ],
+        )
+        .expect("all COALESCE branches have static types");
+        assert_eq!(ft.code(), FieldTypeCode::Date);
+    }
+
+    /// The ENUM/SET rewrite's ONLY reachable path: one enum branch beside a
+    /// NULL one, where `AggFieldType` never runs. Recorded witness:
+    /// `tests/integrationtest/r/expression/misc.result:911` runs
+    /// `select if(A, null,b)=1 from t` over `b enum("b")`.
+    #[test]
+    fn a_lone_enum_branch_reports_the_varchar_its_signature_returns() {
+        let ft = infer_type_4_control_funcs(
+            "if",
+            &[typed(FieldTypeCode::Null), arg(FieldTypeCode::Enum, 1, 0)],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Varchar);
+    }
+
+    /// `IF` never re-adds NOT NULL: `newReturnFieldTypeForBaseBuiltinFunc`
+    /// gives `bf.tp` only `mysql.BinaryFlag`, so two NOT NULL branches still
+    /// make a nullable result -- if all when-clauses are false there is
+    /// nothing to return.
+    ///
+    /// This is also the boundary for Go's `var tempFlag uint`: starting that
+    /// mask at the MERGED flags instead of at zero would let `AggFieldType`'s
+    /// `mergeTypeFlag` carry NOT NULL through, and `IF` has no tail to undo
+    /// it. `IFNULL` and `COALESCE` put NOT NULL back in their own
+    /// `getFunction` tails, not here.
+    #[test]
+    fn two_not_null_branches_do_not_make_an_if_not_null() {
+        let not_null = |code| {
+            let mut ft = FieldType::new(code);
+            ft.set_flen(1);
+            ft.set_decimal(0);
+            ft.add_flags(FieldTypeFlags::NOT_NULL);
+            Expression::Constant(Constant::new(Datum::Null, ft))
+        };
+        let branches = [
+            not_null(FieldTypeCode::LongLong),
+            not_null(FieldTypeCode::LongLong),
+        ];
+        let ft = infer_type_4_control_funcs("if", &branches).expect("typed");
+        assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
+    }
+
+    /// `setFlenFromArgs` branches on `AggregateEvalType`'s answer, NOT on the
+    /// merged FIELD type's eval type, and the two genuinely differ: every
+    /// TEMPORAL eval type is `IsStringKind`, so a DURATION pair merges to a
+    /// DURATION field type whose `AggregateEvalType` is `ETString`.
+    ///
+    /// The ETString arm gives up on the width as soon as one branch has none;
+    /// the trailing arm this would otherwise take just maxes the widths and
+    /// reports the other branch's. Reading the eval type off the merged type
+    /// would agree on every NUMERIC pair, which is why the boundary is
+    /// temporal.
+    #[test]
+    fn the_width_arm_is_chosen_by_the_aggregate_eval_type() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::Duration, 10, 0),
+                arg(FieldTypeCode::Duration, UNSPECIFIED_LENGTH, 0),
+            ],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Duration);
+        assert_eq!(ft.flen(), UNSPECIFIED_LENGTH);
+    }
+
+    /// Every branch NULL: a NULL column, width and scale zeroed.
+    #[test]
+    fn every_branch_null_is_a_null_column() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[typed(FieldTypeCode::Null), typed(FieldTypeCode::Null)],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Null);
+        assert_eq!((ft.flen(), ft.decimal()), (0, 0));
+        assert_eq!(ft.charset_name(), "binary");
+    }
+
+    /// An ENUM pair merges to a STRING eval type, and Go then REWRITES the
+    /// reported type to VARCHAR because `builtinIfStringSig` is what runs.
+    #[test]
+    fn an_enum_pair_reports_the_varchar_its_signature_returns() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::Enum, 1, 0),
+                arg(FieldTypeCode::Enum, 1, 0),
+            ],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Varchar);
+        assert_eq!(ft.decimal(), UNSPECIFIED_LENGTH);
+    }
+
+    /// `setDecimalFromArgs` widens the scale to the widest branch, which is
+    /// what makes `IFNULL(1, 1.5)` print `1.0` and not `1`. Go, via `gorun`:
+    /// `RS:1|1.0|1.0|1|1|1`.
+    #[test]
+    fn a_decimal_branch_widens_the_integer_branchs_scale() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::LongLong, 1, 0),
+                arg(FieldTypeCode::NewDecimal, 2, 1),
+            ],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::NewDecimal);
+        // `setFlenFromArgs`' decimal arm: each branch's INTEGRAL width is its
+        // flen less one sign digit less its own scale, so both branches here
+        // contribute 0, and the merged scale plus one sign digit are added
+        // back -- `0 + 1 + 1`.
+        assert_eq!((ft.flen(), ft.decimal()), (2, 1));
+    }
+
+    /// A DATETIME result takes its canonical width, never a branch's.
+    #[test]
+    fn a_datetime_result_takes_its_canonical_width() {
+        let ft = infer_type_4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::Datetime, 3, 0),
+                arg(FieldTypeCode::Datetime, 3, 0),
+            ],
+        )
+        .expect("typed");
+        assert_eq!((ft.code(), ft.flen()), (FieldTypeCode::Datetime, 19));
     }
 }
