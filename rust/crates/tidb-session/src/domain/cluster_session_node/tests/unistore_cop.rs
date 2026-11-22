@@ -57,6 +57,7 @@ mod analyzetest;
 mod pointget;
 mod aggregates;
 mod set_operations;
+mod select_clauses;
 mod ddl_analyze;
 mod ddl_delivery;
 mod admin_alter_ddl_job;
