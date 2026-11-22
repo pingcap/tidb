@@ -122,14 +122,14 @@ func NewDBTableHandler(tool *handler.TikvHandlerTool) *DBTableHandler {
 	return &DBTableHandler{tool}
 }
 
-// FlashReplicaHandler is the handler for flash replica.
-type FlashReplicaHandler struct {
+// FlashReplicaDeprecatedHandler is the handler for tiflash-server that manage tiflash replica info. Only used by tiflash prior than v6.0. Deprecated.
+type FlashReplicaDeprecatedHandler struct {
 	*handler.TikvHandlerTool
 }
 
-// NewFlashReplicaHandler creates a new FlashReplicaHandler.
-func NewFlashReplicaHandler(tool *handler.TikvHandlerTool) *FlashReplicaHandler {
-	return &FlashReplicaHandler{tool}
+// NewFlashReplicaDeprecatedHandler creates a new FlashReplicaDeprecatedHandler.
+func NewFlashReplicaDeprecatedHandler(tool *handler.TikvHandlerTool) *FlashReplicaDeprecatedHandler {
+	return &FlashReplicaDeprecatedHandler{tool}
 }
 
 // RegionHandler is the common field for http handler. It contains
@@ -617,7 +617,7 @@ type TableFlashReplicaInfo struct {
 }
 
 // ServeHTTP implements the HTTPHandler interface.
-func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h FlashReplicaDeprecatedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodPost {
 		h.handleStatusReport(w, req)
 		return
@@ -677,7 +677,7 @@ func appendTiFlashReplicaInfo(replicaInfos []*TableFlashReplicaInfo, tblInfo *mo
 	return replicaInfos
 }
 
-func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*TableFlashReplicaInfo, error) {
+func (h FlashReplicaDeprecatedHandler) getDropOrTruncateTableTiflash(currentSchema infoschema.InfoSchema) ([]*TableFlashReplicaInfo, error) {
 	s, err := session.CreateSession(h.Store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -737,7 +737,7 @@ func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
 	return tf.FlashRegionCount == tf.RegionCount
 }
 
-func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+func (h FlashReplicaDeprecatedHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
 	var status tableFlashReplicaStatus
 	err := json.NewDecoder(req.Body).Decode(&status)
 	if err != nil {

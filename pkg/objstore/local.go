@@ -57,6 +57,11 @@ func (l *LocalStorage) Base() string {
 	return l.base
 }
 
+// Features implements FeatureProvider.
+func (*LocalStorage) Features() storeapi.Features {
+	return storeapi.FeatureSupportsStartAfter
+}
+
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
@@ -305,18 +310,34 @@ func (f *localFile) GetFileSize() (int64, error) {
 }
 
 // Create implements Storage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if option != nil && option.DirectIO {
+		return newLocalDirectWriter(filename, option.PartSize)
+	}
+	var partSize int64
+	if option != nil {
+		partSize = option.PartSize
+	}
+	return newLocalBufferedWriter(filename, partSize)
+}
+
+func newLocalBufferedWriter(filename string, partSize int64) (objectio.Writer, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Size the write buffer from PartSize when set, matching the object-store
+	// backends, so per-row streaming does not cost one syscall per write.
 	buf := bufio.NewWriter(file)
+	if partSize > 0 {
+		buf = bufio.NewWriterSize(file, int(partSize))
+	}
 	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
 

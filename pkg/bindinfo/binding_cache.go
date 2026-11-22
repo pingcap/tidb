@@ -17,7 +17,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +52,7 @@ type BindingCacheUpdater interface {
 type bindingCacheUpdater struct {
 	BindingCache
 
+	mu    sync.Mutex // serialize reloads, including their deferred removals
 	sPool util.DestroyableSessionPool
 
 	// lastTaskTime records the last update time for the global sql bind cache.
@@ -62,6 +62,9 @@ type bindingCacheUpdater struct {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) (err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	cacheSizeChange := false
 	latestCacheSize := vardef.MemQuotaBindingCache.Load()
 	if u.GetMemCapacity() != latestCacheSize {
@@ -114,18 +117,8 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 			lastUpdateTime = binding.UpdateTime
 			hasNewBinding = true
 		}
-
-		oldBinding := u.GetBinding(binding.SQLDigest)
-		cachedBinding := pickCachedBinding(oldBinding, binding)
-		if cachedBinding != nil {
-			err = u.SetBinding(binding.SQLDigest, cachedBinding)
-			if err != nil {
-				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
-			}
-		} else {
-			u.RemoveBinding(binding.SQLDigest)
-		}
 	}
+	err = u.applyBindings(bindings)
 
 	// update last-update-time and metrics
 	u.lastUpdateTime.Store(lastUpdateTime)
@@ -133,6 +126,51 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) 
 	metrics.BindingCacheMemLimit.Set(float64(u.GetMemCapacity()))
 	metrics.BindingCacheNumBindings.Set(float64(len(u.GetAllBindings())))
 	return nil
+}
+
+// applyBindings resolves each digest's ordered history before publishing changes.
+// In particular, a historical deletion must not remove a later recreation.
+func (u *bindingCacheUpdater) applyBindings(bindings []*Binding) (err error) {
+	type update struct {
+		binding      *Binding
+		insertion    int
+		needsRemoval bool
+	}
+	selected := make(map[string]update, len(bindings))
+	digests := make([]string, 0, len(bindings))
+	var removed []string
+	for _, binding := range bindings {
+		current, seen := selected[binding.SQLDigest]
+		if !seen {
+			current.binding = u.GetBinding(binding.SQLDigest)
+		}
+		next := pickCachedBinding(current.binding, binding)
+		if next == nil {
+			// A recreation must reinsert the digest after candidates inserted
+			// in the meantime, preserving equal-specificity fuzzy binding order.
+			if !current.needsRemoval {
+				removed = append(removed, binding.SQLDigest)
+				current.needsRemoval = true
+			}
+		} else if !seen || current.binding == nil {
+			current.insertion = len(digests)
+			digests = append(digests, binding.SQLDigest)
+		}
+		current.binding = next
+		selected[binding.SQLDigest] = current
+	}
+
+	// Free obsolete entries before admitting replacements under a tight quota.
+	u.RemoveBinding(removed...)
+	for i, digest := range digests {
+		current := selected[digest]
+		if current.binding != nil && current.insertion == i {
+			if err = u.SetBinding(digest, current.binding); err != nil {
+				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
+			}
+		}
+	}
+	return err
 }
 
 // UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
@@ -171,13 +209,13 @@ type digestBiMap interface {
 	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
 	Add(noDBDigest, sqlDigest string)
 
-	// Del deletes the pair of noDBDigest and sqlDigest.
-	Del(sqlDigest string)
+	// Del deletes the specified sqlDigests, copying each affected bucket at most once.
+	Del(sqlDigests ...string)
 
 	// All returns all the sqlDigests.
 	All() (sqlDigests []string)
 
-	// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+	// NoDBDigest2SQLDigest returns a read-only snapshot of the sqlDigests for noDBDigest.
 	NoDBDigest2SQLDigest(noDBDigest string) []string
 
 	// SQLDigest2NoDBDigest converts sqlDigest to noDBDigest.
@@ -185,7 +223,10 @@ type digestBiMap interface {
 }
 
 type digestBiMapImpl struct {
-	mu                   sync.RWMutex
+	mu sync.RWMutex
+	// Published elements are immutable so lookups can iterate their snapshots
+	// after releasing mu. Appends preserve the existing prefix; deletions copy
+	// the slice to avoid changing elements visible to earlier snapshots.
 	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
 	sqlDigest2noDBDigest map[string]string   // sqlDigest --> noDBDigest
 }
@@ -203,41 +244,43 @@ func newDigestBiMap() digestBiMap {
 func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	exist := false
-	for _, d := range b.noDBDigest2SQLDigest[noDBDigest] {
-		if d == sqlDigest {
-			exist = true
-			break
-		}
+	if _, exists := b.sqlDigest2noDBDigest[sqlDigest]; exists {
+		return
 	}
-	if !exist { // avoid adding duplicated binding digests
-		b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
-	}
+	b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
 
-// Del deletes the pair of noDBDigest and sqlDigest.
-func (b *digestBiMapImpl) Del(sqlDigest string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	noDBDigest, ok := b.sqlDigest2noDBDigest[sqlDigest]
-	if !ok {
+// Del deletes the specified sqlDigests, copying each affected bucket at most once.
+func (b *digestBiMapImpl) Del(sqlDigests ...string) {
+	if len(sqlDigests) == 0 {
 		return
 	}
-	digestList := b.noDBDigest2SQLDigest[noDBDigest]
-	for i := range digestList { // remove sqlDigest from this list
-		if digestList[i] == sqlDigest {
-			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
-			digestList = slices.Delete(digestList, i, i+1)
-			break
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	removedCounts := make(map[string]int)
+	for _, sqlDigest := range sqlDigests {
+		if noDBDigest, ok := b.sqlDigest2noDBDigest[sqlDigest]; ok {
+			delete(b.sqlDigest2noDBDigest, sqlDigest)
+			removedCounts[noDBDigest]++
 		}
 	}
-	if len(digestList) == 0 {
-		delete(b.noDBDigest2SQLDigest, noDBDigest)
-	} else {
-		b.noDBDigest2SQLDigest[noDBDigest] = digestList
+	for noDBDigest, removedCount := range removedCounts {
+		digestList := b.noDBDigest2SQLDigest[noDBDigest]
+		if removedCount == len(digestList) {
+			delete(b.noDBDigest2SQLDigest, noDBDigest)
+			continue
+		}
+		// Publish a new slice to preserve snapshots held by ongoing lookups.
+		remaining := make([]string, 0, len(digestList)-removedCount)
+		for _, digest := range digestList {
+			if _, ok := b.sqlDigest2noDBDigest[digest]; ok {
+				remaining = append(remaining, digest)
+			}
+		}
+		b.noDBDigest2SQLDigest[noDBDigest] = remaining
 	}
-	delete(b.sqlDigest2noDBDigest, sqlDigest)
 }
 
 // All returns all the sqlDigests.
@@ -251,7 +294,7 @@ func (b *digestBiMapImpl) All() []string {
 	return sqlDigests
 }
 
-// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+// NoDBDigest2SQLDigest returns a read-only snapshot of the sqlDigests for noDBDigest.
 func (b *digestBiMapImpl) NoDBDigest2SQLDigest(noDBDigest string) []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -275,8 +318,8 @@ type BindingCache interface {
 	GetAllBindings() []*Binding
 	// SetBinding sets the binding for the specified sqlDigest.
 	SetBinding(sqlDigest string, binding *Binding) (err error)
-	// RemoveBinding removes the binding for the specified sqlDigest.
-	RemoveBinding(sqlDigest string)
+	// RemoveBinding removes the bindings for the specified sqlDigests.
+	RemoveBinding(sqlDigests ...string)
 	// SetMemCapacity sets the memory capacity for the cache.
 	SetMemCapacity(capacity int64)
 	// GetMemUsage gets the memory usage of the cache.
@@ -398,11 +441,13 @@ func (c *bindingCache) SetBinding(sqlDigest string, binding *Binding) (err error
 	return
 }
 
-// RemoveBinding removes the Bindings which has same originSQL with specified Bindings.
+// RemoveBinding removes the bindings for the specified sqlDigests.
 // The function is thread-safe.
-func (c *bindingCache) RemoveBinding(sqlDigest string) {
-	c.digestBiMap.Del(sqlDigest)
-	c.cache.Del(sqlDigest)
+func (c *bindingCache) RemoveBinding(sqlDigests ...string) {
+	c.digestBiMap.Del(sqlDigests...)
+	for _, sqlDigest := range sqlDigests {
+		c.cache.Del(sqlDigest)
+	}
 }
 
 // SetMemCapacity sets the memory capacity for the cache.

@@ -9,12 +9,21 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+)
+
+const (
+	// uploadConcurrency and uploadPartSize configure the concurrent multipart
+	// upload of data files. 5 MiB is the object store's minimum part size
+	// (S3/GCS).
+	uploadConcurrency = 4
+	uploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -210,11 +219,16 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return
 			}
 		}
-		err = ir.Start(tctx, conn)
+		readCtx, cancel := tctx.WithCancel()
+		defer cancel()
+		err = ir.Start(readCtx, conn)
 		if err != nil {
 			tctx.L().Warn("failed to start table chunk", zap.Error(err))
 			return
 		}
+		defer func() {
+			_ = ir.Close()
+		}()
 		if conf.SQL != "" {
 			rows := ir.RawRows()
 			meta, err = setTableMetaFromRows(w.conf.ServerInfo.ServerType, rows)
@@ -225,16 +239,14 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return errors.Trace(err)
 			}
 		}
-		defer func() {
-			_ = ir.Close()
-		}()
-		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
+		return w.tryToWriteTableData(tctx, readCtx, cancel, meta, ir, currentChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel func(), meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
-	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
+	_, isKVData := ir.(*kvTableData)
+	namer := newOutputFileNamer(meta, curChkIdx, isKVData || conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileFmtExtension := format.Extension()
 	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
 		compressSuffix := strings.TrimPrefix(conf.ParquetCompressType.FileSuffix(), ".")
@@ -244,10 +256,22 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	if err != nil {
 		return err
 	}
+	reader := newTableDataReader(readCtx, cancel, meta, ir)
+	defer func() {
+		_ = reader.Close()
+	}()
+	ir = reader
+
+	// DirectIO is honored only by local storage, including through compression.
+	wo := &storeapi.WriterOption{DirectIO: true}
+	if format == FileFormatCSV || format == FileFormatSQLText {
+		wo.Concurrency = uploadConcurrency
+		wo.PartSize = uploadPartSize
+	}
 
 	somethingIsWritten := false
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
@@ -309,14 +333,6 @@ type outputFileNamer struct {
 	DB         string
 	Table      string
 	format     string
-}
-
-type csvOption struct {
-	nullValue      string
-	separator      []byte
-	delimiter      []byte
-	lineTerminator []byte
-	binaryFormat   BinaryFormat
 }
 
 func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outputFileNamer {

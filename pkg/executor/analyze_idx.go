@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"math"
 	"time"
 
@@ -135,7 +136,9 @@ func (e *AnalyzeIndexExec) open(ctx context.Context, ranges []*ranger.Range, con
 		ranges = ranger.NullRange()
 		err = e.fetchAnalyzeResult(ctx, ranges, true)
 		if err != nil {
-			return err
+			closeErr := e.result.Close()
+			e.result = nil
+			return stderrors.Join(err, closeErr)
 		}
 	}
 	return nil
@@ -170,7 +173,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ctx context.Context, ranges []*ran
 	if err != nil {
 		return err
 	}
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx(), e.planID)
 	if err != nil {
 		return err
 	}

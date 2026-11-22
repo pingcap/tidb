@@ -1,0 +1,18 @@
+set global tidb_enable_metadata_lock = OFF;
+Error 1836 (HY000): Running in read-only mode
+select count(*) from information_schema.tables;
+select count(*) from mysql.user;
+select count(*) from performance_schema.setup_actors;
+use mysql;
+select count(*) from user;
+use test;
+select 1;
+Error 1836 (HY000): Running in read-only mode
+select * from test.t;
+Error 1836 (HY000): Running in read-only mode
+select * from mysql.user join test.t;
+Error 1836 (HY000): Running in read-only mode
+select * from mysql.user for update;
+Error 1836 (HY000): Running in read-only mode
+select @x := 1 from mysql.user;
+Error 1836 (HY000): Running in read-only mode

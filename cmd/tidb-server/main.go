@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -98,6 +99,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -108,6 +110,7 @@ const (
 	nmConfig           = "config"
 	nmConfigCheck      = "config-check"
 	nmConfigStrict     = "config-strict"
+	nmDiagnosticMode   = "diagnostic-mode"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -167,10 +170,11 @@ const (
 )
 
 var (
-	version      *bool
-	configPath   *string
-	configCheck  *bool
-	configStrict *bool
+	version        *bool
+	configPath     *string
+	configCheck    *bool
+	configStrict   *bool
+	diagnosticMode *bool
 
 	// Base
 	store            *string
@@ -243,6 +247,7 @@ func initFlagSet() *flag.FlagSet {
 	configPath = fset.String(nmConfig, "", "config file path")
 	configCheck = flagBoolean(fset, nmConfigCheck, false, "check config file validity and exit")
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
+	diagnosticMode = flagBoolean(fset, nmDiagnosticMode, false, "enable process-wide diagnostic mode")
 
 	// Base
 	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
@@ -321,30 +326,82 @@ func initDeployMode(cfg *config.Config) error {
 }
 
 func initExternalWorkloadManager(ctx context.Context, storage kv.Storage) extworkload.Manager {
+	if !deploymode.IsStarter() {
+		return nil
+	}
 	cfg := config.GetGlobalConfig().ExternalWorkload
 	if !cfg.Enable {
 		return nil
 	}
-	// Manager init is non-fatal; TiDB can continue without external workload coordination.
+	// Non-GCV2 roles can continue without coordination, but a dedicated GCV2
+	// worker must not run without the controller.
 	meta := storage.GetCodec().GetKeyspaceMeta()
 	if meta == nil {
+		if cfg.Role == config.RoleGCV2Worker {
+			logutil.BgLogger().Fatal("external workload GCV2 role requires keyspace meta")
+		}
 		logutil.BgLogger().Warn("external workload controller enabled but keyspace meta is unavailable; TiDB will continue without external workload coordination")
 		return nil
 	}
+	if cfg.Role == config.RoleGCV2Worker && !pd.IsKeyspaceUsingKeyspaceLevelGC(meta) {
+		logutil.BgLogger().Fatal("external workload GCV2 role requires keyspace-level GC")
+	}
 	mgr, err := extworkload.NewManager(ctx, meta, cfg)
 	if err != nil {
+		if cfg.Role == config.RoleGCV2Worker {
+			logutil.BgLogger().Fatal("failed to initialize external workload manager for GCV2 role", zap.Error(err))
+		}
 		logutil.BgLogger().Warn("failed to initialize external workload manager; TiDB will continue without external workload coordination", zap.Error(err))
 		return nil
 	}
+	extworkload.SetManagerForStore(storage, mgr)
 	return mgr
 }
 
-func closeExternalWorkloadManager(mgr extworkload.Manager) {
+func closeExternalWorkloadManager(storage kv.Storage, mgr extworkload.Manager) {
 	if mgr == nil {
 		return
 	}
+	extworkload.SetManagerForStore(storage, nil)
 	if err := mgr.Close(); err != nil {
 		logutil.BgLogger().Warn("failed to close external workload manager", zap.Error(err))
+	}
+}
+
+func loadExternalWorkloadGCLifeTime(ctx context.Context, storage kv.Storage) (time.Duration, error) {
+	se, err := session.CreateSession(storage)
+	if err != nil {
+		return 0, err
+	}
+	defer se.Close()
+	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, se.GetSessionVars())
+	if err != nil {
+		return 0, err
+	}
+	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
+	if err != nil {
+		return 0, err
+	}
+	return gcLifeTime, nil
+}
+
+func initializeExternalWorkloadGCV2(ctx context.Context, storage kv.Storage, mgr extworkload.Manager) {
+	if diagnosticmode.Enabled() {
+		logutil.BgLogger().Info("don't initialize external workload GCV2", zap.String("reason", "diagnostic mode"))
+		return
+	}
+	if !extworkload.IsMaster(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+	gcLifeTime, err := loadExternalWorkloadGCLifeTime(ctx, storage)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load GC life time for external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
+		closeExternalWorkloadManager(storage, mgr)
+		return
+	}
+	if err := mgr.InitializeGCV2(ctx, gcLifeTime); err != nil {
+		logutil.BgLogger().Warn("failed to initialize external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
+		closeExternalWorkloadManager(storage, mgr)
 	}
 }
 
@@ -360,6 +417,7 @@ func main() {
 			return
 		}
 	}
+	terror.MustNil(diagnosticmode.Initialize(*diagnosticMode))
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if kerneltype.IsNextGen() {
 		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
@@ -477,12 +535,11 @@ func main() {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	storage, dom, externalWorkloadManager, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
-	if deploymode.IsStarter() {
-		externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
-		defer closeExternalWorkloadManager(externalWorkloadManager)
+	if externalWorkloadManager != nil {
+		defer closeExternalWorkloadManager(storage, externalWorkloadManager)
 	}
 	svr := createServer(storage, dom)
 	if standbyController != nil {
@@ -611,38 +668,49 @@ func registerStores() error {
 	return err
 }
 
-func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, extworkload.Manager, error) {
 	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		kv.StandAloneTiDB = true
 	}
 	storage := kvstore.MustInitStorage(keyspaceName)
+	if deploymode.IsStarter() && storage.GetCodec().GetAPIVersion() == kvrpcpb.APIVersion_V2 {
+		metricsutil.SetKeyspaceID(uint32(storage.GetCodec().GetKeyspaceID()))
+	}
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
-				return nil, nil, errors.New("kernel type mismatch")
+				return nil, nil, nil, errors.New("kernel type mismatch")
 			}
 		}
 	}
+	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
-		return nil, nil, err
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
+		return nil, nil, nil, err
 	}
-	dom, err := session.BootstrapSession(storage)
+	dom, err := session.BootstrapSessionWithExternalWorkloadManager(storage, externalWorkloadManager)
 	if err != nil {
-		return nil, nil, err
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
+		return nil, nil, nil, err
 	}
-	return storage, dom, nil
+	initializeExternalWorkloadGCV2(context.Background(), storage, externalWorkloadManager)
+	externalWorkloadManager = extworkload.GetManagerFromStore(storage)
+	if externalWorkloadManager == nil {
+		dom.SetExternalWorkloadManager(nil)
+	}
+	return storage, dom, externalWorkloadManager, nil
 }
 
 // Prometheus push.
@@ -710,6 +778,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	fset.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
 	})
+	if actualFlags[nmStarterParams] && cfg.DeployMode == deploymode.Starter {
+		terror.MustNil(applyStarterAdditionalParams(cfg, getStarterAdditionalParams()))
+	}
 
 	// Base
 	if actualFlags[nmHost] {
@@ -1038,6 +1109,9 @@ func setGlobalVars() {
 	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	vardef.SetStatsLease(statsLeaseDuration)
+	if !cfg.Performance.EnableStatsCacheMemQuota {
+		log.Warn("performance.enable-stats-cache-mem-quota is deprecated and has no effect; the stats cache always uses its memory quota")
+	}
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
@@ -1253,14 +1327,11 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	}
 }
 
-// The amount of time we wait for the ongoing txt to finished.
-// We should better provider a dynamic way to set this value.
-var gracefulCloseConnectionsTimeout = 15 * time.Second
-
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
-	drainClientWait := gracefulCloseConnectionsTimeout
+	// The amount of time we wait for the ongoing statements and transactions to finish.
+	drainClientWait := time.Duration(config.GetGlobalConfig().GracefulCloseConnectionsTimeout) * time.Second
 	if deploymode.IsStarter() && svr.GetForceShutdown() {
 		drainClientWait = 0
 	}
@@ -1352,6 +1423,7 @@ type starterParams struct {
 	podName          string
 	podIP            string
 	podNamespace     string
+	enableRGFallback bool
 }
 
 func parseStarterAdditionalParams(raw string) (starterParams, error) {
@@ -1394,11 +1466,26 @@ func parseStarterAdditionalParams(raw string) (starterParams, error) {
 			params.podIP = value
 		case "pod-namespace":
 			params.podNamespace = value
+		case "enable-rg-fallback":
+			enable, err := strconv.ParseBool(value)
+			if err != nil {
+				return params, fmt.Errorf("starter additional param %q must be a bool: %w", key, err)
+			}
+			params.enableRGFallback = enable
 		default:
 			return params, fmt.Errorf("unknown starter additional param %q", key)
 		}
 	}
 	return params, nil
+}
+
+func applyStarterAdditionalParams(cfg *config.Config, raw string) error {
+	params, err := parseStarterAdditionalParams(raw)
+	if err != nil {
+		return err
+	}
+	cfg.StarterParams.EnableRGFallback = params.enableRGFallback
+	return nil
 }
 
 func getStarterAdditionalParams() string {

@@ -59,6 +59,7 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 			MaxTS:                 maxTs,
 		}, taggedParsed)
 		require.True(t, taggedParsed.HasDDLFiles())
+		require.False(t, taggedParsed.IsEmpty())
 
 		taggedNoDDLFileName := fmt.Sprintf(
 			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
@@ -76,6 +77,25 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 			HasFlags:              true,
 		}, taggedNoDDLParsed)
 		require.False(t, taggedNoDDLParsed.HasDDLFiles())
+		require.False(t, taggedNoDDLParsed.IsEmpty())
+
+		taggedEmptyFileName := fmt.Sprintf(
+			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
+			flushTs, storeID, minBeginTsInDefaultCf, maxTs, minTs, uint64(3),
+		)
+		taggedEmptyParsed, err := backupmetas.ParseName(taggedEmptyFileName)
+		require.NoError(t, err)
+		require.Equal(t, backupmetas.ParsedName{
+			FlushTS:               flushTs,
+			StoreID:               storeID,
+			MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
+			MinTS:                 minTs,
+			MaxTS:                 maxTs,
+			Flags:                 3,
+			HasFlags:              true,
+		}, taggedEmptyParsed)
+		require.False(t, taggedEmptyParsed.HasDDLFiles())
+		require.True(t, taggedEmptyParsed.IsEmpty())
 
 		taggedDefaultDDLFileName := fmt.Sprintf(
 			"%016X%016X-d%016Xu%016Xl%016Xp%016X",
@@ -84,6 +104,7 @@ func FuzzParseBackupMetaFileNameRoundTrip(f *testing.F) {
 		taggedDefaultDDLParsed, err := backupmetas.ParseName(taggedDefaultDDLFileName)
 		require.NoError(t, err)
 		require.True(t, taggedDefaultDDLParsed.HasDDLFiles())
+		require.False(t, taggedDefaultDDLParsed.IsEmpty())
 
 		tagValues := map[byte]uint64{
 			backupmetas.NameMinBeginTsInDefaultCfTag: minBeginTsInDefaultCf,

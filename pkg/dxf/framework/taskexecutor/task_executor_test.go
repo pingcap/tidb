@@ -33,6 +33,8 @@ import (
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 var (
@@ -577,6 +579,8 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	t.Run("subtask cancelled during running", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
+		core, logs := observer.New(zap.InfoLevel)
+		e.taskExecutor.sampleLogger = zap.New(core)
 		e.mockForCheckBalanceSubtask()
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
@@ -592,6 +596,8 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 		e.taskExecutor.Run()
+		require.Empty(t, logs.FilterMessage("run subtask failed").All())
+		require.Len(t, logs.FilterMessage("subtask run canceled").All(), 1)
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -936,6 +942,14 @@ func TestTaskExecutorRun(t *testing.T) {
 }
 
 func TestDetectAndHandleParamModify(t *testing.T) {
+	newResourceModifyEnv := func(t *testing.T) *taskExecutorRunEnv {
+		env := newTaskExecutorRunEnv0(t)
+		taskExecutor := env.taskExecutor
+		execute.SetFrameworkInfo(env.stepExecutor, taskExecutor.task.Load(),
+			taskExecutor.nodeRc.GetStepResource(taskExecutor.GetTaskBase()),
+			env.taskTable.UpdateSubtaskCheckpoint, env.taskTable.GetSubtaskCheckpoint)
+		return env
+	}
 	newTestEnv := func(t *testing.T, dur time.Duration) *taskExecutorRunEnv {
 		env := newTaskExecutorRunEnv0(t)
 		setDetectParamModifyInterval(t, dur)
@@ -972,7 +986,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 	})
 
 	t.Run("required slots become smaller, but failed to reduce resource usage", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -984,11 +998,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&oldTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 6, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("required slots become smaller, apply successfully", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1000,11 +1015,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&latestTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 12, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("required slots become larger, but not enough slots for exchange", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1018,11 +1034,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.taskTable.EXPECT().GetTaskByID(gomock.Any(), latestTask.ID).Return(&latestTask, nil)
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&oldTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("required slots become larger, but failed to notify application", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1037,11 +1054,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&oldTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("required slots become larger, apply successfully", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1056,6 +1074,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().ResourceModified(gomock.Any(), gomock.Any()).Return(nil)
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&latestTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
 	})
 
@@ -1086,7 +1105,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 	})
 
 	t.Run("both meta and required slots modified, both failed to apply", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1103,11 +1122,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(errors.New("some error"))
 		require.ErrorContains(t, taskExecutor.detectAndHandleParamModify(context.Background()), "failed to apply task param modification")
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(taskExecutor.GetTaskBase()), env.stepExecutor.GetResource())
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("both meta and required slots modified, apply required slots success, but failed to apply meta", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1127,11 +1147,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Empty(t, taskExecutor.task.Load().Meta)
 		oldTask.RequiredSlots = latestTask.RequiredSlots
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(taskExecutor.GetTaskBase()), env.stepExecutor.GetResource())
 		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("both meta and required slots modified, apply meta success, but failed to apply required slots", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1151,11 +1172,12 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		require.Equal(t, oldTask.RequiredSlots, taskExecutor.task.Load().RequiredSlots)
 		oldTask.Meta = latestTask.Meta
 		require.Equal(t, oldTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(taskExecutor.GetTaskBase()), env.stepExecutor.GetResource())
 		require.Equal(t, 2, taskExecutor.slotMgr.availableSlots())
 	})
 
 	t.Run("both meta and required slots modified, both apply success", func(t *testing.T) {
-		env := newTaskExecutorRunEnv0(t)
+		env := newResourceModifyEnv(t)
 		taskExecutor := env.taskExecutor
 		taskExecutor.stepExec = env.stepExecutor
 		taskExecutor.slotMgr.alloc(taskExecutor.GetTaskBase())
@@ -1172,6 +1194,7 @@ func TestDetectAndHandleParamModify(t *testing.T) {
 		env.stepExecutor.EXPECT().TaskMetaModified(gomock.Any(), gomock.Any()).Return(nil)
 		require.NoError(t, taskExecutor.detectAndHandleParamModify(context.Background()))
 		require.Equal(t, &latestTask, taskExecutor.task.Load())
+		require.Equal(t, taskExecutor.nodeRc.GetStepResource(&latestTask.TaskBase), env.stepExecutor.GetResource())
 		require.Equal(t, 0, taskExecutor.slotMgr.availableSlots())
 	})
 }

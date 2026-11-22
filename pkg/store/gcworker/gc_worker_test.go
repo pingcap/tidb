@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -66,6 +67,31 @@ type mockGCWorkerLockResolver struct {
 	tikvStore         tikv.Storage
 	scanLocks         func([]*txnlock.Lock, []byte) ([]*txnlock.Lock, *tikv.KeyLocation)
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+}
+
+type stubGCV2Manager struct {
+	extworkload.Manager
+
+	role             config.ExternalWorkloadRole
+	meta             *keyspacepb.KeyspaceMeta
+	err              error
+	recycleSafePoint uint64
+	registerCount    int
+	recycleCount     int
+}
+
+func (m *stubGCV2Manager) Role() config.ExternalWorkloadRole { return m.role }
+func (m *stubGCV2Manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
+
+func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ time.Duration) error {
+	m.registerCount++
+	return m.err
+}
+
+func (m *stubGCV2Manager) RecycleGCV2(_ context.Context, safePoint uint64) error {
+	m.recycleSafePoint = safePoint
+	m.recycleCount++
+	return m.err
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
@@ -222,6 +248,60 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 	s.gcWorker = gcWorker
 
 	return s
+}
+
+func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
+	const safePoint = 123
+	for _, tc := range []struct {
+		name             string
+		gcManagementType string
+		recycleErr       error
+		wantRecycleCount int
+	}{
+		{
+			name:             "keyspace level GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "recycle failure is best effort",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			recycleErr:       errors.New("mock recycle GCV2 failure"),
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "unified GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeUnified,
+			wantRecycleCount: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+				Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1},
+				Name:     "ks",
+				Config:   map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
+			}))
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, store.Close())
+			})
+
+			mgr := &stubGCV2Manager{
+				role: config.RoleGCV2Worker,
+				meta: store.GetCodec().GetKeyspaceMeta(),
+				err:  tc.recycleErr,
+			}
+			extworkload.SetManagerForStore(store, mgr)
+			worker := &GCWorker{store: store}
+
+			worker.notifyGCV2AfterGC(context.Background(), safePoint)
+			require.Zero(t, mgr.registerCount)
+			require.Equal(t, tc.wantRecycleCount, mgr.recycleCount)
+			if tc.wantRecycleCount > 0 {
+				require.Equal(t, uint64(safePoint), mgr.recycleSafePoint)
+			}
+		})
+	}
 }
 
 func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
@@ -1493,9 +1573,9 @@ func testResolveLocksWithKeyspacesImpl(t *testing.T, subCaseName string) {
 			gcManagementType = pd.KeyspaceConfigGCManagementTypeUnified
 		}
 		return &keyspacepb.KeyspaceMeta{
-			Id:     id,
-			Name:   name,
-			Config: map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: id},
+			Name:     name,
+			Config:   map[string]string{pd.KeyspaceConfigGCManagementType: gcManagementType},
 		}
 	}
 
@@ -2314,6 +2394,164 @@ func TestCalcDeleteRangeConcurrency(t *testing.T) {
 			}
 			if result < 1 {
 				t.Errorf("Result should never be less than 1, but got %d", result)
+			}
+		})
+	}
+}
+
+func TestGCPlacementRulesForCreateMaterializedViewRollback(t *testing.T) {
+	s := createGCWorkerSuite(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("create-mv-rollback:20")`))
+	historyJobFailpointEnabled := true
+	defer func() {
+		if historyJobFailpointEnabled {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		}
+	}()
+
+	var gcPlacementRuleCache sync.Map
+	bundleID := "TiDB_DDL_20"
+	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
+	require.NoError(t, err)
+	bundle.ID = bundleID
+	require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+	got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.False(t, got.IsEmpty())
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 20}
+	require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache))
+	v, ok := gcPlacementRuleCache.Load(int64(20))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
+
+	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.True(t, got.IsEmpty())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	historyJobFailpointEnabled = false
+
+	for _, test := range []struct {
+		name          string
+		failpoint     string
+		tableID       int64
+		shadowTableID int64
+	}{
+		{name: "drop materialized view", failpoint: "drop-mview:20", tableID: 20},
+		{name: "drop materialized view log", failpoint: "drop-mlog:30", tableID: 30},
+		{name: "out of place materialized view cutover", failpoint: "mview-cutover:40:41", tableID: 40, shadowTableID: 41},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", `return("`+test.failpoint+`")`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
+
+			bundleID := fmt.Sprintf("TiDB_DDL_%d", test.tableID)
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1, r2"})
+			require.NoError(t, err)
+			bundle.ID = bundleID
+			bundles := []*placement.Bundle{bundle}
+			if test.shadowTableID != 0 {
+				shadowBundle := bundle.Clone()
+				shadowBundle.ID = placement.GroupID(test.shadowTableID)
+				bundles = append(bundles, shadowBundle)
+			}
+			require.NoError(t, infosync.PutRuleBundles(context.Background(), bundles))
+
+			var cache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: test.tableID}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &cache))
+			_, ok := cache.Load(test.tableID)
+			require.True(t, ok)
+			got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.True(t, got.IsEmpty())
+			if test.shadowTableID != 0 {
+				got, err = infosync.GetRuleBundle(context.Background(), placement.GroupID(test.shadowTableID))
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				require.False(t, got.IsEmpty())
+			}
+		})
+	}
+}
+
+func TestGCPlacementRulesForMaterializedViewOutOfPlaceCutover(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		oldMLogID int64
+		cancelled bool
+	}{
+		{name: "without log"},
+		{name: "with log", oldMLogID: 40},
+		{name: "cancelled", oldMLogID: 40, cancelled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := createGCWorkerSuite(t)
+			tiflash := infosync.NewMockTiFlash()
+			infosync.SetMockTiFlash(tiflash)
+			defer func() {
+				infosync.SetMockTiFlash(nil)
+				tiflash.StatusServer.Close()
+			}()
+
+			historyJob := "mview-cutover:20:30"
+			retiredIDs := []int64{20}
+			preservedIDs := []int64{30, 50}
+			if tc.oldMLogID != 0 {
+				historyJob += fmt.Sprintf(":%d", tc.oldMLogID)
+				retiredIDs = append(retiredIDs, tc.oldMLogID)
+			}
+			if tc.cancelled {
+				historyJob += ":50"
+				retiredIDs = []int64{50}
+				preservedIDs = []int64{20, 30, tc.oldMLogID}
+			}
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", fmt.Sprintf("return(%q)", historyJob)))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+			}()
+
+			bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
+				PrimaryRegion: "r1",
+				Regions:       "r1, r2",
+			})
+			require.NoError(t, err)
+			allIDs := []int64{20, 30, 50}
+			if tc.oldMLogID != 0 {
+				allIDs = append(allIDs, tc.oldMLogID)
+			}
+			for _, id := range allIDs {
+				current := bundle.Clone()
+				current.ID = fmt.Sprintf("TiDB_DDL_%d", id)
+				require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{current}))
+				require.NoError(t, infosync.ConfigureTiFlashPDForTable(id, 1, &[]string{}))
+			}
+
+			var gcPlacementRuleCache sync.Map
+			dr := util.DelRangeTask{JobID: 1, ElementID: retiredIDs[0]}
+			require.NoError(t, doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache))
+			for _, id := range retiredIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.True(t, got.IsEmpty())
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.False(t, ok)
+			}
+			for _, id := range preservedIDs {
+				_, ok := gcPlacementRuleCache.Load(id)
+				require.False(t, ok)
+				_, ok = tiflash.GetPlacementRule(infosync.MakeRuleID(id))
+				require.True(t, ok)
+				got, err := infosync.GetRuleBundle(context.Background(), fmt.Sprintf("TiDB_DDL_%d", id))
+				require.NoError(t, err)
+				require.False(t, got.IsEmpty())
 			}
 		})
 	}

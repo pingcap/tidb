@@ -23,6 +23,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -63,6 +64,10 @@ type Manager struct {
 	// action "judging whether there is this record in the current watch list and adding records" have atomicity.
 	queryLock sync.Mutex
 	watchList *ttlcache.Cache[string, *QuarantineRecord]
+	// inNormalMode is false when diagnostic mode is enabled. It records whether
+	// the cache was started during initialization, so Stop never waits on a
+	// cache that was not started.
+	inNormalMode bool
 	// activeGroup is used to manage the active runaway watches of resource group.
 	// It uses sync.Map + atomic.Int64 for lock-free reads on the per-query hot path.
 	activeGroup sync.Map // map[string]*atomic.Int64
@@ -105,10 +110,14 @@ func NewRunawayManager(
 		ttlcache.WithCapacity[string, *QuarantineRecord](maxWatchListCap),
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
 	)
-	go watchList.Start()
+	inNormalMode := !diagnosticmode.Enabled()
+	if inNormalMode {
+		go watchList.Start()
+	}
 	m := &Manager{
 		ResourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
+		inNormalMode:          inNormalMode,
 		serverID:              serverAddr,
 		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
@@ -402,7 +411,7 @@ func (rm *Manager) Stop() {
 	if rm == nil {
 		return
 	}
-	if rm.watchList != nil {
+	if rm.watchList != nil && rm.inNormalMode {
 		rm.watchList.Stop()
 	}
 }

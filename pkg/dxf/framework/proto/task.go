@@ -92,6 +92,13 @@ const (
 	MaxConcurrentTaskUpperBound = 1000
 	// DefaultMaxConcurrentTask is the default DXF task concurrency.
 	DefaultMaxConcurrentTask = maxConcurrentTaskLowerBound
+
+	// taskCleanupBatchSizeLowerBound is the minimum allowed DXF task cleanup batch size.
+	taskCleanupBatchSizeLowerBound = 1
+	// TaskCleanupBatchSizeUpperBound is the maximum allowed DXF task cleanup batch size.
+	TaskCleanupBatchSizeUpperBound = 1000
+	// DefaultTaskCleanupBatchSize is the default DXF task cleanup batch size.
+	DefaultTaskCleanupBatchSize = 20
 )
 
 // maxConcurrentTask is an owner-local emergency tuning knob for DXF scheduling.
@@ -102,8 +109,15 @@ const (
 // on the owner, so the owner node may need a larger resource spec first.
 var maxConcurrentTask atomic.Int64
 
+// taskCleanupBatchSize is an owner-local tuning knob for DXF task cleanup.
+// It is intentionally kept in memory only: it is not persisted to TiKV, is reset
+// on restart, and only affects the TiDB node that receives the update. Operators
+// should change it through the DXF owner node.
+var taskCleanupBatchSize atomic.Int64
+
 func init() {
 	maxConcurrentTask.Store(DefaultMaxConcurrentTask)
+	taskCleanupBatchSize.Store(DefaultTaskCleanupBatchSize)
 }
 
 // GetMaxConcurrentTask returns the max concurrency of task.
@@ -127,6 +141,30 @@ func SetMaxConcurrentTaskForTest(value int) func() {
 	maxConcurrentTask.Store(int64(value))
 	return func() {
 		maxConcurrentTask.Store(int64(old))
+	}
+}
+
+// GetTaskCleanupBatchSize returns the task cleanup batch size.
+func GetTaskCleanupBatchSize() int {
+	return int(taskCleanupBatchSize.Load())
+}
+
+// SetTaskCleanupBatchSize updates the task cleanup batch size.
+func SetTaskCleanupBatchSize(value int) error {
+	if value < taskCleanupBatchSizeLowerBound || value > TaskCleanupBatchSizeUpperBound {
+		return fmt.Errorf("task_cleanup_batch_size %d is out of range [%d, %d]",
+			value, taskCleanupBatchSizeLowerBound, TaskCleanupBatchSizeUpperBound)
+	}
+	taskCleanupBatchSize.Store(int64(value))
+	return nil
+}
+
+// SetTaskCleanupBatchSizeForTest updates the task cleanup batch size and returns a restore function.
+func SetTaskCleanupBatchSizeForTest(value int) func() {
+	old := GetTaskCleanupBatchSize()
+	taskCleanupBatchSize.Store(int64(value))
+	return func() {
+		taskCleanupBatchSize.Store(int64(old))
 	}
 }
 

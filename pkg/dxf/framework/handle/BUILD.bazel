@@ -52,6 +52,7 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/testutil",

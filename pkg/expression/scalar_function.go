@@ -117,6 +117,10 @@ func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, resul
 
 // VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	intest.Assert(ctx != nil)
+	if intest.EnableAssert {
+		ctx = wrapEvalAssert(ctx, sf.Function)
+	}
 	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
 }
 
@@ -574,6 +578,10 @@ func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.Binary
 
 // EvalVectorFloat32 implements Expression interface.
 func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	intest.Assert(ctx != nil)
+	if intest.EnableAssert {
+		ctx = wrapEvalAssert(ctx, sf.Function)
+	}
 	return sf.Function.evalVectorFloat32(ctx, row)
 }
 
@@ -846,22 +854,28 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 // - ast.Plus
 // - ast.Minus
 // - ast.UnaryMinus
+//
+// The constant operand of ast.Plus and ast.Minus must be immutable and not NULL, since
+// `col + NULL` / `NULL - col` is NULL for every row and doesn't follow col's order.
 func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 	switch sf.FuncName.String() {
 	case ast.Plus:
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp, reverse
 		case *ScalarFunction:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
+			if !isNonNullConstant(tp) {
+				return nil, false
+			}
 			switch rtp := args[1].(type) {
 			case *Column:
 				return rtp, reverse
@@ -874,16 +888,19 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 		args := sf.GetArgs()
 		switch tp := args[0].(type) {
 		case *Column:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp, reverse
 		case *ScalarFunction:
-			if _, ok := args[1].(*Constant); !ok {
+			if !isNonNullConstant(args[1]) {
 				return nil, false
 			}
 			return tp.GetSingleColumn(reverse)
 		case *Constant:
+			if !isNonNullConstant(tp) {
+				return nil, false
+			}
 			switch rtp := args[1].(type) {
 			case *Column:
 				return rtp, !reverse
@@ -903,6 +920,20 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// isNonNullConstant returns true if expr is an immutable constant whose value is non-NULL.
+// Parameter markers and deferred expressions are rejected: their value can change
+// between executions of a cached plan, e.g. `NULLIF(?, 0) - col` may become NULL.
+func isNonNullConstant(expr Expression) bool {
+	c, ok := expr.(*Constant)
+	if !ok {
+		return false
+	}
+	if c.ConstLevel() != ConstStrict {
+		return false
+	}
+	return !c.Value.IsNull()
 }
 
 // Coercibility returns the coercibility value which is used to check collations.

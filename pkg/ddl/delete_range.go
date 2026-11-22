@@ -293,7 +293,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		args, err := model.GetFinishedDropTableArgs(job)
@@ -309,6 +309,23 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+	case model.ActionCreateMaterializedView:
+		if !job.IsRollbackDone() || job.TableID == 0 {
+			return nil
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{job.TableID}, ea, "create materialized view rollback: table ID"))
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tableIDs := []int64{args.OldMViewID}
+		if job.IsCancelled() {
+			tableIDs = []int64{args.NewMLogID}
+		} else if args.OldMLogID != 0 {
+			tableIDs = append(tableIDs, args.OldMLogID)
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs, ea, "refresh materialized view out-of-place cutover: retired table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
 		args, err := model.GetFinishedTruncateTableArgs(job)
@@ -471,7 +488,8 @@ func doBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	wrapper.PrepareParamsList(len(tableIDs) * 5)
-	for i, tableID := range tableIDs {
+	rowCount := 0
+	for _, tableID := range tableIDs {
 		tableID, ok := wrapper.RewriteTableID(tableID)
 		if !ok {
 			continue
@@ -480,12 +498,16 @@ func doBatchDeleteTablesRange(ctx context.Context, wrapper DelRangeExecWrapper, 
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		startKeyEncoded := hex.EncodeToString(startKey)
 		endKeyEncoded := hex.EncodeToString(endKey)
-		buf.WriteString(insertDeleteRangeSQLValue)
-		if i != len(tableIDs)-1 {
+		if rowCount > 0 {
 			buf.WriteString(",")
 		}
+		buf.WriteString(insertDeleteRangeSQLValue)
 		elemID := ea.allocForPhysicalID(tableID)
 		wrapper.AppendParamsList(jobID, elemID, startKeyEncoded, endKeyEncoded)
+		rowCount++
+	}
+	if rowCount == 0 {
+		return nil
 	}
 
 	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))

@@ -31,9 +31,9 @@ func (sm *Manager) DelRunningTask(id int64) {
 	sm.delScheduler(id)
 }
 
-// DoCleanupRoutine implements Scheduler.DoCleanupRoutine interface.
-func (sm *Manager) DoCleanupRoutine() {
-	sm.doCleanupTask()
+// DoClean runs task cleanup synchronously in tests.
+func (sm *Manager) DoClean() {
+	sm.drainCleanTaskBatches()
 }
 
 func (s *BaseScheduler) Switch2NextStep() (err error) {

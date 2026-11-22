@@ -117,7 +117,7 @@ const (
 	ActionModifyEngineAttribute                 ActionType = 74
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionModifySchemaReadOnly                  ActionType = 77
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -125,6 +125,16 @@ const (
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
+	ActionCreateMaterializedViewLog             ActionType = 85
+	ActionCreateMaterializedView                ActionType = 86
+	ActionDropMaterializedViewLog               ActionType = 87
+	ActionDropMaterializedView                  ActionType = 88
+	ActionAlterMaterializedViewRefresh          ActionType = 89
+	ActionAlterMaterializedViewLogPurge         ActionType = 90
+	ActionAlterMaterializedViewAttributes       ActionType = 91
+	ActionMViewRefreshOutOfPlaceCutover         ActionType = 92
+	ActionCreateMaterializedViewShadow          ActionType = 93
+	ActionDropMaterializedViewShadow            ActionType = 94
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -210,6 +220,16 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaskingPolicy:                    "alter masking policy",
 	ActionDropMaskingPolicy:                     "drop masking policy",
 	ActionAlterTableSetRegionSplitPolicy:        "alter table set region split policy",
+	ActionCreateMaterializedViewLog:             "create materialized view log",
+	ActionCreateMaterializedView:                "create materialized view",
+	ActionDropMaterializedViewLog:               "drop materialized view log",
+	ActionDropMaterializedView:                  "drop materialized view",
+	ActionAlterMaterializedViewRefresh:          "alter materialized view refresh",
+	ActionAlterMaterializedViewLogPurge:         "alter materialized view log purge",
+	ActionAlterMaterializedViewAttributes:       "alter materialized view attributes",
+	ActionMViewRefreshOutOfPlaceCutover:         "refresh materialized view complete out-of-place cutover",
+	ActionCreateMaterializedViewShadow:          "create materialized view shadow table",
+	ActionDropMaterializedViewShadow:            "drop materialized view shadow table",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -286,6 +306,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -308,6 +330,8 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
 	default:
 		return "none"
 	}
@@ -452,6 +476,10 @@ type Job struct {
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
+	// CheckSchemaReadOnly requires the owner to recheck writable schemas before
+	// the first step. The submitter's explicit replica-writer bypass clears it.
+	// A multi-schema parent consumes it before creating any sub-job proxies.
+	CheckSchemaReadOnly bool `json:"check_schema_read_only,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
@@ -463,6 +491,15 @@ type Job struct {
 	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
 	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
 	LastSchemaVersion int64 `json:"last_schema_version"`
+
+	// RU stores the resource units accounted for this DDL job. The calculated RU,
+	// rather than the raw buffered KV byte count, is stored so it stays fixed after
+	// the job finishes even if the accounting weight or formula changes later.
+	// A multi-schema change keeps cumulative RU on its parent Job, not its SubJobs:
+	// parent Job.RU -> SubJob.ToProxyJob -> proxy Job.RU ->
+	// updateParentJobFromProxy -> parent Job.RU. The next SubJob's proxy therefore
+	// starts with the RU accumulated by all preceding SubJobs.
+	RU float64 `json:"ru,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -841,7 +878,7 @@ func (job *Job) GetSystemVars(name string) (string, bool) {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+	case ActionAddIndex, ActionAddPrimaryKey, ActionCreateMaterializedView, ActionReorganizePartition,
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
@@ -878,14 +915,17 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
+	case ActionCreateMaterializedView:
+		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:
 		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
-	case ActionRebaseAutoID, ActionShardRowID,
+	case ActionRebaseAutoID, ActionShardRowID, ActionMViewRefreshOutOfPlaceCutover,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
@@ -988,22 +1028,23 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type         ActionType `json:"type"`
-	JobArgs      JobArgs    `json:"-"`
-	args         []any
-	RawArgs      json.RawMessage `json:"raw_args"`
-	SchemaState  SchemaState     `json:"schema_state"`
-	SnapshotVer  uint64          `json:"snapshot_ver"`
-	RealStartTS  uint64          `json:"real_start_ts"`
-	Revertible   bool            `json:"revertible"`
-	State        JobState        `json:"state"`
-	RowCount     int64           `json:"row_count"`
-	Warning      *terror.Error   `json:"warning"`
-	NeedReorg    bool            `json:"-"`
-	SchemaVer    int64           `json:"schema_version"`
-	ReorgTp      ReorgType       `json:"reorg_tp"`
-	ReorgStage   ReorgStage      `json:"reorg_stage"`
-	AnalyzeState int8            `json:"analyze_state"`
+	Type                ActionType `json:"type"`
+	JobArgs             JobArgs    `json:"-"`
+	args                []any
+	RawArgs             json.RawMessage       `json:"raw_args"`
+	SchemaState         SchemaState           `json:"schema_state"`
+	SnapshotVer         uint64                `json:"snapshot_ver"`
+	RealStartTS         uint64                `json:"real_start_ts"`
+	Revertible          bool                  `json:"revertible"`
+	State               JobState              `json:"state"`
+	RowCount            int64                 `json:"row_count"`
+	Warning             *terror.Error         `json:"warning"`
+	NeedReorg           bool                  `json:"-"`
+	SchemaVer           int64                 `json:"schema_version"`
+	ReorgTp             ReorgType             `json:"reorg_tp"`
+	ReorgStage          ReorgStage            `json:"reorg_stage"`
+	AnalyzeState        int8                  `json:"analyze_state"`
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -1034,39 +1075,41 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
 	return Job{
-		Version:         parentJob.Version,
-		ID:              parentJob.ID,
-		Type:            sub.Type,
-		SchemaID:        parentJob.SchemaID,
-		TableID:         parentJob.TableID,
-		SchemaName:      parentJob.SchemaName,
-		State:           sub.State,
-		Warning:         sub.Warning,
-		Error:           nil,
-		ErrorCount:      0,
-		RowCount:        sub.RowCount,
-		Mu:              sync.Mutex{},
-		NeedReorg:       sub.NeedReorg,
-		args:            sub.args,
-		RawArgs:         sub.RawArgs,
-		SchemaState:     sub.SchemaState,
-		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     sub.RealStartTS,
-		StartTS:         parentJob.StartTS,
-		DependencyID:    parentJob.DependencyID,
-		Query:           parentJob.Query,
-		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
-		Priority:        parentJob.Priority,
-		SeqNum:          parentJob.SeqNum,
-		Charset:         parentJob.Charset,
-		Collate:         parentJob.Collate,
-		AdminOperator:   parentJob.AdminOperator,
-		ResumeReason:    parentJob.ResumeReason,
-		TraceInfo:       parentJob.TraceInfo,
-		SQLMode:         parentJob.SQLMode,
-		SessionVars:     parentJob.SessionVars,
+		Version:             parentJob.Version,
+		ID:                  parentJob.ID,
+		Type:                sub.Type,
+		SchemaID:            parentJob.SchemaID,
+		TableID:             parentJob.TableID,
+		SchemaName:          parentJob.SchemaName,
+		State:               sub.State,
+		Warning:             sub.Warning,
+		Error:               nil,
+		ErrorCount:          0,
+		RowCount:            sub.RowCount,
+		Mu:                  sync.Mutex{},
+		NeedReorg:           sub.NeedReorg,
+		args:                sub.args,
+		RawArgs:             sub.RawArgs,
+		SchemaState:         sub.SchemaState,
+		SnapshotVer:         sub.SnapshotVer,
+		RealStartTS:         sub.RealStartTS,
+		StartTS:             parentJob.StartTS,
+		DependencyID:        parentJob.DependencyID,
+		Query:               parentJob.Query,
+		BinlogInfo:          parentJob.BinlogInfo,
+		ReorgMeta:           reorgMeta,
+		MultiSchemaInfo:     &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		Priority:            parentJob.Priority,
+		SeqNum:              parentJob.SeqNum,
+		Charset:             parentJob.Charset,
+		Collate:             parentJob.Collate,
+		AdminOperator:       parentJob.AdminOperator,
+		ResumeReason:        parentJob.ResumeReason,
+		RU:                  parentJob.RU,
+		TraceInfo:           parentJob.TraceInfo,
+		SQLMode:             parentJob.SQLMode,
+		SessionVars:         parentJob.SessionVars,
+		InvolvingSchemaInfo: sub.InvolvingSchemaInfo,
 	}
 }
 
@@ -1081,6 +1124,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+	sub.InvolvingSchemaInfo = proxyJob.InvolvingSchemaInfo
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
@@ -1126,6 +1170,8 @@ type MultiSchemaInfo struct {
 
 	RelativeColumns []ast.CIStr `json:"-"`
 	PositionColumns []ast.CIStr `json:"-"`
+
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
@@ -1409,6 +1455,20 @@ type TimeZoneLocation struct {
 	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
 	mu       sync.RWMutex
+}
+
+// Clone returns a copy of the time zone location without copying its mutex.
+func (tz *TimeZoneLocation) Clone() TimeZoneLocation {
+	if tz == nil {
+		return TimeZoneLocation{}
+	}
+	tz.mu.RLock()
+	defer tz.mu.RUnlock()
+	return TimeZoneLocation{
+		Name:     tz.Name,
+		Offset:   tz.Offset,
+		location: tz.location,
+	}
 }
 
 // GetLocation gets the timezone location.

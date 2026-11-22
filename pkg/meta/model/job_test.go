@@ -67,6 +67,7 @@ func TestJobCodec(t *testing.T) {
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
+		RU:         12.5,
 		BinlogInfo: &HistoryInfo{},
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
@@ -83,6 +84,7 @@ func TestJobCodec(t *testing.T) {
 	newJob := &Job{}
 	err = newJob.Decode(b)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, job.BinlogInfo, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
@@ -96,6 +98,7 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b1)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, &HistoryInfo{}, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
@@ -105,7 +108,14 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b2)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Greater(t, len(newJob.String()), 0)
+	legacyJob := &Job{}
+	require.NoError(t, legacyJob.Decode([]byte(`{"id":1}`)))
+	require.Zero(t, legacyJob.RU)
+	zeroRUJobBytes, err := legacyJob.Encode(true)
+	require.NoError(t, err)
+	require.NotContains(t, string(zeroRUJobBytes), `"ru"`)
 
 	job.State = JobStateDone
 	require.True(t, job.IsDone())
@@ -166,16 +176,18 @@ func TestLocation(t *testing.T) {
 
 func TestJobClone(t *testing.T) {
 	job := &Job{
-		Version:         JobVersion1,
-		ID:              100,
-		Type:            ActionCreateTable,
-		SchemaID:        101,
-		TableID:         102,
-		SchemaName:      "test",
-		TableName:       "t",
-		State:           JobStateDone,
-		MultiSchemaInfo: nil,
-		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+		Version:             JobVersion1,
+		CheckSchemaReadOnly: true,
+		ID:                  100,
+		Type:                ActionCreateTable,
+		SchemaID:            101,
+		TableID:             102,
+		SchemaName:          "test",
+		TableName:           "t",
+		State:               JobStateDone,
+		RU:                  12.5,
+		MultiSchemaInfo:     nil,
+		ResumeReason:        &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -185,13 +197,16 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.SchemaName, clone.SchemaName)
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
+	require.Equal(t, job.RU, clone.RU)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
 	require.Equal(t, job.ResumeReason, clone.ResumeReason)
+	require.True(t, clone.CheckSchemaReadOnly)
 }
 
 func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 	parentJob := &Job{
 		ID:           100,
+		RU:           12.5,
 		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	subJob := &SubJob{
@@ -200,6 +215,7 @@ func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 	}
 	proxyJob := subJob.ToProxyJob(parentJob, 0)
 	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
+	require.Equal(t, parentJob.RU, proxyJob.RU)
 }
 
 func TestJobSize(t *testing.T) {
@@ -207,8 +223,8 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
-	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
+	require.Equal(t, 424, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -238,6 +254,7 @@ func TestMayNeedReorg(t *testing.T) {
 		ActionAlterTablePartitioning,
 		ActionAddIndex,
 		ActionAddPrimaryKey,
+		ActionCreateMaterializedView,
 	}
 	generalJobTypes := []ActionType{
 		ActionCreateTable,
@@ -262,6 +279,15 @@ func TestMayNeedReorg(t *testing.T) {
 		job.Type = jobType
 		require.False(t, job.MayNeedReorg())
 	}
+}
+
+func TestCreateMaterializedViewRollbackable(t *testing.T) {
+	job := &Job{Type: ActionCreateMaterializedView, SchemaState: StateNone}
+	require.True(t, job.IsRollbackable())
+	job.SchemaState = StateWriteReorganization
+	require.True(t, job.IsRollbackable())
+	job.SchemaState = StatePublic
+	require.False(t, job.IsRollbackable())
 }
 
 func TestInFinalState(t *testing.T) {
@@ -347,7 +373,11 @@ func TestString(t *testing.T) {
 		{ActionCreateSchema, "create schema"},
 		{ActionDropSchema, "drop schema"},
 		{ActionCreateTable, "create table"},
+		{ActionCreateMaterializedViewShadow, "create materialized view shadow table"},
+		{ActionDropMaterializedViewShadow, "drop materialized view shadow table"},
 		{ActionDropTable, "drop table"},
+		{ActionDropMaterializedView, "drop materialized view"},
+		{ActionDropMaterializedViewLog, "drop materialized view log"},
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},

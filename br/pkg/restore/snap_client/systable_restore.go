@@ -29,8 +29,62 @@ import (
 )
 
 const (
-	sysUserTableName = "user"
+	sysUserTableName     = "user"
+	sysDBTableName       = "db"
+	sysBindInfoTableName = "bind_info"
 )
+
+type compatibleMissingBackupSystemTableColumn struct {
+	requiredColumns  []string
+	selectExpression string
+}
+
+var (
+	operateViewPrivColumnName = strings.ToLower(mysql.OperateViewPriv.ColumnString())
+
+	compatibleMissingBackupSystemTableColumns = map[string]map[string]compatibleMissingBackupSystemTableColumn{
+		sysUserTableName: {
+			operateViewPrivColumnName: {
+				requiredColumns:  []string{strings.ToLower(mysql.SuperPriv.ColumnString())},
+				selectExpression: "IF(`Super_priv` = 'Y', 'Y', 'N')",
+			},
+		},
+		sysDBTableName: {
+			operateViewPrivColumnName: {
+				selectExpression: "'N'",
+			},
+		},
+		sysBindInfoTableName: {
+			"last_used_date": {
+				selectExpression: "NULL",
+			},
+		},
+	}
+)
+
+// upgradedNullableUserColumns are the mysql.user columns that the upgrade from
+// an old TiDB version adds as nullable, while a newly bootstrapped cluster
+// defines them as NOT NULL.
+var upgradedNullableUserColumns = map[string]struct{}{
+	"create_role_priv":       {},
+	"drop_role_priv":         {},
+	"account_locked":         {},
+	"shutdown_priv":          {},
+	"reload_priv":            {},
+	"file_priv":              {},
+	"config_priv":            {},
+	"create_tablespace_priv": {},
+}
+
+func isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, columnNameL string, backupCol, clusterCol *model.ColumnInfo) bool {
+	if dbNameL != mysql.SystemDB || tableNameL != sysUserTableName {
+		return false
+	}
+	if _, ok := upgradedNullableUserColumns[columnNameL]; !ok {
+		return false
+	}
+	return !mysql.HasNotNullFlag(backupCol.GetFlag()) && mysql.HasNotNullFlag(clusterCol.GetFlag())
+}
 
 var planPeplayerTables = map[string]map[string]struct{}{
 	"mysql": {
@@ -128,6 +182,17 @@ var unRecoverableTable = map[string]map[string]struct{}{
 
 		// TiDB internal timers.
 		"tidb_timers": {},
+
+		// MV maintenance metadata uses cluster-local table IDs and TSOs, so it
+		// cannot be meaningfully restored into another cluster.
+		"tidb_mview_refresh_info":             {},
+		"tidb_mview_fast_refresh_source_info": {},
+		"tidb_mlog_purge_info":                {},
+		"tidb_mview_refresh_hist":             {},
+		"tidb_mview_refresh_alert":            {},
+		"tidb_mlog_purge_hist":                {},
+		// Storage-class transition history uses cluster-local table IDs and TSOs.
+		"tidb_storage_class_transition_history": {},
 
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
@@ -355,6 +420,91 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
+func buildSystemTableReplaceColumns(
+	dbName, tableName string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) ([]string, []string, error) {
+	upstreamColMap := make(map[string]*model.ColumnInfo, len(upstreamTable.Columns))
+	for _, col := range upstreamTable.Columns {
+		upstreamColMap[col.Name.L] = col
+	}
+
+	downstreamColMap := make(map[string]struct{}, len(downstreamTable.Columns))
+	for _, col := range downstreamTable.Columns {
+		downstreamColMap[col.Name.L] = struct{}{}
+	}
+	for _, col := range upstreamTable.Columns {
+		if _, ok := downstreamColMap[col.Name.L]; !ok {
+			return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"missing column in cluster data, table: %s, col: %s %s",
+				upstreamTable.Name.O, col.Name, col.FieldType.String())
+		}
+	}
+
+	columnNames := make([]string, 0, len(downstreamTable.Columns))
+	columnExpressions := make([]string, 0, len(downstreamTable.Columns))
+	for _, col := range downstreamTable.Columns {
+		_, ok := upstreamColMap[col.Name.L]
+		if !ok {
+			columnConfig, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, col.Name.L)
+			if recognized {
+				if canLoadSystemTableWithMissingBackupColumn(dbName, tableName, col.Name.L, upstreamColMap) {
+					columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+					columnExpressions = append(columnExpressions, columnConfig.selectExpression)
+					continue
+				}
+				return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					upstreamTable.Name.O, col.Name, col.FieldType.String())
+			}
+			continue
+		}
+		columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		columnExpressions = append(columnExpressions, utils.EncloseName(col.Name.L))
+	}
+	if len(columnNames) == 0 {
+		return nil, nil, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"no compatible columns for system table restore, table: %s", upstreamTable.Name.O)
+	}
+	return columnNames, columnExpressions, nil
+}
+
+func hasAllColumns(columns map[string]*model.ColumnInfo, requiredColumns []string) bool {
+	for _, column := range requiredColumns {
+		if _, exists := columns[column]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func canLoadSystemTableWithMissingBackupColumn(dbName, tableName, columnName string, backupColumns map[string]*model.ColumnInfo) bool {
+	if dbName != mysql.SystemDB {
+		return false
+	}
+	columnConfig, ok := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
+	return ok && columnConfig.selectExpression != "" && hasAllColumns(backupColumns, columnConfig.requiredColumns)
+}
+
+func canSkipUnrecognizedMissingBackupSystemTableColumn(dbName, tableName, columnName string) bool {
+	if dbName != mysql.SystemDB || tableName != sysUserTableName {
+		return false
+	}
+	_, recognized := getCompatibleMissingBackupSystemTableColumn(tableName, columnName)
+	return !recognized
+}
+
+func getCompatibleMissingBackupSystemTableColumn(
+	tableName, columnName string,
+) (compatibleMissingBackupSystemTableColumn, bool) {
+	tableColumns, ok := compatibleMissingBackupSystemTableColumns[tableName]
+	if !ok {
+		return compatibleMissingBackupSystemTableColumn{}, false
+	}
+	columnConfig, ok := tableColumns[columnName]
+	return columnConfig, ok
+}
+
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
@@ -553,23 +703,28 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	}
 
 	if db.ExistingTables[tableName] != nil {
+		downstreamTable := db.ExistingTables[tableName]
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
 		if rc.privilegeTableRowsCollateCompatibility {
-			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, downstreamTable); err != nil {
 				return err
 			}
 		}
-		// target column order may different with source cluster
-		columnNames := make([]string, 0, len(ti.Columns))
-		for _, col := range ti.Columns {
-			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
+		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, downstreamTable); err != nil {
+			return err
 		}
-		colListStr := strings.Join(columnNames, ",")
+		// target column order may different with source cluster
+		columnNames, columnExpressions, err := buildSystemTableReplaceColumns(dbName, tableName, ti, downstreamTable)
+		if err != nil {
+			return err
+		}
+		columnListStr := strings.Join(columnNames, ",")
+		columnExpressionStr := strings.Join(columnExpressions, ",")
 		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
-			colListStr, colListStr,
+			columnListStr, columnExpressionStr,
 			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
 		return execSQL(ctx, replaceIntoSQL)
 	}
@@ -596,32 +751,21 @@ func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB strin
 func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, collationCheck bool) (canLoadSysTablePhysical bool, err error) {
 	log.Info("checking target cluster system table compatibility with backed up data")
 	canLoadSysTablePhysical = true
-	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	systemTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
-			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		if ok && isRenameableSysTable(decodedSysDBName.L, table.Info.Name.L) {
+			systemTablesInBackup = append(systemTablesInBackup, table)
 		}
 	}
-	sysDB := ast.NewCIStr(mysql.SystemDB)
-	for _, table := range privilegeTablesInBackup {
-		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
+	for _, table := range systemTablesInBackup {
+		decodedSysDBName, _ := utils.GetSysDBCIStrName(table.DB.Name)
+		ti, err := restore.GetTableSchema(dom, decodedSysDBName, table.Info.Name)
 		if err != nil {
 			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
 			return false, errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
 		}
 		backupTi := table.Info
-		// skip checking the number of columns in mysql.user table,
-		// because higher versions of TiDB may add new columns.
-		if len(ti.Columns) != len(backupTi.Columns) && backupTi.Name.L != sysUserTableName {
-			log.Error("column count mismatch",
-				zap.Stringer("table", table.Info.Name),
-				zap.Int("col in cluster", len(ti.Columns)),
-				zap.Int("col in backup", len(backupTi.Columns)))
-			return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
-				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
-		}
 		backupColMap := make(map[string]*model.ColumnInfo)
 		for i := range backupTi.Columns {
 			col := backupTi.Columns[i]
@@ -632,13 +776,12 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// mysql.user may gain new columns in newer TiDB versions. In that case the
-				// schemas are still logically compatible, but loading the backed-up data
-				// directly into the temporary table with the newer schema can fail checksum
-				// validation because the upstream snapshot does not contain the new column.
-				// Fall back to non-physical loading for mysql.user when the backup is
-				// missing target columns.
-				if backupTi.Name.L == sysUserTableName {
+				// Some system tables can gain columns in newer TiDB versions. In that case
+				// logical restore can fill the missing columns with configured
+				// compatibility expressions or target defaults, but physical loading must
+				// fall back because the upstream snapshot does not contain those columns.
+				if canLoadSystemTableWithMissingBackupColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupColMap) ||
+					canSkipUnrecognizedMissingBackupSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L) {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
@@ -653,11 +796,22 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			backupFieldType := backupCol.FieldType
+			if isUpgradedNullableSystemTableColumn(decodedSysDBName.L, backupTi.Name.L, col.Name.L, backupCol, col) {
+				// The logical restore refuses a NULL in such a column before it
+				// copies the rows.
+				log.Warn("nullable column in backup data is NOT NULL in cluster",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				backupFieldType = *backupFieldType.Clone()
+				backupFieldType.AddFlag(mysql.NotNullFlag)
+				canLoadSysTablePhysical = false
+			}
+			typeEq, collateEq := utils.IsTypeCompatible(backupFieldType, col.FieldType)
 			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
 			collateCompatible := collateEq
 			if typeEq && (!collateEq && collationCheck) {
-				collateCompatible = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
+				collateCompatible = checkSysTableColumnCollateCompatibility(decodedSysDBName.L, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
 			}
 			if !(typeEq && collateCompatible) {
 				log.Error("incompatible column",
@@ -672,26 +826,24 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			}
 		}
 
-		if backupTi.Name.L == sysUserTableName {
-			// check whether the columns of table in cluster are less than the backup data
-			clusterColMap := make(map[string]*model.ColumnInfo)
-			for i := range ti.Columns {
-				col := ti.Columns[i]
-				clusterColMap[col.Name.L] = col
-			}
-			// order can be different
-			for i := range backupTi.Columns {
-				col := backupTi.Columns[i]
-				clusterCol := clusterColMap[col.Name.L]
-				if clusterCol == nil {
-					log.Error("missing column in cluster data",
-						zap.Stringer("table", table.Info.Name),
-						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
-					return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-						"missing column in cluster data, table: %s, col: %s %s",
-						table.Info.Name.O,
-						col.Name, col.FieldType.String())
-				}
+		// check whether the columns of table in cluster are less than the backup data
+		clusterColMap := make(map[string]*model.ColumnInfo)
+		for i := range ti.Columns {
+			col := ti.Columns[i]
+			clusterColMap[col.Name.L] = col
+		}
+		// order can be different
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			clusterCol := clusterColMap[col.Name.L]
+			if clusterCol == nil {
+				log.Error("missing column in cluster data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return false, errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in cluster data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
 			}
 		}
 	}
@@ -714,6 +866,46 @@ func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, u
 	return exists
 }
 
+// checkNoNullInUpgradedNullableColumns fails when the backup holds a NULL in a
+// column that only an upgrade made nullable. The restore session has an empty
+// sql_mode, so REPLACE INTO ... SELECT would store the implicit default instead.
+func (rc *SnapClient) checkNoNullInUpgradedNullableColumns(
+	ctx context.Context,
+	temporaryDBNameL, dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	columns := make([]string, 0)
+	conditions := make([]string, 0)
+	for _, backupCol := range upstreamTable.Columns {
+		clusterCol := model.FindColumnInfo(downstreamTable.Columns, backupCol.Name.L)
+		if clusterCol == nil ||
+			!isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, backupCol.Name.L, backupCol, clusterCol) {
+			continue
+		}
+		columns = append(columns, backupCol.Name.O)
+		conditions = append(conditions, utils.EncloseName(backupCol.Name.L)+" IS NULL")
+	}
+	if len(conditions) == 0 {
+		return nil
+	}
+	sql := fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE %s",
+		utils.EncloseDBAndTable(temporaryDBNameL, tableNameL), strings.Join(conditions, " OR "))
+	ectx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, sql)
+	if err != nil {
+		return errors.Annotatef(err, "failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if nullRows := rows[0].GetInt64(0); nullRows > 0 {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"%d rows of %s.%s in backup data have NULL in %s, which is NOT NULL in cluster",
+			nullRows, dbNameL, tableNameL, strings.Join(columns, ", "))
+	}
+	return nil
+}
+
 func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	ctx context.Context,
 	dbNameL, tableNameL string,
@@ -728,6 +920,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 		return nil
 	}
 	colCount := 0
+	upstreamCollations := make(map[string]string, len(collateCompatibilityColumnMap.columns))
 	for _, col := range upstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
@@ -735,6 +928,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
+			upstreamCollations[col.Name.L] = col.GetCollate()
 			colCount += 1
 		}
 	}
@@ -743,12 +937,23 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 			"incompatible column collate, upstream table %s.%s has only %d columns with collate utf8mb4_bin",
 			dbNameL, tableNameL, colCount)
 	}
+	matchingCollations := 0
+	for _, col := range downstreamTable.Columns {
+		if upstreamCollation, exists := upstreamCollations[col.Name.L]; exists && upstreamCollation == col.GetCollate() {
+			matchingCollations++
+		}
+	}
+	// Only collation conversions can introduce collisions between privilege rows.
+	// Upgraded clusters may retain bin columns, so matching bin-to-bin schemas are valid too.
+	if matchingCollations == len(collateCompatibilityColumnMap.columns) {
+		return nil
+	}
 	colCount = 0
 	for _, col := range downstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, downstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
 			colCount += 1

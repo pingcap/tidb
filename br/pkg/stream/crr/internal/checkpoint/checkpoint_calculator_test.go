@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
+func TestCheckpointCalculatorValidatesMetaScanStorage(t *testing.T) {
 	ctx := context.Background()
 	boundaries, err := testutil.BuildRegionLayout(
 		testutil.AddRoundRobinRegions(1, 1),
@@ -42,20 +42,27 @@ func TestCheckpointCalculatorRejectsUnsupportedMetaScanStorage(t *testing.T) {
 	h, err := testutil.NewLocalTestHarnessWithTestContext(ctx, tc, boundaries)
 	require.NoError(t, err)
 
-	_, err = checkpoint.NewCalculator(
-		checkpoint.CalculatorDeps{
-			PD: h.PDSim,
-			Upstream: &recordingUpstreamStorage{
-				inner: h.Upstream,
-				uri:   "azure://bucket/prefix/",
-			},
-			Sync: checkpoint.NewExistenceSyncChecker(h.Downstream),
-		},
-		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
-		nil,
-	)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "StartAfter-capable upstream storage")
+	for _, scheme := range []string{"s3", "file", "gcs", "oss", "azure"} {
+		t.Run(scheme, func(t *testing.T) {
+			_, err := checkpoint.NewCalculator(
+				checkpoint.CalculatorDeps{
+					PD: h.PDSim,
+					Upstream: &recordingUpstreamStorage{
+						inner: h.Upstream,
+						uri:   scheme + "://bucket/prefix/",
+					},
+					Sync: checkpoint.NewExistenceSyncChecker(h.Downstream),
+				},
+				checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+				nil,
+			)
+			if scheme == "azure" {
+				require.ErrorContains(t, err, "StartAfter-capable upstream storage")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestCheckpointCalculatorRequiresObjectSyncChecker(t *testing.T) {
@@ -212,6 +219,48 @@ func TestCheckpointCalculatorUsesProvidedObjectSyncChecker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, record.CheckpointTS, checkpointTS)
 	require.Equal(t, record.FlushTS, calculator.SyncedTS())
+}
+
+func TestCheckpointCalculatorAdvancesWithEmptyMetaFlag(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	const flushTS = uint64(20)
+	const checkpointTS = uint64(15)
+	const storeID = uint64(1)
+	metaPath := writeCheckpointEmptyMeta(ctx, t, upstream, flushTS, storeID)
+
+	pd := &fakePDMetaReader{}
+	pd.Set(checkpointTS, storeID)
+	observer := &recordingObserver{}
+	calculator, err := checkpoint.NewCalculator(
+		checkpoint.CalculatorDeps{
+			PD:       pd,
+			Upstream: upstream,
+			Sync:     checkpoint.NewExistenceSyncChecker(fileExistenceMap{}),
+		},
+		checkpoint.CheckpointCalculatorConfig{TaskName: "drr_test_task"},
+		observer,
+	)
+	require.NoError(t, err)
+
+	checkpointTSResult, err := calculator.ComputeNextCheckpoint(ctx)
+	require.NoError(t, err)
+	require.Equal(t, checkpointTS, checkpointTSResult)
+	require.Equal(t, flushTS, calculator.SyncedTS())
+
+	events := observer.Events()
+	require.Len(t, events, 3)
+	require.Equal(t, checkpoint.EventRoundPlanned, events[1].Type)
+	require.NotNil(t, events[1].Statistic)
+	require.Zero(t, events[1].Statistic.UpstreamReadMetaFileCount)
+	require.Zero(t, events[1].Statistic.EstimatedSyncLogFileCount)
+	require.Zero(t, events[1].PendingFileCount)
+	require.Equal(t, checkpoint.EventCheckpointAdvanced, events[2].Type)
+	require.NotNil(t, events[2].Statistic)
+	require.Zero(t, events[2].Statistic.DownstreamCheckFileCount)
+	require.NotEmpty(t, metaPath)
 }
 
 func TestCheckpointCalculatorFailsOnObjectSyncError(t *testing.T) {
@@ -576,4 +625,27 @@ func writeCheckpointTestMeta(
 	require.NoError(t, err)
 	require.NoError(t, storage.WriteFile(ctx, metaPath, payload))
 	return metaPath, logPath
+}
+
+func writeCheckpointEmptyMeta(
+	ctx context.Context,
+	t *testing.T,
+	storage storeapi.Storage,
+	flushTS uint64,
+	storeID uint64,
+) string {
+	t.Helper()
+
+	metaPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(),
+		flushTS,
+		storeID,
+		uint64(0),
+		uint64(0),
+		uint64(0),
+		uint64(2),
+	)
+	require.NoError(t, storage.WriteFile(ctx, metaPath, []byte("invalid metadata payload")))
+	return metaPath
 }
