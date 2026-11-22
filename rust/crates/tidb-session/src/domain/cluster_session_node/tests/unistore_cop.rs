@@ -91,6 +91,7 @@ mod dxf_taskexecutor;
 mod import_into_job;
 mod import_query;
 mod select_into;
+mod parallel_sort;
 mod cost_model_ver1;
 mod import_into_precheck;
 mod import_into_show;

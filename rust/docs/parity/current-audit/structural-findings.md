@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-22; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-22.md](structural-audit-2026-11-22.md).
 
-**4 unresolved: 4 open, 0 partial.**
+**3 unresolved: 3 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -43,7 +43,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| R04 | open | Go's `SortExec.Open` always sorts in parallel (`IsUnparallel = false`, `ExecutorConcurrency` workers, multi-way merge, `parallelSortSpillHelper`), and TopN has its own workers; `parallel_sort_worker.go`, `parallel_sort_spill_helper.go` and `topn_worker.go` are not ported (the crate's own doc says so), so Rust sorts only in Go's unparallel mode. Rust: `tidb-executor-sortexec/src/lib.rs`, `topn_chunk_heap.rs` (crate doc: NOT COVERED) | `pkg/executor/sortexec/sort.go`, `parallel_sort_worker.go`, `parallel_sort_spill_helper.go`, `topn_worker.go` |
 
 ### Domain and process services
 

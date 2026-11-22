@@ -6420,13 +6420,16 @@ fn build_with_state(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let schema = unary_schema(plan, child.as_ref());
-            Ok(Box::new(SortExec::new(
-                meta(ctx, plan, schema),
-                by_items,
-                child,
-                ctx.clone(),
-                ctx.statement_memory(),
-            )) as Box<dyn Executor>)
+            Ok(Box::new(
+                SortExec::new(
+                    meta(ctx, plan, schema),
+                    by_items,
+                    child,
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                )
+                .with_concurrency(ctx.executor_concurrency()),
+            ) as Box<dyn Executor>)
         }
         PhysicalPlan::TopN(topn) => {
             let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;

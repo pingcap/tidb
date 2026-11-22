@@ -30,8 +30,8 @@
 //! itself at the next safe point -- which is the same point Go's `add`
 //! observes `isSpillTriggered()` and rolls to a new partition. There is no
 //! window in which rows are added to a partition that is being spilled,
-//! because that path has no second thread. Go's default parallel sort remains
-//! unimplemented; TopN spill lives in [`crate::topn_spill`].
+//! because that path has no second thread. Go's default parallel sort lives
+//! in [`crate::parallel_sort`]; TopN spill lives in [`crate::topn_spill`].
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -190,6 +190,111 @@ impl SortPartition {
         }
     }
 
+    /// A partition whose memory the parallel sort's fetcher has already
+    /// charged (Go's `parallelSortWorker` holds rows its fetcher accounted on
+    /// the sort's tracker), so its own tracker hangs off nothing.
+    pub(crate) fn new_detached(field_types: Vec<FieldType>, spill_storage: Arc<SpillStorage>) -> Self {
+        Self::new(field_types, &Tracker::new(LABEL_FOR_ROW_CONTAINER, -1), spill_storage)
+    }
+
+    /// Go `multiWayMerger` over in-memory sorted runs (`memorySource`): one
+    /// sorted partition holding every run's rows in merged order. The rows
+    /// stay in their chunks, as Go merges `chunk.Row` handles, and compare
+    /// through `lessRow`'s key comparators. `check` runs before each merged
+    /// row with the loop count (Go's per-row signal and failpoint checks).
+    pub(crate) fn merge_sorted_runs<C: Columns>(
+        field_types: Vec<FieldType>,
+        spill_storage: Arc<SpillStorage>,
+        runs: Vec<SortPartition>,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        mut check: impl FnMut(u64) -> Result<(), ExecError>,
+    ) -> Result<SortPartition, ExecError> {
+        let mut merged = Self::new_detached(field_types, spill_storage);
+        // (run, chunk offset of the run in `merged.chunks`, its rows, cursor)
+        let mut sources: Vec<(usize, Vec<(usize, usize)>, usize)> = Vec::with_capacity(runs.len());
+        for run in runs {
+            debug_assert!(run.sorted && run.in_disk.is_none());
+            let offset = merged.chunks.len();
+            merged.chunks.extend(run.chunks);
+            sources.push((offset, run.rows, 0));
+        }
+        let head = |sources: &[(usize, Vec<(usize, usize)>, usize)], run: usize| {
+            let (offset, rows, cursor) = &sources[run];
+            rows.get(*cursor).map(|&(chunk, row)| (offset + chunk, row))
+        };
+        let mut heads: Vec<(usize, (usize, usize))> = (0..sources.len())
+            .filter_map(|run| head(&sources, run).map(|position| (run, position)))
+            .collect();
+        let chunks = &merged.chunks;
+        let mut compare_error = None;
+        let mut less = |left: &(usize, (usize, usize)), right: &(usize, (usize, usize))| {
+            let (_, (left_chunk, left_row)) = *left;
+            let (_, (right_chunk, right_row)) = *right;
+            match compare_rows(
+                by_items,
+                compare_funcs,
+                ctx,
+                chunks[left_chunk].get_row(left_row),
+                chunks[right_chunk].get_row(right_row),
+            ) {
+                Ok(ordering) => ordering == Ordering::Less,
+                Err(error) => {
+                    compare_error.get_or_insert(error);
+                    false
+                }
+            }
+        };
+        let total: usize = sources.iter().map(|(_, rows, _)| rows.len()).sum();
+        let mut merged_rows = Vec::with_capacity(total);
+        tidb_goruntime::go_heap::init(&mut heads, &mut less);
+        let mut loop_count = 0u64;
+        loop {
+            check(loop_count)?;
+            loop_count += 1;
+            let Some(&(run, position)) = heads.first() else {
+                break;
+            };
+            merged_rows.push(position);
+            sources[run].2 += 1;
+            match head(&sources, run) {
+                Some(next) => {
+                    heads[0].1 = next;
+                    tidb_goruntime::go_heap::fix(&mut heads, 0, &mut less);
+                }
+                None => {
+                    tidb_goruntime::go_heap::remove(&mut heads, 0, &mut less);
+                }
+            }
+        }
+        if let Some(error) = compare_error {
+            return Err(error);
+        }
+        merged.rows = merged_rows;
+        merged.sorted = true;
+        Ok(merged)
+    }
+
+    /// Go `parallelSortWorker.keyColumnsLess`'s sort: the batch sort with the
+    /// parallel worker's signal checkpoint.
+    pub(crate) fn sort_with_checkpoint<C: Columns>(
+        &mut self,
+        by_items: &[SortByItem],
+        compare_funcs: &[Option<ColumnCompareFunc>],
+        ctx: &C,
+        memory: &StatementMemory,
+        checkpoint: u64,
+    ) -> Result<(), ExecError> {
+        self.sort_impl(by_items, compare_funcs, ctx, Some((memory, checkpoint)))
+    }
+
+    /// Attaches this run's disk tracker under the sort's (Go
+    /// `inDisk.GetDiskTracker().AttachTo(sortExec.diskTracker)`).
+    pub(crate) fn attach_disk_tracker(&self, parent: &Arc<disk::Tracker>) {
+        self.disk_tracker.attach_to(parent);
+    }
+
     /// Test hook for Go `SetSmallSpillChunkSizeForTest`.
     pub fn set_small_spill_chunk_size_for_test(&mut self, size: usize) {
         self.spill_chunk_size = size;
@@ -208,6 +313,14 @@ impl SortPartition {
     /// Whether this partition's rows live on disk (Go `isSpillTriggered`).
     pub fn is_spill_triggered(&self) -> bool {
         self.in_disk.is_some()
+    }
+
+    /// Rows the read cursor has not passed yet (in memory).
+    pub(crate) fn num_unread_rows(&self) -> usize {
+        match &self.in_disk {
+            Some(in_disk) => in_disk.num_rows() as usize,
+            None => self.rows.len() - self.cursor,
+        }
     }
 
     /// Rows held, in memory or on disk.
@@ -389,7 +502,22 @@ impl SortPartition {
         &mut self,
         memory: Option<&StatementMemory>,
     ) -> Result<(), ExecError> {
-        if self.rows.is_empty() {
+        self.spill_unread_rows_to_disk(|| match memory {
+            // Go's `sortPartition.spillToDiskImpl` invokes
+            // `HandleKillSignal` after each full spill chunk.
+            Some(memory) => memory.check().map_err(ExecError::from),
+            None => Ok(()),
+        })
+    }
+
+    /// Writes the rows not yet read, in their sorted order, to a spill file
+    /// and releases them; `after_full_chunk` runs after each full spill chunk
+    /// is written.
+    pub(crate) fn spill_unread_rows_to_disk(
+        &mut self,
+        mut after_full_chunk: impl FnMut() -> Result<(), ExecError>,
+    ) -> Result<(), ExecError> {
+        if self.rows[self.cursor..].is_empty() {
             // Go `errSpillEmptyChunk`. Reached only if the action fires on a
             // partition that has taken no rows, which the `spillLimit` guard
             // makes unreachable in practice.
@@ -405,16 +533,12 @@ impl SortPartition {
         );
         in_disk.disk_tracker().attach_to(&self.disk_tracker);
         let mut tmp = Chunk::new_chunk_with_capacity(&self.field_types, self.spill_chunk_size);
-        for &(chunk_index, row_index) in &self.rows {
+        for &(chunk_index, row_index) in &self.rows[self.cursor..] {
             tmp.append_row(self.chunks[chunk_index].get_row(row_index));
             if tmp.num_rows() >= self.spill_chunk_size {
                 in_disk.add(&tmp).map_err(spill_error)?;
                 tmp.reset();
-                if let Some(memory) = memory {
-                    // Go's `sortPartition.spillToDiskImpl` invokes
-                    // `HandleKillSignal` after each full spill chunk.
-                    memory.check().map_err(ExecError::from)?;
-                }
+                after_full_chunk()?;
             }
         }
         // Go: do not spill an empty tail chunk -- `Add` rejects it.
@@ -426,6 +550,7 @@ impl SortPartition {
         // Release memory as all data have been spilled to disk.
         self.chunks = Vec::new();
         self.rows = Vec::new();
+        self.cursor = 0;
         self.mem_tracker.replace_bytes_used(0);
         Ok(())
     }

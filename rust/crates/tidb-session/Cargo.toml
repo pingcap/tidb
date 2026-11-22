@@ -226,6 +226,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-go-rand = { path = "../tidb-go-rand" }
 tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
 tidb-placement = { path = "../tidb-placement" }
 tempfile.workspace = true

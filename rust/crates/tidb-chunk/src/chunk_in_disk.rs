@@ -273,6 +273,7 @@ impl DataInDiskByChunks {
     /// Not safe to call concurrently -- Go says so too, and for the same
     /// reason: one shared `buf` and one append cursor.
     pub fn add(&mut self, chk: &Chunk) -> Result<(), DiskError> {
+        inject_chunk_in_disk_random_error()?;
         if chk.num_rows() == 0 {
             return Err(DiskError::Message(
                 "Chunk spilled to disk should have at least 1 row",
@@ -317,6 +318,7 @@ impl DataInDiskByChunks {
 
     /// Go `readFromFisk` (Go's spelling): refills `buf` with chunk `chk_idx`.
     fn read_from_disk(&mut self, chk_idx: usize) -> Result<(), DiskError> {
+        inject_chunk_in_disk_random_error()?;
         let size = self.chunk_size(chk_idx) as usize;
         self.buf.clear();
         self.buf.resize(size, 0);
@@ -374,6 +376,23 @@ impl DataInDiskByChunks {
     pub fn file_path(&self) -> Option<&PathBuf> {
         self.data_file.path()
     }
+}
+
+/// Go `injectChunkInDiskRandomError`.
+fn inject_chunk_in_disk_random_error() -> Result<(), DiskError> {
+    let mut result = Ok(());
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", |value| {
+        if value.bool() {
+            let rand_num = tidb_go_rand::int31n(10000);
+            if rand_num < 3 {
+                result = Err(DiskError::Message("random error is triggered"));
+            } else if rand_num < 6 {
+                let delay_time = tidb_go_rand::int31n(10) + 5;
+                std::thread::sleep(std::time::Duration::from_millis(delay_time as u64));
+            }
+        }
+    });
+    result
 }
 
 impl Drop for DataInDiskByChunks {

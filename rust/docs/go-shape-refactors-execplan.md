@@ -12,13 +12,14 @@ The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structura
 
 - [x] (2026-11-22) Re-audit: 11 behavior gaps found and fixed (pushed `ac1e5b40a18`); X01's duplicate implementations collapsed (`55f9417f16b`, `346f2fff28a`).
 - [x] (2026-11-23) R01: cost model version 1 -- `coster/ver1.rs` holds Go's `getPlanCostVer14<Operator>` bodies, `CostEnv::ver1` carries the version-1 factors when `tidb_cost_model_version = 1`, and the pushed-down / point-plan Selections no longer claim Go's `FromDataSource`; 79 probe statements (pseudo and analyzed statistics, both versions) match a Go server.
-- [ ] R04: parallel sort and TopN workers.
+- [x] (2026-11-23) R04: `SortExec` runs Go's parallel mode (`parallel_sort.rs`: `ExecutorConcurrency` workers over a bounded chunk channel, batch sorts of `maxChunkSize*30` rows merged per worker, `parallelSortSpillAction` / `parallelSortSpillHelper` spilling the merged worker runs, the in-memory result spilling when the action fires mid-merge); the unparallel mode stays Go's test hook. TopN's spill workers were already Go's `topn_worker.go` (`topn.rs`); the crate docs that said otherwise are fixed and `TestKillSignalInTopN` carries its Go name. Go's `TestParallelSort`, `TestFailpoint`, `TestParallelSortSpillDisk`, `TestParallelSortSpillDiskFailpoint`, `TestIssue59655`, `TestIssue63216`, `TestIssue55344` are ported (with `util/chunk`'s `ChunkInDiskError` failpoint and Go's package-level `rand.Int31n`).
 - [ ] R02: EXPLAIN EXPLORE.
 - [ ] R03: ANALYZE in Go's shape.
 - [ ] X02: one DDL session port.
 
 ## Surprises & Discoveries
 
+- R04: the fetcher runs on the thread that calls `Next` (Go's fetcher goroutine runs while `Next` blocks on `resultChannel`), and a failed worker keeps draining the chunk channel: a worker that stopped draining left the fetcher waiting on its in-flight chunk forever (the mutant hangs `TestFailpoint`).
 - R01: the planner marked every pushed-down and point-plan Selection `FromDataSource`; Go marks only the root Selection over `RootTaskConds`. Version 2 never reads the flag, so it was invisible until version 1 priced the Selection.
 
 - The 11-18 audit matched Go packages to Rust crates by name, so whole Go files inside a matched package could be missing (`select_into.go` was: `SELECT ... INTO OUTFILE` answered rows and wrote no file).

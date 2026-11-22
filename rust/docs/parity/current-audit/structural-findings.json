@@ -2,8 +2,8 @@
   "date": "2026-11-22",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
   "counts": {
-    "unresolved": 4,
-    "open": 4,
+    "unresolved": 3,
+    "open": 3,
     "partial": 0
   },
   "findings": [
@@ -24,14 +24,6 @@
       "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/statistics/handle/globalstats`"
     },
     {
-      "id": "R04",
-      "status": "open",
-      "group": "Executor, DML and expressions",
-      "finding": "Go's `SortExec.Open` always sorts in parallel (`IsUnparallel = false`, `ExecutorConcurrency` workers, multi-way merge, `parallelSortSpillHelper`), and TopN has its own workers; `parallel_sort_worker.go`, `parallel_sort_spill_helper.go` and `topn_worker.go` are not ported (the crate's own doc says so), so Rust sorts only in Go's unparallel mode.",
-      "rust_evidence": "`tidb-executor-sortexec/src/lib.rs`, `topn_chunk_heap.rs` (crate doc: NOT COVERED)",
-      "go_owner": "`pkg/executor/sortexec/sort.go`, `parallel_sort_worker.go`, `parallel_sort_spill_helper.go`, `topn_worker.go`"
-    },
-    {
       "id": "X02",
       "status": "open",
       "group": "Structure: Go's shape before more ports",
@@ -40,7 +32,7 @@
       "go_owner": "`pkg/ddl/session` (`Session`), `pkg/ddl/job_worker.go` (`w.sess`), `pkg/ddl/ddl_history.go` (`getJobsBySQL`)"
     }
   ],
-  "unresolved": 4,
-  "open": 4,
+  "unresolved": 3,
+  "open": 3,
   "partial": 0
 }

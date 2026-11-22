@@ -20,9 +20,11 @@
 //! `topn_chunk_heap.go`. Covered elsewhere: `sort.go` -> [`crate`],
 //! `sort_util.go` -> [`tidb_driver_error::panic_recovery`], `sort_partition.go` ->
 //! [`crate::sort_partition`], `topn.go` -> [`crate::topn`], `topn_spill.go` ->
-//! [`crate::topn_spill`]. Sort and TopN own their active result heaps.
-//! NOT COVERED anywhere yet: `parallel_sort_worker.go`,
-//! `parallel_sort_spill_helper.go`, `sort_spill.go`, `topn_worker.go`.
+//! [`crate::topn_spill`], `parallel_sort_worker.go`,
+//! `parallel_sort_spill_helper.go` and `sort_spill.go`'s parallel action ->
+//! [`crate::parallel_sort`], `sort_spill.go`'s partition action ->
+//! [`crate::sort_partition`], `topn_worker.go` -> [`crate::topn`]'s spill
+//! workers. Sort and TopN own their active result heaps.
 //!
 //! [`TopNChunkHeap`] is the row store AND the heap over it, exactly as Go's
 //! `topNChunkHeap` is: rows land in a chunk list, `rowPtrs` index them, and the
@@ -62,9 +64,9 @@
 //!   `buildKeyColumns`), so `keyColumnsCompare` compares the stored rows'
 //!   cells through `chunk.GetCompareFunc`, and a constant by-item never
 //!   orders.
-//! * `TestKillSignalInTopN` is NOT ported: it is a Go test helper exported from
-//!   the production file so an external test package can reach unexported
-//!   fields, and it drives the parallel spill helper this crate has not ported.
+//! * `TestKillSignalInTopN` is a Go test helper exported from the production
+//!   file so an external test package can reach unexported fields; its test is
+//!   `crate::topn`'s `test_kill_signal_in_topn`.
 
 use tidb_goruntime::go_heap;
 use std::cmp::Ordering;

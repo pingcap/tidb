@@ -170,3 +170,26 @@ mod tests {
         }
     }
 }
+
+/// Go's top-level source: since Go 1.20 it is randomly seeded at start-up
+/// and shared by the package functions under a lock.
+fn global() -> std::sync::MutexGuard<'static, Rand> {
+    static GLOBAL: std::sync::OnceLock<std::sync::Mutex<Rand>> = std::sync::OnceLock::new();
+    GLOBAL
+        .get_or_init(|| {
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |elapsed| elapsed.as_nanos() as i64);
+            std::sync::Mutex::new(Rand::new(seed))
+        })
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Go `rand.Int31n`, the package function over the global source.
+///
+/// # Panics
+/// `n` is not positive, as Go panics.
+pub fn int31n(n: i32) -> i32 {
+    global().int31n(n)
+}

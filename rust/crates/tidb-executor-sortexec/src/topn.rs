@@ -2590,12 +2590,13 @@ mod spill_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Go's `topNSpillHelper.spillHeap` polls `SQLKiller.HandleSignal` every
-    /// 100 retained rows while serializing a run. A cancellation raised after
-    /// the heap was selected must therefore abort the write and leave no
-    /// partial spill file behind.
+    /// Go `TestKillSignalInTopN` (`topn_spill_test.go` through the exported
+    /// helper in `topn_chunk_heap.go`): `topNSpillHelper.spillHeap` polls
+    /// `SQLKiller.HandleSignal` every 100 retained rows while serializing a
+    /// run, so a kill raised after the heap was filled aborts the write with
+    /// the interruption and leaves no partial spill file behind.
     #[test]
-    fn topn_spill_honors_query_kill_during_run_write() {
+    fn test_kill_signal_in_topn() {
         let dir = scratch_temp_dir("topn-spill-kill");
         let rows = shuffled_rows(256);
         let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)

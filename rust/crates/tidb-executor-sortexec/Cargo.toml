@@ -22,6 +22,8 @@ tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
+tidb-failpoint = { path = "../tidb-failpoint" }
+tidb-go-rand = { path = "../tidb-go-rand" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
@@ -32,4 +34,5 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tidb-executor = { path = "../tidb-executor" }
