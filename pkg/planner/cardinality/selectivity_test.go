@@ -622,7 +622,13 @@ func TestIssue71999(t *testing.T) {
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
 	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	// INSERT can return before its secondary keys finish committing. Unistore's
+	// mock ANALYZE does not resolve those locks and can miss rows.
+	// Force a table scan through the normal read path to resolve any remaining
+	// row locks and verify that all 1,000 rows are visible before ANALYZE.
+	testKit.MustQuery("select count(*) from t ignore index(idx_id)").Check(testkit.Rows("1000"))
 	testKit.MustExec("analyze table t")
+	testKit.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").CheckAt([]int{5}, testkit.Rows("1000"))
 	testKit.MustExec("create index idx_abc on t(a, b, c)")
 	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
 	// so it must not prune idx_id, which has statistics and is far more selective.

@@ -130,6 +130,15 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+
+	// Each range is a separate seek in TiKV; charge it so that many-range scans (typically from
+	// IN-lists) are not costed as if they were one contiguous scan. An IndexJoin inner scan
+	// (rangeInfo set) is skipped: indexJoinSeekingCostVer2 already charges its seeks per build row.
+	if len(p.Ranges) > 1 && p.rangeInfo == "" {
+		seekCost := rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekCost)
+	}
+
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
@@ -189,6 +198,12 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 	}
 	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+
+	// Charge per-range TiKV seeks as for index scans. RowID scans under IndexLookUp and IndexJoin
+	// inner scans (rangeInfo set) are skipped; their seeks are costed by the parent.
+	if p.StoreType == kv.TiKV && len(p.Ranges) > 1 && p.rangeInfo == "" && !p.isChildOfIndexLookUp {
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor))
+	}
 
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
@@ -937,6 +952,14 @@ func indexJoinSeekingCostVer2(option *optimizetrace.PlanCostOption, buildRows, n
 	return costusage.NewCostVer2(option, scanFactor,
 		buildRows*10*math.Log2(8)*numRanges*scanFactor.Value,
 		func() string { return fmt.Sprintf("seeking(%v*%v*10*log2(8)*%v)", buildRows, numRanges, scanFactor) })
+}
+
+func rangeSeekCostVer2(option *optimizetrace.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	// Each seek ≈ scanning 10 rows of 8-byte width (from experiments in #62499).
+	// Same model as indexJoinSeekingCostVer2 but without the buildRows multiplier.
+	return costusage.NewCostVer2(option, scanFactor,
+		numRanges*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("rangeSeek(%v*10*log2(8)*%v)", numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *optimizetrace.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
