@@ -119,6 +119,13 @@ alter table t partition by range (year(dt)) (partition q0 values less than (2000
 drop table if exists t;
 -- error 8271
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 1 DAY"}}' partition by range (id) (partition p0 values less than (100));
+select @@global.tidb_storage_class_interval_recalc_period;
+set global tidb_storage_class_interval_recalc_period = '1m';
+show warnings;
+select @@global.tidb_storage_class_interval_recalc_period;
+-- error 1231
+set global tidb_storage_class_interval_recalc_period = '-1h';
+set global tidb_storage_class_interval_recalc_period = default;
 
 drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["2","4"]}}' partition by list (id) (partition p0 values in (1,2), partition p1 values in (3,4), partition p2 values in (5));

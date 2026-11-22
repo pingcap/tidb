@@ -246,6 +246,57 @@ partition p0 values less than ('2023-02-01'))`)
 	require.NoError(t, checkStorageClassIntervalPartitionKey("", toDays))
 }
 
+func TestEvalStorageClassIntervalChanges(t *testing.T) {
+	ctx := metabuild.NewContext()
+	tbInfo := buildStorageClassTableInfo(t, ctx, `create table t (dt date) ENGINE_ATTRIBUTE = '{"storage_class":{"tier":"IA","less_than":"INTERVAL 1 MONTH"}}'
+partition by range columns (dt) (partition p1 values less than ('2026-01-01'), partition p2 values less than ('2026-02-01'),
+partition p3 values less than ('2026-03-01'))`)
+	require.NoError(t, rebuildStorageClassForPartitions(tbInfo, tbInfo.Partition.Definitions))
+	require.NoError(t, BuildStorageClassForPartitions(tbInfo.Partition.Definitions, tbInfo,
+		mustStorageClassSettings(t, `{"tier":"IA","less_than":"2026-01-01"}`)))
+
+	changes, err := evalStorageClassIntervalChanges(tbInfo, time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.True(t, changes.hasInterval)
+	require.Empty(t, changes.toIA)
+	require.Empty(t, changes.notToIA)
+
+	changes, err = evalStorageClassIntervalChanges(tbInfo, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, []string{"p2"}, changes.toIA)
+	require.Empty(t, changes.notToIA)
+
+	// The clock moved backwards: p1 would leave IA.
+	changes, err = evalStorageClassIntervalChanges(tbInfo, time.Date(2025, 12, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Empty(t, changes.toIA)
+	require.Equal(t, []string{"p1"}, changes.notToIA)
+
+	tbInfo.ID = 100
+	for i := range tbInfo.Partition.Definitions {
+		tbInfo.Partition.Definitions[i].ID = int64(101 + i)
+	}
+	old := snapshotPhysicalStorageClasses(tbInfo)
+	toIA := tbInfo.Clone()
+	toIA.Partition.Definitions[1].StorageClassTier = model.StorageClassTierIA
+	require.True(t, shouldApplyStorageClassIntervalRecalculation(tbInfo, old, snapshotPhysicalStorageClasses(toIA)))
+	require.False(t, shouldApplyStorageClassIntervalRecalculation(tbInfo, old, old))
+	toStandard := toIA.Clone()
+	toStandard.Partition.Definitions[0].StorageClassTier = model.StorageClassTierStandard
+	require.False(t, shouldApplyStorageClassIntervalRecalculation(tbInfo, old, snapshotPhysicalStorageClasses(toStandard)))
+
+	tbInfo.EngineAttribute = `{"storage_class":{"tier":"IA","names_in":["p1"]}}`
+	changes, err = evalStorageClassIntervalChanges(tbInfo, time.Now())
+	require.NoError(t, err)
+	require.False(t, changes.hasInterval)
+}
+
+func mustStorageClassSettings(t *testing.T, storageClass string) *model.StorageClassSettings {
+	settings, err := BuildStorageClassSettingsFromJSON(json.RawMessage(storageClass))
+	require.NoError(t, err)
+	return settings
+}
+
 // FuzzStorageClassIntervalCutoff checks that evaluation never panics and that
 // RANGE COLUMNS(DATE) and RANGE(TO_DAYS) agree on the same boundary dates.
 func FuzzStorageClassIntervalCutoff(f *testing.F) {

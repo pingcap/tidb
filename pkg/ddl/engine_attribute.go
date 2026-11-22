@@ -136,19 +136,36 @@ func (w *worker) onModifyTableEngineAttribute(jobCtx *jobContext, job *model.Job
 		return ver, errors.Trace(err)
 	}
 
+	if args.IntervalRecalculation && tblInfo.EngineAttribute != args.EngineAttribute {
+		logutil.BgLogger().Info("storage class interval recalculation skipped, engine attribute changed",
+			zap.Int64("tableID", tblInfo.ID), zap.String("table", tblInfo.Name.O))
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		return ver, nil
+	}
+
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
 		return ver, nil
 	}
 	oldState := snapshotPhysicalStorageClasses(tblInfo)
 
+	newTblInfo := tblInfo
+	if args.IntervalRecalculation {
+		// Evaluate on a copy so the checked result is exactly what is applied.
+		newTblInfo = tblInfo.Clone()
+	}
 	// Keep the original string for SHOW CREATE TABLE.
-	tblInfo.EngineAttribute = args.EngineAttribute
+	newTblInfo.EngineAttribute = args.EngineAttribute
 
-	if err := onAlterTableStorageClassSettings(attr.StorageClass, tblInfo); err != nil {
+	if err := onAlterTableStorageClassSettings(attr.StorageClass, newTblInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if args.IntervalRecalculation && !shouldApplyStorageClassIntervalRecalculation(newTblInfo, oldState, snapshotPhysicalStorageClasses(newTblInfo)) {
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		return ver, nil
+	}
+	tblInfo = newTblInfo
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
