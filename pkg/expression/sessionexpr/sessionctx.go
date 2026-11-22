@@ -410,12 +410,12 @@ func (s *sequenceOperator) checkReadOnly() error {
 	// itself must remain serial even when no KV reader has activated it yet.
 	s.txnMu.Lock()
 	defer s.txnMu.Unlock()
-	s.sctx.GetSessionVars().GetRelatedTableForReadOnly().Store(s.GetSequenceID(), ast.NewCIStr(s.db))
+	s.sctx.GetSessionVars().GetRelatedTableForReadOnly().Store(s.GetSequenceID(), model.NewCIStr(s.db))
 	if _, err := s.sctx.Txn(true); err != nil {
 		return err
 	}
-	is := s.sctx.GetLatestISWithoutSessExt()
-	if db, ok := is.SchemaByName(ast.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(s.sctx, db.Name.L) {
+	is := s.sctx.GetDomainInfoSchema()
+	if db, ok := is.SchemaByName(model.NewCIStr(s.db)); ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(s.sctx, db.Name.L) {
 		return dbterror.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
 	}
 	failpoint.InjectCall("afterSequenceReadOnlyCheck")

@@ -289,7 +289,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 				SchemaName:          "db",
 				Type:                model.ActionCreateTable,
 				CheckSchemaReadOnly: check,
-			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr(fmt.Sprintf("t%d", i))}}, false))
+			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr(fmt.Sprintf("t%d", i))}}, false))
 		}
 		merged, err := mergeCreateTableJobs(jobs)
 		require.NoError(t, err)

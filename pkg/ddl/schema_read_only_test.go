@@ -25,18 +25,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -82,9 +78,6 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		for _, mdl := range []bool{true, false} {
 			for _, bypass := range []bool{false, true} {
 				t.Run(fmt.Sprintf("mdl=%t/bypass=%t", mdl, bypass), func(t *testing.T) {
-					if !mdl && kerneltype.IsNextGen() {
-						t.Skip("MDL is always enabled in nextgen")
-					}
 					enableReadOnlyDDLFp(t)
 					store, dom := testkit.CreateMockStoreAndDomain(t)
 					sv := server.CreateMockServer(t, store)
@@ -190,21 +183,21 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		worker := testkit.NewTestKit(t, store)
 		admin.MustExec("create database ro")
 		admin.MustExec("create table ro.t(id int primary key)")
-		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+		db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("ro"))
 		require.True(t, ok)
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), db.Name, ast.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), db.Name, pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		// An already-submitted physical import is not part of read-only draining.
-		require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeImport, db.ID, tbl.Meta().ID))
+		require.NoError(t, dom.DDLExecutor().AlterTableMode(worker.Session(), &model.AlterTableModeArgs{TableMode: model.TableModeImport, SchemaID: db.ID, TableID: tbl.Meta().ID}))
 		admin.MustExec("alter database ro read only = 1")
 		db, ok = dom.InfoSchema().SchemaByName(db.Name)
 		require.True(t, ok)
 		require.True(t, db.ReadOnly)
-		tbl, err = dom.InfoSchema().TableByName(context.Background(), db.Name, ast.NewCIStr("t"))
+		tbl, err = dom.InfoSchema().TableByName(context.Background(), db.Name, pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Equal(t, model.TableModeImport, tbl.Meta().Mode)
 		// Completion must still release import mode after the database becomes read-only.
-		require.NoError(t, ddl.AlterTableMode(dom.DDLExecutor(), worker.Session(), model.TableModeNormal, db.ID, tbl.Meta().ID))
+		require.NoError(t, dom.DDLExecutor().AlterTableMode(worker.Session(), &model.AlterTableModeArgs{TableMode: model.TableModeNormal, SchemaID: db.ID, TableID: tbl.Meta().ID}))
 		admin.MustQuery("select * from ro.t").Check(testkit.Rows())
 		admin.MustGetErrCode("import into ro.t from ''", 3989)
 		admin.MustGetErrCode("insert into ro.t values(1)", 3989)
@@ -513,40 +506,7 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		writer.MustGetErrCode("execute del using @id", 3989)
 		admin.MustQuery("select * from ro.t").Check(testkit.Rows("3"))
 	})
-	t.Run("NativeMaterializedViewDDL", func(t *testing.T) {
-		for _, tc := range []struct {
-			name, sql string
-			setup     []string
-		}{
-			{name: "CreateView", sql: "create materialized view ro.mv(a, cnt) as select a, count(1) from ro.t group by a", setup: []string{"create materialized view log on ro.t(a)"}},
-			{name: "CreateLog", sql: "create materialized view log on ro.t(a)"},
-			{name: "DropView", sql: "drop materialized view ro.mv", setup: []string{"create materialized view log on ro.t(a)", "create materialized view ro.mv(a, cnt) as select a, count(1) from ro.t group by a"}},
-			{name: "DropLog", sql: "drop materialized view log on ro.t", setup: []string{"create materialized view log on ro.t(a)"}},
-			{name: "AlterLog", sql: "alter materialized view log on ro.t add column (b)", setup: []string{"create materialized view log on ro.t(a)"}},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				enableReadOnlyDDLFp(t)
-				store := testkit.CreateMockStore(t)
-				tk := testkit.NewTestKit(t, store)
-				tk.MustExec("set tidb_mview_enable = on")
-				tk.MustExec("create database ro")
-				tk.MustExec("create table ro.t(a int not null, b int)")
-				for _, sql := range tc.setup {
-					tk.MustExec(sql)
-				}
-				before := tk.MustQuery("show tables from ro").Rows()
-				tk.MustExec("alter database ro read only = 1")
-				tk.MustGetErrCode("prepare mv_ddl from '"+tc.sql+"'", 3989)
-				tk.MustGetErrCode(tc.sql, 3989)
-				require.Equal(t, before, tk.MustQuery("show tables from ro").Rows())
-				if tc.name == "DropView" {
-					tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
-					require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-					tk.MustExec(tc.sql)
-				}
-			})
-		}
-	})
+
 	t.Run("ExplicitLockTargets", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
@@ -746,20 +706,23 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ttlDone <- dom.AdvancedSysSessionPool().WithSession(func(s *syssession.Session) error {
-				return s.WithSessionContext(func(ctx sessionctx.Context) error {
-					ttl := ttlsession.NewSession(ctx, s.AvoidReuse)
-					return ttl.RunInTxn(context.Background(), func() error {
-						if _, err := ttl.ExecuteSQL(context.Background(), "delete from ro.t where ts < now() - interval 1 second"); err != nil {
-							return err
-						}
-						txnID.Store(ctx.GetSessionVars().TxnCtx.StartTS)
-						close(deleted)
-						<-resume
-						return nil
-					}, ttlsession.TxnModeOptimistic)
-				})
-			})
+			resource, err := dom.SysSessionPool().Get()
+			if err != nil {
+				ttlDone <- err
+				return
+			}
+			defer dom.SysSessionPool().Put(resource)
+			ctx := resource.(sessionctx.Context)
+			ttl := ttlsession.NewSession(ctx, ctx.GetSQLExecutor(), nil)
+			ttlDone <- ttl.RunInTxn(context.Background(), func() error {
+				if _, err := ttl.ExecuteSQL(context.Background(), "delete from ro.t where ts < now() - interval 1 second"); err != nil {
+					return err
+				}
+				txnID.Store(ctx.GetSessionVars().TxnCtx.StartTS)
+				close(deleted)
+				<-resume
+				return nil
+			}, ttlsession.TxnModeOptimistic)
 		}()
 		select {
 		case <-deleted:
@@ -851,9 +814,6 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		}
 	})
 	t.Run("MDLOffExistingWrite", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("MDL is always enabled in nextgen")
-		}
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
 		txn := testkit.NewTestKit(t, store)
@@ -903,9 +863,6 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		other.MustQuery("select * from ro.t").Check(testkit.Rows("1"))
 	})
 	t.Run("MDLOffLateAccess", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("MDL is always enabled in nextgen")
-		}
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
 		txn := testkit.NewTestKit(t, store)
@@ -936,9 +893,6 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		tk.MustQuery("select lastval(ro.s)").Check(testkit.Rows("1"))
 	})
 	t.Run("MDLOffLazyTransaction", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("MDL is always enabled in nextgen")
-		}
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
 		writer := testkit.NewTestKit(t, store)
@@ -951,7 +905,7 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		resume := make(chan struct{})
 		release := sync.OnceFunc(func() { close(resume) })
 		var paused atomic.Bool
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/planner/core/afterCheckSchemaReadOnlyWithoutMDL", func(db ast.CIStr) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/planner/core/afterCheckSchemaReadOnlyWithoutMDL", func(db pmodel.CIStr) {
 			if db.L == "ro" && paused.CompareAndSwap(false, true) {
 				close(planned)
 				<-resume
@@ -982,22 +936,7 @@ func TestSchemaReadOnlyTransitions(t *testing.T) {
 		require.ErrorContains(t, <-done, "read only state has changed")
 		alter.MustQuery("select * from ro.t").Check(testkit.Rows())
 	})
-	t.Run("MaterializedViewAttributes", func(t *testing.T) {
-		enableReadOnlyDDLFp(t)
-		store, dom := testkit.CreateMockStoreAndDomain(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("set tidb_mview_enable = on")
-		tk.MustExec("create database ro")
-		tk.MustExec("use ro")
-		tk.MustExec("create table t(a int not null)")
-		tk.MustExec("create materialized view log on t(a)")
-		tk.MustExec("create materialized view mv(a, cnt) as select a, count(1) from t group by a")
-		tk.MustExec("alter database ro read only = 1")
-		tk.MustGetErrCode("alter materialized view mv attributes='mview_alert_warning=5,mview_alert_overdue=10,mview_alert_refresh_failed=yes'", 3989)
-		mv, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("mv"))
-		require.NoError(t, err)
-		require.False(t, mv.Meta().MaterializedView.AlertRefreshFailed)
-	})
+
 }
 
 func TestSchemaReadOnlyIncompleteTransactionScan(t *testing.T) {
@@ -1052,7 +991,7 @@ func TestSchemaReadOnlyRollbackAfterPanic(t *testing.T) {
 			err := tk.ExecToErr(fmt.Sprintf("alter database ro read only = %d", readOnlyValue))
 			require.Error(t, err)
 			require.True(t, panicked.Load())
-			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+			db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("ro"))
 			require.True(t, ok)
 			require.Equal(t, !readOnly, db.ReadOnly)
 		})
@@ -1129,14 +1068,11 @@ func TestSchemaReadOnlyRecoveryAndCancellation(t *testing.T) {
 		release()
 		require.NoError(t, <-firstDone)
 		require.ErrorContains(t, <-secondDone, "Cancelled DDL job")
-		db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("ro"))
+		db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr("ro"))
 		require.True(t, ok)
 		require.True(t, db.ReadOnly)
 	})
 	t.Run("DroppedTableID", func(t *testing.T) {
-		if kerneltype.IsNextGen() {
-			t.Skip("MDL is always enabled in nextgen")
-		}
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)
 		txn := testkit.NewTestKit(t, store)
@@ -1214,7 +1150,7 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			case "cleanup":
 				admin.MustExec("admin cleanup table lock ro.t")
 			}
-			checkTableLock(t, admin, "ro", "t", ast.TableLockNone)
+			checkTableLock(t, admin, "ro", "t", pmodel.TableLockNone)
 			admin.MustQuery("select * from ro.t").Check(testkit.Rows())
 		})
 	}
@@ -1284,7 +1220,7 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("create database Ro")
 		tk.MustExec("create table Ro.t(a int)")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("ro"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tk.MustExec("insert into mysql.tidb_import_jobs(table_schema,table_name,table_id,created_by,parameters,source_file_size,status,step) values ('ro','t',?,'root','{}',1,'pending','')", tbl.Meta().ID)
 		tk.MustExec("alter database ro read only = 1")
@@ -1298,9 +1234,9 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("create database ro")
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", "return(`{\"new\":{\"schema_read_only\":true},\"old\":{}}`)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", "return(`{\"new\":{\"schema_read_only\":true},\"old\":{}}`)")
 		require.ErrorContains(t, tk.ExecToErr("alter database ro read only = 1"), "do not support database read-only")
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
 		tk.MustExec("alter database ro read only = 1")
 		tk.MustExec("alter database ro read only = 0")
 	})
@@ -1325,17 +1261,16 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 	t.Run("TiFlashAvailability", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", "return(true)")
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceSetTiFlashReplicaSkipColumnarStorageGate", "return(true)")
 		store, dom := testkit.CreateMockStoreAndDomain(t)
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("create database ro")
 		tk.MustExec("create table ro.t(a int)")
 		tk.MustExec("alter table ro.t set tiflash replica 1")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("ro"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tk.MustExec("alter database ro read only = 1")
 		require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true))
-		tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("ro"), ast.NewCIStr("t"))
+		tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("ro"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		require.True(t, tbl.Meta().TiFlashReplica.Available)
 		tk.MustGetErrCode("alter table ro.t set tiflash replica 0", 3989)
@@ -1359,9 +1294,6 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 	})
 	for _, mdl := range []bool{false, true} {
 		t.Run(fmt.Sprintf("LocalTemporaryTableMDL%v", mdl), func(t *testing.T) {
-			if !mdl && kerneltype.IsNextGen() {
-				t.Skip("NextGen always enables MDL")
-			}
 			enableReadOnlyDDLFp(t)
 			store := testkit.CreateMockStore(t)
 			writer := testkit.NewTestKit(t, store)
@@ -1378,10 +1310,9 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			defer writer.MustExec("rollback")
 			writer.MustQuery("select * from test.anchor").Check(testkit.Rows())
 			alter.MustExec("alter database ro read only = 1")
-			writer.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
-				Build: func(string) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("2\n")), nil },
-				Wg:    &sync.WaitGroup{},
-			})
+			writer.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder(
+				func(string) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("2\n")), nil },
+			))
 			for _, sql := range []string{
 				"load data local infile 'temporary.csv' into table ro.tmp",
 				"insert into ro.tmp values (2)",
@@ -1399,104 +1330,6 @@ func TestSchemaReadOnlyReviewFixes(t *testing.T) {
 			writer.MustQuery("select * from ro.tmp").Check(testkit.Rows("1"))
 		})
 	}
-	for _, method := range []string{"fast", "complete delta apply", "complete out of place"} {
-		t.Run("Refresh_"+method, func(t *testing.T) {
-			enableReadOnlyDDLFp(t)
-			store := testkit.CreateMockStore(t)
-			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("set tidb_mview_enable = on")
-			tk.MustExec("create database ro")
-			tk.MustExec("create table ro.t(a int not null)")
-			tk.MustExec("insert into ro.t values (1)")
-			tk.MustExec("create materialized view log on ro.t(a)")
-			tk.MustExec("create materialized view ro.mv(a, cnt) as select a, count(1) from ro.t group by a")
-			tk.MustExec("insert into ro.t values (2)")
-			tk.MustExec("alter database ro read only = 1")
-			sql := "refresh materialized view ro.mv " + method
-			tk.MustGetErrCode(sql, 3989)
-			tk.MustQuery("select * from ro.mv order by a").Check(testkit.Rows("1 1"))
-			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
-			_, err := tk.Session().GetSQLExecutor().ExecuteInternal(ctx, sql)
-			require.ErrorContains(t, err, "read only mode")
-			tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
-			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-			tk.MustExec("set autocommit = 0")
-			tk.MustExec(sql)
-			tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
-			if method == "fast" {
-				tk.MustExec("prepare refresh_stmt from '" + sql + "'")
-				tk.MustExec("execute refresh_stmt")
-				tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
-				tk.MustExec("deallocate prepare refresh_stmt")
-				tk.MustQuery(sql + " with profile")
-				tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
-			}
-			tk.MustQuery("select * from ro.mv order by a").Check(testkit.Rows("1 1", "2 1"))
-			tk.MustExec("rollback")
-			tk.MustExec("set autocommit = 1")
-		})
-	}
-	t.Run("RefreshTransitionDraining", func(t *testing.T) {
-		enableReadOnlyDDLFp(t)
-		store := testkit.CreateMockStore(t)
-		writer := testkit.NewTestKit(t, store)
-		alter := testkit.NewTestKit(t, store)
-		writer.MustExec("set tidb_mview_enable = on")
-		writer.MustExec("create database ro")
-		writer.MustExec("create table ro.t(a int not null)")
-		writer.MustExec("insert into ro.t values (1)")
-		writer.MustExec("create materialized view log on ro.t(a)")
-		writer.MustExec("create materialized view ro.mv(a, cnt) as select a, count(1) from ro.t group by a")
-		writer.MustExec("insert into ro.t values (2)")
-		writer.MustExec("set autocommit = 0")
-		started, resume := make(chan struct{}), make(chan struct{})
-		release := sync.OnceFunc(func() { close(resume) })
-		var once sync.Once
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterAcquireAdvisoryLock", func() {
-			once.Do(func() { close(started); <-resume })
-		})
-		var wg sync.WaitGroup
-		defer func() { release(); wg.Wait() }()
-		refreshDone, alterDone := make(chan error, 1), make(chan error, 1)
-		wg.Add(1)
-		go func() { defer wg.Done(); refreshDone <- writer.ExecToErr("refresh materialized view ro.mv fast") }()
-		select {
-		case <-started:
-		case <-time.After(5 * time.Second):
-			t.Fatal("refresh did not start")
-		}
-		var draining atomic.Bool
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-			draining.Store(len(ids) > 0)
-		})
-		wg.Add(1)
-		go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
-		require.Eventually(t, draining.Load, 5*time.Second, 10*time.Millisecond)
-		release()
-		require.Error(t, <-refreshDone)
-		require.NoError(t, <-alterDone)
-		writer.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("1"))
-		writer.MustQuery("select * from ro.mv order by a").Check(testkit.Rows("1 1"))
-	})
-
-	t.Run("PurgeEntry", func(t *testing.T) {
-		enableReadOnlyDDLFp(t)
-		store := testkit.CreateMockStore(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("set tidb_mview_enable = on")
-		tk.MustExec("create database ro")
-		tk.MustExec("create table ro.t(a int not null)")
-		tk.MustExec("create materialized view log on ro.t(a)")
-		tk.MustExec("insert into ro.t values (1)")
-		tk.MustExec("alter database ro read only = 1")
-		tk.MustGetErrCode("purge materialized view log on ro.t", 3989)
-		tk.MustExec("grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%'")
-		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-		tk.MustExec("purge materialized view log on ro.t")
-		tk.MustQuery("select count(*) from ro.`$mlog$t`").Check(testkit.Rows("0"))
-		tk.MustExec("revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from 'root'@'%'")
-		tk.MustGetErrCode("purge materialized view log on ro.t", 3989)
-	})
 	t.Run("InternalAuthorizationScope", func(t *testing.T) {
 		enableReadOnlyDDLFp(t)
 		store := testkit.CreateMockStore(t)

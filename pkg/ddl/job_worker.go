@@ -1067,13 +1067,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
-<<<<<<< HEAD
-=======
-	case model.ActionAlterTableSetRegionSplitPolicy:
-		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
 	case model.ActionModifySchemaReadOnly:
 		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -32,12 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
@@ -892,7 +888,7 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 		t.Fatal("ALTER did not observe the transaction before the deadline")
 	}
 	is := sessiontxn.GetTxnManager(tk3.Session()).GetTxnInfoSchema()
-	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test_db"))
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
 	require.True(t, ok)
 	require.True(t, dbInfo.ReadOnly)
 	tk3.MustGetErrMsg("insert into test_db.t values (1)", "[schema:3989]Schema 'test_db' is in read only mode.")

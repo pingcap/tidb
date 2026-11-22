@@ -301,19 +301,7 @@ func TestLocation(t *testing.T) {
 
 func TestJobClone(t *testing.T) {
 	job := &Job{
-<<<<<<< HEAD
-		Version:         JobVersion1,
-		ID:              100,
-		Type:            ActionCreateTable,
-		SchemaID:        101,
-		TableID:         102,
-		SchemaName:      "test",
-		TableName:       "t",
-		State:           JobStateDone,
-		MultiSchemaInfo: nil,
-=======
 		Version:             JobVersion1,
-		CheckSchemaReadOnly: true,
 		ID:                  100,
 		Type:                ActionCreateTable,
 		SchemaID:            101,
@@ -321,10 +309,8 @@ func TestJobClone(t *testing.T) {
 		SchemaName:          "test",
 		TableName:           "t",
 		State:               JobStateDone,
-		RU:                  12.5,
 		MultiSchemaInfo:     nil,
-		ResumeReason:        &JobResumeReason{Type: JobResumeReasonKVDiskFull},
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
+		CheckSchemaReadOnly: true,
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -335,26 +321,7 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
-<<<<<<< HEAD
-=======
-	require.Equal(t, job.ResumeReason, clone.ResumeReason)
 	require.True(t, clone.CheckSchemaReadOnly)
-}
-
-func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
-	parentJob := &Job{
-		ID:           100,
-		RU:           12.5,
-		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
-	}
-	subJob := &SubJob{
-		Type:  ActionAddIndex,
-		State: JobStateQueueing,
-	}
-	proxyJob := subJob.ToProxyJob(parentJob, 0)
-	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
-	require.Equal(t, parentJob.RU, proxyJob.RU)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 }
 
 func TestJobSize(t *testing.T) {

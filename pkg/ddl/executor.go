@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -7050,8 +7051,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-<<<<<<< HEAD
-=======
 	// A job can wait behind a read-only transition after its SQL passed
 	// preprocessing. Persist the submitter's bypass decision for the owner.
 	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
@@ -7072,13 +7071,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Completing an authorized import only publishes operational metadata.
 		job.CheckSchemaReadOnly = false
 	}
-
-	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
-		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
-			zap.Uint64("ConnID", job.TraceInfo.ConnectionID),
-			zap.String("SessionAlias", job.TraceInfo.SessionAlias))
-	}
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {

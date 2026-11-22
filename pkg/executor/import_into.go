@@ -34,6 +34,7 @@ import (
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -91,12 +92,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	astArgs := importer.ASTArgsFromImportPlan(e.plan)
-=======
-	importPlan.SchemaReadOnlyBypass = privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(importPlan.DBName).L)
-	astArgs := astArgsFromImportPlan(e.plan)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
 		return err
 	}
@@ -229,167 +225,7 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 	if variable.EnableDistTask.Load() {
 		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
-<<<<<<< HEAD
 	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
-=======
-	return submitStandaloneImportTask(ctx, e.controller.Plan, e.stmt, nil)
-}
-
-// submitStandaloneImportTask submits a task to the distribute framework that only runs on the current node.
-// when import from server-disk, pass engine chunks too, as scheduler might run on another
-// node where we can't access the data files.
-func submitStandaloneImportTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return 0, nil, err
-	}
-	return doSubmitImportTask(ctx, plan, stmt, serverInfo, chunkMap)
-}
-
-// SubmitImportTask submits a task to the distribute framework that runs on all managed nodes.
-func SubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *proto.TaskBase, error) {
-	return doSubmitImportTask(ctx, plan, stmt, nil, nil)
-}
-
-func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	var instances []*serverinfo.ServerInfo
-	if instance != nil {
-		instances = append(instances, instance)
-	}
-	// we use taskManager to submit task, user might not have the privilege to system tables.
-	taskManager, err := dxfstorage.GetTaskManager()
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	taskMeta := &taskinfo.TaskMeta{
-		Plan:              *plan,
-		Stmt:              stmt,
-		EligibleInstances: instances,
-		ChunkMap:          chunkMap,
-	}
-	extraParams := proto.ExtraParams{ManualRecovery: plan.ManualRecovery}
-	asyncPrepare := importer.ShouldUseAsyncPrepare(plan)
-	if asyncPrepare {
-		extraParams.PrepareMode = proto.PrepareModeRequired
-		// below params will be filled later in async prepare, init to 1 temporarily.
-		plan.ThreadCnt = 1
-		plan.MaxNodeCnt = 1
-	}
-	planCtx := planner.PlanCtx{
-		Ctx:        ctx,
-		TaskType:   proto.ImportInto,
-		ThreadCnt:  plan.ThreadCnt,
-		MaxNodeCnt: plan.MaxNodeCnt,
-	}
-	var (
-		jobID, taskID int64
-	)
-	var runningOnUserKS bool
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		runningOnUserKS = kv.IsUserKS(se.GetStore())
-		var err2 error
-		exec := se.GetSQLExecutor()
-		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
-			plan.User, plan.GroupKey, plan.Parameters, plan.TotalFileSize)
-		if err2 != nil {
-			return err2
-		}
-		if kerneltype.IsClassic() {
-			if plan.SchemaReadOnlyBypass {
-				defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
-			}
-			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
-			if err2 != nil {
-				return err2
-			}
-		}
-		// in classical kernel or if we are inside SYSTEM keyspace itself, we
-		// submit the task to DXF in the same transaction as creating the job.
-		if kerneltype.IsClassic() || kv.IsSystemKS(se.GetStore()) {
-			taskMeta.JobID = jobID
-			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
-			planCtx.Keyspace = plan.Keyspace
-			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, taskManager); err2 != nil {
-				return err2
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, nil, err
-	}
-	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
-	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
-	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
-	dxfTaskMgr := taskManager
-	if runningOnUserKS {
-		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
-		var err2 error
-		dxfTaskMgr, err2 = dxfstorage.GetDXFSvcTaskMgr()
-		if err2 != nil {
-			return 0, nil, err2
-		}
-		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			taskMeta.JobID = jobID
-			planCtx.SessionCtx = se
-			planCtx.TaskKey = taskkey.ForJob(jobID)
-			planCtx.Keyspace = plan.Keyspace
-			var err2 error
-			if taskID, err2 = submitTask2DXF(taskMeta, extraParams, planCtx, dxfTaskMgr); err2 != nil {
-				return err2
-			}
-			return nil
-		}); err2 != nil {
-			return 0, nil, err2
-		}
-	}
-	handle.NotifyTaskChange()
-	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
-	if err != nil {
-		return 0, nil, err
-	}
-	logFields := []zap.Field{
-		zap.Int64("job-id", jobID),
-		zap.String("task-key", task.Key),
-		zap.Int64("task-id", task.ID),
-		zap.Bool("global-sort", plan.IsGlobalSort()),
-		zap.Bool("async-prepare", asyncPrepare),
-	}
-	if !asyncPrepare {
-		logFields = append(logFields,
-			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-			zap.Int("thread-cnt", plan.ThreadCnt),
-			zap.Int("max-node-cnt", plan.MaxNodeCnt),
-		)
-	}
-	logutil.BgLogger().Info("job submitted to task queue", logFields...)
-
-	return jobID, task, nil
-}
-
-func submitTask2DXF(taskMeta *taskinfo.TaskMeta, extraParams proto.ExtraParams, planCtx planner.PlanCtx,
-	taskMgr *dxfstorage.TaskManager) (int64, error) {
-	meta, err := json.Marshal(taskMeta)
-	if err != nil {
-		return 0, err
-	}
-	// Use the supplied session and task manager to preserve the caller's
-	// transaction boundary.
-	return taskMgr.CreateTaskWithSession(
-		planCtx.Ctx,
-		planCtx.SessionCtx,
-		planCtx.TaskKey,
-		planCtx.TaskType,
-		planCtx.Keyspace,
-		planCtx.ThreadCnt,
-		handle.GetTargetScope(),
-		planCtx.MaxNodeCnt,
-		extraParams,
-		meta,
-	)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 }
 
 // waitTask waits for the task to finish.
@@ -418,13 +254,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err2
 	}
 	defer CloseSession(newSCtx)
-<<<<<<< HEAD
-=======
-	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
-	if privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(e.controller.Plan.DBName).L) {
-		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, ast.NewCIStr(e.controller.Plan.DBName).L)()
+	if privilege.CanWriteReadOnlySchema(e.userSctx, pmodel.NewCIStr(e.controller.Plan.DBName).L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, pmodel.NewCIStr(e.controller.Plan.DBName).L)()
 	}
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 
 	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {

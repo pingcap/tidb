@@ -118,6 +118,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/owner",
@@ -280,11 +281,7 @@ go_test(
         "restart_test.go",
         "rollingback_internal_test.go",
         "rollingback_test.go",
-<<<<<<< HEAD
-=======
-        "schema_internal_test.go",
         "schema_read_only_test.go",
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
         "schema_test.go",
         "sequence_test.go",
         "stat_test.go",
@@ -345,22 +342,11 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
-<<<<<<< HEAD
+        "//pkg/privilege",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/types",
-=======
-        "//pkg/planner/util",
-        "//pkg/privilege",
-        "//pkg/resourcegroup",
-        "//pkg/resourcemanager/pool/workerpool",
-        "//pkg/server",
-        "//pkg/session",
-        "//pkg/session/sessionapi",
-        "//pkg/session/sessmgr",
-        "//pkg/session/syssession",
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

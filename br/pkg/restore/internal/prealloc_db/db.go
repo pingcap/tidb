@@ -18,12 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/privilege"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"go.uber.org/zap"
 )
@@ -125,7 +121,7 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		databases := make([]string, 0, len(ddlJob.GetInvolvingSchemaInfo()))
 		for _, target := range ddlJob.GetInvolvingSchemaInfo() {
 			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone && target.Database != model.InvolvingAll {
-				databases = append(databases, ast.NewCIStr(target.Database).L)
+				databases = append(databases, pmodel.NewCIStr(target.Database).L)
 			}
 		}
 		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, databases...)()

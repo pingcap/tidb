@@ -113,11 +113,7 @@ const (
 	ActionAddVectorIndex                        ActionType = 73
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-<<<<<<< HEAD
-	_                                           ActionType = 77 // reserve for database read-only feature
-=======
 	ActionModifySchemaReadOnly                  ActionType = 77
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -195,6 +191,7 @@ var ActionMap = map[ActionType]string{
 	ActionAddVectorIndex:                        "add vector index",
 	ActionAlterTableMode:                        "alter table mode",
 	ActionRefreshMeta:                           "refresh meta",
+	ActionModifySchemaReadOnly:                  "modify schema read only",
 	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",

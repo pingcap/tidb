@@ -25,12 +25,8 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-<<<<<<< HEAD:pkg/planner/core/foreign_key.go
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-=======
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/privilege"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912)):pkg/planner/core/operator/physicalop/foreign_key.go
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"

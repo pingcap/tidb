@@ -17,12 +17,9 @@ package ddl
 import (
 	"context"
 	"fmt"
-<<<<<<< HEAD
-=======
 	"strconv"
 	"strings"
 	"time"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,13 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	utillogutil "github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	"go.uber.org/zap"
 )
 
@@ -184,7 +177,7 @@ func checkSchemaReadOnlyBeforeJob(jobCtx *jobContext, job *model.Job) error {
 		if target.Mode != model.ExclusiveInvolving || target.Database == model.InvolvingNone || target.Database == model.InvolvingAll {
 			continue
 		}
-		db, ok := jobCtx.infoCache.GetLatest().SchemaByName(ast.NewCIStr(target.Database))
+		db, ok := jobCtx.infoCache.GetLatest().SchemaByName(pmodel.NewCIStr(target.Database))
 		if !ok {
 			continue // Let the operation report its normal missing-schema error.
 		}

@@ -295,8 +295,8 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 			internal.AddTable(t, r.Store(), db.ID, tbl)
 			db.Deprecated.Tables = []*model.TableInfo{tbl}
 			data := NewData()
-			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
-			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+			builder := NewBuilder(r, nil, data, useV2)
+			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, 1))
 			is := builder.Build(math.MaxUint64)
 			for i, readOnly := range []bool{true, false, true} {
 				oldIS := is
@@ -312,7 +312,7 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 				require.NoError(t, err)
 				m := meta.NewMutator(txn)
 				require.NoError(t, m.UpdateDatabase(db))
-				builder = NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+				builder = NewBuilder(r, nil, data, useV2)
 				require.NoError(t, builder.InitWithOldInfoSchema(is))
 				_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: action, SchemaID: db.ID, Version: int64(i + 2), IsRefreshMeta: action == model.ActionRefreshMeta})
 				require.NoError(t, err)
@@ -341,8 +341,8 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
 			db := internal.MockDBInfo(t, r.Store(), "missing_cached")
 			internal.AddDB(t, r.Store(), db)
-			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, NewData(), useV2)
-			require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 1))
+			builder := NewBuilder(r, nil, NewData(), useV2)
+			require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, 1))
 			txn, err := r.Store().Begin()
 			require.NoError(t, err)
 			defer func() { require.NoError(t, txn.Rollback()) }()
@@ -355,14 +355,7 @@ func testRefreshSchemaReadOnly(t *testing.T) {
 }
 
 func TestBundles(t *testing.T) {
-<<<<<<< HEAD
-=======
 	t.Run("refresh schema read-only flag", testRefreshSchemaReadOnly)
-	t.Run("drop schema streams table IDs", testDropSchemaStreamsTableIDs)
-	t.Run("collect physical table IDs propagates iteration errors", testCollectPhysicalTableIDsPropagatesIterationErrors)
-	t.Run("retry flashback in progress", testRetryOnFlashbackInProgress)
-
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	r := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		r.Store().Close()

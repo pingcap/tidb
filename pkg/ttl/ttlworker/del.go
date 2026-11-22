@@ -22,14 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-<<<<<<< HEAD
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -304,10 +305,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		// Planning can register accesses before a lazy transaction appears in
 		// CLUSTER_TIDB_TRX. Once it becomes visible, recheck the published flag
 		// so a transition cannot miss both its scan and this transaction.
-		latestIS := p.sctx.GetLatestISWithoutSessExt()
+		latestIS := p.sctx.GetDomainInfoSchema()
 		var readOnlyErr error
 		sessVars.GetRelatedTableForReadOnly().Range(func(_, value any) bool {
-			dbName := value.(ast.CIStr)
+			dbName := value.(pmodel.CIStr)
 			db, exists := p.GetTxnInfoSchema().SchemaByName(dbName)
 			latestDB, latestExists := latestIS.SchemaByName(dbName)
 			if exists && latestExists && db.ReadOnly != latestDB.ReadOnly {

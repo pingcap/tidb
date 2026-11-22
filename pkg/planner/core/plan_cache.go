@@ -194,7 +194,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			readOnlyDefaultDB:  stmt.StmtDB,
 			PreprocessorReturn: &PreprocessorReturn{InfoSchema: is},
 		}}
-		ast.Walk(stmtAst.Stmt, readOnlyChecker)
+		stmtAst.Stmt.Accept(readOnlyChecker)
 		if readOnlyChecker.err != nil {
 			return readOnlyChecker.err
 		}

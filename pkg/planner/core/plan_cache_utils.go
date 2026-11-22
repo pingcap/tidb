@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -278,7 +277,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
 		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		latestSchemaVersion = sctx.GetDomainInfoSchema().SchemaMetaVersion()
 	}
 
 	// rebuild key to exclude kv.TiFlash when stmt is not read only

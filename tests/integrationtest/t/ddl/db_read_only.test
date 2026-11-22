@@ -567,18 +567,6 @@ alter database ro_sequence read only = 0;
 drop database ro_sequence;
 drop user 'ro_sequence_writer'@'localhost';
 
-# Materialized-view attributes are database metadata writes.
-create database ro_mv;
-use ro_mv;
-set tidb_mview_enable = on;
-create table t(a int not null);
-create materialized view log on t(a);
-create materialized view mv(a, cnt) as select a, count(1) from t group by a;
-alter database ro_mv read only = 1;
--- error 3989
-alter materialized view mv attributes='mview_alert_warning=5,mview_alert_overdue=10,mview_alert_refresh_failed=yes';
-alter database ro_mv read only = 0;
-drop database ro_mv;
 use test;
 
 # Locking checks follow the current query block, including the CTE-only OF fallback.
@@ -607,38 +595,20 @@ alter database ro_lock read only = 0;
 drop database ro_lock;
 drop database rw_lock;
 
-# Specialized maintenance writes obey the same database-level restriction.
+# Index maintenance writes obey the same database-level restriction.
 create database ro_maintenance;
 create table ro_maintenance.t(a int not null, index idx(a));
 insert into ro_maintenance.t values (1);
-set tidb_mview_enable = on;
-create materialized view log on ro_maintenance.t(a);
-create materialized view ro_maintenance.mv(a, cnt) as select a, count(1) from ro_maintenance.t group by a;
 insert into ro_maintenance.t values (2);
 alter database ro_maintenance read only = 1;
--- error 3989
-refresh materialized view ro_maintenance.mv fast;
--- error 3989
-refresh materialized view ro_maintenance.mv complete delta apply;
--- error 3989
-purge materialized view log on ro_maintenance.t;
 -- error 3989
 admin recover index ro_maintenance.t idx;
 -- error 3989
 admin cleanup index ro_maintenance.t idx;
 admin check table ro_maintenance.t;
-select * from ro_maintenance.mv order by a;
 grant RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'@'%';
-refresh materialized view ro_maintenance.mv fast;
-refresh materialized view ro_maintenance.mv complete delta apply;
-purge materialized view log on ro_maintenance.t;
 admin recover index ro_maintenance.t idx;
 admin cleanup index ro_maintenance.t idx;
-select * from ro_maintenance.mv order by a;
 revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from 'root'@'%';
--- error 3989
-refresh materialized view ro_maintenance.mv fast;
--- error 3989
-purge materialized view log on ro_maintenance.t;
 alter database ro_maintenance read only = 0;
 drop database ro_maintenance;

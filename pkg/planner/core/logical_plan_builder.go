@@ -6779,29 +6779,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		tableNameByKey := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tableNameByKey)
 		for _, tn := range ds.Tables.Tables {
-<<<<<<< HEAD
-			var canUpdate, foundMatch = false, false
-			name := tn.Name.L
-			if tn.Schema.L == "" {
-				canUpdate, foundMatch = updatableList[name]
-			}
-
-			if !foundMatch {
-				if tn.Schema.L == "" {
-					name = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
-				} else {
-					name = tn.Schema.L + "." + tn.Name.L
-				}
-				canUpdate, foundMatch = updatableList[name]
-			}
-=======
 			tb, canUpdate, foundMatch := resolveMultiDeleteTarget(
 				tn,
 				b.ctx.GetSessionVars().CurrentDB,
 				updatableList,
 				tableNameByKey,
 			)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 			// check sql like: `delete b from (select * from t) as a, t`
 			if !foundMatch {
 				return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
@@ -7911,7 +7894,7 @@ func resolveMultiDeleteTarget(
 	}
 	if !foundMatch {
 		if target.Schema.L == "" {
-			key = ast.NewCIStr(currentDB).L + "." + target.Name.L
+			key = pmodel.NewCIStr(currentDB).L + "." + target.Name.L
 		} else {
 			key = target.Schema.L + "." + target.Name.L
 		}

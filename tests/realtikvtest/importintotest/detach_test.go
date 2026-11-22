@@ -21,18 +21,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsouza/fake-gcs-server/fakestorage"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-=======
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+
+	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -88,9 +84,6 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 }
 
 func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
-	if !kerneltype.IsClassic() {
-		s.T().Skip("physical import uses table mode in classic kernel")
-	}
 	// These hooks use the local transaction view rather than cluster discovery in this test.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
@@ -106,7 +99,7 @@ func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()
 	var once sync.Once
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ReadyForImportEngine", func() {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
 		once.Do(func() { close(started); <-resume })
 	})
 	rows := s.tk.MustQuery(fmt.Sprintf("import into read_only_import.t from 'gs://read-only-import/t.csv?endpoint=%s' with detached, thread=1", gcsEndpoint)).Rows()
@@ -119,7 +112,7 @@ func (s *mockGCSSuite) TestReadOnlyTransitionDuringImport() {
 	}
 	// Entry-only checks let read-only succeed while physical ingestion is still paused.
 	s.tk.MustExec("alter database read_only_import read only = 1")
-	db, ok := domain.GetDomain(s.tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("read_only_import"))
+	db, ok := domain.GetDomain(s.tk.Session()).InfoSchema().SchemaByName(pmodel.NewCIStr("read_only_import"))
 	s.Require().True(ok)
 	s.Require().True(db.ReadOnly)
 	release()

@@ -618,7 +618,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 	defer db.Close()
 	dom := domain.GetDomain(db.Session().GetSessionCtx())
 	publishReadOnly := func(name string) {
-		info, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(name))
+		info, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(name))
 		require.True(t, ok)
 		info = info.Clone()
 		info.ReadOnly = true

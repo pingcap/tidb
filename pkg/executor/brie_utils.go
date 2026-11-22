@@ -132,27 +132,7 @@ func BRIECreateTables(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 	for db, tablesInDB := range clonedTables {
-<<<<<<< HEAD
-		dbName := pmodel.NewCIStr(db)
-		queryBuilder := strings.Builder{}
-		for _, table := range tablesInDB {
-			query, err := showRestoredCreateTable(sctx, table, brComment)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			queryBuilder.WriteString(query)
-			queryBuilder.WriteString(";")
-		}
-		sctx.SetValue(sessionctx.QueryString, queryBuilder.String())
-		if err := splitBatchCreateTable(sctx, dbName, tablesInDB, cs...); err != nil {
-			//It is possible to failure when TiDB does not support model.ActionCreateTables.
-			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
-			//we fall back to old way that creating table one by one
-			log.Warn("batch create table from tidb failure", zap.Error(err))
-=======
-		if err := brieCreateTablesInDatabase(sctx, ast.NewCIStr(db), tablesInDB, brComment, cs...); err != nil {
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
+		if err := brieCreateTablesInDatabase(sctx, pmodel.NewCIStr(db), tablesInDB, brComment, cs...); err != nil {
 			return err
 		}
 	}
@@ -160,43 +140,31 @@ func BRIECreateTables(
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 func brieCreateTablesInDatabase(
 	sctx sessionctx.Context,
-	dbName ast.CIStr,
+	dbName pmodel.CIStr,
 	tables []*model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
 	defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
-	querys := make([]string, 0, len(tables))
+	queryBuilder := strings.Builder{}
 	for _, table := range tables {
-		query, err := showRestoredCreateTable(sctx, dbName, table, brComment)
+		query, err := showRestoredCreateTable(sctx, table, brComment)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		querys = append(querys, query)
+		queryBuilder.WriteString(query)
+		queryBuilder.WriteString(";")
 	}
-	if err := splitBatchCreateTable(sctx, dbName, tables, querys, cs...); err != nil {
-		// If batch creation is unsupported, the caller falls back to creating
-		// tables individually.
+	sctx.SetValue(sessionctx.QueryString, queryBuilder.String())
+	if err := splitBatchCreateTable(sctx, dbName, tables, cs...); err != nil {
 		log.Warn("batch create table from tidb failure", zap.Error(err))
 		return err
 	}
 	return nil
 }
 
-func mergeQuerys(querys []string) string {
-	queryBuilder := strings.Builder{}
-	for _, query := range querys {
-		queryBuilder.WriteString(query)
-		queryBuilder.WriteString(";")
-	}
-	return queryBuilder.String()
-}
-
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 // splitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.

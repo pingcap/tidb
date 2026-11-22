@@ -1457,10 +1457,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 
 	// check plan
-<<<<<<< HEAD
 	if proj, ok := p.(*PhysicalProjection); ok {
-=======
-	if proj, ok := p.(*physicalop.PhysicalProjection); ok {
 		for _, expr := range proj.Exprs {
 			if hasSequenceWrite(expr) {
 				// Sequence mutations use an independent metadata transaction.
@@ -1468,7 +1465,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 				return false
 			}
 		}
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 		p = proj.Children()[0]
 	}
 

@@ -206,6 +206,9 @@ type StaticServerInfo struct {
 	// RPC target, such as standalone BR. Missing/false means the node can serve
 	// TiDB-type RPC requests, which keeps compatibility with older server info.
 	DisableRPC bool `json:"disable_rpc,omitempty"`
+	// SchemaReadOnly advertises enforcement of DBInfo.ReadOnly. Older nodes omit
+	// this capability and prevent activation during a rolling upgrade.
+	SchemaReadOnly bool `json:"schema_read_only,omitempty"`
 }
 
 // DynamicServerInfo represents the dynamic information of the server.
@@ -1134,6 +1137,7 @@ func getServerInfo(id string, serverIDGetter func() uint64, disableRPC bool) *Se
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
 			DisableRPC:     disableRPC,
+			SchemaReadOnly: true,
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),

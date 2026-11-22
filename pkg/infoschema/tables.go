@@ -70,6 +70,8 @@ import (
 const (
 	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
+	// TableSchemataExtensions shows the database read-only state.
+	TableSchemataExtensions = "SCHEMATA_EXTENSIONS"
 	// TableTables is the string constant of infoschema table.
 	TableTables = "TABLES"
 	// TableColumns is the string constant of infoschema table
@@ -249,6 +251,7 @@ const (
 
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
+	TableSchemataExtensions:                 autoid.InformationSchemaDBID + 101,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
 	TableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
@@ -1752,40 +1755,12 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
-<<<<<<< HEAD
-=======
-var tablePlanCache = []columnInfo{
-	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
-	{name: "SQL_TEXT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "STMT_TYPE", tp: mysql.TypeVarchar, size: 64},
-	{name: "PARSE_USER", tp: mysql.TypeVarchar, size: 64},
-	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64},
-	{name: "BINARY_PLAN", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "BINDING", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "OPT_ENV", tp: mysql.TypeVarchar, size: 64},
-	{name: "PARSE_VALUES", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "MEM_SIZE", tp: mysql.TypeLonglong, size: 21},
-	{name: "EXECUTIONS", tp: mysql.TypeLonglong, size: 21},
-	{name: "PROCESSED_KEYS", tp: mysql.TypeLonglong, size: 21},
-	{name: "TOTAL_KEYS", tp: mysql.TypeLonglong, size: 21},
-	{name: "SUM_LATENCY", tp: mysql.TypeLonglong, size: 21},
-	{name: "LOAD_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
-}
-
-var tableKeyspaceMetaCols = []columnInfo{
-	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
-	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
-	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
-}
-
 var tableSchemataExtensions = []columnInfo{
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "OPTIONS", tp: mysql.TypeVarchar, size: 256},
 }
 
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2438,12 +2413,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
-<<<<<<< HEAD
-=======
-	TableTiDBPlanCache:                      tablePlanCache,
-	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 	TableSchemataExtensions:                 tableSchemataExtensions,
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

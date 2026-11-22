@@ -238,23 +238,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
-<<<<<<< HEAD
 		case infoschema.TableColumnPrivileges:
 			err = e.setDataFromColumnPrivileges(sctx)
 		case infoschema.TableTablePrivileges:
 			err = e.setDataFromTablePrivileges(sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(sctx)
-=======
-		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx, false)
-		case infoschema.ClusterTableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx, true)
-		case infoschema.TableKeyspaceMeta:
-			err = e.setDataForKeyspaceMeta(sctx)
 		case infoschema.TableSchemataExtensions:
 			err = e.setDataFromSchemataExtensions(sctx)
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 		}
 		if err != nil {
 			return nil, err

@@ -122,14 +122,9 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	sourceDB := &metautil.Database{Info: &model.DBInfo{
-<<<<<<< HEAD
-		ID:   100,
-		Name: pmodel.NewCIStr("route_source"),
-=======
 		ID:       100,
-		Name:     ast.NewCIStr("route_source"),
+		Name:     pmodel.NewCIStr("route_source"),
 		ReadOnly: true,
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	}}
 	targetDB := sourceDB.Info.Clone()
 	targetDB.Name = pmodel.NewCIStr("route_target")
@@ -187,11 +182,11 @@ func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
 	require.True(t, source.Info.TTLInfo.Enable)
 	require.True(t, targetInfo.TTLInfo.Enable)
 	sourceSequence := &metautil.Table{DB: sourceDB.Info, Info: &model.TableInfo{
-		ID: 102, Name: ast.NewCIStr("source_sequence"), State: model.StatePublic,
+		ID: 102, Name: pmodel.NewCIStr("source_sequence"), State: model.StatePublic,
 		Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1}, AutoIncID: 41,
 	}}
 	targetSequence := sourceSequence.Info.Clone()
-	targetSequence.Name = ast.NewCIStr("target_sequence")
+	targetSequence.Name = pmodel.NewCIStr("target_sequence")
 	_, err = client.AllocTableIDs(ctx, []*metautil.Table{sourceSequence}, false, false, nil)
 	require.NoError(t, err)
 	_, err = client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{Source: sourceSequence, TargetDB: targetDB, TargetInfo: targetSequence}}, 0)

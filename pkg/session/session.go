@@ -489,7 +489,7 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	if processInfo == nil {
 		// Internal sessions can write user tables without a process-list entry.
 		// Their access set is still needed by database read-only draining.
-		processInfo = &sessmgr.ProcessInfo{}
+		processInfo = &util.ProcessInfo{}
 	}
 	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,

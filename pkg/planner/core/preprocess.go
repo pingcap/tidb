@@ -21,11 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/bindinfo"
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -262,12 +258,7 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
-<<<<<<< HEAD
-=======
 
-	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
-	// caller, instead of upgrading table metadata to the latest domain schema.
-	useInfoSchemaAsIs bool
 	// readOnlyDefaultDB preserves PREPARE's binding for multi-delete targets.
 	readOnlyDefaultDB string
 }
@@ -289,11 +280,11 @@ func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func getAllDBNames(node *ast.TableRefsClause) []ast.CIStr {
+func getAllDBNames(node *ast.TableRefsClause) []pmodel.CIStr {
 	if node == nil {
 		return nil
 	}
-	dbNames := make([]ast.CIStr, 0)
+	dbNames := make([]pmodel.CIStr, 0)
 	collector := tableSourceCollector{
 		tableName: make([]*ast.TableName, 0),
 	}
@@ -312,15 +303,15 @@ func (p *preprocessor) resolveUpdatableTables(node *ast.TableRefsClause) []*ast.
 		return nil
 	}
 	resolver := &updatableTableListResolver{resolveCtx: p.resolveCtx}
-	ast.Walk(node, resolver)
+	node.Accept(resolver)
 	return resolver.updatableTableList
 }
 
 func (p *preprocessor) schemasForMatchingTables(
 	tables []*ast.TableName,
 	match func(*ast.TableName, *resolve.TableNameW) bool,
-) []ast.CIStr {
-	dbNames := make([]ast.CIStr, 0, 1)
+) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, 1)
 	for _, tbl := range tables {
 		tblW := p.resolveCtx.GetTableName(tbl)
 		if tblW == nil || tblW.DBInfo == nil || !match(tbl, tblW) {
@@ -338,7 +329,7 @@ func (p *preprocessor) checkLocalTemporaryTableReadOnly(tbl *resolve.TableNameW)
 	}
 	// Local tables are not protected by MDL or database transaction draining.
 	// A write must therefore use the current flag even in an older transaction.
-	db, exists := p.sctx.GetLatestISWithoutSessExt().SchemaByName(tbl.DBInfo.Name)
+	db, exists := p.sctx.GetDomainInfoSchema().SchemaByName(tbl.DBInfo.Name)
 	if exists && db.ReadOnly && !privilege.CanWriteReadOnlySchema(p.sctx, db.Name.L) {
 		p.err = infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
 	}
@@ -369,8 +360,8 @@ func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string)
 	return false
 }
 
-func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
-	dbNames := make([]ast.CIStr, 0, len(node.List))
+func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, len(node.List))
 	tables := p.resolveUpdatableTables(node.TableRefs)
 	for _, assignment := range node.List {
 		column := assignment.Column
@@ -398,8 +389,8 @@ func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
 	return dbNames
 }
 
-func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIStr {
-	dbNames := make([]ast.CIStr, 0, len(node.Tables.Tables))
+func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []pmodel.CIStr {
+	dbNames := make([]pmodel.CIStr, 0, len(node.Tables.Tables))
 	defaultDB := p.sctx.GetSessionVars().CurrentDB
 	if p.readOnlyDefaultDB != "" {
 		defaultDB = p.readOnlyDefaultDB
@@ -437,10 +428,7 @@ func mayHaveSchemaReadOnlyTarget(in ast.Node) bool {
 	case *ast.SelectStmt:
 		// Whether a lock clause writes depends on its type and on the session.
 		return node.LockInfo != nil
-	case *ast.CreateTableStmt, *ast.CreateViewStmt, *ast.CreateMaterializedViewStmt,
-		*ast.CreateMaterializedViewLogStmt, *ast.DropMaterializedViewStmt, *ast.DropMaterializedViewLogStmt,
-		*ast.AlterMaterializedViewLogStmt, *ast.AlterMaterializedViewStmt, *ast.RefreshMaterializedViewStmt,
-		*ast.PurgeMaterializedViewLogStmt, *ast.AdminStmt, *ast.DropTableStmt, *ast.RenameTableStmt,
+	case *ast.CreateTableStmt, *ast.CreateViewStmt, *ast.AdminStmt, *ast.DropTableStmt, *ast.RenameTableStmt,
 		*ast.AlterDatabaseStmt, *ast.DropDatabaseStmt, *ast.CreateIndexStmt, *ast.AlterTableStmt,
 		*ast.ImportIntoStmt, *ast.TruncateTableStmt, *ast.DropIndexStmt, *ast.LoadDataStmt,
 		*ast.CreateSequenceStmt, *ast.AlterSequenceStmt, *ast.DropSequenceStmt,
@@ -455,50 +443,34 @@ type schemaReadOnlyTargetFinder struct {
 	found bool
 }
 
-func (f *schemaReadOnlyTargetFinder) Enter(in ast.Node) bool {
+func (f *schemaReadOnlyTargetFinder) Enter(in ast.Node) (ast.Node, bool) {
 	f.found = f.found || mayHaveSchemaReadOnlyTarget(in)
-	return f.found
+	return in, f.found
 }
 
-func (f *schemaReadOnlyTargetFinder) Leave(ast.Node) bool { return !f.found }
+func (f *schemaReadOnlyTargetFinder) Leave(in ast.Node) (ast.Node, bool) { return in, !f.found }
 
 // stmtMayHaveSchemaReadOnlyTarget reports whether any node of the statement may
 // need a database read-only check.
 func stmtMayHaveSchemaReadOnlyTarget(stmt ast.Node) bool {
 	finder := &schemaReadOnlyTargetFinder{}
-	ast.Walk(stmt, finder)
+	stmt.Accept(finder)
 	return finder.found
 }
 
 // extractSchema extracts the schemas modified by the statement for database read-only checks.
-func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
+func (p *preprocessor) extractSchema(in ast.Node) []pmodel.CIStr {
 	// This runs for every node of every statement: return before allocating.
 	if !mayHaveSchemaReadOnlyTarget(in) {
 		return nil
 	}
-	dbNames := make([]ast.CIStr, 0, 1)
+	dbNames := make([]pmodel.CIStr, 0, 1)
 
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.CreateViewStmt:
 		dbNames = append(dbNames, node.ViewName.Schema)
-	case *ast.CreateMaterializedViewStmt:
-		dbNames = append(dbNames, node.ViewName.Schema)
-	case *ast.CreateMaterializedViewLogStmt:
-		dbNames = append(dbNames, node.Table.Schema)
-	case *ast.DropMaterializedViewStmt:
-		dbNames = append(dbNames, node.ViewName.Schema)
-	case *ast.DropMaterializedViewLogStmt:
-		dbNames = append(dbNames, node.Table.Schema)
-	case *ast.AlterMaterializedViewLogStmt:
-		dbNames = append(dbNames, node.Table.Schema)
-	case *ast.AlterMaterializedViewStmt:
-		dbNames = append(dbNames, node.ViewName.Schema)
-	case *ast.RefreshMaterializedViewStmt:
-		dbNames = append(dbNames, node.ViewName.Schema)
-	case *ast.PurgeMaterializedViewLogStmt:
-		dbNames = append(dbNames, node.Table.Schema)
 	case *ast.AdminStmt:
 		if node.Tp == ast.AdminRecoverIndex || node.Tp == ast.AdminCleanupIndex {
 			for _, tbl := range node.Tables {
@@ -519,7 +491,7 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		if node.AlterDefaultDatabase {
 			// buildDDL writes the resolved CurrentDB back to Name, so a prepared
 			// AST may retain the database used by an earlier plan build.
-			dbName = ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+			dbName = pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		}
 		for _, opt := range node.Options {
 			// Allow changing READ ONLY itself so a read-only database can be
@@ -604,14 +576,14 @@ type schemaReadOnlyChecker struct {
 	*preprocessor
 }
 
-func (*schemaReadOnlyChecker) Enter(ast.Node) bool { return false }
+func (*schemaReadOnlyChecker) Enter(in ast.Node) (ast.Node, bool) { return in, false }
 
-func (c *schemaReadOnlyChecker) Leave(in ast.Node) bool {
+func (c *schemaReadOnlyChecker) Leave(in ast.Node) (ast.Node, bool) {
 	c.checkSchemaReadOnlyInStmt(in)
-	return c.err == nil
+	return in, c.err == nil
 }
 
-func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
+func (p *preprocessor) checkSchemaReadOnly(dbName pmodel.CIStr) {
 	if p.err != nil {
 		return
 	}
@@ -625,7 +597,6 @@ func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
 		}
 		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
 	}
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -1097,13 +1068,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
-<<<<<<< HEAD
-	return in, p.err == nil
-=======
 	p.checkSchemaReadOnlyInStmt(in)
-
-	return p.err == nil
->>>>>>> bf712cf67f6 (ddl: support database-level read-only mode (#72912))
+	return in, p.err == nil
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
@@ -2471,7 +2437,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		tables := vars.GetRelatedTableForReadOnly()
 		if _, loaded := tables.LoadOrStore(tbl.Meta().ID, dbName); !loaded {
 			dbInfo, exists := is.SchemaByName(dbName)
-			latestIS := sctx.GetLatestISWithoutSessExt()
+			latestIS := sctx.GetDomainInfoSchema()
 			latestDB, latestExists := latestIS.SchemaByName(dbName)
 			if exists && latestExists && dbInfo.ReadOnly != latestDB.ReadOnly {
 				tables.Delete(tbl.Meta().ID)
@@ -2527,7 +2493,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if err != nil {
 			return nil, err
 		}
-		dbInfoLatest, _ := latestIS.SchemaByName(dbName)
+		dbInfoLatest, _ := domainSchema.SchemaByName(dbName)
 		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
 			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
 		}
