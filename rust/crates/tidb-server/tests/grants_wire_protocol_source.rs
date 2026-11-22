@@ -1632,3 +1632,79 @@ fn character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp
     drop(client);
     let _ = acceptor.join();
 }
+
+/// Go `TestClientErrors` (`pkg/server/tests/commontest/tidb_test.go`,
+/// `RunTestInfoschemaClientErrors`): an ERR packet counts one error and the
+/// statement's warnings count at the flush, under the connection's user and
+/// host, in the three `client_errors_summary_*` tables.
+#[test]
+fn test_client_errors() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
+    let acceptor = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            factory.as_ref(),
+            store.as_ref(),
+            &tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "root", b"rootpw");
+    run_write(&mut client, &mut reader, "CREATE DATABASE clientErrors");
+    run_write(&mut client, &mut reader, "USE clientErrors");
+    run_write(&mut client, &mut reader, "set @@tidb_enable_cache_prepare_stmt = off");
+
+    // (stmt, incrementWarnings, incrementErrors, errCode)
+    let client_errors = [
+        ("SELECT 0/0", true, false, 1365), // div by zero
+        ("CREATE TABLE test_client_errors2 (a int primary key, b int primary key)", true, true, 1068), // multiple pkeys
+        ("gibberish", true, true, 1064), // parse error
+    ];
+    let sources = ["client_errors_summary_global", "client_errors_summary_by_user", "client_errors_summary_by_host"];
+    let counts = |client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, table: &str, code: u16| {
+        let rows = run_query(
+            client,
+            reader,
+            &format!(
+                "SELECT SUM(error_count), SUM(warning_count) FROM information_schema.{table} \
+                 WHERE error_number = {code} GROUP BY error_number"
+            ),
+        );
+        rows.first().map_or((0, 0), |row| (row[0].parse::<i64>().unwrap(), row[1].parse::<i64>().unwrap()))
+    };
+    for (stmt, increment_warnings, increment_errors, code) in client_errors {
+        for table in sources {
+            let (mut errors, mut warnings) = counts(&mut client, &mut reader, table, code);
+            if increment_errors {
+                errors += 1;
+            }
+            if increment_warnings {
+                warnings += 1;
+            }
+            if increment_errors {
+                run_query_expect_error(&mut client, &mut reader, stmt);
+            } else {
+                run_query(&mut client, &mut reader, stmt);
+            }
+            assert_eq!(
+                counts(&mut client, &mut reader, table, code),
+                (errors, warnings),
+                "source=information_schema.{table} code={code} statement={stmt}"
+            );
+        }
+    }
+    client.shutdown(std::net::Shutdown::Both).unwrap();
+    drop(reader);
+    let _ = acceptor.join();
+}

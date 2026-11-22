@@ -735,6 +735,16 @@ impl<O: Write> Write for ClientErrorRecordingOutput<O> {
     }
 }
 
+impl<O> crate::connection_writers::ClientErrorRecorder for ClientErrorRecordingOutput<O> {
+    fn record_client_error(&self, code: u16) {
+        tidb_errno::infoschema::increment_error(code, &self.user, &self.host);
+    }
+
+    fn record_client_warning(&self, code: u16) {
+        tidb_errno::infoschema::increment_warning(code, &self.user, &self.host);
+    }
+}
+
 impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingOutput<O> {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
         self.inner.write_packet(sequence, payload)
@@ -749,11 +759,11 @@ impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingO
     }
 
     fn record_client_error(&self, code: u16) {
-        tidb_errno::infoschema::increment_error(code, &self.user, &self.host);
+        crate::connection_writers::ClientErrorRecorder::record_client_error(self, code);
     }
 
     fn record_client_warning(&self, code: u16) {
-        tidb_errno::infoschema::increment_warning(code, &self.user, &self.host);
+        crate::connection_writers::ClientErrorRecorder::record_client_warning(self, code);
     }
 
     fn compressed_sequence(&self) -> Option<u8> {
@@ -774,9 +784,18 @@ fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
     output: &O,
     session: &S,
 ) {
+    WARNINGS_RECORDED.with(|recorded| recorded.set(true));
     for code in session.warning_codes() {
         output.record_client_warning(code);
     }
+}
+
+thread_local! {
+    /// Whether this command's response already counted its warnings. Go
+    /// counts them in `clientConn.flush`, which ends every response; a
+    /// response path that does not count them itself is counted once when
+    /// the command ends.
+    static WARNINGS_RECORDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Go Server.concurrentLimiter: one token channel shared by all connections
@@ -2457,6 +2476,7 @@ fn run_connection_commands<S: QuerySession>(
             Option<Stmt>,
             Option<(PreparedGeneral, Vec<tidb_param::PreparedValue>)>,
         )> = None;
+        WARNINGS_RECORDED.with(|recorded| recorded.set(false));
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -3756,6 +3776,9 @@ fn run_connection_commands<S: QuerySession>(
         );
         if dispatch_result.is_err() {
             crate::query_metrics::record_error();
+        }
+        if !WARNINGS_RECORDED.with(std::cell::Cell::get) {
+            record_client_warnings(&*output, &*engine);
         }
         if let Some(error) = crate::connection_writers::take_query_failure() {
             log_dispatch_failure(

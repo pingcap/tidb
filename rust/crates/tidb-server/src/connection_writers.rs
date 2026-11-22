@@ -416,7 +416,31 @@ impl ConnectionPacketOutput for ClientStream {
     }
 }
 
-impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
+/// The identity behind a packet stream that Go's `writeError` /
+/// `writeOkWith` count client errors and warnings under
+/// (`errno.IncrementError(code, cc.user, cc.peerHost)`). A stream with no
+/// connection identity counts nothing.
+pub(crate) trait ClientErrorRecorder {
+    fn record_client_error(&self, _code: u16) {}
+
+    fn record_client_warning(&self, _code: u16) {}
+}
+
+impl ClientErrorRecorder for ClientStream {}
+
+impl ClientErrorRecorder for crate::client_socket::ClientSocket {}
+
+impl ClientErrorRecorder for Vec<u8> {}
+
+impl<W: Write + ClientErrorRecorder> ConnectionPacketOutput for PacketIoWriter<W> {
+    fn record_client_error(&self, code: u16) {
+        self.get_ref().record_client_error(code);
+    }
+
+    fn record_client_warning(&self, code: u16) {
+        self.get_ref().record_client_warning(code);
+    }
+
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
         self.set_sequence(sequence);
         self.write_packet(payload)?;
