@@ -30,7 +30,7 @@ use tidb_expr::expression::Expression;
 use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode, BaseFuncDesc};
 use tidb_planner::mview::{AggKind, BuildResult};
 
-use super::mview_delta_merge::FullUpdateLookup;
+use tidb_planner::common_plans::MViewFullUpdateLookup as FullUpdateLookup;
 use super::DriverError;
 use crate::TableEntry;
 use crate::WithStatementStore as _;

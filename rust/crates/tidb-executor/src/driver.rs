@@ -592,6 +592,42 @@ pub fn plan_statement(
         .map_err(planner_error_to_driver)
 }
 
+/// Go `buildRefreshMaterializedViewImplement`'s optimization of the
+/// derived SELECTs, which `Compile` runs while it builds the plan: an
+/// `MViewDeltaMerge` or `MViewCompleteDeltaApply` gets its planned fields;
+/// any other plan is left alone.
+///
+/// # Errors
+///
+/// A derived SELECT fails to plan, or the session cannot answer the window's
+/// upper bound or an AS OF target's schema.
+pub fn optimize_refresh_implement(
+    plan: &mut tidb_planner::common_plans::Plan,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
+    retained_upper_tso: &dyn Fn() -> Result<u64, DriverError>,
+) -> Result<(), DriverError> {
+    match plan {
+        tidb_planner::common_plans::Plan::MViewDeltaMerge(merge) => {
+            // Go: the retained log window's upper bound, `GetStmtForUpdateTS()`
+            // under the statement's provider, else the activated
+            // transaction's `StartTS()`.
+            let retained_upper_tso = retained_upper_tso()?;
+            let snapshot = |ts: u64| -> Result<tidb_planner::common_plans::DataReaderSnapshot, DriverError> {
+                let info_schema = session_ctx.refresh_snapshot_info_schema(ts).map_err(planner_error_to_driver)?;
+                Ok(tidb_planner::common_plans::DataReaderSnapshot { ts, info_schema })
+            };
+            mview_delta_merge::optimize_mview_delta_merge(merge, catalog, current_db, ctx, retained_upper_tso, &snapshot)
+        }
+        tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) => {
+            mview_delta_apply::optimize_mview_complete_delta_apply(apply, catalog, current_db, ctx)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Go `Compiler.Compile` of the SELECT of an import query: its physical
 /// plan over this catalog.
 ///

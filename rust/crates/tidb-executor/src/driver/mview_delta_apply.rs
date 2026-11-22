@@ -197,6 +197,23 @@ pub fn plan_mview_complete_delta_apply(
     }))
 }
 
+/// Go master `buildRefreshMaterializedViewImplement`'s COMPLETE DELTA APPLY
+/// half after the plan builder: the diff source optimized, the plan's
+/// source set.
+///
+/// # Errors
+///
+/// The diff source fails to plan, or its layout disagrees with the view.
+pub fn optimize_mview_complete_delta_apply(
+    plan: &mut MViewCompleteDeltaApply,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    plan.root = Some(plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?);
+    Ok(())
+}
+
 /// Go master `buildMViewCompleteDeltaApply` + `MViewCompleteDeltaApplyExec`:
 /// applies the view's diff rows and answers the write counts.
 ///
@@ -207,13 +224,12 @@ pub fn plan_mview_complete_delta_apply(
 pub fn run_mview_complete_delta_apply(
     plan: &MViewCompleteDeltaApply,
     catalog: &mut SessionExtendedInfoSchema,
-    current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<DeltaApplyWriterStats, DriverError> {
     let diff = &plan.diff;
     // Go `ExecStmt`: the statement's plan is the operator over its diff
     // source, published with the runtime stats its executors collect.
-    let mut root = plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?;
+    let mut root = plan.root.clone().ok_or_else(|| plain("MViewCompleteDeltaApply: the plan is not optimized"))?;
     crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
     // Go `buildMViewCompleteDeltaApply`'s `updateForUpdateTS`.
     crate::isolation_advise::update_for_update_ts(ctx)?;

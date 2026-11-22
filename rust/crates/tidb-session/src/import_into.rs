@@ -444,10 +444,10 @@ impl Session {
         plan: &tidb_planner::common_plans::ImportInto,
         mut controller: LoadDataController,
     ) -> Result<StmtOutput, DriverError> {
-        let store = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?;
         // Go `CreateSession(userSctx)`: the prechecks and `InitTiKVConfigs`
-        // run on an internal session.
-        let etcd = store.etcd();
+        // run on an internal session; Go `store.NewEtcdCli` answers no client
+        // for a store without one.
+        let etcd = tidb_dxf_importinto::import_store().ok().and_then(|store| store.etcd());
         with_task_manager_session(|se| {
             let conn = se.sql_executor();
             let pre = PrecheckSession { ctx, conn: conn.as_ref(), etcd: etcd.as_deref() };
@@ -456,6 +456,11 @@ impl Session {
                 tidb_dxf_importinto::job::is_raft_kv2(ctx, se).map_err(|e| import_error(&e))?;
             Ok(())
         })?;
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr").is_some() {
+            return Err(other("mock import from select setup error"));
+        }
+        // Go `NewTableImporter(ctx, e.controller, importID, e.Ctx().GetStore())`.
+        let store = tidb_dxf_importinto::import_store().map_err(|e| import_error(&e))?;
         let import_id = uuid::Uuid::new_v4().to_string();
         let table_id = controller.plan.table_info.as_ref().map_or(0, |t| t.id);
         let import_plan = controller.plan.clone();

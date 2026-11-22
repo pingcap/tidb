@@ -314,6 +314,11 @@ pub enum Plan {
 
 /// Go master `MViewDeltaMerge`: FAST refresh's merge of the log window into
 /// the view.
+///
+/// The plan builder names the view and the window; the optimizer
+/// (`buildRefreshMaterializedViewImplement`'s optimization, which this tier
+/// runs where its optimizer lives) fills [`Self::planned`] before the
+/// statement executes or is explained.
 #[derive(Clone, Debug)]
 pub struct MViewDeltaMerge {
     /// The view's schema.
@@ -326,6 +331,66 @@ pub struct MViewDeltaMerge {
     pub mlog_retained_lower_tso: u64,
     /// Go `RegisteredMLogIDs`.
     pub registered_mlog_ids: Vec<i64>,
+    /// Go's planned fields.
+    pub planned: Option<Box<MViewDeltaMergePlanned>>,
+}
+
+/// Go master `MViewDeltaMerge`'s planned fields.
+#[derive(Clone, Debug)]
+pub struct MViewDeltaMergePlanned {
+    /// Go `mview.Build`'s answer: `MVTableID`, `BaseTableID`, `MLogTableID`,
+    /// `MVColumnCount`, `DeltaColumnCount`, `MVTablePKCols`,
+    /// `GroupKeyMVOffsets`, `CountStarMVOffset` and `AggInfos`.
+    pub build: crate::mview::BuildResult,
+    /// Go `Source` under the merge operator, as EXPLAIN shows it.
+    pub root: PhysicalPlan,
+    /// Go `MLogEmpty`.
+    pub mlog_empty: bool,
+    /// Go `FullUpdateInnerSource` .. `FullUpdateSnapshot`.
+    pub full_update: Option<MViewFullUpdateLookup>,
+}
+
+/// Go master `mvFullUpdateLookupTemplate` as `MViewDeltaMerge` keeps it: the
+/// MIN / MAX fallback's lookup child, the template IndexJoin it came from,
+/// and how its output maps onto the view.
+#[derive(Clone, Debug)]
+pub struct MViewFullUpdateLookup {
+    /// Go `FullUpdateInnerSource`.
+    pub inner: PhysicalPlan,
+    /// The template IndexJoin: Go `FullUpdateIndexRanges` and
+    /// `FullUpdateKeyOff2IdxOff`.
+    pub join: tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
+    /// Go `FullUpdateKeyResultColIdxes`: each join key's column in the inner
+    /// output.
+    pub key_result_col_idxes: Vec<usize>,
+    /// Go `FullUpdateOutputMVOffsets`: the view offset of each inner output
+    /// column.
+    pub output_mv_offsets: Vec<usize>,
+    /// Go `FullUpdateSnapshot`: an AS OF target's timestamp and schema.
+    pub snapshot: Option<DataReaderSnapshot>,
+}
+
+impl MViewFullUpdateLookup {
+    /// Go `FullUpdateInnerColumnCount`.
+    #[must_use]
+    pub fn inner_column_count(&self) -> usize {
+        self.inner.schema().map_or(0, |schema| schema.columns.len())
+    }
+
+    /// Go `FullUpdateKeyOff2IdxOff`.
+    #[must_use]
+    pub fn key_off2_idx_off(&self) -> &[i64] {
+        &self.join.key_off2_idx_off
+    }
+}
+
+/// Go `DataReaderSnapshot`: the timestamp and schema a reader reads at.
+#[derive(Clone, Debug)]
+pub struct DataReaderSnapshot {
+    /// Go `TS`.
+    pub ts: u64,
+    /// Go `InfoSchema`.
+    pub info_schema: tidb_infoschema::SessionExtendedInfoSchema,
 }
 
 /// Go master `MViewCompleteDeltaApply`.
@@ -337,6 +402,9 @@ pub struct MViewCompleteDeltaApply {
     pub name: String,
     /// Go `mview.BuildCompleteDiffSource`'s answer.
     pub diff: crate::mview::CompleteDiffBuildResult,
+    /// Go `Source` under the apply operator, as EXPLAIN shows it, which the
+    /// optimizer fills (see [`MViewDeltaMerge`]).
+    pub root: Option<PhysicalPlan>,
 }
 
 /// Go `IsPointGetWithPKOrUniqueKeyByAutoCommit` (`common_plans.go`): whether

@@ -23,7 +23,7 @@
 //! each chunk in turn, which writes the same rows.
 
 
-use tidb_planner::common_plans::MViewDeltaMerge;
+use tidb_planner::common_plans::{DataReaderSnapshot, MViewDeltaMerge, MViewDeltaMergePlanned, MViewFullUpdateLookup};
 use tidb_planner::mview::{AggInfo, AggKind, BuildResult};
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 
@@ -124,37 +124,6 @@ fn explain_info(build: &BuildResult, full_update: bool) -> String {
     info
 }
 
-/// Go master `mvFullUpdateLookupTemplate`: the MIN / MAX fallback's lookup
-/// child, the template IndexJoin it came from, and how its output maps onto
-/// the view.
-pub struct FullUpdateLookup {
-    inner: PhysicalPlan,
-    join: tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
-    /// Go `KeyResultColIdxes`: each join key's column in the inner output.
-    pub(crate) key_result_col_idxes: Vec<usize>,
-    /// Go `OutputMVOffsets`: the view offset of each inner output column.
-    pub(crate) output_mv_offsets: Vec<usize>,
-    /// Go `FullUpdateSnapshot`: an AS OF target's schema and reader.
-    snapshot: Option<FullUpdateSnapshot>,
-}
-
-impl FullUpdateLookup {
-    /// Go `FullUpdateInnerColumnCount`.
-    pub(crate) fn inner_column_count(&self) -> usize {
-        self.inner.schema().map_or(0, |schema| schema.columns.len())
-    }
-
-    /// Go `FullUpdateKeyOff2IdxOff`.
-    pub(crate) fn key_off2_idx_off(&self) -> &[i64] {
-        &self.join.key_off2_idx_off
-    }
-
-    /// Go `FullUpdateSnapshot`.
-    pub(crate) fn full_update_snapshot(&self) -> Option<&FullUpdateSnapshot> {
-        self.snapshot.as_ref()
-    }
-}
-
 /// Go `findMVFullUpdateIndexJoinTemplatePlan`: the template's IndexJoin,
 /// or the one an IndexHashJoin embeds (the Rust planner has no
 /// IndexMergeJoin).
@@ -171,7 +140,7 @@ fn find_index_join(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_ph
 fn extract_full_update_lookup_template(
     lookup_plan: &PhysicalPlan,
     build: &BuildResult,
-) -> Result<FullUpdateLookup, DriverError> {
+) -> Result<MViewFullUpdateLookup, DriverError> {
     let join = find_index_join(lookup_plan)
         .ok_or_else(|| plain("mview full-update lookup template: expected index join plan but not found"))?;
     let inner = join
@@ -222,7 +191,7 @@ fn extract_full_update_lookup_template(
     if non_key.next().is_some() {
         return Err(plain("mview full-update lookup template: non-key column mapping mismatch"));
     }
-    Ok(FullUpdateLookup {
+    Ok(MViewFullUpdateLookup {
         inner,
         join: join.clone(),
         key_result_col_idxes,
@@ -277,7 +246,7 @@ pub fn plan_mview_delta_merge(
     ctx: &crate::StmtContext,
     retained_upper_tso: u64,
     full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
-) -> Result<(PhysicalPlan, bool, Option<FullUpdateLookup>), DriverError> {
+) -> Result<(PhysicalPlan, bool, Option<MViewFullUpdateLookup>), DriverError> {
     // Go `buildRefreshMaterializedViewImplement`: the window's upper bound
     // is the statement transaction's TS, which must be set.
     if retained_upper_tso == 0 {
@@ -321,7 +290,7 @@ pub fn plan_mview_delta_merge(
             // its target (the GC safe point checked, the target's schema).
             let snapshot =
                 if plan.options.to_ts > 0 { Some(full_update_snapshot(plan.options.to_ts)?) } else { None };
-            let lookup_catalog = snapshot.as_ref().map_or(catalog, |snapshot| &snapshot.catalog);
+            let lookup_catalog = snapshot.as_ref().map_or(catalog, |snapshot| &snapshot.info_schema);
             // Go `validateMVFullUpdateSupportingIndex`.
             let base = lookup_catalog.table_info_by_id(build.base_table_id).ok_or_else(|| {
                 plain(format!(
@@ -436,20 +405,46 @@ pub(crate) fn merge_order(build: &BuildResult) -> Result<Vec<usize>, DriverError
     Ok(queue)
 }
 
-/// Go `plannercore.DataReaderSnapshot` for the MIN / MAX recompute of an AS
-/// OF FAST refresh: the target's schema, and the statement reading the base
-/// table at the target.
-pub struct FullUpdateSnapshot {
-    /// Go `TS`: the AS OF target the base table is read at.
-    pub ts: u64,
-    /// Go `InfoSchema`: the target's schema.
-    pub catalog: SessionExtendedInfoSchema,
-    pub ctx: crate::StmtContext,
+/// Go `lookupIS` at an AS OF target, when the merge needs the MIN / MAX
+/// lookup (Go computes it only there): the target's timestamp and schema,
+/// the GC safe point checked.
+pub type FullUpdateSnapshotProvider<'a> = dyn Fn(u64) -> Result<DataReaderSnapshot, DriverError> + 'a;
+
+/// Go `newDataReaderBuilderWithSnapshot`'s reader: the statement context
+/// whose store reads at a snapshot timestamp.
+pub type SnapshotReaderContext<'a> = dyn Fn(u64) -> Result<crate::StmtContext, DriverError> + 'a;
+
+/// Go master `buildRefreshMaterializedViewImplement`'s FAST half after the
+/// plan builder: `mview.Build` over the window, the merge source and the
+/// MIN / MAX lookup template optimized, the planned fields set.
+///
+/// # Errors
+///
+/// The view is malformed for FAST refresh, or a derived SELECT fails to
+/// plan.
+pub fn optimize_mview_delta_merge(
+    plan: &mut MViewDeltaMerge,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    retained_upper_tso: u64,
+    full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
+) -> Result<(), DriverError> {
+    let build = build_merge_source(plan, catalog, ctx)?;
+    let (root, mlog_empty, full_update) =
+        plan_mview_delta_merge(plan, &build, catalog, current_db, ctx, retained_upper_tso, full_update_snapshot)?;
+    plan.planned = Some(Box::new(MViewDeltaMergePlanned { build, root, mlog_empty, full_update }));
+    Ok(())
 }
 
-/// Opens the [`FullUpdateSnapshot`] at an AS OF target, when the merge needs
-/// the MIN / MAX lookup (Go computes it only there).
-pub type FullUpdateSnapshotProvider<'a> = dyn Fn(u64) -> Result<FullUpdateSnapshot, DriverError> + 'a;
+/// The planned fields of an optimized [`MViewDeltaMerge`].
+///
+/// # Errors
+///
+/// The optimizer did not plan it.
+pub fn planned(plan: &MViewDeltaMerge) -> Result<&MViewDeltaMergePlanned, DriverError> {
+    plan.planned.as_deref().ok_or_else(|| plain("MViewDeltaMerge: the plan is not optimized"))
+}
 
 /// Go master `MViewDeltaMergeAggExec`: merges the window into the view and
 /// answers the write counts.
@@ -459,26 +454,23 @@ pub type FullUpdateSnapshotProvider<'a> = dyn Fn(u64) -> Result<FullUpdateSnapsh
 /// The merge source fails to plan or run, a merge fails, or a write fails.
 pub fn run_mview_delta_merge(
     plan: &MViewDeltaMerge,
-    build: &BuildResult,
     catalog: &mut SessionExtendedInfoSchema,
-    current_db: &str,
     ctx: &crate::StmtContext,
-    retained_upper_tso: u64,
-    full_update_snapshot: &FullUpdateSnapshotProvider<'_>,
+    snapshot_reader: &SnapshotReaderContext<'_>,
 ) -> Result<DeltaMergeWriterStats, DriverError> {
-    let (mut root, mlog_empty, full_update) =
-        plan_mview_delta_merge(plan, build, catalog, current_db, ctx, retained_upper_tso, full_update_snapshot)?;
+    let planned = planned(plan)?;
+    let build = &planned.build;
+    let (mut root, mlog_empty, full_update) = (planned.root.clone(), planned.mlog_empty, planned.full_update.as_ref());
     // Go `newDataReaderBuilderWithSnapshot(v.FullUpdateInnerSource,
     // v.FullUpdateSnapshot)`: an AS OF target's recompute reads the base table
     // at the target, over the target's schema.
     let full_update_reader = full_update
-        .as_ref()
         .map(|lookup| match &lookup.snapshot {
             Some(snapshot) => super::physical_builder::full_update_reader_builder(
                 &lookup.inner,
                 &lookup.join,
-                &snapshot.catalog,
-                &snapshot.ctx,
+                &snapshot.info_schema,
+                &snapshot_reader(snapshot.ts)?,
             ),
             None => super::physical_builder::full_update_reader_builder(&lookup.inner, &lookup.join, catalog, ctx),
         })
@@ -504,7 +496,7 @@ pub fn run_mview_delta_merge(
     let mut agg_mappings = super::mview_delta_merge_agg_builder::build_mview_delta_merge_agg_mappings(build, &source_types)?;
     let min_max_recompute = super::mview_delta_merge_agg_builder::build_mview_delta_merge_min_max_recompute(
         build,
-        full_update.as_ref(),
+        full_update,
         full_update_reader,
         &mut agg_mappings,
     )?;

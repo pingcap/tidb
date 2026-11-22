@@ -4160,6 +4160,13 @@ impl tidb_executor::sessionctx::SessionContext for Session {
 impl tidb_planner::plan_builder::stmt_build::SessionPlanContext for Session {
     fn snapshot_ts(&self) -> u64 { self.vars.snapshot_ts() }
 
+    fn refresh_snapshot_info_schema(
+        &self,
+        ts: u64,
+    ) -> Result<tidb_infoschema::SessionExtendedInfoSchema, tidb_planner_core_base::PlanError> {
+        self.refresh_snapshot_info_schema_at(ts).map_err(|error| tidb_planner_core_base::PlanError::from(error.to_mysql_error()))
+    }
+
     fn request_dynamic_verification(&self, privilege: &str, with_grant: bool) -> bool {
         self.has_dynamic_privilege(privilege, with_grant)
     }

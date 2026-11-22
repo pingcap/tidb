@@ -490,3 +490,24 @@ fn test_import_query_step() {
     fail_step.cleanup(&ctx).unwrap();
     exec_all(&mut tk, &["set tidb_max_chunk_size=default"]);
 }
+
+/// Go `TestImportQueryRouting`: a classic kernel imports FROM SELECT on
+/// this node (the next-gen half, which needs a next-gen build, routes it to
+/// a DXF worker only during materialized-view maintenance and with a sort
+/// store).
+#[test]
+fn test_import_query_routing() {
+    let (stack, _users) = cop_backed_stack();
+    // Go's testkit domain starts the DXF task manager.
+    tidb_dxf_storage::set_task_manager(Some(Arc::new(tidb_dxf_storage::TaskManager::new(stack.factory.dxf_session_pool()))));
+    let mut tk = session(&stack, 1);
+    exec_all(&mut tk, &["create table query_route_src(id int)", "create table query_route_dst(id int)"]);
+    let _setup = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/mockImportFromSelectSetupErr", "return(true)");
+    let sql = "import into query_route_dst from select id from query_route_src with disable_precheck";
+    assert!(!tidb_config_kerneltype::is_next_gen(), "the next-gen half needs a next-gen build");
+    tk.vars.in_mview_maintenance = true;
+    // Classic FROM SELECT runs locally.
+    let err = format!("{:?}", tk.run(sql).unwrap_err());
+    tk.vars.in_mview_maintenance = false;
+    assert!(err.contains("mock import from select setup error"), "{err}");
+}

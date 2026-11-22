@@ -3964,11 +3964,13 @@ fn render_physical_query(
 pub fn explain_mview_complete_delta_apply(
     plan: &tidb_planner::common_plans::MViewCompleteDeltaApply,
     catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let mut physical = crate::driver::mview_delta_apply::plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?;
+    let mut physical = plan
+        .root
+        .clone()
+        .ok_or_else(|| DriverError::from(tidb_terror::MysqlError::unknown("MViewCompleteDeltaApply: the plan is not optimized")))?;
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_built_plan(ctx, &physical, catalog, format, &[])
 }
@@ -3979,22 +3981,10 @@ pub fn explain_mview_complete_delta_apply(
 pub fn explain_mview_delta_merge(
     plan: &tidb_planner::common_plans::MViewDeltaMerge,
     catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
-    retained_upper_tso: u64,
-    full_update_snapshot: &crate::driver::mview_delta_merge::FullUpdateSnapshotProvider<'_>,
 ) -> Result<SelectMeta, DriverError> {
-    let build = crate::driver::mview_delta_merge::build_merge_source(plan, catalog, ctx)?;
-    let (mut physical, _, _) = crate::driver::mview_delta_merge::plan_mview_delta_merge(
-        plan,
-        &build,
-        catalog,
-        current_db,
-        ctx,
-        retained_upper_tso,
-        full_update_snapshot,
-    )?;
+    let mut physical = crate::driver::mview_delta_merge::planned(plan)?.root.clone();
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_built_plan(ctx, &physical, catalog, format, &[])
 }

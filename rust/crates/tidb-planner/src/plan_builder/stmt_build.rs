@@ -44,6 +44,13 @@ pub trait SessionPlanContext {
     /// Go `SessionVars.SnapshotTS`.
     fn snapshot_ts(&self) -> u64 { 0 }
 
+    /// Go `gcutil.ValidateSnapshotWithGCSafePoint(ts, GetGCSafePoint(sctx))`
+    /// and `staleread.GetSessionSnapshotInfoSchema(sctx, ts)`: the schema an
+    /// AS OF refresh's MIN / MAX lookup plans over.
+    fn refresh_snapshot_info_schema(&self, _ts: u64) -> Result<tidb_infoschema::SessionExtendedInfoSchema, PlanError> {
+        Err(PlanError::internal("this session reads no snapshot schema"))
+    }
+
     /// Go `privilege.Manager.RequestDynamicVerification(activeRoles, priv,
     /// withGrant)`.
     fn request_dynamic_verification(&self, privilege: &str, with_grant: bool) -> bool;
@@ -1600,6 +1607,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 },
                 mlog_retained_lower_tso: implement.mlog_retained_lower_tso,
                 registered_mlog_ids: implement.registered_mlog_ids.clone(),
+                planned: None,
             })));
         }
         let (charset, collation) = self.ctx.connection_charset_info();
@@ -1629,6 +1637,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             database,
             name: info.name.original().to_owned(),
             diff,
+            root: None,
         })))
     }
 

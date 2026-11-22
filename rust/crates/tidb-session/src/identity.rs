@@ -554,6 +554,30 @@ impl Session {
         Ok(Some((plan, visits, ctx)))
     }
 
+    /// Go `Compile`'s `buildRefreshMaterializedViewImplement` optimization
+    /// of an internal refresh statement's derived SELECTs, with the
+    /// statement's transaction bound (Go reads its for-update TS).
+    pub(crate) fn optimize_refresh_implement(
+        &self,
+        plan: &mut tidb_planner::common_plans::Plan,
+        ctx: &tidb_sessionctx::StmtContext,
+        retained_upper_tso: &dyn Fn() -> Result<u64, DriverError>,
+    ) -> Result<(), DriverError> {
+        let current_db = self.vars.current_db.clone();
+        self.with_planning_catalog(|catalog| {
+            tidb_executor::driver::optimize_refresh_implement(plan, catalog, &current_db, ctx, self, retained_upper_tso)
+        })
+    }
+
+    /// Go `GetTxnManager(sctx).GetStmtForUpdateTS()` under the statement's
+    /// provider, through the statement's bound store.
+    fn stmt_for_update_ts_of(ctx: &tidb_sessionctx::StmtContext) -> Result<u64, DriverError> {
+        let store = ctx
+            .txn_store()
+            .ok_or_else(|| DriverError::from(tidb_terror::MysqlError::unknown("RefreshMaterializedViewImplementStmt: invalid transaction")))?;
+        store.stmt_for_update_ts().map_err(|error| DriverError::from(tidb_terror::MysqlError::unknown(error.to_string())))
+    }
+
     /// Go `Compile` for a statement that is not a query or DML: the plan,
     /// after `CheckPrivilege` over its visit infos -- or over the requests a
     /// PREPARE derived (Go `checkPreparedPriv`). A statement the node already
@@ -574,15 +598,17 @@ impl Session {
             // The plan is rebuilt (it does not cross threads with the
             // session), and what this build notes is the statement's: the
             // node's compile filed none of it.
-            let Some((plan, _, ctx)) = self.build_statement_plan(stmt)? else {
+            let Some((mut plan, _, ctx)) = self.build_statement_plan(stmt)? else {
                 return Ok(None);
             };
+            self.optimize_refresh_implement(&mut plan, &ctx, &|| Self::stmt_for_update_ts_of(&ctx))?;
             self.drain_eval_warnings(&ctx);
             return Ok(Some(plan));
         }
-        let Some((plan, visits, ctx)) = self.build_statement_plan(stmt)? else {
+        let Some((mut plan, visits, ctx)) = self.build_statement_plan(stmt)? else {
             return Ok(None);
         };
+        self.optimize_refresh_implement(&mut plan, &ctx, &|| Self::stmt_for_update_ts_of(&ctx))?;
         // What the build noted (`DROP PROCEDURE IF EXISTS`) is the
         // statement's.
         self.drain_eval_warnings(&ctx);

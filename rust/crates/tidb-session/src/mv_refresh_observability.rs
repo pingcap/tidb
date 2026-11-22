@@ -526,34 +526,26 @@ impl Session {
                 registered_mlog_ids: Vec::new(),
             },
         ))));
-        let Some((plan, _, ctx)) = sys.build_statement_plan(&implement)? else {
+        let Some((mut plan, _, ctx)) = sys.build_statement_plan(&implement)? else {
             return Err(plain("dry run refresh materialized view: invalid internal statement"));
         };
-        let current_db = sys.current_database().to_owned();
-        // Go's builder activates the internal session's transaction; its
-        // start TS bounds the retained mlog window.
-        let retained_upper_tso = sys.node_conn().store_current_version().map_err(plain)?;
+        // Go's builder activates the internal session's transaction
+        // (`b.ctx.Txn(true)`); with no statement provider its start TS bounds
+        // the retained mlog window.
+        let start_ts = sys.node_conn().store_current_version().map_err(plain)?;
+        sys.optimize_refresh_implement(&mut plan, &ctx, &|| Ok(start_ts))?;
+
         // Go renders `Explain{Format: brief}` outside an EXPLAIN statement:
         // the operator info keeps its plan ids (`StmtCtx.IgnoreExplainIDSuffix`
         // is unset) and the id column's are stripped by the formatter, which
         // the row format with ids gives once formatted.
         let format = tidb_sessionctx::explain_format::ExplainFormat::Row;
-        let source = sys.mview_full_update_snapshot_source();
-        let full_update_snapshot = |to_ts: u64| source(&ctx, to_ts);
         let (_, rows) = sys.with_planning_catalog(|catalog| match &plan {
             tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) => {
-                tidb_executor::explain_mview_complete_delta_apply(apply, catalog, &current_db, &ctx, format)
+                tidb_executor::explain_mview_complete_delta_apply(apply, catalog, &ctx, format)
             }
             tidb_planner::common_plans::Plan::MViewDeltaMerge(merge) => {
-                tidb_executor::explain_mview_delta_merge(
-                    merge,
-                    catalog,
-                    &current_db,
-                    &ctx,
-                    format,
-                    retained_upper_tso,
-                    &full_update_snapshot,
-                )
+                tidb_executor::explain_mview_delta_merge(merge, catalog, &ctx, format)
             }
             _ => Err(plain("dry run refresh materialized view: unexpected internal plan")),
         })?;

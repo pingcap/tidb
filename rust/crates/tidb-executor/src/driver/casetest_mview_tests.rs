@@ -44,22 +44,22 @@ fn row_cells(row: &[tidb_datatype::Datum]) -> Vec<String> {
 /// Go `plannercore.Explain{TargetPlan: <FAST implement plan>, Format: brief}.RenderResult()`.
 fn explain_fast_refresh(tables: &[&TableInfo], view: &str, options: BuildOptions, mlog_retained_lower_tso: u64) -> Vec<Vec<String>> {
     let is = mock_info_schema(tables);
-    let plan = MViewDeltaMerge {
+    let mut plan = MViewDeltaMerge {
         database: "test".to_owned(),
         name: view.to_owned(),
         options,
         mlog_retained_lower_tso,
         registered_mlog_ids: Vec::new(),
+        planned: None,
     };
     // Go's mock store under the mock context.
     let ctx = mview_test_context()
         .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
-    let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+    let no_snapshot = |_: u64| -> Result<tidb_planner::common_plans::DataReaderSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
     };
-    let (_, rows) =
-        crate::explain_mview_delta_merge(&plan, &is, "test", &ctx, ExplainFormat::Brief, MOCK_START_TS, &no_snapshot)
-            .unwrap();
+    super::mview_delta_merge::optimize_mview_delta_merge(&mut plan, &is, "test", &ctx, MOCK_START_TS, &no_snapshot).unwrap();
+    let (_, rows) = crate::explain_mview_delta_merge(&plan, &is, &ctx, ExplainFormat::Brief).unwrap();
     rows.iter().map(|row| row_cells(row)).collect()
 }
 
@@ -146,14 +146,16 @@ fn test_explain_refresh_mv_fast_plan_tree_min_max() {
 fn explain_complete_delta_apply(tables: &[&TableInfo], mv: &TableInfo) -> Vec<Vec<String>> {
     let is = mock_info_schema(tables);
     let diff = tidb_planner::mview::build_complete_diff_source(&super::planner_mview_tests::parse, &is, mv).unwrap();
-    let plan = tidb_planner::common_plans::MViewCompleteDeltaApply {
+    let mut plan = tidb_planner::common_plans::MViewCompleteDeltaApply {
         database: "test".to_owned(),
         name: mv.name.original().to_owned(),
         diff,
+        root: None,
     };
     let ctx = mview_test_context()
         .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
-    let (_, rows) = crate::explain_mview_complete_delta_apply(&plan, &is, "test", &ctx, ExplainFormat::Brief).unwrap();
+    super::mview_delta_apply::optimize_mview_complete_delta_apply(&mut plan, &is, "test", &ctx).unwrap();
+    let (_, rows) = crate::explain_mview_complete_delta_apply(&plan, &is, &ctx, ExplainFormat::Brief).unwrap();
     rows.iter().map(|row| row_cells(row)).collect()
 }
 
@@ -201,23 +203,23 @@ fn build_fast_refresh(
     is: &tidb_infoschema::SessionExtendedInfoSchema,
     view: &str,
     retained_upper_tso: u64,
-) -> Result<(tidb_planner::mview::BuildResult, bool, Option<super::mview_delta_merge::FullUpdateLookup>), super::DriverError> {
-    let plan = MViewDeltaMerge {
+) -> Result<(tidb_planner::mview::BuildResult, bool, Option<tidb_planner::common_plans::MViewFullUpdateLookup>), super::DriverError> {
+    let mut plan = MViewDeltaMerge {
         database: "test".to_owned(),
         name: view.to_owned(),
         options: BuildOptions::default(),
         mlog_retained_lower_tso: 0,
         registered_mlog_ids: Vec::new(),
+        planned: None,
     };
     let ctx = mview_test_context()
         .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
-    let build = super::mview_delta_merge::build_merge_source(&plan, is, &ctx)?;
-    let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+    let no_snapshot = |_: u64| -> Result<tidb_planner::common_plans::DataReaderSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
     };
-    let (_, mlog_empty, full_update) =
-        super::mview_delta_merge::plan_mview_delta_merge(&plan, &build, is, "test", &ctx, retained_upper_tso, &no_snapshot)?;
-    Ok((build, mlog_empty, full_update))
+    super::mview_delta_merge::optimize_mview_delta_merge(&mut plan, is, "test", &ctx, retained_upper_tso, &no_snapshot)?;
+    let planned = *plan.planned.expect("the optimizer plans the merge");
+    Ok((planned.build, planned.mlog_empty, planned.full_update))
 }
 
 #[test]
@@ -307,37 +309,30 @@ fn test_build_refresh_mv_fast_as_of_timestamp_plan_with_min_max_carries_full_upd
     let is = mock_info_schema(&tables);
     // Go `oracle.GoTimeToTS(time.Now().UTC().Add(time.Second))`.
     let target_tso = compose_ts(START_PHYSICAL + 1000);
-    let plan = MViewDeltaMerge {
+    let mut plan = MViewDeltaMerge {
         database: "test".to_owned(),
         name: "mv_refresh_asof_plan".to_owned(),
         options: BuildOptions { from_ts: 1, to_ts: target_tso },
         mlog_retained_lower_tso: 0,
         registered_mlog_ids: Vec::new(),
+        planned: None,
     };
     let ctx = mview_test_context()
         .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
-    let build = super::mview_delta_merge::build_merge_source(&plan, &is, &ctx).unwrap();
     // The session's `staleread.GetSessionSnapshotInfoSchema` at the target.
     let requested = std::cell::Cell::new(0);
-    let snapshot_at = |to_ts: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+    let snapshot_at = |to_ts: u64| -> Result<tidb_planner::common_plans::DataReaderSnapshot, super::DriverError> {
         requested.set(to_ts);
-        Ok(super::mview_delta_merge::FullUpdateSnapshot { ts: to_ts, catalog: mock_info_schema(&tables), ctx: ctx.clone() })
+        Ok(tidb_planner::common_plans::DataReaderSnapshot { ts: to_ts, info_schema: mock_info_schema(&tables) })
     };
-    let (_, _, full_update) = super::mview_delta_merge::plan_mview_delta_merge(
-        &plan,
-        &build,
-        &is,
-        "test",
-        &ctx,
-        compose_ts(START_PHYSICAL),
-        &snapshot_at,
-    )
-    .unwrap();
-    let full_update = full_update.expect("FullUpdateInnerSource");
-    let snapshot = full_update.full_update_snapshot().expect("FullUpdateSnapshot");
+    super::mview_delta_merge::optimize_mview_delta_merge(&mut plan, &is, "test", &ctx, compose_ts(START_PHYSICAL), &snapshot_at)
+        .unwrap();
+    let planned = plan.planned.expect("the optimizer plans the merge");
+    let full_update = planned.full_update.as_ref().expect("FullUpdateInnerSource");
+    let snapshot = full_update.snapshot.as_ref().expect("FullUpdateSnapshot");
     assert_eq!(target_tso, requested.get());
     assert_eq!(target_tso, snapshot.ts);
-    assert!(snapshot.catalog.table_info_by_id(base_id).is_some());
+    assert!(snapshot.info_schema.table_info_by_id(base_id).is_some());
 }
 
 #[test]
@@ -402,12 +397,14 @@ fn test_build_refresh_mv_fast_plan_with_min_max_has_full_update() {
 fn build_complete_delta_apply(tables: &[&TableInfo], mv: &TableInfo, ctx: &crate::StmtContext) -> (tidb_planner::common_plans::MViewCompleteDeltaApply, String) {
     let is = mock_info_schema(tables);
     let diff = tidb_planner::mview::build_complete_diff_source(&super::planner_mview_tests::parse, &is, mv).unwrap();
-    let plan = tidb_planner::common_plans::MViewCompleteDeltaApply {
+    let mut plan = tidb_planner::common_plans::MViewCompleteDeltaApply {
         database: "test".to_owned(),
         name: mv.name.original().to_owned(),
         diff,
+        root: None,
     };
-    let physical = super::mview_delta_apply::plan_mview_complete_delta_apply(&plan, &is, "test", ctx).unwrap();
+    super::mview_delta_apply::optimize_mview_complete_delta_apply(&mut plan, &is, "test", ctx).unwrap();
+    let physical = plan.root.clone().expect("the optimizer plans the source");
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &physical else {
         panic!("not an MViewCompleteDeltaApply root");
     };
@@ -750,28 +747,22 @@ fn explain_fast_refresh_at(
     retained_upper_tso: u64,
 ) -> Vec<Vec<String>> {
     let is = mock_info_schema(tables);
-    let plan = MViewDeltaMerge {
+    let mut plan = MViewDeltaMerge {
         database: "test".to_owned(),
         name: view.to_owned(),
         options,
         mlog_retained_lower_tso,
         registered_mlog_ids: Vec::new(),
+        planned: None,
     };
     let ctx = mview_test_context()
         .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::empty_mock_store()));
-    let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
+    let no_snapshot = |_: u64| -> Result<tidb_planner::common_plans::DataReaderSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
     };
-    let (_, rows) = crate::explain_mview_delta_merge(
-        &plan,
-        &is,
-        "test",
-        &ctx,
-        ExplainFormat::Brief,
-        retained_upper_tso,
-        &no_snapshot,
-    )
-    .unwrap();
+    super::mview_delta_merge::optimize_mview_delta_merge(&mut plan, &is, "test", &ctx, retained_upper_tso, &no_snapshot)
+        .unwrap();
+    let (_, rows) = crate::explain_mview_delta_merge(&plan, &is, &ctx, ExplainFormat::Brief).unwrap();
     rows.iter().map(|row| row_cells(row)).collect()
 }
 
