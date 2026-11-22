@@ -2145,6 +2145,7 @@ struct LongDataSession {
     bound: Arc<Mutex<Vec<Vec<BoundValue>>>>,
     long_data_quota: Option<i64>,
     long_data_consumed: Option<Arc<Mutex<i64>>>,
+    max_allowed_packet: Option<usize>,
 }
 
 impl QuerySession for LongDataSession {
@@ -2203,6 +2204,10 @@ impl QuerySession for LongDataSession {
         }
     }
 
+    fn max_allowed_packet(&self) -> Option<usize> {
+        self.max_allowed_packet
+    }
+
     fn connection_id(&self) -> u64 {
         42
     }
@@ -2212,6 +2217,7 @@ struct LongDataFactory {
     bound: Arc<Mutex<Vec<Vec<BoundValue>>>>,
     long_data_quota: Option<i64>,
     long_data_consumed: Option<Arc<Mutex<i64>>>,
+    max_allowed_packet: Option<usize>,
 }
 
 impl QuerySessionFactory for LongDataFactory {
@@ -2222,6 +2228,7 @@ impl QuerySessionFactory for LongDataFactory {
             bound: Arc::clone(&self.bound),
             long_data_quota: self.long_data_quota,
             long_data_consumed: self.long_data_consumed.as_ref().map(Arc::clone),
+            max_allowed_packet: self.max_allowed_packet,
         })
     }
 }
@@ -2288,6 +2295,7 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
             bound: worker_bound,
             long_data_quota: None,
             long_data_consumed: None,
+            max_allowed_packet: None,
         };
         serve_mysql_connection(
             stream,
@@ -2394,6 +2402,7 @@ fn long_data_quota_refuses_before_copy_and_releases_on_execute_and_close() {
             bound: worker_bound,
             long_data_quota: Some(1024),
             long_data_consumed: Some(worker_consumed),
+            max_allowed_packet: None,
         };
         serve_mysql_connection(
             stream,
@@ -2497,6 +2506,7 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
             bound: worker_bound,
             long_data_quota: None,
             long_data_consumed: None,
+            max_allowed_packet: None,
         };
         serve_mysql_connection(
             stream,
@@ -2771,4 +2781,79 @@ fn a_bare_ok_reports_the_last_statements_rows_id_and_message() {
     write_packet(&mut client, 0, &[COM_QUIT]);
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+/// Go `TestStmtSendLongDataMaxAllowedPacket` (`pkg/server/conn_stmt_test.go`)
+/// over the wire: `AppendParam` bounds a parameter by the session's
+/// `max_allowed_packet` (`vars.MaxAllowedPacket`), stops appending once a
+/// chunk would pass it, and the following EXECUTE answers
+/// `ErrNetPacketTooLarge` with the buffers reset. The chunks stay under the
+/// limit because the packet reader enforces it too.
+#[test]
+fn test_stmt_send_long_data_max_allowed_packet() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let bound = Arc::new(Mutex::new(Vec::new()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_bound = Arc::clone(&bound);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = LongDataFactory {
+            bound: worker_bound,
+            long_data_quota: None,
+            long_data_consumed: None,
+            max_allowed_packet: Some(1024),
+        };
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &factory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let timeout_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_long_data_insert(&mut client, &mut reader);
+    for chunk in [vec![b'a'; 600], vec![b'a'; 424]] {
+        write_packet(&mut client, 0, &send_long_data_command(statement_id, 1, &chunk));
+    }
+    // 1024 bytes are within the limit; one more byte passes it.
+    write_packet(&mut client, 0, &send_long_data_command(statement_id, 1, b"c"));
+    assert_no_pending_packet(&timeout_side, &mut reader, "after the oversized chunk");
+
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    execute.push(0);
+    execute.push(1);
+    execute.extend_from_slice(&[TYPE_LONGLONG, 0, TYPE_BLOB, 0]);
+    execute.extend_from_slice(&7_i64.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_eq!(error[0], 0xff, "EXECUTE must return an ERR packet");
+    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 1153);
+    assert!(bound.lock().unwrap().is_empty(), "the oversized parameter skips the write");
+
+    // RESET by EXECUTE: a parameter within the limit binds again.
+    write_packet(&mut client, 0, &send_long_data_command(statement_id, 1, &vec![b'd'; 1000]));
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "EXECUTE after RESET succeeds");
+    assert_eq!(bound.lock().unwrap().len(), 1);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    worker.join().unwrap();
 }

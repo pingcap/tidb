@@ -550,11 +550,10 @@ impl PreparedStatementRegistry {
             return Ok(());
         }
 
-        // Go bounds the accumulated value with `max_allowed_packet`, which
-        // this node does not have as a session variable yet (gap #185); the
-        // same hardcoded wire cap the packet reader enforces is therefore the
-        // bound here, so a client cannot grow one parameter without limit.
-        if current_len.saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
+        // Go bounds the accumulated value with the session's
+        // `max_allowed_packet` (`vars.MaxAllowedPacket`).
+        let max_allowed_packet = session.max_allowed_packet().unwrap_or(DEFAULT_MAX_ALLOWED_PACKET);
+        if current_len.saturating_add(chunk.len()) > max_allowed_packet {
             self.statements
                 .get_mut(&statement_id)
                 .expect("statement was present above")
