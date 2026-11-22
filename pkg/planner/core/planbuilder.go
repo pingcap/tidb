@@ -230,6 +230,9 @@ type PlanBuilder struct {
 	// View definitions are unavailable during preprocessing, so check their expressions
 	// when expanding them to prevent the two plans from reading different rows.
 	buildingFoundRows bool
+	// foundRowsIgnored drops the count plan when an expanded view makes that
+	// scan non-repeatable and tidb_enable_noop_functions is ON or WARN.
+	foundRowsIgnored bool
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
 
@@ -660,7 +663,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		}
 		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
 		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
-		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
+		// CalcFoundRowsNoop marks shapes that still have no count plan. ON and WARN
+		// ignore the modifier instead of rejecting the statement.
+		if nativeCalcFoundRows(x.SelectStmtOpts) && len(b.buildingViewStack) == 0 {
 			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)

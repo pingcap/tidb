@@ -4440,10 +4440,15 @@ type SelectStmtOpts struct {
 	SQLCache        bool
 	SQLSmallResult  bool
 	CalcFoundRows   bool
-	StraightJoin    bool
-	Priority        mysql.PriorityEnum
-	TableHints      []*TableOptimizerHint
-	ExplicitAll     bool
+	// CalcFoundRowsNoop is set when this modifier has no native count plan and
+	// tidb_enable_noop_functions is ON or WARN. It is not SQL syntax. The
+	// modifier stays in the statement so view text keeps it, but planning
+	// ignores it and FOUND_ROWS() reports the rows actually returned.
+	CalcFoundRowsNoop bool
+	StraightJoin      bool
+	Priority          mysql.PriorityEnum
+	TableHints        []*TableOptimizerHint
+	ExplicitAll       bool
 }
 
 // TableOptimizerHint is Table level optimizer hint

@@ -350,9 +350,81 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 			tk.MustQuery("with c as (select 1 as id union all select 2) select SQL_CALC_FOUND_ROWS * from c limit 1").Check(testkit.Rows("1"))
 			tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
 			tk.MustGetErrCode("select (select SQL_CALC_FOUND_ROWS 1)", mysql.ErrCantUseOptionHere)
-			tk.MustGetErrCode("select SQL_CALC_FOUND_ROWS 1 union all select 2", mysql.ErrNotSupportedYet)
+			// Issue 73550: a set operation is not counted natively. OFF still
+			// rejects it. ON and WARN ignore the modifier, so FOUND_ROWS() is
+			// the returned row count rather than the unlimited union size.
+			unionSQL := "select SQL_CALC_FOUND_ROWS 1 union all select 2 limit 1"
+			if mode == "OFF" {
+				tk.MustGetErrCode(unionSQL, mysql.ErrNotSupportedYet)
+				return
+			}
+			tk.MustQuery(unionSQL).Check(testkit.Rows("1"))
+			if mode == "WARN" {
+				tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1235 function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions"))
+			}
+			tk.MustQuery(unionSQL).Check(testkit.Rows("1"))
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		})
 	}
+	t.Run("issue73550", func(t *testing.T) {
+		tk.MustExec("insert into found_rows values (1), (2), (3)")
+		tk.MustExec("create table found_rows_u (id int primary key)")
+		tk.MustExec("insert into found_rows_u values (4), (5)")
+		tk.MustExec("create table found_rows_d (id int)")
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=ON")
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+
+		// Supported shapes stay native with the variable enabled.
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
+
+		unionSQL := "select SQL_CALC_FOUND_ROWS id from found_rows union all select id from found_rows_u order by id limit 1"
+		tk.MustQuery(unionSQL).Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		// Run again with the non-prepared plan cache enabled. A cached plan must
+		// not turn this back into a count, and OFF below must still reject it.
+		tk.MustQuery(unionSQL).Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustNotHavePlan(unionSQL, "CalcFoundRows")
+
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id, row_number() over (order by id) rn from found_rows order by id limit 1").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustExec("begin")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1 for update").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustExec("rollback")
+		tk.MustExec("insert into found_rows_d select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1")
+		tk.MustQuery("select id from found_rows_d").Check(testkit.Rows("1"))
+		tk.MustExec("create view found_rows_v as select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 2")
+		tk.MustQuery("select id from found_rows_v").Check(testkit.Rows("1", "2"))
+		require.Contains(t, tk.MustQuery("show create view found_rows_v").Rows()[0][1], "SQL_CALC_FOUND_ROWS")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows_v order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows where rand() < 2 order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS @found_rows_v := id from found_rows order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select @found_rows_v").Check(testkit.Rows("1"))
+
+		tk.MustExec("create view found_rows_rand as select id from found_rows where rand() < 2")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows_rand order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustExec("prepare found_rows_st from 'select SQL_CALC_FOUND_ROWS id from found_rows union all select id from found_rows_u order by id limit 1'")
+		tk.MustQuery("execute found_rows_st").Check(testkit.Rows("1"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+
+		// A later OFF still rejects new statements, including text replayed from a view.
+		tk.MustExec("set tidb_enable_noop_functions=OFF")
+		tk.MustGetErrCode(unionSQL, mysql.ErrNotSupportedYet)
+		tk.MustQuery("select id from found_rows_v").Check(testkit.Rows("1", "2"))
+		tk.MustGetErrCode("create view found_rows_v2 as select SQL_CALC_FOUND_ROWS id from found_rows limit 2", mysql.ErrNotSupportedYet)
+		tk.MustGetErrCode("select SQL_CALC_FOUND_ROWS id from found_rows_rand order by id limit 1", mysql.ErrNotSupportedYet)
+
+		tk.MustExec("set tidb_enable_noop_functions=WARN")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS id from found_rows where rand() < 2 order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1235 function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions"))
+	})
 }
 
 func TestSQLCalcFoundRowsPlanningAndClose(t *testing.T) {

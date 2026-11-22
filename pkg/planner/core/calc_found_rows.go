@@ -22,8 +22,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
+
+// nativeCalcFoundRows reports whether this SELECT should build a count branch.
+func nativeCalcFoundRows(opts *ast.SelectStmtOpts) bool {
+	return opts != nil && opts.CalcFoundRows && !opts.CalcFoundRowsNoop
+}
 
 // GetFoundRowsPlan returns the logical count branch for SQL_CALC_FOUND_ROWS, or nil.
 func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
@@ -32,7 +38,11 @@ func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
 
 func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
 	b.buildingFoundRows = true
-	defer func() { b.buildingFoundRows = false }()
+	b.foundRowsIgnored = false
+	defer func() {
+		b.buildingFoundRows = false
+		b.foundRowsIgnored = false
+	}()
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
@@ -50,27 +60,56 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	if err != nil {
 		return nil, err
 	}
-	count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
-		F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
-	}}, nil, nil)
-	if err != nil {
-		return nil, err
+	if !b.foundRowsIgnored {
+		count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
+			F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+		}}, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		// buildAggregation also exposes FIRST_ROW expressions for its input columns.
+		// Retain only COUNT, allowing normal column pruning to discard those inputs.
+		projection := logicalop.LogicalProjection{
+			Exprs: []expression.Expression{count.Schema().Columns[0]},
+		}.Init(b.ctx, b.getSelectOffset())
+		projection.SetChildren(count)
+		projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
+		projection.SetOutputNames(count.OutputNames()[:1])
+		b.foundRowsPlan = projection
 	}
-	// buildAggregation also exposes FIRST_ROW expressions for its input columns.
-	// Retain only COUNT, allowing normal column pruning to discard those inputs.
-	projection := logicalop.LogicalProjection{
-		Exprs: []expression.Expression{count.Schema().Columns[0]},
-	}.Init(b.ctx, b.getSelectOffset())
-	projection.SetChildren(count)
-	projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
-	projection.SetOutputNames(count.OutputNames()[:1])
-	b.foundRowsPlan = projection
 	// AST nodes are shared, but their column bindings must belong to each
 	// independent plan. In particular, do not reuse correlated aggregate columns
 	// extracted while building the count branch in the data branch.
 	clear(b.colMapper)
 	clear(b.correlatedAggMapper)
-	return b.buildSelect(ctx, sel)
+	plan, err := b.buildSelect(ctx, sel)
+	if b.foundRowsIgnored {
+		// A view expanded above contains expressions that a second count scan
+		// must not repeat. Ignore the modifier for this statement.
+		if sel.SelectStmtOpts != nil {
+			sel.SelectStmtOpts.CalcFoundRowsNoop = true
+		}
+		b.foundRowsPlan = nil
+	}
+	return plan, err
+}
+
+// keepNoopCalcFoundRows ignores SQL_CALC_FOUND_ROWS when a view expanded while
+// building the count plan contains expressions that scan must not repeat.
+// ON and WARN keep the behavior from before native support.
+func (b *PlanBuilder) keepNoopCalcFoundRows(reason string) bool {
+	if reason == "" || !b.buildingFoundRows {
+		return false
+	}
+	mode := b.ctx.GetSessionVars().NoopFuncsMode
+	if mode == variable.OffInt {
+		return false
+	}
+	if !b.foundRowsIgnored && mode == variable.WarnInt {
+		appendNoopCalcFoundRowsWarning(b.ctx.GetSessionVars())
+	}
+	b.foundRowsIgnored = true
+	return true
 }
 
 // preprocessSQLCalcFoundRows checks modifier placement in the same traversal as
@@ -119,11 +158,43 @@ func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
 		return plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 	}
 	if v.unsupportedReason != "" {
-		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason)
+		return v.useNoopCalcFoundRows(stmt, v.unsupportedReason)
 	}
 	checker := &foundRowsChecker{root: stmt}
 	ast.Walk(stmt, checker)
+	if checker.reason != "" {
+		return v.useNoopCalcFoundRows(stmt, checker.reason)
+	}
 	return checker.err
+}
+
+// useNoopCalcFoundRows keeps statements that have no native count plan running
+// when tidb_enable_noop_functions is ON or WARN. Before native support the
+// modifier was ignored in those modes. OFF still reports the unsupported shape.
+func (v *foundRowsPreprocessor) useNoopCalcFoundRows(stmt *ast.SelectStmt, reason string) error {
+	switch v.sctx.GetSessionVars().NoopFuncsMode {
+	case variable.OnInt:
+		stmt.SelectStmtOpts.CalcFoundRowsNoop = true
+		return nil
+	case variable.WarnInt:
+		stmt.SelectStmtOpts.CalcFoundRowsNoop = true
+		appendNoopCalcFoundRowsWarning(v.sctx.GetSessionVars())
+		return nil
+	default:
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(reason)
+	}
+}
+
+// appendNoopCalcFoundRowsWarning records the historical noop warning once.
+// Planning can preprocess the statement again for the non-prepared plan cache.
+func appendNoopCalcFoundRowsWarning(vars *variable.SessionVars) {
+	warn := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+	for _, existing := range vars.StmtCtx.GetWarnings() {
+		if existing.Err != nil && existing.Err.Error() == warn.Error() {
+			return
+		}
+	}
+	vars.StmtCtx.AppendWarning(warn)
 }
 
 // findSQLCalcFoundRowsAllowedSelect returns the SELECT where the modifier is
@@ -166,6 +237,7 @@ type foundRowsChecker struct {
 	depth      int
 	outerOrder bool
 	inView     bool
+	reason     string
 	err        error
 }
 
@@ -213,6 +285,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 		}
 	}
 	if reason != "" {
+		v.reason = reason
 		v.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(reason)
 	}
 	return v.err != nil
