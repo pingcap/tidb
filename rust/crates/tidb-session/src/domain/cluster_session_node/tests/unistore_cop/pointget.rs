@@ -23,6 +23,21 @@ fn session(stack: &UnistoreClusterStack, connection: u64) -> Session {
     session
 }
 
+/// EXPLAIN brief rows with the plan ids dropped from the operator names.
+fn explain_brief(tk: &mut Session, sql: &str) -> Vec<Vec<String>> {
+    displayed(rows(tk, &format!("explain format = 'brief' {sql}")))
+        .into_iter()
+        .map(|mut row| {
+            if let Some((name, id)) = row[0].rsplit_once('_') {
+                if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+                    row[0] = name.to_owned();
+                }
+            }
+            row
+        })
+        .collect()
+}
+
 fn plan_tree(session: &mut Session, sql: &str) -> Vec<String> {
     displayed(rows(session, &format!("explain format = 'plan_tree' {sql}")))
         .into_iter()
@@ -401,4 +416,71 @@ fn point_get_plans() {
     rows(&mut tk, "DELETE FROM g WHERE id = 2");
     assert_eq!(q(&mut tk, "SELECT v FROM g WHERE id = 2"), none);
     assert_eq!(q(&mut tk, "SELECT id FROM g WHERE code = 'b'"), none);
+}
+
+/// Go's heuristic pins a handle point read even with an extra conjunct that
+/// a unique index would also cover: Update over Selection over Point_Get, the
+/// filter still deciding the write.
+#[test]
+fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 467);
+    rows(&mut tk, "CREATE TABLE heuristic_pin (i INT PRIMARY KEY, j INT, UNIQUE KEY ij (i, j))");
+    rows(&mut tk, "INSERT INTO heuristic_pin VALUES (1, 1)");
+    let plan = explain_brief(&mut tk, "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 1");
+    assert_eq!(plan.len(), 3, "{plan:?}");
+    assert_eq!(plan[0][0], "Update");
+    assert!(plan[1][0].contains("Selection") && plan[1][4].contains("eq("), "{plan:?}");
+    assert_eq!(&plan[2][..4], ["  └─Point_Get", "1.00", "root", "table:heuristic_pin"], "{plan:?}");
+    assert_eq!(plan[2][4], "handle:1", "{plan:?}");
+    rows(&mut tk, "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 2");
+    assert_eq!(tk.affected_rows(), 0);
+    rows(&mut tk, "UPDATE heuristic_pin SET j = -j WHERE i = 1 AND j = 1");
+    assert_eq!(tk.affected_rows(), 1);
+    assert_eq!(displayed(rows(&mut tk, "SELECT j FROM heuristic_pin WHERE i = 1")), [["-1"]]);
+}
+
+/// A handle range read plans Go's cop Projection over the range scan.
+#[test]
+fn exact_handle_range_uses_the_go_cop_projection_tree() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 468);
+    rows(&mut tk, "CREATE TABLE fast_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)");
+    rows(&mut tk, "INSERT INTO fast_range VALUES (1, 'one'), (2, 'two')");
+    let sql = "SELECT c FROM fast_range WHERE id BETWEEN 1 AND 100";
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(plan.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["TableReader", "└─Projection", "  └─TableRangeScan"]);
+    assert_eq!(plan.iter().map(|r| r[2].as_str()).collect::<Vec<_>>(), ["root", "cop[tikv]", "cop[tikv]"]);
+    assert_eq!(displayed(rows(&mut tk, sql)), [["one"], ["two"]]);
+}
+
+/// An ordered handle range keeps the cop Projection below the root Sort.
+#[test]
+fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 469);
+    rows(&mut tk, "CREATE TABLE ordered_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)");
+    rows(&mut tk, "INSERT INTO ordered_range VALUES (1, 'z'), (2, 'a')");
+    let sql = "SELECT c FROM ordered_range WHERE id BETWEEN 1 AND 100 ORDER BY c";
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(
+        plan.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(),
+        ["Sort", "└─TableReader", "  └─Projection", "    └─TableRangeScan"]
+    );
+    assert_eq!(plan.iter().map(|r| r[2].as_str()).collect::<Vec<_>>(), ["root", "root", "cop[tikv]", "cop[tikv]"]);
+    assert_eq!(displayed(rows(&mut tk, sql)), [["a"], ["z"]]);
+}
+
+/// A single-point handle range with an extra filter is a Point_Get.
+#[test]
+fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 491);
+    rows(&mut tk, "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))");
+    rows(&mut tk, "INSERT INTO t1 VALUES (1, 5, 50), (2, 20, 200)");
+    let sql = "SELECT c1 FROM t1 WHERE c1 = 1 AND c2 > 1";
+    let plan: Vec<String> = explain_brief(&mut tk, sql).into_iter().map(|row| row.join("\t")).collect();
+    assert!(plan.iter().any(|line| line.contains("Point_Get")), "{plan:?}");
+    assert!(!plan.iter().any(|line| line.contains("TableRangeScan")), "{plan:?}");
+    assert_eq!(displayed(rows(&mut tk, sql)), [["1"]]);
 }
