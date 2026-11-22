@@ -45,14 +45,14 @@ type Runtime interface {
 	AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error
 }
 
-// KSRuntimeHandle is an acquired runtime handle for a target keyspace.
+// KSRuntimeHandle represents one holder of a target keyspace runtime.
+// Release it after use.
 type KSRuntimeHandle interface {
 	Runtime
-	// Release releases the holding of the runtime handle. After calling Release,
-	// the handle should not be used anymore.
-	// the underlying runtime has different lifecycle, the handle is just a view
-	// and does not manage the lifecycle of the runtime.
-	Release()
+	// Release drops this holder. If it was the last holder, closeIfIdle selects
+	// immediate cleanup (true) or retention for reuse until idle eviction (false).
+	// Only the first Release call on a handle takes effect.
+	Release(closeIfIdle bool)
 }
 
 // Server defines the interface for a SQL server.
