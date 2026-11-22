@@ -61,25 +61,40 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 	return true, nil
 }
 
-func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
+func TestAnalyzeBuildsRequest(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustQuery("select @@tidb_analyze_store_batch_size").Check(testkit.Rows("4"))
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 9")
+	tk.MustQuery("select @@tidb_analyze_store_batch_size").Check(testkit.Rows("8"))
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 4")
 
 	var requestCount atomic.Int64
 	var lastRequest atomic.Pointer[kv.Request]
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeColumnsRequestBuilt", func(req *kv.Request) {
-		lastRequest.Store(req)
+		// BuildCopIterator clears StoreBatchSize in place, so preserve the request
+		// as Analyze built it.
+		snapshot := *req
+		lastRequest.Store(&snapshot)
 		requestCount.Add(1)
 	})
 
 	// Values at MaxInt64 and MaxInt64+1 exercise the unsigned-handle boundary.
-	// Full-sampling Analyze should cover them with one unordered request.
+	// Full-sampling Analyze should cover them with one unordered request. The
+	// generic store batch size must not override the Analyze-specific default.
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency = 6")
+	tk.MustExec("set @@tidb_store_batch_size = 8")
 	tk.MustExec("create table tu(a bigint unsigned primary key)")
 	tk.MustExec("insert into tu values (9223372036854775807), (9223372036854775808)")
 	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
 	require.Equal(t, int64(1), requestCount.Load())
-	require.False(t, lastRequest.Load().KeepOrder)
+	request := lastRequest.Load()
+	require.False(t, request.KeepOrder)
+	require.True(t, request.AllowBatchTaskDataMerge)
+	require.True(t, request.ExecuteBatchTasksSerially)
+	require.Equal(t, 6, request.Concurrency)
+	require.Equal(t, 4, request.StoreBatchSize)
 
 	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
 	bounds := make(map[string]struct{}, 2*len(bucketRows))
@@ -91,10 +106,16 @@ func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
 	require.Contains(t, bounds, "9223372036854775808")
 
 	// An empty unsigned half must not stop the request before its signed range.
+	// Zero disables Analyze store batching without changing the generic setting.
+	tk.MustExec("set @@tidb_analyze_store_batch_size = 0")
 	tk.MustExec("truncate table tu")
 	tk.MustExec("insert into tu values (1)")
 	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
 	require.Equal(t, int64(2), requestCount.Load())
+	request = lastRequest.Load()
+	require.False(t, request.AllowBatchTaskDataMerge)
+	require.False(t, request.ExecuteBatchTasksSerially)
+	require.Zero(t, request.StoreBatchSize)
 	metaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tu'").Rows()
 	require.Len(t, metaRows, 1)
 	require.Equal(t, "1", metaRows[0][5])

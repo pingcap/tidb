@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/israce"
@@ -63,6 +64,7 @@ func PrintTiDBInfo() {
 		zap.String("GoVersion", buildVersion),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
+		zap.Bool("Diagnostic Mode", diagnosticmode.Enabled()),
 	}
 	if componentVersion != "" {
 		fields = append(fields, zap.String("TiDB Component Version", componentVersion))

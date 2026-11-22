@@ -22,8 +22,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -31,9 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -309,7 +316,7 @@ func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected strin
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 	require.Equal(t, expected, result.String())
 }
@@ -318,7 +325,7 @@ func checkShowCreateTableError(t *testing.T, tblInfo *model.TableInfo, expectedE
 	sctx := mock.NewContext()
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(sctx, ast.CIStr{}, tblInfo, autoid.Allocators{}, result)
 	require.ErrorContains(t, err, expectedErr)
 }
 
@@ -698,4 +705,240 @@ PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
 	execAlter(t, tracker, sql)
+}
+
+func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
+	require.ErrorContains(t, err, "PURGE START WITH expression must return DATE/DATETIME/TIMESTAMP")
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
+	require.ErrorContains(t, err, "PURGE NEXT expression must return DATE/DATETIME/TIMESTAMP")
+	execCreate(t, tracker, "create table test.t_date (a int)")
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t_date (a) purge next cast('2030-01-02' as date)")))
+
+	stmt := parseStmt("create materialized view log on test.t (a) purge start with now() next now()")
+	stmt.Purge.Next = nil
+	err = tracker.CreateMaterializedViewLog(sctx, stmt)
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+}
+
+func TestCreateMaterializedViewLogRejectMaterializedObjects(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.mv (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a)")))
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.`$mlog$t` (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "$mlog$t", "BASE TABLE").Error(), err.Error())
+
+	mvInfo := mustTableByName(t, tracker, "test", "mv")
+	mvInfo.MaterializedView = &model.MaterializedViewInfo{}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mvInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.mv (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "mv", "BASE TABLE").Error(), err.Error())
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.shadow (a)"))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
+}
+
+func TestCreateMaterializedViewLogTruncatesLongPhysicalName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	baseName := strings.Repeat("t", mysql.MaxTableNameLength)
+	execCreate(t, tracker, fmt.Sprintf("create table test.`%s` (a int)", baseName))
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(fmt.Sprintf("create materialized view log on test.`%s` (a)", baseName), "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr(baseName))
+	require.Equal(t, mysql.MaxTableNameLength, len([]rune(mlogName.O)))
+	mlogInfo := mustTableByName(t, tracker, "test", mlogName.O)
+	require.NotNil(t, mlogInfo.MaterializedViewLog)
+}
+
+func TestDropMaterializedViewLog(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.shadow (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt)))
+
+	_, err = tracker.TableByName(context.Background(), ast.NewCIStr("test"), model.MaterializedViewLogTableName(ast.NewCIStr("t")))
+	require.ErrorIs(t, err, infoschema.ErrTableNotExists)
+	baseTable := mustTableByName(t, tracker, "test", "t")
+	require.Nil(t, baseTable.MaterializedViewBase)
+
+	shadowInfo := mustTableByName(t, tracker, "test", "shadow").Clone()
+	shadowInfo.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: 1}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), shadowInfo))
+	dropShadowStmt, err := p.ParseOneStmt("drop materialized view log on test.shadow", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropShadowStmt.(*ast.DropMaterializedViewLogStmt))
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "shadow", "BASE TABLE").Error(), err.Error())
+}
+
+func TestDropMaterializedViewLogWithDependentMaterializedView(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	createStmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+	require.NoError(t, tracker.CreateMaterializedViewLog(sctx, createStmt.(*ast.CreateMaterializedViewLogStmt)))
+
+	mlogName := model.MaterializedViewLogTableName(ast.NewCIStr("t"))
+	mlogTable := mustTableByName(t, tracker, "test", mlogName.O).Clone()
+	mlogTable.MaterializedViewLog.DependentMViewIDs = []int64{123}
+	require.NoError(t, tracker.PutTable(ast.NewCIStr("test"), mlogTable))
+
+	dropStmt, err := p.ParseOneStmt("drop materialized view log on test.t", "", "")
+	require.NoError(t, err)
+	err = tracker.DropMaterializedViewLog(sctx, dropStmt.(*ast.DropMaterializedViewLogStmt))
+	require.ErrorContains(t, err, "dependent materialized views exist")
+	require.NotNil(t, mustTableByName(t, tracker, "test", mlogName.O).MaterializedViewLog)
+}
+
+func TestCreateMaterializedViewLogIfNotExists(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int, b int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	parseStmt := func(sql string) *ast.CreateMaterializedViewLogStmt {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.CreateMaterializedViewLogStmt)
+	}
+
+	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (a)"))
+	require.NoError(t, err)
+	baseInfo := mustTableByName(t, tracker, "test", "t").Clone()
+	mlogInfo := mustTableByName(t, tracker, "test", "$mlog$t").Clone()
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (b)"))
+	require.Truef(t, infoschema.ErrTableExists.Equal(err), "err %v", err)
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.t (b)"))
+	require.NoError(t, err)
+	require.Equal(t, baseInfo, mustTableByName(t, tracker, "test", "t").Clone())
+	require.Equal(t, mlogInfo, mustTableByName(t, tracker, "test", "$mlog$t").Clone())
+
+	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log if not exists on test.missing (a)"))
+	require.Truef(t, infoschema.ErrTableNotExists.Equal(err), "err %v", err)
+}
+
+type materializedViewLogExecutor struct {
+	ddl.Executor
+	afterCreate func(*ast.CreateMaterializedViewLogStmt)
+}
+
+func (e *materializedViewLogExecutor) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	err := e.Executor.CreateMaterializedViewLog(ctx, stmt)
+	if err == nil {
+		e.afterCreate(stmt)
+	}
+	return err
+}
+
+func TestCreateMaterializedViewLogIfNotExistsConcurrentWithDDLChecker(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	realDDL, realExecutor := dom.DDL(), dom.DDLExecutor()
+	created, release := make(chan struct{}), make(chan struct{})
+	executor := &materializedViewLogExecutor{
+		Executor: realExecutor,
+		afterCreate: func(stmt *ast.CreateMaterializedViewLogStmt) {
+			if stmt.Cols[0].L == "a" {
+				close(created)
+				<-release
+			}
+		},
+	}
+	checker := schematracker.NewChecker(realDDL, executor, dom.InfoCache())
+	checker.CreateTestDB(nil)
+	dom.SetDDL(realDDL, checker)
+	t.Cleanup(func() { dom.SetDDL(realDDL, realExecutor) })
+
+	first, second := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
+	first.MustExec("set tidb_mview_enable=on")
+	first.MustExec("use test")
+	second.MustExec("set tidb_mview_enable=on")
+	second.MustExec("use test")
+	first.MustExec("create table t (a int, b int)")
+
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	var wg sync.WaitGroup
+	defer func() { unblock(); wg.Wait() }()
+	var firstErr, secondErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		firstErr = first.ExecToErr("create materialized view log if not exists on t (a)")
+	}()
+	select {
+	case <-created:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for the first real DDL to finish")
+	}
+
+	secondDone := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(secondDone)
+		secondErr = second.ExecToErr("create materialized view log if not exists on t (b)")
+	}()
+	// Without serialization, the second call can populate the tracker with column b
+	// while the real log contains column a. A serialized call waits for the first
+	// call to finish updating and checking the tracker.
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+	}
+	unblock()
+	wg.Wait()
+	require.NoError(t, firstErr)
+	require.NoError(t, secondErr)
+	first.MustQuery("show warnings").Check(testkit.Rows())
+	second.MustQuery("show warnings").Check(testkit.Rows("Note 1050 Table 'test.$mlog$t' already exists"))
+	first.MustQuery("select column_name from information_schema.columns where table_schema = 'test' and table_name = '$mlog$t' order by ordinal_position").Check(testkit.Rows("a", model.MaterializedViewLogDMLTypeColumnName, model.MaterializedViewLogOldNewColumnName))
 }

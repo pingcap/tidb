@@ -362,7 +362,7 @@ func EncodeValue(loc *time.Location, b []byte, raw types.Datum) ([]byte, error) 
 // EncodeRow will allocate it.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-func EncodeRow(enc codec.Encoder, loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, checksum rowcodec.Checksum, e *rowcodec.Encoder) ([]byte, error) {
+func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, checksum rowcodec.Checksum, e *rowcodec.Encoder) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -370,14 +370,14 @@ func EncodeRow(enc codec.Encoder, loc *time.Location, row []types.Datum, colIDs 
 		valBuf = valBuf[:0]
 		return e.Encode(loc, colIDs, row, checksum, valBuf)
 	}
-	return EncodeOldRow(enc, loc, row, colIDs, valBuf, values)
+	return EncodeOldRow(loc, row, colIDs, valBuf, values)
 }
 
 // EncodeOldRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
 // valBuf and values pass by caller, for reducing EncodeOldRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeOldRow will allocate it.
-func EncodeOldRow(enc codec.Encoder, loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
+func EncodeOldRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -397,7 +397,7 @@ func EncodeOldRow(enc codec.Encoder, loc *time.Location, row []types.Datum, colI
 		// We could not set nil value into kv.
 		return append(valBuf, codec.NilFlag), nil
 	}
-	return enc.EncodeValue(loc, valBuf, values...)
+	return codec.EncodeValue(loc, valBuf, values...)
 }
 
 func flatten(loc *time.Location, data types.Datum, ret *types.Datum) error {

@@ -132,6 +132,18 @@ func TestModifySchemaArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.PolicyRef, args.PolicyRef)
 		}
 	}
+	inArgs = &ModifySchemaArgs{
+		ReadOnly:   true,
+		DDLStartTS: 123,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaReadOnly)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.ReadOnly)
+		require.Equal(t, uint64(123), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {
@@ -147,6 +159,37 @@ func TestCreateTableArgs(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
+	t.Run("create materialized view shadow", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{
+				ID:                     101,
+				MaterializedViewShadow: &MaterializedViewShadowInfo{SourceMViewID: 88},
+			},
+			FKCheck: true,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedViewShadow)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
+	t.Run("create materialized view", func(t *testing.T) {
+		inArgs := &CreateMaterializedViewArgs{
+			TableInfo:    &TableInfo{ID: 102, MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}}},
+			MLogTableIDs: []int64{99},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
+			args, err := GetCreateMaterializedViewArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
 		}
 	})
 	t.Run("create view", func(t *testing.T) {
@@ -211,12 +254,14 @@ func TestDropTableArgs(t *testing.T) {
 		},
 		FKCheck: true,
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropTable)))
-		args, err := GetDropTableArgs(j2)
-		require.NoError(t, err)
-		require.EqualValues(t, inArgs, args)
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetDropTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs, args)
+		}
 	}
 	for _, tp := range []ActionType{ActionDropView, ActionDropSequence} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -239,12 +284,14 @@ func TestFinishedDropTableArgs(t *testing.T) {
 		OldPartitionIDs: []int64{1, 2},
 		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropTable)))
-		args, err := GetFinishedDropTableArgs(j2)
-		require.NoError(t, err)
-		require.EqualValues(t, inArgs, args)
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
+			args, err := GetFinishedDropTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs, args)
+		}
 	}
 }
 
@@ -570,6 +617,120 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewRefreshArgs{
+		RefreshMethod:          "FAST",
+		RefreshStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleSQLMode: mysql.ModePipesAsConcat,
+		UpdateRefreshSchedule:  true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewRefresh)))
+		args, err := GetAlterMaterializedViewRefreshArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec:    10,
+		AlertOverdueSec:    20,
+		AlertRefreshFailed: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewAttributes)))
+		args, err := GetAlterMaterializedViewAttributesArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+
+	legacy := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec: 10,
+		AlertOverdueSec: 20,
+	}
+	legacyRawArgs, err := marshalArgs(JobVersion1, []any{legacy.AlertWarningSec, legacy.AlertOverdueSec})
+	require.NoError(t, err)
+	j := &Job{
+		Version: JobVersion1,
+		Type:    ActionAlterMaterializedViewAttributes,
+		RawArgs: legacyRawArgs,
+	}
+	args, err := GetAlterMaterializedViewAttributesArgs(j)
+	require.NoError(t, err)
+	require.Equal(t, legacy.AlertWarningSec, args.AlertWarningSec)
+	require.Equal(t, legacy.AlertOverdueSec, args.AlertOverdueSec)
+	require.False(t, args.AlertRefreshFailed)
+}
+
+func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewLogPurgeArgs{
+		PurgeMethod:          "DEFERRED",
+		PurgeStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleSQLMode: mysql.ModeNoBackslashEscapes,
+		UpdatePurgeSchedule:  true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewLogPurge)))
+		args, err := GetAlterMaterializedViewLogPurgeArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
+	nextRefreshUnixSeconds := int64(123456)
+	revision := uint64(789)
+	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+		{
+			OldMLogID:                          501,
+			NewMLogID:                          502,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			BuildSources:                       []MViewRefreshSource{{TableID: 20, MLogID: 30}, {TableID: 21}},
+			ExpectedOldMViewRevision:           &revision,
+			ExpectedLastSuccessReadTSO:         404,
+			ExpectedLastSuccessReadTSONull:     false,
+			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: false,
+		},
+	}
+
+	for _, inArgs := range testCases {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionMViewRefreshOutOfPlaceCutover)))
+			args, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
+	}
+}
+
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 	inArgs := &AlterIndexVisibilityArgs{
 		IndexName: ast.NewCIStr("index-name"),
@@ -764,6 +925,29 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 		require.Equal(t, inArgsWithReset.TiflashReplica, args.TiflashReplica)
 		if v == JobVersion2 {
 			require.Equal(t, inArgsWithReset.ResetAvailable, true)
+		}
+	}
+	// With the `SkipColumnarStorageGate` field
+	inArgsWithSkipGate := &SetTiFlashReplicaArgs{
+		TiflashReplica: ast.TiFlashReplicaSpec{
+			Count:  3,
+			Labels: []string{"TiFlash1", "TiFlash2", "TiFlash3"},
+			Hypo:   true,
+		},
+		ResetAvailable:          true,
+		SkipColumnarStorageGate: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j4 := &Job{}
+		require.NoError(t, j4.Decode(getJobBytes(t, inArgsWithSkipGate, v, ActionSetTiFlashReplica)))
+		args, err := GetSetTiFlashReplicaArgs(j4)
+		require.NoError(t, err)
+		require.Equal(t, inArgsWithSkipGate.TiflashReplica, args.TiflashReplica)
+		if v == JobVersion2 {
+			require.Equal(t, inArgsWithSkipGate.ResetAvailable, true)
+			require.Equal(t, inArgsWithSkipGate.SkipColumnarStorageGate, true)
+		} else {
+			require.False(t, args.SkipColumnarStorageGate)
 		}
 	}
 }
@@ -1044,6 +1228,7 @@ func TestAddIndexArgs(t *testing.T) {
 			IfExist:                 false,
 			IsGlobal:                false,
 			FuncExpr:                "test_string",
+			SplitOpt:                &IndexArgSplitOpt{Num: 4},
 		}},
 		PartitionIDs: []int64{100, 101, 102},
 		OpType:       OpAddIndex,
@@ -1065,6 +1250,11 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1083,7 +1273,39 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
 		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
 		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		if v == JobVersion2 {
+			require.Equal(t, inArgs.IndexArgs[0].SplitOpt, a.SplitOpt)
+		} else {
+			require.Nil(t, a.SplitOpt)
+		}
 	}
+
+	autoArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
+		AutoPreSplit: true,
+	}}}
+	for _, tp := range []ActionType{ActionAddIndex, ActionAddPrimaryKey} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, autoArgs, v, tp)))
+			args, err := GetModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, v == JobVersion2, args.IndexArgs[0].AutoPreSplit)
+			require.Nil(t, args.IndexArgs[0].SplitOpt)
+		}
+	}
+
+	job := &Job{Version: JobVersion2, Type: ActionAddIndex}
+	job.FillArgs(autoArgs)
+	_, err := job.Encode(true)
+	require.NoError(t, err)
+	var legacyArgs struct {
+		IndexArgs []struct {
+			SplitOpt *struct{} `json:"split_opt,omitempty"`
+		} `json:"index_args,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(job.RawArgs, &legacyArgs))
+	require.Len(t, legacyArgs.IndexArgs, 1)
+	require.Nil(t, legacyArgs.IndexArgs[0].SplitOpt)
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IndexArgs[0].IsColumnar = true

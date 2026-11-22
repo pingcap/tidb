@@ -41,6 +41,59 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	return old, nil
 }
 
+func TestCreateDoesNotMutateInputMetadata(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	db, supportPolicy, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "")
+	require.NoError(t, err)
+	require.False(t, supportPolicy)
+	defer db.Close()
+
+	dbInfo := &model.DBInfo{
+		ID:                 100,
+		Name:               ast.NewCIStr("immutable_metadata"),
+		Charset:            "utf8mb4",
+		Collate:            "utf8mb4_bin",
+		PlacementPolicyRef: &model.PolicyRefInfo{Name: ast.NewCIStr("missing_policy")},
+	}
+	exists, err := db.CreateDatabase(ctx, dbInfo, supportPolicy, nil)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.NotNil(t, dbInfo.PlacementPolicyRef)
+
+	fieldType := types.NewFieldType(mysql.TypeTimestamp)
+	table := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: ast.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				FieldType: *fieldType,
+				State:     model.StatePublic,
+			}},
+			Charset:            "utf8mb4",
+			Collate:            "utf8mb4_bin",
+			PlacementPolicyRef: &model.PolicyRefInfo{Name: ast.NewCIStr("missing_policy")},
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       ast.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	allocator := testAllocator(1000)
+	ids, err := prealloctableid.NewAndPrealloc([]*metautil.Table{table}, &allocator)
+	require.NoError(t, err)
+	db.RegisterPreallocatedIDs(ids)
+	require.NoError(t, db.CreateTable(ctx, table, nil, supportPolicy, nil))
+
+	require.NotNil(t, table.Info.PlacementPolicyRef)
+	require.True(t, table.Info.TTLInfo.Enable)
+}
+
 func TestRestoreAutoIncID(t *testing.T) {
 	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -561,10 +614,48 @@ func TestDB_ExecDDL2(t *testing.T) {
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
 	require.NoError(t, err)
 
-	for _, ddlJob := range ddlJobs {
+	defer db.Close()
+	dom := domain.GetDomain(db.Session().GetSessionCtx())
+	publishReadOnly := func(name string) {
+		info, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(name))
+		require.True(t, ok)
+		info = info.Clone()
+		info.ReadOnly = true
+		txn, err := s.Mock.Storage.Begin()
+		require.NoError(t, err)
+		m := meta.NewMutator(txn)
+		require.NoError(t, m.UpdateDatabase(info))
+		version, err := m.GenSchemaVersion()
+		require.NoError(t, err)
+		require.NoError(t, m.SetSchemaDiff(&model.SchemaDiff{Version: version, Type: model.ActionModifySchemaReadOnly, SchemaID: info.ID}))
+		require.NoError(t, txn.Commit(ctx))
+		require.NoError(t, dom.Reload())
+		info, ok = dom.InfoSchema().SchemaByName(info.Name)
+		require.True(t, ok)
+		require.True(t, info.ReadOnly)
+	}
+	for i, ddlJob := range ddlJobs {
+		if i == 2 {
+			publishReadOnly("test_db")
+		}
+
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
+	require.ErrorContains(t, db.Session().Execute(ctx, "alter table test_db.t1 add column forbidden int"), "read only mode")
+	require.NoError(t, db.Session().Execute(ctx, "create database other"))
+	publishReadOnly("other")
+	require.NoError(t, db.ExecDDL(ctx, &model.Job{
+		Type: model.ActionRenameTables, SchemaName: "test_db", Query: "rename table test_db.t1 to other.t1",
+		BinlogInfo:          &model.HistoryInfo{TableInfo: &model.TableInfo{}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "test_db", Table: "t1"}, {Database: "other", Table: "t1"}},
+	}))
+	require.ErrorContains(t, db.ExecDDL(ctx, &model.Job{
+		Type: model.ActionAddColumn, SchemaName: "other", Query: "alter table other.t1 add column forbidden int",
+		BinlogInfo:          &model.HistoryInfo{TableInfo: &model.TableInfo{}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "other", Table: "t1", Mode: model.SharedInvolving}},
+	}), "read only mode")
+	require.ErrorContains(t, db.Session().Execute(ctx, "alter table other.t1 add column forbidden int"), "read only mode")
 }
 
 func TestCreateTableConsistent(t *testing.T) {

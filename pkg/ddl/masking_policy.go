@@ -696,20 +696,20 @@ type renameMaskingExprVisitor struct {
 	newCol ast.CIStr
 }
 
-func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
+func (v *renameMaskingExprVisitor) Enter(in ast.Node) bool {
 	colExpr, ok := in.(*ast.ColumnNameExpr)
 	if !ok {
-		return in, false
+		return false
 	}
 	if colExpr.Name.Name.L != v.oldCol.L {
-		return in, false
+		return false
 	}
 	colExpr.Name.Name = v.newCol
-	return in, false
+	return false
 }
 
-func (*renameMaskingExprVisitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*renameMaskingExprVisitor) Leave(ast.Node) bool {
+	return true
 }
 
 func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (string, error) {
@@ -725,13 +725,9 @@ func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (
 	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
 		return "", errors.New("invalid masking policy expression")
 	}
-	out, ok := selectStmt.Fields.Fields[0].Expr.Accept(&renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol})
-	if !ok {
+	outExpr := selectStmt.Fields.Fields[0].Expr
+	if !ast.Walk(outExpr, &renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol}) {
 		return "", errors.New("failed to rewrite masking policy expression")
-	}
-	outExpr, ok := out.(ast.ExprNode)
-	if !ok {
-		return "", errors.New("invalid rewritten masking policy expression")
 	}
 	return restoreMaskingExpression(outExpr)
 }

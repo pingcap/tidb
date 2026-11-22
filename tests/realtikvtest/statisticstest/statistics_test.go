@@ -132,26 +132,10 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	))
 }
 
-func TestBlockMergeFMSketch(t *testing.T) {
+func TestMergeFMSketch(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
-	}()
-	checkFMSketch(tk)
-}
-
-func TestAsyncMergeFMSketch(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
-	checkFMSketch(tk)
-}
-
-func checkFMSketch(tk *testkit.TestKit) {
 	tk.MustExec(`CREATE TABLE employees  (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,fname VARCHAR(25) NOT NULL,lname VARCHAR(25) NOT NULL,store_id INT NOT NULL,department_id INT NOT NULL
 ) PARTITION BY RANGE(id)  (
     PARTITION p0 VALUES LESS THAN (5),
@@ -249,6 +233,7 @@ func checkTableIDInItems(t *testing.T, tableID int64) {
 func TestLoadNonExistentIndexStats(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table if not exists t(a int, b int);")

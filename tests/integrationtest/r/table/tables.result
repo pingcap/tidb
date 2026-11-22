@@ -2,9 +2,14 @@ drop table if exists shard_t;
 create table shard_t (a int) shard_row_id_bits = 15;
 set @@tidb_shard_allocate_step=3;
 insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);
-select count(distinct(_tidb_rowid>>48)) from shard_t;
-count(distinct(_tidb_rowid>>48))
-4
+select count(*) as rows_in_batch, count(distinct (_tidb_rowid >> 48)) as shards,
+count(distinct _tidb_rowid) = count(*) as unique_row_ids
+from shard_t group by (a - 1) div 3 order by (a - 1) div 3;
+rows_in_batch	shards	unique_row_ids
+3	1	1
+3	1	1
+3	1	1
+2	1	1
 truncate table shard_t;
 set @@tidb_shard_allocate_step=5;
 begin;
@@ -13,16 +18,19 @@ insert into shard_t values (4), (5), (6);
 insert into shard_t values (7), (8), (9);
 insert into shard_t values (10);
 commit;
-select count(distinct(_tidb_rowid>>48)) from shard_t;
-count(distinct(_tidb_rowid>>48))
-2
+select count(*) as rows_in_batch, count(distinct (_tidb_rowid >> 48)) as shards,
+count(distinct _tidb_rowid) = count(*) as unique_row_ids
+from shard_t group by a <= 6 order by a <= 6 desc;
+rows_in_batch	shards	unique_row_ids
+6	1	1
+4	1	1
 truncate table shard_t;
 insert into shard_t values (10);
 insert into shard_t values (11);
 insert into shard_t values (12);
-select count(distinct(_tidb_rowid>>48)) from shard_t;
-count(distinct(_tidb_rowid>>48))
-3
+select count(*) as rows_inserted, count(distinct _tidb_rowid) = count(*) as unique_row_ids from shard_t;
+rows_inserted	unique_row_ids
+3	1
 set @@tidb_shard_allocate_step=default;
 drop table if exists t;
 create table t(a bit(32) default b'1100010001001110011000100100111');

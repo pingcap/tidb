@@ -19,6 +19,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/pingcap/errors"
@@ -33,7 +34,8 @@ import (
 const noSuchKey = "NoSuchKey"
 
 type client struct {
-	svc API
+	svc        API
+	presignSvc API
 	storeapi.BucketPrefix
 	options *backuppb.S3
 }
@@ -151,6 +153,25 @@ func (c *client) DeleteObject(ctx context.Context, name string) error {
 		Key:    oss.Ptr(key),
 	})
 	return errors.Trace(err)
+}
+
+// PresignObject creates a presigned URL for the given object.
+// It implements the presignableClient interface used by s3like.Storage.
+// TODO: A URL signed with temporary credentials can expire before the requested
+// duration. credentials-go does not expose the cached credential expiration, so
+// this method cannot refresh early or report the effective lifetime. Make the OSS
+// credential path expiration-aware, then ensure its remaining lifetime covers
+// expire or return the effective expiration to the caller.
+func (c *client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
+	key := c.ObjectKey(name)
+	result, err := c.presignSvc.Presign(ctx, &oss.GetObjectRequest{
+		Bucket: oss.Ptr(c.Bucket),
+		Key:    oss.Ptr(key),
+	}, oss.PresignExpires(expire))
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.URL, nil
 }
 
 func (c *client) DeleteObjects(ctx context.Context, names []string) error {
@@ -272,9 +293,12 @@ func (c *client) MultipartWriter(ctx context.Context, name string) (objectio.Wri
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// OSS may return the canonical bucket name instead of the request alias.
 	return &multipartWriter{
 		svc:           c.svc,
-		createOutput:  resp,
+		bucket:        input.Bucket,
+		key:           input.Key,
+		uploadID:      resp.UploadId,
 		completeParts: make([]oss.UploadPart, 0, 128),
 	}, nil
 }
@@ -294,7 +318,9 @@ func (c *client) MultipartUploader(name string, partSize int64, concurrency int)
 // multipartWriter does multi-part upload.
 type multipartWriter struct {
 	svc           API
-	createOutput  *oss.InitiateMultipartUploadResult
+	bucket        *string
+	key           *string
+	uploadID      *string
 	completeParts []oss.UploadPart
 }
 
@@ -304,10 +330,10 @@ type multipartWriter struct {
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	req := &oss.UploadPartRequest{
 		Body:          bytes.NewReader(data),
-		Bucket:        u.createOutput.Bucket,
-		Key:           u.createOutput.Key,
+		Bucket:        u.bucket,
+		Key:           u.key,
 		PartNumber:    int32(len(u.completeParts) + 1),
-		UploadId:      u.createOutput.UploadId,
+		UploadId:      u.uploadID,
 		ContentLength: oss.Ptr(int64(len(data))),
 	}
 
@@ -325,9 +351,9 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 // Close completes the multi-part upload request.
 func (u *multipartWriter) Close(ctx context.Context) error {
 	req := &oss.CompleteMultipartUploadRequest{
-		Bucket:   u.createOutput.Bucket,
-		Key:      u.createOutput.Key,
-		UploadId: u.createOutput.UploadId,
+		Bucket:   u.bucket,
+		Key:      u.key,
+		UploadId: u.uploadID,
 		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
 			Parts: u.completeParts,
 		},

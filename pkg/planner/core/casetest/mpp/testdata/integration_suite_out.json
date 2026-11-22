@@ -2807,5 +2807,81 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestAlternativeEngineRestrictedRounds",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans=off",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c",
+        "Plan": [
+          "HashAgg root  group by:Column, funcs:sum(Column)->Column",
+          "└─Projection root  cast(test.alt_engine_flash.b, decimal(10,0) BINARY)->Column, test.alt_engine_flash.c->Column",
+          "  └─HashJoin root  inner join, equal:[eq(test.alt_engine_kv.b, test.alt_engine_flash.a)]",
+          "    ├─Selection(Build) root  not(isnull(test.alt_engine_kv.b))",
+          "    │ └─Point_Get root table:alt_engine_kv handle:5",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.alt_engine_flash.a))",
+          "          └─TableFullScan mpp[tiflash] table:alt_engine_flash keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans=on",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c",
+        "Plan": [
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection mpp[tiflash]  Column",
+          "    └─HashAgg mpp[tiflash]  group by:test.alt_engine_flash.c, funcs:sum(Column)->Column",
+          "      └─ExchangeReceiver mpp[tiflash]  ",
+          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.alt_engine_flash.c, collate: binary]",
+          "          └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column",
+          "            └─Projection mpp[tiflash]  cast(test.alt_engine_flash.b, decimal(10,0) BINARY)->Column, test.alt_engine_flash.c->Column",
+          "              └─Projection mpp[tiflash]  test.alt_engine_flash.b, test.alt_engine_flash.c",
+          "                └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.alt_engine_kv.b, test.alt_engine_flash.a)]",
+          "                  ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "                  │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                  │   └─Selection mpp[tiflash]  not(isnull(test.alt_engine_kv.b))",
+          "                  │     └─TableRangeScan mpp[tiflash] table:alt_engine_kv range:[5,5], keep order:false",
+          "                  └─Selection(Probe) mpp[tiflash]  not(isnull(test.alt_engine_flash.a))",
+          "                    └─TableFullScan mpp[tiflash] table:alt_engine_flash keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[alt_engine_flash], tikv[alt_engine_kv]) */ sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c",
+        "Plan": [
+          "HashAgg root  group by:Column, funcs:sum(Column)->Column",
+          "└─Projection root  cast(test.alt_engine_flash.b, decimal(10,0) BINARY)->Column, test.alt_engine_flash.c->Column",
+          "  └─HashJoin root  inner join, equal:[eq(test.alt_engine_kv.b, test.alt_engine_flash.a)]",
+          "    ├─Selection(Build) root  not(isnull(test.alt_engine_kv.b))",
+          "    │ └─Point_Get root table:alt_engine_kv handle:5",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.alt_engine_flash.a))",
+          "          └─TableFullScan mpp[tiflash] table:alt_engine_flash keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_norep on alt_engine_flash.a = alt_engine_norep.a group by alt_engine_flash.c",
+        "Plan": [
+          "HashAgg root  group by:Column, funcs:sum(Column)->Column",
+          "└─Projection root  cast(test.alt_engine_flash.b, decimal(10,0) BINARY)->Column, test.alt_engine_flash.c->Column",
+          "  └─HashJoin root  inner join, equal:[eq(test.alt_engine_norep.a, test.alt_engine_flash.a)]",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:alt_engine_norep keep order:false",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.alt_engine_flash.a))",
+          "          └─TableFullScan mpp[tiflash] table:alt_engine_flash keep order:false"
+        ]
+      }
+    ]
   }
 ]

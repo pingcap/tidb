@@ -106,7 +106,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	log.Info("starting to remove some PD schedulers")
 	restoreFunc, e := mgr.RemoveAllPDSchedulers(ctx)
 	if e != nil {
-		return errors.Trace(err)
+		return errors.Trace(e)
 	}
 	defer func() {
 		if ctx.Err() != nil {

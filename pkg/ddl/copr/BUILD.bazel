@@ -23,7 +23,7 @@ go_test(
     srcs = ["copr_ctx_test.go"],
     embed = [":copr"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/expression",
         "//pkg/expression/exprstatic",
@@ -31,6 +31,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/types",
+        "//pkg/util/collate",
         "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],

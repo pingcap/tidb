@@ -16,22 +16,13 @@ package optimizor
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -78,71 +69,6 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			handler.WriteData(w, js)
 		}
 	}
-}
-
-// StatsHistoryHandler is the handler for dumping statistics.
-type StatsHistoryHandler struct {
-	do *domain.Domain
-}
-
-// NewStatsHistoryHandler creates a new StatsHistoryHandler.
-func NewStatsHistoryHandler(do *domain.Domain) *StatsHistoryHandler {
-	return &StatsHistoryHandler{do: do}
-}
-
-func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	params := mux.Vars(req)
-	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	if !enabeld {
-		handler.WriteError(w, fmt.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats))
-		return
-	}
-
-	typeCtx := types.DefaultStmtNoWarningContext
-	typeCtx = typeCtx.WithLocation(time.Local)
-	t, err := types.ParseTime(typeCtx, params[handler.Snapshot], mysql.TypeTimestamp, 6)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	t1, err := t.GoTime(time.Local)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	snapshot := oracle.GoTimeToTS(t1)
-	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[handler.DBName], params[handler.TableName])
-	if err != nil {
-		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
-		is := sh.do.InfoSchema()
-		tbl, err = is.TableByName(context.Background(), ast.NewCIStr(params[handler.DBName]), ast.NewCIStr(params[handler.TableName]))
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-	}
-
-	h := sh.do.StatsHandle()
-	js, _, err := h.DumpHistoricalStatsBySnapshot(params[handler.DBName], tbl.Meta(), snapshot)
-	if err != nil {
-		handler.WriteError(w, err)
-	} else {
-		handler.WriteData(w, js)
-	}
-}
-
-func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName string) (table.Table, error) {
-	is, err := dom.GetSnapshotInfoSchema(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	return is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 }
 
 // StatsPriorityQueueHandler is the handler for dumping the stats priority queue snapshot.

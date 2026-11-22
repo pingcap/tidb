@@ -326,6 +326,18 @@ func TestStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, 0, stmtEvicted.history.Len())
 }
 
+func TestEvictedHistoryCollectionKeepsLatestIntervals(t *testing.T) {
+	stmtEvicted := newStmtSummaryByDigestEvicted()
+	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(1, 2))
+	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(2, 3))
+	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(3, 4))
+
+	elements := stmtEvicted.collectHistorySummaries(2)
+	require.Len(t, elements, 2)
+	require.Equal(t, int64(2), elements[0].beginTime)
+	require.Equal(t, int64(3), elements[1].beginTime)
+}
+
 // test addInfo function
 func TestAddInfo(t *testing.T) {
 	now := time.Now().Unix()
@@ -377,6 +389,7 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			iaExecCount:                  2,
 			sumIARemoteReadSegmentCount:  8,
 			maxIARemoteReadSegmentCount:  3,
 
@@ -477,6 +490,7 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			iaExecCount:                  3,
 			sumIARemoteReadSegmentCount:  8,
 			maxIARemoteReadSegmentCount:  5,
 
@@ -584,6 +598,7 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      8,
 			maxRocksdbBlockReadByte:      4,
+			iaExecCount:                  5,
 			sumIARemoteReadSegmentCount:  16,
 			maxIARemoteReadSegmentCount:  5,
 

@@ -71,6 +71,7 @@ func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool
 
 type mockBackupBackupSender struct {
 	backupResponses map[uint64][]*backup.ResponseAndStore
+	afterLoad       func(storeID uint64)
 }
 
 func (m *mockBackupBackupSender) SendAsync(
@@ -99,6 +100,9 @@ func (m *mockBackupBackupSender) SendAsync(
 			lock.Lock()
 			resps = m.backupResponses[storeID]
 			lock.Unlock()
+		}
+		if m.afterLoad != nil {
+			m.afterLoad(storeID)
 		}
 		for _, r := range resps {
 			select {
@@ -361,7 +365,7 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 
 	errContext := utils.NewErrorContext("test", 1)
-	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil)
+	lock, err := s.backupClient.OnBackupResponse(ctx, nil, errContext, nil, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -376,11 +380,11 @@ func TestOnBackupResponse(t *testing.T) {
 	}
 	// case #1: error resposne
 	// first error can be ignored due to errContext.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	// second error cannot be ignored.
-	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Error(t, err)
 
 	// case #2: normal resposne
@@ -394,13 +398,13 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.Nil(t, lock)
 	require.NoError(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
@@ -413,7 +417,7 @@ func TestOnBackupResponse(t *testing.T) {
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
 	r.Resp.EndKey = []byte("c")
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	incomplete, err = tree.GetIncompleteRanges()
@@ -440,7 +444,7 @@ func TestOnBackupResponse(t *testing.T) {
 			},
 		},
 	}
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("b"), lock.Primary)
 }
@@ -609,6 +613,8 @@ func TestMainBackupLoop(t *testing.T) {
 	dropStoreID := uint64(2)
 	s.mockCluster.MarkTombstone(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
+	remainStoreFirstLoad := make(chan struct{})
+	var remainStoreFirstLoadOnce sync.Once
 	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
 	lock.Unlock()
@@ -616,6 +622,13 @@ func TestMainBackupLoop(t *testing.T) {
 	mainLoop = &backup.MainBackupLoop{
 		BackupSender: &mockBackupBackupSender{
 			backupResponses: mockBackupResponses,
+			afterLoad: func(storeID uint64) {
+				if storeID == remainStoreID {
+					remainStoreFirstLoadOnce.Do(func() {
+						close(remainStoreFirstLoad)
+					})
+				}
+			},
 		},
 
 		BackupReq:               backuppb.BackupRequest{},
@@ -626,10 +639,9 @@ func TestMainBackupLoop(t *testing.T) {
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 	go func() {
-		// mock region leader balance behaviour.
-		time.Sleep(500 * time.Millisecond)
+		// Mock region leader balance after store 1 has loaded its first partial response set.
+		<-remainStoreFirstLoad
 		lock.Lock()
-		// store 1 has the range after some while.
 		mockBackupResponses[remainStoreID] = append(mockBackupResponses[remainStoreID], dropBackupResponses...)
 		lock.Unlock()
 	}()

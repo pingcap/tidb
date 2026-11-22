@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -43,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -51,6 +55,52 @@ import (
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
 const truncateTTLRestoreOldRegistrationLogKey = "truncate_ttl_restore_old_registration_failed"
+
+func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, job *model.Job) {
+	args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to decode materialized view cutover args for post-commit cleanup",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if err := w.deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx, args.OldMViewID); err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to delete stale materialized view refresh alert after cutover",
+			zap.Int64("tableID", args.OldMViewID),
+			zap.Error(err),
+		)
+	}
+
+	// Materialized views in Stage-1 are non-partitioned, so their table-level
+	// affinity group ID is derived directly from the old physical table ID.
+	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
+	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
+		logutil.DDLLogger().Warn(
+			"failed to delete old materialized view affinity group after cutover",
+			zap.Int64("tableID", args.OldMViewID),
+			zap.Error(err),
+		)
+	}
+
+	// Stage-1 MVs and MLogs are non-partitioned. Retain their progress until
+	// cutover commits, then remove the entries for both retired physical IDs.
+	for _, id := range []int64{args.OldMViewID, args.OldMLogID} {
+		if id == 0 {
+			continue
+		}
+		if err := infosync.DeleteTiFlashTableSyncProgress(&model.TableInfo{ID: id}); err != nil {
+			logutil.DDLLogger().Warn(
+				"failed to delete retired table TiFlash sync progress after materialized view cutover",
+				zap.Int64("tableID", id),
+				zap.Error(err),
+			)
+		}
+	}
+}
 
 func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
 	err := checkTableInfoValid(tbInfo)
@@ -72,13 +122,38 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if job.Type == model.ActionDropMaterializedViewShadow && tblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(
+			job.SchemaName,
+			job.TableName,
+			"MATERIALIZED VIEW SHADOW TABLE",
+		)
+	}
 
 	originalState := job.SchemaState
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		if job.Type == model.ActionDropMaterializedView {
+			// An owned MLog may have been created after the executor precheck.
+			if err = checkBaseTableMaterializedViewDependencyConstraints(tblInfo, "DROP MATERIALIZED VIEW"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		if job.Type == model.ActionDropTable {
+			if err = checkTableMaterializedViewConstraints(nil, tblInfo, "DROP TABLE"); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
+			if err != nil {
+				return ver, err
+			}
+		}
+		if job.Type == model.ActionDropTable || job.Type == model.ActionDropMaterializedViewLog {
+			err = checkDropMaterializedViewLogHasNoDependentMVs(jobCtx, job, tblInfo)
 			if err != nil {
 				return ver, err
 			}
@@ -106,7 +181,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		ruleIDs := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 
 		args.OldPartitionIDs = oldIDs
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
+		extraInfos, extraErr := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, tblInfo)
+		if extraErr != nil {
+			return ver, errors.Trace(extraErr)
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State, extraInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -129,8 +208,27 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 				logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
 		}
-		// Placement rules cannot be removed immediately after drop table / truncate table, because the
-		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+		if tblInfo.MaterializedView != nil {
+			if err = w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = w.deleteCreateMaterializedViewRefreshAlert(jobCtx, job.TableID); err != nil {
+				logutil.DDLLogger().Warn(
+					"drop table/view: failed to delete materialized view refresh alert",
+					zap.String("schemaName", job.SchemaName),
+					zap.String("tableName", tblInfo.Name.O),
+					zap.Int64("mviewID", job.TableID),
+					zap.Error(err),
+				)
+			}
+		}
+		if tblInfo.MaterializedViewLog != nil {
+			if err = w.deleteMaterializedViewLogPurgeInfo(jobCtx, job.TableID); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		// Keep placement rules until delete-range GC so flashback/recover can retain
+		// the dropped table's placement. doGCPlacementRules removes them later.
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
@@ -199,6 +297,15 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	err = checkTableIDNotExists(metaMut, schemaID, tblInfo.ID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	var snapshotMeta meta.Reader = meta.NewReader(w.store.GetSnapshot(kv.NewVersion(recoverInfo.SnapshotTS)))
+	failpoint.InjectCall("recoverTableForeignKeySnapshot", recoverInfo, &snapshotMeta)
+	if err = checkRecoverTableForeignKeys(jobCtx.infoCache.GetLatest(), job.SchemaName, recoverInfo, snapshotMeta); err != nil {
+		// Keep transient snapshot failures retryable by the owner.
+		if isPermanentRecoverTableForeignKeyError(err) {
 			job.State = model.JobStateCancelled
 		}
 		return ver, errors.Trace(err)
@@ -434,6 +541,17 @@ func checkTableExistAndCancelNonExistJob(t *meta.Mutator, job *model.Job, schema
 	return nil, err
 }
 
+func getTableInfoAndCancelNonExistJob(t *meta.Mutator, job *model.Job, tableID, schemaID int64) (*model.TableInfo, error) {
+	tblInfo, err := getTableInfo(t, tableID, schemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return nil, err
+	}
+	return tblInfo, nil
+}
+
 func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, error) {
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
@@ -458,7 +576,7 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
-// A background job will be created to delete old data.
+// A delete-range task will be enqueued to delete the old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
@@ -475,6 +593,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
+	if err = checkTableMaterializedViewConstraints(nil, tblInfo, "TRUNCATE TABLE"); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
@@ -903,6 +1025,9 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
 	is := jobCtx.infoCache.GetLatest()
+	firstRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	finalRenameByTableID := make(map[int64]*model.RenameTableArgs)
+	renamedTableByID := make(map[int64]schemaIDAndTableInfo)
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -914,12 +1039,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = adjustForeignKeyChildTableInfoAfterRenameTable(
-			jobCtx.infoCache, metaMut, job, &fkh, tblInfo,
-			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
+		if _, ok := firstRenameByTableID[info.TableID]; !ok {
+			firstRenameByTableID[info.TableID] = info
 		}
+		finalRenameByTableID[info.TableID] = info
+		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
 		// Update masking policy names after table rename.
 		newDB, ok := is.SchemaByID(info.NewSchemaID)
 		if !ok {
@@ -930,6 +1054,11 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
+	}
+	err = adjustForeignKeyChildTableInfoAfterRenameTables(
+		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -976,6 +1105,9 @@ func checkAndRenameTables(jobCtx *jobContext, t *meta.Mutator, job *model.Job, t
 	}
 
 	tblInfo.Name = args.NewTableName
+	// Renaming preserves the table ID, so advance its revision to invalidate
+	// cached plans that depend on the previous name-to-ID binding.
+	tblInfo.Revision++
 	err = t.CreateTableOrView(args.NewSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1014,6 +1146,59 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		return nil
 	}
 	fkh.addLoadedTable(oldSchemaName.L, oldTableName.L, newDB.ID, tblInfo)
+	err := adjustReferredForeignKeysAfterRename(is, t, fkh, referredFKs, newDB.Name, newTableName)
+	if err != nil {
+		return err
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustForeignKeyChildTableInfoAfterRenameTables(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	firstRenameByTableID, finalRenameByTableID map[int64]*model.RenameTableArgs,
+	renamedTableByID map[int64]schemaIDAndTableInfo,
+) error {
+	if !vardef.EnableForeignKey.Load() {
+		return nil
+	}
+
+	// The InfoSchema referred-FK map describes table names before the statement.
+	// Register each renamed object under its original name, but point to the
+	// TableInfo at its final location so child tables renamed earlier in the same
+	// statement are updated in place.
+	for tableID, firstRename := range firstRenameByTableID {
+		renamedTable := renamedTableByID[tableID]
+		fkh.addLoadedTable(firstRename.OldSchemaName.L, firstRename.OldTableName.L,
+			renamedTable.schemaID, renamedTable.tblInfo)
+	}
+
+	for tableID, firstRename := range firstRenameByTableID {
+		referredFKs := is.GetTableReferredForeignKeys(firstRename.OldSchemaName.L, firstRename.OldTableName.L)
+		if len(referredFKs) == 0 {
+			continue
+		}
+		finalRename := finalRenameByTableID[tableID]
+		newDB, ok := is.SchemaByID(finalRename.NewSchemaID)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", finalRename.NewSchemaID))
+		}
+		if err := adjustReferredForeignKeysAfterRename(
+			is, t, fkh, referredFKs, newDB.Name, finalRename.NewTableName); err != nil {
+			return err
+		}
+	}
+	return updateLoadedForeignKeyTables(t, fkh)
+}
+
+func adjustReferredForeignKeysAfterRename(
+	is infoschema.InfoSchema,
+	t *meta.Mutator,
+	fkh *foreignKeyHelper,
+	referredFKs []*model.ReferredFKInfo,
+	newSchemaName, newTableName ast.CIStr,
+) error {
 	for _, referredFK := range referredFKs {
 		childTableInfo, err := fkh.getTableFromStorage(is, t, referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -1026,9 +1211,13 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		if childFKInfo == nil {
 			continue
 		}
-		childFKInfo.RefSchema = newDB.Name
+		childFKInfo.RefSchema = newSchemaName
 		childFKInfo.RefTable = newTableName
 	}
+	return nil
+}
+
+func updateLoadedForeignKeyTables(t *meta.Mutator, fkh *foreignKeyHelper) error {
 	for _, info := range fkh.loaded {
 		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {
@@ -1187,6 +1376,10 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 	replicaInfo := args.TiflashReplica
 
+	failpoint.Inject("forceSetTiFlashReplicaSkipColumnarStorageGate", func() {
+		args.SkipColumnarStorageGate = true
+	})
+
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1199,6 +1392,12 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 
 	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = w.checkColumnarStorageEnabled(replicaInfo.Count, args.SkipColumnarStorageGate)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1270,6 +1469,36 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	defer w.sessPool.Put(ctx)
 
 	return checkTiFlashReplicaCount(ctx, replicaCount)
+}
+
+func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, skipColumnarStorageGate bool) error {
+	// Removing TiFlash replica or skipping the gate (e.g. placement-rule repair)
+	// does not require tidb_columnar_storage_enabled to be enabled.
+	if replicaCount == 0 || skipColumnarStorageGate {
+		return nil
+	}
+	ctx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(ctx)
+
+	return checkColumnarStorageEnabled(ctx)
+}
+
+func (w *worker) checkCreateTableColumnarStorage(job *model.Job, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil {
+		return nil
+	}
+	err := w.checkColumnarStorageEnabled(tbInfo.TiFlashReplica.Count, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		if tableHasColumnarIndex(tbInfo) {
+			return wrapColumnarStorageGateForColumnarIndex(err)
+		}
+		return err
+	}
+	return nil
 }
 
 func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -1354,12 +1583,7 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 	if len(constraints) == 0 {
 		return nil
 	}
-	tbInfos, err := t.ListTables(context.Background(), schemaID)
-	if err != nil {
-		return err
-	}
-
-	for _, tb := range tbInfos {
+	return t.IterTables(schemaID, func(tb *model.TableInfo) error {
 		for _, constraint := range constraints {
 			if constraint.State != model.StateWriteOnly {
 				if constraintInfo := tb.FindConstraintInfoByName(constraint.Name.L); constraintInfo != nil {
@@ -1367,9 +1591,8 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 				}
 			}
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func checkTableIDNotExists(t *meta.Mutator, schemaID, tableID int64) error {
@@ -1454,6 +1677,9 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+	if jobCtx.multiSchemaDiff != nil {
+		SetSchemaDiffForMultiInfos(jobCtx.multiSchemaDiff, multiInfos...)
 	}
 	return ver, nil
 }
@@ -1918,4 +2144,384 @@ func (w *worker) onAlterTableSetRegionSplitPolicy(jobCtx *jobContext, job *model
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+	if args.OldMViewID != job.TableID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: mismatched old materialized view id")
+	}
+	if args.OldMViewID == args.ShadowTableID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table id equals old materialized view id")
+	}
+	if args.BuildReadTSO == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: invalid build read tso")
+	}
+	oldMViewTblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if oldMViewTblInfo.MaterializedView == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, job.TableName, "MATERIALIZED VIEW")
+	}
+	if len(oldMViewTblInfo.MaterializedView.BaseTableIDs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: materialized view must reference exactly one base table in Stage-1, got %d", len(oldMViewTblInfo.MaterializedView.BaseTableIDs))
+	}
+	if args.ExpectedOldMViewRevision != nil && oldMViewTblInfo.Revision != *args.ExpectedOldMViewRevision {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack(
+			"refresh materialized view complete OUT OF PLACE cutover: stale old materialized view revision detected before cutover, expected %d but got %d",
+			*args.ExpectedOldMViewRevision, oldMViewTblInfo.Revision,
+		)
+	}
+	shadowTblInfo, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, args.ShadowTableID, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not a protected physical table")
+	}
+	if shadowTblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is missing shadow metadata")
+	}
+	if shadowTblInfo.MaterializedViewShadow.SourceMViewID != args.OldMViewID {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table source materialized view id mismatch")
+	}
+	if shadowTblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStack("refresh materialized view complete OUT OF PLACE cutover: shadow table is not in public, but %s", shadowTblInfo.State)
+	}
+	if args.OldMLogID != 0 {
+		// Drain old purges before taking the shared schema-version mutex. The
+		// advisory lock also excludes new purges until this job finishes.
+		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, job, args.OldMLogID); err != nil {
+			if exeerrors.ErrMVAdvisoryLockConflict.Equal(err) {
+				// Retrying this job would reset the total purge-lock wait budget.
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
+		}
+	}
+
+	infoCapacity := 2 * len(oldMViewTblInfo.MaterializedView.BaseTableIDs)
+	if base := oldMViewTblInfo.MaterializedViewBase; base != nil {
+		infoCapacity += len(base.MViewIDs)
+	}
+	infos := make([]schemaIDAndTableInfo, 0, infoCapacity)
+	for _, id := range oldMViewTblInfo.MaterializedView.BaseTableIDs {
+		base, err := getMViewOutOfPlaceCutoverTable(jobCtx, job, id)
+		if err != nil {
+			return ver, err
+		}
+		if err := rewriteMaterializedViewBaseForOutOfPlaceCutover(base.tblInfo, args.OldMViewID, args.ShadowTableID); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		infos = append(infos, base)
+		if logID := base.tblInfo.MaterializedViewBase.MLogID; logID != 0 {
+			mlog, err := getMViewOutOfPlaceCutoverTable(jobCtx, job, logID)
+			if err != nil {
+				return ver, err
+			}
+			if mlog.tblInfo.MaterializedViewLog == nil || mlog.tblInfo.MaterializedViewLog.BaseTableID != id {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+					"refresh materialized view complete OUT OF PLACE cutover: materialized view log metadata is invalid",
+				)
+			}
+			ids, replaced := replaceMaterializedViewID(mlog.tblInfo.MaterializedViewLog.DependentMViewIDs, args.OldMViewID, args.ShadowTableID)
+			if replaced {
+				mlog.tblInfo.MaterializedViewLog.DependentMViewIDs = ids
+				infos = append(infos, mlog)
+			}
+		}
+	}
+
+	var oldMLog, newMLog *model.TableInfo
+	if base := oldMViewTblInfo.MaterializedViewBase; base != nil {
+		if base.MLogID != args.OldMLogID {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				"refresh materialized view complete OUT OF PLACE cutover: output log changed; retry refresh",
+			)
+		}
+		if args.OldMLogID != 0 {
+			oldLog, err := getMViewOutOfPlaceCutoverTable(jobCtx, job, args.OldMLogID)
+			if err != nil {
+				return ver, err
+			}
+			oldMLog = oldLog.tblInfo
+			newMLog = oldMLog.Clone()
+			newMLog.ID = args.NewMLogID
+			newMLog.Revision = 0
+			newMLog.UpdateTS = jobCtx.metaMut.StartTS
+			newMLog.MaterializedViewLog.BaseTableID = args.ShadowTableID
+			if newMLog.TiFlashReplica != nil {
+				replica := *newMLog.TiFlashReplica
+				replica.Available = false
+				replica.AvailablePartitionIDs = nil
+				newMLog.TiFlashReplica = &replica
+			}
+		}
+		for _, id := range base.MViewIDs {
+			child, err := getMViewOutOfPlaceCutoverTable(jobCtx, job, id)
+			if err != nil {
+				return ver, err
+			}
+			child.tblInfo.MaterializedView.BaseTableIDs, _ = replaceMaterializedViewID(
+				child.tblInfo.MaterializedView.BaseTableIDs, args.OldMViewID, args.ShadowTableID,
+			)
+			infos = append(infos, child)
+		}
+	}
+
+	if err := w.migrateMViewRefreshInfoForOutOfPlaceCutover(jobCtx, args); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err := w.migrateMViewRefreshSourceInfo(jobCtx, args.OldMViewID, args.ShadowTableID, args.BuildSources); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if newMLog != nil {
+		// Retire the runtime row atomically with the metadata switch, so delayed
+		// tasks resolved to the old log fail before issuing any DELETE.
+		failpoint.InjectCall("mViewOutOfPlaceBeforeRetireMLog", args.OldMLogID)
+		if err := w.deleteMaterializedViewLogPurgeInfo(jobCtx, args.OldMLogID); err != nil {
+			return ver, err
+		}
+		if err := w.upsertCreateMaterializedViewLogPurgeInfo(jobCtx, job.SchemaName, newMLog); err != nil {
+			return ver, err
+		}
+		if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, args.OldMLogID); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := jobCtx.metaMut.GetAutoIDAccessors(job.SchemaID, args.OldMLogID).Del(); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := createTableOrViewWithCheck(jobCtx.metaMut, job, job.SchemaID, newMLog); err != nil {
+			return ver, err
+		}
+		if replica := newMLog.TiFlashReplica; replica != nil {
+			if err := infosync.ConfigureTiFlashPDForTable(newMLog.ID, replica.Count, &replica.LocationLabels); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		// Publish the inherited placement policy for the replacement log's new key range.
+		bundles, err := placement.NewFullTableBundles(jobCtx.metaMut, newMLog)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		if err := infosync.PutRuleBundlesWithDefaultRetry(jobCtx.stepCtx, bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrap(err, "failed to notify PD the placement rules")
+		}
+	}
+	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", func() {
+		failpoint.Return(ver, errors.New("mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info"))
+	})
+	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverBeforeCommitError", func() {
+		failpointErr := errors.New("mock refresh materialized view complete OUT OF PLACE cutover error before commit")
+		w.sess.Rollback()
+		if err := w.sess.Begin(w.workCtx); err != nil {
+			failpoint.Return(ver, errors.Trace(err))
+		}
+		job.Error = toTError(failpointErr)
+		job.ErrorCount++
+		job.State = model.JobStateCancelled
+		failpoint.Return(ver, failpointErr)
+	})
+	if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, args.OldMViewID); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := jobCtx.metaMut.GetAutoIDAccessors(job.SchemaID, args.OldMViewID).Del(); err != nil {
+		return ver, errors.Trace(err)
+	}
+	newMViewTblInfo := shadowTblInfo.Clone()
+	newMViewTblInfo.Name = oldMViewTblInfo.Name
+	newMViewTblInfo.Comment = oldMViewTblInfo.Comment
+	newMViewTblInfo.MaterializedView = oldMViewTblInfo.MaterializedView.Clone()
+	newMViewTblInfo.MaterializedViewBase = oldMViewTblInfo.MaterializedViewBase.Clone()
+	if newMLog != nil {
+		newMViewTblInfo.MaterializedViewBase.MLogID = newMLog.ID
+	}
+	newMViewTblInfo.MaterializedViewShadow = nil
+	newMViewTblInfo.UpdateTS = jobCtx.metaMut.StartTS
+	if err := repairTableOrViewWithCheck(jobCtx.metaMut, job, job.SchemaID, newMViewTblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	for _, info := range infos {
+		info.tblInfo.UpdateTS = jobCtx.metaMut.StartTS
+		if err := repairTableOrViewWithCheck(jobCtx.metaMut, job, info.schemaID, info.tblInfo); err != nil {
+			return ver, err
+		}
+	}
+	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMetadataError", func() {
+		failpoint.Return(ver, errors.New("mock materialized view cutover error after metadata changes"))
+	})
+
+	ver, err = updateSchemaVersion(jobCtx, job, infos...)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := asyncNotifyEvent(jobCtx, notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newMViewTblInfo, oldMViewTblInfo, newMLog, oldMLog), job, noSubJob, w.sess); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, newMViewTblInfo)
+	return ver, nil
+}
+
+func replaceMaterializedViewID(ids []int64, oldID, newID int64) ([]int64, bool) {
+	replaced := false
+	seen := make(map[int64]struct{}, len(ids))
+	result := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id == oldID {
+			id = newID
+			replaced = true
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result, replaced
+}
+
+func rewriteMaterializedViewBaseForOutOfPlaceCutover(baseTblInfo *model.TableInfo, oldMViewID, shadowTableID int64) error {
+	if baseTblInfo == nil || baseTblInfo.MaterializedViewBase == nil || len(baseTblInfo.MaterializedViewBase.MViewIDs) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: base table materialized view metadata missing")
+	}
+	found := false
+	seen := make(map[int64]struct{}, len(baseTblInfo.MaterializedViewBase.MViewIDs))
+	ids := make([]int64, 0, len(baseTblInfo.MaterializedViewBase.MViewIDs))
+	for _, id := range baseTblInfo.MaterializedViewBase.MViewIDs {
+		if id == oldMViewID {
+			id = shadowTableID
+			found = true
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if !found {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: old materialized view id is missing in base table metadata")
+	}
+	baseTblInfo.MaterializedViewBase.MViewIDs = ids
+	return nil
+}
+
+// migrateMViewRefreshInfoForOutOfPlaceCutover moves the refresh-info row from
+// the old MV table ID to the shadow table ID as part of the cutover DDL txn.
+func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
+	jobCtx *jobContext,
+	args *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs,
+) error {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	// SQL statement commits release mutations into the transaction buffer, so
+	// later cutover errors must roll back the entire DDL transaction.
+	jobCtx.mustRollbackTxnOnError = true
+
+	oldRows, err := w.sess.Execute(
+		ctx,
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"mview-refresh-cutover-read-refresh-info",
+		args.OldMViewID,
+	)
+	if err != nil {
+		return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
+	}
+	if len(oldRows) == 0 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: refresh info row missing in mysql.tidb_mview_refresh_info",
+		)
+	}
+	if len(oldRows) != 1 {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: inconsistent refresh info row in mysql.tidb_mview_refresh_info",
+		)
+	}
+
+	oldRow := oldRows[0]
+	if args.ExpectedLastSuccessReadTSONull {
+		if !oldRow.IsNull(1) {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+				"refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover",
+			)
+		}
+	} else if oldRow.IsNull(1) || oldRow.GetUint64(1) != args.ExpectedLastSuccessReadTSO {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+			"refresh materialized view complete OUT OF PLACE cutover: stale LAST_SUCCESS_READ_TSO detected before cutover",
+		)
+	}
+
+	sql := "UPDATE mysql.tidb_mview_refresh_info SET MVIEW_ID = %?, LAST_SUCCESS_READ_TSO = %?, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?"
+	buildReadTSO := args.BuildReadTSO
+	failpoint.Inject("mockMViewRefreshOutOfPlacePersistReadTSO", func(val failpoint.Value) {
+		if text, ok := val.(string); ok {
+			if ts, err := strconv.ParseUint(text, 10, 64); err == nil {
+				buildReadTSO = ts
+			}
+		}
+	})
+	params := []any{args.ShadowTableID, buildReadTSO, time.Now().Unix()}
+	if args.ShouldUpdateNextRefreshUnixSeconds {
+		sql += ", NEXT_REFRESH_UNIX_SECONDS = %?"
+		var nextRefreshUnixSeconds any
+		if args.NextRefreshUnixSeconds != nil {
+			nextRefreshUnixSeconds = *args.NextRefreshUnixSeconds
+		}
+		params = append(params, nextRefreshUnixSeconds)
+	}
+	sql += " WHERE MVIEW_ID = %?"
+	params = append(params, args.OldMViewID)
+	_, err = w.sess.Execute(ctx, sql, "mview-refresh-cutover-migrate-refresh-info", params...)
+	return errors.Trace(convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err))
+}
+
+func (w *worker) deleteMViewRefreshAlertForOutOfPlaceCutover(jobCtx *jobContext, oldMViewID int64) error {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	_, err := w.sess.Execute(ctx, sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", oldMViewID), "mview-refresh-cutover-delete-refresh-alert")
+	return err
+}
+
+func convertMViewRefreshInfoTableNotExistsErrOnOutOfPlaceCutover(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: required system table mysql.tidb_mview_refresh_info does not exist")
+	}
+	return err
+}
+
+// getMViewOutOfPlaceCutoverTable loads metadata from the DDL transaction.
+func getMViewOutOfPlaceCutoverTable(
+	jobCtx *jobContext,
+	job *model.Job,
+	id int64,
+) (schemaIDAndTableInfo, error) {
+	info, err := getTableInfoAndCancelNonExistJob(jobCtx.metaMut, job, id, job.SchemaID)
+	return schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: info}, err
 }

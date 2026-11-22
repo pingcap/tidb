@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -273,19 +275,10 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
+		idx, err := newIndex(t.physicalTableID, tblInfo, idxInfo, t.encoder.UseNewCollate())
 		if err != nil {
 			return err
 		}
-		intest.AssertFunc(func() bool {
-			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
-			// However, we have an assumption that the specific type of each element in it should always be `*index`.
-			// We have this assumption because some codes access the inner method of `*index`,
-			// and they use `asIndex` to cast `table.Index` to `*index`.
-			_, ok := idx.(*index)
-			intest.Assert(ok, "index should be type of `*index`")
-			return true
-		})
 		t.indices = append(t.indices, idx)
 	}
 	return nil
@@ -523,7 +516,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	key := t.RecordKey(h)
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -928,7 +921,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -988,6 +981,11 @@ func genIndexKeyStrs(colVals []types.Datum) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Chunk readers represent binary columns as strings with the binary collation.
+			if cv.Kind() == types.KindBytes || cv.Kind() == types.KindMysqlBit || cv.Kind() == types.KindBinaryLiteral ||
+				(cv.Kind() == types.KindString && cv.Collation() == charset.CollationBin) {
+				cvs = util.FmtNonASCIIPrintableCharToHex(cvs, len(cvs), true)
+			}
 		}
 		strVals = append(strVals, cvs)
 	}
@@ -1025,20 +1023,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if err != nil {
 			return nil, err
 		}
-		var dupErr error
 		if !skipCheck && v.Meta().Unique {
 			// Make error message consistent with MySQL.
 			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
-			colStrVals, err := genIndexKeyStrs(indexVals)
-			if err != nil {
-				return nil, err
-			}
-			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, dupErr
+				colStrVals, err := genIndexKeyStrs(indexVals)
+				if err != nil {
+					return nil, err
+				}
+				return dupHandle, kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 			}
 			return nil, err
 		}
@@ -1121,7 +1117,7 @@ func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle,
 	if err != nil {
 		return nil, rowMap, err
 	}
-	defaultVals := make([]types.Datum, len(cols))
+	defaultVals := make([]types.Datum, len(tbl.Meta().Columns))
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -1356,7 +1352,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		return nil
 	}
 
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	logutil.BgLogger().Debug("iterate records", zap.String("startKey", redact.Value(string(startKey))), zap.String("key", redact.Value(string(it.Key()))), zap.String("value", redact.Value(string(it.Value()))))
 
 	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {
@@ -1529,19 +1525,15 @@ func (t *TableCommon) UseNewCollate() bool {
 	return t.encoder.UseNewCollate()
 }
 
+// canSkip reports whether a column can be omitted from the encoded row: it is
+// represented by the handle, has an absent NULL default, or is virtual generated.
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.encoder.UseNewCollate(), t.Meta(), col, value)
-}
-
-// CanSkip is for these cases, we can skip the columns in encoded row:
-// 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that but has no origin default;
-// 3. the column is virtual generated.
-func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+	info := t.Meta()
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.IsCommonHandleColumn(info) {
+		useNewCollate := t.encoder.UseNewCollate()
 		pkIdx := FindPrimaryIndex(info)
 		for _, idxCol := range pkIdx.Columns {
 			if info.Columns[idxCol.Offset].ID != col.ID {

@@ -16,10 +16,11 @@ package executor
 
 import (
 	"context"
-	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -39,6 +41,8 @@ import (
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
 	exec.BaseExecutor
+
+	writeStats *execdetails.WriteRuntimeStats
 
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
@@ -53,16 +57,6 @@ type DeleteExec struct {
 	fkCascades map[int64][]*FKCascadeExec
 
 	ignoreErr bool
-}
-
-func addDeleteRowsColMultiply(total, delta int64) int64 {
-	if delta <= 0 || total == math.MaxInt64 {
-		return total
-	}
-	if total > math.MaxInt64-delta {
-		return math.MaxInt64
-	}
-	return total + delta
 }
 
 // Next implements the Executor Next interface.
@@ -113,11 +107,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		return errors.New("schema columns and fields mismatch")
 	}
 	memUsageOfChk := int64(0)
-	var rowsColMultiply int64
-	recordRowsColMultiply := func() {
-		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
-		rowsColMultiply = 0
-	}
 
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -129,12 +118,12 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		if chk.NumRows() == 0 {
 			break
 		}
+		recordWriteCPUWork(e.writeStats, tbl, chk.NumRows())
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				recordRowsColMultiply()
-				if err := e.doBatchDelete(ctx); err != nil {
+				if err := e.doBatchDelete(ctx, tbl); err != nil {
 					return err
 				}
 				rowCount = 0
@@ -160,15 +149,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 					continue
 				}
 			}
-			columnCount := len(datumRow)
-			if isExtraHandle {
-				columnCount--
-			}
 			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
 			if err != nil {
 				return err
 			}
-			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(columnCount))
 			rowCount++
 			datumRow = datumRow[:0]
 		}
@@ -180,14 +164,20 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
-	recordRowsColMultiply()
 	return nil
 }
 
-func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
+func (e *DeleteExec) doBatchDelete(ctx context.Context, tbl table.Table) error {
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
+	failpoint.InjectCall("afterBatchDeleteNewTxn", e.Ctx())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), tbl.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil
@@ -207,6 +197,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		handle, err := info.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, joinedRow)
 		if err != nil {
 			return err
+		}
+		// After EXCHANGE PARTITION, _tidb_rowid is only unique within a partition.
+		if pt, ok := e.tblID2Table[info.TblID].(table.PartitionedTable); ok && !pt.Meta().HasClusteredIndex() {
+			p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), joinedRow[info.Start:info.End])
+			if err != nil {
+				return err
+			}
+			handle = kv.NewPartitionHandle(p.GetPhysicalID(), handle)
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		row, exist := tblRowMap[info.TblID].Get(handle)
@@ -265,10 +263,11 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
-	var rowsColMultiply int64
 	for id, rowMap := range tblRowMap {
 		var err error
+		var processedRows int
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
+			processedRows++
 			if e.ignoreErr {
 				var ignored bool
 				ignored, err = checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[id], val.handleVal)
@@ -282,18 +281,18 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 				}
 			}
 
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
-			if err != nil {
-				return false
+			// The partition ID is only for the map key, RemoveRecord finds the partition from the row.
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				h = ph.Handle
 			}
-			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(len(val.handleVal)))
-			return true
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
+			return err == nil
 		})
+		recordWriteCPUWork(e.writeStats, e.tblID2Table[id], processedRows)
 		if err != nil {
 			return err
 		}
 	}
-	recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	return nil
 }
 
@@ -337,12 +336,19 @@ func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FK
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
+	if e.writeStats != nil {
+		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
+	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
+	e.writeStats = nil
+	if e.RuntimeStats() != nil {
+		e.writeStats = &execdetails.WriteRuntimeStats{}
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

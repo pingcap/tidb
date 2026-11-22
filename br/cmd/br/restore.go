@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -69,9 +70,6 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Need to be skipped when the cluster has TiDB type coprocessor tasks
-		conf.AdvertiseAddress = config.UnavailableIP
-
 		// No need to cache the coproceesor result
 		conf.TiKVClient.CoprCache.CapacityMB = 0
 	})
@@ -116,6 +114,9 @@ func printWorkaroundOnFullRestoreError(err error) {
 }
 
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
+	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
+		return err
+	}
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
 	}
@@ -138,6 +139,9 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 }
 
 func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
+	if err := rejectRestoreRenameFlag(command, cmdName); err != nil {
+		return err
+	}
 	cfg := task.Config{LogProgress: HasLogFile()}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
@@ -153,6 +157,15 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 	if err := task.RunRestoreTxn(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
 		log.Error("failed to restore txn kv", zap.Error(err))
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func rejectRestoreRenameFlag(command *cobra.Command, cmdName string) error {
+	renameFlag := command.Flag(task.FlagRename)
+	if renameFlag != nil && renameFlag.Changed {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported by %s", task.FlagRename, cmdName)
 	}
 	return nil
 }
@@ -200,6 +213,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -214,6 +228,7 @@ func newDBRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -227,6 +242,7 @@ func newTableRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -269,5 +285,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }

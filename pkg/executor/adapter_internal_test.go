@@ -29,11 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -47,6 +48,15 @@ import (
 type stmtStatsTestContext struct {
 	*mock.Context
 	stmtStats *stmtstats.StatementStats
+}
+
+type maxExecutionTimeTestContext struct {
+	*mock.Context
+	processInfo *sessmgr.ProcessInfo
+}
+
+func (c *maxExecutionTimeTestContext) ShowProcess() *sessmgr.ProcessInfo {
+	return c.processInfo
 }
 
 type sharedLockMemBufferForTest struct {
@@ -145,6 +155,20 @@ func TestRecordSetNextAfterFinish(t *testing.T) {
 
 	err := rs.Next(context.Background(), chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1))
 	require.Error(t, err)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestCheckMaxExecutionTimeExceededPreservesPendingKillReason(t *testing.T) {
+	sctx := &maxExecutionTimeTestContext{
+		Context: mock.NewContext(),
+		processInfo: &sessmgr.ProcessInfo{
+			Time:             time.Now().Add(-time.Hour),
+			MaxExecutionTime: 1,
+		},
+	}
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	err := checkMaxExecutionTimeExceeded(sctx)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
 }
 
@@ -283,48 +307,6 @@ func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 	require.Equal(t, normalizedPlan, topCollector.GetPlan(planDigest.Bytes()))
 }
 
-func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
-	resetTopProfilingStateForTest(t)
-	topsqlstate.EnableTopRU()
-
-	t.Run("domain ru version v2 drives top ru sampling", func(t *testing.T) {
-		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
-		testCtx := stmt.Ctx.(*stmtStatsTestContext)
-		testCtx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
-
-		vars := stmt.Ctx.GetSessionVars()
-		metrics := execdetails.NewRUV2Metrics()
-		metrics.AddPlanCnt(3)
-		vars.RUV2Metrics = metrics
-		expectedRU := metrics.TotalRU(vars.RUV2Weights(), 0, 0)
-
-		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
-
-		key := ruKeyForStmt(t, stmt)
-		m := stats.MergeRUInto()
-		require.Len(t, m, 1)
-		require.Equal(t, uint64(1), m[key].ExecCount)
-		require.InDelta(t, expectedRU, m[key].TotalRU, 1e-9)
-	})
-
-	t.Run("nil domain falls back to default ru version", func(t *testing.T) {
-		stmt, stats := newExecStmtWithStmtStatsForTest(context.Background(), t)
-
-		vars := stmt.Ctx.GetSessionVars()
-		metrics := execdetails.NewRUV2Metrics()
-		metrics.AddPlanCnt(3)
-		vars.RUV2Metrics = metrics
-
-		_ = stmt.observeStmtBeginForTopProfiling(context.Background())
-
-		key := ruKeyForStmt(t, stmt)
-		m := stats.MergeRUInto()
-		require.Len(t, m, 1)
-		require.Equal(t, uint64(1), m[key].ExecCount)
-		require.InDelta(t, 0.0, m[key].TotalRU, 1e-9)
-	})
-}
-
 // TestObserveStmtFinishedOnTopProfiling verifies stale RU exec context is cleared
 // before the first tick after re-enable.
 // Flow: begin-on -> disable -> finish -> re-enable -> tick-before-new-begin
@@ -447,6 +429,24 @@ func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint64(1), incr.ExecCount)
 	require.InDelta(t, 0.0, incr.TotalRU, 1e-9)
+}
+
+func TestRUDetailsForStatementLogPreservesUnfinalizedRU(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(newMockDomainWithRUVersion(t, rmclient.RUVersionV2), nil)
+	stmt := &ExecStmt{Ctx: ctx}
+	ruDetails := util.NewRUDetailsWith(11, 7, 20*time.Millisecond)
+
+	unfinalized := stmt.ruDetailsForStatementLog(ruDetails, nil)
+	require.Same(t, ruDetails, unfinalized)
+	require.Equal(t, 11.0, unfinalized.RRU())
+	require.Equal(t, 7.0, unfinalized.WRU())
+
+	finalizedZero := stmt.ruDetailsForStatementLog(ruDetails, []float64{0})
+	require.NotSame(t, ruDetails, finalizedZero)
+	require.Zero(t, finalizedZero.RRU())
+	require.Zero(t, finalizedZero.WRU())
+	require.Equal(t, 20*time.Millisecond, finalizedZero.RUWaitDuration())
 }
 
 type mockResourceGroupProvider struct {

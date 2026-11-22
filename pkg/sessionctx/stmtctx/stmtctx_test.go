@@ -126,11 +126,21 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 			sc.InLoadDataStmt = true
 		}), 1168},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			sc.EnableTiKVShortCircuitExpression = true
+		}), model.FlagEnableTiKVShortCircuitExpression},
 	}
 	for _, tt := range testCases {
 		got := tt.in.PushDownFlags()
 		require.Equal(t, tt.out, got)
 	}
+
+	sc := stmtctx.NewStmtCtx()
+	sc.EnableTiKVShortCircuitExpression = true
+	sc.InitFromPBFlagAndTz(0, time.UTC)
+	require.False(t, sc.EnableTiKVShortCircuitExpression)
+	sc.InitFromPBFlagAndTz(model.FlagEnableTiKVShortCircuitExpression, time.UTC)
+	require.True(t, sc.EnableTiKVShortCircuitExpression)
 }
 
 func TestWeakConsistencyRead(t *testing.T) {
@@ -467,6 +477,13 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 
 func TestResetStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
+	sc.SetFoundRows(3)
+	require.Equal(t, uint64(3), sc.FoundRows())
+	sc.ResetForRetry()
+	require.Zero(t, sc.FoundRows())
+	sc.SetFoundRows(2)
+	require.Equal(t, uint64(2), sc.FoundRows())
+	sc.SetFoundRows(3)
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
@@ -485,6 +502,9 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 
 	sc.Reset()
+	require.Zero(t, sc.FoundRows())
+	sc.SetFoundRows(1)
+	require.Equal(t, uint64(1), sc.FoundRows())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
@@ -572,6 +592,9 @@ func TestReservedRowIDAlloc(t *testing.T) {
 	require.Equal(t, int64(0), id)
 	// reset some ids
 	reserved.Reset(12, 15)
+	curBase, curMax := reserved.Current()
+	require.Equal(t, int64(12), curBase)
+	require.Equal(t, int64(15), curMax)
 	require.False(t, reserved.Exhausted())
 	id, ok = reserved.Consume()
 	require.True(t, ok)

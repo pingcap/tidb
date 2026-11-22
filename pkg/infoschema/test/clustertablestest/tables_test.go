@@ -500,14 +500,13 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
-			"0",
-			"",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
 			"null",
 			"select * from t_slim;",
+			"",
 		},
 		{"2021-09-08 14:39:54.506967",
 			"427578666238083075",
@@ -600,14 +599,13 @@ func TestSlowQuery(t *testing.T) {
 			"0.021",
 			"1",
 			"1",
-			"0",
-			"",
 			"",
 			"",
 			"",
 			"",
 			"null",
 			"INSERT INTO ...;",
+			"",
 		},
 	}
 
@@ -829,17 +827,22 @@ func TestStmtSummaryTable(t *testing.T) {
 		)
 		AND column_name IN (
 			'AVG_IA_REMOTE_READ_SEGMENT_COUNT',
+			'IA_EXEC_COUNT',
 			'MAX_IA_REMOTE_READ_SEGMENT_COUNT'
 		)
 		ORDER BY table_name, column_name
 	`).Check(testkit.Rows(
 		"CLUSTER_STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY IA_EXEC_COUNT",
 		"CLUSTER_STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
 		"CLUSTER_STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY IA_EXEC_COUNT",
 		"CLUSTER_STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
 		"STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY IA_EXEC_COUNT",
 		"STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
 		"STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY IA_EXEC_COUNT",
 		"STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
 	))
 	tk.MustQuery(`
@@ -852,6 +855,7 @@ func TestStmtSummaryTable(t *testing.T) {
 			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
 		)
 		AND column_name IN (
+			'IA_REMOTE_EXEC_COUNT',
 			'AVG_IA_READ_SEGMENT_COUNT',
 			'MAX_IA_READ_SEGMENT_COUNT'
 		)
@@ -1498,9 +1502,13 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	var ok bool
 	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
 	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
-	var beginTime = time.Now().Format(types.TimeFormat)
+	begin := time.Now()
+	beginTime := begin.Format(types.TimeFormat)
 	err = tk.QueryToErr(expectedSQLText)
 	require.NotNil(t, err)
+	require.Eventually(t, func() bool {
+		return !memory.MemoryLimitGCLast.Load().Before(begin)
+	}, 5*time.Second, 50*time.Millisecond)
 	// Check Memory Table
 	rows := tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE").Rows()
 	memoryUsageReadTime := time.Now().Format(types.TimeFormat)
