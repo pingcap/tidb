@@ -19,6 +19,7 @@ The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structura
 
 ## Surprises & Discoveries
 
+- R05 (first half, 2026-11-23): Go's `compareTaskCost` prices both tasks before checking validity, so the first candidate of every data-source search is priced (and records its relevant variables); this planner short-circuited on an invalid best task, so a single cop candidate was never priced. Fixed; the remaining half of R05 is Go's per-operator cost cache.
 - R02: Go's injected LEADING hint carries `Tables` but no `LeadingList`, so the join reorder never applies it (only `LeadingJoinOrder` is set); the Rust port injects the same table-list shape. The `binding_hint` column is `ParseHintsSet`'s normalized set (query-block names added), and explore rows render in plan order (`FlattenPhysicalPlan(p, false)`), not build side first.
 - X02: the node's DDL-pool session context answered `ExecuteInternal` through the plain `Execute` path, so internal SQL did not restore the caller's goroutine labels (Go's `ExecuteInternal` defers `SetGoroutineLabels`); two label tests caught it once the DDL sessions moved onto it.
 - R04: the fetcher runs on the thread that calls `Next` (Go's fetcher goroutine runs while `Next` blocks on `resultChannel`), and a failed worker keeps draining the chunk channel: a worker that stopped draining left the fetcher waiting on its in-flight chunk forever (the mutant hangs `TestFailpoint`).

@@ -79,13 +79,15 @@ pub fn compare_task_cost(
     cur: &Task,
     best: &Task,
 ) -> Result<bool, PlanError> {
-    if cur.invalid() {
-        return Ok(false);
+    // Go prices both tasks (`getTaskPlanCost`) before it looks at their
+    // validity, so the first candidate a search meets is priced too.
+    let cur_cost = (!cur.invalid()).then(|| coster.task_cost(cur)).transpose()?;
+    let best_cost = (!best.invalid()).then(|| coster.task_cost(best)).transpose()?;
+    match (cur_cost, best_cost) {
+        (None, _) => Ok(false),
+        (_, None) => Ok(true),
+        (Some(cur), Some(best)) => Ok(cur < best),
     }
-    if best.invalid() {
-        return Ok(true);
-    }
-    Ok(coster.task_cost(cur)? < coster.task_cost(best)?)
 }
 
 /// Everything one search shares: the id allocator the built operators draw
@@ -5661,14 +5663,14 @@ fn find_best_task_4_logical_data_source_paths(
             ordinary_candidates.push(cur);
             continue;
         }
-        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+        if compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
     }
     // The survivors of `skylinePruning` and its preferRange filter were
     // fixed by `prepare_access_paths`.
     for cur in ordinary_candidates {
-        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+        if compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
         }
     }
@@ -5694,7 +5696,7 @@ fn find_best_task_4_logical_data_source_paths(
             }
             merge_task = merge_task.into_root_task_in(ctx.allocator, ctx.expression_evaluator)?;
         }
-        if best.invalid() || compare_task_cost(ctx.coster, &merge_task, &best)? {
+        if compare_task_cost(ctx.coster, &merge_task, &best)? {
             best = merge_task;
         }
     }

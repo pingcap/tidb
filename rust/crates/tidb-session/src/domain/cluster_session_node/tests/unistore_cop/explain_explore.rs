@@ -199,15 +199,7 @@ fn test_relevant_opt_vars_and_fixes() {
         let (vars, fixes) = tk
             .plan_explore_query(tidb_executor::record_relevant_opt_vars_and_fixes, &query_of(sql))
             .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
-        let mut expected_vars = expected["Vars"].as_str().unwrap().to_owned();
-        if sql == "select a from t1 where a=1 order by b limit 10" {
-            // Register row R05: Go's findBestTask compares the TopN-pushed
-            // index-lookup cop task through getTaskPlanCost, pricing its
-            // row-id scan without isChildOfINL (a range scan); this planner
-            // compares root tasks only, so that pricing call never happens.
-            expected_vars = expected_vars.replace(" tidb_opt_table_range_scan_cost_factor", "");
-        }
-        assert_eq!(format!("[{}]", vars.join(" ")), expected_vars, "sql: {sql}");
+        assert_eq!(format!("[{}]", vars.join(" ")), expected["Vars"].as_str().unwrap(), "sql: {sql}");
         let fixes: Vec<String> = fixes.iter().map(ToString::to_string).collect();
         assert_eq!(format!("[{}]", fixes.join(" ")), expected["Fixes"].as_str().unwrap(), "sql: {sql}");
     }
