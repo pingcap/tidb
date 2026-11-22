@@ -114,7 +114,9 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
         rc_write_check_ts: bool,
         _auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
-        (!retrying).then(|| std::sync::Arc::new(RCPlanAdvisor { rc_write_check_ts }) as _)
+        (!retrying).then(|| {
+            std::sync::Arc::new(RCPlanAdvisor { rc_write_check_ts, future: crate::txn_future(&*self.txn) }) as _
+        })
     }
 
     fn on_stmt_start(
@@ -168,6 +170,7 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
 pub struct RCPlanAdvisor {
     /// Go `SessionVars.RcWriteCheckTS`.
     pub rc_write_check_ts: bool,
+    future: Option<crate::WeakTxnFuture>,
 }
 
 impl tidb_sessionctx::TxnPlanAdvisor for RCPlanAdvisor {
@@ -179,6 +182,10 @@ impl tidb_sessionctx::TxnPlanAdvisor for RCPlanAdvisor {
         let plan = plan.downcast_ref::<PhysicalPlan>()?;
         plan_skip_get_tso_from_pd(plan, self.rc_write_check_ts, insert_replace_or_on_duplicate, false)
             .then_some(true)
+    }
+
+    fn advise_warmup(&self) {
+        crate::advise_warmup(self.future.as_ref());
     }
 }
 

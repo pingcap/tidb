@@ -434,11 +434,12 @@ impl TxnManager {
         self.txn.take().map(|entered| entered.provider.into_txn())
     }
 
-    /// Go `PrepareTxnCtx` for an autocommit INSERT / UPDATE / DELETE: the
-    /// statement's implicit transaction enters pending on a timestamp future
-    /// (`prepare_autocommit_write`, Go `txnFuture`) requested now, so the
-    /// request overlaps planning; the first read, lock or the commit
-    /// activates it and records its start in `read_ts`.
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for an
+    /// autocommit INSERT / UPDATE / DELETE: the statement's implicit
+    /// transaction, entered unprepared; `AdviseWarmup` requests its
+    /// timestamp (`prepare_autocommit_write`, Go's oracle future), the
+    /// executor builder activates it (`updateForUpdateTS`) and records its
+    /// start in `read_ts`.
     fn enter_implicit_write(
         &mut self,
         pessimistic: bool,
@@ -448,9 +449,27 @@ impl TxnManager {
         options: SessionTransactionOptions,
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
-        let pending =
-            self.transactions.prepare_autocommit_write(resource_group, pessimistic, fair_locking, options.clone());
-        self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, isolation, pending, options, read_ts);
+        let oracle: OracleFuture = {
+            let transactions = Arc::clone(&self.transactions);
+            let resource_group = resource_group.to_owned();
+            let options = options.clone();
+            Box::new(move || {
+                let pending =
+                    transactions.prepare_autocommit_write(&resource_group, pessimistic, fair_locking, options);
+                oracle_opener(pending, read_ts)
+            })
+        };
+        let txn: Box<dyn OpenClusterTransaction> = Box::new(LazyClusterTransaction::new_unprepared_implicit(
+            pessimistic,
+            options,
+            self.buffer.clone(),
+            oracle,
+        ));
+        debug_assert!(self.txn.is_none(), "a transaction entered over another");
+        self.txn = Some(EnteredTxn {
+            kind: TxnKind::ImplicitWrite,
+            provider: new_provider_with_request(false, pessimistic, isolation, txn),
+        });
     }
 
     /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for an
@@ -500,22 +519,6 @@ impl TxnManager {
             kind: TxnKind::ImplicitRead,
             provider: new_provider_with_request(false, false, "", txn),
         });
-    }
-
-    fn enter_implicit(
-        &mut self,
-        kind: TxnKind,
-        pessimistic: bool,
-        isolation: &str,
-        pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
-        options: SessionTransactionOptions,
-        read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
-    ) {
-        let opener = oracle_opener(pending, read_ts);
-        let txn: Box<dyn OpenClusterTransaction> =
-            Box::new(LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener));
-        debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind, provider: new_provider_with_request(false, pessimistic, isolation, txn) });
     }
 
     /// Go `StalenessTxnContextProvider.OnInitialize`: a read-only

@@ -179,9 +179,6 @@ pub struct StatementLifecycle<'a> {
     pub follower: &'a mut dyn CatalogFollowing,
     /// What a commit reads off the server.
     pub hooks: Box<dyn CommitHooks>,
-    /// Whether the running write is one whose transaction Go's executor
-    /// builder activates before it runs.
-    pub activate_statement_txn: bool,
 }
 
 impl StatementLifecycle<'_> {
@@ -484,7 +481,7 @@ impl StatementLifecycle<'_> {
                 break Err(error);
             }
             let snapshot = {
-                match self.open_read_snapshot(shape, read_ts, resource_group, is_dml)
+                match self.open_read_snapshot(shape, is_dml)
                 {
                     Ok(snapshot) => snapshot,
                     Err(error) => break Err(error),
@@ -500,42 +497,6 @@ impl StatementLifecycle<'_> {
                 let _ = self.finish_snapshot();
                 break Err(error);
             }
-            // Go's executor builder activates an autocommit INSERT, UPDATE or
-            // DELETE before it runs (`updateForUpdateTS` ->
-            // `GetStmtForUpdateTS`): the statement has its start timestamp --
-            // the one it commits at, and the one its slow log and
-            // `tidb_last_query_info` report -- even when it never reads or
-            // fails before reading. Asking the deferred snapshot for it is
-            // that activation; a failed open is reported by the read or
-            // commit that follows.
-            if self.activate_statement_txn
-                && self.txn.explicit().is_none()
-                && shape != StatementReadShape::AutocommitWrite
-            {
-                let _ = self
-                    .slot
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .start_ts();
-            }
-            // Go's executor builder activates a DML's transaction before the
-            // statement runs (`updateForUpdateTS` -> `GetStmtForUpdateTS`):
-            // a pending `autocommit = 0` transaction, or an autocommit
-            // write's implicit one, which binds the SQL buffer while it is
-            // still empty -- so the statement's writes and its pessimistic
-            // locks land in the one buffer its commit publishes -- and gives
-            // a statement that never reads its `TxnCtx.StartTS`.
-            if self.activate_statement_txn || autocommit_write {
-                if let Some(transaction) = self.txn.current() {
-                    if let Err(error) = transaction.activate() {
-                        let _ = self.finish_snapshot();
-                        break Err(SqlQueryError::unknown(error));
-                    }
-                }
-            }
-            if autocommit_write {
-                savepoint = self.txn.buffer().checkpoint();
-            }
             // Go `handlePessimisticDML` / `handlePessimisticSelectForUpdate`:
             // `OnPessimisticStmtStart` before the statement executes (a no-op
             // for an optimistic provider).
@@ -544,6 +505,14 @@ impl StatementLifecycle<'_> {
                 break Err(error);
             }
             let outcome = run(&mut self.session);
+            // Go `LazyTxn.initStmtBuf`: the statement checkpoint is the one
+            // the implicit transaction took on the buffer as the executor
+            // builder activated it (`updateForUpdateTS`).
+            if autocommit_write {
+                if let Some(checkpoint) = self.txn.current().and_then(|transaction| transaction.stmt_checkpoint()) {
+                    savepoint = checkpoint;
+                }
+            }
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
@@ -1032,8 +1001,6 @@ impl StatementLifecycle<'_> {
     pub fn open_read_snapshot(
         &mut self,
         shape: StatementReadShape,
-        read_ts: &transactions::StatementReadTs,
-        resource_group: &str,
         is_dml: bool,
     ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
         // The explicit transaction, or an autocommit statement's implicit
@@ -1173,7 +1140,7 @@ impl StatementLifecycle<'_> {
         };
         let setup = self
             .enter_implicit_transaction(false, false, resource_group, &statement.read_ts)
-            .and_then(|()| self.open_read_snapshot(shape, &statement.read_ts, resource_group, false))
+            .and_then(|()| self.open_read_snapshot(shape, false))
             .and_then(|snapshot| {
                 drop(self.bind(snapshot));
                 self.prepare_snapshot()

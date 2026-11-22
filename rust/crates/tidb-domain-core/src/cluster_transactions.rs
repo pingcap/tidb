@@ -654,6 +654,13 @@ pub trait OpenClusterTransaction: Send {
     fn txn_future_preparer(&self) -> Option<Arc<dyn TxnFuturePreparer>> {
         None
     }
+
+    /// Go `LazyTxn.initStmtBuf` at activation: the statement checkpoint an
+    /// autocommit write's implicit transaction took on the buffer as it
+    /// activated, `None` before that (and for any other transaction).
+    fn stmt_checkpoint(&self) -> Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint> {
+        None
+    }
 }
 
 /// Go `baseTxnContextProvider`'s steps on the session's pending transaction

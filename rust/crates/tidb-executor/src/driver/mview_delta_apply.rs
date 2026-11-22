@@ -215,6 +215,8 @@ pub fn run_mview_complete_delta_apply(
     // source, published with the runtime stats its executors collect.
     let mut root = plan_mview_complete_delta_apply(plan, catalog, current_db, ctx)?;
     crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
+    // Go `buildMViewCompleteDeltaApply`'s `updateForUpdateTS`.
+    crate::isolation_advise::update_for_update_ts(ctx)?;
     let dml = super::physical_builder::DmlExec::new(&root, ctx);
     let root_id = i64::from(root.id());
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root_plan) = &mut root else {

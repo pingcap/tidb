@@ -2,19 +2,11 @@
   "date": "2026-11-21",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports. Known source-confirmed gaps only, not an exhaustive acceptance claim.",
   "counts": {
-    "unresolved": 4,
+    "unresolved": 3,
     "open": 0,
-    "partial": 4
+    "partial": 3
   },
   "findings": [
-    {
-      "id": "X05",
-      "status": "partial",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "`pkg/sessiontxn` is ported as `tidb-sessiontxn` (2026-11-19): `TxnManager` holds one provider per transaction (`Optimistic`, `PessimisticRR`, `PessimisticRC`, `PessimisticSerializable`, `StalenessTxnContextProvider`), which owns the transaction and answers each statement's snapshot, `OnStmtStart` (RCCheckTS), `OnStmtRetry` (the for-update timestamp) and `OnStmtErrorForNextAction` (pessimistic lock errors, the after-query retry). Done 2026-11-22: every transaction enters through `TxnManager::enter_new_txn(EnterNewTxnRequest)` (Go `EnterNewTxn` -> `newProviderWithRequest` -> `OnInitialize`: `WithBeginStmt` activates, `BeforeStmt` enters lazy, `WithReplaceProvider` is a statement's `AS OF`); an autocommit read's implicit transaction enters unprepared, and the optimistic provider's `AdviseOptimizeWithPlan` decides the `MaxUint64` point get from the PLAN (`tidb_planner::common_plans::is_point_get_with_pk_or_unique_key_by_auto_commit`, with `PointGetPlan.TblInfo`) through `forcePrepareConstStartTS` (`TxnFuturePreparer`, `MaxTsReadTransaction`), then `AdviseWarmup` requests the timestamp; the AST `AutocommitPointGet` shape and the dead `declare_autocommit_point_get` chain are gone, and plan advisors are published for implicit transactions too. Remaining: an autocommit INSERT / UPDATE / DELETE's implicit transaction requests its timestamp when it is entered and the lifecycle activates it before the statement plans (`attempt_statement_inner`'s `activate_statement_txn || autocommit_write` arm), where Go requests it at `AdviseWarmup` and activates it in the executor builder (`updateForUpdateTS`) after `AdviseOptimizeWithPlanAndThenWarmUp`.",
-      "rust_evidence": "`rust/crates/tidb-session/src/txn_manager.rs` (`enter_new_txn`), `statement_lifecycle.rs` (`attempt_statement_inner`)",
-      "go_owner": "`pkg/sessiontxn` (`interface.go`, `txn_manager.go`), `pkg/sessiontxn/isolation`, `pkg/sessiontxn/staleread`, `pkg/sessiontxn/internal`, `pkg/session/txnmanager.go`, `pkg/executor/builder.go` (`getSnapshot`)"
-    },
     {
       "id": "X09",
       "status": "partial",
@@ -40,7 +32,7 @@
       "go_owner": "`pkg/ddl/materialized_view.go`, `pkg/ddl/mview_*.go`, `pkg/planner/mview`, `pkg/executor/mviewdeltamergeagg`, `pkg/util/mviewutil`, `ImportStepQuery` in `pkg/dxf/importinto` (Go master)"
     }
   ],
-  "unresolved": 4,
+  "unresolved": 3,
   "open": 0,
-  "partial": 4
+  "partial": 3
 }

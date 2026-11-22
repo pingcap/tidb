@@ -87,7 +87,6 @@ pub(crate) fn create_cross_ks_session_over(
             loaded.schema_meta_version(),
             loaded.skipped_tables().to_vec(),
         ),
-        activate_statement_txn: false,
         commit_hooks: Box::new(move |session, schema_version| {
             Box::new(NodeCommitHooks {
                 bindings: Arc::default(),

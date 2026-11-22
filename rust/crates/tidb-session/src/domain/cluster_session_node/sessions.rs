@@ -297,7 +297,6 @@ impl DomainSessions for Domain {
                     })
                 }
             }),
-            activate_statement_txn: false,
             buffer: buffer.clone(),
             connection_id: connection_id,
             ok_packet: WriteOutcome::default(),

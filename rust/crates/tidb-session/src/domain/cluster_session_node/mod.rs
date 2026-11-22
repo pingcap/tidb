@@ -362,10 +362,6 @@ pub struct NodeConn {
     pub(crate) slot: crate::statement_lifecycle::SnapshotSlot,
     /// The catalog the session follows.
     follower: catalog_follower::CatalogFollower,
-    /// Whether the running write is one whose transaction Go's executor
-    /// builder activates before it runs (`updateForUpdateTS` ->
-    /// `GetStmtForUpdateTS`).
-    activate_statement_txn: bool,
     commit_hooks: crate::store_session::CommitHooksFactory,
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
@@ -710,7 +706,6 @@ impl<'s> ClusterServerSession<'s> {
             slot: &node.slot,
             follower: &mut node.follower,
             hooks,
-            activate_statement_txn: node.activate_statement_txn,
         }
     }
 
@@ -902,41 +897,6 @@ impl<'s> ClusterServerSession<'s> {
             .with_bound_statement(shape, resource_group, false, false, run)
     }
 
-    /// Whether Go's executor builder activates `stmt`'s transaction before
-    /// the statement runs: `buildInsert` (INSERT and REPLACE), `buildUpdate`
-    /// and `buildDelete` call `updateForUpdateTS`, whose
-    /// `GetStmtForUpdateTS` activates it. A text `EXECUTE` builds the
-    /// statement it names.
-    #[must_use]
-    pub fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
-        let stmt = match stmt {
-            Stmt::Session(session) => match session.as_ref() {
-                tidb_ast::SessionStmt::Execute { name, .. } => {
-                    match self.session.prepared_statement_node(name) {
-                        Some(prepared) => prepared,
-                        None => return false,
-                    }
-                }
-                _ => return false,
-            },
-            stmt => stmt,
-        };
-        // Go master's `buildMViewCompleteDeltaApply` calls
-        // `updateForUpdateTS` too.
-        matches!(
-            stmt,
-            Stmt::Dml(dml) if matches!(
-                dml.as_ref(),
-                tidb_ast::DmlStmt::Insert(_)
-                    | tidb_ast::DmlStmt::Update(_)
-                    | tidb_ast::DmlStmt::Delete(_)
-            )
-        ) || matches!(
-            stmt,
-            Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::RefreshMaterializedViewImplement(_))
-        )
-    }
-
     /// [`StatementReadShape::AutocommitWrite`] for an autocommit INSERT,
     /// UPDATE or DELETE (Go `isDMLStatement`): it runs in the implicit
     /// transaction (Go's `LazyTxn`) that `decideTxnMode` makes optimistic or
@@ -975,7 +935,6 @@ impl<'s> ClusterServerSession<'s> {
         // `pkg/executor/point_get.go:612-624`): the executor locks the keys its
         // plan names through `TableStorage::lock_keys_for_read`, so nothing is
         // classified or locked here before the statement compiles.
-        self.node.activate_statement_txn = self.activates_txn_at_build(stmt);
         let shape = self.autocommit_dml_shape(stmt).unwrap_or(StatementReadShape::Unknown);
         // Go `executorBuilder.getSnapshotTS`: an INSERT / UPDATE / DELETE,
         // and Go master's materialized view merge and delta apply
@@ -1007,7 +966,6 @@ impl<'s> ClusterServerSession<'s> {
                 )),
             },
         );
-        self.node.activate_statement_txn = false;
         let affected_rows = attempt?;
         self.session.add_statement_read_keys(affected_rows);
         Ok((affected_rows, self.session.statement_insert_id()))
@@ -2460,8 +2418,6 @@ impl<'s> ClusterServerSession<'s> {
         }
         let observed_write = is_write && effective.is_some();
         self.session.set_binary_prepared_execution(true);
-        self.node.activate_statement_txn =
-            is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
         if let Some(stmt) = effective {
             self.session.set_statement_telemetry_info(stmt);
         }
@@ -2529,7 +2485,6 @@ impl<'s> ClusterServerSession<'s> {
                 prepared.set_schema_version(schema_version);
             }
         }
-        self.node.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         self.session.close_context_of_prepared_stmt();
         self.session.update_telemetry_metric();

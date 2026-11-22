@@ -77,6 +77,13 @@ struct Pending {
     /// commit, which are handed it explicitly.
     bind_only_if_empty: bool,
     checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    /// Go `enterFairLockingOnValid`: the statement's fair locking, set while
+    /// the transaction was pending, for the activation to start.
+    fair_locking_on_valid: Option<bool>,
+    /// Go `LazyTxn.initStmtBuf` at `changePendingToValid`: an autocommit
+    /// write's statement checkpoint, taken on the buffer as the transaction
+    /// activates.
+    stmt_checkpoint: Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint>,
     /// The activation's own failure, reported by every later call that needs
     /// the transaction.
     failed: Option<String>,
@@ -117,6 +124,12 @@ impl Shared {
                     if !state.bind_only_if_empty || buffer.is_empty() {
                         transaction.bind_mutation_buffer(buffer);
                     }
+                    if state.bind_only_if_empty {
+                        state.stmt_checkpoint = Some(buffer.checkpoint());
+                    }
+                }
+                if let Some(enabled) = state.fair_locking_on_valid.take() {
+                    transaction.set_fair_locking(enabled);
                 }
                 if let Some(checker) = &state.checker {
                     let mut transaction = transaction;
@@ -191,6 +204,12 @@ impl TxnFuturePreparer for Shared {
     }
 }
 
+/// The opener slot of a transaction entered unprepared, replaced before
+/// any activation (`Shared::prepare_in`).
+fn unprepared_opener() -> TransactionOpener {
+    Box::new(|_| Err("the unprepared transaction has no opener".to_owned()))
+}
+
 /// A transaction that has entered but not yet activated; see the module
 /// documentation.
 pub struct LazyClusterTransaction {
@@ -219,6 +238,8 @@ impl LazyClusterTransaction {
                     buffer: Some(buffer),
                     bind_only_if_empty: false,
                     checker: None,
+                    fair_locking_on_valid: None,
+                    stmt_checkpoint: None,
                     failed: None,
                     open: None,
                 }),
@@ -261,18 +282,31 @@ impl LazyClusterTransaction {
         oracle: OracleFuture,
         constant: ConstantFuture,
     ) -> Self {
-        let transaction = Self::new_implicit_read(
-            options,
-            buffer,
-            Box::new(|_| Err("the unprepared transaction has no opener".to_owned())),
-        );
+        Self::new_implicit_read(options, buffer, unprepared_opener()).unprepared(oracle, Some(constant))
+    }
+
+    /// Go `EnterNewTxnBeforeStmt` for an autocommit INSERT / UPDATE /
+    /// DELETE: the implicit transaction entered unprepared; the provider's
+    /// warm-up (`AdviseWarmup`) requests its timestamp, and the executor
+    /// builder activates it (`updateForUpdateTS`).
+    #[must_use]
+    pub fn new_unprepared_implicit(
+        pessimistic: bool,
+        options: SessionTransactionOptions,
+        buffer: MutationBuffer,
+        oracle: OracleFuture,
+    ) -> Self {
+        Self::new_implicit(pessimistic, options, buffer, unprepared_opener()).unprepared(oracle, None)
+    }
+
+    fn unprepared(self, oracle: OracleFuture, constant: Option<ConstantFuture>) -> Self {
         {
-            let mut state = transaction.shared.state();
+            let mut state = self.shared.state();
             state.opener = None;
             state.oracle_future = Some(oracle);
-            state.constant_future = Some(constant);
+            state.constant_future = constant;
         }
-        transaction
+        self
     }
 
     /// A snapshot that opens the transaction at its first read and is then
@@ -460,9 +494,15 @@ impl OpenClusterTransaction for LazyClusterTransaction {
     }
 
     fn set_fair_locking(&self, enabled: bool) {
-        if let Some(transaction) = self.shared.state().open.as_ref() {
-            transaction.set_fair_locking(enabled);
+        let mut state = self.shared.state();
+        match state.open.as_ref() {
+            Some(transaction) => transaction.set_fair_locking(enabled),
+            None => state.fair_locking_on_valid = Some(enabled),
         }
+    }
+
+    fn stmt_checkpoint(&self) -> Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint> {
+        self.shared.state().stmt_checkpoint
     }
 
     fn advance_for_update_ts(&self) -> Result<u64, String> {

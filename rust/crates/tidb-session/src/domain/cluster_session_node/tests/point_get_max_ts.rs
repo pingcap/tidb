@@ -1199,3 +1199,21 @@ fn replica_read_serves_only_read_only_statements_off_check_ts() {
     let _ = rows(&mut session, "SELECT /*+ read_consistent_replica() */ v FROM t WHERE v > 0");
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
 }
+
+/// Go activates an autocommit write's transaction in the executor builder
+/// (`updateForUpdateTS`), after the statement compiled: a statement the
+/// planner refuses never takes a timestamp.
+#[test]
+fn an_autocommit_write_refused_while_planning_takes_no_timestamp() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+
+    let opens = opens_of(&node, || {
+        let error = session
+            .node_conn()
+            .execute_write("UPDATE t SET nosuch = 1 WHERE id = 1")
+            .expect_err("unknown column");
+        assert!(format!("{error:?}").contains("1054"), "{error:?}");
+    });
+    assert_eq!(opens, Opens { timestamped: 0, max_ts: 0 });
+}

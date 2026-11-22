@@ -153,6 +153,47 @@ pub trait TxnContext: isolation::ProviderSessionVars {
     fn locking_read(&self) -> bool;
 }
 
+/// The provider's pending transaction future, held weakly by its advisor:
+/// the statement context that carries the advisor outlives the transaction
+/// (a retained plan keeps it), and the provider never outlives its
+/// transaction.
+pub type WeakTxnFuture = std::sync::Weak<dyn tidb_domain_core::cluster_transactions::TxnFuturePreparer>;
+
+/// The transaction's future, weakly.
+#[must_use]
+pub fn txn_future(txn: &dyn OpenClusterTransaction) -> Option<WeakTxnFuture> {
+    txn.txn_future_preparer().map(|future| std::sync::Arc::downgrade(&future))
+}
+
+/// Go `baseTxnContextProvider.AdviseWarmup` -> `prepareTxn`: requests the
+/// transaction's timestamp unless it is prepared.
+pub fn advise_warmup(future: Option<&WeakTxnFuture>) {
+    if let Some(future) = future.and_then(std::sync::Weak::upgrade) {
+        let _ = future.prepare_txn();
+    }
+}
+
+/// Go `baseTxnContextProvider`'s advice: no plan optimization, and the
+/// warm-up.
+#[derive(Debug)]
+pub struct BaseTxnAdvisor {
+    future: WeakTxnFuture,
+}
+
+impl tidb_sessionctx::TxnPlanAdvisor for BaseTxnAdvisor {
+    fn advise_optimize_with_plan(
+        &self,
+        _plan: &dyn std::any::Any,
+        _insert_replace_or_on_duplicate: bool,
+    ) -> Option<bool> {
+        None
+    }
+
+    fn advise_warmup(&self) {
+        advise_warmup(Some(&self.future));
+    }
+}
+
 /// Go `TxnContextProvider`: one transaction's context. It owns the
 /// transaction (Go's `p.txn` and the session `LazyTxn` it activates). The
 /// default bodies are Go's `baseTxnContextProvider` methods that a provider
@@ -274,7 +315,8 @@ pub trait TxnContextProvider: Send {
         _rc_write_check_ts: bool,
         _auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
-        None
+        let future = txn_future(self.txn())?;
+        Some(std::sync::Arc::new(BaseTxnAdvisor { future }))
     }
     /// Go `ActivateTxn`: the transaction, activated.
     ///

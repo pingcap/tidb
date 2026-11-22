@@ -17,7 +17,7 @@
 use super::{txn_start_ts, ProviderSessionVars};
 use crate::{EnterNewTxnType, TxnContext, TxnContextProvider};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tidb_domain_core::cluster_transactions::{OpenClusterTransaction, TxnFuturePreparer};
+use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
 use tidb_planner::common_plans::is_point_get_with_pk_or_unique_key_by_auto_commit;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::cluster_storage::ClusterSnapshot;
@@ -76,7 +76,7 @@ impl TxnContextProvider for OptimisticTxnContextProvider {
         _rc_write_check_ts: bool,
         auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
-        let future = std::sync::Arc::downgrade(&self.txn.txn_future_preparer()?);
+        let future = crate::txn_future(&*self.txn)?;
         Some(std::sync::Arc::new(OptimisticPlanAdvisor {
             future,
             auto_commit_txn,
@@ -93,7 +93,7 @@ pub struct OptimisticPlanAdvisor {
     /// The provider's transaction future, held weakly: the statement context
     /// that carries this advisor outlives the transaction (a retained plan
     /// keeps it), and the provider never outlives its transaction.
-    future: std::sync::Weak<dyn TxnFuturePreparer>,
+    future: crate::WeakTxnFuture,
     /// Go `IsAutoCommitTxn(vars)`.
     auto_commit_txn: bool,
     /// Go `optimizeWithMaxTS`.
@@ -141,9 +141,7 @@ impl tidb_sessionctx::TxnPlanAdvisor for OptimisticPlanAdvisor {
 
     // Go `baseTxnContextProvider.AdviseWarmup` -> `prepareTxn`.
     fn advise_warmup(&self) {
-        if let Some(future) = self.future.upgrade() {
-            let _ = future.prepare_txn();
-        }
+        crate::advise_warmup(Some(&self.future));
     }
 }
 

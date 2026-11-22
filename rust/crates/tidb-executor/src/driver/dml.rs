@@ -176,6 +176,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
         );
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
+    crate::isolation_advise::update_for_update_ts(ctx)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution(if insert.replace {
         "*executor.ReplaceExec.Next"
@@ -3213,6 +3214,7 @@ pub fn run_update_stmt_with_physical(
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
+    crate::isolation_advise::update_for_update_ts(ctx)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
     let Some(plan) = physical_plan else {
@@ -4644,6 +4646,7 @@ pub fn run_delete_stmt_with_physical(
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
+    crate::isolation_advise::update_for_update_ts(ctx)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");
     let dml = physical_plan

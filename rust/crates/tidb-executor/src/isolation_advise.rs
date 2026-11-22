@@ -38,3 +38,14 @@ pub(crate) fn advise_optimize_with_plan(
     // Go `AdviseOptimizeWithPlanAndThenWarmUp`.
     advisor.advise_warmup();
 }
+
+/// Go `executorBuilder.updateForUpdateTS` (`buildInsert`, `buildUpdate`,
+/// `buildDelete`): `GetStmtForUpdateTS`, which activates the statement's
+/// transaction -- after `AdviseOptimizeWithPlanAndThenWarmUp`, so a kept
+/// for-update timestamp is not fetched again.
+pub(crate) fn update_for_update_ts(ctx: &crate::StmtContext) -> Result<(), crate::DriverError> {
+    if let Some(store) = ctx.txn_store() {
+        store.stmt_for_update_ts()?;
+    }
+    Ok(())
+}

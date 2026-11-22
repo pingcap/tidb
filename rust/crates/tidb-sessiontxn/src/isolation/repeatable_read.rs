@@ -112,7 +112,7 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
         _rc_write_check_ts: bool,
         _auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
-        Some(std::sync::Arc::new(RRPlanAdvisor))
+        Some(std::sync::Arc::new(RRPlanAdvisor { future: crate::txn_future(&*self.txn) }))
     }
 
     fn on_stmt_start(
@@ -152,7 +152,9 @@ impl TxnContextProvider for PessimisticRRTxnContextProvider {
 /// (or a write whose reads are all point gets) keeps the current for-update
 /// timestamp (`optimizeForNotFetchingLatestTS`).
 #[derive(Debug)]
-pub struct RRPlanAdvisor;
+pub struct RRPlanAdvisor {
+    future: Option<crate::WeakTxnFuture>,
+}
 
 impl tidb_sessionctx::TxnPlanAdvisor for RRPlanAdvisor {
     fn advise_optimize_with_plan(
@@ -162,6 +164,10 @@ impl tidb_sessionctx::TxnPlanAdvisor for RRPlanAdvisor {
     ) -> Option<bool> {
         let plan = plan.downcast_ref::<PhysicalPlan>()?;
         not_need_get_latest_ts_from_pd(plan, false).then_some(false)
+    }
+
+    fn advise_warmup(&self) {
+        crate::advise_warmup(self.future.as_ref());
     }
 }
 
