@@ -28,14 +28,14 @@ partition by range (year(dob)) (
 
 # test information_schema.schemata_extensions
 desc information_schema.schemata_extensions;
-select * from information_schema.schemata_extensions;
-create schema aa;
-create schema bb;
-create schema cc;
-alter schema bb read only 1;
-select * from information_schema.schemata_extensions;
-alter schema bb read only 0;
-select * from information_schema.schemata_extensions;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
+create schema db_read_only_meta_a;
+create schema db_read_only_meta_b;
+create schema db_read_only_meta_c;
+alter schema db_read_only_meta_b read only 1;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
+alter schema db_read_only_meta_b read only 0;
+select * from information_schema.schemata_extensions where schema_name in ('db_read_only', 'db_read_only_1', 'db_read_only_meta_a', 'db_read_only_meta_b', 'db_read_only_meta_c') order by schema_name;
 
 # DDL can NOT be executed in read-only mode
 alter schema db_read_only read only 1;
@@ -45,9 +45,10 @@ alter schema db_read_only read only 1;
 alter database db_read_only charset gbk;
 -- error 3989
 alter database db_read_only collate utf8mb4_roman_ci;
-create placement policy p1 followers=4;
+create placement policy db_read_only_policy followers=4;
 -- error 3989
-alter database db_read_only placement policy p1;
+alter database db_read_only placement policy db_read_only_policy;
+drop placement policy db_read_only_policy;
 -- error 3989
 alter database db_read_only set tiflash replica 1;
 -- error 3989
@@ -101,12 +102,9 @@ alter table members truncate partition p1980;
 -- error 3989
 alter table members add partition (partition `p1990to2010` values less than (2010));
 -- error 3989
-alter table members reorganize partition `p1990to2010` into
-(partition p1990 values less than (2000),
- partition p2000 values less than (2010),
- partition p2010 values less than (2020),
- partition p2020 values less than (2030),
- partition pMax values less than (maxvalue));
+alter table members reorganize partition p1990 into
+(partition p1990_1995 values less than (1995),
+ partition p1995_2000 values less than (2000));
 
 # rename table
 -- error 3989
@@ -151,6 +149,10 @@ alter table t compact tiflash replica;
 # finish test
 alter schema db_read_only read only 0;
 alter schema db_read_only_1 read only 0;
+# The blocked REORGANIZE statement is valid once the database is writable.
+alter table members reorganize partition p1990 into
+(partition p1990_1995 values less than (1995),
+ partition p1995_2000 values less than (2000));
 
 
 ### DML can't be executed in read-only mode
@@ -194,7 +196,8 @@ use db1;
 insert into t1 values(1, 1);
 -- error 3989
 insert into t1 select * from t2;
-insert into db2.t1 select * from t1; # pass
+# A writable target is allowed.
+insert into db2.t1 select * from t1;
 -- error 3989
 insert into t1 table t2;
 -- error 3989
@@ -229,7 +232,7 @@ delete db2.t2 from db1.t1, db2.t2;
 -- error 3989
 delete db1.t1 from db1.t1, db2.t2;
 -- error 3989
-delete t1 from t1, t1 as t2 where t1.b = t2.b and t1.a > t2.a;
+delete t1 from t1, t1 as t2 where t1.a = t2.a and t1.id > t2.id;
 -- error 3989
 delete from t1,t2,t3 using t1,t2,t3 where t3.a = 1;
 -- error 3989
@@ -249,8 +252,9 @@ update temp set a = 1;
 -- error 3989
 update t1, t2 set t1.a = 1, t2.a = 1 where t1.a = t2.a;
 -- error 3989
-update t1 join db2.t2 set t1.a=1 where t1.b=db2.t2.b;
-analyze table t1; #pass
+update t1 join db2.t2 set t1.a=1 where t1.id=db2.t2.id;
+# ANALYZE is allowed.
+analyze table t1;
 -- error 3989
 with cte as (select * from t1) update t2 set a = 1 where t2.a in (select a from cte);
 
@@ -313,6 +317,9 @@ update db2.parent_3 set id = 10;
 
 # finish test
 alter schema db1 read only 0;
+# The blocked joined DELETE and UPDATE have valid columns and syntax.
+delete t1 from t1, t1 as t2 where t1.a = t2.a and t1.id > t2.id;
+update t1 join db2.t2 set t1.a=1 where t1.id=db2.t2.id;
 
 ## test prepare/execute statement in read only mode
 drop database if exists read_only;
@@ -334,8 +341,9 @@ set @a = 1;
 set @b = 2;
 alter schema read_only read only 1;
 
+# Unlike MySQL, TiDB rejects preparing writes in read-only mode.
 -- error 3989
-prepare stmt from 'insert into t1 values(?, ?)';  # different from mysql, mysql allows prepare in read only mode
+prepare stmt from 'insert into t1 values(?, ?)';
 -- error 3989
 execute stmt_insert using @a, @b;
 -- error 3989
@@ -612,3 +620,14 @@ admin cleanup index ro_maintenance.t idx;
 revoke RESTRICTED_REPLICA_WRITER_ADMIN on *.* from 'root'@'%';
 alter database ro_maintenance read only = 0;
 drop database ro_maintenance;
+
+# Restore and remove all schemas created by the earlier DDL and DML cases.
+use test;
+drop database read_only;
+drop database db1;
+drop database db2;
+drop database db_read_only;
+drop database db_read_only_1;
+drop database db_read_only_meta_a;
+drop database db_read_only_meta_b;
+drop database db_read_only_meta_c;

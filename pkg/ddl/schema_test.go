@@ -764,7 +764,7 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 			defer func() {
 				tk1.Session().RollbackTxn(context.Background())
 				cancel()
-				wg.Wait()
+				waitSchemaReadOnlyWorkers(t, &wg, store)
 			}()
 			wg.Add(1)
 			go func() {
@@ -789,9 +789,18 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 			select {
 			case <-observed:
 				observationSucceeded = true
+			case err := <-alterDone:
+				t.Fatalf("ALTER completed before COMMIT: %v", err)
 			case <-timer.C:
 			case <-ctx.Done():
 				t.Fatal("transaction observation exceeded the deadline")
+			}
+			if observe {
+				select {
+				case err := <-alterDone:
+					t.Fatalf("ALTER completed before COMMIT: %v", err)
+				default:
+				}
 			}
 			tk1.MustExec("commit")
 			select {

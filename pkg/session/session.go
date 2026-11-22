@@ -5021,7 +5021,7 @@ func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int
 	if sv.TxnCtx == nil {
 		return
 	}
-	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+	sv.TxnCtx.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
 			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {

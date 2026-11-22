@@ -101,7 +101,9 @@ type jobContext struct {
 	stepCtx              context.Context
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
-	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// A failed read-only metadata step must discard all writes before saving job progress.
+	mustRollbackTxnOnError bool
+	inInnerRunOneJobStep   bool // Only used for multi-schema change DDL job.
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -578,6 +580,7 @@ func (w *worker) transitOneJobStep(
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
+	jobCtx.mustRollbackTxnOnError = false
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
@@ -628,7 +631,7 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
-	if job.IsCancelled() {
+	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(jobCtx, job)
@@ -639,7 +642,27 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
+	if (runJobErr != nil || job.IsCancelled()) && jobCtx.mustRollbackTxnOnError {
+		w.sess.Rollback()
+		txn, err = w.prepareTxn(job)
+		if err != nil {
+			jobCtx.unlockSchemaVersion(job.ID)
+			return 0, err
+		}
+		// Rollback ends the transaction checked above. Recheck the job in the
+		// fresh transaction before overwriting concurrent cancel/pause requests.
+		currBytes, err = jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+		if err != nil || !bytes.Equal(currBytes, jobW.Bytes) {
+			w.sess.Rollback()
+			jobCtx.unlockSchemaVersion(job.ID)
+			if err != nil {
+				return 0, err
+			}
+			return 0, errors.New("job meta changed by others")
+		}
+		jobCtx.metaMut = meta.NewMutator(txn)
+		schemaVer = 0
+	} else if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
 		// If the running job meets an error
 		// and the job state is rolling back, it means that we have already handled this error.
 		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
@@ -727,7 +750,7 @@ func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 // countForPanic records the error count for DDL job.
 func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
-	if job.State == model.JobStateRollingback {
+	if job.State == model.JobStateRollingback && !needsSchemaReadOnlyRollback(job) {
 		job.State = model.JobStateCancelled
 	} else {
 		job.State = model.JobStateCancelling
@@ -741,7 +764,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	}
 	errorCount := variable.GetDDLErrorCountLimit()
 
-	if job.ErrorCount > errorCount {
+	if job.ErrorCount > errorCount && !needsSchemaReadOnlyRollback(job) {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
 		logger.Warn(msg)
 		job.Error = toTError(errors.New(msg))
@@ -816,6 +839,7 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
+			err = errors.New("panic in handling DDL job")
 			w.countForPanic(jobCtx, job)
 		}, false)
 
