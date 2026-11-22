@@ -1708,3 +1708,74 @@ fn test_client_errors() {
     drop(reader);
     let _ = acceptor.join();
 }
+
+/// Go `Server.checkConnectionCount`, which `openSession` runs while it reads
+/// the client's handshake response: a connection over `Instance.MaxConnections`
+/// (the registered clients, read live, so `SET GLOBAL max_connections`
+/// applies) is answered `1040 Too many connections` with the negotiated
+/// SQLSTATE after the initial handshake, and the error counts under the
+/// connecting user.
+#[test]
+fn max_connections_is_checked_when_the_session_opens() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
+    let acceptor = std::thread::spawn(move || {
+        let mut served = Vec::new();
+        for _ in 0..3 {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            let factory = Arc::clone(&factory);
+            let store = Arc::clone(&store);
+            let tracker = Arc::clone(&tracker);
+            served.push(std::thread::spawn(move || {
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+            }));
+        }
+        for connection in served {
+            let _ = connection.join();
+        }
+    });
+    tidb_config::config_tree::config::update_global(|c| c.instance.max_connections = 1);
+
+    let mut first = TcpStream::connect(address).unwrap();
+    let mut first_reader = PacketReader::new(first.try_clone().unwrap());
+    authenticate(&mut first, &mut first_reader, "root", b"rootpw");
+
+    let mut second = TcpStream::connect(address).unwrap();
+    let mut second_reader = PacketReader::new(second.try_clone().unwrap());
+    let reply = try_authenticate(&mut second, &mut second_reader, "root", b"rootpw");
+    assert_eq!(reply[0], 0xff, "over the limit must be an ERR: {reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1040);
+    assert_eq!(&reply[3..9], b"#08004");
+    assert_eq!(String::from_utf8_lossy(&reply[9..]), "Too many connections");
+    let rows = run_query(
+        &mut first,
+        &mut first_reader,
+        "SELECT error_count FROM information_schema.client_errors_summary_by_user \
+         WHERE error_number = 1040 AND user = 'root'",
+    );
+    assert_eq!(rows, vec![vec!["1".to_owned()]]);
+
+    // The limit is read when the session opens.
+    run_write(&mut first, &mut first_reader, "SET GLOBAL max_connections = 0");
+    let mut third = TcpStream::connect(address).unwrap();
+    let mut third_reader = PacketReader::new(third.try_clone().unwrap());
+    authenticate(&mut third, &mut third_reader, "root", b"rootpw");
+
+    for (client, reader) in [(first, first_reader), (second, second_reader), (third, third_reader)] {
+        let _ = client.shutdown(std::net::Shutdown::Both);
+        drop(reader);
+    }
+    let _ = acceptor.join();
+}

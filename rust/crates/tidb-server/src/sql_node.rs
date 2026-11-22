@@ -129,6 +129,8 @@ pub struct ConnectionTracker {
     pub(crate) command_limiter: crate::mysql_connection::CommandLimiter,
     /// Go `Server.userResource`.
     pub(crate) user_resource: crate::user_connections::UserResource,
+    /// Go `Server.clients`.
+    pub(crate) clients: ServerClients,
     connection_ids: Arc<dyn Allocator + Send + Sync>,
     identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     active: AtomicUsize,
@@ -138,6 +140,64 @@ pub struct ConnectionTracker {
     failed: AtomicU64,
 }
 
+
+/// Go `Server.clients`: the connections past their handshake, which
+/// `checkConnectionCount` counts against `Instance.MaxConnections`.
+#[derive(Default)]
+pub(crate) struct ServerClients {
+    count: AtomicUsize,
+}
+
+impl ServerClients {
+    /// Go `Server.ConnectionCount`.
+    pub(crate) fn connection_count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+
+    /// Go `Server.checkConnectionCount`: `openSession` refuses a connection
+    /// while the registered ones reach the configured limit, read when the
+    /// connection opens its session (`SET GLOBAL max_connections` applies).
+    pub(crate) fn check_connection_count(
+        &self,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        let max_connections = tidb_config::config_tree::config::get_global_config().instance.max_connections;
+        // When the value of Instance.MaxConnections is 0, the number of
+        // connections is unlimited.
+        if max_connections == 0 {
+            return Ok(());
+        }
+        if self.connection_count() >= max_connections as usize {
+            let error = tidb_server_err::ERR_CON_COUNT.gen_with_stack_by_args(&[]);
+            tidb_logutil::bg_logger().error(
+                "too many connections",
+                &[
+                    tidb_log::Field::new("max connections", tidb_log::Value::U64(u64::from(max_connections))),
+                    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
+                ],
+            );
+            return Err(tidb_terror::MysqlError::from_terror(&error).into());
+        }
+        Ok(())
+    }
+
+    /// Go `Server.registerConn`, with `onConn`'s deferred removal from
+    /// `s.clients` when the returned guard drops.
+    pub(crate) fn register_conn(&self) -> ClientRegistration<'_> {
+        self.count.fetch_add(1, Ordering::AcqRel);
+        ClientRegistration { clients: self }
+    }
+}
+
+/// One connection in [`ServerClients`].
+pub(crate) struct ClientRegistration<'a> {
+    clients: &'a ServerClients,
+}
+
+impl Drop for ClientRegistration<'_> {
+    fn drop(&mut self) {
+        self.clients.count.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 impl Default for ConnectionTracker {
     fn default() -> Self {
@@ -169,6 +229,7 @@ impl ConnectionTracker {
         Self {
             command_limiter: crate::mysql_connection::CommandLimiter::new(config.token_limit),
             user_resource: crate::user_connections::UserResource::default(),
+            clients: ServerClients::default(),
             connection_ids,
             identity,
             active: AtomicUsize::default(),
@@ -387,43 +448,6 @@ fn poll_terminal(terminal: &mpsc::Receiver<WorkerTerminal>) -> Result<(), SqlNod
     Ok(())
 }
 
-/// Go's `ErrConCount` reply: a client arriving when every worker is busy is
-/// told `1040 Too many connections` and closed, rather than left waiting in
-/// the listen backlog.
-///
-/// `server.go` returns `servererr.ErrConCount` from its capacity check and
-/// `onConn` answers it with `conn.writeError(ctx, err)`, so the packet goes
-/// out before any handshake -- which is why the sequence number is 0 and the
-/// packet carries NO SQLSTATE marker. Go writes it through the same
-/// `writeError`, whose 4.1 form is conditioned on
-/// `cc.capability&mysql.ClientProtocol41`, and at this point the client has
-/// sent no capability flags at all, so that bit is clear. Sending the marker
-/// anyway is not cosmetic: the client parses the packet in the old form and
-/// the marker lands INSIDE the message, which reads
-/// `ERROR 1040 (HY000): #08004Too many connections`.
-///
-/// Failures are ignored on purpose: the connection is being refused, and a
-/// peer that has already gone away is the ordinary case.
-fn refuse_over_capacity(stream: &ClientSocket) {
-    let Ok(socket) = stream.try_clone() else {
-        return;
-    };
-    let Ok(mut output) =
-        tidb_protocol::PacketIoWriter::new(socket, tidb_protocol::CompressionAlgorithm::None)
-    else {
-        return;
-    };
-    let _ = crate::connection_writers::write_error(
-        &mut output,
-        0,
-        tidb_mysql::errors::errcode::ErrConCount,
-        *b"08004",
-        "Too many connections",
-        false,
-    );
-    let _ = stream.shutdown(Shutdown::Both);
-}
-
 #[derive(Default)]
 struct ActiveSockets {
     streams: Mutex<Vec<ActiveSocket>>,
@@ -553,10 +577,10 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     /// This server's `SHOW STATUS` provider, unregistered when it drops.
     _statistics: crate::stat::RegisteredStatistics,
     _tls_rotation: Option<TlsRotation>,
-    /// Go's `Instance.MaxConnections`: the simultaneous-connection limit,
-    /// where zero means unlimited (`server.go`'s `checkConnectionCount`).
-    /// It also bounds the warm pool; demand past it spawns one dedicated
-    /// thread per connection.
+    /// The configured `Instance.MaxConnections` at startup, which bounds the
+    /// warm pool; demand past it spawns one dedicated thread per connection.
+    /// The limit itself is checked when a connection opens its session
+    /// ([`ServerClients::check_connection_count`]).
     worker_count: usize,
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
@@ -877,22 +901,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                     }
                 })
                 .collect();
-            // Go ACCEPTS first and checks capacity after
-            // (`server.go`'s `onConn` -> `checkConnectionCount`):
-            //
-            //     if conns >= int(s.cfg.Instance.MaxConnections) {
-            //         return servererr.ErrConCount
-            //     }
-            //     ...
-            //     case servererr.ErrConCount:
-            //         if err := conn.writeError(ctx, err); ...
-            //
-            // so a client over the limit is TOLD `1040 Too many connections`
-            // and closed. Acquiring a worker BEFORE accepting left that client
-            // in the listen backlog instead, where it waited out its own
-            // connect timeout and reported "Lost connection ... waiting for
-            // initial communication packet" -- a pooler cannot tell that from
-            // a dead server, and 1040 is what tells it to back off.
             let (stream, peer_addr) = match incoming.recv() {
                 Ok(Ok(connection)) => connection,
                 Ok(Err(error)) => break Err(SqlNodeError::Listener(error)),
@@ -914,22 +922,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             }
             if self.tracker.identity_lost() {
                 drop(stream);
-                continue;
-            }
-            // Go's capacity test is a COUNT against the configured limit, and
-            // a zero limit is UNLIMITED (`server.go`'s `checkConnectionCount`):
-            //
-            //     // When the value of Instance.MaxConnections is 0, the number
-            //     // of connections is unlimited.
-            //     if int(s.cfg.Instance.MaxConnections) == 0 { return nil }
-            //     conns := s.ConnectionCount()
-            //     if conns >= int(s.cfg.Instance.MaxConnections) { ... }
-            //
-            // The count says exactly what Go's says, and every admitted client
-            // under the limit is guaranteed a serving thread because the
-            // dispatch below grows past the warm pool on demand.
-            if self.worker_count != 0 && self.tracker.active() >= self.worker_count {
-                refuse_over_capacity(&stream);
                 continue;
             }
             // Go `newConn` logs a socket option it could not set and serves

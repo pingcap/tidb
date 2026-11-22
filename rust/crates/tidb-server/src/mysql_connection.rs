@@ -1241,6 +1241,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
             &mut commands,
             &tracker.command_limiter,
             &tracker.user_resource,
+            &tracker.clients,
             &mut events,
         )
     }))
@@ -1286,6 +1287,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     commands: &mut ConnectionCommandCounts,
     command_limiter: &CommandLimiter,
     user_resource: &crate::user_connections::UserResource,
+    clients: &crate::sql_node::ServerClients,
     events: &mut ConnectionExtensions,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
@@ -1624,10 +1626,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             )
         }
     }
-    // Go `openSessionAndDoAuth`'s `checkUserConnectionCount`.
-    if let Err(error) =
+    // Go `openSessionAndDoAuth`: `openSession`'s `checkConnectionCount`, then
+    // `checkUserConnectionCount`.
+    if let Err(error) = clients.check_connection_count().and_then(|()| {
         user_resource.check_user_connection_count(users, &response_user, &peer_addr.host())
-    {
+    }) {
         write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
         return Ok(ConnectionReport {
             connection_id,
@@ -1910,6 +1913,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         }
     };
 
+    // Go `onConn`: `s.registerConn(conn)` until the connection ends.
+    let _client = clients.register_conn();
     events.accepted = true;
     if let Some(info) = engine.extension_connection_event_info() {
         events.info = info;
