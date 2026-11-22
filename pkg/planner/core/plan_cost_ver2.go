@@ -606,6 +606,37 @@ func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 	return p.PlanCostVer2, nil
 }
 
+// getPlanCostVer24PhysicalLimit returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost
+// A Limit adds no cost of its own; it only lowers its children's row counts through
+// ExpectedCnt. tidb_opt_limit_cost_factor is applied here so that every logical Limit is
+// adjusted exactly once:
+//   - the original Limit always ends up in the root task (attach2Task4PhysicalLimit converts
+//     its child to a root task first), so the factor applies at RootTaskType;
+//   - the copies pushed down into cop or MPP tasks sit below that root Limit and are skipped;
+//   - a Limit sunk into an IndexLookUp or IndexMerge reader leaves no root Limit behind, so
+//     the reader applies the factor to its PushedLimit instead.
+func getPlanCostVer24PhysicalLimit(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalLimit)
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
+
+	childCost, err := p.Children()[0].GetPlanCostVer2(taskType, option, isChildOfINL...)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+
+	p.PlanCostVer2 = costusage.SumCostVer2(childCost)
+	p.PlanCostInit = true
+	if taskType == property.RootTaskType {
+		// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+	}
+	return p.PlanCostVer2, nil
+}
+
 // getPlanCostVer24PhysicalStreamAgg returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + agg-cost + group-cost
 func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {

@@ -120,6 +120,10 @@ var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
 // Attach2Task4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
 var Attach2Task4PhysicalLimit func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetPlanCostVer24PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
+var GetPlanCostVer24PhysicalLimit func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
 // GetPlanCostVer14PhysicalTopN will be called by PhysicalLimit in physicalOp pkg.
 var GetPlanCostVer14PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *costusage.PlanCostOption) (float64, error)

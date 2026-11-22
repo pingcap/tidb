@@ -208,6 +208,44 @@ func TestTableScanCostWithForce(t *testing.T) {
 	})
 }
 
+// TestLimitCostFactorAtRootLimit checks that tidb_opt_limit_cost_factor applies to a Limit
+// that is not sunk into an IndexLookUp/IndexMerge reader, and that it applies exactly once:
+// at the root Limit, not again at the copy pushed down into the cop task.
+func TestLimitCostFactorAtRootLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key (a), key(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("analyze table t")
+
+	// A covering index read keeps a root Limit above an IndexReader that holds the pushed-down
+	// cop Limit, so the Limit is not sunk into a reader.
+	const query = "explain format=verbose select b from t use index(b) where b > 3 limit 1"
+	rootCost := func(factor string) float64 {
+		tk.MustExec("set @@session.tidb_opt_limit_cost_factor=" + factor)
+		rows := tk.MustQuery(query).Rows()
+		require.True(t, strings.HasPrefix(rows[0][0].(string), "Limit"), "plan: %v", rows)
+		require.Equal(t, "root", rows[0][3])
+		copLimits := 0
+		for _, row := range rows[1:] {
+			if strings.Contains(row[0].(string), "Limit") && strings.HasPrefix(row[3].(string), "cop") {
+				copLimits++
+			}
+		}
+		require.Equal(t, 1, copLimits, "expected one pushed-down cop Limit: %v", rows)
+		cost, err := strconv.ParseFloat(rows[0][2].(string), 64)
+		require.NoError(t, err)
+		return cost
+	}
+
+	// estCost is printed with two decimals, so compare with a tolerance that still tells a
+	// single application (10x) from a double one (100x).
+	base := rootCost("1")
+	require.InEpsilon(t, base*10, rootCost("10"), 0.01)
+	require.InEpsilon(t, base*0.1, rootCost("0.1"), 0.01)
+}
+
 func TestOptimizerCostFactors(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		store := tk.Session().GetStore()
