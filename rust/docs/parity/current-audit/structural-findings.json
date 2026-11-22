@@ -8,7 +8,7 @@
   },
   "findings": [
     {
-      "id": "S01",
+      "id": "R01",
       "status": "open",
       "group": "Planner and bindings",
       "finding": "Cost model version 1 is not transcreated: of `plan_cost_ver1.go`'s 40 functions only `getPlanCostVer1` for a few operators exists, so `SET tidb_cost_model_version = 1` costs and chooses plans differently (probe: `EXPLAIN FORMAT='verbose' SELECT * FROM t1 WHERE b > 1` costs 16279.11 in Go and 73382.22 in Rust; a two-table join on an indexed column is a HashJoin in Go and a MergeJoin in Rust).",
@@ -16,7 +16,7 @@
       "go_owner": "`pkg/planner/core/plan_cost_ver1.go`"
     },
     {
-      "id": "S02",
+      "id": "R02",
       "status": "open",
       "group": "Planner and bindings",
       "finding": "`EXPLAIN EXPLORE <sql>` is answered as a plain EXPLAIN: Go's binding exploration (`ExplorePlansForSQL`, `getBindingPlanInfo`, `runToGetExecInfo`, `fillRecommendation`) and plan generation over hint states (`generatePlanWithSCtx`, `breadthFirstPlanSearch`, `genPlanUnderState`) have no Rust counterpart.",
@@ -24,7 +24,7 @@
       "go_owner": "`pkg/bindinfo/binding_auto.go`, `pkg/bindinfo/binding_plan_generation.go`, `pkg/executor/explain.go` (explore)"
     },
     {
-      "id": "S03",
+      "id": "R03",
       "status": "open",
       "group": "Statistics",
       "finding": "ANALYZE is not in Go's shape. One 3,055-line `real_tikv_analyze.rs` holds the planner's `buildAnalyze*` / `getMustAnalyzedColumns`, the executor's `AnalyzeExec` and globalstats' async merge; Go's `AnalyzeExec` worker pool (`analyzeWorker`, `handleResultsError`, `handleGlobalStats`), `AnalyzeColumnsExec`'s sampling build (`buildSamplingStats`, `subMergeWorker`, `subBuildWorker`, `readDataAndSendTask`, `handleNDVForSpecialIndexes`), `analyze_idx.go`'s `fetchAnalyzeResult`, `analyze_global_stats.go` and `analyze_worker.go` have no counterparts.",
@@ -32,7 +32,7 @@
       "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/statistics/handle/globalstats`"
     },
     {
-      "id": "S04",
+      "id": "R04",
       "status": "open",
       "group": "Executor, DML and expressions",
       "finding": "Go's `SortExec.Open` always sorts in parallel (`IsUnparallel = false`, `ExecutorConcurrency` workers, multi-way merge, `parallelSortSpillHelper`), and TopN has its own workers; `parallel_sort_worker.go`, `parallel_sort_spill_helper.go` and `topn_worker.go` are not ported (the crate's own doc says so), so Rust sorts only in Go's unparallel mode.",
