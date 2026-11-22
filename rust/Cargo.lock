@@ -11576,6 +11576,7 @@ dependencies = [
  "tidb-stmtsummary",
  "tidb-stringutil",
  "tidb-terror",
+ "tidb-tiflash",
  "tidb-tiflashcompute",
  "tidb-tikvutil",
  "tidb-timeutil",

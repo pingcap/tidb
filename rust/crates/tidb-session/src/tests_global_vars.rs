@@ -3295,3 +3295,30 @@ fn process_state_global_getters_answer_like_go() {
     assert_eq!(tidb_memory::gctuner::max_gc_percent(), 600);
     assert_eq!(read(&mut session, "tidb_gogc_tuner_max_value"), Some("600".to_owned()));
 }
+
+/// Go `tidb_slow_log_rules` has no `Validation`: `SetGlobal` /
+/// `SetSession` parse it, the table keeps the text as written, and the
+/// getters answer the encoded rules (gorun: `Resource_group:testRG` stored,
+/// `resource_group:testRG` read in both scopes).
+#[test]
+fn slow_log_rules_store_the_raw_text_and_read_back_encoded_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    session.run(r#"SET GLOBAL tidb_slow_log_rules = "Resource_group:testRG""#).unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT variable_value FROM mysql.global_variables WHERE variable_name = 'tidb_slow_log_rules'"
+        ),
+        Some("Resource_group:testRG".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.tidb_slow_log_rules"),
+        Some("resource_group:testRG".to_owned())
+    );
+    session.run(r#"SET SESSION tidb_slow_log_rules = "Resource_group:testRG""#).unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@session.tidb_slow_log_rules"),
+        Some("resource_group:testRG".to_owned())
+    );
+    session.run("SET GLOBAL tidb_slow_log_rules = ''").unwrap();
+}

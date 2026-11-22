@@ -39,6 +39,7 @@ tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-tls = { path = "../tidb-tls" }
 tidb-goruntime = { path = "../tidb-goruntime" }

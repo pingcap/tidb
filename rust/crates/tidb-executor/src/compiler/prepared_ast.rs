@@ -252,8 +252,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                         .get_system("collation_connection")
                         .unwrap_or_default(),
                     self.session_vars()
-                        .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                        .unwrap_or_default(),
+                        .partition_prune_mode().to_owned(),
                     self.session_vars()
                         .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
                         .unwrap_or_default(),

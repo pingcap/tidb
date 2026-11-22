@@ -1541,8 +1541,7 @@ impl<'s> ClusterServerSession<'s> {
         let scatter_scope = self
             .session
             .vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_SCATTER_REGION)
-            .unwrap_or_default();
+            .scatter_region().to_owned();
         let loaded = self.node.catalog.get_latest();
         for id in created {
             let found = loaded.table_info_by_id(*id);

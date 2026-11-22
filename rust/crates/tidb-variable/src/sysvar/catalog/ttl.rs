@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_mpp_store_fail_ttl",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_delete_batch_size",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_delete_batch_size),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_delete_batch_size),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_delete_rate_limit",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_delete_rate_limit),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_delete_rate_limit),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_delete_worker_count",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_delete_worker_count),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_delete_worker_count),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_enable",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_job_enable),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_job_enable),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_end_time",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_job_schedule_window_end_time),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_job_schedule_window_end_time),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_job_schedule_window_start_time",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_job_schedule_window_start_time),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_job_schedule_window_start_time),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_running_tasks",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_running_tasks),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_running_tasks),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_scan_batch_size",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_scan_batch_size),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_scan_batch_size),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ttl_scan_worker_count",
@@ -221,5 +231,6 @@ pub(super) static ENTRIES: [SysVarDef; 11] = [
         set_global: Some(super::super::process_hooks::set_tidb_ttl_scan_worker_count),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ttl_scan_worker_count),
+        get_state_value: None,
     },
 ];

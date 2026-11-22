@@ -780,8 +780,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .unwrap_or_else(|_| defaults.analyze_version.clone()),
             scatter_region: self
                 .session_vars()
-                .get_system(tidb_vars::TIDB_SCATTER_REGION)
-                .unwrap_or_else(|_| defaults.scatter_region.clone()),
+                .scatter_region().to_owned(),
             time_zone_name,
             time_zone_offset,
             div_precision_increment: int_var(
@@ -1203,8 +1202,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             select_limit: self.session_vars().select_limit(),
             static_partition_prune: self
                 .session_vars()
-                .get_system("tidb_partition_prune_mode")
-                .is_ok_and(|value| value.eq_ignore_ascii_case("static")),
+                .partition_prune_mode().eq_ignore_ascii_case("static"),
             skip_missing_partition_stats: not_off(
                 tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
             ),
@@ -1284,10 +1282,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             max_allowed_packet: self.session_vars().max_allowed_packet(),
             group_concat_max_len: self
                 .session_vars()
-                .get_system("group_concat_max_len")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(1024),
+                .group_concat_max_len(),
             metric_schema_step: self
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP)
@@ -1328,8 +1323,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             },
             ddl_session_alias: self
                 .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-                .unwrap_or_default(),
+                .session_alias().to_owned(),
             arbitrator_wait_averse: match self
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
@@ -1882,12 +1876,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                             .and_then(|value| value.parse::<u64>().ok())
                             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64),
                     )
-                    .with_tiflash_replica_read(tidb_tiflash::get_tiflash_replica_read_by_str(
-                        &self
-                            .session_vars()
-                            .get_system(tidb_vardef::tidb_vars::TIFLASH_REPLICA_READ)
-                            .unwrap_or_default(),
-                    ))
+                    .with_tiflash_replica_read(self.session_vars().tiflash_replica_read())
                     .with_lazy_clock(self.stale_tso_timestamp().or(snapshot.timestamp), zone);
                 if let Some(latest_index_schema) = latest_index_schema {
                     let _ = ctx.with_latest_info_schema(crate::LatestInfoSchema::new(latest_index_schema));
@@ -1932,12 +1921,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         .and_then(|value| value.parse::<u64>().ok())
                         .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64),
                 )
-                .with_tiflash_replica_read(tidb_tiflash::get_tiflash_replica_read_by_str(
-                    &self
-                        .session_vars()
-                        .get_system(tidb_vardef::tidb_vars::TIFLASH_REPLICA_READ)
-                        .unwrap_or_default(),
-                ))
+                .with_tiflash_replica_read(self.session_vars().tiflash_replica_read())
                 .with_process_plan_info_sink(Arc::clone(&self.process_plan_info_ref()))
                 .with_statement_phase_observer(self.statement_phase_observer())
                 .with_phase_durations(self.phase_durations_ref().clone())

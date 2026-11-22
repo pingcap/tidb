@@ -46,8 +46,8 @@ macro_rules! set_global {
 macro_rules! get_global {
     ($($name:ident => $body:expr;)*) => {
         $(
-            pub(super) fn $name() -> String {
-                $body
+            pub(super) fn $name() -> Result<String, crate::vars::VarError> {
+                Ok($body)
             }
         )*
     };
@@ -755,10 +755,10 @@ pub(super) fn set_tidb_trace_event(_vars: &mut SessionVars, value: &str) -> Resu
 
 /// Go `tidb_trace_event`'s `GetGlobal`: the running recorder's configuration
 /// re-marshalled, or empty.
-pub(super) fn get_tidb_trace_event() -> String {
-    tidb_traceevent::get_flight_recorder()
+pub(super) fn get_tidb_trace_event() -> Result<String, crate::vars::VarError> {
+    Ok(tidb_traceevent::get_flight_recorder()
         .and_then(|recorder| serde_json::to_string(&recorder.config).ok())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Go `tidb_slow_log_max_per_sec`'s `SetGlobal` (`TidbOptInt(s, 0)`).
@@ -768,8 +768,8 @@ pub(super) fn set_tidb_slow_log_max_per_sec(_vars: &mut SessionVars, value: &str
 }
 
 /// Go `tidb_slow_log_max_per_sec`'s `GetGlobal`.
-pub(super) fn get_tidb_slow_log_max_per_sec() -> String {
-    crate::slow_log::slow_log_max_per_sec().to_string()
+pub(super) fn get_tidb_slow_log_max_per_sec() -> Result<String, crate::vars::VarError> {
+    Ok(crate::slow_log::slow_log_max_per_sec().to_string())
 }
 
 /// Go `tidb_slow_log_rules`' `SetGlobal`.
@@ -778,8 +778,8 @@ pub(super) fn set_tidb_slow_log_rules(_vars: &mut SessionVars, value: &str) -> R
 }
 
 /// Go `tidb_slow_log_rules`' `GetGlobal`.
-pub(super) fn get_tidb_slow_log_rules() -> String {
-    crate::slow_log_rules::global_slow_log_rules()
+pub(super) fn get_tidb_slow_log_rules() -> Result<String, crate::vars::VarError> {
+    Ok(crate::slow_log_rules::global_slow_log_rules())
 }
 
 /// Go `variable.GenerateBinaryPlan` (`session.go`): whether the slow log and
@@ -791,4 +791,25 @@ pub static GENERATE_BINARY_PLAN: std::sync::atomic::AtomicBool = std::sync::atom
 pub(super) fn set_tidb_generate_binary_plan(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
     GENERATE_BINARY_PLAN.store(on(value), SeqCst);
     Ok(())
+}
+
+/// Go `tidb_external_ts`' `SetGlobal`: `parseTSFromNumberOrTime` in the
+/// session's location, then `SetExternalTimestamp`.
+pub(super) fn set_tidb_external_ts(vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+    // Go `types.ParseTime` refuses an empty value as a datetime.
+    if value.is_empty() {
+        return Err(tidb_terror::MysqlError::from_sql_error(tidb_mysql::errors::SqlError::new_f(
+            tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
+            "Incorrect datetime value: '%s'",
+            &[],
+            &[tidb_mysql::errors::FormatArg::from(value)],
+        )));
+    }
+    let ts = crate::vars::parse_read_timestamp(value, &vars.session_time_zone(), true)?;
+    crate::domain_slots::set_external_timestamp(ts)
+}
+
+/// Go `tidb_external_ts`' `GetGlobal`: `GetExternalTimestamp`.
+pub(super) fn get_tidb_external_ts() -> Result<String, VarError> {
+    crate::domain_slots::get_external_timestamp().map(|ts| ts.to_string())
 }

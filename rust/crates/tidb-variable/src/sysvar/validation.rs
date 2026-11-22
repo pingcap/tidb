@@ -1074,31 +1074,6 @@ pub(super) fn init_connect(
     Ok(validated)
 }
 
-/// Go's `tidb_slow_log_rules` hooks: SetSession parses the unbound
-/// rules (a ConnID is refused) and GetSession reads back their
-/// encoding; SetGlobal parses with ConnIDs allowed and stores the text.
-pub(super) fn tidb_slow_log_rules(
-    def: &SysVarDef,
-    validated: Validated,
-    original: &str,
-    scope: u8,
-    lookup: Lookup<'_>,
-) -> Result<Validated, ValidationError> {
-    if scope == SCOPE_SESSION {
-        let encoded = crate::slow_log_rules::session_rules(&validated.value)
-            .map_err(ValidationError::Refused)?;
-        return Ok(Validated {
-            value: encoded,
-            truncated: validated.truncated,
-        });
-    }
-    let encoded =
-        crate::slow_log_rules::global_rules(&validated.value).map_err(ValidationError::Refused)?;
-    Ok(Validated {
-        value: encoded,
-        truncated: validated.truncated,
-    })
-}
 
 /// Go's `setPipelinedDmlResourcePolicy` (`sysvar.go`), a SetSession
 /// hook: `standard`, `conservative`, or `custom{key=value, ...}` over
@@ -1828,13 +1803,13 @@ pub(super) fn tidb_enable_async_merge_global_stats(
 /// Go master `tidb_enable_async_merge_global_stats`'s `GetSession` /
 /// `GetGlobal`: ON, whatever `upgradeToVer177` persisted on an upgraded
 /// cluster (persisted values are read without `Validation`).
-pub(crate) fn always_on() -> String {
-    "ON".to_owned()
+pub(crate) fn always_on() -> Result<String, crate::vars::VarError> {
+    Ok("ON".to_owned())
 }
 
 /// [`always_on`] as a `GetSession` hook.
 pub(crate) fn always_on_session(_: &crate::vars::SessionVars) -> Result<String, crate::vars::VarError> {
-    Ok(always_on())
+    always_on()
 }
 
 /// Go master `tidb_enable_historical_stats` /
@@ -1961,10 +1936,12 @@ pub(super) fn tidb_enable_tiflash_read_for_write_stmt(
 /// Go `tidb_partition_prune_mode`'s `SetSession`: switching a session from
 /// static to dynamic asks for a re-analyze and warns against the session level.
 pub(super) fn tidb_partition_prune_mode_set_session(cx: &mut crate::vars::SessionVars, value: &str) -> Result<(), crate::error::VarError> {
-    if value == "dynamic" && cx.get_system("tidb_partition_prune_mode").ok().as_deref() == Some("static") {
+    let new_mode = value.trim().to_ascii_lowercase();
+    if new_mode == "dynamic" && cx.partition_prune_mode() == "static" {
         cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "Please analyze all partition tables again for consistency between partition and global stats".to_owned());
         cx.append_stmt_plain_warning(tidb_context::WarningLevel::Warning, "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned());
     }
+    cx.store_partition_prune_mode(new_mode);
     Ok(())
 }
 

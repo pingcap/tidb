@@ -603,13 +603,21 @@ pub struct SysVarDef {
     pub get_session: Option<GetHook>,
     /// Go `GetGlobal` (see [`GetGlobalHook`]).
     pub get_global: Option<GetGlobalHook>,
+    /// Go `GetStateValue` (see [`GetStateHook`]).
+    pub get_state_value: Option<GetStateHook>,
 }
+
+/// Go `SysVar.GetStateValue`: the value a session-state migration encodes
+/// for the variable, and whether to encode it at all
+/// (`GetSessionStatesSystemVar` asks it before `GetSession`).
+pub type GetStateHook = fn(&crate::vars::SessionVars) -> Result<(String, bool), crate::vars::VarError>;
 
 /// Go `SysVar.GetGlobal`: the GLOBAL value a variable answers from the
 /// process's state rather than from the global table (`GetGlobalFromHook`),
-/// which every GLOBAL read goes through. Go's closure also receives the
-/// context and the session, which none of the ported hooks read.
-pub type GetGlobalHook = fn() -> String;
+/// which every GLOBAL read goes through, or Go's error. Go's closure also
+/// receives the context and the session, which none of the ported hooks
+/// read.
+pub type GetGlobalHook = fn() -> Result<String, crate::vars::VarError>;
 
 /// Go `SysVar.GetSession`: the session value a variable answers from the
 /// session's state rather than from `vars.systems` (`GetSessionFromHook`),
@@ -694,6 +702,7 @@ impl SysVarDef {
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     };
 
     /// Go `HasSessionScope`.
@@ -1277,9 +1286,10 @@ impl SysVarDef {
     /// `GetGlobal` answer, validated as Go validates it ("since some are read
     /// directly from tables") -- an out-of-range process value is clamped.
     #[must_use]
-    pub fn get_global_from_hook(&self) -> Option<String> {
-        self.get_global
-            .map(|get_global| self.validate_with_relaxed_validation(&get_global(), SCOPE_GLOBAL))
+    pub fn get_global_from_hook(&self) -> Option<Result<String, crate::vars::VarError>> {
+        self.get_global.map(|get_global| {
+            get_global().map(|value| self.validate_with_relaxed_validation(&value, SCOPE_GLOBAL))
+        })
     }
 
     /// Go `SysVar.ValidateWithRelaxedValidation`: normalize values when

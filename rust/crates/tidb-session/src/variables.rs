@@ -348,28 +348,21 @@ impl Session {
     }
 
     /// Go `SessionVars.SetSystemVar` for a SESSION assignment: the
-    /// variable's hooks run in `tidb-variable` (`SessionVars::set_system_var`);
-    /// the `SetSession` hooks that reach the session itself -- the random
-    /// generator's seed, autocommit ending the transaction -- run here.
+    /// variable's hooks run in `tidb-variable` (`SessionVars::set_system_var`),
+    /// and a hook that left the transaction (`SetInTxn(false)`) ends the
+    /// session's here.
     pub(crate) fn set_session_sys_var(
         &mut self,
         name: &str,
         value: String,
     ) -> Result<(), DriverError> {
-        let was_autocommit = self.is_autocommit();
         let result = self.vars.set_system_var(name, value);
         self.take_var_warnings();
         result.map_err(var_error)?;
-        // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
-        // ON ends the ongoing transaction ("Implicitly commit the possible
-        // ongoing transaction if mode is changed from off to on"). Only the
-        // TRANSITION does it -- `SET autocommit = 1` while it is already on
-        // leaves an explicit `BEGIN` running, which is why
-        // `BEGIN; INSERT; SET autocommit = 1; ROLLBACK` still rolls back
-        // (captured).
-        if name.eq_ignore_ascii_case("autocommit") && !was_autocommit && self.is_autocommit() {
-            // Go `SetInTxn(false)`; the statement's finish commits the store
-            // transaction (`autoCommitAfterStmt`).
+        // A `SetSession` that left the transaction (Go `SetInTxn(false)`:
+        // `autocommit`'s OFF to ON transition) ends it; the statement's
+        // finish commits the store transaction (`autoCommitAfterStmt`).
+        if self.txn_ctx.is_some() && !self.vars.in_txn() {
             self.leave_txn_ctx_for_commit();
         }
         Ok(())

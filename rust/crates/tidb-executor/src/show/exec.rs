@@ -940,8 +940,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         // so both servers on one host render identical strings.
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
@@ -1010,8 +1009,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn stats_locked_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let context = self.statement_context(false);
         let rows = {
             let domain = self.domain_info_schema();
@@ -1071,8 +1069,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let stats_handle = self.stats_handle();
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
             for database in catalog.database_names() {
@@ -1138,8 +1135,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let stats_handle = self.stats_handle();
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let zone = chrono::Local;
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
@@ -1261,8 +1257,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let stats_handle = self.stats_handle();
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let zone = self.session_time_zone();
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();
@@ -1392,8 +1387,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let stats_handle = self.stats_handle();
         let dynamic_partition_prune = !self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-            .is_ok_and(|mode| mode.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         let zone = self.session_time_zone();
         let rows = self.with_catalog_mut(|catalog| {
             let mut rows = Vec::new();

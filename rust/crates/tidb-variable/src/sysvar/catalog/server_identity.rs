@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "datadir",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "eq_range_index_dive_limit",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "identity",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_last_insert_id),
         get_global: None,
+        get_state_value: Some(crate::vars::SessionVars::get_state_never),
     },
     SysVarDef {
         name: "insert_id",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "last_insert_id",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_last_insert_id),
         get_global: None,
+        get_state_value: Some(crate::vars::SessionVars::get_state_never),
     },
     SysVarDef {
         name: "license",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "long_query_time",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "lower_case_file_system",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "lower_case_table_names",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "min_examined_row_limit",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "open_files_limit",
@@ -239,6 +250,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "pid_file",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "plugin_dir",
@@ -275,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_plugin_dir),
+        get_state_value: None,
     },
     SysVarDef {
         name: "plugin_load",
@@ -293,6 +307,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_plugin_load),
+        get_state_value: None,
     },
     SysVarDef {
         name: "protocol_version",
@@ -311,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "rand_seed1",
@@ -329,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_rand_seed),
         get_global: None,
+        get_state_value: Some(crate::vars::SessionVars::get_state_rand_seed1),
     },
     SysVarDef {
         name: "rand_seed2",
@@ -347,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_rand_seed),
         get_global: None,
+        get_state_value: Some(crate::vars::SessionVars::get_state_rand_seed2),
     },
     SysVarDef {
         name: "slow_launch_time",
@@ -365,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_config",
@@ -383,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_config),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_legacy_instance_scope",
@@ -401,6 +421,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_noop_functions",
@@ -419,6 +440,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_noop_variables",
@@ -437,6 +459,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_noop_variables),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_noop_variables),
+        get_state_value: None,
     },
     SysVarDef {
         name: "version",
@@ -455,6 +478,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "version_comment",
@@ -473,6 +497,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "version_compile_machine",
@@ -493,6 +518,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "version_compile_os",
@@ -518,6 +544,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "warning_count",
@@ -536,6 +563,7 @@ pub(super) static ENTRIES: [SysVarDef; 28] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_warning_count),
         get_global: None,
+        get_state_value: None,
     },
 ];
 

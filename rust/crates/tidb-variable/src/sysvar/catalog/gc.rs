@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_gc_aware_memory_track),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_gc_aware_memory_track),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_gogc_tuner",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_concurrency",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_enable",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_life_time",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_max_wait_time",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_run_interval",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gc_scan_lock_mode",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_max_value",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: Some(super::super::process_hooks::set_tidb_gogc_tuner_max_value),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_gogc_tuner_max_value),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_min_value",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: Some(super::super::process_hooks::set_tidb_gogc_tuner_min_value),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_gogc_tuner_min_value),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_gogc_tuner_threshold",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: Some(super::super::process_hooks::set_tidb_gogc_tuner_threshold),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_gogc_tuner_threshold),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_server_memory_limit_gc_trigger",
@@ -239,5 +250,6 @@ pub(super) static ENTRIES: [SysVarDef; 12] = [
         set_global: Some(super::super::process_hooks::set_tidb_server_memory_limit_gc_trigger),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_server_memory_limit_gc_trigger),
+        get_state_value: None,
     },
 ];

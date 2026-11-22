@@ -36,8 +36,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use tidb_variable::sysvar::{alias_of, get_sys_var, SysVarDef, SCOPE_GLOBAL, SCOPE_INSTANCE};
 use tidb_fixcontrol::OptimizerFixControl;
 use tidb_variable::vars::{
-    global_get_hook, parse_read_timestamp, validation_var_error,
-    ExternalTimestampProvider, PdRegionPolicy, ResolvedGlobals,
+    global_get_hook, validation_var_error,
+    PdRegionPolicy, ResolvedGlobals,
 };
 use tidb_variable::VarError;
 
@@ -61,7 +61,6 @@ pub struct GlobalSysvars {
     /// variable name.
     get_global_hooks: GetGlobalHooks,
     pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
-    external_timestamp: Arc<RwLock<Option<Arc<dyn ExternalTimestampProvider>>>>,
     /// Go `Domain.sysVarCache`: the global and session views every read and
     /// every new session is answered from. Shared by every clone.
     cache: Arc<crate::sysvar_cache::SysVarCache>,
@@ -255,7 +254,6 @@ impl Default for GlobalSysvars {
         Self {
             set_global_hooks: SetGlobalHooks::default(),
             get_global_hooks: GetGlobalHooks::default(),
-            external_timestamp: Arc::default(),
             pd_region_policy: Arc::default(),
             cache: Arc::default(),
             restricted_executor: RestrictedExecutor::default(),
@@ -347,14 +345,6 @@ impl tidb_variable::GlobalVarAccessor for GlobalSysvars {
 
     fn resource_control_strict_mode(&self) -> bool {
         GlobalSysvars::resource_control_strict_mode(self)
-    }
-
-    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>> {
-        GlobalSysvars::external_timestamp_provider(self)
-    }
-
-    fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
-        GlobalSysvars::set_external_timestamp_provider(self, provider);
     }
 }
 
@@ -589,33 +579,10 @@ impl GlobalSysvars {
         drop(resolved);
     }
 
-    /// Installs the live storage oracle used by external timestamp callbacks.
-    pub fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
-        *self
-            .external_timestamp
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(provider);
-    }
-
-    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>> {
-        self.external_timestamp
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
     /// Reads a node-wide value; oracle-backed variables bypass the cached image.
     pub fn get(&self, name: &str) -> Result<String, VarError> {
         if let Some(value) = self.run_get_global_hook(name) {
             return Ok(value);
-        }
-        if name.eq_ignore_ascii_case("tidb_external_ts") {
-            if let Some(provider) = self.external_timestamp_provider() {
-                return provider
-                    .get()
-                    .map(|ts| ts.to_string())
-                    .map_err(VarError::unknown);
-            }
         }
         let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
@@ -639,7 +606,7 @@ impl GlobalSysvars {
             // Go `SysVar.GetGlobal`: the variable's process-wide value is the
             // live table's answer (a scratch table answers what it stores).
             if let Some(value) = def.get_global_from_hook() {
-                return Ok(value);
+                return value;
             }
         }
         let snapshot = Arc::clone(
@@ -695,7 +662,7 @@ impl GlobalSysvars {
                 ]),
             ));
         }
-        self.get(name).map(|value| global_get_hook(def, value))
+        self.get(name).and_then(|value| global_get_hook(def, value))
     }
 
     /// Rebuilds the read-mostly image from the cache's global view and the
@@ -840,9 +807,6 @@ impl GlobalSysvars {
         if let Some(value) = self.run_get_global_hook(def.name) {
             return Ok(value);
         }
-        if def.name == "tidb_external_ts" {
-            return self.get(def.name);
-        }
         if let Some(value) = self.instance_plan_cache_limit_getter(def) {
             return Ok(value);
         }
@@ -859,7 +823,7 @@ impl GlobalSysvars {
                 return Ok(value);
             }
             if let Some(value) = def.get_global_from_hook() {
-                return Ok(value);
+                return value;
             }
         }
         let snapshot = Arc::clone(
@@ -902,23 +866,6 @@ impl GlobalSysvars {
         value: String,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<bool, VarError> {
-        if name.eq_ignore_ascii_case("tidb_external_ts") {
-            if let Some(provider) = self.external_timestamp_provider() {
-                if value.is_empty() {
-                    return Err(tidb_terror::MysqlError::from_sql_error(
-                        tidb_mysql::errors::SqlError::new_f(
-                            tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
-                            "Incorrect datetime value: '%s'",
-                            &[],
-                            &[tidb_mysql::errors::FormatArg::from(value.as_str())],
-                        ),
-                    ));
-                }
-                provider
-                    .set(parse_read_timestamp(&value, zone, true)?)
-                    .map_err(VarError::unknown)?;
-            }
-        }
         let value = match get_sys_var(name) {
             Some(def) if def.var_type == tidb_variable::sysvar::TypeFlag::Time => {
                 tidb_variable::sysvar::check_time_system_var(&value, zone)

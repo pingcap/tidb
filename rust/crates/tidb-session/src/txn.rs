@@ -316,6 +316,12 @@ impl Session {
         Ok(())
     }
 
+    /// Ends the session's transaction context: Go `SetInTxn(false)` with it.
+    fn take_txn_ctx(&mut self) -> Option<TxnCtx> {
+        self.vars.set_in_txn(false);
+        self.txn_ctx.take()
+    }
+
     /// Whether a transaction is open (Go `SessionVars.InTxn`, the wire's
     /// `SERVER_STATUS_IN_TRANS`).
     #[must_use]
@@ -490,6 +496,7 @@ impl Session {
         // A fresh transaction gets a fresh, empty staged-write tracker --
         // Go's own membuffer is empty the moment a transaction activates.
         self.staged_writes = std::sync::Arc::default();
+        self.vars.set_in_txn(true);
         self.txn_ctx = Some(TxnCtx {
             lock_expire: Default::default(),
             mode,
@@ -774,6 +781,7 @@ impl Session {
         let read = provider(ts, self.current_resource_group(), schema)?;
         // A historical read also has an empty transaction membuffer.
         self.staged_writes = std::sync::Arc::default();
+        self.vars.set_in_txn(true);
         self.txn_ctx = Some(TxnCtx {
             lock_expire: Default::default(),
             mode: SessionTxnMode::Optimistic,
@@ -816,7 +824,7 @@ impl Session {
     /// published timestamp goes with it.
     pub(crate) fn discard_stale_statement_transaction(&mut self) {
         self.cleanup_txn_read_ts();
-        if let Some((ts, _)) = self.txn_ctx.take().and_then(|txn| txn.stale) {
+        if let Some((ts, _)) = self.take_txn_ctx().and_then(|txn| txn.stale) {
             self.set_last_txn_info_started(ts);
         }
         if let Some(process) = &self.process {
@@ -956,7 +964,7 @@ impl Session {
         // (`isolation/base.go:108-114`): a failed activation leaves no
         // transaction open.
         if let Err(error) = txn.enter_new_txn_with_begin(self) {
-            self.txn_ctx = None;
+            drop(self.take_txn_ctx());
             self.current_tso().clear();
             return Err(error);
         }
@@ -1008,7 +1016,7 @@ impl Session {
             self.record_statement_ended_txn();
         }
         self.cleanup_txn_read_ts();
-        let Some(txn) = self.txn_ctx.take() else {
+        let Some(txn) = self.take_txn_ctx() else {
             return;
         };
         self.publish_transaction_committing();
@@ -1038,7 +1046,7 @@ impl Session {
         if self.txn_ctx.is_some() {
             self.record_statement_ended_txn();
         }
-        if let Some(ctx) = self.txn_ctx.take() {
+        if let Some(ctx) = self.take_txn_ctx() {
             self.clear_table_delta();
             if let Some(process) = &self.process {
                 process

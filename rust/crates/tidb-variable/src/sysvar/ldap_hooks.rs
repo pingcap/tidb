@@ -142,8 +142,8 @@ fn bool_to_on_off(value: bool) -> String {
 macro_rules! ldap_get_global {
     ($($name:ident => $body:expr;)*) => {
         $(
-            pub(super) fn $name() -> String {
-                $body
+            pub(super) fn $name() -> Result<String, crate::vars::VarError> {
+                Ok($body)
             }
         )*
     };

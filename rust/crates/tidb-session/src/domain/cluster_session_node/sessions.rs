@@ -1044,13 +1044,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
     }
 
     fn partition_prune_mode(&self) -> String {
-        self.with_session(|session| {
-            session
-                .session
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                .map_err(|error| stats_session_error(format!("{error:?}")))
-        })
+        self.with_session(|session| Ok(session.session.vars().partition_prune_mode().to_owned()))
         .unwrap_or_default()
     }
 

@@ -1279,8 +1279,7 @@ impl Session {
                 "session_alias",
                 tidb_log::Value::Str(
                     self.vars
-                        .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-                        .unwrap_or_default(),
+                        .session_alias().to_owned(),
                 ),
             ),
             tidb_log::Field::new(

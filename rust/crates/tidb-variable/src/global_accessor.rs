@@ -22,10 +22,9 @@
 //! context installs the mock.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Mutex;
 
 use crate::sysvar::{get_sys_var, sys_var_index_lookup};
-use crate::vars::ExternalTimestampProvider;
 use crate::VarError;
 
 /// Go `variable.GlobalVarAccessor`, with the typed reads this tier serves
@@ -101,12 +100,6 @@ pub trait GlobalVarAccessor: crate::GlobalSysvarAccessor + std::fmt::Debug {
     /// Go's typed `vardef.EnableResourceControlStrictMode`.
     fn resource_control_strict_mode(&self) -> bool;
 
-    /// The storage authority behind `tidb_external_ts`, when installed.
-    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>>;
-
-    /// Installs the storage authority behind `tidb_external_ts`.
-    fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>);
-
     /// Go `SysVar.SetGlobal` for a variable another package registered
     /// (`variable.RegisterSysVar` from `workloadrepo`'s `init`): run once
     /// the GLOBAL value is stored, with the stored, type-normalized value.
@@ -126,7 +119,6 @@ pub trait GlobalVarAccessor: crate::GlobalSysvarAccessor + std::fmt::Debug {
 #[derive(Debug, Default)]
 pub struct MockGlobalAccessor {
     vals: Mutex<HashMap<String, String>>,
-    external_timestamp: RwLock<Option<Arc<dyn ExternalTimestampProvider>>>,
 }
 
 impl MockGlobalAccessor {
@@ -140,7 +132,6 @@ impl MockGlobalAccessor {
                     .map(|def| (def.name.to_owned(), crate::sysvar::effective_default(def)))
                     .collect(),
             ),
-            external_timestamp: RwLock::default(),
         }
     }
 
@@ -305,19 +296,5 @@ impl GlobalVarAccessor for MockGlobalAccessor {
 
     fn resource_control_strict_mode(&self) -> bool {
         tidb_vardef::defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE
-    }
-
-    fn external_timestamp_provider(&self) -> Option<Arc<dyn ExternalTimestampProvider>> {
-        self.external_timestamp
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    fn set_external_timestamp_provider(&self, provider: Arc<dyn ExternalTimestampProvider>) {
-        *self
-            .external_timestamp
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(provider);
     }
 }

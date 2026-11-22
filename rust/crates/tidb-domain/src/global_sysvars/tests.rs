@@ -392,10 +392,11 @@ mod session_vars {
             vars.get_session_states_system_var("timestamp").unwrap(),
             ("1.25".to_owned(), true)
         );
+        // Go's `GetStateValue` returns the default it does not keep.
         vars.set_system("timestamp", "0".to_owned()).unwrap();
         assert_eq!(
             vars.get_session_states_system_var("timestamp").unwrap(),
-            (String::new(), false)
+            ("0".to_owned(), false)
         );
 
         vars.set_system("max_allowed_packet", "1024".to_owned())
@@ -410,6 +411,36 @@ mod session_vars {
             vars.get_session_states_system_var("last_insert_id")
                 .unwrap(),
             (String::new(), false)
+        );
+        // Go `GetSessionStatesSystemVar` asks a variable's `GetSession`
+        // before its cached value, so a typed field is encoded untouched.
+        assert_eq!(
+            vars.get_session_states_system_var("group_concat_max_len").unwrap(),
+            ("1024".to_owned(), true)
+        );
+        assert_eq!(
+            vars.get_session_states_system_var("tiflash_replica_read").unwrap(),
+            ("all_replicas".to_owned(), true)
+        );
+        assert_eq!(
+            vars.get_session_states_system_var("tidb_opt_index_join_build_v2").unwrap(),
+            ("ON".to_owned(), true)
+        );
+        vars.set_system("tidb_session_alias", "alias1".to_owned()).unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("tidb_session_alias").unwrap(),
+            ("alias1".to_owned(), true)
+        );
+        // `GetStateValue`: the rand seeds always, the one-shot level only
+        // while set.
+        assert_eq!(
+            vars.get_session_states_system_var("tx_isolation_one_shot").unwrap(),
+            (String::new(), false)
+        );
+        vars.set_system("rand_seed1", "10000000".to_owned()).unwrap();
+        assert_eq!(
+            vars.get_session_states_system_var("rand_seed1").unwrap(),
+            ("10000000".to_owned(), true)
         );
         assert!(vars
             .get_session_states_system_var("not_a_sysvar")

@@ -268,8 +268,7 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
             .unwrap_or(4);
         let explicit_request_source_type = self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
-            .unwrap_or_default();
+            .explicit_request_source_type().to_owned();
         let ctx = self.statement_context(false);
         // Go `GetClient()` and `getSnapshotTS()`: the session transaction's
         // coprocessor client and snapshot.

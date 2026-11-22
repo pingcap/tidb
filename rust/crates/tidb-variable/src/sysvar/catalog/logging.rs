@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_cache_size",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_checksum",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_direct_non_transactional_updates",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_error_action",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_format",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_group_commit_sync_delay",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_group_commit_sync_no_delay_count",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_gtid_simple_recovery",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_max_flush_queue_time",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_order_commits",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_row_image",
@@ -239,6 +250,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_rows_query_log_events",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlog_stmt_cache_size",
@@ -275,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "binlogging_impossible_mode",
@@ -293,6 +307,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "expire_logs_days",
@@ -311,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "general_log",
@@ -329,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "general_log_file",
@@ -347,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_backward_compatible_user_definitions",
@@ -365,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_bin_trust_function_creators",
@@ -383,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_bin_use_v1_row_events",
@@ -401,6 +421,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_error",
@@ -419,6 +440,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_error_verbosity",
@@ -437,6 +459,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_output",
@@ -455,6 +478,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_queries_not_using_indexes",
@@ -473,6 +497,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_slave_updates",
@@ -491,6 +516,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_slow_admin_statements",
@@ -509,6 +535,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_slow_slave_statements",
@@ -527,6 +554,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_syslog",
@@ -545,6 +573,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_syslog_facility",
@@ -563,6 +592,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_syslog_include_pid",
@@ -581,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_syslog_tag",
@@ -599,6 +630,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_timestamps",
@@ -617,6 +649,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "log_warnings",
@@ -635,6 +668,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "max_binlog_cache_size",
@@ -653,6 +687,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "max_binlog_size",
@@ -671,6 +706,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "max_binlog_stmt_cache_size",
@@ -689,6 +725,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "max_relay_log_size",
@@ -707,6 +744,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_trace",
@@ -725,6 +763,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_trace_features",
@@ -743,6 +782,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_trace_limit",
@@ -761,6 +801,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_trace_max_mem_size",
@@ -779,6 +820,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_trace_offset",
@@ -797,6 +839,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "plugin_audit_log_buffer_size",
@@ -817,6 +860,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_plugin_audit_log_buffer_size),
+        get_state_value: None,
     },
     SysVarDef {
         name: "plugin_audit_log_flush_interval",
@@ -835,6 +879,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_plugin_audit_log_flush_interval),
+        get_state_value: None,
     },
     SysVarDef {
         name: "relay_log_info_file",
@@ -853,6 +898,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "relay_log_info_repository",
@@ -871,6 +917,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "relay_log_purge",
@@ -889,6 +936,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "relay_log_recovery",
@@ -907,6 +955,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "relay_log_space_limit",
@@ -925,6 +974,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_master_trace_level",
@@ -943,6 +993,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "rpl_semi_sync_slave_trace_level",
@@ -961,6 +1012,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "slow_query_log",
@@ -979,6 +1031,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "slow_query_log_file",
@@ -997,6 +1050,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "sql_log_off",
@@ -1015,6 +1069,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "sync_binlog",
@@ -1033,6 +1088,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "sync_relay_log",
@@ -1051,6 +1107,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "sync_relay_log_info",
@@ -1069,6 +1126,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_slow_log",
@@ -1087,6 +1145,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_slow_log),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_slow_log),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_expensive_query_time_threshold",
@@ -1105,6 +1164,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_expensive_query_time_threshold),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_expensive_query_time_threshold),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_expensive_txn_time_threshold",
@@ -1123,6 +1183,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_expensive_txn_time_threshold),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_expensive_txn_time_threshold),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_general_log",
@@ -1141,6 +1202,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_general_log),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_general_log),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_log_file_max_days",
@@ -1159,6 +1221,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_log_file_max_days),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_log_file_max_days),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_alternative_logical_plans",
@@ -1177,6 +1240,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_query_log_max_len",
@@ -1195,6 +1259,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_query_log_max_len),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_query_log_max_len),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_record_plan_in_slow_log",
@@ -1213,6 +1278,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_record_plan_in_slow_log),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_record_plan_in_slow_log),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_redact_log",
@@ -1231,6 +1297,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(crate::vars::SessionVars::set_global_tidb_redact_log),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_slow_log_max_per_sec",
@@ -1249,6 +1316,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_slow_log_max_per_sec),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_slow_log_max_per_sec),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_slow_log_rules",
@@ -1262,11 +1330,12 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         max_value: 0,
         possible_values: &[],
         auto_convert_negative_bool: false,
-        validation: Some(super::super::validation::tidb_slow_log_rules),
-        set_session: None,
+        validation: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_slow_log_rules),
         set_global: Some(super::super::process_hooks::set_tidb_slow_log_rules),
-        get_session: None,
+        get_session: Some(crate::vars::SessionVars::get_session_tidb_slow_log_rules),
         get_global: Some(super::super::process_hooks::get_tidb_slow_log_rules),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_slow_log_threshold",
@@ -1285,6 +1354,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_slow_log_threshold),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_slow_log_threshold),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_slow_query_file",
@@ -1304,6 +1374,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_slow_txn_log_threshold",
@@ -1322,6 +1393,7 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_trace_event",
@@ -1340,5 +1412,6 @@ pub(super) static ENTRIES: [SysVarDef; 73] = [
         set_global: Some(super::super::process_hooks::set_tidb_trace_event),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_trace_event),
+        get_state_value: None,
     },
 ];

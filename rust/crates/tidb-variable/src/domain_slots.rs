@@ -71,3 +71,40 @@ pub fn low_resolution_tso_update_interval(interval: Duration) -> Result<(), VarE
         .clone();
     set.map_or(Ok(()), |set| set(interval))
 }
+
+static EXTERNAL_TIMESTAMP: RwLock<Option<Arc<dyn crate::vars::ExternalTimestampProvider>>> = RwLock::new(None);
+
+/// Go `variable.SetExternalTimestamp = do.setExternalTimestamp` and
+/// `variable.GetExternalTimestamp = do.getExternalTimestamp`
+/// (`domain_sysvars.go`).
+pub fn set_external_timestamp_funcs(provider: Arc<dyn crate::vars::ExternalTimestampProvider>) {
+    *EXTERNAL_TIMESTAMP
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(provider);
+}
+
+fn external_timestamp() -> Option<Arc<dyn crate::vars::ExternalTimestampProvider>> {
+    EXTERNAL_TIMESTAMP
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Go `variable.SetExternalTimestamp(ctx, ts)`; no domain filled it: noop.
+///
+/// # Errors
+///
+/// The storage refused the timestamp.
+pub fn set_external_timestamp(ts: u64) -> Result<(), VarError> {
+    external_timestamp().map_or(Ok(()), |provider| provider.set(ts).map_err(VarError::unknown))
+}
+
+/// Go `variable.GetExternalTimestamp(ctx)`; no domain filled it: Go's
+/// `DefTiDBExternalTS`.
+///
+/// # Errors
+///
+/// The storage could not answer.
+pub fn get_external_timestamp() -> Result<u64, VarError> {
+    external_timestamp().map_or(Ok(0), |provider| provider.get().map_err(VarError::unknown))
+}

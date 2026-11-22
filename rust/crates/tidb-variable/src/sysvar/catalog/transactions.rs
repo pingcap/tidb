@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "lock_wait_timeout",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_batch_commit",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_committer_concurrency",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_committer_concurrency),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_committer_concurrency),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_constraint_check_in_place_pessimistic",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_current_ts",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_tidb_current_ts),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_disable_txn_auto_retry",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_1pc",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_external_ts_read",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_local_txn",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_local_txn),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_local_txn),
+        get_state_value: None,
     },
     // Compatibility surface only: the live Rust DML path does not yet run
     // Go's table mutation consistency checker when this is enabled.
@@ -241,6 +252,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_row_level_checksum",
@@ -259,6 +271,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_row_level_checksum),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_row_level_checksum),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_shared_lock_promotion",
@@ -277,6 +290,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_tso_follower_proxy",
@@ -295,6 +309,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_tso_follower_proxy),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_tso_follower_proxy),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_external_ts",
@@ -310,9 +325,10 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         auto_convert_negative_bool: false,
         validation: None,
         set_session: None,
-        set_global: None,
+        set_global: Some(super::super::process_hooks::set_tidb_external_ts),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_external_ts),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_foreign_key_check_in_shared_lock",
@@ -331,6 +347,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_guarantee_linearizability",
@@ -349,6 +366,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_idle_transaction_timeout",
@@ -367,6 +385,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_isolation_read_engines",
@@ -385,6 +404,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_last_txn_info",
@@ -403,6 +423,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_tidb_last_txn_info),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_lock_unchanged_keys",
@@ -421,6 +442,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_low_resolution_tso",
@@ -439,6 +461,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_low_resolution_tso_update_interval",
@@ -457,6 +480,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_low_resolution_tso_update_interval),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_nontransactional_ignore_error",
@@ -475,6 +499,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_pessimistic_txn_fair_locking",
@@ -493,6 +518,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_rc_read_check_ts",
@@ -511,6 +537,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_rc_read_check_ts),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_rc_read_check_ts),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_rc_write_check_ts",
@@ -529,6 +556,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_read_consistency",
@@ -547,6 +575,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_read_staleness",
@@ -565,6 +594,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_retry_limit",
@@ -583,6 +613,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_skip_isolation_level_check",
@@ -601,6 +632,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_snapshot",
@@ -619,6 +651,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_tso_client_batch_max_wait_time",
@@ -637,6 +670,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_tso_client_batch_max_wait_time),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_tso_client_batch_max_wait_time),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_tso_client_rpc_mode",
@@ -655,6 +689,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_tso_client_rpc_mode),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_txn_assertion_level",
@@ -673,6 +708,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_txn_commit_batch_size",
@@ -691,6 +727,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_txn_commit_batch_size),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_txn_commit_batch_size),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_txn_entry_size_limit",
@@ -709,6 +746,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: Some(super::super::process_hooks::set_tidb_txn_entry_size_limit),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_txn_mode",
@@ -727,6 +765,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "transaction_alloc_block_size",
@@ -745,6 +784,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "transaction_allow_batching",
@@ -763,6 +803,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "transaction_isolation",
@@ -786,6 +827,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "transaction_prealloc_size",
@@ -804,6 +846,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "transaction_write_set_extraction",
@@ -822,6 +865,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tx_isolation",
@@ -845,6 +889,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tx_isolation_one_shot",
@@ -863,6 +908,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: Some(crate::vars::SessionVars::get_state_tx_isolation_one_shot),
     },
     SysVarDef {
         name: "tx_read_ts",
@@ -881,6 +927,7 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "unique_checks",
@@ -899,5 +946,6 @@ pub(super) static ENTRIES: [SysVarDef; 48] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
 ];

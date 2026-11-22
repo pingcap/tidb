@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "last_plan_from_binding",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_last_plan_from_binding),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "last_plan_from_cache",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_last_plan_from_cache),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "mpp_exchange_compression_mode",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "mpp_version",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_prune_level",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_search_depth",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "optimizer_switch",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_allow_mpp",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_broadcast_join_threshold_count",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_broadcast_join_threshold_size",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_capture_plan_baselines",
@@ -239,6 +250,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_cost_model_version",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_binding_usage",
@@ -275,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_binding_usage),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_binding_usage),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_cascades_planner",
@@ -293,6 +307,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_index_merge",
@@ -311,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_index_merge_join",
@@ -329,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_inl_join_inner_multi_pattern",
@@ -343,10 +360,11 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         possible_values: &[],
         auto_convert_negative_bool: false,
         validation: None,
-        set_session: None,
+        set_session: Some(crate::vars::SessionVars::set_session_tidb_enable_inl_join_inner_multi_pattern),
         set_global: None,
-        get_session: None,
+        get_session: Some(crate::vars::SessionVars::get_session_tidb_enable_inl_join_inner_multi_pattern),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_instance_plan_cache",
@@ -365,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_instance_plan_cache),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_instance_plan_cache),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_new_cost_interface",
@@ -383,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_non_prepared_plan_cache",
@@ -401,6 +421,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_non_prepared_plan_cache_for_dml",
@@ -419,6 +440,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_ordered_result_mode",
@@ -437,6 +459,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_outer_join_reorder",
@@ -455,6 +478,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_parallel_apply",
@@ -473,6 +497,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_plan_cache_for_param_limit",
@@ -491,6 +516,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_plan_cache_for_subquery",
@@ -509,6 +535,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_prepared_plan_cache",
@@ -527,6 +554,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_prepared_plan_cache_memory_monitor",
@@ -545,6 +573,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enforce_mpp",
@@ -563,6 +592,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_evolve_plan_baselines",
@@ -581,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_hash_join_concurrency",
@@ -599,6 +630,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_hash_join_version",
@@ -617,6 +649,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ignore_inlist_plan_digest",
@@ -635,6 +668,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_ignore_inlist_plan_digest),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ignore_inlist_plan_digest),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_join_batch_size",
@@ -653,6 +687,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_join_double_read_penalty_cost_rate",
@@ -671,6 +706,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_lookup_concurrency",
@@ -689,6 +725,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_lookup_join_concurrency",
@@ -707,6 +744,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_lookup_pushdown_policy",
@@ -725,6 +763,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_lookup_size",
@@ -743,6 +782,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_index_merge_intersection_concurrency",
@@ -761,6 +801,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_instance_plan_cache_max_size",
@@ -779,6 +820,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_instance_plan_cache_max_mem_size),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_instance_plan_cache_max_mem_size),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_instance_plan_cache_reserved_percentage",
@@ -797,6 +839,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_instance_plan_cache_reserved_percentage),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_instance_plan_cache_reserved_percentage),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_load_binding_timeout",
@@ -815,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_mem_quota_binding_cache",
@@ -833,6 +877,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_mem_quota_binding_cache),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_mem_quota_binding_cache),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_merge_join_concurrency",
@@ -851,6 +896,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_non_prepared_plan_cache_size",
@@ -869,6 +915,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_advanced_join_hint",
@@ -887,6 +934,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_agg_push_down",
@@ -905,6 +953,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_always_keep_join_key",
@@ -923,6 +972,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_broadcast_cartesian_join",
@@ -941,6 +991,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_cartesian_join_order_threshold",
@@ -959,6 +1010,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_concurrency_factor",
@@ -977,6 +1029,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_copcpu_factor",
@@ -995,6 +1048,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_correlation_exp_factor",
@@ -1013,6 +1067,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_correlation_threshold",
@@ -1031,6 +1086,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_cpu_factor",
@@ -1049,6 +1105,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_derive_topn",
@@ -1067,6 +1124,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_desc_factor",
@@ -1085,6 +1143,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_disk_factor",
@@ -1103,6 +1162,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_distinct_agg_push_down",
@@ -1121,6 +1181,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_advanced_join_reorder",
@@ -1139,6 +1200,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_correlation_adjustment",
@@ -1157,6 +1219,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_fuzzy_binding",
@@ -1175,6 +1238,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_hash_join",
@@ -1193,6 +1257,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_late_materialization",
@@ -1211,6 +1276,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_mpp_shared_cte_execution",
@@ -1229,6 +1295,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_no_decorrelate_in_select",
@@ -1247,6 +1314,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_non_eval_scalar_subquery",
@@ -1265,6 +1333,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_semi_join_rewrite",
@@ -1283,6 +1352,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_enable_three_stage_multi_distinct_agg",
@@ -1301,6 +1371,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_fix_control",
@@ -1319,6 +1390,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_force_inline_cte",
@@ -1337,6 +1409,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_group_ndv_skew_ratio",
@@ -1355,6 +1428,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_hash_agg_cost_factor",
@@ -1373,6 +1447,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_hash_join_cost_factor",
@@ -1391,6 +1466,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_join_build_v2",
@@ -1407,8 +1483,9 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         validation: Some(super::super::validation::tidb_opt_index_join_build_v2),
         set_session: None,
         set_global: None,
-        get_session: None,
+        get_session: Some(super::super::validation::always_on_session),
         get_global: Some(super::super::process_hooks::get_tidb_opt_index_join_build_v2),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_join_cost_factor",
@@ -1427,6 +1504,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_join_max_scan_rows_ratio",
@@ -1445,6 +1523,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_lookup_cost_factor",
@@ -1463,6 +1542,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_merge_cost_factor",
@@ -1481,6 +1561,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_prune_threshold",
@@ -1499,6 +1580,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_reader_cost_factor",
@@ -1517,6 +1599,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_index_scan_cost_factor",
@@ -1535,6 +1618,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_insubq_to_join_and_agg",
@@ -1553,6 +1637,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_threshold",
@@ -1571,6 +1656,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_through_proj",
@@ -1589,6 +1675,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_join_reorder_through_sel",
@@ -1607,6 +1694,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_limit_cost_factor",
@@ -1625,6 +1713,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_limit_push_down_threshold",
@@ -1643,6 +1732,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_memory_factor",
@@ -1661,6 +1751,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_merge_join_cost_factor",
@@ -1679,6 +1770,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_mpp_outer_join_fixed_build_side",
@@ -1697,6 +1789,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_network_factor",
@@ -1715,6 +1808,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_objective",
@@ -1733,6 +1827,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_partial_ordered_index_for_topn",
@@ -1751,6 +1846,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_prefer_range_scan",
@@ -1769,6 +1865,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_prefix_index_single_scan",
@@ -1787,6 +1884,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_projection_push_down",
@@ -1805,6 +1903,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_range_max_size",
@@ -1823,6 +1922,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_risk_eq_skew_ratio",
@@ -1841,6 +1941,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_risk_range_skew_ratio",
@@ -1859,6 +1960,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_scale_ndv_skew_ratio",
@@ -1877,6 +1979,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_scan_factor",
@@ -1895,6 +1998,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_seek_factor",
@@ -1913,6 +2017,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_skew_distinct_agg",
@@ -1931,6 +2036,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_sort_cost_factor",
@@ -1949,6 +2055,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_stream_agg_cost_factor",
@@ -1967,6 +2074,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_table_full_scan_cost_factor",
@@ -1985,6 +2093,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_table_range_scan_cost_factor",
@@ -2003,6 +2112,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_table_reader_cost_factor",
@@ -2021,6 +2131,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_table_rowid_scan_cost_factor",
@@ -2039,6 +2150,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_table_tiflash_scan_cost_factor",
@@ -2057,6 +2169,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_three_stage_distinct_agg",
@@ -2075,6 +2188,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_tiflash_concurrency_factor",
@@ -2093,6 +2207,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_topn_cost_factor",
@@ -2111,6 +2226,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_use_invisible_indexes",
@@ -2129,6 +2245,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_opt_write_row_id",
@@ -2147,6 +2264,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_plan_cache_max_plan_size",
@@ -2165,6 +2283,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_plan_cache_strategy",
@@ -2183,6 +2302,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_prefer_broadcast_join_by_exchange_data_size",
@@ -2201,6 +2321,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_prepared_plan_cache_memory_guard_ratio",
@@ -2219,6 +2340,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: Some(super::super::process_hooks::set_tidb_prepared_plan_cache_memory_guard_ratio),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_prepared_plan_cache_memory_guard_ratio),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_prepared_plan_cache_size",
@@ -2237,6 +2359,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_regard_null_as_point",
@@ -2255,6 +2378,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_remove_orderby_in_subquery",
@@ -2273,6 +2397,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_runtime_filter_mode",
@@ -2291,6 +2416,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_runtime_filter_type",
@@ -2309,6 +2435,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_session_plan_cache_size",
@@ -2327,6 +2454,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_shard_row_id_bits",
@@ -2345,6 +2473,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_use_plan_baselines",
@@ -2363,6 +2492,7 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tiflash_hash_join_version",
@@ -2381,4 +2511,5 @@ pub(super) static ENTRIES: [SysVarDef; 131] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },];

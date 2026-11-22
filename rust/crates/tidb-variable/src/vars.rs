@@ -120,7 +120,9 @@ pub fn set_global_resource_control(enable: bool) {
     }
 }
 
-/// Storage-oracle authority installed once by the process session factory.
+/// The storage authority behind Go's `variable.SetExternalTimestamp` /
+/// `GetExternalTimestamp`, which the domain fills
+/// ([`crate::domain_slots::set_external_timestamp_funcs`]).
 pub trait ExternalTimestampProvider: std::fmt::Debug + Send + Sync {
     /// Reads the current timestamp from the storage authority.
     fn get(&self) -> Result<u64, String>;
@@ -272,6 +274,29 @@ pub struct SessionVars {
     /// Go's typed `SessionVars.MaxAllowedPacket`, maintained by the sysvar's
     /// `SetSession` hook and read directly by wire and builtin consumers.
     max_allowed_packet: u64,
+    /// Go's `ServerStatusInTrans` bit (`InTxn` / `SetInTxn`).
+    in_txn: bool,
+    /// Go `SessionVars.ExplicitRequestSourceType` (`tidb_request_source_type`).
+    explicit_request_source_type: String,
+    /// Go `SessionVars.ScatterRegion` (`tidb_scatter_region`).
+    scatter_region: String,
+    /// Go `SessionVars.EnablePlanReplayedContinuesCapture`.
+    enable_plan_replayed_continues_capture: bool,
+    /// Go `SessionVars.EnablePlanReplayerCapture`.
+    enable_plan_replayer_capture: bool,
+    /// Go `SessionVars.GroupConcatMaxLen`.
+    group_concat_max_len: u64,
+    /// Go `SessionVars.PartitionPruneMode`.
+    partition_prune_mode: String,
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
+    enable_inl_join_inner_multi_pattern: bool,
+    /// Go `SessionVars.TiFlashReplicaRead`.
+    tiflash_replica_read: tidb_tiflash::ReplicaRead,
+    /// Go `SessionVars.SessionAlias`.
+    session_alias: String,
+    /// Go `SessionVars.SlowLogRules.RawRules` while its `SlowLogRules` is
+    /// set: the session's unbound slow-log rules, encoded; empty for none.
+    slow_log_rules: String,
     /// Go's typed `SessionVars.MaxKeysRead`, maintained by the
     /// `tidb_max_keys_read` `SetSession` hook. The Go accessor returns this
     /// value only while a SELECT statement is active; callers pass that
@@ -687,6 +712,19 @@ impl Default for SessionVars {
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
                 .expect("the compiled default SQL mode is valid"),
             max_allowed_packet: 64 << 20,
+            in_txn: false,
+            explicit_request_source_type: String::new(),
+            scatter_region: tidb_vardef::defaults::DEF_TIDB_SCATTER_REGION.to_owned(),
+            enable_plan_replayed_continues_capture: false,
+            enable_plan_replayer_capture: tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_REPLAYER_CAPTURE,
+            group_concat_max_len: tidb_vardef::defaults::DEF_GROUP_CONCAT_MAX_LEN,
+            partition_prune_mode: tidb_vardef::defaults::DEF_TIDB_PARTITION_PRUNE_MODE.to_owned(),
+            enable_inl_join_inner_multi_pattern: tidb_vardef::defaults::DEF_TIDB_ENABLE_INL_JOIN_MULTI_PATTERN,
+            tiflash_replica_read: tidb_tiflash::get_tiflash_replica_read_by_str(
+                tidb_vardef::defaults::DEF_TIFLASH_REPLICA_READ,
+            ),
+            session_alias: String::new(),
+            slow_log_rules: String::new(),
             max_keys_read: 0,
             max_execution_time: 0,
             time_zone: resolve_session_time_zone_value("SYSTEM"),
@@ -1006,6 +1044,19 @@ impl SessionVars {
 
 
 
+    /// Go `SessionVars.InTxn`: the `ServerStatusInTrans` bit, which the
+    /// session sets as it enters a transaction and clears as it ends one,
+    /// and `autocommit`'s `SetSession` clears on the OFF to ON transition.
+    #[must_use]
+    pub const fn in_txn(&self) -> bool {
+        self.in_txn
+    }
+
+    /// Go `SessionVars.SetInTxn`.
+    pub fn set_in_txn(&mut self, in_txn: bool) {
+        self.in_txn = in_txn;
+    }
+
     /// Go `SessionVars.IsAutocommit`, backed by its typed server-status bit.
     #[must_use]
     pub const fn is_autocommit(&self) -> bool {
@@ -1037,6 +1088,66 @@ impl SessionVars {
     #[must_use]
     pub const fn max_allowed_packet(&self) -> u64 {
         self.max_allowed_packet
+    }
+
+    /// Go `SessionVars.ExplicitRequestSourceType`.
+    #[must_use]
+    pub fn explicit_request_source_type(&self) -> &str {
+        &self.explicit_request_source_type
+    }
+
+    /// Go `SessionVars.ScatterRegion`.
+    #[must_use]
+    pub fn scatter_region(&self) -> &str {
+        &self.scatter_region
+    }
+
+    /// Go `SessionVars.EnablePlanReplayedContinuesCapture`.
+    #[must_use]
+    pub const fn enable_plan_replayed_continues_capture(&self) -> bool {
+        self.enable_plan_replayed_continues_capture
+    }
+
+    /// Go `SessionVars.EnablePlanReplayerCapture`.
+    #[must_use]
+    pub const fn enable_plan_replayer_capture(&self) -> bool {
+        self.enable_plan_replayer_capture
+    }
+
+    /// Go `SessionVars.GroupConcatMaxLen`.
+    #[must_use]
+    pub const fn group_concat_max_len(&self) -> u64 {
+        self.group_concat_max_len
+    }
+
+    /// Go `SessionVars.PartitionPruneMode.Load()`.
+    #[must_use]
+    pub fn partition_prune_mode(&self) -> &str {
+        &self.partition_prune_mode
+    }
+
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
+    #[must_use]
+    pub const fn enable_inl_join_inner_multi_pattern(&self) -> bool {
+        self.enable_inl_join_inner_multi_pattern
+    }
+
+    /// Go `SessionVars.TiFlashReplicaRead`.
+    #[must_use]
+    pub const fn tiflash_replica_read(&self) -> tidb_tiflash::ReplicaRead {
+        self.tiflash_replica_read
+    }
+
+    /// Go `SessionVars.SessionAlias`.
+    #[must_use]
+    pub fn session_alias(&self) -> &str {
+        &self.session_alias
+    }
+
+    /// Go `SessionVars.SlowLogRules`'s `RawRules`, empty when unset.
+    #[must_use]
+    pub fn slow_log_rules(&self) -> &str {
+        &self.slow_log_rules
     }
 
     /// Go `SessionVars.GetMaxKeysRead`: `tidb_max_keys_read` limits index
@@ -1347,7 +1458,7 @@ impl SessionVars {
             return self
                 .globals()
                 .get_by_registry_index(index)
-                .map(|value| Cow::Owned(global_get_hook(def, value)));
+                .and_then(|value| global_get_hook(def, value).map(Cow::Owned));
         }
         // Go `GetSessionOrGlobalSystemVar`: a variable with a `GetSession`
         // hook answers from it ("shortcut to the getter").
@@ -1392,10 +1503,10 @@ impl SessionVars {
         if let Some(value) = first_reads.get(&index) {
             return Some(Ok(Cow::Owned(value.clone())));
         }
-        Some(self.globals().get_by_registry_index(index).map(|value| {
-            let value = global_get_hook(def, value);
+        Some(self.globals().get_by_registry_index(index).and_then(|value| {
+            let value = global_get_hook(def, value)?;
             first_reads.insert(index, value.clone());
-            Cow::Owned(value)
+            Ok(Cow::Owned(value))
         }))
     }
 
@@ -1425,16 +1536,11 @@ impl SessionVars {
             .and_then(|value| value.parse::<f64>().ok())
     }
 
-    /// Returns the value that Go's `GetSessionStatesSystemVar` would encode
-    /// while migrating this session, together with whether the entry should
-    /// be kept in the session-state image.
-    ///
-    /// Session state is deliberately based on cached session overrides, not
-    /// on `get_system`'s registry-default fallback: an untouched variable is
-    /// omitted so the destination session can use its own default.  Go's
-    /// timestamp state hook also omits an override equal to the default,
-    /// `max_allowed_packet` is always emitted through its typed getter, and
-    /// the last-insert-id/identity hooks are explicitly never migrated.
+    /// Go `GetSessionStatesSystemVar`: the value a session-state migration
+    /// encodes for `name`, and whether to encode it -- the variable's
+    /// `GetStateValue` if it has one, else its `GetSession`, else only the
+    /// session's cached value (no global or default fallback, so an
+    /// untouched variable is omitted and the destination keeps its own).
     pub fn get_session_states_system_var(&self, name: &str) -> Result<(String, bool), VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
             return Err(tidb_terror::MysqlError::from_terror(
@@ -1443,21 +1549,15 @@ impl SessionVars {
             ));
         };
         let definition = crate::sysvar::sys_var_at(index);
+        // Call GetStateValue first if it exists. Otherwise, call GetSession.
+        if let Some(get_state_value) = definition.get_state_value {
+            return get_state_value(self);
+        }
+        if let Some(get_session) = definition.get_session {
+            return get_session(self).map(|value| (value, true));
+        }
+        // Only get the cached value. No need to check the global or default value.
         let key = crate::sysvar::lowered_if_needed(name);
-
-        // Go's GetStateValue hooks intentionally omit these values even when
-        // their ordinary session getter exposes a value.
-        if matches!(key.as_ref(), "last_insert_id" | "identity") {
-            return Ok((String::new(), false));
-        }
-
-        // Go's max_allowed_packet definition has a GetSession hook, so its
-        // current typed value is serialized even before an explicit session
-        // override exists.
-        if key == "max_allowed_packet" {
-            return Ok((self.max_allowed_packet.to_string(), true));
-        }
-
         let first_read = self
             .first_read_globals
             .0
@@ -1465,17 +1565,44 @@ impl SessionVars {
             .expect("first-read globals lock poisoned")
             .get(&index)
             .cloned();
-        let Some(value) = self.systems.get(key.as_ref()).or(first_read.as_ref()) else {
-            return Ok((String::new(), false));
-        };
+        Ok(match self.systems.get(key.as_ref()).or(first_read.as_ref()) {
+            Some(value) => (value.clone(), true),
+            None => (String::new(), false),
+        })
+    }
 
-        // Go's timestamp hook only migrates a non-default explicit override;
-        // an assignment of the default is equivalent to no session state.
-        if key == "timestamp" && value == definition.value {
-            return Ok((String::new(), false));
-        }
+    /// Go `timestamp`'s `GetStateValue`: an explicit override that is not
+    /// the default.
+    pub(crate) fn get_state_timestamp(&self) -> Result<(String, bool), VarError> {
+        Ok(match self.systems.get("timestamp") {
+            Some(timestamp) => (timestamp.clone(), timestamp != tidb_vardef::defaults::DEF_TIMESTAMP),
+            None => (String::new(), false),
+        })
+    }
 
-        Ok((value.clone(), true))
+    /// Go `last_insert_id` / `identity`'s `GetStateValue`: never migrated.
+    pub(crate) fn get_state_never(&self) -> Result<(String, bool), VarError> {
+        Ok((String::new(), false))
+    }
+
+    /// Go `tx_isolation_one_shot`'s `GetStateValue`.
+    pub(crate) fn get_state_tx_isolation_one_shot(&self) -> Result<(String, bool), VarError> {
+        let (state, value) = &self.txn_isolation_level_one_shot;
+        Ok(if *state == TxnIsolationLevelOneShotState::Def {
+            (String::new(), false)
+        } else {
+            (value.clone(), true)
+        })
+    }
+
+    /// Go `rand_seed1`'s `GetStateValue`.
+    pub(crate) fn get_state_rand_seed1(&self) -> Result<(String, bool), VarError> {
+        Ok((self.rng.get_seed1().to_string(), true))
+    }
+
+    /// Go `rand_seed2`'s `GetStateValue`.
+    pub(crate) fn get_state_rand_seed2(&self) -> Result<(String, bool), VarError> {
+        Ok((self.rng.get_seed2().to_string(), true))
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently
@@ -1717,11 +1844,6 @@ impl SessionVars {
         &mut self,
         globals: Option<Arc<dyn crate::GlobalVarAccessor>>,
     ) -> Option<Arc<dyn crate::GlobalVarAccessor>> {
-        if let (Some(current), Some(incoming)) = (&self.globals, &globals) {
-            if let Some(provider) = current.external_timestamp_provider() {
-                incoming.set_external_timestamp_provider(provider);
-            }
-        }
         std::mem::replace(&mut self.globals, globals)
     }
 
@@ -1767,7 +1889,7 @@ impl SessionVars {
             return Ok(default);
         }
         if let Some(value) = def.get_global_from_hook() {
-            return Ok(value);
+            return value;
         }
         if let Some(stored) = self.globals().overrides().get(def.name) {
             return Ok(stored.clone());
@@ -1937,8 +2059,8 @@ pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
 
 /// Go `SysVar.GetGlobalFromHook`: the variable's `GetGlobal` hook, else the
 /// stored GLOBAL value.
-pub fn global_get_hook(def: &SysVarDef, value: String) -> String {
-    def.get_global_from_hook().unwrap_or(value)
+pub fn global_get_hook(def: &SysVarDef, value: String) -> Result<String, VarError> {
+    def.get_global_from_hook().unwrap_or(Ok(value))
 }
 
 /// Go `SessionVars.GetRelatedTableForMDL().Store(id, ...)`: records one stored
@@ -2157,7 +2279,13 @@ impl SessionVars {
 
     /// Go `autocommit`'s `SetSession`.
     pub(crate) fn set_session_autocommit(&mut self, value: &str) -> Result<(), VarError> {
-        self.autocommit = value == "ON";
+        let is_autocommit = tidb_vardef::option_values::tidb_opt_on(value);
+        // Implicitly commit the possible ongoing transaction if mode is
+        // changed from off to on.
+        if !self.autocommit && is_autocommit {
+            self.set_in_txn(false);
+        }
+        self.autocommit = is_autocommit;
         Ok(())
     }
 
@@ -2165,6 +2293,122 @@ impl SessionVars {
     pub(crate) fn set_session_max_allowed_packet(&mut self, value: &str) -> Result<(), VarError> {
         self.max_allowed_packet = value.parse::<u64>().expect("max_allowed_packet validation stores unsigned decimal bytes");
         Ok(())
+    }
+
+    /// Go `max_allowed_packet`'s `GetSession`.
+    pub(crate) fn get_session_max_allowed_packet(&self) -> Result<String, VarError> {
+        Ok(self.max_allowed_packet.to_string())
+    }
+
+    /// Go `tidb_request_source_type`'s `SetSession`.
+    pub(crate) fn set_session_tidb_request_source_type(&mut self, value: &str) -> Result<(), VarError> {
+        value.clone_into(&mut self.explicit_request_source_type);
+        Ok(())
+    }
+
+    /// Go `tidb_request_source_type`'s `GetSession`.
+    pub(crate) fn get_session_tidb_request_source_type(&self) -> Result<String, VarError> {
+        Ok(self.explicit_request_source_type.clone())
+    }
+
+    /// Go `tidb_scatter_region`'s `SetSession`.
+    pub(crate) fn set_session_tidb_scatter_region(&mut self, value: &str) -> Result<(), VarError> {
+        value.clone_into(&mut self.scatter_region);
+        Ok(())
+    }
+
+    /// Go `tidb_scatter_region`'s `GetSession`.
+    pub(crate) fn get_session_tidb_scatter_region(&self) -> Result<String, VarError> {
+        Ok(self.scatter_region.clone())
+    }
+
+    /// Go `tidb_enable_plan_replayer_continuous_capture`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_plan_replayer_continuous_capture(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_plan_replayed_continues_capture = tidb_vardef::option_values::tidb_opt_on(value);
+        Ok(())
+    }
+
+    /// Go `tidb_enable_plan_replayer_continuous_capture`'s `GetSession`.
+    pub(crate) fn get_session_tidb_enable_plan_replayer_continuous_capture(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.enable_plan_replayed_continues_capture).to_owned())
+    }
+
+    /// Go `tidb_enable_plan_replayer_capture`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_plan_replayer_capture(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_plan_replayer_capture = tidb_vardef::option_values::tidb_opt_on(value);
+        Ok(())
+    }
+
+    /// Go `tidb_enable_plan_replayer_capture`'s `GetSession`.
+    pub(crate) fn get_session_tidb_enable_plan_replayer_capture(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.enable_plan_replayer_capture).to_owned())
+    }
+
+    /// Go `group_concat_max_len`'s `SetSession`.
+    pub(crate) fn set_session_group_concat_max_len(&mut self, value: &str) -> Result<(), VarError> {
+        self.group_concat_max_len = value
+            .parse::<u64>()
+            .expect("group_concat_max_len validation stores an unsigned decimal");
+        Ok(())
+    }
+
+    /// Go `group_concat_max_len`'s `GetSession`.
+    pub(crate) fn get_session_group_concat_max_len(&self) -> Result<String, VarError> {
+        Ok(self.group_concat_max_len.to_string())
+    }
+
+    /// Go `tidb_partition_prune_mode`'s `GetSession`.
+    pub(crate) fn get_session_tidb_partition_prune_mode(&self) -> Result<String, VarError> {
+        Ok(self.partition_prune_mode.clone())
+    }
+
+    /// Go `tidb_partition_prune_mode`'s `SetSession` store.
+    pub(crate) fn store_partition_prune_mode(&mut self, mode: String) {
+        self.partition_prune_mode = mode;
+    }
+
+    /// Go `tidb_enable_inl_join_inner_multi_pattern`'s `SetSession`.
+    pub(crate) fn set_session_tidb_enable_inl_join_inner_multi_pattern(&mut self, value: &str) -> Result<(), VarError> {
+        self.enable_inl_join_inner_multi_pattern = tidb_vardef::option_values::tidb_opt_on(value);
+        Ok(())
+    }
+
+    /// Go `tidb_enable_inl_join_inner_multi_pattern`'s `GetSession`.
+    pub(crate) fn get_session_tidb_enable_inl_join_inner_multi_pattern(&self) -> Result<String, VarError> {
+        Ok(bool_to_on_off(self.enable_inl_join_inner_multi_pattern).to_owned())
+    }
+
+    /// Go `tiflash_replica_read`'s `SetSession`.
+    pub(crate) fn set_session_tiflash_replica_read(&mut self, value: &str) -> Result<(), VarError> {
+        self.tiflash_replica_read = tidb_tiflash::get_tiflash_replica_read_by_str(value);
+        Ok(())
+    }
+
+    /// Go `tiflash_replica_read`'s `GetSession`.
+    pub(crate) fn get_session_tiflash_replica_read(&self) -> Result<String, VarError> {
+        Ok(tidb_tiflash::get_tiflash_replica_read(self.tiflash_replica_read).to_owned())
+    }
+
+    /// Go `tidb_session_alias`'s `SetSession`.
+    pub(crate) fn set_session_tidb_session_alias(&mut self, value: &str) -> Result<(), VarError> {
+        value.clone_into(&mut self.session_alias);
+        Ok(())
+    }
+
+    /// Go `tidb_session_alias`'s `GetSession`.
+    pub(crate) fn get_session_tidb_session_alias(&self) -> Result<String, VarError> {
+        Ok(self.session_alias.clone())
+    }
+
+    /// Go `tidb_slow_log_rules`'s `SetSession`: `ParseSessionSlowLogRules`.
+    pub(crate) fn set_session_tidb_slow_log_rules(&mut self, value: &str) -> Result<(), VarError> {
+        self.slow_log_rules = crate::slow_log_rules::session_rules(value).map_err(VarError::unknown)?;
+        Ok(())
+    }
+
+    /// Go `tidb_slow_log_rules`'s `GetSession`.
+    pub(crate) fn get_session_tidb_slow_log_rules(&self) -> Result<String, VarError> {
+        Ok(self.slow_log_rules.clone())
     }
 
     /// Go `tidb_max_keys_read`'s `SetSession`.

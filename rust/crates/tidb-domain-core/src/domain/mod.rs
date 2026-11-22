@@ -1029,7 +1029,9 @@ impl Domain {
         auto_ids: Arc<dyn TableAutoIds>,
         sys_session_opener: SysSessionOpener,
     ) -> Self {
-        global_vars.set_external_timestamp_provider(Arc::new(ClusterExternalTimestamp(
+        // Go `initDomainSysVars`: `variable.SetExternalTimestamp` /
+        // `GetExternalTimestamp`.
+        tidb_variable::domain_slots::set_external_timestamp_funcs(Arc::new(ClusterExternalTimestamp(
             Arc::clone(&transactions),
         )));
         let boot_skipped =

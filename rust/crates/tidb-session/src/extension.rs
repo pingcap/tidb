@@ -152,8 +152,7 @@ impl Session {
             connection_info: self.vars.connection_info.as_deref()?.clone(),
             session_alias: self
                 .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-                .unwrap_or_default(),
+                .session_alias().to_owned(),
             active_roles: self
                 .active_roles()
                 .iter()
@@ -305,8 +304,7 @@ impl Session {
             connection_info: self.vars.connection_info.clone(),
             alias: self
                 .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-                .unwrap_or_default(),
+                .session_alias().to_owned(),
             node,
             execute,
             prepared,

@@ -289,8 +289,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .unwrap_or_default();
         statement.dynamic_partition_prune = !self
             .session_vars()
-            .get_system("tidb_partition_prune_mode")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
+            .partition_prune_mode().eq_ignore_ascii_case("static");
         statement.skip_missing_partition_stats =
             on(tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS);
         statement.enable_ddl_analyze_exec_opt = self.session_vars().enable_ddl_analyze_exec_opt;

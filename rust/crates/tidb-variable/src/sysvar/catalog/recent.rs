@@ -28,6 +28,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_connection_event_log",
@@ -46,5 +47,6 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_connection_event_log),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_connection_event_log),
+        get_state_value: None,
     },
 ];

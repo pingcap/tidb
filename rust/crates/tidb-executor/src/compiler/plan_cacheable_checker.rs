@@ -52,8 +52,7 @@ pub trait PlanCacheableChecker: super::CompilerSession {
                 ),
                 dynamic_partition_prune: self
                     .session_vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
-                    .is_ok_and(|mode| mode.eq_ignore_ascii_case("dynamic")),
+                    .partition_prune_mode().eq_ignore_ascii_case("dynamic"),
                 disable_partition_cache: self
                     .session_vars()
                     .optimizer_fix_control()

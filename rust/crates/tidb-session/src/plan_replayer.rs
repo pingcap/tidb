@@ -606,12 +606,9 @@ impl Session {
     ) {
         // Go also skips the statistics request sources; this node's
         // statistics statements all run on restricted sessions.
-        let on = |name: &str| {
-            self.vars.get_system(name).is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-        };
-        let continues = on(tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_REPLAYER_CONTINUOUS_CAPTURE);
+        let continues = self.vars.enable_plan_replayed_continues_capture();
         // Go `IsPlanReplayerCaptureEnabled`.
-        if self.vars.restricted_sql || !(on(tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_REPLAYER_CAPTURE) || continues) {
+        if self.vars.restricted_sql || !(self.vars.enable_plan_replayer_capture() || continues) {
             return;
         }
         let Some(handle) = self.plan_replayer_handle() else {

@@ -30,5 +30,6 @@ pub(super) static ENTRIES: [SysVarDef; 1] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
 ];

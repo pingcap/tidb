@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_adaptive_flushing_lwm",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_adaptive_hash_index",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_adaptive_max_sleep_delay",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_api_bk_commit_interval",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_api_disable_rowlock",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_api_enable_binlog",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_api_enable_mdl",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_api_trx_level",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_autoextend_increment",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_autoinc_lock_mode",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_at_shutdown",
@@ -239,6 +250,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_now",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_dump_pct",
@@ -275,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_filename",
@@ -293,6 +307,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_instances",
@@ -311,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_abort",
@@ -329,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_at_startup",
@@ -347,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_load_now",
@@ -365,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_buffer_pool_size",
@@ -383,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_change_buffer_max_size",
@@ -401,6 +421,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_change_buffering",
@@ -419,6 +440,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_checksum_algorithm",
@@ -437,6 +459,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_cmp_per_index_enabled",
@@ -455,6 +478,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_commit_concurrency",
@@ -473,6 +497,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_compression_failure_threshold_pct",
@@ -491,6 +516,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_compression_level",
@@ -509,6 +535,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_compression_pad_pct_max",
@@ -527,6 +554,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_concurrency_tickets",
@@ -545,6 +573,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_create_intrinsic",
@@ -563,6 +592,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_data_file_path",
@@ -581,6 +611,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_default_row_format",
@@ -599,6 +630,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_disable_sort_file_cache",
@@ -617,6 +649,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_doublewrite",
@@ -635,6 +668,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_fast_shutdown",
@@ -653,6 +687,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_file_per_table",
@@ -671,6 +706,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_fill_factor",
@@ -689,6 +725,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_flush_log_at_timeout",
@@ -707,6 +744,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_flush_log_at_trx_commit",
@@ -725,6 +763,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_flush_neighbors",
@@ -743,6 +782,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_flush_sync",
@@ -761,6 +801,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_flushing_avg_loops",
@@ -779,6 +820,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_force_load_corrupted",
@@ -797,6 +839,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_force_recovery",
@@ -815,6 +858,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_aux_table",
@@ -833,6 +877,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_cache_size",
@@ -851,6 +896,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_enable_diag_print",
@@ -869,6 +915,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_enable_stopword",
@@ -887,6 +934,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_max_token_size",
@@ -905,6 +953,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_min_token_size",
@@ -923,6 +972,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_num_word_optimize",
@@ -941,6 +991,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_result_cache_limit",
@@ -959,6 +1010,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_server_stopword_table",
@@ -977,6 +1029,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_sort_pll_degree",
@@ -995,6 +1048,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_total_cache_size",
@@ -1013,6 +1067,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_ft_user_stopword_table",
@@ -1031,6 +1086,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_io_capacity",
@@ -1049,6 +1105,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_io_capacity_max",
@@ -1067,6 +1124,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_lock_wait_timeout",
@@ -1085,6 +1143,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_buffer_size",
@@ -1103,6 +1162,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_compressed_pages",
@@ -1121,6 +1181,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_file_size",
@@ -1139,6 +1200,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_files_in_group",
@@ -1157,6 +1219,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_group_home_dir",
@@ -1175,6 +1238,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_log_write_ahead_size",
@@ -1193,6 +1257,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_lru_scan_depth",
@@ -1211,6 +1276,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_max_dirty_pages_pct",
@@ -1229,6 +1295,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_max_dirty_pages_pct_lwm",
@@ -1247,6 +1314,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_max_purge_lag",
@@ -1265,6 +1333,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_max_purge_lag_delay",
@@ -1283,6 +1352,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_max_undo_log_size",
@@ -1301,6 +1371,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_monitor_disable",
@@ -1319,6 +1390,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_monitor_enable",
@@ -1337,6 +1409,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_monitor_reset",
@@ -1355,6 +1428,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_monitor_reset_all",
@@ -1373,6 +1447,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_old_blocks_pct",
@@ -1391,6 +1466,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_old_blocks_time",
@@ -1409,6 +1485,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_online_alter_log_max_size",
@@ -1427,6 +1504,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_open_files",
@@ -1445,6 +1523,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_optimize_fulltext_only",
@@ -1463,6 +1542,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_optimize_point_storage",
@@ -1481,6 +1561,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_page_size",
@@ -1499,6 +1580,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_print_all_deadlocks",
@@ -1517,6 +1599,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_purge_batch_size",
@@ -1535,6 +1618,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_purge_rseg_truncate_frequency",
@@ -1553,6 +1637,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_purge_threads",
@@ -1571,6 +1656,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_random_read_ahead",
@@ -1589,6 +1675,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_read_ahead_threshold",
@@ -1607,6 +1694,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_read_io_threads",
@@ -1625,6 +1713,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_read_only",
@@ -1643,6 +1732,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_replication_delay",
@@ -1661,6 +1751,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_rollback_on_timeout",
@@ -1679,6 +1770,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_rollback_segments",
@@ -1697,6 +1789,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_sort_buffer_size",
@@ -1715,6 +1808,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_spin_wait_delay",
@@ -1733,6 +1827,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_auto_recalc",
@@ -1751,6 +1846,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_method",
@@ -1769,6 +1865,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_on_metadata",
@@ -1787,6 +1884,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_persistent",
@@ -1805,6 +1903,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_persistent_sample_pages",
@@ -1823,6 +1922,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_stats_transient_sample_pages",
@@ -1841,6 +1941,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_status_output",
@@ -1859,6 +1960,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_status_output_locks",
@@ -1877,6 +1979,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_strict_mode",
@@ -1895,6 +1998,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_sync_array_size",
@@ -1913,6 +2017,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_sync_spin_loops",
@@ -1931,6 +2036,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_table_locks",
@@ -1949,6 +2055,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_thread_concurrency",
@@ -1967,6 +2074,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_thread_sleep_delay",
@@ -1985,6 +2093,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_undo_directory",
@@ -2003,6 +2112,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_undo_log_truncate",
@@ -2021,6 +2131,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_undo_tablespaces",
@@ -2039,6 +2150,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_use_native_aio",
@@ -2057,6 +2169,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_version",
@@ -2075,6 +2188,7 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "innodb_write_io_threads",
@@ -2093,5 +2207,6 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
 ];

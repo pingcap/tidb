@@ -41,6 +41,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "auto_increment_increment",
@@ -59,6 +60,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "auto_increment_offset",
@@ -77,6 +79,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "ddl_slow_threshold",
@@ -95,6 +98,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_ddl_slow_threshold),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_ddl_slow_threshold),
+        get_state_value: None,
     },
     SysVarDef {
         name: "foreign_key_checks",
@@ -113,6 +117,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "metadata_locks_cache_size",
@@ -131,6 +136,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_disk_quota",
@@ -149,6 +155,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_disk_quota),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ddl_disk_quota),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_enable_fast_reorg",
@@ -167,6 +174,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_enable_fast_reorg),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ddl_enable_fast_reorg),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_error_count_limit",
@@ -185,6 +193,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_error_count_limit),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_flashback_concurrency",
@@ -203,6 +212,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_flashback_concurrency),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_reorg_batch_size",
@@ -221,6 +231,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_reorg_batch_size),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_reorg_max_write_speed",
@@ -239,6 +250,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_reorg_max_write_speed),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_ddl_reorg_max_write_speed),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_reorg_priority",
@@ -257,6 +269,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_ddl_reorg_worker_cnt",
@@ -275,6 +288,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_ddl_reorg_worker_count),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_auto_increment_in_generated",
@@ -293,6 +307,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_clustered_index",
@@ -311,6 +326,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_ddl",
@@ -329,6 +345,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_ddl),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_ddl),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_exchange_partition",
@@ -347,6 +364,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_fast_table_check",
@@ -365,6 +383,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_foreign_key",
@@ -383,6 +402,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_enable_foreign_key),
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_foreign_key),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_global_index",
@@ -401,6 +421,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_list_partition",
@@ -419,6 +440,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_metadata_lock",
@@ -437,6 +459,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: Some(super::super::process_hooks::get_tidb_enable_metadata_lock),
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_enable_table_partition",
@@ -455,6 +478,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_last_ddl_info",
@@ -474,6 +498,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: Some(crate::vars::SessionVars::get_session_tidb_last_ddl_info),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_max_delta_schema_count",
@@ -492,6 +517,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_max_delta_schema_count),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_partition_prune_mode",
@@ -508,8 +534,9 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         validation: Some(super::super::validation::tidb_partition_prune_mode),
         set_session: Some(super::super::validation::tidb_partition_prune_mode_set_session),
         set_global: Some(super::super::validation::tidb_partition_prune_mode_set_global),
-        get_session: None,
+        get_session: Some(crate::vars::SessionVars::get_session_tidb_partition_prune_mode),
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_placement_mode",
@@ -528,6 +555,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_row_format_version",
@@ -546,6 +574,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_schema_version_cache_limit",
@@ -564,6 +593,7 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: None,
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
     SysVarDef {
         name: "tidb_table_cache_lease",
@@ -582,5 +612,6 @@ pub(super) static ENTRIES: [SysVarDef; 31] = [
         set_global: Some(super::super::process_hooks::set_tidb_table_cache_lease),
         get_session: None,
         get_global: None,
+        get_state_value: None,
     },
 ];

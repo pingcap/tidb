@@ -97,9 +97,7 @@ pub fn set_options_on_txn_active(vars: &tidb_variable::SessionVars) -> SessionTr
     options.request_source = Some(tidb_txnkv::RequestSource {
         internal: vars.restricted_sql,
         source_type: vars.request_source_type.clone(),
-        explicit_source_type: get(tidb_vardef::tidb_vars::TIDB_EXPLICIT_REQUEST_SOURCE_TYPE)
-            .as_ref()
-            .to_owned(),
+        explicit_source_type: vars.explicit_request_source_type().to_owned(),
     });
     // Go `LazyTxn`'s activation: "overwrite entry size limit by sys var".
     options.entry_size_limit = get(tidb_vardef::tidb_vars::TIDB_TXN_ENTRY_SIZE_LIMIT)

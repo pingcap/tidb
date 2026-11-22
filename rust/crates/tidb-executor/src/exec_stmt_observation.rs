@@ -303,8 +303,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             let effective = tidb_variable::slow_log_rules::EffectiveSlowLogRules::new(
                 &self
                     .session_vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_RULES)
-                    .unwrap_or_default(),
+                    .slow_log_rules().to_owned(),
                 &tidb_variable::slow_log_rules::global_slow_log_rules(),
                 conn_id,
             );
@@ -327,8 +326,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         }
         let session_alias = self
             .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_SESSION_ALIAS)
-            .unwrap_or_default();
+            .session_alias().to_owned();
         let exec_detail = observation.cop_stats.exec_details();
         let cop_tasks = observation.cop_stats.cop_tasks_details();
         // Go `getEncodedPlan` / `getBinaryPlan` as the slow log writes them.
