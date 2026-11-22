@@ -163,7 +163,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// instead refreshes its session-dependent target even without a schema change.
 		ret := &PreprocessorReturn{InfoSchema: is}
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
-		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
+		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret), func(p *preprocessor) {
+			// Multi-delete targets keep PREPARE's binding after USE, including
+			// the read-only check performed during schema-change preprocessing.
+			p.readOnlyDefaultDB = stmt.StmtDB
+		})
 		if err != nil {
 			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
 				return err
@@ -362,6 +366,9 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
 }
 
+// preparedMultiDeleteDBKey carries the statement's default database through planning.
+type preparedMultiDeleteDBKey struct{}
+
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
@@ -373,6 +380,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
+	if deleteStmt, ok := stmtAst.Stmt.(*ast.DeleteStmt); ok && deleteStmt.Tables != nil {
+		ctx = context.WithValue(ctx, preparedMultiDeleteDBKey{}, stmt.StmtDB)
+	}
 	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
 	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {

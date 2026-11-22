@@ -599,3 +599,101 @@ drop database db_read_only_1;
 drop database db_read_only_meta_a;
 drop database db_read_only_meta_b;
 drop database db_read_only_meta_c;
+create database ro_fk_batch;
+use ro_fk_batch;
+create table p(id int primary key, u int not null unique);
+create table c(id int primary key, pid int, foreign key(pid) references p(id) on delete cascade on update cascade);
+create table src(a int, b int);
+insert into p values(1,10);
+insert into src values(1,1),(2,999);
+set @previous_batch_dml = @@global.tidb_enable_batch_dml;
+set @previous_batch_insert = @@tidb_batch_insert;
+set @previous_batch_size = @@tidb_dml_batch_size;
+set @previous_sql_mode = @@sql_mode;
+set global tidb_enable_batch_dml = 1;
+set tidb_batch_insert = 1;
+set tidb_dml_batch_size = 1;
+set sql_mode = 'STRICT_ALL_TABLES';
+insert into c select a,b from src order by a;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`ro_fk_batch`.`c`, CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`) ON DELETE CASCADE ON UPDATE CASCADE)
+select * from c order by id;
+id	pid
+insert into c values(1,1);
+replace into p values(2,10),(3,null);
+Error 1048 (23000): Column 'u' cannot be null
+select * from p order by id;
+id	u
+1	10
+select * from c order by id;
+id	pid
+1	1
+delete from src;
+insert into src values(2,10),(3,null);
+replace into p select a,b from src order by a;
+Error 1048 (23000): Column 'u' cannot be null
+select * from p order by id;
+id	u
+1	10
+select * from c order by id;
+id	pid
+1	1
+insert into p values(2,10),(3,null) on duplicate key update id = values(id);
+Error 1048 (23000): Column 'u' cannot be null
+select * from p order by id;
+id	u
+1	10
+select * from c order by id;
+id	pid
+1	1
+update src set b = 20 where a = 3;
+replace into p select a,b from src order by a;
+select * from p order by id;
+id	u
+2	10
+3	20
+select * from c order by id;
+id	pid
+set global tidb_enable_batch_dml = @previous_batch_dml;
+set tidb_batch_insert = @previous_batch_insert;
+set tidb_dml_batch_size = @previous_batch_size;
+set sql_mode = @previous_sql_mode;
+use test;
+drop database ro_fk_batch;
+create database ro_delete_prepare_a;
+create database ro_delete_prepare_b;
+create table ro_delete_prepare_a.t(id int primary key);
+create table ro_delete_prepare_b.t(id int primary key);
+insert into ro_delete_prepare_a.t values(1);
+insert into ro_delete_prepare_b.t values(1);
+alter database ro_delete_prepare_b read only = 1;
+set @previous_prepared_cache = @@tidb_enable_prepared_plan_cache;
+set tidb_enable_prepared_plan_cache = 0;
+use ro_delete_prepare_a;
+prepare ro_multi_delete from 'delete t from ro_delete_prepare_a.t join ro_delete_prepare_b.t on ro_delete_prepare_a.t.id = ro_delete_prepare_b.t.id where ro_delete_prepare_a.t.id = ?';
+set @delete_id = 1;
+use ro_delete_prepare_b;
+execute ro_multi_delete using @delete_id;
+select * from ro_delete_prepare_a.t;
+id
+select * from ro_delete_prepare_b.t;
+id
+1
+insert into ro_delete_prepare_a.t values(1);
+alter table ro_delete_prepare_a.t add column extra int;
+execute ro_multi_delete using @delete_id;
+select id from ro_delete_prepare_a.t;
+id
+select id from ro_delete_prepare_b.t;
+id
+1
+select database();
+database()
+ro_delete_prepare_b
+delete from ro_delete_prepare_b.t;
+Error 3989 (HY000): Schema 'ro_delete_prepare_b' is in read only mode.
+deallocate prepare ro_multi_delete;
+set tidb_enable_prepared_plan_cache = @previous_prepared_cache;
+alter database ro_delete_prepare_b read only = 0;
+use test;
+drop database ro_delete_prepare_a;
+drop database ro_delete_prepare_b;

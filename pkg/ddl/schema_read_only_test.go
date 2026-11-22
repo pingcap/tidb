@@ -767,26 +767,22 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		require.Contains(t, sv.GetInternalSessionStartTSList(), txnID.Load())
 		require.NoError(t, admin.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 		admin.MustQuery(fmt.Sprintf("select id from information_schema.tidb_trx where id = %d", txnID.Load())).Check(testkit.Rows())
-		scanned := make(chan bool, 1)
-		var scanObserved atomic.Bool
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReadOnlyTxnQuery", func(_ sessionctx.Context, sql string, rows *[]chunk.Row) {
-			if !strings.HasPrefix(sql, "SELECT RELATED_TABLE_IDS") || !scanObserved.CompareAndSwap(false, true) {
-				return
+		observed := make(chan struct{})
+		var observeOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
+			if _, ok := ids[int64(txnID.Load())]; ok {
+				observeOnce.Do(func() { close(observed) })
 			}
-			found := false
-			for _, row := range *rows {
-				found = found || uint64(row.GetInt64(1)) == txnID.Load()
-			}
-			scanned <- found
 		})
 		alterDone := make(chan error, 1)
 		wg.Add(1)
 		go func() { defer wg.Done(); alterDone <- alter.ExecToErr("alter database ro read only = 1") }()
 		select {
-		case found := <-scanned:
-			require.True(t, found, "read-only transition omitted the uncommitted internal TTL DELETE")
+		case <-observed:
+		case err := <-alterDone:
+			t.Fatalf("read-only transition finished before observing the internal TTL transaction: %v", err)
 		case <-time.After(5 * time.Second):
-			t.Fatal("read-only transaction scan did not run")
+			t.Fatal("filtered drain set did not include the internal TTL transaction")
 		}
 		select {
 		case err := <-alterDone:
@@ -794,8 +790,18 @@ func TestSchemaReadOnlyReviewRegressions(t *testing.T) {
 		default:
 		}
 		release()
-		require.NoError(t, <-ttlDone)
-		require.NoError(t, <-alterDone)
+		select {
+		case err := <-ttlDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTL COMMIT did not finish")
+		}
+		select {
+		case err := <-alterDone:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("read-only transition did not finish after TTL COMMIT")
+		}
 		admin.MustQuery("select * from ro.t").Check(testkit.Rows())
 	})
 }

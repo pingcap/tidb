@@ -6778,10 +6778,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		updatableList := make(map[string]bool)
 		tableNameByKey := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tableNameByKey)
+		defaultDB := sessionVars.CurrentDB
+		if stmtDB, ok := ctx.Value(preparedMultiDeleteDBKey{}).(string); ok {
+			defaultDB = stmtDB
+		}
 		for _, tn := range ds.Tables.Tables {
 			tb, canUpdate, foundMatch := resolveMultiDeleteTarget(
 				tn,
-				b.ctx.GetSessionVars().CurrentDB,
+				defaultDB,
 				updatableList,
 				tableNameByKey,
 			)
