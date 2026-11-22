@@ -31,6 +31,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/privilege",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",

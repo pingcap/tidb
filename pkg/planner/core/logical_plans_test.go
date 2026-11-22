@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1528,12 +1527,6 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 	}
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// if true, test will too slow to run.
-		conf.Performance.EnableStatsCacheMemQuota = false
-	})
 	s := coretestsdk.CreatePlannerSuiteElems()
 	defer s.Close()
 	for _, tt := range tests {
@@ -1654,12 +1647,6 @@ func TestUnion(t *testing.T) {
 }
 
 func TestTopNPushDown(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// if true, test will too slow to run.
-		conf.Performance.EnableStatsCacheMemQuota = false
-	})
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := coretestsdk.CreatePlannerSuiteElems()
@@ -1831,12 +1818,6 @@ func TestNameResolver(t *testing.T) {
 }
 
 func TestOuterJoinEliminator(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// if true, test will too slow to run.
-		conf.Performance.EnableStatsCacheMemQuota = false
-	})
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
@@ -1908,12 +1889,6 @@ type plannerSuiteWithOptimizeVars struct {
 }
 
 func TestWindowFunction(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// if true, test will too slow to run.
-		conf.Performance.EnableStatsCacheMemQuota = false
-	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.PlannerSuite = coretestsdk.CreatePlannerSuiteElems()
 	defer s.PlannerSuite.Close()
@@ -1931,12 +1906,6 @@ func TestWindowFunction(t *testing.T) {
 }
 
 func TestWindowParallelFunction(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		// if true, test will too slow to run.
-		conf.Performance.EnableStatsCacheMemQuota = false
-	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.PlannerSuite = coretestsdk.CreatePlannerSuiteElems()
 	defer s.PlannerSuite.Close()

@@ -312,6 +312,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	defer e.ReleaseSysSession(releaseCtx, deleteSctx)
 	deleteVars := deleteSctx.GetSessionVars()
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), schemaName.L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(deleteSctx, schemaName.L)()
+	}
 	restoreDeleteVars, err := applyMLogPurgeMaintenanceSessionVars(
 		deleteVars,
 		vars.MViewMaintainMemQuota,

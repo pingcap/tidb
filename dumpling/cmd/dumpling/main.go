@@ -45,8 +45,8 @@ func main() {
 		pflag.Usage()
 		return
 	}
-	println(cli.LongVersion())
 	if *printVersion {
+		println(cli.LongVersion())
 		return
 	}
 
@@ -59,6 +59,22 @@ func main() {
 		fmt.Printf("\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
 		os.Exit(1)
 	}
+	// ParseFromFlags has already validated this flag and its conflicts.
+	if askPassword, _ := pflag.CommandLine.GetBool("ask-password"); askPassword {
+		// Use the controlling terminal so redirected stdin is never consumed.
+		tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "--ask-password requires a controlling terminal")
+			os.Exit(1)
+		}
+		conf.Password, err = readPassword(tty)
+		_ = tty.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	println(cli.LongVersion())
 
 	registry := conf.PromRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

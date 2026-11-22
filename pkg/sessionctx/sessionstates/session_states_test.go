@@ -614,7 +614,7 @@ func TestSessionCtx(t *testing.T) {
 			// check LastFoundRows
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("insert test.t1 value(1), (2), (3), (4), (5)")
-				// SQL_CALC_FOUND_ROWS is not supported now, so we just test normal select.
+				// Normal SELECT reports its returned-row count.
 				rows := tk.MustQuery("select * from test.t1 limit 3").Rows()
 				require.Equal(t, 3, len(rows))
 				return "3"
@@ -780,6 +780,40 @@ func TestSessionCtx(t *testing.T) {
 		showSessionStatesAndSet(t, tk1, tk2)
 		tt.checkFunc(tk2, param)
 	}
+
+	t.Run("native-found-rows", func(t *testing.T) {
+		src := testkit.NewTestKit(t, store)
+		dst := testkit.NewTestKit(t, store)
+		src.MustExec("create table test.found_rows_state(id int primary key)")
+		src.MustExec("insert into test.found_rows_state values (1), (2), (3), (4), (5)")
+		src.MustExec("prepare stmt from 'select sql_calc_found_rows id from test.found_rows_state order by id limit ?'")
+		src.MustExec("set @page_size = 2")
+		for _, tt := range []struct {
+			name  string
+			query string
+			rows  []string
+			total uint64
+		}{
+			{"page", "select sql_calc_found_rows id from test.found_rows_state order by id limit 2", []string{"1", "2"}, 5},
+			{"empty-page", "select sql_calc_found_rows id from test.found_rows_state limit 2 offset 10", nil, 5},
+			{"limit-zero", "select sql_calc_found_rows id from test.found_rows_state limit 0", nil, 5},
+			{"zero-total", "select sql_calc_found_rows id from test.found_rows_state where id > 5 limit 2", nil, 0},
+			{"prepared", "execute stmt using @page_size", []string{"1", "2"}, 5},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				src := testkit.NewTestKitWithSession(t, store, src.Session())
+				dst := testkit.NewTestKitWithSession(t, store, dst.Session())
+				// A zero total must replace the destination's preceding nonzero count.
+				dst.MustQuery("select 1 union all select 2 union all select 3").Sort().Check(testkit.Rows("1", "2", "3"))
+				src.MustQuery(tt.query).Check(testkit.Rows(tt.rows...))
+				for range 2 {
+					showSessionStatesAndSet(t, src, dst)
+					require.Equal(t, tt.total, src.Session().GetSessionVars().LastFoundRows)
+					dst.MustQuery("select found_rows()").Check(testkit.Rows(strconv.FormatUint(tt.total, 10)))
+				}
+			})
+		}
+	})
 }
 
 func TestStatementCtx(t *testing.T) {

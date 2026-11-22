@@ -509,7 +509,9 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
-// Process field may not initialize if this is a session used internally.
+// It returns nil without an active transaction. Otherwise ProcessInfo includes
+// related tables even for internal sessions without a process-list entry; their
+// connection identity fields may be zero-valued.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -522,7 +524,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return &txnInfo
+		// Internal sessions can write user tables without a process-list entry.
+		// Their access set is still needed by database read-only draining.
+		processInfo = &sessmgr.ProcessInfo{}
 	}
 	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,
@@ -531,6 +535,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
+	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -558,7 +566,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// to prevent the case that a long running auto-commit statement is now trying to commit.
 		pm := privilege.GetPrivilegeManager(s)
 		roles := s.sessionVars.ActiveRoles
-		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 			s.RollbackTxn(ctx)
 			return plannererrors.ErrSQLInReadOnlyMode
 		}
@@ -4412,18 +4420,27 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-// initBootstrapDependentTables creates system tables that classic kernel upgrade
-// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+// initBootstrapDependentTables creates system tables that Classic and legacy
+// NextGen upgrade DDL may consult before reaching their ordinary creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
-	// This is only for classic upgrades from below version280. Fresh bootstrap and
-	// next-gen create the table elsewhere. After version280, the table may have been renamed.
-	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
+	// After version280, the table may have been renamed. Fresh bootstrap and
+	// native NextGen create the table elsewhere.
+	if ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
+		if kerneltype.IsNextGen() {
+			isLegacyNextGen, err := t.IsLegacyNextGen()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !isLegacyNextGen {
+				return nil
+			}
+		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
@@ -4628,7 +4645,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	if kerneltype.IsNextGen() {
-		if err := bootstrapSchemas(store); err != nil {
+		if err := bootstrapNextGenSchemas(store); err != nil {
 			return nil, err
 		}
 	}

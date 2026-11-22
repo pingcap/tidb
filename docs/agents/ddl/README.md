@@ -90,6 +90,29 @@ sequenceDiagram
   E-->>S: return result
 ```
 
+## Database read-only restore exception
+
+Ordinary SQL and unauthenticated internal sessions do not gain a read-only write
+bypass from SUPER or from internal-SQL execution. An explicit
+`RESTRICTED_REPLICA_WRITER_ADMIN` grant permits ordinary writes.
+
+Trusted BR restore is a separate exception: SQL RESTORE first uses its existing
+SUPER/RESTORE_ADMIN authorization, while standalone BR uses its trusted restore
+entrypoint. Restore can recreate tables, replay incremental DDL, and restore
+sequence state after the source database's ReadOnly flag has been restored.
+Incremental DDL authorization covers its recorded write dependencies; other
+restore operations authorize their current target database. The previous session
+state is restored before return or reuse, without granting later SQL writes.
+Releasing existing table locks is exempt from the read-only job check; acquiring
+new locks retains that check.
+
+The contract is implemented by `pkg/privilege/privilege.go`,
+`pkg/executor/brie_utils.go`, and
+`br/pkg/restore/internal/prealloc_db/db.go`. Boundary coverage lives in
+`TestBRIECreateTable/TrustedRestoreReadOnlyBoundary` and
+`TestCreateTablesWithPlanPreservesSourceMetadata`. Incremental DDL replay and
+cross-database authorization boundaries are covered by `TestDB_ExecDDL2`.
+
 ## Diagnostic schema loading
 
 Diagnostic mode continues to use the ordinary Etcd schema syncer. The Domain
