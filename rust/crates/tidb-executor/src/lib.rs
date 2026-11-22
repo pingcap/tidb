@@ -151,6 +151,7 @@ use tidb_kv::mpp_query;
 mod tests_mpp_query;
 use tidb_table::partition_routing;
 mod physical_cte;
+pub mod select_into;
 pub mod select_lock;
 #[cfg(test)]
 mod tests_aggfuncs_approx_pushdown_source;

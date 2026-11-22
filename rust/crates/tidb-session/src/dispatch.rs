@@ -2271,23 +2271,24 @@ impl Session {
                     self.statement_context_for_stmt(&stmt, false),
                     &stmt,
                 )?;
-                // go `SelectIntoOutfile` opens the destination with O_EXCL
-                // when the executor opens, after the statement was planned
-                // and its privileges checked: an existing file is refused
-                // with the raw open error (the oracle answers `open <path>:
-                // file exists`). This tier does not write data files, so the
-                // refusal is the only observable part of the clause that can
-                // be honored faithfully.
-                let outfile_exists = |record_set| match query.as_ref() {
-                    tidb_ast::QueryStmt::Select(select) => match &select.into_outfile {
-                        Some(outfile) if std::path::Path::new(&outfile.file_name).exists() => {
-                            Err(DriverError::Unsupported(
-                                format!("open {}: file exists", outfile.file_name).into(),
-                            ))
-                        }
-                        _ => Ok(record_set),
-                    },
-                    tidb_ast::QueryStmt::SetOpr(_) => Ok(record_set),
+                // Go `buildSelectInto` wraps the target plan in a
+                // `SelectIntoExec`, which drains it into the file and answers
+                // no rows (the statement's affected rows are the rows written).
+                let finish_select = |mut record_set: tidb_executor::driver::RecordSet, ctx: tidb_sessionctx::StmtContext| {
+                    let into = match query.as_ref() {
+                        tidb_ast::QueryStmt::Select(select) => select.into_outfile.as_ref(),
+                        tidb_ast::QueryStmt::SetOpr(_) => None,
+                    };
+                    let Some(into) = into else {
+                        return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
+                    };
+                    let mut exec = tidb_executor::select_into::SelectIntoExec::new(into);
+                    exec.open()?;
+                    let drained = exec.next(&mut record_set, &ctx);
+                    let closed = exec.close();
+                    record_set.finish()?;
+                    drained?;
+                    Ok(PendingExecution::Complete(tidb_executor::StmtOutput::Affected(closed?)))
                 };
                 let tidb_ast::QueryStmt::Select(_) = &**query else {
                     let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
@@ -2349,10 +2350,7 @@ impl Session {
                         });
                         if let Some(Some(record_set)) = result.transpose()? {
                             self.vars.found_in_plan_cache = cache_hit;
-                            return Ok(PendingExecution::Query(PendingQuery::new(
-                                outfile_exists(record_set)?,
-                                ctx,
-                            )));
+                            return finish_select(record_set, ctx);
                         }
                     }
                 }
@@ -2371,10 +2369,7 @@ impl Session {
                         &ctx,
                     )
                 })?;
-                return Ok(PendingExecution::Query(PendingQuery::new(
-                    outfile_exists(record_set)?,
-                    ctx,
-                )));
+                return finish_select(record_set, ctx);
             }
             Stmt::Dml(dml) => {
                 // Go parameterizes a non-prepared DML statement too (the

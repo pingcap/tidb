@@ -296,6 +296,13 @@ impl Session {
             // plan Go builds for it has an empty schema; see
             // `admin_plan_has_result_schema`.
             Stmt::Admin(admin) if !admin_plan_has_result_schema(admin) => StmtKind::Write,
+            // Go `buildSelectInto`'s `SelectInto` plan has an empty schema:
+            // `SELECT ... INTO OUTFILE` answers an OK packet.
+            Stmt::Query(query)
+                if matches!(query.as_ref(), tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_some()) =>
+            {
+                StmtKind::Write
+            }
             // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.
             Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
             // Go `NonTransactionalDMLExec` answers a `BATCH ...` with a result
