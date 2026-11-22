@@ -564,7 +564,9 @@ func (hg *Histogram) lessRowCountBounds(sctx planctx.PlanContext, value types.Da
 		return preCount, preCount
 	}
 	belowUpper := float64(hg.Buckets[bucketIdx].Count - hg.Buckets[bucketIdx].Repeat)
-	if match {
+	// A zero Repeat leaves the upper bound's frequency unrecorded: rows equal to value may be
+	// anywhere in the bucket's count, so only a positive Repeat makes a match exact.
+	if match && hg.Buckets[bucketIdx].Repeat > 0 {
 		return belowUpper, belowUpper
 	}
 	// The bucket's lower bound is an observed value, so no bucket row lies below it.

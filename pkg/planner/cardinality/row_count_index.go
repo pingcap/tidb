@@ -413,7 +413,9 @@ func estimateRowCountWithUniformDistribution(
 		}
 		worstCase = min(worstCase, bucketRows)
 	}
-	result.MaxEst = max(result.MaxEst, worstCase)
+	// Assign rather than max with the skew-ratio MaxEst, which is not bounded by the bucket.
+	// Floor at Est so the worst case never falls below the estimate.
+	result.MaxEst = max(result.Est, worstCase)
 	return result
 }
 

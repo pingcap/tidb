@@ -202,6 +202,13 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if err != nil {
 				return statistics.DefaultRowEst(0), errors.Trace(err)
 			}
+			// A point estimate with a spread is not an exact statistic, and the value may
+			// hold no rows at all. Excluding it must then not lower the range's worst case.
+			// MinEst is left alone elsewhere because skyline pruning reads it through
+			// MinCountAfterAccess.
+			if lowCnt.MinEst < lowCnt.MaxEst {
+				lowCnt.MinEst = 0
+			}
 			cnt.Subtract(lowCnt)
 			cnt.Clamp(0, c.NotNullCount())
 		}

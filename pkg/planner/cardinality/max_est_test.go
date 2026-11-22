@@ -109,9 +109,9 @@ func TestColumnRangeTopNKeepsMaxEst(t *testing.T) {
 	require.InDelta(t, histOnly.MaxEst+2000, est.MaxEst, 1e-6)
 }
 
-// TestColumnRangeLowExcludeKeepsMaxEst: (range) - (low point) must subtract the point's
-// MinEst from MaxEst. Subtracting the point's MaxEst shrank the worst case exactly when the
-// point estimate was uncertain.
+// TestColumnRangeLowExcludeKeepsMaxEst: (range) - (low point) must not shrink the worst case
+// by more than the point can hold. Subtracting the point's MaxEst shrank the worst case
+// exactly when the point estimate was uncertain, and an uncertain point may hold no rows.
 func TestColumnRangeLowExcludeKeepsMaxEst(t *testing.T) {
 	sctx := mock.NewContext()
 	// Make the uniform point estimate carry a spread, so MinEst < Est < MaxEst for the low point.
@@ -130,8 +130,34 @@ func TestColumnRangeLowExcludeKeepsMaxEst(t *testing.T) {
 	require.NoError(t, err)
 
 	require.InDelta(t, closed.Est-point.Est, open.Est, 1e-6)
-	require.InDelta(t, closed.MaxEst-point.MinEst, open.MaxEst, 1e-6)
+	require.InDelta(t, closed.MaxEst, open.MaxEst, 1e-6)
 	require.InDelta(t, max(closed.MinEst-point.MaxEst, 1), open.MinEst, 1e-6)
+}
+
+// TestColumnRangeLowExcludeEndpoint: excluding an exact low endpoint subtracts its rows from
+// the worst case. Excluding a uniform endpoint subtracts nothing from it, because the value
+// may hold no rows, but still moves Est.
+func TestColumnRangeLowExcludeEndpoint(t *testing.T) {
+	sctx := mock.NewContext()
+	col := newTwoBucketColumn(1, 0)
+	realtime := int64(col.TotalRowCount())
+	rangeEst := func(lo, hi int64, lowExclude bool) statistics.RowEstimate {
+		ran := intRange(lo, hi, lowExclude)
+		ran[0].HighExclude = true
+		est, err := getColumnRowCount(sctx, col, ran, realtime, 0, false)
+		require.NoError(t, err)
+		return est
+	}
+
+	// 100 is a bucket upper bound observed 10 times.
+	closed, open := rangeEst(100, 150, false), rangeEst(100, 150, true)
+	require.InDelta(t, closed.MaxEst-10, open.MaxEst, 1e-6)
+
+	// 50 is estimated as the uniform average, 11 rows.
+	closed, open = rangeEst(50, 150, false), rangeEst(50, 150, true)
+	require.InDelta(t, closed.Est-11, open.Est, 1e-6)
+	require.InDelta(t, closed.MaxEst, open.MaxEst, 1e-6)
+	require.InDelta(t, 1090, open.MaxEst, 1e-6)
 }
 
 // TestExpBackoffSingleColumnKeepsMaxEst: when only one column of a multi-column range has
@@ -243,6 +269,18 @@ func TestUniformEqualityReportsWorstCase(t *testing.T) {
 		require.InDelta(t, 100, est.MaxEst, 1e-6)
 	})
 
+	t.Run("bounded by bucket with a skew ratio", func(t *testing.T) {
+		skewCtx := mock.NewContext()
+		skewCtx.GetSessionVars().RiskEqSkewRatio = 0.05
+		col := newTwoBucketColumn(1, 0)
+		realtime := int64(col.TotalRowCount())
+		est, err := getColumnRowCount(skewCtx, col, intRange(150, 150, false), realtime, 0, false)
+		require.NoError(t, err)
+		require.Greater(t, est.Est, 1100.0/100, "the skew ratio must move Est")
+		// The unbounded skew worst case is 1001 rows; the bucket holds 100.
+		require.InDelta(t, 100, est.MaxEst, 1e-6)
+	})
+
 	t.Run("bounded by smallest TopN", func(t *testing.T) {
 		col := newTwoBucketColumn(1, 40)
 		realtime := int64(col.TotalRowCount())
@@ -289,4 +327,21 @@ func TestMultiBucketRangeReportsWorstCase(t *testing.T) {
 	est, err = getColumnRowCount(sctx, col, ran, realtime, 0, false)
 	require.NoError(t, err)
 	require.InDelta(t, est.Est, est.MaxEst, 1e-6)
+}
+
+// TestRangeFromZeroRepeatBucketUpper: a range that starts at a bucket upper bound whose
+// Repeat is zero cannot treat that bound as exact, since rows equal to it are unrecorded and
+// may be anywhere in the bucket's count.
+func TestRangeFromZeroRepeatBucketUpper(t *testing.T) {
+	sctx := mock.NewContext()
+	col := newTwoBucketColumn(1, 0)
+	col.Histogram.Buckets[0].Repeat = 0
+	realtime := int64(col.TotalRowCount())
+
+	ran := intRange(100, 150, false)
+	ran[0].HighExclude = true
+	est, err := getColumnRowCount(sctx, col, ran, realtime, 0, false)
+	require.NoError(t, err)
+	// Worst case: every row of the first bucket equals 100, plus the second bucket below 200.
+	require.InDelta(t, 1090, est.MaxEst, 1e-6)
 }
