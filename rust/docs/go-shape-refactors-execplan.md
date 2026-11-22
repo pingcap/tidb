@@ -11,13 +11,15 @@ The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structura
 ## Progress
 
 - [x] (2026-11-22) Re-audit: 11 behavior gaps found and fixed (pushed `ac1e5b40a18`); X01's duplicate implementations collapsed (`55f9417f16b`, `346f2fff28a`).
-- [ ] R01: cost model version 1.
+- [x] (2026-11-23) R01: cost model version 1 -- `coster/ver1.rs` holds Go's `getPlanCostVer14<Operator>` bodies, `CostEnv::ver1` carries the version-1 factors when `tidb_cost_model_version = 1`, and the pushed-down / point-plan Selections no longer claim Go's `FromDataSource`; 79 probe statements (pseudo and analyzed statistics, both versions) match a Go server.
 - [ ] R04: parallel sort and TopN workers.
 - [ ] R02: EXPLAIN EXPLORE.
 - [ ] R03: ANALYZE in Go's shape.
 - [ ] X02: one DDL session port.
 
 ## Surprises & Discoveries
+
+- R01: the planner marked every pushed-down and point-plan Selection `FromDataSource`; Go marks only the root Selection over `RootTaskConds`. Version 2 never reads the flag, so it was invisible until version 1 priced the Selection.
 
 - The 11-18 audit matched Go packages to Rust crates by name, so whole Go files inside a matched package could be missing (`select_into.go` was: `SELECT ... INTO OUTFILE` answered rows and wrote no file).
 - A per-file symbol-coverage score over-reports: most low-scoring files are ported under other names or decompositions. Every candidate was read before registering.

@@ -151,6 +151,13 @@ pub const fn trace_cost(options: Option<&PlanCostOption>) -> bool {
     }
 }
 
+/// A plain cost with no trace: Go's version-1 `PlanCost`, which this tier
+/// keeps in the same slot as a version-2 cost.
+#[must_use]
+pub const fn cost_ver2_of_value(cost: f64) -> CostVer2 {
+    CostVer2 { cost, trace: None }
+}
+
 /// Creates a zero cost, optionally with an empty trace.
 pub fn new_zero_cost_ver2(trace: bool) -> CostVer2 {
     CostVer2 {

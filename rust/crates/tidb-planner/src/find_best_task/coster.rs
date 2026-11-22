@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The production [`TaskCoster`]: Go `getPlanCostVer2` over the enum tree.
+//! The production [`TaskCoster`]: Go `getPlanCostVer2` over the enum tree
+//! (and version 1's bodies in [`ver1`] when the session runs that model).
 //!
 //! Go prices a task by dispatching `GetPlanCostVer2` down the built plan;
 //! each operator's formula lives in `pkg/planner/core/plan_cost_ver2.go`
@@ -38,6 +39,8 @@
 //! * Operators outside the priced set — joins arrive through
 //!   [`crate::find_best_task`]'s own model — price as the sum of their
 //!   children, conservative and shape-neutral.
+
+mod ver1;
 
 use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_cardinality::row_size::RowSizeColumn;
@@ -69,6 +72,9 @@ pub struct CostEnv {
     pub cost_factors: CostFactorVars,
     /// Concurrency, quota, paging, and size variables used by the formulas.
     pub session: CostSessionOpts,
+    /// Go `CostModelVersion == 1`'s factors: `Some` prices plans with
+    /// `GetPlanCostVer1` (`getPlanCost`), `None` with version 2.
+    pub ver1: Option<crate::plan_cost_ver1::Ver1Factors>,
 }
 
 /// The default-factor coster.
@@ -82,6 +88,8 @@ pub struct Ver2Coster {
     /// Go `StmtCtx.GetIndexForce()`, read by `getTableScanPenalty`.
     index_force: bool,
     cost_option: Option<tidb_planner_costusage::PlanCostOption>,
+    /// Go `getPlanCost`'s version switch (see [`CostEnv::ver1`]).
+    ver1: Option<crate::plan_cost_ver1::Ver1Factors>,
     // Go stores costs on physical nodes. EXPLAIN uses a temporary cache over
     // its immutable retained tree so child rendering reuses recursive costs.
     explain_costs: Option<std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, CostVer2>>>>,
@@ -142,6 +150,7 @@ impl Ver2Coster {
             allow_prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
             index_force: false,
             cost_option: None,
+            ver1: None,
             explain_costs: None,
         }
     }
@@ -156,6 +165,7 @@ impl Ver2Coster {
             allow_prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
             index_force: false,
             cost_option: None,
+            ver1: env.ver1.clone(),
             explain_costs: None,
         }
     }
@@ -401,7 +411,11 @@ impl Ver2Coster {
                 return cost.clone();
             }
         }
-        let cost = self.price_uncached(plan, task_type, is_child_of_inl);
+        // Go `getPlanCost`: version 1 unless the session runs version 2.
+        let cost = match &self.ver1 {
+            Some(factors) => tidb_planner_costusage::cost_ver2_of_value(self.price_ver1(plan, task_type, factors)),
+            None => self.price_uncached(plan, task_type, is_child_of_inl),
+        };
         if let Some(cache) = &self.explain_costs {
             cache.borrow_mut().insert(key, cost.clone());
         }

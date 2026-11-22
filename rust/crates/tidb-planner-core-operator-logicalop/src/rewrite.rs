@@ -2104,32 +2104,6 @@ fn stats_arity(go_symbol: &str) -> PlanError {
     ))
 }
 
-/// Go `cardinality.EstimateColsNDVWithMatchedLen(cols, schema, profile)` over
-/// the join keys, packaged as the [`JoinKeyEstimate`] the ported
-/// [`estimate_full_join_row_count`] consumes.
-///
-/// The body is NOT restated: the existing port in
-/// [`tidb_planner_cardinality::derive_stats`] is called directly — since the
-/// `StatsInfo` unification there is only one profile type and one column-id
-/// spelling, so the former u64 conversion detour is gone.
-fn join_key_estimate(
-    keys: &[tidb_expr::column::Column],
-    profile: &StatsInfo,
-    group_ndv_skew_ratio: f64,
-) -> JoinKeyEstimate {
-    let ids: Vec<i64> = keys.iter().map(|col| col.unique_id).collect();
-    let (ndv, matched_len) =
-        tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
-            &ids,
-            profile,
-            group_ndv_skew_ratio,
-        );
-    JoinKeyEstimate {
-        ndv,
-        matched_len,
-        key_len: ids.len(),
-    }
-}
 
 impl OwnedRewrite for DeriveStatsFold<'_> {
     /// Go's `cumColGroups`, one copy per child.
@@ -2230,23 +2204,23 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             left_row_count: left.row_count(),
                             right_row_count: right.row_count(),
                             is_cartesian: op.equal_conditions.is_empty(),
-                            left_join_keys: join_key_estimate(
+                            left_join_keys: tidb_planner_cardinality::join::join_key_estimate(
                                 &left_keys,
                                 left,
                                 self.env.group_ndv_skew_ratio,
                             ),
-                            right_join_keys: join_key_estimate(
+                            right_join_keys: tidb_planner_cardinality::join::join_key_estimate(
                                 &right_keys,
                                 right,
                                 self.env.group_ndv_skew_ratio,
                             ),
                             // Go passes `nil, nil` for the NA keys here.
-                            left_non_equi_keys: join_key_estimate(
+                            left_non_equi_keys: tidb_planner_cardinality::join::join_key_estimate(
                                 &[],
                                 left,
                                 self.env.group_ndv_skew_ratio,
                             ),
-                            right_non_equi_keys: join_key_estimate(
+                            right_non_equi_keys: tidb_planner_cardinality::join::join_key_estimate(
                                 &[],
                                 right,
                                 self.env.group_ndv_skew_ratio,
@@ -2319,23 +2293,23 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 // non-empty, even when other equal-condition
                                 // shapes are present.
                                 is_cartesian: false,
-                                left_join_keys: join_key_estimate(
+                                left_join_keys: tidb_planner_cardinality::join::join_key_estimate(
                                     &left_keys,
                                     left,
                                     self.env.group_ndv_skew_ratio,
                                 ),
-                                right_join_keys: join_key_estimate(
+                                right_join_keys: tidb_planner_cardinality::join::join_key_estimate(
                                     &right_keys,
                                     right,
                                     self.env.group_ndv_skew_ratio,
                                 ),
                                 // Go passes nil NA keys for LogicalApply.
-                                left_non_equi_keys: join_key_estimate(
+                                left_non_equi_keys: tidb_planner_cardinality::join::join_key_estimate(
                                     &[],
                                     left,
                                     self.env.group_ndv_skew_ratio,
                                 ),
-                                right_non_equi_keys: join_key_estimate(
+                                right_non_equi_keys: tidb_planner_cardinality::join::join_key_estimate(
                                     &[],
                                     right,
                                     self.env.group_ndv_skew_ratio,

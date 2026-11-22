@@ -135,3 +135,30 @@ pub fn estimate_full_join_row_count(input: &FullJoinRowCountInput) -> f64 {
         );
     count * 0.9_f64.powf(remaining_keys)
 }
+
+/// Go `cardinality.EstimateColsNDVWithMatchedLen(cols, schema, profile)` over
+/// the join keys, packaged as the [`JoinKeyEstimate`] the ported
+/// [`estimate_full_join_row_count`] consumes.
+///
+/// The body is NOT restated: the existing port in
+/// [`crate::derive_stats`] is called directly — since the
+/// `StatsInfo` unification there is only one profile type and one column-id
+/// spelling, so the former u64 conversion detour is gone.
+pub fn join_key_estimate(
+    keys: &[tidb_expr::column::Column],
+    profile: &tidb_planner_property::stats_info::StatsInfo,
+    group_ndv_skew_ratio: f64,
+) -> JoinKeyEstimate {
+    let ids: Vec<i64> = keys.iter().map(|col| col.unique_id).collect();
+    let (ndv, matched_len) =
+        crate::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+            &ids,
+            profile,
+            group_ndv_skew_ratio,
+        );
+    JoinKeyEstimate {
+        ndv,
+        matched_len,
+        key_len: ids.len(),
+    }
+}

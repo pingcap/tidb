@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-22; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-22.md](structural-audit-2026-11-22.md).
 
-**5 unresolved: 5 open, 0 partial.**
+**4 unresolved: 4 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -37,7 +37,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| R01 | open | Cost model version 1 is not transcreated: of `plan_cost_ver1.go`'s 40 functions only `getPlanCostVer1` for a few operators exists, so `SET tidb_cost_model_version = 1` costs and chooses plans differently (probe: `EXPLAIN FORMAT='verbose' SELECT * FROM t1 WHERE b > 1` costs 16279.11 in Go and 73382.22 in Rust; a two-table join on an indexed column is a HashJoin in Go and a MergeJoin in Rust). Rust: `tidb-planner` (`get_plan_cost_ver1` only in `physical_tests.rs` coverage) | `pkg/planner/core/plan_cost_ver1.go` |
 | R02 | open | `EXPLAIN EXPLORE <sql>` is answered as a plain EXPLAIN: Go's binding exploration (`ExplorePlansForSQL`, `getBindingPlanInfo`, `runToGetExecInfo`, `fillRecommendation`) and plan generation over hint states (`generatePlanWithSCtx`, `breadthFirstPlanSearch`, `genPlanUnderState`) have no Rust counterpart. Rust: no module; the statement reaches the ordinary EXPLAIN path | `pkg/bindinfo/binding_auto.go`, `pkg/bindinfo/binding_plan_generation.go`, `pkg/executor/explain.go` (explore) |
 
 ### Executor, DML and expressions

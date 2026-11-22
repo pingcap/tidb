@@ -292,6 +292,12 @@ pub struct CostSessionOpts {
     pub projection_concurrency: f64,
     /// `tidb_hashagg_final_concurrency`, resolved.
     pub hashagg_final_concurrency: f64,
+    /// `tidb_hashagg_partial_concurrency`, resolved (Go
+    /// `HashAggPartialConcurrency()`, read by version 1's `CPUCostDivisor`).
+    pub hashagg_partial_concurrency: f64,
+    /// `tidb_opt_join_reorder_threshold`, which version 1's
+    /// `EstimateFullJoinRowCount` reads.
+    pub join_reorder_threshold: i32,
     /// Union-all concurrency, resolved.
     pub union_concurrency: f64,
     /// `tidb_index_lookup_size`.
@@ -377,6 +383,8 @@ impl Default for CostSessionOpts {
             index_lookup_join_concurrency: 5.0,
             projection_concurrency: 5.0,
             hashagg_final_concurrency: 5.0,
+            hashagg_partial_concurrency: 5.0,
+            join_reorder_threshold: 0,
             union_concurrency: 5.0,
             index_lookup_size: 20000.0,
             index_join_batch_size: 25000.0,

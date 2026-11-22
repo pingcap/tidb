@@ -4142,7 +4142,8 @@ fn find_best_task_4_logical_data_source_paths(
                         point = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: table_filters,
-                            from_data_source: true,
+                            // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                            from_data_source: false,
                         });
                     }
                     let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
@@ -4314,7 +4315,8 @@ fn find_best_task_4_logical_data_source_paths(
                     PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                         base: selection_base,
                         conditions: table_filters,
-                        from_data_source: true,
+                        // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                        from_data_source: false,
                     })
                 };
                 Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
@@ -4578,7 +4580,8 @@ fn find_best_task_4_logical_data_source_paths(
                     PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                         base: selection_base,
                         conditions: table_filters,
-                        from_data_source: true,
+                        // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                        from_data_source: false,
                     })
                 };
                 if use_mpp {
@@ -5015,7 +5018,8 @@ fn find_best_task_4_logical_data_source_paths(
                         point = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: remained_conds,
-                            from_data_source: true,
+                            // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                            from_data_source: false,
                         });
                     }
                     let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
@@ -5495,7 +5499,8 @@ fn find_best_task_4_logical_data_source_paths(
                             .into_iter()
                             .chain(global_partition_filter)
                             .collect(),
-                        from_data_source: true,
+                        // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                        from_data_source: false,
                     })
                 };
                 // Go `convertToIndexScan` (`find_best_task.go:2652`): on a
@@ -5630,7 +5635,8 @@ fn find_best_task_4_logical_data_source_paths(
                         tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: table_filters,
-                            from_data_source: true,
+                            // Go sets `FromDataSource` only on `RootTaskConds`' selection.
+                            from_data_source: false,
                         },
                     )));
                 }

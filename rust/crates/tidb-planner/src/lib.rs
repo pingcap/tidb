@@ -112,6 +112,7 @@ pub mod plan_cacheable_checker;
 pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;
+pub mod plan_cost_ver1;
 pub mod plan_cost_ver2;
 pub mod plan_hint;
 pub mod point_get_value;

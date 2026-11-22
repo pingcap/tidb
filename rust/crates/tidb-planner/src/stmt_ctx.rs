@@ -77,18 +77,23 @@ fn cost_env_of(slot: Option<&Arc<dyn std::any::Any + Send + Sync>>) -> &CostEnv 
         .unwrap_or_else(|| DEFAULT.get_or_init(CostEnv::default))
 }
 
-/// The cost environment `slot` holds with `final_` HashAgg final workers,
-/// or `None` when it already has them.
-fn with_hashagg_final(
+/// The cost environment `slot` holds with `partial` and `final_` HashAgg
+/// workers, or `None` when it already has them.
+fn with_hashagg_workers(
     slot: Option<&Arc<dyn std::any::Any + Send + Sync>>,
+    partial: usize,
     final_: usize,
 ) -> Option<Arc<CostEnv>> {
     let current = cost_env_of(slot);
-    if slot.is_some() && current.session.hashagg_final_concurrency == final_ as f64 {
+    if slot.is_some()
+        && current.session.hashagg_final_concurrency == final_ as f64
+        && current.session.hashagg_partial_concurrency == partial as f64
+    {
         return None;
     }
     let mut env = current.clone();
     env.session.hashagg_final_concurrency = final_ as f64;
+    env.session.hashagg_partial_concurrency = partial as f64;
     Some(Arc::new(env))
 }
 
@@ -106,7 +111,7 @@ impl PlannerStmtCtx for StmtContext {
 
     fn with_hashagg_concurrency(self, partial: usize, final_: usize) -> Self {
         let ctx = self.with_hashagg_concurrency_values(partial, final_);
-        match with_hashagg_final(ctx.optimizer_cost_env_any(), final_) {
+        match with_hashagg_workers(ctx.optimizer_cost_env_any(), partial, final_) {
             Some(env) => ctx.replace_optimizer_cost_env_any(env),
             None => ctx,
         }
@@ -146,7 +151,7 @@ impl PlannerStmtCtxData for StmtContextData {
 
     fn with_hashagg_concurrency(&mut self, partial: usize, final_: usize) -> &mut Self {
         let _ = self.with_hashagg_concurrency_values(partial, final_);
-        match with_hashagg_final(self.optimizer_cost_env_any(), final_) {
+        match with_hashagg_workers(self.optimizer_cost_env_any(), partial, final_) {
             Some(env) => self.replace_optimizer_cost_env_any(env),
             None => self,
         }

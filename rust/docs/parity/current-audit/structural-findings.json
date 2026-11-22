@@ -2,19 +2,11 @@
   "date": "2026-11-22",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
   "counts": {
-    "unresolved": 5,
-    "open": 5,
+    "unresolved": 4,
+    "open": 4,
     "partial": 0
   },
   "findings": [
-    {
-      "id": "R01",
-      "status": "open",
-      "group": "Planner and bindings",
-      "finding": "Cost model version 1 is not transcreated: of `plan_cost_ver1.go`'s 40 functions only `getPlanCostVer1` for a few operators exists, so `SET tidb_cost_model_version = 1` costs and chooses plans differently (probe: `EXPLAIN FORMAT='verbose' SELECT * FROM t1 WHERE b > 1` costs 16279.11 in Go and 73382.22 in Rust; a two-table join on an indexed column is a HashJoin in Go and a MergeJoin in Rust).",
-      "rust_evidence": "`tidb-planner` (`get_plan_cost_ver1` only in `physical_tests.rs` coverage)",
-      "go_owner": "`pkg/planner/core/plan_cost_ver1.go`"
-    },
     {
       "id": "R02",
       "status": "open",
@@ -48,7 +40,7 @@
       "go_owner": "`pkg/ddl/session` (`Session`), `pkg/ddl/job_worker.go` (`w.sess`), `pkg/ddl/ddl_history.go` (`getJobsBySQL`)"
     }
   ],
-  "unresolved": 5,
-  "open": 5,
+  "unresolved": 4,
+  "open": 4,
   "partial": 0
 }

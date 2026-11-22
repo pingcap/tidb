@@ -357,6 +357,32 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         env.session.projection_concurrency = resolved_concurrency("tidb_projection_concurrency");
         env.session.hashagg_final_concurrency =
             resolved_concurrency("tidb_hashagg_final_concurrency");
+        env.session.hashagg_partial_concurrency =
+            resolved_concurrency("tidb_hashagg_partial_concurrency");
+        env.session.join_reorder_threshold = number(
+            "tidb_opt_join_reorder_threshold",
+            tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as f64,
+        ) as i32;
+        // Go `getPlanCost`: `CostModelVersion == 1` prices with the
+        // version-1 factors.
+        if number(tidb_vardef::tidb_vars::TIDB_COST_MODEL_VERSION, 2.0) == 1.0 {
+            use tidb_vardef::{defaults as d, tidb_vars as v};
+            env.ver1 = Some(tidb_planner::plan_cost_ver1::Ver1Factors {
+                cpu: number(v::TIDB_OPT_CPU_FACTOR, d::DEF_OPT_CPU_FACTOR),
+                cop_cpu: number(v::TIDB_OPT_COP_CPU_FACTOR, d::DEF_OPT_COP_CPU_FACTOR),
+                network: number(v::TIDB_OPT_NETWORK_FACTOR, d::DEF_OPT_NETWORK_FACTOR),
+                scan: number(v::TIDB_OPT_SCAN_FACTOR, d::DEF_OPT_SCAN_FACTOR),
+                desc_scan: number(v::TIDB_OPT_DESC_SCAN_FACTOR, d::DEF_OPT_DESC_SCAN_FACTOR),
+                seek: number(v::TIDB_OPT_SEEK_FACTOR, d::DEF_OPT_SEEK_FACTOR),
+                memory: number(v::TIDB_OPT_MEMORY_FACTOR, d::DEF_OPT_MEMORY_FACTOR),
+                disk: number(v::TIDB_OPT_DISK_FACTOR, d::DEF_OPT_DISK_FACTOR),
+                concurrency: number(v::TIDB_OPT_CONCURRENCY_FACTOR, d::DEF_OPT_CONCURRENCY_FACTOR),
+                cop_tiflash_concurrency: number(
+                    v::TIDB_OPT_TIFLASH_CONCURRENCY_FACTOR,
+                    d::DEF_OPT_TIFLASH_CONCURRENCY_FACTOR,
+                ),
+            });
+        }
         env.session.union_concurrency = executor_concurrency;
         env.session.index_lookup_size = number("tidb_index_lookup_size", 20_000.0);
         env.session.index_join_batch_size = number("tidb_index_join_batch_size", 25_000.0);
