@@ -354,6 +354,9 @@ func (e *executor) AlterTableEngineAttribute(ctx sessionctx.Context, ident ast.I
 	if _, err = model.ParseEngineAttributeFromString(engineAttribute); err != nil {
 		return dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(fmt.Sprintf("'%v'", err))
 	}
+	if err = checkStorageClassIntervalPartitionKey(engineAttribute, tb.Meta()); err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),

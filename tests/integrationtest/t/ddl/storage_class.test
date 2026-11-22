@@ -99,6 +99,27 @@ drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}' partition by range (id) (partition p0 values less than (100), partition p1 values less than (200), partition pmax values less than maxvalue);
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 
+# Interval selectors. Boundaries are far in the past or future, so results do not depend on the current date.
+drop table if exists t;
+create table t (id int, dt date) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 1 DAY"}}' partition by range columns (dt) (partition p2000 values less than ('2000-01-01'), partition p9000 values less than ('9000-01-01'), partition pmax values less than (maxvalue));
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+-- error 8271
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"STANDARD", "less_than":"INTERVAL 1 DAY"}}';
+-- error 8271
+alter table t ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 1 HOUR"}}';
+drop table if exists t;
+create table t (dt date) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 3 YEAR"}}' partition by range (to_days(dt)) (partition p2000 values less than (to_days('2000-01-01')), partition pmax values less than maxvalue);
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+drop table if exists t;
+create table t (dt date) ENGINE_ATTRIBUTE = '{"storage_class": [{"tier":"STANDARD", "names_in":["p1999"]}, {"tier":"IA", "less_than":"INTERVAL 1 DAY"}]}' partition by range columns (dt) (partition p1999 values less than ('1999-01-01'), partition p2000 values less than ('2000-01-01'));
+alter table t add partition (partition p2001 values less than ('2001-01-01'), partition p9000 values less than ('9000-01-01'));
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+-- error 8271
+alter table t partition by range (year(dt)) (partition q0 values less than (2000), partition qmax values less than maxvalue);
+drop table if exists t;
+-- error 8271
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"INTERVAL 1 DAY"}}' partition by range (id) (partition p0 values less than (100));
+
 drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["2","4"]}}' partition by list (id) (partition p0 values in (1,2), partition p1 values in (3,4), partition p2 values in (5));
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';

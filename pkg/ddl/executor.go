@@ -1108,6 +1108,12 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkStorageClassAdmission(tbInfo.EngineAttribute, tbInfo); err != nil {
 		return err
 	}
+	// CREATE TABLE ... LIKE copies a rule that was validated when it was set.
+	if s.ReferTable == nil {
+		if err = checkStorageClassIntervalPartitionKey(tbInfo.EngineAttribute, tbInfo); err != nil {
+			return err
+		}
+	}
 
 	// Process region split policies from CREATE TABLE
 	if len(s.SplitIndex) > 0 {
