@@ -44,7 +44,7 @@ use tidb_kv::storage::StorageError;
 use tidb_txnkv::transaction::{LockWaitTime, SchemaLeaseChecker};
 use tidb_txnkv::Key;
 
-use tidb_domain_core::cluster_transactions::{CommittedTxnInfo, OpenClusterTransaction};
+use tidb_domain_core::cluster_transactions::{CommittedTxnInfo, OpenClusterTransaction, TxnFuturePreparer};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Opens the store transaction from the options in force at the activation
@@ -53,8 +53,20 @@ pub type TransactionOpener = Box<
     dyn FnOnce(SessionTransactionOptions) -> Result<Box<dyn OpenClusterTransaction>, String> + Send,
 >;
 
+/// Go `newOracleFuture`: requests the start timestamp, returning the opener
+/// that waits for it.
+pub type OracleFuture = Box<dyn FnOnce() -> TransactionOpener + Send>;
+
+/// Go `sessiontxn.ConstantFuture(ts)`: the opener of a transaction valid at
+/// `ts` without a timestamp request.
+pub type ConstantFuture = Box<dyn FnOnce(u64) -> TransactionOpener + Send>;
+
 struct Pending {
+    /// The prepared future (Go `isTxnPrepared`); `None` until `prepareTxn`
+    /// or `forcePrepareConstStartTS` for a transaction entered unprepared.
     opener: Option<TransactionOpener>,
+    oracle_future: Option<OracleFuture>,
+    constant_future: Option<ConstantFuture>,
     options: SessionTransactionOptions,
     resource_group: Option<String>,
     assertion_level: Option<tidb_proto::KvrpcAssertionLevel>,
@@ -94,6 +106,8 @@ impl Shared {
         if let Some(error) = &state.failed {
             return Err(error.clone());
         }
+        // Go `ActivateTxn` -> `prepareTxn`.
+        Self::prepare_in(state);
         let Some(opener) = state.opener.take() else {
             return Err("the pending transaction was already consumed".to_owned());
         };
@@ -135,6 +149,17 @@ impl Shared {
         Ok(())
     }
 
+    /// Go `prepareTxn`: requests the timestamp of a transaction entered
+    /// unprepared.
+    fn prepare_in(state: &mut Pending) {
+        if state.open.is_some() || state.opener.is_some() {
+            return;
+        }
+        if let Some(oracle) = state.oracle_future.take() {
+            state.opener = Some(oracle());
+        }
+    }
+
     /// Runs `use_open` against the activated transaction.
     fn with_open<T>(
         &self,
@@ -143,6 +168,26 @@ impl Shared {
         let mut state = self.state();
         Self::activate_in(&mut state)?;
         use_open(state.open.as_deref().expect("just activated"))
+    }
+}
+
+impl TxnFuturePreparer for Shared {
+    fn prepare_txn(&self) -> Result<(), String> {
+        Self::prepare_in(&mut self.state());
+        Ok(())
+    }
+
+    fn force_prepare_const_start_ts(&self, ts: u64) -> Result<(), String> {
+        let mut state = self.state();
+        if state.open.is_some() {
+            return Err("cannot force prepare const start ts because txn is active".to_owned());
+        }
+        let Some(constant) = state.constant_future.take() else {
+            return Err("the transaction's start timestamp cannot be a constant".to_owned());
+        };
+        state.oracle_future = None;
+        state.opener = Some(constant(ts));
+        Ok(())
     }
 }
 
@@ -166,6 +211,8 @@ impl LazyClusterTransaction {
                 statements: std::sync::atomic::AtomicU64::new(0),
                 state: Mutex::new(Pending {
                     opener: Some(opener),
+                    oracle_future: None,
+                    constant_future: None,
                     options,
                     resource_group: None,
                     assertion_level: None,
@@ -199,6 +246,32 @@ impl LazyClusterTransaction {
     pub fn new_implicit_read(options: SessionTransactionOptions, buffer: MutationBuffer, opener: TransactionOpener) -> Self {
         let transaction = Self::new(false, options, buffer, opener);
         transaction.shared.state().buffer = None;
+        transaction
+    }
+
+    /// Go `EnterNewTxnBeforeStmt` for an autocommit read: the implicit
+    /// transaction entered UNPREPARED (no timestamp requested); the
+    /// provider's warm-up requests one (`oracle`), its plan advice may
+    /// replace it by a constant (`constant`), and activation prepares one
+    /// if neither ran.
+    #[must_use]
+    pub fn new_unprepared_implicit_read(
+        options: SessionTransactionOptions,
+        buffer: MutationBuffer,
+        oracle: OracleFuture,
+        constant: ConstantFuture,
+    ) -> Self {
+        let transaction = Self::new_implicit_read(
+            options,
+            buffer,
+            Box::new(|_| Err("the unprepared transaction has no opener".to_owned())),
+        );
+        {
+            let mut state = transaction.shared.state();
+            state.opener = None;
+            state.oracle_future = Some(oracle);
+            state.constant_future = Some(constant);
+        }
         transaction
     }
 
@@ -477,6 +550,10 @@ impl OpenClusterTransaction for LazyClusterTransaction {
     ) -> Result<LockKeysOutcome, String> {
         self.shared
             .with_open(|transaction| transaction.lock_staged_keys_with_values_if_exist(keys, wait))
+    }
+
+    fn txn_future_preparer(&self) -> Option<Arc<dyn TxnFuturePreparer>> {
+        Some(Arc::clone(&self.shared) as Arc<dyn TxnFuturePreparer>)
     }
 
     fn finish_pessimistic_statement(&self, successful: bool) -> Result<(), String> {

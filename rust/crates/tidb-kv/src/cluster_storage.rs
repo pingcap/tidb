@@ -173,32 +173,6 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     fn start_ts(&self) -> u64 {
         0
     }
-
-    /// Declares, before the statement's first read, that this statement's
-    /// WHOLE read is one autocommit point get on the clustered handle, and
-    /// reports whether the declaration was taken.
-    ///
-    /// This is Go's `AdviseOptimizeWithPlan`
-    /// (`pkg/sessiontxn/isolation/optimistic.go`): the plan is shown to the
-    /// transaction provider once per statement, and a provider that accepts it
-    /// reads at `math.MaxUint64` instead of spending a timestamp.
-    ///
-    /// The declaration is a SHAPE, not a request. "A `get` arrived" is not
-    /// this fact and must never be read as it: an `UPDATE`'s read-before-write
-    /// issues the same `get`, and so does every row lookup of an index double
-    /// read. Both of those would read a different latest-committed version per
-    /// read -- no error, wrong rows. Only a caller that knows the statement's
-    /// root plan may declare.
-    ///
-    /// The default REFUSES, so an implementation that has not thought about
-    /// the question keeps paying for its timestamp. In particular the snapshot
-    /// an explicit `BEGIN` hands its statements refuses by inheriting this
-    /// default, which is [`IsAutoCommitTxn`'s `!InTxn`
-    /// half](https://github.com/pingcap/tidb/blob/master/pkg/planner/core/common_plans.go)
-    /// made structural: inside a transaction there is nothing to declare to.
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        false
-    }
 }
 
 /// SQL identity retained by the table layer for a deferred duplicate error.

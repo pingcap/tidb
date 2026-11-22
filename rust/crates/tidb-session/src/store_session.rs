@@ -69,8 +69,19 @@ impl<F: CatalogFollowing> TxnManagerOps for StoreTxnOps<'_, F> {
         // connection of any age.
         self.follower.rebuild(session);
         let resource_group = session.current_resource_group().to_owned();
+        let request = tidb_sessiontxn::EnterNewTxnRequest {
+            tp: tidb_sessiontxn::EnterNewTxnType::WithBeginStmt,
+            stale_read_ts: session.historical_read_ts().unwrap_or(0),
+            ..tidb_sessiontxn::EnterNewTxnRequest::default()
+        };
+        let inputs = crate::txn_manager::EnterNewTxnInputs {
+            resource_group: &resource_group,
+            schema_version: self.follower.schema_version(),
+            read_ts: None,
+            autocommit_write: false,
+        };
         self.txn
-            .open(session, &resource_group, self.follower.schema_version())
+            .enter_new_txn(session, &request, inputs)
             .map_err(driver_error_of)
     }
 

@@ -111,31 +111,21 @@ impl PointLock {
 }
 
 
-/// What a statement declares about its whole read, before its first read
-/// happens.
-///
-/// Go's counterpart is the answer `IsPointGetWithPKOrUniqueKeyByAutoCommit`
-/// gives `AdviseOptimizeWithPlan` once per statement, with the statement's
-/// ROOT plan. It is a statement-level fact, not a per-read one, and the
-/// difference is the whole safety argument: `MaxUint64` reads the latest
-/// committed version at the moment of the read, so two reads of one statement
-/// at `MaxUint64` are two different snapshots.
+/// What a statement's AST tells the session about its read before planning:
+/// a locking read, or an autocommit write whose timestamped transaction can
+/// open while it plans. Go's plan-time answer (`AdviseOptimizeWithPlan`'s
+/// `MaxUint64` point get) is the optimistic provider's, after planning.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StatementReadShape {
     /// A locking SELECT needs a current statement snapshot in a pessimistic
     /// transaction, even when an older snapshot would find no rows to lock.
     LockingRead,
-    /// Nothing is claimed. The snapshot spends a timestamp at its first read,
-    /// which is every statement's answer unless it earned the other one.
+    /// Nothing is claimed.
     #[default]
     Unknown,
-    /// The statement's whole read is one point get on the clustered handle,
-    /// reading one row once, with no second read of any kind.
-    AutocommitPointGet,
     /// An autocommit UPDATE or DELETE whose first storage read can overlap
-    /// opening its ordinary timestamped snapshot with AST planning.  This is
-    /// not a max-ts claim: the read and any eventual prewrite still use the
-    /// same real `start_ts`, so write-conflict detection is unchanged.
+    /// opening its ordinary timestamped snapshot with AST planning; the read
+    /// and any eventual prewrite use the same real `start_ts`.
     AutocommitWrite,
 }
 
@@ -151,63 +141,9 @@ fn set_opr_has_update_lock(set_opr: &tidb_ast::SetOprStmt) -> bool {
     })
 }
 
-/// Whether `stmt` is a statement whose WHOLE read is one point get on the
-/// clustered handle -- the plan-shape half of Go's
-/// `IsPointGetWithPKOrUniqueKeyByAutoCommit`
-/// (`pkg/planner/core/common_plans.go`).
-///
-/// # What this decides, and what it deliberately does not
-///
-/// Go asks the question of the statement's ROOT plan, and its `switch` is what
-/// makes the answer safe: only a `PhysicalProjection` over a reader, a bare
-/// reader, or a `PointGetPlan` qualifies, and everything else falls to
-/// `default: return false`. A `Selection`, `Apply`, `Limit`, `Sort`,
-/// aggregation or join at the root is therefore already a refusal in Go, and
-/// so is every statement that is not a query at all. This function is that
-/// `switch`, expressed over the statement this tier plans from.
-///
-/// The two conditions it owns beyond the shape, both of them refusals Go makes
-/// elsewhere:
-///
-/// * The unique-index arm is REFUSED outright. Go admits `PointGetPlan` on a
-///   unique index only when `IndexInfo == nil || (Primary && IsCommonHandle)`
-///   -- its `noSecondRead` -- because an index point get is a DOUBLE read, and
-///   `MaxUint64` on a double read can pair an index entry with a row from a
-///   different version. This tier's unique-index arm
-///   (`driver::access::try_point_get`) is exactly that double read, and it
-///   READS the index while deciding, which a declaration made before the first
-///   read cannot do anyway. Refusing it is both halves at once.
-/// * A retained `LIMIT` operator is refused. Go folds a positive, zero-offset
-///   limit into `tryPointGetPlan`; literal bounds permit the same proof here
-///   without evaluating an expression. The complete handle-key proof still
-///   runs below, so a bounded range never gains MaxTS merely from its limit.
-///
-/// The conditions this function does NOT own, because the caller owns them
-/// structurally -- see `ClusterSnapshot::declare_autocommit_point_get`:
-///
-/// * `IsAutoCommitTxn`: autocommit set and no open transaction. The snapshot
-///   an explicit transaction binds refuses the declaration by inheriting the
-///   trait's fail-closed default, so being inside `BEGIN` is not a check here
-///   at all -- there is nothing to declare to.
-/// * "The timestamp is not already spent." The deferred snapshot refuses a
-///   declaration once it has opened, which is Go's `p.txn != nil` arm.
-///
-/// # Why an `UPDATE`'s read-before-write cannot reach the max-ts answer
-///
-/// An UPDATE/DELETE is classified as [`StatementReadShape::AutocommitWrite`]
-/// before this query-only proof. That shape permits only overlapping its
-/// ordinary timestamp allocation with planning; it never selects max-ts. This
-/// matters because at the storage seam an UPDATE's read-before-write and a
-/// SELECT's point get are the SAME `get` on the same key: the difference lives
-/// only in the statement, which is why both declarations are made from the
-/// statement and never inferred from a read.
+/// The [`StatementReadShape`] of `stmt`.
 #[must_use]
-pub fn statement_read_shape(
-    stmt: &tidb_ast::Stmt,
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> StatementReadShape {
+pub fn statement_read_shape(stmt: &tidb_ast::Stmt) -> StatementReadShape {
     if matches!(
         stmt,
         tidb_ast::Stmt::Dml(dml)
@@ -221,285 +157,45 @@ pub fn statement_read_shape(
     let tidb_ast::Stmt::Query(query) = stmt else {
         return StatementReadShape::Unknown;
     };
-    // A set operation reads every term, so it is several reads by
-    // construction; Go's root plan for it is a `PhysicalUnionAll`, which its
-    // `switch` refuses. A `FOR UPDATE` term still makes it a locking read:
-    // Go `ExecStmt.isSelectForUpdate` is `b.hasLock`, set by any
+    // A `FOR UPDATE` term makes a set operation a locking read: Go
+    // `ExecStmt.isSelectForUpdate` is `b.hasLock`, set by any
     // `buildSelectLock` in the tree.
-    let select = match &**query {
-        tidb_ast::QueryStmt::Select(select) => select,
-        tidb_ast::QueryStmt::SetOpr(set_opr) => {
-            return if set_opr_has_update_lock(set_opr) {
-                StatementReadShape::LockingRead
-            } else {
-                StatementReadShape::Unknown
-            };
-        }
+    let locking = match &**query {
+        tidb_ast::QueryStmt::Select(select) => select
+            .lock
+            .as_ref()
+            .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update),
+        tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr_has_update_lock(set_opr),
     };
-    if select
-        .lock
-        .as_ref()
-        .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update)
-    {
-        return StatementReadShape::LockingRead;
+    if locking {
+        StatementReadShape::LockingRead
+    } else {
+        StatementReadShape::Unknown
     }
-    // Go's tryPointGetPlan permits a positive LIMIT with zero offset, but
-    // IsPointGetWithPKOrUniqueKeyByAutoCommit still requires a complete point
-    // key. A row-count bound alone does not prove one snapshot-consistent read.
-    if !select_is_bare_read(select, true)
-        || select.limit.as_ref().is_some_and(|limit| {
-            !matches!(&limit.count, tidb_ast::Expr::Int(value)
-                if value.parse::<u64>().is_ok_and(|count| count > 0))
-                || limit.offset.as_ref().is_some_and(|offset| {
-                    !matches!(offset, tidb_ast::Expr::Int(value)
-                        if value.parse::<u64>() == Ok(0))
-                })
-        })
-    {
-        return StatementReadShape::Unknown;
-    }
-    let Some(table_ref) = tidb_planner::point_get_plan::single_table_ref(&select.from) else {
-        return StatementReadShape::Unknown;
-    };
-    let (database, table_name) = match table_ref.name.as_slice() {
-        [name] if !current_db.is_empty() => (current_db, name.as_str()),
-        [database, name] => (database.as_str(), name.as_str()),
-        _ => return StatementReadShape::Unknown,
-    };
-    let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
-        return StatementReadShape::Unknown;
-    };
-    // A partitioned table's point get routes to a partition, which this
-    // predicate does not resolve; a refusal costs one timestamp.
-    if table.partition().is_some() {
-        return StatementReadShape::Unknown;
-    }
-    let columns: Vec<(String, FieldType)> = table
-        .visible_columns()
-        .into_iter()
-        .map(|(_, column)| (column.read().name.original().to_owned(), column.read().field_type.clone()))
-        .collect();
-    let Some(where_clause) = select.where_clause.as_ref() else {
-        return StatementReadShape::Unknown;
-    };
-    // The rest is `try_point_get`'s handle arm verbatim, through the same two
-    // helpers, so a statement this predicate accepts is a statement that arm
-    // accepts. It reads nothing: both helpers walk the AST only.
-    let mut pairs = Vec::new();
-    if !tidb_planner::point_get_plan::get_name_value_pairs(where_clause, &mut pairs, zone) {
-        return StatementReadShape::Unknown;
-    }
-    if !tidb_planner::point_get_plan::convert_pairs_to_column_domain(&mut pairs, &columns) {
-        return StatementReadShape::Unknown;
-    }
-    if let Some(handle_offset) = table.pk_handle_offset() {
-        if pairs.len() != 1 {
-            return StatementReadShape::Unknown;
-        }
-        let handle_column = table.columns()[handle_offset].read().name.original().to_owned();
-        if !pairs[0].column().go_lower_eq(&handle_column) {
-            return StatementReadShape::Unknown;
-        }
-        return match pairs[0].value() {
-            Datum::Int(_) | Datum::UInt(_) => StatementReadShape::AutocommitPointGet,
-            _ => StatementReadShape::Unknown,
-        };
-    }
-
-    // A clustered common handle is a primary-key tuple encoded directly in
-    // the record key.  Go's `IsPointGetWithPKOrUniqueKeyByAutoCommit` admits
-    // this `PointGetPlan` arm as well as the signed-BIGINT handle arm; unlike
-    // a secondary unique index it is still one storage read, so the
-    // MaxUint64 shortcut is safe for a bare point projection.  Require every
-    // handle column exactly once so a duplicate equality or a non-key
-    // residual cannot accidentally claim the shortcut.
-    let common_offsets = table.common_handle_offsets();
-    if common_offsets.is_empty() || pairs.len() != common_offsets.len() {
-        return StatementReadShape::Unknown;
-    }
-    let complete = common_offsets.iter().all(|offset| {
-        table.columns().get(*offset).is_some_and(|column| {
-            let name = column.read().name.original().to_owned();
-            pairs
-                .iter()
-                .filter(|pair| pair.column().go_lower_eq(&name))
-                .count()
-                == 1
-        })
-    });
-    complete
-        .then_some(StatementReadShape::AutocommitPointGet)
-        .unwrap_or(StatementReadShape::Unknown)
 }
 
 #[cfg(test)]
-mod common_handle_shape_tests {
+mod statement_read_shape_tests {
     use super::*;
 
-    // Keep the common-handle guard's value-domain branch exercised without
-    // requiring a storage backend: this is the shape decision made before
-    // the first read, not a transport test.
-    #[test]
-    fn common_handle_point_read_is_admitted() {
-        let mut table = tidb_infoschema::SessionExtendedInfoSchema::mock();
-        let mut kv = tidb_table::tables::TableCommon::new(
-            1,
-            vec![
-                tidb_table::column::Column {
-                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                        id: 1,
-                        name: tidb_ast::CiString::new("k"),
-                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::ColumnInfo::default()
-                    }),
-                    generated: None,
-                    default_value: None,
-                    origin_default: None,
-                },
-                tidb_table::column::Column {
-                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                        id: 2,
-                        name: tidb_ast::CiString::new("v"),
-                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::ColumnInfo::default()
-                    }),
-                    generated: None,
-                    default_value: None,
-                    origin_default: None,
-                },
-            ],
-        );
-        kv.set_name("t");
-        kv.set_common_handle_offsets(vec![0]);
-        table.register_kv_in("test", "t", kv).unwrap();
-        let stmt = tidb_parser::parse("SELECT v FROM t WHERE k = 'x'").unwrap();
-        assert_eq!(
-            statement_read_shape(
-                &stmt,
-                &table,
-                "test",
-                &tidb_datatype::SessionTimeZone::utc(),
-            ),
-            StatementReadShape::AutocommitPointGet
-        );
-    }
-
-    #[test]
-    fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
-        let mut table = tidb_infoschema::SessionExtendedInfoSchema::mock();
-        let mut kv = tidb_table::tables::TableCommon::new(
-            1,
-            vec![
-                tidb_table::column::Column {
-                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                        id: 1,
-                        name: tidb_ast::CiString::new("k"),
-                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::ColumnInfo::default()
-                    }),
-                    generated: None,
-                    default_value: None,
-                    origin_default: None,
-                },
-                tidb_table::column::Column {
-                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                        id: 2,
-                        name: tidb_ast::CiString::new("v"),
-                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::ColumnInfo::default()
-                    }),
-                    generated: None,
-                    default_value: None,
-                    origin_default: None,
-                },
-            ],
-        );
-        kv.set_name("t");
-        kv.set_common_handle_offsets(vec![0]);
-        table.register_kv_in("test", "t", kv).unwrap();
-        for (sql, expected) in [
-            (
-                "SELECT v FROM t WHERE k >= 'x' LIMIT 1",
-                StatementReadShape::Unknown,
-            ),
-            ("SELECT v FROM t LIMIT 1", StatementReadShape::Unknown),
-            (
-                "SELECT v FROM t WHERE v = 1 LIMIT 1",
-                StatementReadShape::Unknown,
-            ),
-            (
-                "SELECT v FROM t WHERE k = 'x' LIMIT 1",
-                StatementReadShape::AutocommitPointGet,
-            ),
-            (
-                "SELECT v FROM t WHERE k = 'x' LIMIT 2",
-                StatementReadShape::AutocommitPointGet,
-            ),
-            (
-                "SELECT v FROM t WHERE k = 'x' LIMIT 1 OFFSET 0",
-                StatementReadShape::AutocommitPointGet,
-            ),
-            (
-                "SELECT v FROM t WHERE k = 'x' LIMIT 0",
-                StatementReadShape::Unknown,
-            ),
-            (
-                "SELECT v FROM t WHERE k = 'x' LIMIT 1 OFFSET 1",
-                StatementReadShape::Unknown,
-            ),
-        ] {
-            let stmt = tidb_parser::parse(sql).unwrap();
-            assert_eq!(
-                statement_read_shape(
-                    &stmt,
-                    &table,
-                    "test",
-                    &tidb_datatype::SessionTimeZone::utc(),
-                ),
-                expected,
-                "{sql}",
-            );
-        }
-    }
-
     /// DML gets its own ordinary-snapshot shape so the session can start the
-    /// PD-backed open before the write read path is built.  It must never be
-    /// confused with the max-ts point-get shortcut used by SELECT.
+    /// PD-backed open before the write read path is built.
     #[test]
     fn update_and_delete_use_the_prefetchable_write_shape() {
-        let catalog = tidb_infoschema::SessionExtendedInfoSchema::mock();
         for sql in [
             "UPDATE t SET v = 1 WHERE k = 'x'",
             "DELETE FROM t WHERE k = 'x'",
         ] {
             let stmt = tidb_parser::parse(sql).unwrap();
             assert_eq!(
-                statement_read_shape(
-                    &stmt,
-                    &catalog,
-                    "test",
-                    &tidb_datatype::SessionTimeZone::utc(),
-                ),
+                statement_read_shape(&stmt),
                 StatementReadShape::AutocommitWrite,
                 "{sql} should overlap its normal snapshot open with planning"
             );
         }
         let insert = tidb_parser::parse("INSERT INTO t VALUES (1, 2)").unwrap();
         assert_eq!(
-            statement_read_shape(
-                &insert,
-                &catalog,
-                "test",
-                &tidb_datatype::SessionTimeZone::utc(),
-            ),
+            statement_read_shape(&insert),
             StatementReadShape::Unknown,
             "INSERT has no guaranteed first read to prefetch"
         );
@@ -514,10 +210,6 @@ mod common_handle_shape_tests {
 /// plain column references and wildcards for the same reason -- a scalar
 /// subquery in it is a second read, and an aggregate is a root `HashAgg`.
 pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
-    select_is_bare_read(select, false)
-}
-
-fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool {
     use tidb_ast::{SelectField, SelectStatementKind};
 
     select.kind == SelectStatementKind::Select
@@ -530,7 +222,7 @@ fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool
         && select.having.is_none()
         && select.windows.is_empty()
         && select.order_by.is_empty()
-        && (allow_limit || select.limit.is_none())
+        && select.limit.is_none()
         // `FOR UPDATE` locks the row, which needs a real timestamp to lock at.
         && select.lock.is_none()
         && select.into_outfile.is_none()

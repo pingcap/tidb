@@ -266,12 +266,13 @@ pub trait TxnContextProvider: Send {
     }
     /// Go `AdviseOptimizeWithPlan`, handed to the executor builder: the
     /// advisor of this provider's plan advice, `None` for a provider whose
-    /// advice is the base no-op (serializable, staleness; the optimistic
-    /// max-ts point get is decided before the plan runs).
+    /// advice is the base no-op (serializable, staleness).
+    /// `auto_commit_txn` is Go `IsAutoCommitTxn(vars)`.
     fn plan_advisor(
         &self,
         _retrying: bool,
         _rc_write_check_ts: bool,
+        _auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
         None
     }

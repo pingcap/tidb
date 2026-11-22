@@ -12,8 +12,9 @@
 // limitations under the License.
 
 //! Go `pkg/sessiontxn/isolation`'s `AdviseOptimizeWithPlan`: the statement's
-//! optimized plan tells its pessimistic provider whether the statement needs
-//! a fresh for-update timestamp, before the statement's first read or lock.
+//! optimized plan tells its provider whether the statement needs a fresh
+//! for-update timestamp (pessimistic) or reads at `math.MaxUint64`
+//! (optimistic), before the statement's first read or lock.
 
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 
@@ -31,4 +32,9 @@ pub(crate) fn advise_optimize_with_plan(
     if let Some(check_ts) = advisor.advise_optimize_with_plan(plan, insert_replace_or_on_duplicate) {
         crate::statement_store(ctx).advise_keep_for_update_ts(check_ts);
     }
+    if advisor.optimize_with_max_ts() {
+        ctx.set_priority_high_if_no_priority();
+    }
+    // Go `AdviseOptimizeWithPlanAndThenWarmUp`.
+    advisor.advise_warmup();
 }

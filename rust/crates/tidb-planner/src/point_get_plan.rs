@@ -605,6 +605,7 @@ fn build_fast_point_physical_plan(
         tidb_planner_core_operator_physicalop::PointGetPlan {
             base,
             table_id: table.table_id(),
+            tbl_info: Some(table.meta()),
             // Go `PointGetPlan.PartitionNames`: a global index applies them
             // to the partition its entry records.
             partition: ((global_index && !table_ref.partitions.is_empty())
@@ -1623,7 +1624,9 @@ pub fn try_point_get(
     statement: Option<&dyn tidb_exprctx::Columns>,
     table_dual: &mut bool,
 ) -> Result<Option<PointGetPin>, DriverError> {
-    if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
+    // Go `tryPointGetPlan` refuses HAVING and ORDER BY only: a GROUP BY over
+    // the plain columns `buildSchemaFromFields` admits groups the one row.
+    if select.having.is_some() || !select.order_by.is_empty() {
         return Ok(None);
     }
     if let Some(limit) = select.limit {

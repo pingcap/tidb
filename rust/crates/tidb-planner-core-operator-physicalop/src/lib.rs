@@ -3278,6 +3278,8 @@ pub struct PointGetPlan {
     pub base: BasePhysicalPlan,
     /// The selected table.
     pub table_id: i64,
+    /// Go `PointGetPlan.TblInfo`.
+    pub tbl_info: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Dynamic partition routing; `table_id` remains the logical table ID.
     pub partition: Option<PointGetPartition>,
     /// The selected index, or `None` for a table handle.
@@ -3407,6 +3409,18 @@ impl PhysicalTableScan {
 }
 
 impl PhysicalIndexScan {
+    /// Go `PhysicalIndexScan.IsPointGetByUniqueKey`: one non-nullable point
+    /// range over every column of a unique index.
+    #[must_use]
+    pub fn is_point_get_by_unique_key(&self) -> bool {
+        self.ranges.len() == 1
+            && self.index.as_ref().is_some_and(|index| {
+                let index = index.read();
+                index.unique && self.ranges[0].low_val.len() == index.columns.len()
+            })
+            && self.ranges[0].is_point_non_nullable()
+    }
+
     /// Go `haveCorCol`.
     #[must_use]
     pub fn have_cor_col(&self) -> bool {
@@ -5988,6 +6002,7 @@ impl PhysicalPlan {
             Self::PointGet(op) => Self::PointGet(PointGetPlan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
+                tbl_info: op.tbl_info.clone(),
                 partition: op.partition.clone(),
                 index_id: op.index_id,
                 access_cols: op.access_cols.clone(),

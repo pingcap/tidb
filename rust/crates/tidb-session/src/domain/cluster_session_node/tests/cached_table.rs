@@ -334,7 +334,10 @@ fn cached_table_point_gets_read_its_copy_as_go() {
     read_in_txn_until_cached(&mut session, "select * from test.pg where id = 4", &[]);
 
     assert_eq!(int_rows(&mut session, "select * from test.pg where id = 3"), [vec![3, 13, 103]]);
-    assert!(!session.read_from_table_cache(), "an autocommit point get reads at MaxUint64");
+    // Go `IsPointGetWithPKOrUniqueKeyByAutoCommit` refuses `MaxUint64` for a
+    // cached table ("math.MaxUint64 always make cacheData invalid"), so the
+    // autocommit point get reads the copy too.
+    assert!(session.read_from_table_cache(), "an autocommit point get reads the cached copy");
 
     // The transaction's own writes are read before the copy.
     rows(&mut session, "begin");

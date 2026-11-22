@@ -1513,10 +1513,6 @@ fn nonclustered_primary_retains_prepared_point_plan() {
     let plan = prepared
         .point_get_plan()
         .expect("Go retains PointGet for nonclustered unique primary keys");
-    assert_eq!(
-        plan.statement_read_shape(),
-        tidb_executor::access_path::StatementReadShape::Unknown
-    );
     for (key, expected) in [("user1", "one"), ("user2", "two"), ("missing", "")] {
         let execution = session
             .bind_cached_prepared_point_get(&plan, &[Datum::Bytes(key.as_bytes().to_vec())])

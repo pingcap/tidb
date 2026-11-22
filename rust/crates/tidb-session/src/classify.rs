@@ -187,23 +187,13 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
 }
 
 impl Session {
-    /// What this statement's WHOLE read is, decided by parsing alone, so a
-    /// front end that binds a read snapshot can tell it before the statement
-    /// runs -- and therefore before its first read spends a timestamp.
+    /// What this statement's read is, decided by parsing alone, before the
+    /// statement runs: a locking read or an autocommit write (see
+    /// [`tidb_executor::access_path::statement_read_shape`]).
     ///
-    /// This is the fourth question of this file's set, and it stays separate
-    /// from the other three for the same reason they stay separate from each
-    /// other: a `SELECT` is `Query`-shaped whether or not it is a point get,
-    /// and a point get inside an `UPDATE` is `Write`-shaped while reading the
-    /// very same row by the very same key. Only
-    /// [`tidb_executor::access_path::statement_read_shape`] answers this one,
-    /// and it answers it from the statement's own tree.
-    ///
-    /// `params` are a prepared statement's execute-time values; they are bound
-    /// into the text first, because a `?` is not a value a point get can be
-    /// planned from. Empty for the text protocol. A statement that fails to
-    /// parse or bind declares nothing, which costs a timestamp and never a
-    /// row.
+    /// `params` are a prepared statement's execute-time values, bound into
+    /// the statement first. Empty for the text protocol. A statement that
+    /// fails to parse or bind declares nothing.
     #[must_use]
     pub fn statement_read_shape(&self, sql: &str, params: &[Datum]) -> StatementReadShape {
         // One parse, in the client's encodings, with the values installed on
@@ -255,30 +245,7 @@ impl Session {
         {
             return StatementReadShape::LockingRead;
         }
-        let disable_point_get =
-            crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control());
-        let catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let shape = tidb_executor::access_path::statement_read_shape(
-            stmt,
-            &catalog,
-            self.current_database(),
-            &self.session_time_zone(),
-        );
-        // Fix52592 disables TryFastPlan, not MaxTS for a TableReader whose
-        // range is one complete clustered key (Go common_plans.go). A LIMIT
-        // can only use this AST proof when TryFastPlan folds it away; retain
-        // the conservative answer for that shape when the fast path is off.
-        let has_limit = matches!(stmt, Stmt::Query(query)
-            if matches!(query.as_ref(), tidb_ast::QueryStmt::Select(select)
-                if select.limit.is_some()));
-        if disable_point_get && has_limit && shape == StatementReadShape::AutocommitPointGet {
-            StatementReadShape::Unknown
-        } else {
-            shape
-        }
+        tidb_executor::access_path::statement_read_shape(stmt)
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can

@@ -282,9 +282,9 @@ pub trait ClusterTransactions: Send + Sync {
     /// Opens one autocommit statement's read snapshot at `u64::MAX` -- the
     /// latest committed version -- spending no PD timestamp.
     ///
-    /// Reached only from a statement that DECLARED its whole read is one point
-    /// get on the clustered handle; see
-    /// [`ClusterSnapshot::declare_autocommit_point_get`].
+    /// Reached only through [`MaxTsReadTransaction`], the transaction an
+    /// autocommit point get's plan advice made (Go `AdviseOptimizeWithPlan`
+    /// -> `IsPointGetWithPKOrUniqueKeyByAutoCommit`).
     fn open_max_ts_snapshot(
         &self,
         resource_group: &str,
@@ -646,6 +646,112 @@ pub trait OpenClusterTransaction: Send {
     /// statement's locks are taken fairly. The optimistic default locks
     /// nothing.
     fn set_fair_locking(&self, _enabled: bool) {}
+
+    /// The transaction's pending timestamp future, which Go's provider
+    /// prepares (`prepareTxn`) or replaces by a constant
+    /// (`forcePrepareConstStartTS`) until the transaction activates. `None`
+    /// for a transaction opened with its future already chosen.
+    fn txn_future_preparer(&self) -> Option<Arc<dyn TxnFuturePreparer>> {
+        None
+    }
+}
+
+/// Go `baseTxnContextProvider`'s steps on the session's pending transaction
+/// future (`sctx.PrepareTSFuture` over the `LazyTxn`) before the
+/// transaction activates.
+pub trait TxnFuturePreparer: Send + Sync {
+    /// Go `prepareTxn` (`AdviseWarmup`): requests the start timestamp now,
+    /// unless the transaction is already prepared.
+    ///
+    /// # Errors
+    ///
+    /// The timestamp request could not be started.
+    fn prepare_txn(&self) -> Result<(), String>;
+
+    /// Go `forcePrepareConstStartTS`: the transaction activates at `ts`
+    /// (`sessiontxn.ConstantFuture`) without asking for a timestamp; a
+    /// future already requested is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Go's "cannot force prepare const start ts because txn is active".
+    fn force_prepare_const_start_ts(&self, ts: u64) -> Result<(), String>;
+}
+
+/// The transaction Go's `ActivateTxn` begins over
+/// `ConstantFuture(math.MaxUint64)` for an autocommit point get
+/// (`AdviseOptimizeWithPlan`): read-only, valid at `u64::MAX`, its one read
+/// the latest committed version
+/// ([`ClusterTransactions::open_max_ts_snapshot`]).
+pub struct MaxTsReadTransaction {
+    transactions: Arc<dyn ClusterTransactions>,
+    resource_group: Mutex<String>,
+    opened_at: std::time::Instant,
+    statements: std::sync::atomic::AtomicU64,
+}
+
+impl MaxTsReadTransaction {
+    /// The transaction, reading through `transactions` as `resource_group`.
+    #[must_use]
+    pub fn new(transactions: Arc<dyn ClusterTransactions>, resource_group: &str) -> Self {
+        Self {
+            transactions,
+            resource_group: Mutex::new(resource_group.to_owned()),
+            opened_at: std::time::Instant::now(),
+            statements: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl fmt::Debug for MaxTsReadTransaction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("MaxTsReadTransaction").finish_non_exhaustive()
+    }
+}
+
+impl OpenClusterTransaction for MaxTsReadTransaction {
+    fn start_ts(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn opened_at(&self) -> std::time::Instant {
+        self.opened_at
+    }
+
+    fn statement_count(&self) -> u64 {
+        self.statements.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn note_statement(&self) {
+        self.statements.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn set_resource_group_name(&self, name: &str) -> Result<(), String> {
+        name.clone_into(&mut self.resource_group.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        Ok(())
+    }
+
+    fn set_statement_assertion_level(&self, _level: tidb_proto::KvrpcAssertionLevel) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        let resource_group = self
+            .resource_group
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.transactions.open_max_ts_snapshot(&resource_group)
+    }
+
+    // Go commits a read-only transaction without reaching the store.
+    fn commit(self: Box<Self>, _buffer: &MutationBuffer) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
+        Ok(None)
+    }
+
+    fn rollback(self: Box<Self>) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Rebuilds and stages one Go SQL statement inside a caller-owned pessimistic

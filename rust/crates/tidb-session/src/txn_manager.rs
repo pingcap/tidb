@@ -33,7 +33,7 @@ use tidb_sessiontxn::isolation::readcommitted::PessimisticRCTxnContextProvider;
 use tidb_sessiontxn::isolation::repeatable_read::PessimisticRRTxnContextProvider;
 use tidb_sessiontxn::isolation::serializable::PessimisticSerializableTxnContextProvider;
 use tidb_sessiontxn::staleread::provider::StalenessTxnContextProvider;
-use tidb_sessiontxn::{EnterNewTxnType, TxnContext, TxnContextProvider};
+use tidb_sessiontxn::{EnterNewTxnRequest, EnterNewTxnType, TxnContext, TxnContextProvider, TxnMode};
 use tidb_domain_core::session_transaction::set_options_on_txn_active;
 use std::sync::Arc;
 
@@ -43,9 +43,9 @@ use tidb_store_driver_txn::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_domain_core::cluster_transactions::{
-    ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction,
+    ClusterTransactions, CommittedTxnInfo, MaxTsReadTransaction, OpenClusterTransaction,
 };
-use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};
+use crate::lazy_transaction::{ConstantFuture, LazyClusterTransaction, OracleFuture, TransactionOpener};
 use crate::Session;
 
 
@@ -148,6 +148,22 @@ impl ProviderSessionVars for ActivationVars<'_> {
     }
 }
 
+/// What `EnterNewTxn`'s initialization reads beyond Go's request (Go's
+/// `OnInitialize` and `PrepareTxnCtx` read them from `sctx`).
+#[derive(Clone, Copy)]
+pub struct EnterNewTxnInputs<'a> {
+    /// The statement's resource group.
+    pub resource_group: &'a str,
+    /// The catalog version an explicit transaction pins.
+    pub schema_version: i64,
+    /// An autocommit statement's read-ts record (`BeforeStmt` in
+    /// autocommit).
+    pub read_ts: Option<&'a tidb_domain_core::cluster_transactions::StatementReadTs>,
+    /// The statement is an autocommit INSERT / UPDATE / DELETE (Go
+    /// `isDMLStatement`).
+    pub autocommit_write: bool,
+}
+
 /// What the session's one transaction is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TxnKind {
@@ -169,12 +185,20 @@ struct EnteredTxn {
     provider: Box<dyn TxnContextProvider>,
 }
 
-/// Go `newProviderWithRequest` for a transaction the store opened:
-/// optimistic, else the pessimistic provider of the level the transaction
-/// entered with (`IsolationLevelForNewTxn`), REPEATABLE-READ for every level
-/// but READ-COMMITTED and SERIALIZABLE.
-fn new_provider(txn: Box<dyn OpenClusterTransaction>, isolation: &str) -> Box<dyn TxnContextProvider> {
-    if !txn.is_pessimistic() {
+/// Go `newProviderWithRequest`: the staleness provider for a stale read,
+/// else optimistic, else the pessimistic provider of the level the
+/// transaction enters with (`IsolationLevelForNewTxn`), REPEATABLE-READ for
+/// every level but READ-COMMITTED and SERIALIZABLE.
+fn new_provider_with_request(
+    stale: bool,
+    pessimistic: bool,
+    isolation: &str,
+    txn: Box<dyn OpenClusterTransaction>,
+) -> Box<dyn TxnContextProvider> {
+    if stale {
+        return Box::new(StalenessTxnContextProvider::new(txn));
+    }
+    if !pessimistic {
         return Box::new(OptimisticTxnContextProvider::new(txn));
     }
     match isolation.to_ascii_uppercase().as_str() {
@@ -320,11 +344,80 @@ impl TxnManager {
         self.txn.as_mut().map(|entered| &mut *entered.provider)
     }
 
-    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>, isolation: &str) {
+    fn set_explicit(&mut self, txn: Box<dyn OpenClusterTransaction>, pessimistic: bool, isolation: &str) {
         // An autocommit statement ends its implicit transaction before the
         // next statement enters one.
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind: TxnKind::Explicit, provider: new_provider(txn, isolation) });
+        self.txn = Some(EnteredTxn {
+            kind: TxnKind::Explicit,
+            provider: new_provider_with_request(false, pessimistic, isolation, txn),
+        });
+    }
+
+    /// Go `TxnManager.EnterNewTxn`: enters the transaction `request` asks
+    /// for, under the provider `newProviderWithRequest` chooses, initialized
+    /// as that provider's `OnInitialize` does for the request type:
+    ///
+    /// * `WithBeginStmt` / `Default`: `BEGIN` activates the transaction at
+    ///   once (`activeNow`), a stale `BEGIN` at its as-of timestamp;
+    /// * `BeforeStmt`: before a statement that finds no transaction, a lazy
+    ///   one -- the `autocommit = 0` transaction (Go `InTxn` from its
+    ///   activation), or an autocommit statement's implicit one;
+    /// * `WithReplaceProvider`: a statement's `AS OF` read.
+    pub fn enter_new_txn(
+        &mut self,
+        session: &Session,
+        request: &EnterNewTxnRequest,
+        inputs: EnterNewTxnInputs<'_>,
+    ) -> Result<(), SqlQueryError> {
+        let pessimistic = match request.txn_mode {
+            TxnMode::Pessimistic => true,
+            TxnMode::Optimistic => false,
+            TxnMode::FromVars => Self::is_pessimistic(session),
+        };
+        match request.tp {
+            EnterNewTxnType::Default | EnterNewTxnType::WithBeginStmt => {
+                self.begin(session, pessimistic, request.stale_read_ts, inputs.resource_group, inputs.schema_version)
+            }
+            // The `autocommit = 0` transaction: no statement read-ts record
+            // (`enter_if_autocommit_off`); an autocommit statement passes its
+            // own.
+            EnterNewTxnType::BeforeStmt if inputs.read_ts.is_none() => {
+                self.enter_pending(session, pessimistic, inputs.resource_group, inputs.schema_version);
+                Ok(())
+            }
+            EnterNewTxnType::BeforeStmt => {
+                let read_ts = inputs.read_ts.expect("checked by the arm above");
+                let options = Self::implicit_statement_options(session);
+                self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, false);
+                if inputs.autocommit_write {
+                    // Fair locking starts per statement, from the provider's
+                    // `OnPessimisticStmtStart`.
+                    let fair_locking = false;
+                    let isolation = session.isolation_for_provider();
+                    self.enter_implicit_write(pessimistic, &isolation, fair_locking, inputs.resource_group, options, read_ts.clone());
+                } else {
+                    let low_resolution = session.use_low_resolution_tso();
+                    self.enter_implicit_read(low_resolution, inputs.resource_group, options, read_ts.clone());
+                }
+                Ok(())
+            }
+            EnterNewTxnType::WithReplaceProvider => {
+                let options = Self::implicit_statement_options(session);
+                self.enter_stale(true, request.stale_read_ts, inputs.resource_group, options);
+                Ok(())
+            }
+        }
+    }
+
+    /// `SetOptionsOnTxnActive`'s inputs for an autocommit statement's
+    /// implicit transaction.
+    fn implicit_statement_options(session: &Session) -> SessionTransactionOptions {
+        set_options_on_txn_active(session.vars())
+            .with_statement_kv_context(session.statement_kv_context_cell())
+            .with_temporary_tables(session.temporary_table_ids())
+            .with_guarantee_linearizability(session.guarantee_linearizability())
+            .with_kill_signal(session.kv_kill_signal())
     }
 
     /// Ends the explicit transaction's hold on the slot (its commit or
@@ -346,7 +439,7 @@ impl TxnManager {
     /// (`prepare_autocommit_write`, Go `txnFuture`) requested now, so the
     /// request overlaps planning; the first read, lock or the commit
     /// activates it and records its start in `read_ts`.
-    pub fn enter_implicit_write(
+    fn enter_implicit_write(
         &mut self,
         pessimistic: bool,
         isolation: &str,
@@ -360,19 +453,53 @@ impl TxnManager {
         self.enter_implicit(TxnKind::ImplicitWrite, pessimistic, isolation, pending, options, read_ts);
     }
 
-    /// Go `PrepareTxnCtx` for an autocommit read: the same implicit
-    /// transaction, optimistic, pending on its timestamp future (a
-    /// low-resolution one under `tidb_low_resolution_tso`) until the first
-    /// read activates it. A read-only statement ends it without a commit.
-    pub fn enter_implicit_read(
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for an
+    /// autocommit read: the implicit optimistic transaction, entered
+    /// unprepared. Its provider's `AdviseOptimizeWithPlan` may make it a
+    /// `MaxUint64` read (`forcePrepareConstStartTS`); otherwise `AdviseWarmup`
+    /// requests its timestamp (a low-resolution one under
+    /// `tidb_low_resolution_tso`), or the first read does. A read-only
+    /// statement ends it without a commit.
+    fn enter_implicit_read(
         &mut self,
         low_resolution: bool,
         resource_group: &str,
         options: SessionTransactionOptions,
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
-        let pending = self.transactions.prepare_autocommit_read(resource_group, low_resolution, options.clone());
-        self.enter_implicit(TxnKind::ImplicitRead, false, "", pending, options, read_ts);
+        let oracle: OracleFuture = {
+            let transactions = Arc::clone(&self.transactions);
+            let resource_group = resource_group.to_owned();
+            let options = options.clone();
+            let read_ts = read_ts.clone();
+            Box::new(move || {
+                let pending = transactions.prepare_autocommit_read(&resource_group, low_resolution, options);
+                oracle_opener(pending, read_ts)
+            })
+        };
+        let constant: ConstantFuture = {
+            let transactions = Arc::clone(&self.transactions);
+            let resource_group = resource_group.to_owned();
+            Box::new(move |ts| {
+                Box::new(move |_options| {
+                    debug_assert_eq!(ts, u64::MAX, "the only constant start ts is the point get's MaxUint64");
+                    read_ts.activate_const_start_ts(ts);
+                    Ok(Box::new(MaxTsReadTransaction::new(transactions, &resource_group))
+                        as Box<dyn OpenClusterTransaction>)
+                })
+            })
+        };
+        let txn: Box<dyn OpenClusterTransaction> = Box::new(LazyClusterTransaction::new_unprepared_implicit_read(
+            options,
+            self.buffer.clone(),
+            oracle,
+            constant,
+        ));
+        debug_assert!(self.txn.is_none(), "a transaction entered over another");
+        self.txn = Some(EnteredTxn {
+            kind: TxnKind::ImplicitRead,
+            provider: new_provider_with_request(false, false, "", txn),
+        });
     }
 
     fn enter_implicit(
@@ -384,28 +511,18 @@ impl TxnManager {
         options: SessionTransactionOptions,
         read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
     ) {
-        let opener: TransactionOpener = Box::new(move |_options| {
-            let begin = std::time::Instant::now();
-            let transaction = pending.and_then(|pending| pending.wait());
-            read_ts.record_wait_ts(begin.elapsed());
-            let transaction = transaction?;
-            read_ts.record(transaction.start_ts());
-            Ok(transaction)
-        });
-        let txn: Box<dyn OpenClusterTransaction> = Box::new(if kind == TxnKind::ImplicitRead {
-            LazyClusterTransaction::new_implicit_read(options, self.buffer.clone(), opener)
-        } else {
-            LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener)
-        });
+        let opener = oracle_opener(pending, read_ts);
+        let txn: Box<dyn OpenClusterTransaction> =
+            Box::new(LazyClusterTransaction::new_implicit(pessimistic, options, self.buffer.clone(), opener));
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn { kind, provider: new_provider(txn, isolation) });
+        self.txn = Some(EnteredTxn { kind, provider: new_provider_with_request(false, pessimistic, isolation, txn) });
     }
 
     /// Go `StalenessTxnContextProvider.OnInitialize`: a read-only
     /// transaction at the as-of timestamp, its statements read through the
     /// staleness provider (`activateStaleTxn` for a stale `BEGIN`,
     /// `enterNewStaleTxnWithReplaceProvider` for one statement).
-    pub fn enter_stale(
+    fn enter_stale(
         &mut self,
         statement_only: bool,
         ts: u64,
@@ -420,7 +537,7 @@ impl TxnManager {
         self.could_retry = false;
         self.txn = Some(EnteredTxn {
             kind: if statement_only { TxnKind::ImplicitRead } else { TxnKind::Stale },
-            provider: Box::new(StalenessTxnContextProvider::new(txn)),
+            provider: new_provider_with_request(true, false, "", txn),
         });
     }
 
@@ -542,7 +659,15 @@ impl TxnManager {
         if self.explicit().is_some() || session.is_autocommit() {
             return;
         }
-        self.enter_pending(session, resource_group, schema_version);
+        let request = EnterNewTxnRequest {
+            tp: EnterNewTxnType::BeforeStmt,
+            stale_read_ts: session.historical_read_ts().unwrap_or(0),
+            ..EnterNewTxnRequest::default()
+        };
+        let inputs = EnterNewTxnInputs { resource_group, schema_version, read_ts: None, autocommit_write: false };
+        // A pending transaction enters without failing; its activation
+        // reports the error.
+        let _ = self.enter_new_txn(session, &request, inputs);
     }
 
     /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)`
@@ -550,14 +675,13 @@ impl TxnManager {
     /// entered but left pending. It takes its timestamp, publishes
     /// `TxnCtx.StartTS` and registers in `information_schema.tidb_trx` at the
     /// first statement that activates it (`lazy_transaction`).
-    pub fn enter_pending(&mut self, session: &Session, resource_group: &str, schema_version: i64) {
-        if session.historical_read_ts().is_some() {
+    fn enter_pending(&mut self, session: &Session, pessimistic: bool, resource_group: &str, schema_version: i64) {
+        if let Some(ts) = session.historical_read_ts() {
             // A stale read publishes its own timestamp and opens no store
-            // transaction; `open` handles that arm.
-            let _ = self.open(session, resource_group, schema_version);
+            // transaction.
+            let _ = self.begin(session, pessimistic, ts, resource_group, schema_version);
             return;
         }
-        let pessimistic = Self::is_pessimistic(session);
         self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, true);
         // Fair locking starts per statement, from the provider's
         // `OnPessimisticStmtStart`.
@@ -581,7 +705,7 @@ impl TxnManager {
             Self::statement_transaction_options(session),
             self.buffer.clone(),
             opener,
-        )), &isolation);
+        )), pessimistic, &isolation);
         self.pin_schema(session, schema_version);
     }
 
@@ -595,14 +719,18 @@ impl TxnManager {
 
     /// Go `EnterNewTxnWithBeginStmt`: `BEGIN` activates the transaction at
     /// once (`OnInitialize`'s `activeNow`, `isolation/base.go:88`), so its
-    /// timestamp is taken here.
-    pub fn open(
+    /// timestamp is taken here; a stale `BEGIN` (`stale_read_ts`) at its
+    /// as-of timestamp.
+    fn begin(
         &mut self,
         session: &Session,
+        pessimistic: bool,
+        stale_read_ts: u64,
         resource_group: &str,
         schema_version: i64,
     ) -> Result<(), SqlQueryError> {
-        if let Some(ts) = session.historical_read_ts() {
+        if stale_read_ts != 0 {
+            let ts = stale_read_ts;
             session.current_tso().publish(ts);
             if let Some(observer) = session.transaction_observer() {
                 observer.activated(ts);
@@ -610,7 +738,6 @@ impl TxnManager {
             self.enter_stale(false, ts, resource_group, Self::statement_transaction_options(session));
             return Ok(());
         }
-        let pessimistic = Self::is_pessimistic(session);
         self.decide_could_retry(session, pessimistic, EnterNewTxnType::WithBeginStmt, true);
         // Fair locking starts per statement, from the provider's
         // `OnPessimisticStmtStart`.
@@ -629,7 +756,7 @@ impl TxnManager {
         if let Some(observer) = session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
-        self.set_explicit(transaction, &session.isolation_for_provider());
+        self.set_explicit(transaction, pessimistic, &session.isolation_for_provider());
         self.pin_schema(session, schema_version);
         Ok(())
     }
@@ -1072,4 +1199,20 @@ impl Drop for CachedTableRenewLease {
     fn drop(&mut self) {
         self.exits.clear();
     }
+}
+
+/// The opener of a transaction pending on Go's oracle future: waits for the
+/// timestamp and records the statement's start in `read_ts`.
+fn oracle_opener(
+    pending: Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String>,
+    read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
+) -> TransactionOpener {
+    Box::new(move |_options| {
+        let begin = std::time::Instant::now();
+        let transaction = pending.and_then(|pending| pending.wait());
+        read_ts.record_wait_ts(begin.elapsed());
+        let transaction = transaction?;
+        read_ts.record(transaction.start_ts());
+        Ok(transaction)
+    })
 }

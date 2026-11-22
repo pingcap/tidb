@@ -1060,14 +1060,6 @@ impl ClusterSnapshot for SwappableSnapshot {
             .as_ref()
             .map_or(0, |snapshot| snapshot.start_ts())
     }
-
-    /// An unbound slot has no statement to declare for, so it refuses -- the
-    /// same fail-closed answer its reads give.
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        self.bound
-            .as_mut()
-            .is_some_and(|snapshot| snapshot.declare_autocommit_point_get())
-    }
 }
 
 /// Go `KVTxn.GetSnapshot()` / `GetSnapshotWithStmtReadTS`: a snapshot whose
@@ -1163,10 +1155,6 @@ impl ClusterSnapshot for CommittedOnlySnapshot {
 
     fn start_ts(&self) -> u64 {
         self.inner().start_ts()
-    }
-
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        self.inner().declare_autocommit_point_get()
     }
 }
 
@@ -1269,10 +1257,6 @@ impl ClusterSnapshot for CacheTableSnapshot {
 
     fn start_ts(&self) -> u64 {
         self.snapshot.start_ts()
-    }
-
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        self.snapshot.declare_autocommit_point_get()
     }
 }
 

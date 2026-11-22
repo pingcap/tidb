@@ -112,6 +112,7 @@ impl TxnContextProvider for PessimisticRCTxnContextProvider {
         &self,
         retrying: bool,
         rc_write_check_ts: bool,
+        _auto_commit_txn: bool,
     ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
         (!retrying).then(|| std::sync::Arc::new(RCPlanAdvisor { rc_write_check_ts }) as _)
     }

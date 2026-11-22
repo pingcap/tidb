@@ -183,23 +183,6 @@ impl PreparedPointGetPlan {
         (&self.database, &self.table)
     }
 
-    /// The transaction read policy this retained point plan can safely use.
-    /// A row-handle lookup performs one read and may use Go's autocommit
-    /// MaxTS optimization. A secondary-unique lookup reads the index entry
-    /// and then the row, so Go's `noSecondRead` guard keeps it on an ordinary
-    /// timestamped snapshot even though the point executor itself is reusable.
-    #[must_use]
-    pub const fn statement_read_shape(&self) -> crate::access_path::StatementReadShape {
-        match self.target {
-            PreparedPointTarget::RowHandle => {
-                crate::access_path::StatementReadShape::AutocommitPointGet
-            }
-            PreparedPointTarget::UniqueIndex { .. } => {
-                crate::access_path::StatementReadShape::Unknown
-            }
-        }
-    }
-
     /// Rebuilds the parameter-dependent handle and resolves every residual
     /// bound against this EXECUTE's parameters. A value that cannot be moved
     /// exactly into its column's domain declines the cache and must be
@@ -1984,6 +1967,20 @@ pub fn open_prepared_point_get(
     let TableEntry::Kv(kv) = table.as_ref() else {
         return Ok(None);
     };
+    // Go `Compile` -> `AdviseOptimizeWithPlanAndThenWarmUp` over the
+    // `Execute` plan's cached `PointGetPlan`.
+    let advised = tidb_planner_core_operator_physicalop::PhysicalPlan::PointGet(
+        tidb_planner_core_operator_physicalop::PointGetPlan {
+            table_id: kv.table_id(),
+            tbl_info: Some(kv.meta()),
+            index_id: match plan.target {
+                PreparedPointTarget::RowHandle => None,
+                PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
+            },
+            ..Default::default()
+        },
+    );
+    crate::isolation_advise::advise_optimize_with_plan(stmt_ctx, &advised, false);
     crate::statement_store(stmt_ctx).set_snapshot_read_options(stmt_ctx.snapshot_read_options(0.0));
     let schema = fast_point_schema(kv, &plan.output);
     let columns = plan.output.columns.clone();

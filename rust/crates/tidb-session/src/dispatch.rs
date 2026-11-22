@@ -2881,11 +2881,11 @@ impl Session {
         &mut self,
         provider: &dyn tidb_sessiontxn::TxnContextProvider,
     ) {
-        self.stmt_txn_plan_advisor = (self.in_transaction()
-            && self.historical_read_ts().is_none()
-            && !self.txn_is_stale_read())
-        .then(|| provider.plan_advisor(self.retrying, self.rc_write_check_ts()))
-        .flatten();
+        // Go `IsAutoCommitTxn`.
+        let auto_commit_txn = self.is_autocommit() && !self.in_transaction();
+        self.stmt_txn_plan_advisor = (self.historical_read_ts().is_none() && !self.txn_is_stale_read())
+            .then(|| provider.plan_advisor(self.retrying, self.rc_write_check_ts(), auto_commit_txn))
+            .flatten();
     }
 
     /// Go `SessionVars.RcWriteCheckTS`, set by `tidb_rc_write_check_ts`.

@@ -16,7 +16,10 @@
 
 use super::{txn_start_ts, ProviderSessionVars};
 use crate::{EnterNewTxnType, TxnContext, TxnContextProvider};
-use tidb_domain_core::cluster_transactions::OpenClusterTransaction;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tidb_domain_core::cluster_transactions::{OpenClusterTransaction, TxnFuturePreparer};
+use tidb_planner::common_plans::is_point_get_with_pk_or_unique_key_by_auto_commit;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
@@ -65,6 +68,82 @@ impl TxnContextProvider for OptimisticTxnContextProvider {
         cx: &mut dyn TxnContext,
     ) -> Result<Box<dyn ClusterSnapshot>, SqlQueryError> {
         self.txn.snapshot_for(cx.locking_read()).map_err(SqlQueryError::unknown)
+    }
+
+    fn plan_advisor(
+        &self,
+        _retrying: bool,
+        _rc_write_check_ts: bool,
+        auto_commit_txn: bool,
+    ) -> Option<std::sync::Arc<dyn tidb_sessionctx::TxnPlanAdvisor>> {
+        let future = std::sync::Arc::downgrade(&self.txn.txn_future_preparer()?);
+        Some(std::sync::Arc::new(OptimisticPlanAdvisor {
+            future,
+            auto_commit_txn,
+            optimize_with_max_ts: AtomicBool::new(false),
+        }))
+    }
+}
+
+/// Go `OptimisticTxnContextProvider.AdviseOptimizeWithPlan` and
+/// `AdviseWarmup` over the provider's pending transaction: an autocommit
+/// point get by primary or unique key reads at `math.MaxUint64`
+/// (`forcePrepareConstStartTS`) instead of spending a timestamp.
+pub struct OptimisticPlanAdvisor {
+    /// The provider's transaction future, held weakly: the statement context
+    /// that carries this advisor outlives the transaction (a retained plan
+    /// keeps it), and the provider never outlives its transaction.
+    future: std::sync::Weak<dyn TxnFuturePreparer>,
+    /// Go `IsAutoCommitTxn(vars)`.
+    auto_commit_txn: bool,
+    /// Go `optimizeWithMaxTS`.
+    optimize_with_max_ts: AtomicBool,
+}
+
+impl std::fmt::Debug for OptimisticPlanAdvisor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OptimisticPlanAdvisor")
+            .field("auto_commit_txn", &self.auto_commit_txn)
+            .field("optimize_with_max_ts", &self.optimize_with_max_ts)
+            .finish_non_exhaustive()
+    }
+}
+
+impl tidb_sessionctx::TxnPlanAdvisor for OptimisticPlanAdvisor {
+    fn advise_optimize_with_plan(
+        &self,
+        plan: &dyn std::any::Any,
+        _insert_replace_or_on_duplicate: bool,
+    ) -> Option<bool> {
+        // `p.isTidbSnapshotEnabled()` / `p.isBeginStmtWithStaleRead()`: no
+        // advisor is published for those statements.
+        if self.optimize_with_max_ts.load(Ordering::Relaxed) {
+            return None;
+        }
+        let plan = plan.downcast_ref::<PhysicalPlan>()?;
+        if is_point_get_with_pk_or_unique_key_by_auto_commit(self.auto_commit_txn, plan)
+            // A refusal is Go's `p.txn != nil`: the transaction has already
+            // been activated, so its start ts has already been used.
+            && self
+                .future
+                .upgrade()
+                .is_some_and(|future| future.force_prepare_const_start_ts(u64::MAX).is_ok())
+        {
+            self.optimize_with_max_ts.store(true, Ordering::Relaxed);
+        }
+        None
+    }
+
+    fn optimize_with_max_ts(&self) -> bool {
+        self.optimize_with_max_ts.load(Ordering::Relaxed)
+    }
+
+    // Go `baseTxnContextProvider.AdviseWarmup` -> `prepareTxn`.
+    fn advise_warmup(&self) {
+        if let Some(future) = self.future.upgrade() {
+            let _ = future.prepare_txn();
+        }
     }
 }
 

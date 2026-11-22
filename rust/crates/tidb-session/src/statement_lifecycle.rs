@@ -478,7 +478,11 @@ impl StatementLifecycle<'_> {
             if autocommit_write {
                 self.begin_autocommit_statement_locks(autocommit_pessimistic);
             }
-            self.enter_implicit_transaction(shape, autocommit_write, autocommit_pessimistic, resource_group, read_ts);
+            if let Err(error) =
+                self.enter_implicit_transaction(autocommit_write, autocommit_pessimistic, resource_group, read_ts)
+            {
+                break Err(error);
+            }
             let snapshot = {
                 match self.open_read_snapshot(shape, read_ts, resource_group, is_dml)
                 {
@@ -492,7 +496,6 @@ impl StatementLifecycle<'_> {
                 // connection.
                 drop(stale);
             }
-            self.declare_read_shape(shape);
             if let Err(error) = self.prepare_snapshot() {
                 let _ = self.finish_snapshot();
                 break Err(error);
@@ -1065,21 +1068,8 @@ impl StatementLifecycle<'_> {
                 .publish(provider.txn().for_update_ts());
             return snapshot;
         }
-        if shape == StatementReadShape::AutocommitPointGet {
-            let snapshot = self
-                .txn
-                .transactions()
-                .open_max_ts_snapshot(resource_group)
-                .map_err(SqlQueryError::unknown)?;
-            // Go `AdviseOptimizeWithPlan` -> `forcePrepareConstStartTS(
-            // math.MaxUint64)`: the point get's `getSnapshot` activates the
-            // transaction at that constant, which its commit counts and
-            // `tidb_last_txn_info` reports.
-            read_ts.activate_const_start_ts(u64::MAX);
-            return Ok(snapshot);
-        }
-        // Every other statement outside a transaction entered its implicit
-        // one (`enter_implicit_transaction`) before opening its snapshot.
+        // Every statement outside a transaction entered its implicit one
+        // (`enter_implicit_transaction`) before opening its snapshot.
         Err(SqlQueryError::unknown(
             "an autocommit statement opened its snapshot without its implicit transaction",
         ))
@@ -1087,59 +1077,61 @@ impl StatementLifecycle<'_> {
 
     /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for a
     /// statement outside any transaction: an autocommit write enters its
-    /// implicit transaction (pessimistic when `decideTxnMode` says so), any
-    /// other statement an implicit optimistic one -- except a stale read,
-    /// which has its own timestamp, and a point get the plan advised to read
-    /// the latest version (`AdviseOptimizeWithPlan`), which needs none.
+    /// implicit transaction (pessimistic when `decideTxnMode` says so), a
+    /// stale read the staleness provider, any other statement an implicit
+    /// optimistic one, unprepared until its plan advice and warm-up
+    /// (`AdviseOptimizeWithPlanAndThenWarmUp`). The entered provider then
+    /// starts the statement (Go `OnStmtStart`), publishing its plan advisor.
     fn enter_implicit_transaction(
         &mut self,
-        shape: StatementReadShape,
+        autocommit_write: bool,
+        autocommit_pessimistic: bool,
+        resource_group: &str,
+        read_ts: &transactions::StatementReadTs,
+    ) -> Result<(), SqlQueryError> {
+        // The explicit transaction (a stale one included) serves the statement.
+        if self.txn.current().is_some() {
+            return Ok(());
+        }
+        self.enter_implicit_provider(autocommit_write, autocommit_pessimistic, resource_group, read_ts);
+        self.on_provider_stmt_event(false)
+    }
+
+    fn enter_implicit_provider(
+        &mut self,
         autocommit_write: bool,
         autocommit_pessimistic: bool,
         resource_group: &str,
         read_ts: &transactions::StatementReadTs,
     ) {
-        // The explicit transaction (a stale one included) serves the statement.
-        if self.txn.current().is_some() {
-            return;
-        }
-        let vars = self.session.vars();
-        let options = tidb_domain_core::session_transaction::set_options_on_txn_active(vars)
-            .with_statement_kv_context(self.session.statement_kv_context_cell())
-            .with_temporary_tables(self.session.temporary_table_ids())
-            .with_guarantee_linearizability(self.session.guarantee_linearizability())
-            .with_kill_signal(self.session.kv_kill_signal());
         // Go `EnterNewTxnWithReplaceProvider`: a statement's `AS OF` read
         // enters the staleness provider (never retryable).
-        if let Some(ts) = self.session.historical_read_ts() {
-            self.txn.enter_stale(true, ts, resource_group, options);
-            return;
-        }
-        self.txn.decide_could_retry(
-            self.session,
-            // `decide_could_retry`'s `pessimistic` argument: no optimistic
-            // provider decides for a pessimistic transaction.
-            autocommit_write && autocommit_pessimistic,
-            tidb_sessiontxn::EnterNewTxnType::BeforeStmt,
-            false,
-        );
-        if autocommit_write {
-            // Fair locking starts per statement, from the provider's
-            // `OnPessimisticStmtStart`.
-            let fair_locking = false;
-            let isolation = self.session.isolation_for_provider();
-            self.txn.enter_implicit_write(
-                autocommit_pessimistic,
-                &isolation,
-                fair_locking,
-                resource_group,
-                options,
-                read_ts.clone(),
-            );
-        } else if shape != StatementReadShape::AutocommitPointGet {
-            let low_resolution = self.session.use_low_resolution_tso();
-            self.txn.enter_implicit_read(low_resolution, resource_group, options, read_ts.clone());
-        }
+        let request = match self.session.historical_read_ts() {
+            Some(ts) => tidb_sessiontxn::EnterNewTxnRequest {
+                tp: tidb_sessiontxn::EnterNewTxnType::WithReplaceProvider,
+                stale_read_ts: ts,
+                ..tidb_sessiontxn::EnterNewTxnRequest::default()
+            },
+            // Go `PrepareTxnCtx`'s `TxnMode: s.decideTxnMode(stmt)`.
+            None => tidb_sessiontxn::EnterNewTxnRequest {
+                tp: tidb_sessiontxn::EnterNewTxnType::BeforeStmt,
+                txn_mode: if autocommit_write && autocommit_pessimistic {
+                    tidb_sessiontxn::TxnMode::Pessimistic
+                } else {
+                    tidb_sessiontxn::TxnMode::Optimistic
+                },
+                ..tidb_sessiontxn::EnterNewTxnRequest::default()
+            },
+        };
+        let inputs = crate::txn_manager::EnterNewTxnInputs {
+            resource_group,
+            schema_version: self.follower.schema_version(),
+            read_ts: Some(read_ts),
+            autocommit_write,
+        };
+        // An autocommit statement's transaction enters without failing; its
+        // activation reports the error.
+        let _ = self.txn.enter_new_txn(self.session, &request, inputs);
     }
 
     pub fn begin_read_statement(
@@ -1179,12 +1171,11 @@ impl StatementLifecycle<'_> {
             autocommit: scope.autocommit,
             resource_group: resource_group.to_owned(),
         };
-        self.enter_implicit_transaction(shape, false, false, resource_group, &statement.read_ts);
         let setup = self
-            .open_read_snapshot(shape, &statement.read_ts, resource_group, false)
+            .enter_implicit_transaction(false, false, resource_group, &statement.read_ts)
+            .and_then(|()| self.open_read_snapshot(shape, &statement.read_ts, resource_group, false))
             .and_then(|snapshot| {
                 drop(self.bind(snapshot));
-                self.declare_read_shape(shape);
                 self.prepare_snapshot()
             });
         if let Err(error) = setup {
@@ -1285,11 +1276,6 @@ impl StatementLifecycle<'_> {
         self.txn.rollback(self.session)
     }
 
-    /// See [`declare_read_shape`].
-    pub fn declare_read_shape(&self, shape: StatementReadShape) {
-        declare_read_shape(self.slot, shape);
-    }
-
     /// See [`prepare_snapshot`].
     pub fn prepare_snapshot(&self) -> Result<(), SqlQueryError> {
         prepare_snapshot(self.slot)
@@ -1328,24 +1314,6 @@ pub fn autocommit_dml_is_pessimistic(session: &Session, retrying: bool) -> bool 
 
 /// The slot every table of a session reads through.
 pub type SnapshotSlot = Arc<Mutex<SwappableSnapshot>>;
-
-/// Tells the just-bound snapshot what shape the statement's whole read is,
-/// before the statement runs and therefore before its first read.
-///
-/// This is Go's `AdviseOptimizeWithPlan`, and the position is the point of
-/// it: after the plan-shape question has been answered and before any
-/// timestamp has been spent. The declaration reaches only a snapshot that
-/// can take it -- an explicit transaction's read handle refuses by
-/// inheriting the trait default, which is `IsAutoCommitTxn`'s `!InTxn`
-/// half made structural rather than re-asked here.
-pub fn declare_read_shape(slot: &SnapshotSlot, shape: StatementReadShape) {
-    if shape != StatementReadShape::AutocommitPointGet {
-        return;
-    }
-    slot.lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .declare_autocommit_point_get();
-}
 
 /// Starts any asynchronous work the bound snapshot needs; the first read still
 /// owns error delivery and timestamp publication.

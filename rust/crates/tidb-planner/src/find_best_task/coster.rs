@@ -1266,6 +1266,7 @@ mod tests {
             base,
             lock: false,
             table_id: i64::from(id),
+            tbl_info: None,
             partition: None,
             index_id: None,
             access_cols: access_cols.then_some(vec![column]),

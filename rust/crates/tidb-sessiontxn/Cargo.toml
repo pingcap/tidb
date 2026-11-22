@@ -14,6 +14,7 @@ workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-kv = { path = "../tidb-kv" }
+tidb-planner = { path = "../tidb-planner" }
 tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }

@@ -4,9 +4,9 @@
 //! Go serves an autocommit point get on the primary key at `math.MaxUint64` --
 //! the latest committed version -- instead of spending a PD timestamp
 //! (`OptimisticTxnContextProvider.AdviseOptimizeWithPlan`, guarded by
-//! `IsPointGetWithPKOrUniqueKeyByAutoCommit`). This node now does the same, by
-//! DECLARING the statement's shape to the bound snapshot before the statement
-//! runs.
+//! `IsPointGetWithPKOrUniqueKeyByAutoCommit`). This node does the same: the
+//! implicit read transaction is entered unprepared, and the plan's advice
+//! replaces its timestamp future by the constant before the first read.
 //!
 //! # Why almost every pin here is a refusal
 //!
@@ -156,17 +156,19 @@ fn prepared_cursor_retains_its_statement_overlay() {
         1,
         "Go point executor uses one-row chunks"
     );
-    assert_eq!(
-        node.live.load(Ordering::Acquire),
-        1,
-        "result retains its snapshot"
-    );
     let authority = result.take_cursor_materialization().unwrap();
     assert_eq!(authority.init_chunk_size, 8);
     assert_eq!(authority.max_chunk_size, 128);
     assert_eq!(
         result.source().next_batch(8).unwrap(),
         vec![vec![Datum::Int(10)]]
+    );
+    // The first read activated the transaction (Go `ActivateTxn` at the
+    // point get's `getSnapshot`); the result retains its snapshot.
+    assert_eq!(
+        node.live.load(Ordering::Acquire),
+        1,
+        "result retains its snapshot"
     );
     drop(result);
     assert_eq!(node.live.load(Ordering::Acquire), 0);
@@ -599,19 +601,21 @@ fn a_point_predicate_on_a_non_handle_column_still_takes_a_timestamp() {
     assert_eq!(opens, PAID);
 }
 
-/// `SELECT ... FOR UPDATE` locks the row, and a lock needs a real timestamp to
-/// be taken at.
+/// An autocommit `SELECT ... FOR UPDATE` locks nothing (Go
+/// `getLockWaitTime`: `PessimisticLockEligible` is false outside a
+/// transaction), so its point get is the plain `PointGetPlan` Go reads at
+/// `MaxUint64`.
 #[test]
-fn a_locking_read_still_takes_a_timestamp() {
+fn an_autocommit_locking_read_takes_the_shortcut_as_go_does() {
     let (mut session, node) = open_session();
     seed(&mut session);
 
+    let mut answer = Vec::new();
     let opens = opens_of(&node, || {
-        let _ = session
-            .node_conn()
-            .execute("SELECT v FROM t WHERE id = 1 FOR UPDATE");
+        answer = rows(&mut session, "SELECT v FROM t WHERE id = 1 FOR UPDATE");
     });
-    assert_eq!(opens.max_ts, 0, "a locking read took the shortcut");
+    assert_eq!(answer, vec![vec![Datum::Int(10)]]);
+    assert_eq!(opens, FREE);
 }
 
 /// The same point get inside `BEGIN` reads at the transaction's snapshot.
@@ -742,25 +746,25 @@ fn a_concurrent_commit_is_visible_between_autocommit_point_gets_but_not_inside_a
         .expect("commit");
 }
 
-/// The predicate against the guard it ports, statement by statement, with no
-/// storage in the picture at all.
+/// Go `IsPointGetWithPKOrUniqueKeyByAutoCommit` over each statement's plan,
+/// observed as what the statement opened: a `MaxUint64` read and no
+/// timestamp.
 #[test]
-fn the_statement_shape_predicate_matches_the_guard_it_ports() {
-    use tidb_executor::access_path::{statement_read_shape, StatementReadShape};
-
-    let (session, _node) = open_session();
-    let catalog = session.shared_catalog();
-    let shape = |sql: &str| {
-        let catalog = catalog.lock().expect("catalog");
-        let stmt = tidb_parser::parse(sql).expect("parse");
-        statement_read_shape(
-            &stmt,
-            &catalog,
-            "app",
-            &tidb_datatype::SessionTimeZone::utc(),
-        )
+fn the_plan_predicate_admits_only_a_single_read_point_get() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    let mut takes = |sql: &str| {
+        let opens = opens_of(&node, || {
+            let is_query = tidb_parser::parse(sql)
+                .is_ok_and(|stmt| matches!(stmt, tidb_ast::Stmt::Query(_)));
+            if is_query {
+                rows(&mut session, sql);
+            } else {
+                session.node_conn().execute_write(sql).expect("the statement runs");
+            }
+        });
+        opens == FREE
     };
-    let takes = |sql: &str| shape(sql) == StatementReadShape::AutocommitPointGet;
 
     assert!(takes("SELECT v FROM t WHERE id = 7"));
     assert!(takes("SELECT v FROM t WHERE 7 = id"));
@@ -795,17 +799,22 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     assert!(!takes(
         "SELECT a.v FROM t AS a JOIN t AS b ON a.id = b.id WHERE a.id = 7"
     ));
-    assert!(!takes("WITH c AS (SELECT 1) SELECT v FROM t WHERE id = 7"));
+    // Go plans these as a bare `Point_Get` (the unused CTE and the
+    // one-row DISTINCT / GROUP BY are eliminated), so its switch admits them.
+    assert!(takes("WITH c AS (SELECT 1) SELECT v FROM t WHERE id = 7"));
+    assert!(takes("SELECT DISTINCT v FROM t WHERE id = 7"));
+    assert!(takes("SELECT v FROM t WHERE id = 7 GROUP BY v"));
+    // An autocommit FOR UPDATE locks nothing (Go `getLockWaitTime`:
+    // `PessimisticLockEligible` is false), so its plan is the same
+    // `Point_Get`.
+    assert!(takes("SELECT v FROM t WHERE id = 7 FOR UPDATE"));
     // Operators Go's switch would find above the reader.
-    assert!(!takes("SELECT DISTINCT v FROM t WHERE id = 7"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 ORDER BY v"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 LIMIT 0"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 LIMIT 1 OFFSET 1"));
     assert!(!takes("SELECT v FROM t WHERE id >= 7 LIMIT 1"));
     assert!(!takes("SELECT v FROM t WHERE v = 7 LIMIT 1"));
     assert!(!takes("SELECT v FROM t LIMIT 1"));
-    assert!(!takes("SELECT v FROM t WHERE id = 7 FOR UPDATE"));
-    assert!(!takes("SELECT v FROM t WHERE id = 7 GROUP BY v"));
     // A table with no clustered handle column has no handle to pin.
     assert!(!takes("SELECT v FROM hnd WHERE v = 7"));
     // No WHERE, no table, and a statement that is not a read at all.

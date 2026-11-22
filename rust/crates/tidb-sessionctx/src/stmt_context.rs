@@ -388,6 +388,16 @@ pub trait TxnPlanAdvisor: Send + Sync + std::fmt::Debug {
         plan: &dyn std::any::Any,
         insert_replace_or_on_duplicate: bool,
     ) -> Option<bool>;
+
+    /// Go `OptimisticTxnContextProvider.optimizeWithMaxTS`: the plan made
+    /// the statement read at `math.MaxUint64`.
+    fn optimize_with_max_ts(&self) -> bool {
+        false
+    }
+
+    /// Go `AdviseWarmup`, which `AdviseOptimizeWithPlanAndThenWarmUp` runs
+    /// after the advice: the transaction requests its timestamp now.
+    fn advise_warmup(&self) {}
 }
 
 /// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and
@@ -1289,7 +1299,7 @@ pub struct StmtContextData {
     /// `ResetContextOfStmt` copies off the AST and
     /// `RequestBuilder.getKVPriority` turns into the KV request priority.
     /// `NoPriority` and `Delayed` both send `kv.PriorityNormal`.
-    statement_priority: tidb_ast::StatementPriority,
+    statement_priority: Arc<std::sync::atomic::AtomicU8>,
     /// Go `StmtCtx.NotFillCache`: a SELECT's `SQL_NO_CACHE` modifier, which
     /// `ResetContextOfStmt` sets as `!SelectStmtOpts.SQLCache` and
     /// `SetFromSessionVars` copies to every KV request.
@@ -3625,7 +3635,7 @@ impl StmtContext {
             read_replica_scope: None,
             is_staleness: false,
             coprocessor_read_policy: Default::default(),
-            statement_priority: tidb_ast::StatementPriority::None,
+            statement_priority: Arc::new(std::sync::atomic::AtomicU8::new(priority_code(tidb_ast::StatementPriority::None))),
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
             enabled_rate_limit_action: false,
@@ -6217,7 +6227,7 @@ impl StmtContext {
         mut self,
         statement_priority: tidb_ast::StatementPriority,
     ) -> Self {
-        self.statement_priority = statement_priority;
+        self.statement_priority = Arc::new(std::sync::atomic::AtomicU8::new(priority_code(statement_priority)));
         self
     }
 
@@ -6255,7 +6265,24 @@ impl StmtContext {
     /// Go `StmtCtx.Priority` for this statement.
     #[must_use]
     pub fn statement_priority(&self) -> tidb_ast::StatementPriority {
-        self.statement_priority
+        match self.statement_priority.load(Ordering::Relaxed) {
+            1 => tidb_ast::StatementPriority::Low,
+            2 => tidb_ast::StatementPriority::High,
+            3 => tidb_ast::StatementPriority::Delayed,
+            _ => tidb_ast::StatementPriority::None,
+        }
+    }
+
+    /// Go `AdviseOptimizeWithPlan`'s `if sessVars.StmtCtx.Priority ==
+    /// mysql.NoPriority { sessVars.StmtCtx.Priority = kv.PriorityHigh }` for
+    /// a statement optimized to read at `math.MaxUint64`.
+    pub fn set_priority_high_if_no_priority(&self) {
+        let _ = self.statement_priority.compare_exchange(
+            priority_code(tidb_ast::StatementPriority::None),
+            priority_code(tidb_ast::StatementPriority::High),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
     }
 
     /// Go `StmtCtx.NotFillCache` for this statement.
@@ -8407,5 +8434,15 @@ pub const fn scanner_sql_mode(mode: tidb_mysql::SqlMode) -> tidb_lexer::SqlMode 
         ignore_space: mode.has_ignore_space_mode(),
         pipes_as_concat: mode.has_pipes_as_concat_mode(),
         strict_mode: mode.has_strict_mode(),
+    }
+}
+
+/// `StmtCtx.Priority`'s stored code.
+const fn priority_code(priority: tidb_ast::StatementPriority) -> u8 {
+    match priority {
+        tidb_ast::StatementPriority::None => 0,
+        tidb_ast::StatementPriority::Low => 1,
+        tidb_ast::StatementPriority::High => 2,
+        tidb_ast::StatementPriority::Delayed => 3,
     }
 }

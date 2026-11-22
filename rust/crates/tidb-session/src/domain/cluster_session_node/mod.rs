@@ -2267,10 +2267,8 @@ impl<'s> ClusterServerSession<'s> {
             self.session
                 .prepared_plan_cache_allowed_for_statement(template)
         });
-        // Bind the retained point plan once and use that same plan's
-        // `noSecondRead` classification for snapshot selection. The previous
-        // path rebuilt the whole point matcher on every EXECUTE, discarded
-        // it, then bound this cached plan separately.
+        // Bind the retained point plan once; its execution advises the
+        // provider with it (`AdviseOptimizeWithPlan`).
         let cached_point_get = cache_allowed
             .then(|| statement.point_get_plan())
             .flatten()
@@ -2281,9 +2279,6 @@ impl<'s> ClusterServerSession<'s> {
                     binding_sql.as_deref(),
                 )
             });
-        let point_read_shape = cached_point_get
-            .as_ref()
-            .map(|execution| execution.plan().statement_read_shape());
         let fast = cached_point_get.is_some();
         // On a Go plan-cache miss, physical optimization first gives
         // TryFastPlan this shape; the point plan it returns is what later
@@ -2339,12 +2334,10 @@ impl<'s> ClusterServerSession<'s> {
             })
         };
         let shape = if fast {
-            point_read_shape.unwrap_or(StatementReadShape::Unknown)
+            StatementReadShape::Unknown
         } else if fast_select {
             // A retained physical SELECT still needs the locking statement's
             // fresh for-update snapshot and lock-value cache on every replay.
-            // Classify this execution's values, not the unbound PREPARE
-            // markers: a complete point key may use MaxTS even on cache hits.
             bound_template
                 .as_ref()
                 .map_or(StatementReadShape::Unknown, |bound| {

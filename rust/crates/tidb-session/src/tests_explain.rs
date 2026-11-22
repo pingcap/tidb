@@ -7886,9 +7886,13 @@ fn a_hash_aggregate_charges_its_workers_like_go() {
     ] {
         session.run(sql).unwrap();
     }
+    // The GROUP BY's peak has two interleavings, in Go as here: the partial
+    // worker releases its input chunk after handing its groups over, and a
+    // final worker that charges a group first peaks one group higher (1 run
+    // in 384 at 48 concurrent copies).
     let parallel = [
         ("SELECT /*+ hash_agg() */ sum(a) FROM t", "12.6 KB"),
-        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "13.5 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b", "13.5 KB|13.7 KB"),
         ("SELECT /*+ hash_agg() */ group_concat(b ORDER BY a) FROM t", "2.27 KB"),
         ("SELECT /*+ hash_agg() */ sum(a) FROM t WHERE a > 10", "12.5 KB"),
     ];
@@ -7908,7 +7912,8 @@ fn a_hash_aggregate_charges_its_workers_like_go() {
         row[7].clone()
     };
     for (sql, expected) in parallel {
-        assert_eq!(memory(&mut session, sql), expected, "parallel {sql}");
+        let actual = memory(&mut session, sql);
+        assert!(expected.split('|').any(|peak| peak == actual), "parallel {sql}: {actual} not {expected}");
     }
     session.run("SET tidb_hashagg_partial_concurrency = 1, tidb_hashagg_final_concurrency = 1").unwrap();
     for (sql, expected) in serial {

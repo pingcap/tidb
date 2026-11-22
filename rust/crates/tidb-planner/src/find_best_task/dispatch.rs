@@ -4081,6 +4081,7 @@ fn find_best_task_4_logical_data_source_paths(
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PointGetPlan {
                             base: point_base,
+                            tbl_info: ds.table_info.clone(),
                             table_id: if ds.pk_is_handle() || common_handle.is_some() {
                                 ds.physical_table_id
                             } else {
@@ -4949,6 +4950,7 @@ fn find_best_task_4_logical_data_source_paths(
                     let mut point = if ranges.len() == 1 {
                         PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PointGetPlan {
                             base: point_base,
+                            tbl_info: ds.table_info.clone(),
                             table_id: ds.physical_table_id,
                             // Go `PointGetPlan.PartitionNames`: a global index
                             // applies them to the partition its entry records.

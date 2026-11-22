@@ -425,10 +425,6 @@ impl ClusterSnapshot for TemporaryTableSnapshotInterceptor {
     fn start_ts(&self) -> u64 {
         self.snap.start_ts()
     }
-
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        self.snap.declare_autocommit_point_get()
-    }
 }
 
 #[cfg(test)]

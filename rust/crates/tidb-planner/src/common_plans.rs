@@ -338,3 +338,76 @@ pub struct MViewCompleteDeltaApply {
     /// Go `mview.BuildCompleteDiffSource`'s answer.
     pub diff: crate::mview::CompleteDiffBuildResult,
 }
+
+/// Go `IsPointGetWithPKOrUniqueKeyByAutoCommit` (`common_plans.go`): whether
+/// `plan` reads one row by its primary key or a unique key in a single read,
+/// so an autocommit statement may read it at `math.MaxUint64`.
+/// `auto_commit_txn` is Go `IsAutoCommitTxn(vars)`.
+#[must_use]
+pub fn is_point_get_with_pk_or_unique_key_by_auto_commit(auto_commit_txn: bool, plan: &PhysicalPlan) -> bool {
+    if !auto_commit_txn {
+        return false;
+    }
+
+    // check plan
+    let plan = match plan {
+        PhysicalPlan::Projection(_) => match plan.children().first() {
+            Some(child) => child,
+            None => return false,
+        },
+        plan => plan,
+    };
+
+    match plan {
+        PhysicalPlan::IndexReader(reader) => reader
+            .index_plans()
+            .first()
+            .is_some_and(|index_scan| matches!(index_scan, PhysicalPlan::IndexScan(scan) if scan.is_point_get_by_unique_key())),
+        PhysicalPlan::TableReader(reader) => {
+            let Some(PhysicalPlan::TableScan(table_scan)) = reader.table_plans().first().copied() else {
+                return false;
+            };
+            let is_point_range =
+                table_scan.ranges.len() == 1 && table_scan.ranges[0].is_point_non_nullable();
+            if !is_point_range {
+                return false;
+            }
+            let mut pk_length = 1;
+            if let Some(table) = &table_scan.table {
+                let table = table.read();
+                if table.is_common_handle {
+                    pk_length = tidb_table::tables::scan_from_infos::find_primary_index(&table)
+                        .map_or(0, |pk_idx| pk_idx.read().columns.len());
+                }
+            }
+            table_scan.ranges[0].low_val.len() == pk_length
+        }
+        PhysicalPlan::PointGet(point) => {
+            // If the PointGetPlan needs to read data using unique index (double read), we
+            // can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
+            // and the data and index would be inconsistent!
+            // If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
+            // because math.MaxUint64 always make cacheData invalid.
+            let table = point.tbl_info.as_ref().map(|table| table.read());
+            let no_second_read = point.index_id.is_none_or(|index_id| {
+                table.as_ref().is_some_and(|table| {
+                    table.is_common_handle
+                        && table
+                            .find_index_by_id(index_id)
+                            .is_some_and(|index| index.read().primary)
+                })
+            });
+            if !no_second_read {
+                return false;
+            }
+            if table
+                .as_ref()
+                .is_some_and(|table| table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE)
+            {
+                return false;
+            }
+            true
+        }
+        _ => false,
+    }
+}

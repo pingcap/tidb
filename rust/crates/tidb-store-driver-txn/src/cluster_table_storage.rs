@@ -1683,10 +1683,6 @@ impl ClusterSnapshot for MutationOverlaySnapshot {
     fn start_ts(&self) -> u64 {
         self.snapshot.start_ts()
     }
-
-    fn declare_autocommit_point_get(&mut self) -> bool {
-        self.snapshot.declare_autocommit_point_get()
-    }
 }
 
 /// Locks one Go SQL statement and returns its mutations for the enclosing
