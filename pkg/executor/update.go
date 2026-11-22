@@ -562,15 +562,23 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
+		// info of `_tidb_rowid` column is nil.
+		var colInfo *mmodel.ColumnInfo
+		if cols[assign.Col.Index] != nil {
+			colInfo = cols[assign.Col.Index].ColumnInfo
+		}
+
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
-		if err != nil {
+		// The planner may fold the assignment into a CAST expression for the target column
+		// type (the point-update fast path does this). The conversion error is then raised by
+		// the expression itself, so map it here as well to keep the error code and message in
+		// line with the non-point path.
+		if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 			return nil, err
 		}
 
-		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
