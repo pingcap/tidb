@@ -124,8 +124,6 @@ pub mod mpp_gather;
 pub mod mppcoordmanager;
 #[cfg(test)]
 pub(crate) mod test_region;
-#[cfg(test)]
-pub(crate) mod test_store;
 pub mod dag_request;
 pub mod driver;
 pub mod explain;
@@ -160,8 +158,6 @@ mod tests_aggfuncs_approx_pushdown_source;
 mod tests_analyze_panic_recovery_source;
 #[cfg(test)]
 mod tests_joiner_required_rows_source;
-#[cfg(test)]
-mod tests_merge_join_in_disk_source;
 #[cfg(test)]
 mod tests_pkg_nested_loop_apply_source;
 #[cfg(test)]

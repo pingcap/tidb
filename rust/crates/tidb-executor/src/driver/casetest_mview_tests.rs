@@ -52,8 +52,7 @@ fn explain_fast_refresh(tables: &[&TableInfo], view: &str, options: BuildOptions
         registered_mlog_ids: Vec::new(),
     };
     // Go's mock store under the mock context.
-    let ctx = mview_test_context()
-        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let ctx = mview_test_context();
     let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
     };
@@ -151,8 +150,7 @@ fn explain_complete_delta_apply(tables: &[&TableInfo], mv: &TableInfo) -> Vec<Ve
         name: mv.name.original().to_owned(),
         diff,
     };
-    let ctx = mview_test_context()
-        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let ctx = mview_test_context();
     let (_, rows) = crate::explain_mview_complete_delta_apply(&plan, &is, "test", &ctx, ExplainFormat::Brief).unwrap();
     rows.iter().map(|row| row_cells(row)).collect()
 }
@@ -209,8 +207,7 @@ fn build_fast_refresh(
         mlog_retained_lower_tso: 0,
         registered_mlog_ids: Vec::new(),
     };
-    let ctx = mview_test_context()
-        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let ctx = mview_test_context();
     let build = super::mview_delta_merge::build_merge_source(&plan, is, &ctx)?;
     let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
@@ -314,8 +311,7 @@ fn test_build_refresh_mv_fast_as_of_timestamp_plan_with_min_max_carries_full_upd
         mlog_retained_lower_tso: 0,
         registered_mlog_ids: Vec::new(),
     };
-    let ctx = mview_test_context()
-        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let ctx = mview_test_context();
     let build = super::mview_delta_merge::build_merge_source(&plan, &is, &ctx).unwrap();
     // The session's `staleread.GetSessionSnapshotInfoSchema` at the target.
     let requested = std::cell::Cell::new(0);
@@ -757,8 +753,7 @@ fn explain_fast_refresh_at(
         mlog_retained_lower_tso,
         registered_mlog_ids: Vec::new(),
     };
-    let ctx = mview_test_context()
-        .with_txn_store(Box::new(tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default()));
+    let ctx = mview_test_context();
     let no_snapshot = |_: u64| -> Result<super::mview_delta_merge::FullUpdateSnapshot, super::DriverError> {
         panic!("the test reads no AS OF snapshot")
     };

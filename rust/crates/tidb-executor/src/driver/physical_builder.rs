@@ -8159,11 +8159,10 @@ use super::*;
 
     #[test]
     fn ordinary_executor_records_runtime_stats_when_collection_is_enabled() {
-        let store = crate::test_store::store();
         let source = Arc::new(RecordingExecutorRuntimeStatsSource::default());
         let source_handle: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource> = source.clone();
         let ctx =
-            crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())).with_executor_runtime_stats_source(Some(source_handle));
+            crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);
         let mut executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
 
@@ -8200,9 +8199,8 @@ use super::*;
 
     #[test]
     fn built_executor_checks_sql_killer_before_next() {
-        let store = crate::test_store::store();
         let memory = crate::StatementMemory::default();
-        let ctx = crate::StmtContext::for_query_with_memory(memory.clone()).with_txn_store(Box::new(store.clone()));
+        let ctx = crate::StmtContext::for_query_with_memory(memory.clone());
         let mut executor = build(&dual(1, 1), &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
         executor.open().unwrap();
         memory
@@ -8448,7 +8446,6 @@ use super::*;
 
     #[test]
     fn physical_shuffle_builds_worker_receivers_and_reads_each_source_once() {
-        let store = crate::test_store::store();
         use tidb_planner_core_operator_physicalop::PhysicalShuffle;
         let mut projection_base = BasePhysicalPlan::with_id(7, "Projection", 0);
         projection_base.base.set_schema(Some(empty_schema()));
@@ -8483,7 +8480,7 @@ use super::*;
             ids.alloc();
         }
         tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut plan, &ids).unwrap();
-        let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default().with_txn_store(Box::new(store.clone()))).unwrap();
+        let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {
             exec.open().unwrap();
             let mut rows = 0;
@@ -8597,7 +8594,6 @@ use super::*;
 
     #[test]
     fn physical_cte_uses_the_recursive_delta_and_go_limit_window() {
-        let store = crate::test_store::store();
         let plan = cte(
             3,
             41,
@@ -8606,16 +8602,15 @@ use super::*;
             false,
             Some((1, 4)),
         );
-        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())))
+        let executor = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::for_query())
             .expect("build recursive physical CTE");
         assert_eq!(drain_row_count(executor).expect("run recursive CTE"), 3);
     }
 
     #[test]
     fn cached_physical_union_and_max_one_row_build_directly() {
-        let store = crate::test_store::store();
         let catalog = tidb_infoschema_perfschema::mock_catalog();
-        let ctx = crate::StmtContext::default().with_txn_store(Box::new(store.clone()));
+        let ctx = crate::StmtContext::default();
 
         let mut union_executor = build(&union(3, vec![dual(1, 1), dual(2, 1)]), &catalog, &ctx)
             .expect("build cached union");
@@ -8698,7 +8693,6 @@ use super::*;
 
     #[test]
     fn table_reader_build_records_go_stmtctx_table_access() {
-        let store = crate::test_store::store();
         let table_id = 40;
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv(
@@ -8729,7 +8723,7 @@ use super::*;
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
-        let ctx = crate::StmtContext::for_query_with_memory(session.statement()).with_txn_store(Box::new(store.clone()));
+        let ctx = crate::StmtContext::for_query_with_memory(session.statement());
         let _executor = build(&plan, &catalog, &ctx).expect("build physical table reader");
 
         // Building the physical table reader is Go's non-empty
@@ -8740,256 +8734,6 @@ use super::*;
             .unwrap();
         assert!(vars.stmt_has_table_ids());
         assert!(vars.sql_killer().unwrap().handle_signal().is_some());
-    }
-
-    #[test]
-    fn cached_physical_point_get_builds_direct_handle_read() {
-        let mut table =
-            crate::TableCommon::new(43, vec![long_column("id", 1), long_column("value", 2)]);
-        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
-        table.set_pk_handle_offset(0);
-        for value in 1..=3 {
-            table
-                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_exprctx::NoColumns,
-                )
-                .expect("seed clustered row");
-        }
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("point", table);
-
-        let mut base = BasePhysicalPlan::with_id(10, "PointGet", 0);
-        base.base.set_schema(Some(two_long_schema()));
-        let plan = PhysicalPlan::PointGet(PointGetPlan {
-            base,
-            table_id: 43,
-            partition: None,
-            index_id: None,
-            lock: false,
-            access_cols: None,
-            ranges: vec![tidb_ranger::types::Range {
-                low_val: vec![Datum::Int(2)],
-                high_val: vec![Datum::Int(2)],
-                collators: vec![tidb_charset::Collation::Binary],
-                low_exclude: false,
-                high_exclude: false,
-            }],
-            range_rebuild: None,
-            select_lock: None,
-        });
-
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let mut executor = build(&plan, &catalog, &ctx).expect("build cached point get");
-        assert_eq!(executor.init_cap(), 1);
-        assert_eq!(executor.max_chunk_size(), 1);
-        executor.open().expect("open cached point get");
-        let mut output = executor.new_chunk();
-        executor.next(&mut output).expect("read cached point get");
-        assert_eq!(output.num_rows(), 1);
-        assert_eq!(output.get_row(0).get_int64(0), 2);
-        assert_eq!(output.get_row(0).get_int64(1), 20);
-        executor.next(&mut output).expect("point get eof");
-        assert_eq!(output.num_rows(), 0);
-    }
-
-    #[test]
-    fn cached_physical_point_get_resolves_unique_index_before_common_handle() {
-        let mut table =
-            crate::TableCommon::new(46, vec![long_column("id", 1), long_column("value", 2)]);
-        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
-        table.set_common_handle_offsets(vec![0, 1]);
-        table
-            .add_index(tidb_table::tables::Index {
-                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
-                        id: 8,
-                        name: tidb_ast::CiString::new("value_uidx"),
-                        unique: true,
-                        columns: (vec![1])
-                            .iter()
-                            .enumerate()
-                            .map(|(position, _)| tidb_model::IndexColumn {
-                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                                ..tidb_model::IndexColumn::default()
-                            })
-                            .collect::<Vec<_>>()
-                            .into(),
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::IndexInfo::default()
-                    }),
-                    column_offsets: vec![1],
-                    clustered_primary: false,
-                },
-                false,
-            );
-        for value in 1..=3 {
-            table
-                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_exprctx::NoColumns,
-                )
-                .expect("seed common-handle row");
-        }
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("unique_point", table);
-
-        let mut base = BasePhysicalPlan::with_id(13, "PointGet", 0);
-        base.base.set_schema(Some(two_long_schema()));
-        let plan = PhysicalPlan::PointGet(PointGetPlan {
-            base,
-            table_id: 46,
-            partition: None,
-            index_id: Some(8),
-            lock: false,
-            access_cols: None,
-            ranges: vec![tidb_ranger::types::Range {
-                low_val: vec![Datum::Int(20)],
-                high_val: vec![Datum::Int(20)],
-                collators: vec![tidb_charset::Collation::Binary],
-                low_exclude: false,
-                high_exclude: false,
-            }],
-            range_rebuild: None,
-            select_lock: None,
-        });
-
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let mut executor = build(&plan, &catalog, &ctx).expect("build unique point get");
-        executor.open().expect("open unique point get");
-        let mut output = executor.new_chunk();
-        executor.next(&mut output).expect("read unique point get");
-        assert_eq!(output.num_rows(), 1);
-        assert_eq!(output.get_row(0).get_int64(0), 2);
-        assert_eq!(output.get_row(0).get_int64(1), 20);
-        executor.next(&mut output).expect("unique point get eof");
-        assert_eq!(output.num_rows(), 0);
-    }
-
-    #[test]
-    fn cached_physical_batch_point_get_deduplicates_and_orders_handles() {
-        let mut table =
-            crate::TableCommon::new(44, vec![long_column("id", 1), long_column("value", 2)]);
-        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
-        table.set_pk_handle_offset(0);
-        for value in 1..=3 {
-            table
-                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_exprctx::NoColumns,
-                )
-                .expect("seed clustered row");
-        }
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("batch", table);
-
-        let mut base = BasePhysicalPlan::with_id(11, "BatchPointGet", 0);
-        base.base.set_schema(Some(two_long_schema()));
-        let point_range = |value| tidb_ranger::types::Range {
-            low_val: vec![Datum::Int(value)],
-            high_val: vec![Datum::Int(value)],
-            collators: vec![tidb_charset::Collation::Binary],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        let plan = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
-            base,
-            table_id: 44,
-            index_id: None,
-            access_cols: None,
-            unsigned_handle: true,
-            ranges: [3, 1, 3, 9].into_iter().map(point_range).collect(),
-            partition_ids: None,
-            partition_names: Vec::new(),
-            range_rebuild: None,
-            keep_order: true,
-            desc: false,
-            select_lock: None,
-            lock: false,
-});
-
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let mut executor = build(&plan, &catalog, &ctx).expect("build cached batch point get");
-        executor.open().expect("open cached batch point get");
-        let mut output = executor.new_chunk();
-        executor
-            .next(&mut output)
-            .expect("read cached batch point get");
-        assert_eq!(output.num_rows(), 2);
-        assert_eq!(output.get_row(0).get_int64(0), 1);
-        assert_eq!(output.get_row(1).get_int64(0), 3);
-    }
-
-    #[test]
-    fn cached_physical_batch_point_get_uses_batched_unique_index_lookup() {
-        let mut table =
-            crate::TableCommon::new(45, vec![long_column("id", 1), long_column("value", 2)]);
-        let mut store = tidb_store_driver_txn::cluster_storage_test_util::SharedMemStorage::default();
-        table.set_pk_handle_offset(0);
-        table
-            .add_index(tidb_table::tables::Index {
-                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
-                        id: 8,
-                        name: tidb_ast::CiString::new("value_uidx"),
-                        unique: true,
-                        columns: (vec![1])
-                            .iter()
-                            .enumerate()
-                            .map(|(position, _)| tidb_model::IndexColumn {
-                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                                ..tidb_model::IndexColumn::default()
-                            })
-                            .collect::<Vec<_>>()
-                            .into(),
-                        state: tidb_model::SchemaState::PUBLIC,
-                        ..tidb_model::IndexInfo::default()
-                    }),
-                    column_offsets: vec![1],
-                    clustered_primary: false,
-                },
-                false,
-            );
-        for value in 1..=3 {
-            table
-                .insert_row(&mut store, &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_exprctx::NoColumns,
-                )
-                .expect("seed unique-index row");
-        }
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register_kv("unique_batch", table);
-
-        let mut base = BasePhysicalPlan::with_id(12, "BatchPointGet", 0);
-        base.base.set_schema(Some(two_long_schema()));
-        let point_range = |value| tidb_ranger::types::Range {
-            low_val: vec![Datum::Int(value)],
-            high_val: vec![Datum::Int(value)],
-            collators: vec![tidb_charset::Collation::Binary],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        let plan = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
-            base,
-            table_id: 45,
-            index_id: Some(8),
-            access_cols: None,
-            unsigned_handle: false,
-            ranges: [30, 10, 30, 90].into_iter().map(point_range).collect(),
-            partition_ids: None,
-            partition_names: Vec::new(),
-            range_rebuild: None,
-            keep_order: true,
-            desc: false,
-            select_lock: None,
-            lock: false,
-});
-
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let mut executor = build(&plan, &catalog, &ctx).expect("build unique batch point get");
-        executor.open().expect("open unique batch point get");
-        let mut output = executor.new_chunk();
-        executor
-            .next(&mut output)
-            .expect("read unique batch point get");
-        assert_eq!(output.num_rows(), 2);
-        assert_eq!(output.get_row(0).get_int64(0), 1);
-        assert_eq!(output.get_row(1).get_int64(0), 3);
     }
 
     fn index_scan(id: i32, table_id: i64, index_id: i64, low: i64, high: i64) -> PhysicalPlan {

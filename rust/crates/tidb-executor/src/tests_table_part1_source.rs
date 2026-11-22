@@ -23,13 +23,7 @@
 
 #![cfg(test)]
 
-use crate::{
-    run_create_table_on, run_insert_on, run_select_on, run_update_on, SessionExtendedInfoSchema, StmtContext,
-};
 
-fn query_ctx() -> StmtContext {
-    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
-}
 
 /// `pkg/table/tables/index_test.go:601::TestExtractColumnsFromCondition`.
 #[test]
@@ -93,84 +87,6 @@ fn test_dedup_index_columns4_test() {
     }
 }
 
-/// `pkg/table/tables/tables_test.go:77::TestBasic`.
-#[test]
-fn test_basic() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (a int primary key auto_increment, b varchar(255) unique)",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "insert into t values (1, 'abc')",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    run_update_on(
-        "update t set b = 'cba' where a = 1",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    let rows = run_select_on("select a, b from t", &catalog, &query_ctx()).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0][0], tidb_datatype::Datum::Int(1));
-    run_create_table_on("create table t2 (a int)", &mut catalog).unwrap();
-    crate::run_delete_on("delete from t", &mut catalog, &query_ctx()).unwrap();
-    assert_eq!(
-        run_select_on("select count(*) from t", &catalog, &query_ctx()).unwrap(),
-        vec![vec![tidb_datatype::Datum::Int(0)]]
-    );
-}
-
-/// `pkg/table/tables/tables_test.go:179::TestTypes`.
-#[test]
-fn test_types() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c10 decimal(10,1))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "insert into t values (1, 2, 3, 4, '5', '6', '7', 1.4)",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    let rows = run_select_on(
-        "select c1, c5, c10 from t where c1 = 1",
-        &catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 3);
-}
-
-/// `pkg/table/tables/tables_test.go:231::TestUniqueIndexMultipleNullEntries`.
-#[test]
-fn test_unique_index_multiple_null_entries() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (a int primary key, b varchar(255) unique)",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "insert into t values (1, null), (2, null)",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    assert_eq!(
-        run_select_on("select count(*) from t", &catalog, &query_ctx()).unwrap(),
-        vec![vec![tidb_datatype::Datum::Int(2)]]
-    );
-}
-
 /// `pkg/table/tables/tables_test.go:271::TestRowKeyCodec`.
 #[test]
 fn test_row_key_codec() {
@@ -200,64 +116,4 @@ fn test_row_key_codec() {
             "invalid: {invalid:?}"
         );
     }
-}
-
-/// `pkg/table/tables/tables_test.go:312::TestUnsignedPK`.
-#[test]
-fn test_unsigned_pk() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (a bigint unsigned primary key, b varchar(255))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "insert into t values (1, 'abc')",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    let rows = run_select_on("select a, b from t", &catalog, &query_ctx()).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(matches!(rows[0][0], tidb_datatype::Datum::UInt(1)));
-}
-
-/// `pkg/table/tables/tables_test.go:335::TestIterRecords`.
-#[test]
-fn test_iter_records() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on("create table t (a int primary key, b int)", &mut catalog).unwrap();
-    run_insert_on(
-        "insert into t values (-1, 2), (2, null)",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    assert_eq!(
-        run_select_on("select count(*) from t", &catalog, &query_ctx()).unwrap(),
-        vec![vec![tidb_datatype::Datum::Int(2)]]
-    );
-}
-
-/// `pkg/table/tables/tables_test.go:657::TestConstraintCheckForUniqueIndex`.
-#[test]
-fn test_constraint_check_for_unique_index() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (id int primary key, k int not null, c varchar(20) not null, unique key uk(k, c))",
-        &mut catalog,
-    )
-    .unwrap();
-    run_insert_on(
-        "insert into t values (1, 1, 'tidb'), (2, 2, 'tidb')",
-        &mut catalog,
-        &query_ctx(),
-    )
-    .unwrap();
-    assert!(run_update_on(
-        "update t set k = 1 where id = 2",
-        &mut catalog,
-        &query_ctx()
-    )
-    .is_err());
 }

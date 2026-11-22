@@ -16,6 +16,7 @@
 //! executor's in-memory tier used to check, over the cop-backed TestKit stack
 //! (X11).
 
+use super::sql_kit::{exec_all, explain_brief};
 use super::*;
 
 fn session(stack: &UnistoreClusterStack, connection: u64) -> Session {
@@ -195,5 +196,26 @@ fn a_recursive_block_is_cast_into_the_seed_schema() {
             "WITH RECURSIVE t (a,b) AS ( SELECT 1, 2 UNION ALL SELECT a + 1, 'zz' FROM t WHERE a < 3 ) SELECT * FROM t",
         )),
         [["1", "2"], ["2", "0"], ["3", "0"]]
+    );
+}
+
+/// A single-use CTE is inlined and keeps the base table's analyzed
+/// statistics; a CTE used twice still answers its rows.
+#[test]
+fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 622);
+    exec_all(&mut tk, &[
+        "CREATE TABLE warehouse (w_id BIGINT, w_name VARCHAR(16))",
+        "INSERT INTO warehouse VALUES (1, 'one'), (2, 'two'), (3, 'three')",
+        "ANALYZE TABLE warehouse",
+    ]);
+    let plan = explain_brief(&mut tk, "WITH w AS (SELECT w_id, w_name FROM warehouse) SELECT w_id FROM w");
+    let scan = plan.iter().find(|row| row[0].contains("TableFullScan")).expect("a table scan");
+    assert_eq!((scan[1].as_str(), scan[3].as_str()), ("3.00", "table:warehouse"), "{plan:?}");
+    assert!(!scan[4].contains("stats:pseudo"), "{plan:?}");
+    assert_eq!(
+        displayed(rows(&mut tk, "WITH w AS (SELECT w_id FROM warehouse) SELECT x.w_id FROM w AS x JOIN w AS y ON x.w_id = y.w_id ORDER BY x.w_id")),
+        [["1"], ["2"], ["3"]]
     );
 }

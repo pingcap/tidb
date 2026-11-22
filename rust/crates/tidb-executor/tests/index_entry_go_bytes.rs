@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
-use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_ranger::types::Range;
 use tidb_table::tables::Index;
 use tidb_table::tables::TableCommon;
@@ -77,7 +77,7 @@ fn hex(bytes: &[u8]) -> String {
 /// exact bytes the table stored rather than only the keys.
 #[derive(Debug)]
 struct Mirror {
-    inner: MemTableStorage,
+    inner: tidb_store_driver_txn::cluster_storage::ClusterTableStorage,
     written: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
 }
 
@@ -134,7 +134,7 @@ fn table(columns: Vec<tidb_table::column::Column>) -> (TableCommon, Written, Mir
 fn table_with_collation(columns: Vec<tidb_table::column::Column>, use_new_collation: bool) -> (TableCommon, Written, Mirror) {
     let written: Written = Arc::new(Mutex::new(BTreeMap::new()));
     let store = Mirror {
-        inner: MemTableStorage::new(),
+        inner: tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0,
         written: Arc::clone(&written),
     };
     (

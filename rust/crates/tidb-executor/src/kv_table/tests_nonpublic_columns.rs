@@ -96,7 +96,7 @@ fn stored(
 #[test]
 fn writes_carry_nonpublic_columns_like_go() {
     let mut table = table_with(tidb_model::SchemaState::WRITE_ONLY);
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     // Go `TableCommon.Columns`: one list in `TableInfo.Columns` order, the
     // public columns its `Cols()` prefix.
     assert_eq!(table.columns().len(), 2);
@@ -181,7 +181,7 @@ fn mview_log_rows_follow_go_master() {
             ..Default::default()
         }));
     });
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let ctx = crate::StmtContext::for_dml(false, false, false);
     let row = |a: i64, b: i64, c: i64| [Datum::Int(a), Datum::Int(b), Datum::Int(c)];
     let mut insert = wrap_table_with_materialized_view_log(&base, mlog.clone(), MLogSourceStmt::Insert).unwrap();

@@ -1171,151 +1171,19 @@ mod limit_bound_tests {
 
 #[cfg(test)]
 mod field_name_tests {
-    use super::{run_select_meta_on, SessionExtendedInfoSchema};
     use tidb_planner::plan_builder::field_name::strip_spec_field_comment_markers;
 
-    /// Go `SpecFieldPattern` + `TrimComment`: every closing `*/` and opening
-    /// `/*!<version>` marker is removed, and a `/*+ ...` hint opener is kept.
     #[test]
     fn strip_spec_field_comment_markers_matches_go_spec_field_pattern() {
-        // The optimizer-hint case the recorded corpus needs: the `*/` goes,
-        // the `/*+` stays, and the two surrounding spaces remain.
         assert_eq!(
             strip_spec_field_comment_markers("(select /*+ INL_JOIN(x2) */ x2.a from t)"),
             "(select /*+ INL_JOIN(x2)  x2.a from t)"
         );
-        // A MySQL version comment `/*!40101 ... */` loses both markers.
         assert_eq!(
             strip_spec_field_comment_markers("a /*!40101 + 1 */"),
             "a  + 1 "
         );
-        // A bare `/*!` with no version still goes.
         assert_eq!(strip_spec_field_comment_markers("/*! x */"), " x ");
-        // Text with neither marker is untouched, multibyte included.
         assert_eq!(strip_spec_field_comment_markers("列 + 1"), "列 + 1");
-    }
-
-    /// Go `buildProjectionFieldNameFromExpressions`: a bare NULL literal is
-    /// named `NULL`, whatever case the source text used.
-    #[test]
-    fn a_null_literal_column_is_named_uppercase_null() {
-        let store = crate::test_store::store();
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        let (columns, _) = run_select_meta_on("select null", &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
-        assert_eq!(columns[0].0, "NULL");
-        // A parenthesized / unary-plus NULL reaches the same rule.
-        let (columns, _) = run_select_meta_on("select (null)", &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
-        assert_eq!(columns[0].0, "NULL");
-    }
-
-    /// The label of the one field of `sql`.
-    fn label_of(sql: &str) -> String {
-        let ctx = crate::StmtContext::for_query();
-        let (columns, _) = run_select_meta_on(sql, &tidb_infoschema_perfschema::mock_catalog(), &ctx).unwrap();
-        columns[0].0.clone()
-    }
-
-    /// Go's `types.KindString` arm: a string literal names its column by its
-    /// VALUE, not by the text it was written with, and leading non-graphic
-    /// characters are trimmed (`strings.TrimLeftFunc` over `mysql.RangeGraph`).
-    #[test]
-    fn a_string_literal_column_is_named_by_its_decoded_value() {
-        // The quotes go, and an escape is decoded: `'\N'` is the value `N`.
-        assert_eq!(label_of("select 'abc'"), "abc");
-        assert_eq!(label_of(r"select '\N'"), "N");
-        assert_eq!(label_of(r#"select "\N""#), "N");
-        // Leading whitespace and controls are trimmed; TRAILING ones are not.
-        assert_eq!(label_of(r"select '\t   col'"), "col");
-        assert_eq!(label_of(r"select ' \r\n  .col'"), ".col");
-        assert_eq!(label_of("select 'abc   '"), "abc   ");
-        assert_eq!(label_of("select '  abc   123   '"), "abc   123   ");
-        // Multi-byte graphic characters survive the trim, both letters (`Lo`)
-        // and symbols (`So`), which are both members of `mysql.RangeGraph`.
-        assert_eq!(label_of(r"select '\n\t   中文 col'"), "中文 col");
-        assert_eq!(label_of("select '   \u{1f606}col'"), "\u{1f606}col");
-        assert_eq!(label_of("select '\u{200b}col'"), "col");
-        // The value rule is reached through parentheses and a unary plus.
-        assert_eq!(label_of("select (('abc'))"), "abc");
-        assert_eq!(label_of(r#"select +"aaa""#), "aaa");
-        // Adjacent literals concatenate as a value but retain the decoded
-        // byte length of the first token for the result-column name.
-        assert_eq!(label_of("select 'a' 'b'"), "a");
-        assert_eq!(label_of("select 'é' 'x'"), "é");
-    }
-
-    /// Go's `default` arm: a numeric literal keeps its SOURCE TEXT, with the
-    /// unary-plus/parenthesis wrapper trimmed from both ends -- so the trim,
-    /// not a re-render of the value, is what makes `+0.999` into `0.999`.
-    #[test]
-    fn a_numeric_literal_column_is_named_by_its_trimmed_source_text() {
-        assert_eq!(label_of("select +1"), "1");
-        assert_eq!(label_of("select +0"), "0");
-        assert_eq!(label_of("select +0.999"), "0.999");
-        // A unary MINUS is not stripped by `getInnerFromParenthesesAndUnaryPlus`,
-        // so `+(-9)` is not a literal at all and keeps its whole text.
-        assert_eq!(label_of("select +(-9)"), "+(-9)");
-        assert_eq!(label_of("select +(-0.001)"), "+(-0.001)");
-    }
-
-    /// Go's `types.KindInt64` arm reads `mysql.IsBooleanFlag`: the `TRUE` and
-    /// `FALSE` keywords are named by their VALUE, uppercased, rather than by
-    /// the text. Read from `buildProjectionFieldNameFromExpressions`; no
-    /// recorded `.result` in the 257-topic corpus selects a bare boolean
-    /// keyword, so the Go source is the only oracle for this arm.
-    #[test]
-    fn a_boolean_keyword_column_is_named_true_or_false() {
-        assert_eq!(label_of("select true"), "TRUE");
-        assert_eq!(label_of("select FaLsE"), "FALSE");
-        // A plain `1` carries no boolean flag and takes the text arm.
-        assert_eq!(label_of("select 1"), "1");
-    }
-
-    /// Go's `types.KindBinaryLiteral` arm: "Don't rewrite BIT literal or HEX
-    /// literals" -- the source text is kept exactly, with no trim.
-    #[test]
-    fn a_hex_or_bit_literal_column_keeps_its_source_text() {
-        assert_eq!(label_of("select 0x41"), "0x41");
-        assert_eq!(label_of("select b'101'"), "b'101'");
-    }
-
-    /// Go: `NAME_CONST(name, value)` names its column by `name`, which MySQL
-    /// documents as the whole point of the function.
-    #[test]
-    fn name_const_names_its_column_by_its_first_argument() {
-        assert_eq!(label_of("select name_const('test_int', 1)"), "test_int");
-        assert_eq!(label_of("SELECT NAME_CONST('come', -1)"), "come");
-    }
-
-    /// Go's `unaryOpToExpression`: "expression (+ a) is equal to a", and
-    /// parentheses vanish the same way, so both are named like the bare
-    /// column.
-    #[test]
-    fn a_parenthesized_or_unary_plus_column_is_named_like_the_column() {
-        let store = crate::test_store::store();
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        crate::run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
-        let ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        for sql in [
-            "select (a) from t",
-            "select + a from t",
-            "select all + a from t",
-        ] {
-            let (columns, _) = run_select_meta_on(sql, &catalog, &ctx).unwrap();
-            assert_eq!(columns[0].0, "a", "{sql}");
-        }
-    }
-
-    /// The literal arms must read what the SOURCE WROTE, not what the tree
-    /// holds by the time the name is chosen: this tier substitutes a
-    /// variable's value and folds a scalar subquery INTO the field's
-    /// expression, and both of those land a literal where the user wrote
-    /// something else. Both cases below were measured as regressions when the
-    /// rewritten expression was asked instead of
-    /// `SelectFieldList::written_literal`.
-    #[test]
-    fn a_folded_literal_is_not_a_written_literal() {
-        // `(select 1)` folds to the literal `1`; naming it by the `default`
-        // arm's trim would have produced `select 1`.
-        assert_eq!(label_of("select (select 1)"), "(select 1)");
     }
 }

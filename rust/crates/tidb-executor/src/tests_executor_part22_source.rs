@@ -13,60 +13,9 @@
 // limitations under the License.
 
 //! Ports of `pkg/executor.part22`: deterministic items 1261--1320 of the
-//! upstream executor test enumeration. The running rows use only the
-//! in-memory catalog and executor seams owned by this crate. Tests that need
-//! sessions, transactions, TiKV/PD, TiProxy, LOAD DATA, runtime memory
-//! observations, or Go-only private helpers remain explicit parity gaps.
+//! upstream executor test enumeration that need no SQL stack; the SQL ones
+//! run on the TestKit stack (`tidb-session` `unistore_cop`).
 
-use crate::{
-    run_create_table_on, run_insert_on, run_insert_reporting, run_select_on, SessionExtendedInfoSchema, StmtContext,
-};
-use tidb_datatype::Datum;
-
-fn query_ctx() -> StmtContext {
-    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
-}
-
-fn dml_ctx() -> StmtContext {
-    StmtContext::for_dml(false, true, false).with_txn_store(Box::new(crate::test_store::store()))
-}
-
-fn int_value(datum: &Datum) -> i64 {
-    match datum {
-        Datum::Int(value) => *value,
-        Datum::UInt(value) => i64::try_from(*value).expect("test value fits in i64"),
-        other => panic!("expected integer datum, got {other:?}"),
-    }
-}
-
-/// Go `pkg/executor/test/writetest/write_test.go:42::TestInsertIgnore`.
-#[test]
-fn insert_ignore_keeps_the_nonduplicate_rows() {
-    let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    run_create_table_on(
-        "create table t (id int primary key, c int unique key)",
-        &mut catalog,
-    )
-    .expect("table creates");
-    run_insert_on("insert into t values (1, 2)", &mut catalog, &dml_ctx()).expect("seed insert");
-    run_insert_reporting(
-        "insert ignore into t values (1, 3), (2, 3)",
-        &mut catalog,
-        "test",
-        &dml_ctx(),
-    )
-    .expect("insert ignore succeeds");
-
-    let rows = run_select_on("select id, c from t order by id", &catalog, &query_ctx())
-        .expect("select succeeds");
-    assert_eq!(rows.len(), 2);
-    assert_eq!(int_value(&rows[0][0]), 1);
-    assert_eq!(int_value(&rows[0][1]), 2);
-    assert_eq!(int_value(&rows[1][0]), 2);
-    assert_eq!(int_value(&rows[1][1]), 3);
-}
-
-/// Go `pkg/executor/utils_test.go:184::TestWorkerPool`.
 #[test]
 fn worker_pool_preserves_the_go_submission_contract() {
     let values: Vec<usize> = (0..16).collect();

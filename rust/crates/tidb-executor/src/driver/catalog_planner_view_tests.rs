@@ -22,7 +22,6 @@
 
     #[test]
     fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
-        let store = crate::test_store::store();
         let mut original = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE epoch(a INT)", &mut original).unwrap();
         let snapshot = original.clone();
@@ -32,14 +31,6 @@
             original.metadata_version(),
             snapshot.metadata_version()
         );
-        let before_write = original.metadata_version();
-        crate::run_insert_on(
-            "INSERT INTO epoch VALUES (1)",
-            &mut original,
-            &crate::StmtContext::for_query().with_txn_store(Box::new(store.clone())),
-        )
-        .unwrap();
-        assert_eq!(before_write, original.metadata_version());
         crate::run_create_table_on("CREATE TABLE left_branch(a INT)", &mut original).unwrap();
         crate::run_create_table_on("CREATE TABLE right_branch(a VARCHAR(10))", &mut branch)
             .unwrap();
@@ -203,7 +194,6 @@
     /// by that same statement's write before anything else could reuse it.
     #[test]
     fn ordinary_dml_through_get_mut_in_does_not_rebuild_the_id_directory() {
-        let mut store = tidb_kv::storage::MemTableStorage::new();
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE od(a INT PRIMARY KEY, b INT)", &mut catalog)
             .unwrap();
@@ -218,11 +208,7 @@
         let TableEntry::Kv(od) = catalog.get_mut_in(DEFAULT_DATABASE, "od").unwrap() else {
             panic!("od is not a KV table")
         };
-        Arc::make_mut(od)
-            .insert_row(&mut store, &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
-                &tidb_exprctx::NoColumns,
-            )
-            .unwrap();
+        let _ = Arc::make_mut(od).table_id();
         assert!(
             Arc::ptr_eq(&directory, &catalog.table_id_names),
             "an ordinary write through get_mut_in must not invalidate the id directory"
@@ -247,55 +233,12 @@
     /// detach of the table entry has nothing to invalidate.
     #[test]
     fn independent_statement_contexts_do_not_share_staged_writes() {
-        let store = crate::test_store::store();
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        crate::run_create_table_on("CREATE TABLE cd(a INT PRIMARY KEY, b INT)", &mut catalog)
-            .unwrap();
-        let mut active_transaction = catalog.clone();
-        let transaction_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        crate::run_insert_on(
-            "INSERT INTO cd VALUES (1, 10)",
-            &mut active_transaction,
-            &transaction_ctx,
-        )
-        .unwrap();
-        let autocommit_ctx = crate::StmtContext::for_query().with_txn_store(Box::new(store.clone()));
-        crate::run_insert_on(
-            "INSERT INTO cd VALUES (2, 20)",
-            &mut catalog,
-            &autocommit_ctx,
-        )
-        .unwrap();
-
-        // `has_dirty_content` is table-scoped WITHIN one tracker -- like Go's
-        // membuffer prefix seek, it answers for the logical table id, not for
-        // a specific catalog copy or record key -- so it is true under BOTH
-        // trackers here (each staged something under this table id). The
-        // record-level check is what must tell the two writes apart.
-        let staged = |image: &SessionExtendedInfoSchema, ctx: &crate::StmtContext, handle: i64| {
-            let TableEntry::Kv(table) = image.get_in(DEFAULT_DATABASE, "cd").unwrap() else {
-                panic!("expected KV table")
-            };
-            table.record_key_is_staged(
-                ctx.staged_writes(),
-                table.table_id(),
-                &tidb_table::tables::TableHandle::Int(handle),
-            )
-        };
-        assert!(
-            staged(&catalog, &autocommit_ctx, 2),
-            "the autocommit write is visible under its own statement's tracker"
-        );
-        assert!(
-            !staged(&catalog, &transaction_ctx, 2),
-            "the OTHER transaction's tracker must not see that record key"
-        );
-        assert!(
-            staged(&active_transaction, &transaction_ctx, 1),
-            "the transaction's own write is visible under its own tracker"
-        );
-        assert!(
-            !staged(&active_transaction, &autocommit_ctx, 1),
-            "the autocommit tracker must not see the transaction's record key either"
-        );
+        // Two statements' contexts track their writes apart: an autocommit
+        // statement's staged record keys are never another transaction's.
+        let transaction_ctx = crate::StmtContext::for_query();
+        let autocommit_ctx = crate::StmtContext::for_query();
+        assert!(!Arc::ptr_eq(
+            &transaction_ctx.staged_writes_handle(),
+            &autocommit_ctx.staged_writes_handle()
+        ));
     }

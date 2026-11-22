@@ -15,6 +15,7 @@
 //! Aggregate behavior the executor's in-memory tier used to check, over the
 //! cop-backed TestKit stack (X11).
 
+use super::sql_kit::{exec_all, explain_brief, q};
 use super::*;
 
 fn session(stack: &UnistoreClusterStack, connection: u64) -> Session {
@@ -171,20 +172,6 @@ fn select_distinct() {
     assert_eq!(q(&mut tk, "SELECT DISTINCT SUM(v) FROM g3 GROUP BY k"), [["5"], ["9"]]);
 }
 
-/// EXPLAIN brief rows with the plan ids dropped from the operator names.
-fn explain_brief(tk: &mut Session, sql: &str) -> Vec<Vec<String>> {
-    displayed(rows(tk, &format!("explain format = 'brief' {sql}")))
-        .into_iter()
-        .map(|mut row| {
-            if let Some((name, id)) = row[0].rsplit_once('_') {
-                if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
-                    row[0] = name.to_owned();
-                }
-            }
-            row
-        })
-        .collect()
-}
 
 /// HAVING filters aggregate rows and ORDER BY sorts them; an aggregate or a
 /// grouped column used only there is a hidden column trimmed from the
@@ -440,4 +427,266 @@ fn explain_distinct_scalar_subquery_with_filter() {
     assert!(plan.iter().any(|row| row[0].contains("HashAgg")), "{plan:?}");
     assert!(plan.iter().any(|row| row[0].contains("Selection")), "{plan:?}");
     assert_eq!(displayed(rows(&mut tk, sql)), [["1201"]]);
+}
+
+/// The operator names with the tree drawing stripped.
+fn bare_operators(plan: &[Vec<String>]) -> Vec<String> {
+    plan.iter().map(|row| row[0].trim_start_matches(&[' ', '│', '├', '└', '─'][..]).to_owned()).collect()
+}
+
+/// STREAM_AGG / HASH_AGG hints choose the aggregate; a stream aggregate over
+/// an unordered child keeps its enforced Sort, a hash aggregate sorts above.
+#[test]
+fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 640);
+    exec_all(&mut tk, &[
+        "CREATE TABLE hinted_agg (g BIGINT, v BIGINT)",
+        "INSERT INTO hinted_agg VALUES (2,20),(1,10),(2,21),(3,30)",
+        "CREATE TABLE hinted_order (g BIGINT, v BIGINT, INDEX g_idx(g))",
+        "INSERT INTO hinted_order VALUES (2,20),(1,10),(2,21),(3,30)",
+    ]);
+    let stream_sql = "SELECT /*+ STREAM_AGG() */ g, COUNT(v) FROM hinted_agg GROUP BY g";
+    assert_eq!(q(&mut tk, stream_sql), [["1", "1"], ["2", "2"], ["3", "1"]]);
+    for (sql, root, child) in [
+        (stream_sql, "StreamAgg", Some("Sort")),
+        ("SELECT /*+ HASH_AGG() */ g, COUNT(v) FROM hinted_agg GROUP BY g", "HashAgg", None),
+    ] {
+        let plan = explain_brief(&mut tk, sql);
+        let names = operators(&plan);
+        let at = names.iter().position(|name| name.contains(root)).unwrap_or_else(|| panic!("{names:?}"));
+        if let Some(child) = child {
+            assert!(names.get(at + 1).is_some_and(|name| name.contains(child)), "{names:?}");
+        }
+    }
+    for (hint, aggregate, direction, expected) in [
+        ("HASH_AGG", "HashAgg", "ASC", [1, 2, 3]),
+        ("HASH_AGG", "HashAgg", "DESC", [3, 2, 1]),
+        ("STREAM_AGG", "StreamAgg", "ASC", [1, 2, 3]),
+        ("STREAM_AGG", "StreamAgg", "DESC", [3, 2, 1]),
+    ] {
+        let sql = format!("SELECT /*+ {hint}() */ g, COUNT(*) FROM hinted_order GROUP BY g ORDER BY g {direction}");
+        let want = expected.iter().map(|g| vec![g.to_string(), (if *g == 2 { 2 } else { 1 }).to_string()]).collect::<Vec<_>>();
+        assert_eq!(q(&mut tk, &sql), want, "{sql}");
+        let plan = explain_brief(&mut tk, &sql);
+        let names = operators(&plan);
+        let at = names.iter().position(|name| name.contains(aggregate)).unwrap_or_else(|| panic!("{sql}: {names:?}"));
+        if hint == "HASH_AGG" {
+            assert!(names[..at].iter().any(|name| name.contains("Sort")), "{names:?}");
+            assert!(!names.iter().any(|name| name.contains("StreamAgg")), "{names:?}");
+        }
+    }
+}
+
+/// A STREAM_AGG DISTINCT keeps the Sort its child needs.
+#[test]
+fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 641);
+    exec_all(&mut tk, &["CREATE TABLE hinted_distinct (g BIGINT)", "INSERT INTO hinted_distinct VALUES (2),(1),(2),(3)"]);
+    let sql = "SELECT /*+ STREAM_AGG() */ DISTINCT g FROM hinted_distinct";
+    assert_eq!(q(&mut tk, sql), [["1"], ["2"], ["3"]]);
+    let plan = explain_brief(&mut tk, sql);
+        let names = operators(&plan);
+    let at = names.iter().position(|name| name.contains("StreamAgg")).unwrap_or_else(|| panic!("{names:?}"));
+    assert!(names.get(at + 1).is_some_and(|name| name.contains("Sort")), "{names:?}");
+}
+
+/// An aggregate over a handle range keeps the TableRangeScan's range.
+#[test]
+fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 642);
+    rows(&mut tk, "CREATE TABLE sbtest1 (id BIGINT PRIMARY KEY, k BIGINT, INDEX k_1(k))");
+    let plan = explain_brief(&mut tk, "SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 100 AND 199");
+    assert!(plan.iter().any(|row| row[0].contains("TableRangeScan") && row[4].contains("range:[100,199]")), "{plan:#?}");
+}
+
+/// Go's `AggregationPushDownSolver` substitutes the child Projection before
+/// `InjectProjBelowAgg`; derived group outputs are restored below the sort.
+#[test]
+fn aggregate_push_down_substitutes_child_projection_before_injection() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 643);
+    exec_all(&mut tk, &[
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderdate DATE)",
+        "CREATE TABLE lineitem (l_orderkey INT, l_extendedprice DECIMAL(15,2), l_discount DECIMAL(15,2), nation VARCHAR(25), cust_nation VARCHAR(25))",
+    ]);
+    let sql = "SELECT o_year, SUM(CASE WHEN nation = 'INDIA' THEN volume ELSE 0 END) / SUM(volume) AS share \
+        FROM (SELECT EXTRACT(YEAR FROM o_orderdate) AS o_year, l_extendedprice * (1 - l_discount) AS volume, nation \
+              FROM orders, lineitem WHERE o_orderkey = l_orderkey) all_nations GROUP BY o_year ORDER BY o_year";
+    let plan = explain_brief(&mut tk, sql);
+    let info = |row: usize| plan[row][4].clone();
+    assert_eq!(&bare_operators(&plan)[..6], ["Sort", "Projection", "HashAgg", "Projection", "Projection", "HashJoin"], "{plan:#?}");
+    assert!(info(0).starts_with("Column#"), "{plan:#?}");
+    assert!(info(1).starts_with("Column#") && info(1).contains("div(Column#"), "{plan:#?}");
+    assert_eq!(info(2).matches("funcs:firstrow(").count(), 1, "{plan:#?}");
+    assert!(
+        info(3).contains("test.lineitem.nation")
+            && info(3).contains("test.lineitem.l_extendedprice")
+            && info(3).contains("extract(YEAR, test.orders.o_orderdate)")
+            && info(3).matches("test.orders.o_orderdate").count() == 1,
+        "{plan:#?}"
+    );
+    assert!(
+        info(4).contains("test.lineitem.l_extendedprice")
+            && info(4).contains("test.lineitem.l_discount")
+            && info(4).contains("test.orders.o_orderdate")
+            && info(4).contains("test.lineitem.nation"),
+        "{plan:#?}"
+    );
+    for (sql, direct_groups) in [
+        (
+            "SELECT supp_nation, cust_nation, l_year, SUM(volume) AS revenue \
+             FROM (SELECT nation AS supp_nation, cust_nation, EXTRACT(YEAR FROM o_orderdate) AS l_year, l_extendedprice * (1 - l_discount) AS volume \
+                   FROM orders, lineitem WHERE o_orderkey = l_orderkey) shipping \
+             GROUP BY supp_nation, cust_nation, l_year ORDER BY supp_nation, cust_nation, l_year",
+            &["test.lineitem.nation", "test.lineitem.cust_nation"][..],
+        ),
+        (
+            "SELECT nation, o_year, SUM(amount) AS sum_profit \
+             FROM (SELECT nation, EXTRACT(YEAR FROM o_orderdate) AS o_year, l_extendedprice * (1 - l_discount) AS amount \
+                   FROM orders, lineitem WHERE o_orderkey = l_orderkey) profit \
+             GROUP BY nation, o_year ORDER BY nation, o_year DESC",
+            &["test.lineitem.nation"][..],
+        ),
+    ] {
+        assert!(rows(&mut tk, sql).is_empty());
+        let plan = explain_brief(&mut tk, sql);
+        let info = |row: usize| plan[row][4].clone();
+        assert_eq!(&bare_operators(&plan)[..4], ["Sort", "Projection", "HashAgg", "Projection"], "{plan:#?}");
+        assert_eq!(info(2).matches("funcs:firstrow(").count(), direct_groups.len() + 1, "{plan:#?}");
+        for group in direct_groups {
+            assert!(info(0).contains(group) && info(1).contains(group), "{plan:#?}");
+            assert!(info(2).contains(&format!(")->{group}")), "{plan:#?}");
+        }
+        assert!(info(0).contains("Column#") && info(1).contains("Column#") && info(2).contains(")->Column#"), "{plan:#?}");
+    }
+}
+
+/// Go keeps the visible projection below Sort and `restoreSchemaIfChanged`
+/// keeps the reordered join's column identities below `InjectProjBelowAgg`.
+#[test]
+fn grouped_order_by_projects_visible_fields_below_sort() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 644);
+    exec_all(&mut tk, &[
+        "CREATE TABLE orders (o_orderkey INT PRIMARY KEY, o_orderpriority VARCHAR(15))",
+        "CREATE TABLE lineitem (l_orderkey INT, l_shipmode VARCHAR(10), l_commitdate DATE, l_receiptdate DATE, l_shipdate DATE)",
+    ]);
+    let sql = "SELECT l_shipmode, \
+        SUM(CASE WHEN o_orderpriority = '1-URGENT' OR o_orderpriority = '2-HIGH' THEN 1 ELSE 0 END) AS high_line_count, \
+        SUM(CASE WHEN o_orderpriority <> '1-URGENT' AND o_orderpriority <> '2-HIGH' THEN 1 ELSE 0 END) AS low_line_count \
+        FROM orders, lineitem WHERE o_orderkey = l_orderkey AND l_shipmode IN ('RAIL', 'FOB') \
+        AND l_commitdate < l_receiptdate AND l_shipdate < l_commitdate AND l_receiptdate >= '1997-01-01' \
+        AND l_receiptdate < DATE_ADD('1997-01-01', INTERVAL 1 YEAR) GROUP BY l_shipmode ORDER BY l_shipmode";
+    let plan = explain_brief(&mut tk, sql);
+    let info = |row: usize| plan[row][4].clone();
+    assert_eq!(&bare_operators(&plan)[..5], ["Sort", "Projection", "HashAgg", "Projection", "Projection"], "{plan:#?}");
+    assert_eq!(info(4), "test.orders.o_orderpriority, test.lineitem.l_shipmode", "{plan:#?}");
+    assert!(info(3).contains("test.orders.o_orderpriority") && info(3).contains("test.lineitem.l_shipmode"), "{plan:#?}");
+    let hash_agg = info(2);
+    let group = hash_agg.strip_prefix("group by:").and_then(|rest| rest.split(',').next()).expect("a group").trim().to_owned();
+    assert!(hash_agg.contains(&format!("funcs:firstrow({group})->test.lineitem.l_shipmode")), "{plan:#?}");
+}
+
+/// The reordered region-dimension join clamps d_name's NDV before the fact
+/// join; the Sort reads the aggregate's generated column; HashJoin prints its
+/// equality aligned with the logical children. Statistics are a real ANALYZE
+/// of rows with the TPC-H-shaped NDVs (1000 facts, 25 dims, 5 regions).
+#[test]
+fn grouped_rows_follow_the_reordered_join_tree() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 645);
+    exec_all(&mut tk, &[
+        "CREATE TABLE fact (f_id INT PRIMARY KEY, f_dim_id INT, f_value INT)",
+        "CREATE TABLE dim (d_id INT PRIMARY KEY, d_region_id INT, d_name VARCHAR(20))",
+        "CREATE TABLE region (r_id INT PRIMARY KEY, r_name VARCHAR(20))",
+    ]);
+    let facts = (1..=1000).map(|id| format!("({id},{},{id})", id % 25 + 1)).collect::<Vec<_>>().join(",");
+    rows(&mut tk, &format!("INSERT INTO fact VALUES {facts}"));
+    let dims = (1..=25).map(|id| format!("({id},{},'d{id}')", id % 5 + 1)).collect::<Vec<_>>().join(",");
+    rows(&mut tk, &format!("INSERT INTO dim VALUES {dims}"));
+    exec_all(&mut tk, &[
+        "INSERT INTO region VALUES (1,'MIDDLE'),(2,'R2'),(3,'R3'),(4,'R4'),(5,'R5')",
+        "ANALYZE TABLE fact, dim, region",
+    ]);
+    let plan = explain_brief(
+        &mut tk,
+        "SELECT d_name, SUM(f_value) AS revenue FROM fact, dim, region \
+         WHERE f_dim_id = d_id AND d_region_id = r_id AND r_name = 'MIDDLE' GROUP BY d_name ORDER BY revenue DESC",
+    );
+    let names = bare_operators(&plan);
+    let agg = &plan[names.iter().position(|name| name == "HashAgg").expect("a HashAgg")];
+    assert_eq!(agg[1], "5.00", "{plan:#?}");
+    let sum_out = agg[4].split("funcs:sum(").nth(1).and_then(|rest| rest.split(")->").nth(1)).and_then(|rest| rest.split(',').next()).expect("a sum");
+    assert_eq!(plan[0][4], format!("{sum_out}:desc"), "{plan:#?}");
+    assert!(plan.iter().any(|row| row[4].contains("eq(test.dim.d_id, test.fact.f_dim_id)")), "{plan:#?}");
+}
+
+/// A filter over a derived aggregate's output refreshes the source
+/// statistics: 8 rows under pseudo statistics.
+#[test]
+fn derived_aggregate_null_filter_refreshes_source_statistics() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 646);
+    exec_all(&mut tk, &[
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, d_ytd DECIMAL(12,2), PRIMARY KEY(d_w_id,d_id) CLUSTERED)",
+        "INSERT INTO district VALUES (1,1,10),(2,1,NULL),(1,2,20)",
+    ]);
+    let sql = "SELECT d_id FROM (SELECT d_id,d_w_id,SUM(d_ytd) s FROM district GROUP BY d_id,d_w_id) d WHERE d_w_id=1 AND s IS NOT NULL";
+    assert_eq!(q(&mut tk, sql), [["1"]]);
+    let plan = explain_brief(&mut tk, sql);
+    let filter = plan.iter().find(|row| row[4].contains("not(isnull(cast(")).unwrap_or_else(|| panic!("{plan:#?}"));
+    assert_eq!(filter[1], "8.00", "{plan:#?}");
+}
+
+/// A narrow covering index range keeps order for the grouped columns and
+/// never prices a table read on top.
+#[test]
+fn a_narrow_covering_index_range_prices_the_common_handle_once() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 647);
+    rows(&mut tk, "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, PRIMARY KEY (o_w_id,o_d_id,o_id) CLUSTERED, KEY idx_order (o_w_id,o_d_id,o_c_id,o_id))");
+    let plan = explain_brief(&mut tk, "SELECT o_w_id, o_d_id, count(*) FROM orders WHERE o_w_id = 1 GROUP BY o_w_id, o_d_id");
+    assert!(
+        plan.iter().any(|row| row[0].contains("IndexRangeScan") && row[3].contains("idx_order") && row[4].contains("range:[1,1]") && row[4].contains("keep order:true")),
+        "{plan:#?}"
+    );
+    assert!(plan.iter().all(|row| !row[0].contains("TableRangeScan")), "{plan:#?}");
+}
+
+/// Go pushes a global COUNT over index ranges as StreamAgg through an
+/// IndexReader; full COUNT(*) and SUM pick HashAgg over an IndexFullScan.
+#[test]
+fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 648);
+    exec_all(&mut tk, &[
+        "CREATE TABLE count_ranges (id INT PRIMARY KEY, k INT NOT NULL, KEY k_1(k))",
+        "INSERT INTO count_ranges VALUES (1, 1), (2, 15), (3, 20)",
+    ]);
+    let sql = "SELECT COUNT(k) FROM count_ranges WHERE (k BETWEEN 1 AND 6) OR (k BETWEEN 2 AND 7) OR \
+        (k BETWEEN 3 AND 8) OR (k BETWEEN 4 AND 9) OR (k BETWEEN 5 AND 10) OR (k BETWEEN 6 AND 11) OR \
+        (k BETWEEN 7 AND 12) OR (k BETWEEN 8 AND 13) OR (k BETWEEN 9 AND 14) OR (k BETWEEN 10 AND 15)";
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(operators(&plan), ["StreamAgg", "└─IndexReader", "  └─StreamAgg", "    └─IndexRangeScan"]);
+    assert_eq!(plan.iter().map(|row| row[2].as_str()).collect::<Vec<_>>(), ["root", "root", "cop[tikv]", "cop[tikv]"]);
+    assert!(plan[0][4].starts_with("funcs:count(Column#"), "{plan:#?}");
+    assert_eq!(plan[1][4], "index:StreamAgg");
+    assert!(plan[2][4].starts_with("funcs:count(test.count_ranges.k)->Column#"), "{plan:#?}");
+    assert!(plan[3][3].contains("index:k_1(k)"), "{plan:#?}");
+    assert_eq!(q(&mut tk, sql), [["2"]]);
+    for (sql, want) in [("SELECT COUNT(*) FROM count_ranges", "3"), ("SELECT SUM(k) FROM count_ranges", "36")] {
+        assert_eq!(operators(&explain_brief(&mut tk, sql)), ["HashAgg", "└─IndexReader", "  └─HashAgg", "    └─IndexFullScan"], "{sql}");
+        assert_eq!(q(&mut tk, sql), [[want]], "{sql}");
+    }
+}
+
+#[test]
+fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 649);
+    rows(&mut tk, "CREATE TABLE explain_common_plan (id INT PRIMARY KEY, k INT)");
+    assert!(!explain_brief(&mut tk, "SELECT k, SUM(id) FROM explain_common_plan WHERE id > 0 GROUP BY k").is_empty());
 }

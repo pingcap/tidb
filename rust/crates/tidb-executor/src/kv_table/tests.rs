@@ -45,7 +45,7 @@ fn auto_id_owner_separates_hidden_handles_from_single_point_values() {
 
 #[test]
 fn auto_id_owner_explicit_hidden_handle_does_not_rebase_auto_increment() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut table = test_table();
     table.set_auto_increment_offset(0);
     table.init_auto_id_cache(1);
@@ -113,7 +113,7 @@ fn test_table() -> TableCommon {
 
 #[test]
 fn writable_check_constraints_guard_insert_and_update() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut table = test_table();
     let expression = tidb_model::generated_expr::parse_expression("a > 0")
         .expect("persisted CHECK expression parses");
@@ -358,7 +358,7 @@ fn test_extract_columns_from_condition() {
 /// is the PRIMARY KEY over `PriKeyFlag` columns.
 #[test]
 fn column_and_index_mutators_keep_the_table_info_in_step() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let column = |name: &str, id: i64| tidb_table::column::Column {
         info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
             id: id,
@@ -458,7 +458,7 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
 
 #[test]
 fn drop_index_removes_orphan_entries_without_decoding_rows() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut table = TableCommon::new(42, Vec::new());
     table.add_index(
         Index {
@@ -496,7 +496,7 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
     use tidb_table::partition_routing::{PartitionKind, PartitionExpr};
     for global in [false, true] {
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
         let mut table = TableCommon::new(42, Vec::new());
         table.set_partition(PartitionExpr {
             kind: PartitionKind::Hash,
@@ -562,7 +562,7 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
 
 #[test]
 fn update_rewrites_only_index_entries_whose_bytes_change() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     // Go `pkg/table/tables/tables.go ::
     // rebuildUpdateRecordIndices` skips an index whose columns are all
     // untouched, and `pkg/executor/write.go :: updateRecord` arms that
@@ -682,7 +682,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
 
 #[test]
 fn row_conflicts_only_include_matching_partial_indexes() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut table = test_table();
     table.set_name("partial_conflicts");
     table.set_pk_handle_offset(0);
@@ -771,7 +771,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
             Some(b'm'),
         ),
     ] {
-        let mut store = tidb_kv::storage::MemTableStorage::new();
+        let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
         let mut table = test_table();
         let index = Index {
             info: tidb_model::GoShared::new(tidb_model::IndexInfo {
@@ -845,7 +845,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
 
 #[test]
 fn test_unique_index_multiple_null_entries() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     // Direct port of
     // pkg/table/tables/tables_test.go::TestUniqueIndexMultipleNullEntries.
     // NULL-bearing UNIQUE keys are non-distinct and carry the row handle,
@@ -921,7 +921,7 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
 
 #[test]
 fn test_iter_records() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     // Direct port of pkg/table/tables/tables_test.go::TestIterRecords.
     // Record iteration crosses the signed-handle ordering boundary and
     // preserves NULL in a non-handle column.
@@ -975,7 +975,7 @@ fn test_iter_records() {
 /// UPDATE/DELETE addresses the row it read.
 #[test]
 fn scan_reports_the_handles_the_key_codec_wrote() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut t = test_table();
     let mut handles = Vec::new();
     for i in 0..3 {
@@ -1022,7 +1022,7 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
 
 #[test]
 fn scan_covers_the_whole_table_and_stops_at_its_range() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut t = test_table();
     for i in 0..3 {
         t.insert_row(&mut store, &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
@@ -1058,7 +1058,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
 
 #[test]
 fn insert_encodes_real_bytes_and_scan_decodes() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut t = test_table();
     let mut s1 = Datum::Null;
     s1.set_bytes(b"hello".to_vec());
@@ -1106,7 +1106,7 @@ fn record_keys_are_the_real_format() {
 /// `5` is four bytes.
 #[test]
 fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
     decimal_type.set_flen(4);
     decimal_type.set_decimal(0);
@@ -1250,7 +1250,7 @@ fn a_plain_integer_handle_key_stays_inline() {
 /// holds one row insertion.
 #[test]
 fn the_mutation_checker_compares_a_stage_with_its_row() {
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let mut table = test_table();
     table.set_pk_handle_offset(0);
     table.add_index(

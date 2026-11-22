@@ -101,8 +101,8 @@ fn assert_point_chunks(
     zone: &SessionTimeZone,
 ) {
     use tidb_executor_internal_exec::Executor;
-    use tidb_kv::storage::{MemTableStorage, TableStorage};
-    let mut storage = MemTableStorage::new();
+    use tidb_kv::storage::TableStorage;
+    let mut storage = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     for (handle, bytes, _) in rows {
         let handle = match handle {
             TableHandle::Int(value) => tidb_tablecodec::table_key::RecordHandle::Int(*value),
@@ -447,7 +447,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
     let mut table = TableCommon::new(43, columns.clone());
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     table.set_common_handle_offsets(vec![0]);
     table
         .insert_row(&mut store, &[Datum::new_string_datum("abc"), Datum::Int(9)], &statement)
@@ -466,7 +466,7 @@ fn restored_common_handle_value_wins_over_its_lossy_sort_key_even_when_fast_path
     // while Go's table decoder must materialize this handle component when
     // the table explicitly disables new collations.
     let mut old_collation_table = TableCommon::new(44, columns).with_new_collation_mode(false);
-    let mut old_collation_table_store = tidb_kv::storage::MemTableStorage::new();
+    let mut old_collation_table_store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     old_collation_table.set_common_handle_offsets(vec![0]);
     old_collation_table
         .insert_row(&mut old_collation_table_store, &[Datum::new_string_datum("abc"), Datum::Int(10)], &statement)
@@ -518,7 +518,7 @@ fn projected_row_decoder_keeps_common_handle_component_positions() {
 
     let statement = StmtContext::for_query().with_time_zone(zone.clone());
     let mut table = TableCommon::new(42, columns);
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     table.set_common_handle_offsets(vec![0, 1]);
     table
         .insert_row(&mut store, &[Datum::Int(100), Datum::new_string_datum("abc"), Datum::Int(9)],
@@ -734,7 +734,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     generated.generated = Some(generated_column("a + 1", true, &columns, &zone));
     columns.push(generated);
     let mut table = TableCommon::new(42, columns);
-    let mut store = tidb_kv::storage::MemTableStorage::new();
+    let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
     let handle = table
         // Table.AddRecord consumes an already materialized mutation row.
         .insert_row(&mut store, &[Datum::Int(2), Datum::Int(3)], &statement)
@@ -918,7 +918,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
             let mut generated = column(2, "generated", field_type);
             generated.generated = Some(generated_column("source", false, &[source.clone()], &zone));
             let mut table = TableCommon::new(42, vec![source, generated]).with_new_collation_mode(mode);
-            let mut store = tidb_kv::storage::MemTableStorage::new();
+            let mut store = tidb_store_driver_txn::cluster_storage_test_util::storage(&[]).0;
             table
                 .insert_row(&mut store, &[Datum::new_string_datum("a"), Datum::Null], &statement)
                 .unwrap();

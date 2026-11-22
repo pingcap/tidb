@@ -20,7 +20,7 @@
 use crate::StmtContext;
 
 fn ctx() -> StmtContext {
-    StmtContext::for_query().with_txn_store(Box::new(crate::test_store::store()))
+    StmtContext::for_query()
 }
 
 /// Go `executor_test.go:1439::TestAdapterStatement`: the compiled statement

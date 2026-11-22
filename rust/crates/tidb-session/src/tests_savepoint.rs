@@ -28,10 +28,8 @@
 //! `savepoint_big_txn_source` corpus topics in `rust/difftests/corpus/table/`,
 //! which the result ring runs against this engine.
 //!
-//! SCOPE: these run on in-process `MemTableStorage`, so what they prove is the
-//! session's catalog-image savepoint stack. The cluster path keeps its own
-//! stack of `MutationBuffer` images and is pinned in `tidb_server`'s
-//! `cluster_session_node` tests.
+//! SCOPE: these run on Go testkit's session over the mock store
+//! (`Session::new`), whose statements commit through the store.
 
 #![cfg(test)]
 
