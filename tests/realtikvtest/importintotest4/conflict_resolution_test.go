@@ -111,7 +111,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	s.NoError(err)
 
 	task := s.getTaskByJob(int64(jobID))
-	s.checkExternalFields(task.ID, false)
+	s.checkExternalFields(task.ID, sortStorageURI, false)
 
 	// check lines inside the file that records the conflicted rows.
 	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
@@ -534,7 +534,7 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	})
 }
 
-func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
+func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64, sortStorageURI string) {
 	s.T().Helper()
 
 	task := s.getTaskByJob(jobID)
@@ -547,8 +547,9 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
 		kvGroupCanConflict[importinto.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
-	store, err := importer.GetSortStore(s.ctx, taskMeta.Plan.CloudStorageURI)
+	store, err := importer.GetSortStore(s.ctx, sortStorageURI)
 	s.NoError(err)
+	defer store.Close()
 	for _, st := range subtasks {
 		m := importinto.MergeSortStepMeta{}
 		s.NoError(json.Unmarshal(st.Meta, &m))
@@ -583,7 +584,7 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 				[]string{},
 				"__force_merge_step",
 			)
-			s.checkMergeStepConflictInfo(jobID)
+			s.checkMergeStepConflictInfo(jobID, fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint))
 		}
 	})
 
@@ -601,7 +602,7 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 				[]string{},
 				"__force_merge_step",
 			)
-			s.checkMergeStepConflictInfo(jobID)
+			s.checkMergeStepConflictInfo(jobID, fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint))
 		}
 	})
 }

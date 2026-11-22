@@ -103,6 +103,8 @@ var (
 	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 
+	mLegacyECDSASessionTokenDisabled = []byte("LegacyECDSASessionTokenDisabled")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1043,6 +1045,7 @@ func splitRangeInt64Max(n int64) [][]string {
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 // This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+// It calls fn from the worker goroutines, but never concurrently.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1921,6 +1924,19 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
+// have been permanently disabled. A missing key preserves upgrade compatibility.
+func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
+	value, err := m.txn.GetInt64(mLegacyECDSASessionTokenDisabled)
+	return value == 1, errors.Trace(err)
+}
+
+// SetLegacyECDSASessionTokenDisabled permanently disables legacy ECDSA session
+// tokens. The transition is one-way and repeated writes are safe.
+func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
+	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
 }
 
 // ElementKeyType is a key type of the element.

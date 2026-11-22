@@ -1467,6 +1467,8 @@ func TestDBAStmt(t *testing.T) {
 		{"set char set default", true, "SET CHARSET DEFAULT"},
 
 		{"set role `role1`", true, "SET ROLE `role1`@`%`"},
+		{"set role auto", false, ""},
+		{"set role `auto`", true, "SET ROLE `auto`@`%`"},
 		{"SET ROLE DEFAULT", true, "SET ROLE DEFAULT"},
 		{"SET ROLE ALL", true, "SET ROLE ALL"},
 		{"SET ROLE ALL EXCEPT `role1`, `role2`", true, "SET ROLE ALL EXCEPT `role1`@`%`, `role2`@`%`"},
@@ -1485,7 +1487,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show config", true, "SHOW CONFIG"},
 		{"show config where type='tidb'", true, "SHOW CONFIG WHERE `type`=_UTF8MB4'tidb'"},
 		{"show config where instance='127.0.0.1:3306'", true, "SHOW CONFIG WHERE `instance`=_UTF8MB4'127.0.0.1:3306'"},
-		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"}, // check that `CONFIG` is unreserved keyword
+		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"},   // check that `CONFIG` is unreserved keyword
+		{"create table AUTO (AUTO int)", true, "CREATE TABLE `AUTO` (`AUTO` INT)"}, // check that AUTO remains usable as an identifier
 
 		// for FLUSH statement
 		{"flush no_write_to_binlog tables tbl1 with read lock", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK"},
@@ -1736,6 +1739,18 @@ func TestBuiltin(t *testing.T) {
 
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
+		{"SELECT INTERVAL()", false, ""},
+		{"SELECT INTERVAL(1)", false, ""},
+		{"SELECT INTERVAL(1, 0)", true, "SELECT INTERVAL(1, 0)"},
+		{"SELECT NOW() + INTERVAL(1+2) DAY `add`", true, "SELECT DATE_ADD(NOW(), INTERVAL (1+2) DAY) AS `add`"},
+		{"SELECT d + INTERVAL (q - 1) QUARTER", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT d - INTERVAL (q - 1) QUARTER", true, "SELECT DATE_SUB(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT INTERVAL (q - 1) QUARTER + d", true, "SELECT DATE_ADD(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ADDDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT ADDDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT SUBDATE(d, INTERVAL (q - 1) QUARTER)", true, "SELECT SUBDATE(`d`, INTERVAL (`q`-1) QUARTER)"},
+		{"SELECT ROW(ROW(1,2),3), ROW(1,ROW(2,3))", true, "SELECT ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT (1,2), ((1,2),3), (1,(2,3))", true, "SELECT ROW(1,2),ROW(ROW(1,2),3),ROW(1,ROW(2,3))"},
+		{"SELECT MAKEDATE(YEAR(d), 1) + INTERVAL (QUARTER(d) - 1) QUARTER", true, "SELECT DATE_ADD(MAKEDATE(YEAR(`d`), 1), INTERVAL (QUARTER(`d`)-1) QUARTER)"},
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
 		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
 		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
@@ -3043,6 +3058,7 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true, "CREATE TABLE `t` (`c` TEXT) DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1, PRE_SPLIT_REGIONS = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1 PRE_SPLIT_REGIONS = 1"},
+		{"CREATE TABLE t (c TEXT) PRE_SPLIT_REGIONS AUTO;", false, ""},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, // TODO: The number yacc in parentheses has not been implemented yet.
 		// For reference_definition in column_definition.
@@ -3269,6 +3285,29 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX IF NOT EXISTS (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX IF NOT EXISTS(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = auto", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4 PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = FOO", false, ""},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'AUTO'", false, ""},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = `AUTO`", false, ""},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (by (1, 'a'), (2, 'b'), (3, 'c'));", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BY (1,_UTF8MB4'a'),(2,_UTF8MB4'b'),(3,_UTF8MB4'c'))"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS AUTO", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = AUTO"},
+		// Simulate an older parser that does not advertise the AUTO capability:
+		// the unsupported feature comment is ignored while add-index still parses.
+		{"CREATE INDEX idx ON t (a, b) /*T![unsupported_auto_presplit] PRE_SPLIT_REGIONS = AUTO */", true, "CREATE INDEX `idx` ON `t` (`a`, `b`)"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE /*T![global_index] GLOBAL */ COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a' GLOBAL"},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) /*T![global_index] GLOBAL */", true, "ALTER TABLE `t` ADD UNIQUE(`a`) GLOBAL"},
@@ -5149,6 +5188,8 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE ROLE `test-role`, `role1`@'localhost'", true, "CREATE ROLE `test-role`@`%`, `role1`@`localhost`"},
 		{"CREATE ROLE `test-role`", true, "CREATE ROLE `test-role`@`%`"},
 		{"CREATE ROLE role1", true, "CREATE ROLE `role1`@`%`"},
+		{"CREATE ROLE auto", false, ""},
+		{"CREATE ROLE `auto`", true, "CREATE ROLE `auto`@`%`"},
 		{"CREATE ROLE `role1`@'localhost'", true, "CREATE ROLE `role1`@`localhost`"},
 		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password", true, "CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password'"},
 		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password by 'new-password'", true, "CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'new-password'"},
@@ -6257,6 +6298,16 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
+		{"analyze table t with default buckets", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default topn", true, "ANALYZE TABLE `t` WITH DEFAULT TOPN"},
+		{"analyze table t with default samples", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES"},
+		{"analyze table t with default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLERATE"},
+		{"analyze table t with default samples, 0.1 samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES, 0.1 SAMPLERATE"},
+		{"analyze table t with default buckets, default topn, default samples, default samplerate", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS, DEFAULT TOPN, DEFAULT SAMPLES, DEFAULT SAMPLERATE"},
+		{"analyze table t with 4 buckets, default topn", true, "ANALYZE TABLE `t` WITH 4 BUCKETS, DEFAULT TOPN"},
+		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
+		{"analyze table t with default cmsketch width", false, ""},
+		{"analyze table t with default cmsketch depth", false, ""},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}

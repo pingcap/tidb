@@ -51,7 +51,10 @@ func TestTiDBOptOn(t *testing.T) {
 
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
+	require.Equal(t, On, vars.EnableRedactLog)
+	require.Equal(t, On, GetSysVar(TiDBRedactLog).Value)
 
+	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, ConcurrencyUnset, vars.indexLookupConcurrency)
@@ -93,6 +96,8 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 	require.Equal(t, DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
+	require.False(t, DefTiDBEnableAdaptiveLimitScan)
+	require.False(t, vars.EnableAdaptiveLimitScan)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))

@@ -88,7 +88,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		true,
 	)
 	require.True(t, ok)
-	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
+	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols, tbl.Meta().FindIndexByName("a_domains_b"))
 
 	// assert mv col access filters.
 	require.Equal(t, len(accessFilters), 3)

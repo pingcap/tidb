@@ -113,6 +113,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
+	// HintTiFlashLMFilter is a hint to enforce TiFlash late materialization filter columns.
+	HintTiFlashLMFilter = "tiflash_lm_filter"
 	// HintMerge is a hint which can switch turning inline for the CTE.
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
@@ -217,8 +219,6 @@ type StmtHints struct {
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
 	StraightJoinOrder       bool
-	// EnableCascadesPlanner is use cascades planner for a single query only.
-	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
 	// -1 for disable.
 	ForceNthPlan  int64
@@ -230,7 +230,6 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
-	HasEnableCascadesPlannerHint   bool
 	HasResourceGroup               bool
 	SetVars                        map[string]string
 
@@ -269,7 +268,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
 		StraightJoinOrder:              sh.StraightJoinOrder,
-		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		WriteSlowLog:                   sh.WriteSlowLog,
@@ -277,7 +275,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
 		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
-		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
 		HasResourceGroup:               sh.HasResourceGroup,
 		SetVars:                        vars,
 		OriginalTableHints:             tableHints,
@@ -308,7 +305,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -323,8 +320,9 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			hintOffs[hint.HintName.L] = i
 			useToJAHintCnt++
 		case "use_cascades":
-			hintOffs[hint.HintName.L] = i
-			useCascadesHintCnt++
+			// USE_CASCADES() is deprecated: the Cascades planner has been removed.
+			// The hint is still accepted so existing statements keep parsing, but it
+			// is intentionally ignored.
 		case "no_index_merge":
 			hintOffs[hint.HintName.L] = i
 			noIndexMergeHintCnt++
@@ -438,16 +436,6 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
 		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
 	}
-	// Handle USE_CASCADES
-	if useCascadesHintCnt != 0 {
-		useCascadesHint := hints[hintOffs["use_cascades"]]
-		if useCascadesHintCnt > 1 {
-			warn := errors.NewNoStackErrorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasEnableCascadesPlannerHint = true
-		stmtHints.EnableCascadesPlanner = useCascadesHint.HintData.(bool)
-	}
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {
 		if noIndexMergeHintCnt > 1 {
@@ -549,6 +537,7 @@ type PlanHints struct {
 	IndexMergeHintList    []HintedIndex    // use_index_merge
 	TiFlashTables         []HintedTable    // isolation_read_engines(xx=tiflash)
 	TiKVTables            []HintedTable    // isolation_read_engines(xx=tikv)
+	TiFlashLMFilters      []HintedColumn   // tiflash_lm_filter
 	LeadingJoinOrder      []HintedTable    // leading
 	LeadingList           *ast.LeadingList // leading recursive
 	HJBuild               []HintedTable    // hash_join_build
@@ -592,6 +581,36 @@ type HintedIndex struct {
 	// If an HintedIndex is not Matched after building
 	// a Select statement, we will generate a warning for it.
 	Matched bool
+}
+
+// HintedColumn indicates which columns this hint should take effect on.
+type HintedColumn struct {
+	DBName       pmodel.CIStr
+	TblName      pmodel.CIStr
+	SelectOffset int
+	Columns      []pmodel.CIStr
+	Matched      bool
+}
+
+// Match checks whether the hint is matched with the given table alias.
+func (hint *HintedColumn) Match(other *HintedTable) bool {
+	return hint.SelectOffset == other.SelectOffset &&
+		hint.TblName.L == other.TblName.L &&
+		(hint.DBName.L == other.DBName.L ||
+			hint.DBName.L == "*" || other.DBName.L == "*")
+}
+
+// ColumnString formats the HintedColumn as DBName.tableName[, columnNames].
+func (hint *HintedColumn) ColumnString() string {
+	columnList := make([]string, len(hint.Columns))
+	for i := range hint.Columns {
+		columnList[i] = hint.Columns[i].L
+	}
+	columnListString := strings.Join(columnList, ", ")
+	if columnListString != "" {
+		columnListString = fmt.Sprintf(", %s", columnListString)
+	}
+	return fmt.Sprintf("%s.%s%s", hint.DBName, hint.TblName, columnListString)
 }
 
 // Match checks whether the hint is matched with the given dbName and tblName.
@@ -771,6 +790,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		shuffleJoinTables                                                               []HintedTable
 		indexHintList, indexMergeHintList                                               []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
+		tiflashLMFilters                                                                []HintedColumn
 		preferAggType                                                                   uint
 		preferAggToCop                                                                  bool
 		timeRangeHint                                                                   ast.HintTimeRange
@@ -786,7 +806,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintTiFlashLMFilter, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -893,6 +913,24 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 				PushDownLookUp: pushDownLookUp,
 			})
+		case HintTiFlashLMFilter:
+			// TableOptimizerHint reuses Indexes to store the identifier list after the table name.
+			// For TIFLASH_LM_FILTER, these identifiers are column names instead of index names.
+			columns := hint.Indexes
+			if len(columns) == 0 {
+				warnHandler.SetHintWarning("The TIFLASH_LM_FILTER hint is not used correctly, please specify at least one column name.")
+				continue
+			}
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = pmodel.NewCIStr(currentDB)
+			}
+			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
+				DBName:       dbName,
+				TblName:      hint.Tables[0].TableName,
+				SelectOffset: hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+				Columns:      columns,
+			})
 		case HintReadFromStorage:
 			switch hint.HintData.(pmodel.CIStr).L {
 			case HintTiFlash:
@@ -973,6 +1011,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		IndexHintList:         indexHintList,
 		TiFlashTables:         tiflashTables,
 		TiKVTables:            tikvTables,
+		TiFlashLMFilters:      tiflashLMFilters,
 		PreferAggToCop:        preferAggToCop,
 		PreferAggType:         preferAggType,
 		IndexMergeHintList:    indexMergeHintList,
@@ -1133,6 +1172,7 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
+	warnings = append(warnings, collectUnmatchedColumnHintWarning(HintTiFlashLMFilter, hintInfo.TiFlashLMFilters)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexJoin.INLHJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.IndexJoin.INLMJTables)...)
@@ -1145,6 +1185,28 @@ func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintLeading, "", hintInfo.LeadingJoinOrder)...)
 	warnings = append(warnings, collectUnmatchedStorageHintWarning(hintInfo.TiFlashTables, hintInfo.TiKVTables)...)
 	return warnings
+}
+
+func collectUnmatchedColumnHintWarning(hintType string, columnHints []HintedColumn) (warnings []string) {
+	for _, hint := range columnHints {
+		if !hint.Matched {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintType,
+				hint.ColumnString(),
+				hint.DBName,
+				hint.TblName,
+			)
+			warnings = append(warnings, errMsg)
+		}
+	}
+	return warnings
+}
+
+func getHintTableQBName(hint *ast.TableOptimizerHint) pmodel.CIStr {
+	if len(hint.Tables) > 0 && hint.Tables[0].QBName.L != "" {
+		return hint.Tables[0].QBName
+	}
+	return hint.QBName
 }
 
 func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []string) {

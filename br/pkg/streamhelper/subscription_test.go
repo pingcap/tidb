@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,6 +44,22 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 		last = len(sub.Events())
 		return noProg
 	}, 3*time.Second, 100*time.Millisecond)
+}
+
+func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+	t.Helper()
+	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				observed.Merge(event)
+			default:
+				return observed.MinValue() == checkpoint
+			}
+		}
+	}, 3*time.Second, 100*time.Millisecond)
+	return observed
 }
 
 func TestSubBasic(t *testing.T) {
@@ -170,12 +187,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {
@@ -286,10 +299,10 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
 	defer sub.Drop()
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	req.Eventually(func() bool {
+	req.NoError(utils.WaitUntil(ctx, func() bool {
 		err := sub.PendingErrors()
 		return err != nil && strings.Contains(err.Error(), "while receiving from")
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Millisecond, 3*time.Second))
 
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
@@ -318,16 +331,21 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter(manyRegions(0, 1500)...)
 	installSubscribeSupport(c)
+	// Prepare the checkpoints before starting the subscription idle watchdogs.
+	c.advanceCheckpoints()
 
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
 	defer sub.Drop()
 	req.NoError(sub.UpdateStoreTopology(ctx))
-
-	c.advanceCheckpoints()
 	c.flushAll()
 
-	req.Eventually(func() bool {
+	// Leave the output undrained so forwarding events blocks on the full channel.
+	req.NoError(utils.WaitUntil(ctx, func() bool {
+		return len(sub.Events()) == cap(sub.Events())
+	}, 10*time.Millisecond, 3*time.Second))
+	// Poll synchronously so a timed-out predicate cannot race with Drop.
+	req.NoError(utils.WaitUntil(ctx, func() bool {
 		err := sub.PendingErrors()
 		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Millisecond, 3*time.Second))
 }

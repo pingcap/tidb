@@ -118,7 +118,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
@@ -137,7 +137,7 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 }
 
 func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	exists, err := domain.CheckPlanReplayerTaskExists(ctx1, e.Ctx(), e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest)
 	if err != nil {
 		return err
@@ -187,6 +187,10 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {
 		return err
+	}
+	if e.HistoricalStatsTS > 0 {
+		// The dump runs other statements in this session and replaces its StmtCtx, so warn after it.
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(variable.ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs("PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP"))
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
 	return nil

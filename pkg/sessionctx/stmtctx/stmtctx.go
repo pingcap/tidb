@@ -268,8 +268,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -345,6 +348,11 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// MatchSQLBindingCacheKey is the AST node used to match the SQL binding.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache caches the binding match result for the current statement.
+	MatchSQLBindingCache any
 
 	// ExecRetryCount records the number of retries for executing the statement.
 	// It is set after ExecStmt execution and currently only used in the Slow Log phase

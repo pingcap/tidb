@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -386,6 +387,27 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 		require.Equal(t, ca.best, ToString(p), comment)
 		join, _ := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
 		require.Equal(t, ca.joinType, join.JoinType.String(), comment)
+	}
+
+	for _, keepJoinKey := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keepJoinKey=%t", keepJoinKey), func(t *testing.T) {
+			s.sctx.GetSessionVars().AlwaysKeepJoinKey = keepJoinKey
+			stmt, err := s.p.ParseOneStmt("select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t1.a = 1)", "", "")
+			require.NoError(t, err)
+			nodeW := resolve.NewNodeW(stmt)
+			p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+			require.NoError(t, err)
+			p, err = logicalOptimize(ctx, rule.FlagDecorrelate|rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+			require.NoError(t, err)
+			join := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalJoin)
+			right := join.Children()[1].(*logicalop.DataSource)
+			require.Equal(t, "[eq(1, test.t.a)]", expression.StringifyExpressionsWithCtx(s.ctx.GetExprCtx().GetEvalCtx(), right.PushedDownConds))
+			if keepJoinKey {
+				require.Len(t, join.EqualConditions, 1)
+			} else {
+				require.Empty(t, join.EqualConditions)
+			}
+		})
 	}
 }
 
@@ -1165,7 +1187,28 @@ func TestAggPrune(t *testing.T) {
 func TestVisitInfo(t *testing.T) {
 	t.Run("test non-column privilege visit info", testNormalVisitInfo)
 	t.Run("test column privilege visit info", testColumnPrivilegeVisitInfo)
+	t.Run("test raw select visit info retains fallback", testRawSelectVisitInfoRetainsFallback)
 	t.Run("test column privilege visit info with PointGet", testColumnPrivilegePointGetVisitInfo)
+}
+
+func testRawSelectVisitInfoRetainsFallback(t *testing.T) {
+	const sql = "SELECT a FROM t"
+	s := createPlannerSuite()
+	stmt, err := s.p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	require.NoError(t, Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is})))
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+
+	checkRawVisitInfo(t, builder.visitInfo, []visitInfo{
+		{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+		{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+	}, sql)
 }
 
 func testNormalVisitInfo(t *testing.T) {
@@ -2584,14 +2627,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT count(a) FROM t`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
 		{
@@ -2623,8 +2664,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
 
@@ -3045,7 +3084,27 @@ func unique(v []visitInfo) []visitInfo {
 	return v[:len(v)-repeat]
 }
 
+// effectiveVisitInfoForTest ignores intentionally retained fallback SELECT
+// requirements when a concrete column requirement exists for the same table.
+func effectiveVisitInfoForTest(vs []visitInfo) []visitInfo {
+	withConcreteColumn := make(map[[2]string]struct{}, len(vs))
+	for _, v := range vs {
+		if v.privilege == mysql.SelectPriv && v.column != "" && v.column != "*" {
+			withConcreteColumn[[2]string{v.db, v.table}] = struct{}{}
+		}
+	}
+	return slices.DeleteFunc(vs, func(v visitInfo) bool {
+		_, concrete := withConcreteColumn[[2]string{v.db, v.table}]
+		return concrete && v.privilege == mysql.SelectPriv && v.column == "*"
+	})
+}
+
 func checkVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
+	actual = effectiveVisitInfoForTest(actual)
+	checkRawVisitInfo(t, actual, expected, comment)
+}
+
+func checkRawVisitInfo(t *testing.T, actual, expected []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(actual))
 	sort.Sort(visitInfoArray(expected))
 	actual = unique(actual)
@@ -3200,6 +3259,95 @@ func TestNameResolver(t *testing.T) {
 			require.NoError(t, err)
 		} else {
 			require.EqualError(t, err, test.err)
+		}
+	}
+
+	// Wide select lists (at least projNameIndexThreshold fields and input names;
+	// t has 12 columns) resolve their fields through the projection name index.
+	// Check when the index is used, that lookups fall back to scanning once a
+	// subquery in the select list grows the input plan (and so its names), that
+	// a nested wide projection inside such a subquery uses its own index, that
+	// the index is restored afterwards, and that every field still resolves to
+	// the right input column.
+	type lookup struct {
+		tbl     string
+		indexed bool
+	}
+	var lookups []lookup
+	fieldNameLookupHookForTest = func(v *ast.ColumnName, indexed bool) {
+		lookups = append(lookups, lookup{v.Table.L, indexed})
+	}
+	defer func() { fieldNameLookupHookForTest = nil }()
+	for _, tc := range []struct {
+		sql string
+		// indexed gives, per table alias, how many lookups the index served
+		// (exactly; no other lookup may use it). scanned gives, for the listed
+		// aliases, how many lookups fell back to scanning.
+		indexed, scanned map[string]int
+		err              string
+	}{
+		{
+			sql:     "select t1.*, t2.*, t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "t3": 12},
+		},
+		{
+			// The correlated scalar subquery adds an Apply, so the fields after it
+			// resolve against a different names slice and must scan.
+			sql:     "select t1.*, t2.*, (select max(s.a) from t s where s.b = t1.c), t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12},
+			scanned: map[string]int{"t3": 12},
+		},
+		{
+			// The EXISTS subquery builds its own wide projection, which indexes its
+			// own input names; the outer index is restored after it.
+			sql:     "select t1.*, t2.*, exists (select s1.*, s2.*, s3.* from t s1, t s2, t s3 where s1.a = t1.a), t3.* from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "s1": 12, "s2": 12, "s3": 12},
+			scanned: map[string]int{"t3": 12},
+		},
+		{
+			sql:     "select t1.*, t2.*, t3.*, a from t t1, t t2, t t3",
+			indexed: map[string]int{"t1": 12, "t2": 12, "t3": 12, "": 1},
+			err:     "[planner:1052]Column 'a' in field list is ambiguous",
+		},
+	} {
+		comment := fmt.Sprintf("for %s", tc.sql)
+		lookups = lookups[:0]
+		stmt, err := s.GetParser().ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, comment)
+		builder, _ := NewPlanBuilder().Init(s.GetSCtx().GetPlanCtx(), s.GetIS(), hint.NewQBHintHandler(nil))
+		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+		require.Nil(t, builder.projNameIndex, comment)
+		gotIndexed, gotScanned := map[string]int{}, map[string]int{}
+		for _, l := range lookups {
+			if l.indexed {
+				gotIndexed[l.tbl]++
+			} else {
+				gotScanned[l.tbl]++
+			}
+		}
+		require.Equal(t, tc.indexed, gotIndexed, comment)
+		for tbl, n := range tc.scanned {
+			require.Equal(t, n, gotScanned[tbl], "%s table %s", comment, tbl)
+		}
+		if tc.err != "" {
+			require.EqualError(t, err, tc.err, comment)
+			continue
+		}
+		require.NoError(t, err, comment)
+		// Every output column of the top projection is the input column with the
+		// same table and column name.
+		proj, ok := p.(*logicalop.LogicalProjection)
+		require.True(t, ok, comment)
+		child := proj.Children()[0]
+		for i, expr := range proj.Exprs {
+			col, ok := expr.(*expression.Column)
+			if !ok || proj.OutputNames()[i].TblName.L == "" {
+				continue
+			}
+			j := child.Schema().ColumnIndex(col)
+			require.GreaterOrEqual(t, j, 0, "%s field %d", comment, i)
+			require.Equal(t, proj.OutputNames()[i].TblName.L, child.OutputNames()[j].TblName.L, "%s field %d", comment, i)
+			require.Equal(t, proj.OutputNames()[i].ColName.L, child.OutputNames()[j].ColName.L, "%s field %d", comment, i)
 		}
 	}
 }
@@ -3368,6 +3516,8 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	}
 
 	sctx := MockContext()
+	// Plan assertions inspect literal frame bounds.
+	sctx.GetSessionVars().EnableRedactLog = variable.Off
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

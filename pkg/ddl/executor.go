@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -452,7 +453,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 
 func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	done := false
-	killed := sctx.GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted
+	killed := exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal())
 	if killed {
 		return true, 1
 	}
@@ -462,7 +463,17 @@ func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
 	return done, 0
 }
 
-func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+// convertKillFlag maps killed!=0 to ErrQueryInterrupted for batch
+// ALTER DATABASE SET TIFLASH REPLICA. killed==0 is the failpoint-only abort
+// and still returns nil.
+func convertKillFlag(killed uint32) error {
+	if killed != 0 {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	return nil
+}
+
+func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool, uint32) {
 	configRetry := tiflashCheckPendingTablesRetry
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
@@ -474,13 +485,13 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
-			return true, originVersion, pendingCount, false
+			return true, originVersion, pendingCount, false, killed
 		}
 		originVersion, pendingCount = e.getPendingTiFlashTableCount(originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount < threshold {
 			// If there are not many unavailable tables, we don't need a force check.
-			return false, originVersion, pendingCount, false
+			return false, originVersion, pendingCount, false, 0
 		}
 		logutil.DDLLogger().Info("too many unavailable tables, wait",
 			zap.Uint32("threshold", threshold),
@@ -494,7 +505,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 	logutil.DDLLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
 	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
 	// so there is a force check immediately after that.
-	return false, originVersion, pendingCount, true
+	return false, originVersion, pendingCount, true, 0
 }
 
 func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -539,7 +550,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-			return nil
+			return convertKillFlag(killed)
 		}
 
 		tbReplicaInfo := tbl.TiFlashReplica
@@ -571,10 +582,11 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
 			finished := false
-			finished, originVersion, pendingCount, forceCheck = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			var killed uint32
+			finished, originVersion, pendingCount, forceCheck, killed = e.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
 			if finished {
-				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
-				return nil
+				logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+				return convertKillFlag(killed)
 			}
 		}
 
@@ -595,14 +607,18 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		args := &model.SetTiFlashReplicaArgs{TiflashReplica: *tiflashReplica}
 		err := e.doDDLJob2(sctx, job, args)
 		if err != nil {
-			oneFail = tbl.ID
-			fail++
 			logutil.DDLLogger().Info("processing schema table error",
 				zap.Int64("tableID", tbl.ID),
 				zap.Int64("schemaID", dbInfo.ID),
 				zap.Stringer("tableName", tbl.Name),
 				zap.Stringer("schemaName", dbInfo.Name),
 				zap.Error(err))
+			// KILL cancelled this job; return the error and do not process remaining tables.
+			if dbterror.ErrCancelledDDLJob.Equal(err) || exeerrors.ErrQueryInterrupted.Equal(err) {
+				return err
+			}
+			oneFail = tbl.ID
+			fail++
 		} else {
 			succ++
 		}
@@ -1438,6 +1454,11 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
 	}
+	snapshotMeta := meta.NewReader(e.store.GetSnapshot(kv.NewVersion(recoverTableInfo.SnapshotTS)))
+	if err := checkRecoverTableForeignKeys(is, schema.Name.L, recoverTableInfo, snapshotMeta); err != nil {
+		return err
+	}
+	failpoint.InjectCall("afterCheckRecoverTableForeignKeys", recoverTableInfo)
 
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
@@ -3093,6 +3114,10 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 
 	ntMeta := nt.Meta()
 
+	if util.IsMemOrSysDB(ntSchema.Name.L) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
+	}
+
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -4182,6 +4207,9 @@ func (e *executor) dropTableObject(
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
 		}
+		if fkCheck {
+			objects = orderDropTableObjectsByForeignKey(is, objects)
+		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropView
@@ -4262,7 +4290,9 @@ func (e *executor) dropTableObject(
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
 		args := &model.DropTableArgs{
-			Identifiers: objectIdents,
+			// The owner may ignore a self-reference, but it must not assume that
+			// later objects in this statement have already been dropped.
+			Identifiers: []ast.Ident{fullti},
 			FKCheck:     fkCheck,
 		}
 
@@ -4273,6 +4303,7 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("afterDropTableObject", tableInfo.Meta().Name.L)
 
 		// unlock table after drop
 		if tableObjectType != tableObject {
@@ -4295,6 +4326,74 @@ func (e *executor) dropTableObject(
 		}
 	}
 	return nil
+}
+
+// orderDropTableObjectsByForeignKey orders children before their referenced
+// parents. Each table is dropped by an independent DDL job, so this prevents a
+// referring child from being renamed between an earlier parent job and its own
+// later job. Cycles retain their input order and are rejected by the owner-side
+// foreign-key check unless foreign_key_checks is disabled.
+func orderDropTableObjectsByForeignKey(is infoschema.InfoSchema, objects []*ast.TableName) []*ast.TableName {
+	objectIndex := make(map[schemaAndTable]int, len(objects))
+	for i, object := range objects {
+		objectIndex[schemaAndTable{schema: object.Schema.L, table: object.Name.L}] = i
+	}
+
+	children := make([][]int, len(objects))
+	indegree := make([]int, len(objects))
+	edges := make(map[[2]int]struct{})
+	for childIdx, child := range objects {
+		childTable, err := is.TableByName(context.Background(), child.Schema, child.Name)
+		if err != nil {
+			continue
+		}
+		for _, fk := range childTable.Meta().ForeignKeys {
+			if fk.Version < model.FKVersion1 {
+				continue
+			}
+			parentSchema := fk.RefSchema.L
+			if parentSchema == "" {
+				parentSchema = child.Schema.L
+			}
+			parentIdx, ok := objectIndex[schemaAndTable{schema: parentSchema, table: fk.RefTable.L}]
+			if !ok || childIdx == parentIdx {
+				continue
+			}
+			edge := [2]int{childIdx, parentIdx}
+			if _, ok := edges[edge]; ok {
+				continue
+			}
+			edges[edge] = struct{}{}
+			children[childIdx] = append(children[childIdx], parentIdx)
+			indegree[parentIdx]++
+		}
+	}
+
+	ordered := make([]*ast.TableName, 0, len(objects))
+	processed := make([]bool, len(objects))
+	for len(ordered) < len(objects) {
+		selected := -1
+		for i := range objects {
+			if !processed[i] && indegree[i] == 0 {
+				selected = i
+				break
+			}
+		}
+		if selected < 0 {
+			for i, object := range objects {
+				if !processed[i] {
+					ordered = append(ordered, object)
+				}
+			}
+			break
+		}
+		processed[selected] = true
+		ordered = append(ordered, objects[selected])
+		for _, parentIdx := range children[selected] {
+			indegree[parentIdx]--
+		}
+	}
+	return ordered
 }
 
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
@@ -4707,6 +4806,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
@@ -4733,6 +4836,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			AutoPreSplit:            autoPreSplit,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4985,6 +5090,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
 	global := false
@@ -5019,7 +5129,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			AutoPreSplit:            autoPreSplit,
 			ConditionString:         conditionString,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5152,6 +5264,68 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Int("maxNodeCount", m.MaxNodeCount),
 	)
 	return nil
+}
+
+func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
+	if indexOpt == nil {
+		return nil, false, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, indexOpt.AutoPreSplit, nil
+	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &model.IndexArgSplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, false, nil
+	}
+
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, false, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, false, errors.Errorf("Split index region num should be greater than 0")
+	}
+	return &model.IndexArgSplitOpt{
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
+	}, false, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -6790,6 +6964,15 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
+// isRetryableDDLCancelErr reports whether DoDDLJobWrapper should call
+// CancelJobsBySystem again. Finished, cannot-cancel, and not-found results are
+// terminal for the cancel command.
+func isRetryableDDLCancelErr(err error) bool {
+	return !dbterror.ErrCancelFinishedDDLJob.Equal(err) &&
+		!dbterror.ErrCannotCancelDDLJob.Equal(err) &&
+		!dbterror.ErrDDLJobNotFound.Equal(err)
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -6840,7 +7023,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	failpoint.InjectCall("waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
-	sessVars.StmtCtx.IsDDLJobInQueue = true
+	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
 
 	ddlAction := job.Type
 	if result.merged {
@@ -6903,7 +7086,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+		if exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal()) {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 				return context.Canceled
@@ -6914,16 +7097,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
-				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				e.sessPool.Put(se)
-				if len(errs) > 0 {
-					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-				}
 				if err != nil {
 					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
 					continue
 				}
+				// CancelJobsBySystem returns one result per requested job; only
+				// non-nil entries need error handling.
+				if len(errs) > 0 && errs[0] != nil {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					if isRetryableDDLCancelErr(errs[0]) {
+						continue
+					}
+				}
+				// Clear DDLJobID so CancelJobsBySystem is not issued again. The wait
+				// loop continues until the job is in history.
+				sessVars.StmtCtx.DDLJobID = 0
 			}
 		}
 

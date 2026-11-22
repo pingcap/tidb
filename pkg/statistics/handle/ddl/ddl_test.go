@@ -117,6 +117,11 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// A panic in handling an event does not escape HandleDDLEvent. The event has no table info.
+	require.NotPanics(t, func() {
+		require.NoError(t, h.HandleDDLEvent(context.Background(), nil, notifier.NewDropTableEvent(nil)))
+	})
 }
 
 func TestSystemTableDDLHasNoEvent(t *testing.T) {
@@ -150,9 +155,10 @@ func TestSystemTableDDLHasNoEvent(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (6))")
 	<-h.DDLEventCh()
 	testKit.MustExec("create table mysql.test3 (c1 int, c2 int, index idx(c1, c2))")
-	// Exchange partition.
-	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
-	testKit.MustExec("alter table t exchange partition p0 with table mysql.test3")
+	// Exchange partition with a system table is now rejected by the DDL guard.
+	err := testKit.ExecToErr("alter table t exchange partition p0 with table mysql.test3")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.test3'")
 	require.Len(t, h.DDLEventCh(), 0)
 }
 
@@ -1347,21 +1353,42 @@ func TestDropSchema(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int)")
+	tk.MustExec(`
+		create table pt (c1 int)
+		partition by range (c1) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		)
+	`)
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("insert into pt values (1), (11)")
+	tk.MustExec("analyze table t, pt")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
+	partitionedTbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("pt"))
+	require.NoError(t, err)
+	partitionedTableInfo := partitionedTbl.Meta()
+	require.NotNil(t, partitionedTableInfo.Partition)
+	require.Len(t, partitionedTableInfo.Partition.Definitions, 2)
+	statsMetaVersion := func(tableID int64) string {
+		rows := tk.MustQuery(
+			"select version from mysql.stats_meta where table_id = ?",
+			tableID,
+		).Rows()
+		require.Len(t, rows, 1)
+		return rows[0][0].(string)
+	}
 	// Check the current stats meta version.
-	rows := tk.MustQuery(
-		"select version from mysql.stats_meta where table_id = ?",
-		tableInfo.ID,
-	).Rows()
-	require.Len(t, rows, 1)
-	version := rows[0][0].(string)
+	tableVersion := statsMetaVersion(tableInfo.ID)
+	partitionedGlobalVersion := statsMetaVersion(partitionedTableInfo.ID)
+	partitionVersions := make(map[int64]string, len(partitionedTableInfo.Partition.Definitions))
+	for _, def := range partitionedTableInfo.Partition.Definitions {
+		partitionVersions[def.ID] = statsMetaVersion(def.ID)
+	}
 
 	tk.MustExec("drop database test")
 
@@ -1371,12 +1398,11 @@ func TestDropSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check the stats meta version after drop schema.
-	rows = tk.MustQuery(
-		"select version from mysql.stats_meta where table_id = ?",
-		tableInfo.ID,
-	).Rows()
-	require.Len(t, rows, 1)
-	require.NotEqual(t, version, rows[0][0].(string))
+	require.NotEqual(t, tableVersion, statsMetaVersion(tableInfo.ID))
+	require.NotEqual(t, partitionedGlobalVersion, statsMetaVersion(partitionedTableInfo.ID))
+	for _, def := range partitionedTableInfo.Partition.Definitions {
+		require.NotEqual(t, partitionVersions[def.ID], statsMetaVersion(def.ID))
+	}
 }
 
 func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {

@@ -60,8 +60,8 @@ var (
 	// UseCurrentSessionOpt to make sure the sql is executed in current session.
 	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 
-	// StatsCtx is used to mark the request is from stats module.
-	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// StatsCtx is used to mark the request as internal stats foreground priority.
+	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 )
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
@@ -82,7 +82,11 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	// Return a panic as an error, because callers use the results of f when the error is nil.
+	// For example, TableStatsFromStorage would return the cached table as newly loaded stats.
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", func() {
+		err = errors.New("panic in CallWithSCtx")
+	}, false)
 	se, err := pool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -228,10 +232,17 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
+	fReturned := false
 	defer func() {
+		// If f panics, this call runs while err is still nil.
+		// Roll back then, so that the panic does not commit the partial writes of f.
+		if !fReturned {
+			err = errors.New("panic in WrapTxn")
+		}
 		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
+	fReturned = true
 	return
 }
 
@@ -263,9 +274,6 @@ func ExecWithCtx(
 
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
-	failpoint.Inject("ExecRowsTimeout", func() {
-		failpoint.Return(nil, nil, errors.New("inject timeout error"))
-	})
 	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
 }
 
@@ -276,6 +284,9 @@ func ExecRowsWithCtx(
 	sql string,
 	args ...any,
 ) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	failpoint.Inject("ExecRowsTimeout", func() {
+		failpoint.Return(nil, nil, errors.New("inject timeout error"))
+	})
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(
@@ -290,8 +301,13 @@ func ExecRowsWithCtx(
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
 func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	return ExecWithOptsWithCtx(StatsCtx, sctx, opts, sql, args...)
+}
+
+// ExecWithOptsWithCtx is a helper function to execute sql with context and options and return rows and fields.
+func ExecWithOptsWithCtx(ctx context.Context, sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
-	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
+	return sqlExec.ExecRestrictedSQL(ctx, opts, sql, args...)
 }
 
 // DurationToTS converts duration to timestamp.

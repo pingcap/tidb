@@ -188,6 +188,7 @@ var tokenMap = map[string]int{
 	"STATS_SAMPLE_RATE":        statsSampleRate,
 	"STATS_COL_CHOICE":         statsColChoice,
 	"STATS_COL_LIST":           statsColList,
+	"AUTO":                     auto,
 	"AUTO_ID_CACHE":            autoIdCache,
 	"AUTO_INCREMENT":           autoIncrement,
 	"AUTO_RANDOM":              autoRandom,
@@ -1087,6 +1088,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                  hintLeading,
 	"SEMI_JOIN_REWRITE":        hintSemiJoinRewrite,
 	"NO_DECORRELATE":           hintNoDecorrelate,
+	"TIFLASH_LM_FILTER":        hintTiFlashLMFilter,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

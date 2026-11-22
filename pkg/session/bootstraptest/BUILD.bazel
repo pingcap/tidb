@@ -8,13 +8,14 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 16,
+    shard_count = 18,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/server/handler",
@@ -22,6 +23,7 @@ go_test(
         "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/structure",
         "//pkg/testkit",  #keep
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",

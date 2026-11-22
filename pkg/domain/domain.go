@@ -1384,6 +1384,7 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 func (do *Domain) Init(
 	sysExecutorFactory func(*Domain) (pools.Resource, error),
 	ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker,
+	infoSyncerOptions ...infosync.SyncerOption,
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
@@ -1455,7 +1456,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, infoSyncerOptions...)
 	if err != nil {
 		return err
 	}
@@ -1663,6 +1664,10 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	if err != nil {
 		return err
 	}
+	if serverInfo.DisableRPC {
+		variable.SetEnableAdaptiveReplicaRead(false)
+		return nil
+	}
 	zone := ""
 	for k, v := range serverInfo.Labels {
 		if k == placement.DCLabelKey && v != "" {
@@ -1707,6 +1712,9 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	}
 	svrIDsInThisZone := make([]string, 0)
 	for _, s := range servers {
+		if s.DisableRPC {
+			continue
+		}
 		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
 			if _, ok := storeZones[v]; ok {
 				storeZones[v]++
@@ -2265,7 +2273,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
@@ -2821,21 +2829,34 @@ func (do *Domain) gcStatsWorker() {
 			do.gcStatsWorkerExitPreprocessing()
 			return
 		case <-gcStatsTicker.C:
-			if !do.statsOwner.IsOwner() {
-				continue
-			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
-			if err != nil {
-				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
-			}
-			do.CheckAutoAnalyzeWindows()
+			callWithRecover("gcStatsWorker", func() {
+				if !do.statsOwner.IsOwner() {
+					return
+				}
+				err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
+				if err != nil {
+					logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
+				}
+				do.CheckAutoAnalyzeWindows()
+			})
 		case <-readMemTicker.C:
-			memory.ForceReadMemStats()
-			do.StatsHandle().StatsCache.TriggerEvict()
+			callWithRecover("gcStatsWorker", func() {
+				memory.ForceReadMemStats()
+				do.StatsHandle().StatsCache.TriggerEvict()
+			})
 		case <-updateStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
+			callWithRecover("gcStatsWorker", func() {
+				statsHandle.UpdateStatsHealthyMetrics()
+			})
 		}
 	}
+}
+
+// callWithRecover calls fn and recovers a panic in it. gcStatsWorker uses it for each
+// tick, because the worker does not restart after it exits.
+func callWithRecover(funcInfo string, fn func()) {
+	defer util.Recover(metrics.LabelDomain, funcInfo, nil, false)
+	fn()
 }
 
 func (do *Domain) dumpColStatsUsageWorker() {

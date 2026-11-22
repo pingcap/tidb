@@ -959,6 +959,12 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
 	} else if p.containVirtualColumn(copTask.Plan().Schema().Columns) {
 		return false
 	}
+	// A double read may push TopN to the table side after checking the index
+	// schema above. Virtual columns on that side are evaluated by TiDB, so TiKV
+	// cannot sort on them correctly.
+	if copTask.tablePlan != nil && p.containVirtualColumn(copTask.tablePlan.Schema().Columns) {
+		return false
+	}
 	return true
 }
 
@@ -1087,6 +1093,16 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
+			if copTask.tablePlan == nil {
+				// Keep TopN at root when the order-by columns cannot be resolved against the
+				// index plan but the reader still has no table-side after finishing the index plan.
+				// This can happen when a virtual generated column is covered by an expression index.
+				rootTask := t.ConvertToRootTask(p.SCtx())
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(p, rootTask)
+			}
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}

@@ -67,6 +67,13 @@ func TestUptime(t *testing.T) {
 }
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
+	// CreateMockStore in other tests calls DisableStats4Test and leaves the
+	// process-wide stats lease negative. Stats init, which holds the GC-blocking
+	// transaction, only runs when the lease is positive.
+	origStatsLease := session.GetStatsLease()
+	session.SetStatsLease(3 * time.Second)
+	defer session.SetStatsLease(origStatsLease)
+
 	origConfig := config.GetGlobalConfig()
 	defer func() {
 		config.StoreGlobalConfig(origConfig)

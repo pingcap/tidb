@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -105,17 +106,17 @@ func TestIssue54535(t *testing.T) {
 
 	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
 		Check(testkit.Rows(
-			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
-			"└─IndexJoin_18 9990.00 root  inner join, inner:HashAgg_16, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
-			"  ├─TableReader_45(Build) 9990.00 root  data:Selection_44",
-			"  │ └─Selection_44 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
-			"  │   └─TableFullScan_43 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-			"  └─HashAgg_16(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
-			"    └─IndexLookUp_17 9990.00 root  ",
-			"      ├─Selection_14(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
-			"      │ └─IndexRangeScan_12 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
-			"      └─HashAgg_15(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
-			"        └─TableRowIDScan_13 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
+			"Projection_10 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
+			"└─IndexJoin_19 9990.00 root  inner join, inner:HashAgg_17, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
+			"  ├─TableReader_44(Build) 9990.00 root  data:Selection_43",
+			"  │ └─Selection_43 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
+			"  │   └─TableFullScan_42 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+			"  └─HashAgg_17(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"    └─IndexLookUp_18 9990.00 root  ",
+			"      ├─Selection_15(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
+			"      │ └─IndexRangeScan_13 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
+			"      └─HashAgg_16(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"        └─TableRowIDScan_14 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
 	// test for issues/55169
 	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
 	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
@@ -163,22 +164,22 @@ func TestIssues57583(t *testing.T) {
 	tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
 	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
-		"HashJoin_15 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
-		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
-		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"│ │   └─TableFullScan_31 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"│ └─TableReader_30(Probe) 9990.00 root  data:Selection_29",
-		"│   └─Selection_29 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"│     └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─HashAgg_16(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
-		"  └─HashJoin_17 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"    ├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"    │ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
-		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		"HashJoin_17 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
+		"├─HashJoin_28(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"│ ├─TableReader_35(Build) 9990.00 root  data:Selection_34",
+		"│ │ └─Selection_34 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"│ │   └─TableFullScan_33 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│ └─TableReader_32(Probe) 9990.00 root  data:Selection_31",
+		"│   └─Selection_31 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"│     └─TableFullScan_30 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─HashAgg_18(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+		"  └─HashJoin_19 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"    ├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+		"    │ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"    │   └─TableFullScan_24 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─TableReader_23(Probe) 9990.00 root  data:Selection_22",
+		"      └─Selection_22 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"        └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
 
 func TestIssue59643(t *testing.T) {
@@ -417,7 +418,7 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 	}
 
 	// issue-64854-in-subquery-inside-not-in-list
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0")
 		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
@@ -428,4 +429,212 @@ func TestIssue67534PointUpdateAssignmentCasting(t *testing.T) {
 				(((t0.c1 is false)),
 				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
 	})
+}
+
+// TestDuplicateExpressionIndexOrdering covers the case where several expression indexes on one
+// table repeat the same expression. DDL creates one hidden generated column per index, and the
+// ORDER BY expression is substituted with only one of them, so the chosen plan used to depend on
+// Go map iteration order and flipped between plan builds of the same statement.
+func TestDuplicateExpressionIndexOrdering(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dup_expr_idx")
+	tk.MustExec(`create table t_dup_expr_idx (
+		ns varchar(64) not null,
+		s  varchar(64),
+		st int not null,
+		k  int not null,
+		primary key (ns, st))`)
+	tk.MustExec("create index idx_default on t_dup_expr_idx (ns, (lower(s)), st)")
+	tk.MustExec("create index idx_k on t_dup_expr_idx (ns, k, (lower(s)), st)")
+	tk.MustExec("create index idx_s on t_dup_expr_idx (ns, s, (lower(s)), st)")
+	tk.MustExec("create index idx_st on t_dup_expr_idx (ns, st, (lower(s)))")
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t_dup_expr_idx values ('ns%d', 'S%d', %d, %d)", i%4, i, i, i%5))
+	}
+	tk.MustExec("analyze table t_dup_expr_idx")
+
+	// Reports the index that supplies the ordering, or "sorted" when the plan had to sort
+	// instead. Naming the index alone is not enough: a plan that scans the right index with
+	// keep order:false and sorts on top still reads the whole range.
+	orderingIndex := func(sql string) string {
+		name := "no-index"
+		for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+			op := fmt.Sprintf("%v", row[0])
+			if strings.Contains(op, "TopN") || strings.Contains(op, "Sort") {
+				return "sorted"
+			}
+			if !strings.Contains(op, "IndexRangeScan") {
+				continue
+			}
+			if !strings.Contains(fmt.Sprintf("%v", row[4]), "keep order:true") {
+				continue
+			}
+			obj := fmt.Sprintf("%v", row[3])
+			name = obj[strings.Index(obj, "index:")+len("index:"):]
+			name = name[:strings.Index(name, "(")]
+		}
+		return name
+	}
+
+	for _, c := range []struct{ sql, index string }{
+		// Only ns is bound, so the index that orders by the expression right after ns wins.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' order by lower(s), st limit 5", "idx_default"},
+		// k is bound too, so the expression is the next ordering column of idx_k.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' and k = 1 order by lower(s), st limit 5", "idx_k"},
+	} {
+		// Repeat: the bug reproduced only intermittently, in proportion to the number of
+		// duplicate-expression indexes.
+		for range 20 {
+			require.Equal(t, c.index, orderingIndex(c.sql), "sql: %s", c.sql)
+		}
+		require.Equal(t, c.index, orderingIndex("/* issue:70708 */ "+c.sql))
+	}
+}
+
+func TestExpressionIndexMergeSort(t *testing.T) {
+	t.Run("nullability", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(`create table t_order_null (
+			id int primary key, s varchar(20),
+			g varchar(20) as (lower(s)) virtual,
+			gn varchar(20) as (lower(s)) virtual not null,
+			key ig(g,id), key ign(gn,id))`)
+		// INSERT IGNORE coerces NULL to '' for gn, so the generated expressions
+		// alone do not establish that g and gn have the same index ordering.
+		tk.MustExec("insert ignore into t_order_null(id,s) values (1,''),(2,null),(3,'A')")
+		for _, sortCol := range []string{"g", "gn"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, index := range []string{"ig", "ign"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 3} {
+							suffix := fmt.Sprintf(" order by %s %s,id limit %d", sortCol, direction, limit)
+							want := tk.MustQuery("select id,s,g,gn from t_order_null ignore index(ig,ign)" + suffix).Rows()
+							sql := "select id,s,g,gn from t_order_null force index(" + index + ")" + suffix
+							require.Equal(t, want, tk.MustQuery(sql).Rows(), sql)
+						}
+					}
+				}
+			})
+		}
+	})
+	t.Run("unionIndexMerge", func(t *testing.T) {
+		for _, partitioned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+				ddl := `create table t_order_merge (
+					id int primary key, a int, b int, s varchar(20),
+					key ia(a,(lower(s))), key ib(b,(lower(s))))`
+				if partitioned {
+					ddl += ` partition by range(id) (partition p0 values less than (3), partition p1 values less than (maxvalue))`
+				}
+				tk.MustExec(ddl)
+				// id=3 is returned by both partial paths and must still be deduplicated.
+				tk.MustExec("insert into t_order_merge values (1,1,0,'B'),(2,0,1,'a'),(3,1,1,'C'),(4,2,0,'D'),(5,0,2,'e')")
+				for _, predicate := range []string{"a=1 or b=1", "a in (1,2) or b in (1,2)"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 5} {
+							suffix := fmt.Sprintf(" where %s order by lower(s) %s limit %d", predicate, direction, limit)
+							sql := "select /*+ use_index_merge(t_order_merge,ia,ib) */ id,s from t_order_merge" + suffix
+							want := tk.MustQuery("select id,s from t_order_merge ignore index(ia,ib)" + suffix).Rows()
+							tk.MustQuery(sql).Check(want)
+							plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+							require.Contains(t, plan, "IndexMerge", sql)
+							require.Contains(t, plan, "keep order:true", sql)
+							require.NotContains(t, plan, "TopN", sql)
+							require.NotContains(t, plan, "Sort", sql)
+						}
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("prefixColumns", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+		tk.MustExec(`create table t_merge_prefix (
+			id int primary key, s varchar(20),
+			g1 varchar(20) as (lower(s)) virtual,
+			g2 varchar(20) as (lower(s)) virtual,
+			g3 varchar(20) as (lower(s)) virtual,
+			key ix(g1(1), g2))
+			partition by range(id) (
+				partition p0 values less than (10),
+				partition p1 values less than (maxvalue))`)
+		tk.MustExec("insert into t_merge_prefix(id,s) values (1,'ab'),(11,'aa')")
+		// g1 exists in the index schema but only stores a prefix; g3 is absent.
+		// Both must use the complete g2 values for the cross-partition merge.
+		for _, sortCol := range []string{"g1", "g2", "g3"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, order := range []string{"asc", "desc"} {
+					want := testkit.Rows("11 aa aa", "1 ab ab")
+					if order == "desc" {
+						want = testkit.Rows("1 ab ab", "11 aa aa")
+					}
+					for _, limit := range []int{1, 2} {
+						// Keep the residual predicate on the table side to isolate sorting
+						// from prefix-index filtering and still build a point prefix range.
+						sql := "select id,s,g3 from t_merge_prefix force index(ix) " +
+							"where (g1='aa' and s='aa') or (g1='ab' and s='ab') " +
+							fmt.Sprintf("order by %s %s limit %d", sortCol, order, limit)
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.Contains(t, plan, "IndexLookUp", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Equal(t, want[:limit], tk.MustQuery(sql).Rows(), sql)
+					}
+				}
+			})
+		}
+	})
+	for _, partitioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+			ddl := `create table t_merge_expr (
+				id bigint primary key, ns int, s varchar(20),
+				g varchar(20) generated always as (lower(s)) virtual,
+				key ix(ns, (lower(s))))`
+			if partitioned {
+				ddl += ` partition by range(id) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue))`
+			}
+			tk.MustExec(ddl)
+			tk.MustExec("insert into t_merge_expr(id,ns,s) values (1,1,'B'),(11,1,'a'),(2,2,'D'),(12,2,'c')")
+			for _, predicate := range []string{"ns = 1", "ns in (1,2)"} {
+				for _, fields := range []string{"id, g", "id, s, g"} {
+					for _, order := range []string{"asc", "desc"} {
+						// g and the index's hidden column have different IDs. Covering scans
+						// merge output rows, while lookups merge rows from the index side.
+						suffix := " where " + predicate + " order by g " + order + " limit 3"
+						sql := "select " + fields + " from t_merge_expr force index(ix)" + suffix
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						if fields == "id, g" {
+							require.Contains(t, plan, "IndexReader", sql)
+						} else {
+							require.Contains(t, plan, "IndexLookUp", sql)
+						}
+						want := tk.MustQuery("select " + fields + " from t_merge_expr ignore index(ix)" + suffix).Rows()
+						tk.MustQuery(sql).Check(want)
+					}
+				}
+			}
+		})
+	}
 }

@@ -42,6 +42,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReverseExpressionSortNullableColumn(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table reverse_sort (id int primary key, c double, key i(c))")
+	tk.MustExec("insert into reverse_sort values (1,null),(2,0.3),(3,0.7),(4,0.8)")
+	for _, expr := range []string{"-c", "0-c", "-(c+1)"} {
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s desc,id", expr)).Check(testkit.Rows("2", "3", "4", "1"))
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s,id", expr)).Check(testkit.Rows("1", "4", "3", "2"))
+	}
+	// An even number of reversals preserves both value order and NULL order.
+	tk.MustQuery("select id from reverse_sort order by -(-c) desc,id").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustExec("delete from reverse_sort where c is null")
+	tk.MustExec("alter table reverse_sort modify c double not null")
+	tk.MustQuery("select id from reverse_sort order by -c desc,id").Check(testkit.Rows("2", "3", "4"))
+	plan := tk.MustQuery("explain format='brief' select id from reverse_sort use index(i) order by -c desc,id").Rows()
+	require.NotContains(t, fmt.Sprint(plan), "Sort")
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1838,6 +1856,255 @@ func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	tk.MustQuery("select * from t1 where exists (select * from t3 where t3.a = t1.a)").Check(testkit.Rows("2", "4"))
 }
 
+// TestLateralJoinCardinality verifies the row count estimated for a LATERAL join. The derived table
+// runs once per outer row and its stats already account for the correlated predicates, so the join
+// produces the product of the two sides. The estimate must not be scaled down by the NDV of the
+// correlated columns, which would apply their selectivity a second time.
+func TestLateralJoinCardinality(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tl_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tl_outer (id int primary key, k1 int not null, key ik (k1))")
+	var inner, outer strings.Builder
+	for group := range 30 {
+		for i := range 50 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", group, group*1000+i)
+		}
+	}
+	// 600 outer rows over the same 30 distinct keys, so each key drives 20 executions.
+	for i := range 600 {
+		if outer.Len() > 0 {
+			outer.WriteString(",")
+		}
+		fmt.Fprintf(&outer, "(%d,%d)", i, i%30)
+	}
+	tk.MustExec("insert into tl_inner values " + inner.String())
+	tk.MustExec("insert into tl_outer values " + outer.String())
+	tk.MustExec("analyze table tl_inner all columns")
+	tk.MustExec("analyze table tl_outer all columns")
+
+	// applyRowCounts returns the estimated and actual row counts of the Apply operator.
+	applyRowCounts := func(sql string) (float64, float64) {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				continue
+			}
+			est, err := strconv.ParseFloat(fmt.Sprintf("%v", row[1]), 64)
+			require.NoError(t, err)
+			act, err := strconv.ParseFloat(fmt.Sprintf("%v", row[2]), 64)
+			require.NoError(t, err)
+			return est, act
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return 0, 0
+	}
+
+	// A scalar aggregate returns exactly one row per outer row.
+	est, act := applyRowCounts("select o.k1, f.m from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ min(t2.k2) as m from tl_inner t2 where t2.k1 = o.k1) f")
+	require.Equal(t, float64(600), act)
+	require.Equal(t, act, est, "a lateral scalar aggregate produces one row per outer row")
+
+	// LIMIT 3 returns three rows per outer row, since every key has more than three matches.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2 from tl_inner t2 where t2.k1 = o.k1 " +
+		"order by t2.k2 limit 3) f")
+	require.Equal(t, float64(1800), act)
+	require.Equal(t, act, est, "a lateral LIMIT n produces n rows per outer row")
+
+	// An unbounded inner plan is not special either: grouping by k2 yields one row per matching
+	// row of tl_inner, so the join returns every matched row.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2, count(*) c from tl_inner t2 " +
+		"where t2.k1 = o.k1 group by t2.k2) f")
+	require.Equal(t, float64(30000), act)
+	require.Equal(t, act, est, "a lateral GROUP BY produces one row per group per outer row")
+}
+
+// TestApplyCacheEnabledByOuterRowCount checks that the Apply cache is enabled from how often the
+// correlated values repeat across outer rows, which is what decides whether a lookup can hit. A
+// LATERAL join may emit several rows per outer row, and those extra rows must not be mistaken for
+// extra chances to hit the cache.
+func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tac_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tac_uniq (id int not null, k1 int primary key)")
+	tk.MustExec("create table tac_rep (id int primary key, k1 int not null)")
+	var inner, uniq, rep strings.Builder
+	for key := range 50 {
+		for i := range 40 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", key, key*1000+i)
+		}
+	}
+	// One outer row per key, so no lookup can ever hit.
+	for i := range 50 {
+		if uniq.Len() > 0 {
+			uniq.WriteString(",")
+		}
+		fmt.Fprintf(&uniq, "(%d,%d)", i, i)
+	}
+	// Ten outer rows per key, so nine lookups in ten can hit.
+	for i := range 500 {
+		if rep.Len() > 0 {
+			rep.WriteString(",")
+		}
+		fmt.Fprintf(&rep, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_inner values " + inner.String())
+	tk.MustExec("insert into tac_uniq values " + uniq.String())
+	tk.MustExec("insert into tac_rep values " + rep.String())
+	for _, table := range []string{"tac_inner", "tac_uniq", "tac_rep"} {
+		tk.MustExec("analyze table " + table + " all columns")
+	}
+	// Keep the subquery correlated so that it is executed as an Apply.
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate"`)
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+
+	// applyCacheInfo returns the execution info of the Apply operator.
+	applyCacheInfo := func(sql string) string {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				return fmt.Sprintf("%v", row[5])
+			}
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return ""
+	}
+
+	// The lateral derived table returns 40 rows per outer row either way, so the row count of
+	// the Apply cannot be what the decision is taken from.
+	lateral := "inner join lateral (select t2.k2 from tac_inner t2 where t2.k1 = o.k1) f"
+	info := applyCacheInfo("select o.k1, f.k2 from tac_uniq o " + lateral)
+	require.Contains(t, info, "cache:OFF", "every outer row has its own key, so the cache cannot hit")
+
+	info = applyCacheInfo("select o.k1, f.k2 from tac_rep o " + lateral)
+	require.Contains(t, info, "cache:ON", "each key repeats over ten outer rows")
+
+	// A key that is unique in its own table still repeats once an upstream join duplicates it,
+	// so what matters is the rows reaching the Apply, not the uniqueness of the column.
+	tk.MustExec("create table tac_fan (id int primary key, k1 int not null, key ik (k1))")
+	var fan strings.Builder
+	for i := range 500 {
+		if fan.Len() > 0 {
+			fan.WriteString(",")
+		}
+		fmt.Fprintf(&fan, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_fan values " + fan.String())
+	tk.MustExec("analyze table tac_fan all columns")
+	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
+	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
+	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+}
+
+// TestCorColEqProvidesIndexOrder verifies that an `index_col = correlated_col` access condition
+// pins that column to a single value per execution, so the index columns after it can satisfy an
+// ORDER BY. The inner subquery of the correlated scalar aggregate should then read one row with a
+// Limit over an ordered scan instead of sorting the whole range with a TopN.
+func TestCorColEqProvidesIndexOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tc")
+	tk.MustExec(`create table tc (
+		k1 bigint unsigned not null,
+		k2 bigint unsigned not null,
+		v int not null,
+		primary key (k1, k2) clustered,
+		key ik (k1, v, k2))`)
+	tk.MustExec("insert into tc values (1,10,1),(1,20,1),(2,30,1),(2,40,0),(3,50,0)")
+
+	// explainOf returns the operator name, task and operator info of each explain row.
+	explainOf := func(sql string) []string {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		infos := make([]string, 0, len(rows))
+		for _, row := range rows {
+			infos = append(infos, fmt.Sprintf("%v %v %v", row[0], row[2], row[4]))
+		}
+		return infos
+	}
+	// hasOperator reports whether any explain row matches all the given substrings.
+	hasOperator := func(infos []string, substrs ...string) bool {
+		for _, row := range infos {
+			matched := true
+			for _, substr := range substrs {
+				if !strings.Contains(row, substr) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+		return false
+	}
+	// requireEarlyStopPlan asserts the subquery reads a single row from an ordered scan rather
+	// than sorting the whole matched range. Keeping order is not enough on its own: an
+	// aggregate over an ordered full-range scan also has no TopN, so the Limit that stops the
+	// read after one row must be there too, both in the coprocessor and at the root.
+	requireEarlyStopPlan := func(infos []string, scanOp string) {
+		t.Helper()
+		require.True(t, hasOperator(infos, scanOp, "keep order:true"),
+			"%s should keep order: %v", scanOp, infos)
+		require.True(t, hasOperator(infos, "Limit", "cop[tikv]", "count:1"),
+			"the coprocessor read should stop after one row: %v", infos)
+		require.True(t, hasOperator(infos, "Limit", "root", "count:1"),
+			"the plan should keep a root Limit of one row: %v", infos)
+		require.False(t, hasOperator(infos, "TopN"), "the sort should be eliminated: %v", infos)
+	}
+
+	// MIN over the clustered primary key (k1, k2). The correlated equality on k1 makes the
+	// rebuilt range a single point on k1, so the scan already returns k2 in order.
+	minOverPK := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1) from tc t1"
+	infos := explainOf(minOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(minOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// Same for a secondary index ik(k1, v, k2), where k1 is pinned by the correlated equality
+	// and v by a literal equality.
+	minOverIdx := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (ik) " +
+		"where t1.k1 = t2.k1 and t2.v = 1) from tc t1"
+	infos = explainOf(minOverIdx)
+	requireEarlyStopPlan(infos, "IndexRangeScan")
+	tk.MustQuery(minOverIdx + " order by 1").Check(testkit.Rows("<nil>", "10", "10", "30", "30"))
+
+	// An explicit ORDER BY ... LIMIT inside the correlated subquery benefits the same way.
+	limitOverPK := "select (select /*+ NO_DECORRELATE() */ t2.k2 from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1 order by t2.k2 limit 1) from tc t1"
+	infos = explainOf(limitOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(limitOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// A correlated *range* predicate does not pin its column to a single value, so the columns
+	// after it are not ordered and the TopN must be kept.
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr (a int, b int, c int, d int, key idx (b, c, d))")
+	tk.MustExec("insert into tr values (1,1,1,4),(2,1,2,3),(3,1,3,2),(4,2,1,1)")
+	minAfterRange := "select (select /*+ NO_DECORRELATE() */ min(t2.d) from tr t2 use index (idx) " +
+		"where t2.b = t1.b and t2.c < t1.c) from tr t1"
+	infos = explainOf(minAfterRange)
+	require.True(t, hasOperator(infos, "TopN"),
+		"a correlated range predicate must not claim order on later columns: %v", infos)
+	tk.MustQuery(minAfterRange + " order by 1").Check(testkit.Rows("<nil>", "<nil>", "3", "4"))
+}
+
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -2002,6 +2269,18 @@ func TestVirtualExprPushDown(t *testing.T) {
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+
+	tk.MustExec("drop table if exists t_force_idx;")
+	tk.MustExec(`create table t_force_idx (
+		i bigint,
+		g bigint generated always as (i + 1) virtual,
+		key idx_g (g),
+		key idx_exp_i ((i + 1))
+	)`)
+	tk.MustExec("insert into t_force_idx (i) values (1);")
+	plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
+	require.NotEmpty(t, plan)
+	tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
@@ -2465,4 +2744,240 @@ func TestIssue58829(t *testing.T) {
 
 	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestEnableCascadesPlannerIsDeprecated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cover_offsets (a int not null, b decimal(10,4), c int not null, key idx(a,b,c))")
+	tk.MustExec("insert into cover_offsets values (1,1.0,1),(2,3.1250,99)")
+
+	// Setting the deprecated variable still succeeds, but only emits a warning and
+	// has no effect: the Cascades planner is gone.
+	tk.MustExec("set @@tidb_enable_cascades_planner = on")
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Equal(t, "[variable:1681]tidb_enable_cascades_planner is deprecated and will be removed in a future release.", warns[0].Err.Error())
+	tk.MustQuery("select @@tidb_enable_cascades_planner").Check(testkit.Rows("0"))
+
+	// The query that the Cascades planner used to mis-plan (#68533) now always uses
+	// the default planner, so it returns the stored value instead of garbage.
+	tk.MustQuery("select c from cover_offsets order by a limit 1").Check(testkit.Rows("1"))
+
+	// USE_CASCADES() is still parsed for compatibility, and ignored.
+	tk.MustExec("select /*+ USE_CASCADES(true) */ c from cover_offsets")
+
+	// Global scope behaves the same way.
+	tk.MustExec("set global tidb_enable_cascades_planner = on")
+	tk.MustQuery("select @@global.tidb_enable_cascades_planner").Check(testkit.Rows("0"))
+}
+
+func TestIssue66947(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 text(383) not null)")
+	tk.MustExec("insert into t0 values ('')")
+	tk.MustExec("replace into t0 values (' ')")
+
+	tk.MustQuery("select /* issue:66947 direct-having */ hex(t0.c0) from t0 group by t0.c0 having sum(t0.c0) > -1 and char_length(t0.c0)").
+		Check(testkit.Rows("20"))
+	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
+		Check(testkit.Rows("20"))
+}
+
+func TestIssue66922(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 float unique, c1 numeric zerofill, c2 text(192))")
+	tk.MustExec("insert into t0(c0, c1, c2) values (1.074197572E9, 0, '⋧h')")
+
+	tk.MustQuery(`select /* issue:66922-direct */ t0.c1, t0.c0, t0.c2
+from t0
+group by t0.c1, t0.c0, t0.c2
+having (
+    (count(t0.c1) != -1)
+        and
+    (
+        (case t0.c1 when false then t0.c0 else true end)
+            like
+        t0.c0
+    )
+)`).Check(testkit.Rows())
+
+	tk.MustQuery(`select /* issue:66922-derived */ ref0, ref1, ref2
+from (
+    select t0.c1 as ref0, t0.c0 as ref1, t0.c2 as ref2,
+           (
+               (count(t0.c1) != -1)
+                   and
+               (
+                   (case t0.c1 when false then t0.c0 else true end)
+                       like
+                   t0.c0
+               )
+           ) as ref3
+    from t0
+    group by t0.c1, t0.c0, t0.c2
+) as s where ref3`).Check(testkit.Rows())
+}
+
+func TestIndexScanSeekCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Pruning needs fully loaded index stats; don't let a slow sync load fall back to partial stats.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
+	// Each value of `a` has only 25 rows, so most (a, b, c) point ranges are nearly empty and a
+	// seek per range costs more than scanning and filtering every row under `a`.
+	tk.MustExec("set @@cte_max_recursion_depth = 100000")
+	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
+	// Flush the insert deltas before analyze. Otherwise a late flush raises the modify count
+	// and the table falls back to pseudo stats, which disables pruning.
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_cost_model_version = 2")
+
+	// The IN-lists cover only part of the values of `b` and `c`, so the residual filters on a
+	// pruned scan must reject rows.
+	const where = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10)"
+
+	// Without an ordering requirement the seek cost of 60 (a, b, c) ranges outweighs scanning the
+	// extra rows, so `c` is pruned from the ranges and applied as a filter, leaving 6 (a, b) ranges.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where).Check(testkit.Rows(
+		"IndexReader 278.05 root  index:Selection",
+		"└─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
+		"  └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
+
+	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
+	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
+	fullRanges := make([]string, 0, 60)
+	for b := 1; b <= 6; b++ {
+		for c := 1; c <= 10; c++ {
+			fullRanges = append(fullRanges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where + " order by d limit 5").Check(testkit.Rows(
+		"Limit 5.00 root  offset:0, count:5",
+		"└─IndexReader 5.00 root  index:Limit",
+		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:"+strings.Join(fullRanges, ", ")+", keep order:true"))
+
+	// Compare against a full table scan, which applies every predicate as a filter.
+	tk.MustQuery("select a, b, c, d from t where " + where).Sort().Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where).Sort().Rows())
+	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
+	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+
+	// Many IN-lists ahead of a selective equality: 12*4*3*9 = 1296 ranges for a lookup that
+	// returns nothing. Dropping columns also drops the equality on `e` from the ranges, but each
+	// shorter prefix scans only a few rows per seek it saves, so pruning is allowed.
+	tk.MustExec("create table t2 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t2 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 1000, n % 5, n % 4, n % 10, n, n from cte`)
+	// The leading column has only 2 values, so a shorter prefix would scan far more rows per saved
+	// seek than the guard allows, and the full ranges must be kept.
+	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 2, n % 10, n % 1000, n, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
+	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
+		"IndexReader 1298.91 root  index:Selection",
+		"└─Selection 1298.91 cop[tikv]  eq(test.t2.e, -1), in(test.t2.b, 1, 2, 3, 4), in(test.t2.c, 1, 2, 3), in(test.t2.d, 1, 2, 3, 4, 5, 6, 7, 8, 9)",
+		"  └─IndexRangeScan 1298.91 cop[tikv] table:t2, index:idx(a, b, c, d, e, f) range:[1,1], [2,2], [3,3], [4,4], [5,5], [6,6], [7,7], [8,8], [9,9], [10,10], [11,11], [12,12], keep order:false"))
+	tk.MustQuery("select * from t2 where " + where2).Check(testkit.Rows())
+
+	const where3 = "a = 1 and b in (1,2,3,4,5,6,7,8,9) and c in (1,3,5,7,9,11,13,15,17,19,21)"
+	t3Ranges := make([]string, 0, 99)
+	for b := 1; b <= 9; b++ {
+		for c := 1; c <= 21; c += 2 {
+			t3Ranges = append(t3Ranges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	// Only the operators and ranges are checked: the row estimate for t3 depends on analyze
+	// sampling and varies between runs.
+	tk.MustQuery("explain format='brief' select * from t3 where "+where3).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:IndexRangeScan"},
+		{"└─IndexRangeScan", "range:" + strings.Join(t3Ranges, ", ") + ", keep order:false"},
+	})
+	tk.MustQuery("select * from t3 where " + where3).Sort().Check(
+		tk.MustQuery("select * from t3 ignore index(idx) where " + where3).Sort().Rows())
+
+	// For a non-unique index on a clustered composite handle, IdxCols has the handle columns
+	// appended, so a cutoff can extend past the index definition. Row estimation must still
+	// work for those ranges. The 1200 (a,b,c,d) ranges prune to 6 (a,b) ranges.
+	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
+	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
+		select n % 1000, n % 7, n % 13, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t4")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
+	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
+		{"IndexLookUp", ""},
+		{"├─Selection(Build)", "in(test.t4.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), in(test.t4.d, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)"},
+		{"│ └─IndexRangeScan", "range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"},
+		{"└─TableRowIDScan(Probe)", "keep order:false"},
+	})
+	tk.MustQuery("select * from t4 use index(idx) where " + where4).Sort().Check(
+		tk.MustQuery("select * from t4 ignore index(idx) where " + where4).Sort().Rows())
+
+	// An IndexJoin inner scan's seeks are charged once per build row by the join
+	// (indexJoinSeekingCostVer2), so the scan itself must not charge them again.
+	ijRows := tk.MustQuery("explain format='cost_trace' select /*+ inl_join(t3) */ * from t2 join t3 on t2.a = t3.a where t3.b in (1,2,3)").Rows()
+	foundInnerScan, foundJoin := false, false
+	for _, row := range ijRows {
+		op := row[0].(string)
+		if strings.Contains(op, "IndexRangeScan") {
+			foundInnerScan = true
+			require.Contains(t, row[5].(string), "table:t3")
+			require.NotContains(t, row[3].(string), "rangeSeek")
+		}
+		if strings.Contains(op, "IndexJoin") {
+			foundJoin = true
+			require.Contains(t, row[3].(string), "seeking(")
+		}
+	}
+	require.True(t, foundInnerScan)
+	require.True(t, foundJoin)
+	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "rangeSeek")
+	// Multi-range table scans are charged the same way, so they don't look cheaper than an
+	// equivalent multi-range index scan.
+	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
+	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
+	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
+
+	// On a unique index, only full-key point ranges are exempt from pruning (they can become a
+	// [Batch]PointGet). Ranges that span every index column but end in an interval are not
+	// points, so the 12 (a, b, c > 100) ranges must still prune to 2 (a) ranges.
+	tk.MustExec("create table t5 (a int, b int, c int, d int, unique key uk(a, b, c))")
+	tk.MustExec(`insert into t5 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t5")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	const where5 = "a in (1,3) and b in (0,1,2,3,4,5) and c > 100"
+	tk.MustQuery("explain format='brief' select a, b, c from t5 where "+where5).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:Selection"},
+		{"└─Selection", "gt(test.t5.c, 100), in(test.t5.b, 0, 1, 2, 3, 4, 5)"},
+		{"  └─IndexRangeScan", "range:[1,1], [3,3], keep order:false"},
+	})
+	tk.MustQuery("select a, b, c from t5 where " + where5).Sort().Check(
+		tk.MustQuery("select a, b, c from t5 ignore index(uk) where " + where5).Sort().Rows())
 }

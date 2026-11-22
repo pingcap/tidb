@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -54,15 +56,72 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Bi
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || stmtNode == nil {
+	sessionVars := sctx.GetSessionVars()
+	useBinding := sessionVars.UsePlanBaselines
+	if !useBinding || !mayHaveSQLBinding(stmtNode) {
 		return
 	}
 	// When the domain is initializing, the bind will be nil.
 	if sctx.Value(SessionBindInfoKeyType) == nil {
 		return
 	}
+	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
+	if intest.InTest {
+		// Prepared statements may cache binding info before AST rewrites.
+		if cache != nil && info == nil {
+			return cache.binding, cache.matched, cache.scope
+		}
+		binding, matched, scope = matchSQLBindingCore(sctx, stmtNode, info)
+		assertMatchSQLBinding(cache, matched, binding, scope)
+		return
+	}
+	if cache != nil {
+		return cache.binding, cache.matched, cache.scope
+	}
+	return matchSQLBindingCore(sctx, stmtNode, info)
+}
 
+func mayHaveSQLBinding(stmtNode ast.StmtNode) bool {
+	if stmtNode == nil {
+		return false
+	}
+	switch stmt := stmtNode.(type) {
+	case *ast.InsertStmt:
+		// REPLACE uses InsertStmt with IsReplace set. SQL bindings currently only
+		// support INSERT/REPLACE ... SELECT, not VALUES/SET forms.
+		return stmt.Select != nil
+	case *ast.ExplainStmt:
+		if stmt.Stmt == nil {
+			// EXPLAIN forms such as EXPLAIN <plan_digest> have no underlying statement.
+			// Keep the old behavior and do not use this as an early-negative filter.
+			return true
+		}
+		return mayHaveSQLBinding(stmt.Stmt)
+	default:
+		return true
+	}
+}
+
+func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *bindingCacheItem) {
+	if item := sessionVars.StmtCtx.MatchSQLBindingCacheKey; item != nil && item == stmtNode {
+		// This temporary cache is scoped to a statement execution.
+		cache = sessionVars.StmtCtx.MatchSQLBindingCache.(*bindingCacheItem)
+		intest.Assert(sessionVars.StmtCtx.MatchSQLBindingCache != nil)
+	}
+	return cache
+}
+
+func setMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode, matched bool, binding Binding, scope string) {
+	sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
+	sessionVars.StmtCtx.MatchSQLBindingCache = &bindingCacheItem{
+		binding: binding,
+		matched: matched,
+		scope:   scope,
+	}
+}
+
+func matchSQLBindingCore(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
+	sessionVars := sctx.GetSessionVars()
 	// record the normalization result into info to avoid repeat normalization next time.
 	var fuzzyDigest string
 	var tableNames []*ast.TableName
@@ -80,6 +139,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); matched {
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeSession)
 		return binding, matched, metrics.ScopeSession
 	}
 	globalHandle := GetGlobalBindingHandle(sctx)
@@ -88,10 +148,31 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 	binding, matched = globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames)
 	if matched {
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeGlobal)
 		return binding, matched, metrics.ScopeGlobal
 	}
 
+	setMatchSQLBindingCache(sessionVars, stmtNode, false, Binding{}, "")
 	return
+}
+
+func assertMatchSQLBinding(cache *bindingCacheItem, matched bool, binding Binding, scope string) {
+	intest.AssertFunc(func() bool {
+		if cache == nil {
+			return true
+		}
+		if matched {
+			return cache.matched && cache.binding.isSame(&binding) && cache.scope == scope
+		}
+		return !cache.matched
+	})
+}
+
+// bindingCacheItem caches a binding match for the current statement.
+type bindingCacheItem struct {
+	binding Binding
+	matched bool
+	scope   string
 }
 
 func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {

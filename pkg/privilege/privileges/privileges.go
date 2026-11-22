@@ -441,6 +441,18 @@ func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLEx
 	return "", false
 }
 
+// GetUserResourceGroup implements the Manager interface.
+func (p *UserPrivileges) GetUserResourceGroup(user, host string) string {
+	if SkipWithGrant {
+		return ""
+	}
+	record := p.Handle.Get().connectionVerification(user, host)
+	if record == nil {
+		return ""
+	}
+	return record.ResourceGroup
+}
+
 // GetAuthWithoutVerification implements the Manager interface.
 func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success bool) {
 	if SkipWithGrant {
@@ -688,7 +700,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
-		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
+		if err = sessionstates.ValidateSessionToken(authentication, authUser, authHost); err != nil {
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}

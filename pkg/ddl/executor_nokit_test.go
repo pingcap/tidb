@@ -15,15 +15,207 @@
 package ddl
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+type recoverTableForeignKeySnapshotReader struct {
+	meta.Reader
+	table    *model.TableInfo
+	err      error
+	reads    int
+	schemaID int64
+	tableID  int64
+}
+
+func (r *recoverTableForeignKeySnapshotReader) GetTable(schemaID, tableID int64) (*model.TableInfo, error) {
+	r.reads++
+	r.schemaID, r.tableID = schemaID, tableID
+	return r.table, r.err
+}
+
+type recoverTableForeignKeyInfoSchema struct {
+	infoschema.InfoSchema
+	referred []*model.ReferredFKInfo
+	schema   string
+	table    string
+}
+
+func (is *recoverTableForeignKeyInfoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+	is.schema, is.table = schema, table
+	return is.referred
+}
+
+func TestCheckRecoverTableForeignKeys(t *testing.T) {
+	decodeErr := errors.New("invalid historical table metadata")
+	for _, tc := range []struct {
+		name      string
+		change    func(*model.RecoverTableInfo, *recoverTableForeignKeySnapshotReader, *recoverTableForeignKeyInfoSchema)
+		wantError func(error) bool
+		permanent bool
+		reads     int
+	}{
+		{name: "self rename", reads: 1},
+		{name: "unchanged self", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.Name = pmodel.NewCIStr("old")
+			info.TableInfo.ForeignKeys[0].RefTable = info.TableInfo.Name
+			reader.err = decodeErr
+		}},
+		{name: "original external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.ForeignKeys[0].RefTable = pmodel.NewCIStr("restored")
+			}},
+		{name: "original external schema", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.ForeignKeys[0].RefSchema = pmodel.NewCIStr("other")
+			}},
+		{name: "missing old schema", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.OldSchemaName = ""
+			}},
+		{name: "missing old table", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.OldTableName = ""
+			}},
+		{name: "missing snapshot timestamp", permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.SnapshotTS = 0
+			}},
+		{name: "missing historical table", reads: 1, permanent: true, wantError: infoschema.ErrTableNotExists.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table = nil
+			}},
+		{name: "mismatched historical table", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.table.Name = pmodel.NewCIStr("other")
+			}},
+		{name: "missing historical schema", reads: 1, permanent: true, wantError: meta.ErrDBNotExists.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = meta.ErrDBNotExists
+			}},
+		{name: "retryable metadata read", reads: 1, wantError: kv.ErrTxnRetryable.Equal,
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = kv.ErrTxnRetryable
+			}},
+		{name: "metadata decode error", reads: 1, wantError: func(err error) bool { return errors.Is(err, decodeErr) },
+			change: func(_ *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				reader.err = decodeErr
+			}},
+		{name: "legacy untracked foreign key", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.ForeignKeys[0].Version = 0
+			info.TableInfo.ForeignKeys[0].RefTable = pmodel.NewCIStr("other")
+			info.OldSchemaName, info.OldTableName, info.SnapshotTS = "", "", 0
+			reader.err = decodeErr
+		}},
+		{name: "no foreign key", change: func(info *model.RecoverTableInfo, reader *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+			info.TableInfo.ForeignKeys = nil
+			info.OldSchemaName, info.OldTableName, info.SnapshotTS = "", "", 0
+			reader.err = decodeErr
+		}},
+		{name: "current external endpoint", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(info *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, _ *recoverTableForeignKeyInfoSchema) {
+				info.TableInfo.ForeignKeys[0].RefTable = pmodel.NewCIStr("other")
+			}},
+		{name: "incoming target reference", reads: 1, permanent: true, wantError: dbterror.ErrGeneralUnsupportedDDL.Equal,
+			change: func(_ *model.RecoverTableInfo, _ *recoverTableForeignKeySnapshotReader, is *recoverTableForeignKeyInfoSchema) {
+				is.referred = []*model.ReferredFKInfo{{}}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := &model.TableInfo{ID: 42, Name: pmodel.NewCIStr("old"), ForeignKeys: []*model.FKInfo{{
+				Version: model.FKVersion1, RefSchema: pmodel.NewCIStr("test"), RefTable: pmodel.NewCIStr("old"),
+			}}}
+			restored := original.Clone()
+			restored.Name = pmodel.NewCIStr("restored")
+			restored.ForeignKeys[0].RefTable = restored.Name
+			info := &model.RecoverTableInfo{
+				SchemaID: 1, TableInfo: restored, SnapshotTS: 100, OldSchemaName: "test", OldTableName: "old",
+			}
+			reader := &recoverTableForeignKeySnapshotReader{table: original}
+			is := &recoverTableForeignKeyInfoSchema{}
+			if tc.change != nil {
+				tc.change(info, reader, is)
+			}
+			err := checkRecoverTableForeignKeys(is, "test", info, reader)
+			if tc.wantError == nil {
+				require.NoError(t, err)
+			} else {
+				require.True(t, tc.wantError(err), "unexpected error type: %v", err)
+			}
+			require.Equal(t, tc.permanent, isPermanentRecoverTableForeignKeyError(err))
+			require.Equal(t, tc.reads, reader.reads)
+			if reader.reads > 0 {
+				require.Equal(t, info.SchemaID, reader.schemaID)
+				require.Equal(t, restored.ID, reader.tableID)
+			}
+			if is.table != "" {
+				require.Equal(t, "test", is.schema)
+				require.Equal(t, restored.Name.L, is.table)
+			}
+		})
+	}
+}
+
+func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	done, killed := isSessionDone(sctx)
+	require.True(t, done)
+	require.Equal(t, uint32(1), killed)
+}
+
+func TestConvertKillFlag(t *testing.T) {
+	require.NoError(t, convertKillFlag(0))
+	err := convertKillFlag(1)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+}
+
+func TestWaitPendingTableThresholdAbortsOnKill(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	finished, _, _, forceCheck, killed := (&executor{}).waitPendingTableThreshold(sctx, 1, 1, 0, 0, 1)
+	require.True(t, finished)
+	require.False(t, forceCheck)
+	require.Equal(t, uint32(1), killed)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(convertKillFlag(killed)))
+}
+
+func TestIsRetryableDDLCancelErr(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{name: "finished", err: dbterror.ErrCancelFinishedDDLJob, retry: false},
+		{name: "finished wrapped", err: dbterror.ErrCancelFinishedDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "cannot cancel", err: dbterror.ErrCannotCancelDDLJob, retry: false},
+		{name: "cannot cancel wrapped", err: dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(1), retry: false},
+		{name: "not found", err: dbterror.ErrDDLJobNotFound, retry: false},
+		{name: "not found wrapped", err: dbterror.ErrDDLJobNotFound.GenWithStackByArgs(1), retry: false},
+		{name: "retryable processJobs error", err: errors.New("mock failed admin command on ddl jobs"), retry: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.retry, isRetryableDDLCancelErr(tt.err))
+		})
+	}
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {

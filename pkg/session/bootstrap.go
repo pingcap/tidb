@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -733,6 +734,9 @@ const (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
+		source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_strings MEDIUMTEXT NOT NULL DEFAULT '',
+		route_hash VARCHAR(64) NOT NULL DEFAULT '',
 		start_ts BIGINT UNSIGNED NOT NULL,
 		restored_ts BIGINT UNSIGNED NOT NULL,
 		upstream_cluster_id BIGINT UNSIGNED,
@@ -741,8 +745,9 @@ const (
 		cmd TEXT,
 		task_start_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
 		last_heartbeat_time TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6),
-		UNIQUE KEY unique_registration_params (
+		UNIQUE KEY unique_registration_params_v2 (
 			filter_hash,
+			route_hash,
 			start_ts,
 			restored_ts,
 			upstream_cluster_id,
@@ -807,10 +812,6 @@ var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessiontypes.Session) {
 	startTime := time.Now()
-	err := InitMDLVariableForBootstrap(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
-	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
@@ -820,7 +821,9 @@ func bootstrap(s sessiontypes.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			upgrade(s)
+			// Bootstrap initialization has already persisted and enabled MDL
+			// before the domain started, so no legacy MDL migration is needed.
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -828,6 +831,9 @@ func bootstrap(s sessiontypes.Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			if err := initLegacyECDSASessionToken(s.GetStore(), true); err != nil {
+				logutil.BgLogger().Fatal("disable legacy ECDSA session tokens during bootstrap failed", zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
@@ -1311,16 +1317,25 @@ const (
 	// no-op (e.g. `i_user` on release-8.5-20260527-v8.5.5).
 	version232 = 232
 
+	// version 233
+	// Add restore name routing identity to mysql.tidb_restore_registry:
+	// `source_filter_strings`, `route_strings`, `route_hash` and the
+	// `unique_registration_params_v2` unique index that replaces
+	// `unique_registration_params` (whose key does not include `route_hash`, so
+	// two independent restores sharing a source filter but routing to different
+	// targets would collide).
+	version233 = 233
+
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
-	// next version should start with 239
+	// Versions starting at 239 belong to master; 8.5.x patches use the reserved range.
 
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version232
+var currentBootstrapVersion int64 = version233
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1508,6 +1523,7 @@ var (
 		upgradeToVer230,
 		upgradeToVer231,
 		upgradeToVer232,
+		upgradeToVer233,
 	}
 )
 
@@ -1598,17 +1614,11 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
+// upgradeWithMDLMigration upgrades a store bootstrapped by an older TiDB server.
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessiontypes.Session) {
+func upgradeWithMDLMigration(s sessiontypes.Session, migration legacyMDLMigration) {
 	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
-	}
-
-	var ver int64
-	ver, err = getBootstrapVersion(s)
+	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
@@ -1619,7 +1629,7 @@ func upgrade(s sessiontypes.Session) {
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
 	// but during upgrade we disable it.
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99Before(s)
 	}
 
@@ -1628,7 +1638,7 @@ func upgrade(s sessiontypes.Session) {
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
-	if isNull {
+	if migration == requireLegacyMDLMigration {
 		upgradeToVer99After(s)
 	}
 
@@ -3538,6 +3548,27 @@ func upgradeToVer232(s sessiontypes.Session, ver int64) {
 	addIUserIndexes(s)
 }
 
+// upgradeToVer233 adds the restore name routing identity to
+// mysql.tidb_restore_registry. The DDLs are reentrant so a cluster that already
+// ran a partially completed migration converges on the same schema, and a fresh
+// cluster created from CreateRestoreRegistryTable skips them via
+// ErrColumnExists / ErrDupKeyName / ErrCantDropFieldOrKey.
+func upgradeToVer233(s sessiontypes.Session, ver int64) {
+	if ver >= version233 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, `ALTER TABLE mysql.tidb_restore_registry
+		ADD UNIQUE INDEX unique_registration_params_v2 (
+			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3690,6 +3721,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

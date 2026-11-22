@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
@@ -422,6 +423,13 @@ func TestRunDDLJobPanic(t *testing.T) {
 }
 
 func TestPartitionAddIndexGC(t *testing.T) {
+	// The injected GC safe point deliberately invalidates active reads. Keep
+	// the unrelated DDL notifier from querying its system table during the test.
+	statsOwnerEnabled := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()
+	config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(false)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(statsOwnerEnabled)
+	})
 	s := createFailDBSuite(t)
 	tk := testkit.NewTestKit(t, s.store)
 	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {

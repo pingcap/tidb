@@ -1097,26 +1097,6 @@ set @@tidb_max_paging_size=default;
 select @@tidb_max_paging_size;
 @@tidb_max_paging_size
 50000
-select /*+ set_var(tidb_enable_cascades_planner=0) */ @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-0
-select @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-0
-set @@tidb_enable_cascades_planner=default;
-select @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-0
-select /*+ set_var(tidb_enable_cascades_planner=1) */ @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-1
-select @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-0
-set @@tidb_enable_cascades_planner=default;
-select @@tidb_enable_cascades_planner;
-@@tidb_enable_cascades_planner
-0
 select /*+ set_var(tidb_merge_join_concurrency=1) */ @@tidb_merge_join_concurrency;
 @@tidb_merge_join_concurrency
 1

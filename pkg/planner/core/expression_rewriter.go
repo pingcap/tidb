@@ -241,11 +241,26 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	return rewriteExprNode(rewriter, exprNode, asScalar)
 }
 
+// rewriterSchemaAndNames returns the schema and names an expression rewriter
+// over p resolves column references against.
+func rewriterSchemaAndNames(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
+	return p.Schema(), p.OutputNames()
+}
+
+// rewriterNames returns the names an expression rewriter over p resolves column
+// references against.
+func rewriterNames(p base.LogicalPlan) types.NameSlice {
+	if p == nil {
+		return nil
+	}
+	_, names := rewriterSchemaAndNames(p)
+	return names
+}
+
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-			rewriter.schema = p.Schema()
-			rewriter.names = p.OutputNames()
+			rewriter.schema, rewriter.names = rewriterSchemaAndNames(p)
 		}
 	}()
 
@@ -284,6 +299,12 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	if planCtx != nil && planCtx.plan != nil {
 		curColLen := planCtx.plan.Schema().Len()
 		defer func() {
+			if planCtx.plan.Schema().Len() == curColLen && len(planCtx.plan.OutputNames()) == curColLen {
+				// No column was added, so the names below would be an element-wise copy
+				// of the current ones. Skip the copy: it is O(columns) per rewritten
+				// expression, which is quadratic for SELECT * on a wide table.
+				return
+			}
 			names := planCtx.plan.OutputNames().Shallow()[:curColLen]
 			for i := curColLen; i < planCtx.plan.Schema().Len(); i++ {
 				names = append(names, types.EmptyName)
@@ -1514,9 +1535,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
-		if v.F == ast.AggFuncCount {
-			er.collectPrivsForCount()
-		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.SubqueryExpr,
 		*ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *driver.ValueExpr:
@@ -2497,48 +2515,6 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 }
 
-// Assume that there are two tables t and t1, which contain a and b columns individually. In MySQL:
-// -- Require `a` or `b` SELECT privilege
-// select count(*) from t;
-// select count(1) from t;
-// -- Require `a` SELECT privilege
-// select count(a) from t;
-// -- Require `b` SELECT privilege
-// select count(b) from t;
-// -- Require `SELCT` privilege of `t.a` and `t1.a`
-// select count(*) from t join t1 on t.a = t1.a;
-func (er *expressionRewriter) collectPrivsForCount() {
-	b := er.planCtx.builder
-	if b == nil {
-		return
-	}
-	// dbName -> tableName
-	tableNames := make(map[string]map[string]struct{})
-	for _, fieldName := range er.names {
-		tblName := &ast.TableName{
-			Name:   fieldName.OrigTblName,
-			Schema: fieldName.DBName,
-		}
-		if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
-			tblName.Name = fieldName.TblName
-		}
-		if len(tblName.Name.L) > 0 && len(tblName.Schema.L) > 0 {
-			if _, ok := tableNames[tblName.Schema.L]; !ok {
-				tableNames[tblName.Schema.L] = make(map[string]struct{})
-			}
-			tableNames[tblName.Schema.L][tblName.Name.L] = struct{}{}
-		}
-	}
-
-	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
-	for db, tables := range tableNames {
-		for table := range tables {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, db, table, "*",
-				plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, table))
-		}
-	}
-}
-
 // Now TableName in expression only used by sequence function like nextval(seq).
 // The function arg should be evaluated as a table name rather than normal column name like mysql does.
 func (er *expressionRewriter) toTable(v *ast.TableName) {
@@ -2574,6 +2550,25 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
+// fieldNameLookupHookForTest, when set in tests, is told for each column
+// reference resolved by findFieldName whether the projection name index served it.
+var fieldNameLookupHookForTest func(v *ast.ColumnName, indexed bool)
+
+func (er *expressionRewriter) findFieldName(v *ast.ColumnName) (int, error) {
+	if planCtx := er.planCtx; planCtx != nil && planCtx.builder != nil {
+		if nameIdx := planCtx.builder.projNameIndex; nameIdx.Covers(er.names) {
+			if intest.InTest && fieldNameLookupHookForTest != nil {
+				fieldNameLookupHookForTest(v, true)
+			}
+			return nameIdx.FindFieldName(v)
+		}
+	}
+	if intest.InTest && fieldNameLookupHookForTest != nil {
+		fieldNameLookupHookForTest(v, false)
+	}
+	return expression.FindFieldName(er.names, v)
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	var fieldName4PrivilegeCheck *types.FieldName
 	defer func() {
@@ -2581,7 +2576,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.precollectColNames(fieldName4PrivilegeCheck)
 		}
 	}()
-	idx, err := expression.FindFieldName(er.names, v)
+	idx, err := er.findFieldName(v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 		return

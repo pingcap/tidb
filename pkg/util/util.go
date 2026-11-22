@@ -170,7 +170,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b < 32 || b > 127 {
+	if b < 32 || b >= 127 {
 		return false
 	}
 
@@ -189,7 +189,7 @@ func FmtNonASCIIPrintableCharToHex(str string) string {
 
 		b.WriteString(`\x`)
 		// turns non-printable-ASCII character into hex-string
-		b.WriteString(fmt.Sprintf("%02X", str[i]))
+		fmt.Fprintf(&b, "%02X", str[i])
 	}
 	return b.String()
 }

@@ -841,6 +841,24 @@ func TestDropTables(t *testing.T) {
 
 	failedSQL = "show create table t1;"
 	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
+
+	t.Run("ignore legacy foreign keys", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		original := tk.MustQuery("select @@global.tidb_enable_foreign_key").Rows()[0][0]
+		t.Cleanup(func() { tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_foreign_key=%v", original)) })
+		tk.MustExec("set @@global.tidb_enable_foreign_key=0")
+		tk.MustExec("create table legacy_parent (id int primary key, child_id int, foreign key (child_id) references legacy_child(id))")
+		parent := external.GetTableByName(t, tk, "test", "legacy_parent")
+		require.Len(t, parent.Meta().ForeignKeys, 1)
+		require.Less(t, parent.Meta().ForeignKeys[0].Version, model.FKVersion1)
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		tk.MustExec("create table legacy_child (id int primary key, parent_id int, foreign key (parent_id) references legacy_parent(id))")
+		// The syntax-only parent-to-child reference must not create a cycle
+		// with the enforced child-to-parent reference in the drop order.
+		tk.MustExec("drop table legacy_parent, legacy_child")
+		tk.MustQuery("show tables like 'legacy_%'").Check(testkit.Rows())
+	})
 }
 
 func TestCreateConstraintForTable(t *testing.T) {

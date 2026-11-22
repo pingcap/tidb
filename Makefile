@@ -76,7 +76,8 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: lint
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml \
+	-exclude pkg/util/hack/... -exclude ./pkg/util/hack/...  $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
@@ -606,6 +607,13 @@ check-bazel-prepare:
 .PHONY: bazel_test
 bazel_test: failpoint-enable bazel_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+		--define gotags=deadlock,intest \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
+
+.PHONY: bazel_ci_test
+bazel_ci_test: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
 		--define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...

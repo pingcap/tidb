@@ -515,7 +515,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
-			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+			return common.ErrEmptySourceDir.GenWithStackByArgs(storage.RedactURL(taskCfg.Mydumper.SourceDir))
 		}
 		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}

@@ -268,6 +268,65 @@ func TestGCS(t *testing.T) {
 	require.Equal(t, "gcs://testbucket/a/b/", stg.URI())
 }
 
+type gcsStartAfterTransport struct {
+	http.RoundTripper
+	startOffsets []string
+}
+
+func (tr *gcsStartAfterTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	query := req.URL.Query()
+	if query.Get("prefix") != "" {
+		tr.startOffsets = append(tr.startOffsets, query.Get("startOffset"))
+	}
+	return tr.RoundTripper.RoundTrip(req)
+}
+
+func TestGCSWalkDirStartAfter(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		startAfter string
+		want       []string
+	}{
+		{name: "existing_boundary", startAfter: "data/a", want: []string{"data/b", "data/c"}},
+		{name: "nonexistent_boundary", startAfter: "data/az", want: []string{"data/b", "data/c"}},
+		{name: "nonexistent_anchor_with_trailing_slash", startAfter: "data/a/", want: []string{"data/b", "data/c"}},
+		{name: "empty_start_after", want: []string{"data/a", "data/b", "data/c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, err := fakestorage.NewServerWithOptions(fakestorage.Options{NoListener: true})
+			require.NoError(t, err)
+			t.Cleanup(server.Stop)
+			server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "bucket"})
+			client := server.HTTPClient()
+			transport := &gcsStartAfterTransport{RoundTripper: client.Transport}
+			client.Transport = transport
+			store, err := NewGCSStorage(context.Background(), &backuppb.GCS{
+				Bucket: "bucket", Prefix: "root/", CredentialsBlob: "Fake Credentials",
+			}, &ExternalStorageOptions{HTTPClient: client})
+			require.NoError(t, err)
+			t.Cleanup(store.Close)
+			for _, name := range []string{"data/a", "data/b", "data/c", "elsewhere/d"} {
+				require.NoError(t, store.WriteFile(context.Background(), name, []byte("data")))
+			}
+			var files []string
+			err = store.WalkDir(context.Background(), &WalkOption{SubDir: "data", StartAfter: tc.startAfter}, func(name string, _ int64) error {
+				files = append(files, name)
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, files)
+			require.NotEmpty(t, transport.startOffsets)
+			startOffset := ""
+			if tc.startAfter != "" {
+				startOffset = store.objectName(tc.startAfter)
+			}
+			for _, got := range transport.startOffsets {
+				require.Equal(t, startOffset, got)
+			}
+		})
+	}
+}
+
 func TestNewGCSStorage(t *testing.T) {
 	require.True(t, intest.InTest)
 	ctx := context.Background()

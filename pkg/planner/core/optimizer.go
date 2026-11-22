@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -423,7 +424,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
 }
@@ -442,26 +442,6 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	rfGenerator.GenerateRuntimeFilter(plan)
 	logutil.BgLogger().Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
-}
-
-// tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
-// @brief: push down some filter conditions to the table scan operator
-// @param: sctx: session context
-// @param: plan: the physical plan to be pruned
-// @note: this optimization is only applied when the TiFlash is used.
-// @note: the following conditions should be satisfied:
-//   - Only the filter conditions with high selectivity should be pushed down.
-//   - The filter conditions which contain heavy cost functions should not be pushed down.
-//   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
-	// check if EnableLateMaterialization is set
-	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
-		predicatePushDownToTableScan(sctx, plan)
-	}
-	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
-		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
-	}
 }
 
 /*
@@ -655,6 +635,21 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
+func splitTiFlashLogicalCoreCache(serversInfo []infoschema.ServerInfo) (serversNeedingRefresh []infoschema.ServerInfo, minLogicalCores uint64) {
+	minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppServerInfo := copr.GlobalMPPServerInfoManager.Get(info.Address)
+		// TiFlash may restart with a different CPU configuration while keeping the same
+		// address, so refresh the cached logical core count when StartTimestamp changes.
+		if mppServerInfo == nil || mppServerInfo.StartTimestamp != info.StartTimestamp {
+			serversNeedingRefresh = append(serversNeedingRefresh, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppServerInfo.LogicalCPUCount)
+	}
+	return
+}
+
 func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
@@ -664,19 +659,28 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
-	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+
+	serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache(serversInfo)
+
+	if len(serversNeedingRefresh) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversNeedingRefresh, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+							Address:         serversNeedingRefresh[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+							StartTimestamp:  serversNeedingRefresh[info.Idx].StartTimestamp,
+						})
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
+				}
 			}
 		}
 	}
+
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	return true, minLogicalCores
 }
@@ -953,27 +957,30 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
-	// the parallel apply has three limitation:
-	// 1. the parallel implementation now cannot keep order;
-	// 2. the inner child has to support clone;
-	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
+	// The parallel apply has two limitations:
+	// 1. The inner child has to support clone.
+	// 2. If one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
+	// Note: ordering is now preserved via a reorder buffer (KeepOrder=true)
+	// when the outer side requires sorted output, so order is no longer a limitation.
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
+		hasOrder := apply.GetChildReqProps(outerIdx).NeedKeepOrder()
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
-		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
+		supportClone := err == nil // limitation 1
+		if supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			// When the outer side requires ordering, use a reorder buffer
+			// in the executor to preserve row order while still running
+			// inner workers in parallel.
+			if hasOrder {
+				apply.KeepOrder = true
 			}
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
 		}
-		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// Because of limitation 2, we cannot parallelize Apply operators in this Apply's inner side,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
 		return apply

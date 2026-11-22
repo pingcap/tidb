@@ -32,6 +32,37 @@ const (
 	sysUserTableName = "user"
 )
 
+// upgradedNullableUserColumns are the mysql.user columns that the upgrade from
+// an old TiDB version adds as nullable, while a newly bootstrapped cluster
+// defines them as NOT NULL.
+var upgradedNullableUserColumns = map[string]struct{}{
+	"create_role_priv":       {},
+	"drop_role_priv":         {},
+	"account_locked":         {},
+	"shutdown_priv":          {},
+	"reload_priv":            {},
+	"file_priv":              {},
+	"config_priv":            {},
+	"create_tablespace_priv": {},
+}
+
+func isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, columnNameL string, backupCol, clusterCol *model.ColumnInfo) bool {
+	if dbNameL != mysql.SystemDB || tableNameL != sysUserTableName {
+		return false
+	}
+	if _, ok := upgradedNullableUserColumns[columnNameL]; !ok {
+		return false
+	}
+	return !mysql.HasNotNullFlag(backupCol.GetFlag()) && mysql.HasNotNullFlag(clusterCol.GetFlag())
+}
+
+var planPeplayerTables = map[string]map[string]struct{}{
+	"mysql": {
+		"plan_replayer_status": {},
+		"plan_replayer_task":   {},
+	},
+}
+
 var statsTables = map[string]map[string]struct{}{
 	"mysql": {
 		"stats_buckets":      {},
@@ -80,11 +111,55 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
+		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
+		// Therefore actually the table is empty.
+		"advisory_locks": {},
+		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
+		"analyze_jobs": {},
+		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
+		"analyze_options": {},
+		// Distributed eXecution Framework
+		// Records the tidb node information, no need to recovered.
+		"dist_framework_meta":             {},
+		"tidb_global_task":                {},
+		"tidb_global_task_history":        {},
+		"tidb_background_subtask":         {},
+		"tidb_background_subtask_history": {},
+		// DDL internal system tables.
+		"tidb_ddl_history": {},
+		"tidb_ddl_job":     {},
+		"tidb_ddl_reorg":   {},
+		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
+		"tidb_ddl_notifier": {},
+		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
+		"tidb_import_jobs": {},
+
+		"help_topic": {},
+		// records the RU for each resource group temporary, no need to recovered.
+		"request_unit_by_group": {},
+		// load the table data into the memory.
+		"table_cache_meta": {},
+
+		// TiDB runaway internal information.
+		"tidb_runaway_queries":    {},
+		"tidb_runaway_watch":      {},
+		"tidb_runaway_watch_done": {},
+
+		// TiDB internal ttl information.
+		"tidb_ttl_job_history":  {},
+		"tidb_ttl_table_status": {},
+		"tidb_ttl_task":         {},
+
+		// TiDB internal timers.
+		"tidb_timers": {},
+
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},
 		"index_advisor_results": {},
 
+		// TiDB internal system table to synchronize metadata locks across nodes.
+		"tidb_mdl_info": {},
 		// replace into view is not supported now
 		"tidb_mdl_view": {},
 
@@ -263,6 +338,15 @@ func isStatsTable(schemaName string, tableName string) bool {
 
 func isRenameableSysTable(schemaName string, tableName string) bool {
 	tableMap, ok := renameableSysTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
 	if !ok {
 		return false
 	}
@@ -462,6 +546,10 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		return nil
 	}
 
+	if isPlanReplayerTables(dbName, tableName) {
+		return nil
+	}
+
 	if isUnrecoverableTable(dbName, tableName) {
 		return nil
 	}
@@ -484,6 +572,9 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
 				return err
 			}
+		}
+		if err := rc.checkNoNullInUpgradedNullableColumns(ctx, db.TemporaryName.L, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
+			return err
 		}
 		// target column order may different with source cluster
 		columnNames := make([]string, 0, len(ti.Columns))
@@ -577,7 +668,18 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			backupFieldType := backupCol.FieldType
+			if isUpgradedNullableSystemTableColumn(mysql.SystemDB, backupTi.Name.L, col.Name.L, backupCol, col) {
+				// The logical restore refuses a NULL in such a column before it
+				// copies the rows.
+				log.Warn("nullable column in backup data is NOT NULL in cluster",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				backupFieldType = *backupFieldType.Clone()
+				backupFieldType.AddFlag(mysql.NotNullFlag)
+				canLoadSysTablePhysical = false
+			}
+			typeEq, collateEq := utils.IsTypeCompatible(backupFieldType, col.FieldType)
 			canLoadSysTablePhysical = canLoadSysTablePhysical && collateEq && typeEq
 			collateCompatible := collateEq
 			if typeEq && (!collateEq && collationCheck) {
@@ -638,6 +740,46 @@ func checkSysTableColumnCollateCompatibility(dbNameL, tableNameL, columnNameL, u
 	return exists
 }
 
+// checkNoNullInUpgradedNullableColumns fails when the backup holds a NULL in a
+// column that only an upgrade made nullable. The restore session has an empty
+// sql_mode, so REPLACE INTO ... SELECT would store the implicit default instead.
+func (rc *SnapClient) checkNoNullInUpgradedNullableColumns(
+	ctx context.Context,
+	temporaryDBNameL, dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	columns := make([]string, 0)
+	conditions := make([]string, 0)
+	for _, backupCol := range upstreamTable.Columns {
+		clusterCol := model.FindColumnInfo(downstreamTable.Columns, backupCol.Name.L)
+		if clusterCol == nil ||
+			!isUpgradedNullableSystemTableColumn(dbNameL, tableNameL, backupCol.Name.L, backupCol, clusterCol) {
+			continue
+		}
+		columns = append(columns, backupCol.Name.O)
+		conditions = append(conditions, utils.EncloseName(backupCol.Name.L)+" IS NULL")
+	}
+	if len(conditions) == 0 {
+		return nil
+	}
+	sql := fmt.Sprintf("SELECT COUNT(1) FROM %s WHERE %s",
+		utils.EncloseDBAndTable(temporaryDBNameL, tableNameL), strings.Join(conditions, " OR "))
+	ectx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, err := ectx.ExecRestrictedSQL(kv.WithInternalSourceType(ctx, kv.InternalTxnBR), nil, sql)
+	if err != nil {
+		return errors.Annotatef(err, "failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("failed to count NULL values in %s.%s", dbNameL, tableNameL)
+	}
+	if nullRows := rows[0].GetInt64(0); nullRows > 0 {
+		return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+			"%d rows of %s.%s in backup data have NULL in %s, which is NOT NULL in cluster",
+			nullRows, dbNameL, tableNameL, strings.Join(columns, ", "))
+	}
+	return nil
+}
+
 func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	ctx context.Context,
 	dbNameL, tableNameL string,
@@ -652,6 +794,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 		return nil
 	}
 	colCount := 0
+	upstreamCollations := make(map[string]string, len(collateCompatibilityColumnMap.columns))
 	for _, col := range upstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_bin" && col.GetCollate() != "utf8mb4_general_ci" {
@@ -659,6 +802,7 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 					"incompatible column collate, upstream table %s.%s column %s collate is %s but should be utf8mb4_bin",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
+			upstreamCollations[col.Name.L] = col.GetCollate()
 			colCount += 1
 		}
 	}
@@ -667,12 +811,23 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 			"incompatible column collate, upstream table %s.%s has only %d columns with collate utf8mb4_bin",
 			dbNameL, tableNameL, colCount)
 	}
+	matchingCollations := 0
+	for _, col := range downstreamTable.Columns {
+		if upstreamCollation, exists := upstreamCollations[col.Name.L]; exists && upstreamCollation == col.GetCollate() {
+			matchingCollations++
+		}
+	}
+	// Only collation conversions can introduce collisions between privilege rows.
+	// Upgraded clusters may retain bin columns, so matching bin-to-bin schemas are valid too.
+	if matchingCollations == len(collateCompatibilityColumnMap.columns) {
+		return nil
+	}
 	colCount = 0
 	for _, col := range downstreamTable.Columns {
 		if _, exists := collateCompatibilityColumnMap.columns[col.Name.L]; exists {
 			if col.GetCollate() != "utf8mb4_general_ci" {
 				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
-					"incompatible column collate, downstream table %s.%s column %s collate should be %s",
+					"incompatible column collate, downstream table %s.%s column %s collate is %s but should be utf8mb4_general_ci",
 					dbNameL, tableNameL, col.Name.L, col.GetCollate())
 			}
 			colCount += 1

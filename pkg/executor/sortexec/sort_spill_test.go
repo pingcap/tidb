@@ -261,8 +261,9 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 }
 
 func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
-	ctx.GetSessionVars().InitChunkSize = 1024
-	ctx.GetSessionVars().MaxChunkSize = 1024
+	// Keep all input rows in one chunk to make this one-partition case deterministic.
+	ctx.GetSessionVars().InitChunkSize = sortCase.Rows
+	ctx.GetSessionVars().MaxChunkSize = sortCase.Rows
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
@@ -291,7 +292,12 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, enableFailPoint bool) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
+	hardLimit := int64(10000)
+	if enableFailPoint {
+		// Use a tighter limit so `unholdSyncLock` reliably creates multiple spill partitions.
+		hardLimit = 1000
+	}
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	schema := expression.NewSchema(sortCase.Columns()...)
@@ -306,11 +312,12 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
 	if enableFailPoint {
-		// If we disable the failpoint, there may be only one partition.
+		// This failpoint waits for each partition to finish spilling, so the next
+		// chunk is always stored in a new partition.
 		sortPartitionNum := exe.GetSortPartitionListLenForTest()
 		require.Greater(t, sortPartitionNum, 1)
 
-		// Ensure all partitions are spilled
+		// Ensure all full partitions are spilled.
 		for i := 0; i < sortPartitionNum; i++ {
 			// The last partition may not be spilled.
 			if i < sortPartitionNum-1 {

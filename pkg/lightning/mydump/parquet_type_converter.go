@@ -88,6 +88,10 @@ func setDecimalFromIntImpl(val int64, d *types.Datum, converted *convertedType) 
 }
 
 func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] {
+	// For parquet TIME/TIMESTAMP epoch values:
+	// - IsAdjustedToUTC=true: interpret as UTC instant, then render in parser location.
+	// - IsAdjustedToUTC=false: keep as local-semantics wall clock ("as-if UTC"), no loc conversion.
+	// See convertedType.IsAdjustedToUTC for details about why this is required.
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) {

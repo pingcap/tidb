@@ -270,6 +270,11 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
 		return metaData, nil
 	}
+	if len(metaData) < CrypterIvLen {
+		return nil, errors.Errorf(
+			"encrypted backupmeta is too short: got %d bytes, need at least %d bytes for IV",
+			len(metaData), CrypterIvLen)
+	}
 	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
 	iv := metaData[:CrypterIvLen]
 	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
@@ -395,7 +400,10 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
-func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+func (reader *MetaReader) walkDataFiles(
+	ctx context.Context,
+	output func(*backuppb.File),
+) error {
 	// Read backupmeta v1 data files.
 	for _, f := range reader.backupMeta.Files {
 		output(f)
@@ -528,11 +536,21 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
 
+// ReadDataFiles reads the physical data files from the backupmeta.
+// This function is compatible with the old backupmeta.
+func (reader *MetaReader) ReadDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+	return reader.walkDataFiles(ctx, output)
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var producers sync.WaitGroup
+	defer func() {
+		cancel()
+		producers.Wait()
+	}()
 
 	cfg := readSchemaConfig{}
 	for _, opt := range opts {
@@ -544,7 +562,9 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	// And the second error in the errCh is not the root cause error.
 	errCh := make(chan error, 2)
 	// download and parse metafile
+	producers.Add(1)
 	go func() {
+		defer producers.Done()
 		defer close(schemaCh)
 		if err := reader.readSchemas(cctx, func(s *backuppb.Schema) {
 			if cfg.skipStats {
@@ -560,20 +580,25 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		}
 	}()
 	// parse the schema
+	producers.Add(1)
 	go func() {
+		defer producers.Done()
 		defer close(ch)
 		eg, ectx := errgroup.WithContext(cctx)
+		// Workers may still be sending results when cancellation is observed.
+		// Publish their error and join them before closing the result channel.
+		defer func() {
+			if err := eg.Wait(); err != nil {
+				errCh <- err
+			}
+		}()
 		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
 		for {
 			select {
 			case <-ectx.Done():
-				errCh <- errors.Trace(ectx.Err())
 				return
 			case s, ok := <-schemaCh:
 				if !ok {
-					if err := eg.Wait(); err != nil {
-						errCh <- err
-					}
 					return
 				}
 				workers.ApplyOnErrorGroup(eg, func() error {
@@ -595,12 +620,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
 	var fileMap map[int64][]*backuppb.File
 	if !cfg.skipFiles {
-		fileCh := make(chan *backuppb.File, MaxBatchSize)
+		fileCh := make(chan any, MaxBatchSize)
 		fileErrCh := make(chan error, 1)
 		fileMap = make(map[int64][]*backuppb.File)
+		producers.Add(1)
 		go func() {
+			defer producers.Done()
 			defer close(fileCh)
-			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
+			err := reader.walkDataFiles(cctx, func(file *backuppb.File) {
 				select {
 				case <-cctx.Done():
 				case fileCh <- file:
@@ -610,22 +637,23 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				fileErrCh <- err
 			}
 		}()
-	generateFileMapDone:
 		for {
-			select {
-			case <-cctx.Done():
-				return errors.Trace(cctx.Err())
-			case err := <-fileErrCh:
-				return errors.Trace(err)
-			case file, ok := <-fileCh:
-				if !ok {
-					break generateFileMapDone
-				}
+			fileCount := 0
+			err := receiveBatch(cctx, fileErrCh, fileCh, MaxBatchSize, func(item any) error {
+				file := item.(*backuppb.File)
 				physicalID := tablecodec.DecodeTableID(file.GetStartKey())
 				if physicalID == 0 {
 					log.Panic("tableID must not equal to 0", logutil.File(file))
 				}
 				fileMap[physicalID] = append(fileMap[physicalID], file)
+				fileCount++
+				return nil
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if fileCount == 0 {
+				break
 			}
 		}
 	}
@@ -664,7 +692,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			return nil
 		}
 		for _, table := range tableMap {
-			output <- table
+			select {
+			case <-cctx.Done():
+				return errors.Trace(cctx.Err())
+			case output <- table:
+			}
 		}
 	}
 }
@@ -727,6 +759,15 @@ func receiveBatch(
 			return errors.Trace(err)
 		case s, ok := <-ch:
 			if !ok {
+				// A producer error must win over its result-channel closure.
+				select {
+				case err := <-errCh:
+					return errors.Trace(err)
+				default:
+				}
+				if ctx.Err() != nil {
+					return errors.Trace(ctx.Err())
+				}
 				return nil
 			}
 			if err := collectItem(s); err != nil {

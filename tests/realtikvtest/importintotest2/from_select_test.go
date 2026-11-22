@@ -175,8 +175,12 @@ func (s *mockGCSSuite) TestImportFromSelectPrivilege() {
 	importSQL := "IMPORT INTO test.t1 FROM SELECT a,b,c FROM test.t"
 	grantSQL := "GRANT SELECT(%s) ON test.t TO 'testuser'@'localhost'"
 
-	for _, colName := range []string{"a", "b", "c"} {
-		userTk.MustGetErrCode(importSQL, mysql.ErrColumnaccessDenied)
+	for i, colName := range []string{"a", "b", "c"} {
+		errCode := mysql.ErrColumnaccessDenied
+		if i == 0 {
+			errCode = mysql.ErrTableaccessDenied
+		}
+		userTk.MustGetErrCode(importSQL, errCode)
 		s.tk.MustExec(fmt.Sprintf(grantSQL, colName))
 	}
 	userTk.MustExec(importSQL)

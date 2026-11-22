@@ -282,9 +282,10 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 // DropTableArgs is the arguments for drop table/view/sequence job.
 // when dropping multiple objects, each object will have a separate job
 type DropTableArgs struct {
-	// below fields are only for drop table.
-	// when dropping multiple tables, the Identifiers is the same, but each drop-table
-	// runs in a separate job.
+	// Below fields are only for DROP TABLE.
+	// New DROP TABLE submissions carry only the current table identifier. The
+	// executor uses the full statement list for admission checks before it
+	// submits independent jobs.
 	Identifiers []ast.Ident `json:"identifiers,omitempty"`
 	FKCheck     bool        `json:"fk_check,omitempty"`
 
@@ -1359,6 +1360,23 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 	// ConditionString is used to store the partial index condition string for the index.
 	ConditionString string `json:"condition_string,omitempty"`
+
+	// Only used for job args v2.
+	// Old DDL owners may ignore AutoPreSplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
+	// AutoPreSplit must be separate from SplitOpt. Otherwise, an old DDL owner
+	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
+	// manual split, and rejects the add-index job.
+	AutoPreSplit bool              `json:"auto_presplit,omitempty"`
+	SplitOpt     *IndexArgSplitOpt `json:"split_opt,omitempty"`
+}
+
+// IndexArgSplitOpt is a field of IndexArg used by index presplit.
+type IndexArgSplitOpt struct {
+	Lower      []string   `json:"lower,omitempty"`
+	Upper      []string   `json:"upper,omitempty"`
+	Num        int64      `json:"num,omitempty"`
+	ValueLists [][]string `json:"value_lists,omitempty"`
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,

@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
@@ -48,8 +49,10 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	// No need to cache the coproceesor result
-	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		// No need to cache the coprocessor result.
+		conf.TiKVClient.CoprCache.CapacityMB = 0
+	})
 
 	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
@@ -150,6 +153,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
@@ -165,6 +169,7 @@ func newDBBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	return command
 }
 
@@ -179,6 +184,7 @@ func newTableBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	taskrepo.DefineSnapshotRepoWriterFlags(command.Flags())
 	return command
 }
 

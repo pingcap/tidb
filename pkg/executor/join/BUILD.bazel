@@ -73,6 +73,7 @@ go_test(
     name = "join_test",
     timeout = "short",
     srcs = [
+        "adaptive_limit_outer_test.go",
         "bench_test.go",
         "concurrent_map_test.go",
         "hash_table_v1_test.go",

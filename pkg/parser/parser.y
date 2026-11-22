@@ -326,6 +326,7 @@ import (
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
+	auto                  "AUTO"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -3423,6 +3424,22 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
 	}
+|	"DEFAULT" "BUCKETS"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets}
+	}
+|	"DEFAULT" "TOPN"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN}
+	}
+|	"DEFAULT" "SAMPLES"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples}
+	}
+|	"DEFAULT" "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -6061,7 +6078,7 @@ Int64Num:
 	{
 		v, rangeErrMsg := getInt64FromNUM($1)
 		if len(rangeErrMsg) != 0 {
-			yylex.AppendError(yylex.Errorf(rangeErrMsg))
+			yylex.AppendError(yylex.Errorf("%s", rangeErrMsg))
 			return 1
 		}
 		$$ = v
@@ -6208,8 +6225,14 @@ logAnd:
 	"&&"
 |	"AND"
 
+// At "INTERVAL" '(' Expression ',', goyacc can shift ',' to continue the
+// scalar INTERVAL(Expression, Expression) production or reduce Expression to
+// ExpressionList for the anonymous row expression (Expression, Expression).
+// %prec lowerThanComma makes that reduction lose to the lookahead comma and
+// resolves the conflict explicitly. Other expression lists still reduce
+// normally when no shift action competes.
 ExpressionList:
-	Expression
+	Expression %prec lowerThanComma
 	{
 		$$ = []ast.ExprNode{$1}
 	}
@@ -6646,6 +6669,15 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.Condition != nil {
 				opt1.Condition = opt2.Condition
+			} else if opt2.SplitOpt != nil {
+				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPreSplit = false
+			} else if opt2.AutoPreSplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPreSplit = true
+				}
 			}
 			$$ = opt1
 		}
@@ -6700,6 +6732,26 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Global: false,
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
+			},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
+	{
+		$$ = &ast.IndexOption{
+			AutoPreSplit: true,
 		}
 	}
 |	"WHERE" Expression
@@ -6809,6 +6861,7 @@ UnReservedKeyword:
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
 |	"STATS_COL_LIST"
+|	"AUTO"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFFINITY"
@@ -8136,7 +8189,6 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
@@ -8183,6 +8235,14 @@ FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{

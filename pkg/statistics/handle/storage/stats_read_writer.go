@@ -129,6 +129,15 @@ func (s *statsReadWriter) UpdateStatsVersion() error {
 	}, util.FlagWrapTxn)
 }
 
+// IsStatsMetaWriteTooSlow reports whether a stats_meta write that took dur can be missed by the
+// stats cache Update of other TiDB nodes, which looks back only LeaseOffset * lease from its newest version.
+func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
+	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
+	// This is why we need to explicitly check the lease here. Without this check,
+	// the duration validation would always evaluate to true, which is not the intended behavior.
+	return lease > 0 && dur >= cache.LeaseOffset*lease
+}
+
 // handleSlowStatsSaving is used to handle the slow stats saving process.
 // Once the saving process is too slow, we need to log a warning.
 // Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
@@ -136,10 +145,7 @@ func (s *statsReadWriter) UpdateStatsVersion() error {
 // See more at stats cache's Update function.
 func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) (uint64, error) {
 	dur := time.Since(start)
-	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
-	// This is why we need to explicitly check the lease here. Without this check,
-	// the duration validation would always evaluate to true, which is not the intended behavior.
-	isLoadIntervalExceeded := s.statsHandler.Lease() > 0 && dur >= cache.LeaseOffset*s.statsHandler.Lease()
+	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.statsHandler.Lease(), dur)
 	// Use failpoint to simulate slow saving.
 	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
 		if val.(bool) {
