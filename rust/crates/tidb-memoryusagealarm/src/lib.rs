@@ -714,6 +714,34 @@ impl Write for StackProfileBuffer {
     }
 }
 
+/// The native thread stacks of the process, the Rust stand-in for Go's
+/// `runtime.Stack(buf, true)` (all goroutines): on Linux every task's name
+/// and kernel stack, elsewhere the calling thread's backtrace.
+pub fn write_native_thread_stacks(w: &mut dyn Write) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut tasks = fs::read_dir("/proc/self/task")?.collect::<Result<Vec<_>, _>>()?;
+        tasks.sort_by_key(std::fs::DirEntry::file_name);
+        for task in tasks {
+            let id = task.file_name();
+            writeln!(w, "thread {}:", id.to_string_lossy())?;
+            if let Ok(name) = fs::read_to_string(task.path().join("comm")) {
+                writeln!(w, "name {}", name.trim_end())?;
+            }
+            if let Ok(task_stack) = fs::read_to_string(task.path().join("stack")) {
+                w.write_all(task_stack.as_bytes())?;
+            }
+            writeln!(w)?;
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        writeln!(w, "thread {:?}:", std::thread::current().id())?;
+        writeln!(w, "{:?}", std::backtrace::Backtrace::force_capture())?;
+    }
+    Ok(())
+}
+
 /// Native thread stacks written with Go's fixed 64 MiB all-goroutine buffer.
 fn record_thread_profile(record_dir: &Path) -> io::Result<()> {
     let mut file = fs::File::create(record_dir.join("goroutine")).inspect_err(|err| {
@@ -721,27 +749,7 @@ fn record_thread_profile(record_dir: &Path) -> io::Result<()> {
     })?;
     let mut stack = StackProfileBuffer::new();
     let result = (|| -> io::Result<()> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut tasks = fs::read_dir("/proc/self/task")?.collect::<Result<Vec<_>, _>>()?;
-            tasks.sort_by_key(std::fs::DirEntry::file_name);
-            for task in tasks {
-                let id = task.file_name();
-                writeln!(stack, "thread {}:", id.to_string_lossy())?;
-                if let Ok(name) = fs::read_to_string(task.path().join("comm")) {
-                    writeln!(stack, "name {}", name.trim_end())?;
-                }
-                if let Ok(task_stack) = fs::read_to_string(task.path().join("stack")) {
-                    stack.write_all(task_stack.as_bytes())?;
-                }
-                writeln!(stack)?;
-            }
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            writeln!(stack, "thread {:?}:", std::thread::current().id())?;
-            writeln!(stack, "{:?}", std::backtrace::Backtrace::force_capture())?;
-        }
+        write_native_thread_stacks(&mut stack)?;
         if stack.truncated {
             bg_logger().warn(
                 "goroutine stack trace is too large, truncating",

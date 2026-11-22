@@ -1431,16 +1431,14 @@ pub fn index_template(
     create: &tidb_ast::CreateIndexStmt,
     primary: bool,
 ) -> Result<(IndexInfo, Vec<Option<tidb_ast::Expr>>), DdlAdmissionError> {
-    let unique = match create.kind {
-        tidb_ast::IndexKind::Ordinary => false,
-        tidb_ast::IndexKind::Unique => true,
-        other => {
-            return Err(DdlAdmissionError::unsupported(format!(
-                "CREATE {} INDEX is not supported by this node",
-                other.sql()
-            )))
-        }
-    };
+    // Go `createIndex`: a SPATIAL index is not supported (a columnar kind
+    // took `createColumnarIndex` before this).
+    if create.kind == tidb_ast::IndexKind::Spatial {
+        return Err(DdlAdmissionError::from_terror(
+            &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE.gen_with_stack("SPATIAL index is not supported"),
+        ));
+    }
+    let unique = create.kind == tidb_ast::IndexKind::Unique;
     let mut columns = Vec::with_capacity(create.parts.len());
     let mut expressions = Vec::with_capacity(create.parts.len());
     for part in &create.parts {

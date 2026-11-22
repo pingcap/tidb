@@ -159,6 +159,9 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     crate::install_process_globals(&config);
     setup_log()?;
     setup_extensions()?;
+    // Go `main`: `signal.SetupUSR1Handler()` before `registerStores`.
+    crate::shutdown_signal::setup_usr1_handler()
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let result = run_node_with_log(config);
     // Go `main`: `syncLog()` after the server exited; a failed sync turns
     // the exit into a generic failure.

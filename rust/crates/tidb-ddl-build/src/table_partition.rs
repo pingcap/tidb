@@ -113,6 +113,25 @@ pub fn build_table_partitioning(
     allocate_id: &mut dyn FnMut() -> i64,
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<(PartitionExpr, PartitionInfo)>, MysqlError> {
+    // Go `buildTablePartitionInfo`: a partition type it does not enable
+    // (SYSTEM_TIME) warns and leaves the table unpartitioned.
+    if let Some(partitioning) = create.partitioning.as_ref().filter(|partitioning| {
+        !matches!(
+            partitioning.method.kind,
+            PartitionType::HASH | PartitionType::KEY | PartitionType::RANGE | PartitionType::LIST
+        )
+    }) {
+        ctx.append_warning(tidb_context::WarnErr::Terror(
+            tidb_dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.fast_gen(
+                &format!(
+                    "Unsupported partition type {}, treat as normal table",
+                    partitioning.method.kind.sql()
+                ),
+                &[],
+            ),
+        ));
+        return Ok(None);
+    }
     create
         .partitioning
         .as_ref()
@@ -183,14 +202,15 @@ fn build_table_partitioning_inner(
         method.kind,
         PartitionType::HASH | PartitionType::KEY | PartitionType::RANGE | PartitionType::LIST
     ) {
-        // The method name is Go's own spelling, so the refusal reads like the
-        // clause the user wrote rather than like a Rust variant.
+        // CREATE TABLE warns and builds a normal table before this point
+        // (`build_table_partitioning`). Go's ALTER TABLE ... PARTITION BY
+        // keeps the table's old partitioning when `buildTablePartitionInfo`
+        // does not enable the type, and the reorganization it then runs
+        // leaves an unpartitioned table with an intermediate `pFullTable`
+        // partition (`PARTITION BY NONE`); that corrupt state is not ported.
         let name = method.kind.sql();
         return Err(tidb_terror::MysqlError::unknown(format!(
-            "CREATE TABLE ... PARTITION BY {name} is not supported by this node: \
-             it can neither route a row to one of those partitions nor prune \
-             them, so accepting the clause would build an ordinary \
-             unpartitioned table"
+            "ALTER TABLE ... PARTITION BY {name} is not supported"
         )));
     }
     // Go `buildTablePartitionInfo`: subpartitioning is only legal under

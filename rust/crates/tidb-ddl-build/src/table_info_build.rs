@@ -508,7 +508,6 @@ fn build_table_info_with_column_types(
             context,
             enable_check_constraint,
             GeneratedColumns::Deferred {
-                preceding: &columns,
                 schema,
                 table: create.name.last().map_or("", String::as_str),
             },
@@ -2282,39 +2281,8 @@ pub fn hidden_index_column_info(
 
 /// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
 /// stored table's charset pair — Go `buildColumnAndConstraint` run by the
-/// add-column DDL job. `generated_preceding` is present only for the ADD path
-/// that can validate a virtual generated expression against the columns
-/// before it; CREATE/MODIFY keep their existing admission boundary.
-/// Names a column option the way the statement spelled it.
-///
-/// A refusal reaches the client verbatim, so it must not carry a Rust `Debug`
-/// dump: `ADD COLUMN ... AS (a+1) VIRTUAL` used to be refused with
-/// `Generated { expression: Binary(Plus, Column(["a"]), Int("1")),
-/// expression_text: [97, 43, 49], stored: false }`, which names this port's
-/// AST rather than the user's SQL and leaks the byte spelling of their own
-/// expression back at them.
-fn column_option_sql_name(option: &ColumnOption) -> &'static str {
-    match option {
-        ColumnOption::InlineKey(_) => "an inline key option",
-        ColumnOption::NotNull => "NOT NULL",
-        ColumnOption::Null => "NULL",
-        ColumnOption::AutoIncrement => "AUTO_INCREMENT",
-        ColumnOption::Default(_) => "DEFAULT",
-        ColumnOption::Generated { stored: true, .. } => "a STORED generated expression",
-        ColumnOption::Generated { .. } => "a VIRTUAL generated expression",
-        ColumnOption::OnUpdate(_) => "ON UPDATE",
-        ColumnOption::Comment(_) => "COMMENT",
-        ColumnOption::Collate(_) => "COLLATE",
-        ColumnOption::Check(_) => "CHECK",
-        ColumnOption::Reference(_) => "REFERENCES",
-        ColumnOption::ColumnFormat(_) => "COLUMN_FORMAT",
-        ColumnOption::Storage(_) => "STORAGE",
-        ColumnOption::AutoRandom(_) => "AUTO_RANDOM",
-        ColumnOption::SecondaryEngineAttribute(_) => "SECONDARY_ENGINE_ATTRIBUTE",
-        ColumnOption::MariaDbRowStart => "ROW START",
-        ColumnOption::MariaDbRowEnd => "ROW END",
-    }
-}
+/// add-column DDL job. `generated_preceding` is the table's visible columns,
+/// which a virtual generated expression may read.
 
 /// Go `executor.AddColumn`'s `checkAndCreateNewColumn` for one column
 /// definition; `built_type` is a type Go's internal callers build already
@@ -2327,32 +2295,8 @@ pub fn build_added_column(
     table_collate: &str,
     context: &tidb_metabuild::Context,
     enable_check_constraint: bool,
-    generated_preceding: Option<&[ColumnInfo]>,
+    generated_preceding: &[ColumnInfo],
 ) -> Refusal<ColumnInfo> {
-    for option in &column.options {
-        match option {
-            ColumnOption::Null
-            | ColumnOption::Comment(_)
-            | ColumnOption::NotNull
-            | ColumnOption::Default(_)
-            // Go `getCharsetAndCollateInColumnDef` resolves it with the type.
-            | ColumnOption::Collate(_) => {}
-            // `build_column` below owns Go's single OFF warning and returns
-            // the inline constraint that `CreateNewColumn` discards.
-            ColumnOption::Check(_) => {}
-            // A STORED expression is refused only after it has been built:
-            // Go validates the expression (arity, columns) first.
-            ColumnOption::Generated { .. } if generated_preceding.is_some() => {}
-            // Go builds the ON UPDATE of an added column like CREATE TABLE's.
-            ColumnOption::OnUpdate(_) => {}
-            other => {
-                return Err(DdlAdmissionError::unsupported(format!(
-                    "ADD COLUMN {} waits on its DDL course",
-                    column_option_sql_name(other)
-                )))
-            }
-        }
-    }
     // Go `CreateNewColumn`: a default that calls one of these would give the
     // existing rows a value no replica can reproduce, so it is refused before
     // the column is built.
@@ -2398,13 +2342,12 @@ pub fn build_added_column(
         table_collate,
         context,
         enable_check_constraint,
-        generated_preceding.map_or(GeneratedColumns::Refused, GeneratedColumns::Existing),
+        GeneratedColumns::Existing(generated_preceding),
     )?;
-    if generated_preceding.is_some()
-        && column
-            .options
-            .iter()
-            .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
+    if column
+        .options
+        .iter()
+        .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
     {
         return Err(DdlAdmissionError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.gen_with_stack_by_args(
@@ -2417,7 +2360,6 @@ pub fn build_added_column(
     // may not read the table's AUTO_INCREMENT column (3109).
     if info.is_generated() && !context.enable_auto_increment_in_generated() {
         let auto_increment = generated_preceding
-            .unwrap_or(&[])
             .iter()
             .find(|existing| existing.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT));
         if let Some(auto_increment) = auto_increment {
@@ -2431,9 +2373,9 @@ pub fn build_added_column(
             }
         }
     }
-    // Go ignores every constraint returned here. Unsupported key/FK options
-    // were refused above; the only possible result is the inline CHECK that
-    // pinned `ALTER TABLE ... ADD COLUMN` does not persist.
+    // Go ignores every constraint returned here: the executor's
+    // `checkUnsupportedColumnConstraint` refused the key options, and an
+    // inline CHECK or REFERENCES is not persisted by ADD COLUMN.
     stamp_origin_default(&mut info, context, true)?;
     Ok(info)
 }
@@ -2504,14 +2446,7 @@ pub fn process_modify_column_options(
     for option in &column.options {
         match option {
             ColumnOption::Default(expr) => {
-                staged_default = Some(stage_column_default(
-                    &name,
-                    &field_type,
-                    expr,
-                    context,
-                    &[],
-                    &[],
-                )?);
+                staged_default = Some(stage_column_default(&name, &field_type, expr, context)?);
             }
             // Go `setColumnComment`, once per option.
             ColumnOption::Comment(comment) => {
@@ -2929,32 +2864,16 @@ fn stamp_origin_default(
 /// Where a column's generated expression is resolved.
 #[derive(Clone, Copy)]
 enum GeneratedColumns<'a> {
-    /// ADD COLUMN without the table's columns: this node does not build one.
-    Refused,
     /// ADD COLUMN: against the table's existing columns, now.
     Existing(&'a [ColumnInfo]),
     /// CREATE TABLE: Go `columnDefToCol` records the expression text and
     /// its dependences only, and `checkGeneratedColumn` resolves every
-    /// expression against the whole table once it is built. `preceding` is
-    /// the columns before this one, which a DEFAULT expression reads;
-    /// `schema` and `table` judge a qualified column name.
+    /// expression against the whole table once it is built. `schema` and
+    /// `table` judge a qualified column name.
     Deferred {
-        preceding: &'a [ColumnInfo],
         schema: &'a str,
         table: &'a str,
     },
-}
-
-impl<'a> GeneratedColumns<'a> {
-    fn preceding(self) -> &'a [ColumnInfo] {
-        match self {
-            Self::Refused => &[],
-            Self::Existing(columns)
-            | Self::Deferred {
-                preceding: columns, ..
-            } => columns,
-        }
-    }
 }
 
 /// Go `buildColumnAndConstraint`'s type steps for a column whose type is
@@ -3205,24 +3124,7 @@ fn build_column(
                 }
             },
             ColumnOption::Default(expr) => {
-                let preceding_names: Vec<String> = generated_columns
-                    .preceding()
-                    .iter()
-                    .map(|column| column.name.original().to_owned())
-                    .collect();
-                let preceding_types: Vec<FieldType> = generated_columns
-                    .preceding()
-                    .iter()
-                    .map(|column| column.field_type.clone())
-                    .collect();
-                staged_default = Some(stage_column_default(
-                    name,
-                    &field_type,
-                    expr,
-                    context,
-                    &preceding_names,
-                    &preceding_types,
-                )?);
+                staged_default = Some(stage_column_default(name, &field_type, expr, context)?);
                 remove_on_update_now(&mut field_type);
             }
             ColumnOption::OnUpdate(expr) => {
@@ -3296,11 +3198,6 @@ fn build_column(
                 expression, stored, ..
             } => {
                 let preceding = match generated_columns {
-                    GeneratedColumns::Refused => {
-                        return Err(DdlAdmissionError::unsupported(
-                            "a generated expression waits on its DDL course",
-                        ));
-                    }
                     GeneratedColumns::Deferred { schema, table, .. } => {
                         info.generated_expr_string = expression
                             .restore_with_flags_and_string_charset(
@@ -3374,12 +3271,13 @@ fn build_column(
             // exists. Only the table-level `CONSTRAINT ... FOREIGN KEY`
             // spelling is honored.
             ColumnOption::Reference(_) => {}
-            other => {
-                return Err(DdlAdmissionError::plain(format!(
-                    "column `{name}` carries {}, which this node does not support",
-                    describe_column_option(other)
-                )))
-            }
+            // Go `columnDefToCol`'s option switch has no default arm: these
+            // options are parsed for MySQL compatibility and never read.
+            ColumnOption::ColumnFormat(_)
+            | ColumnOption::Storage(_)
+            | ColumnOption::SecondaryEngineAttribute(_)
+            | ColumnOption::MariaDbRowStart
+            | ColumnOption::MariaDbRowEnd => {}
         }
     }
 
@@ -3500,7 +3398,7 @@ pub fn alter_column(
         return Ok(());
     };
     let field_type = info.field_type.clone();
-    let staged = stage_column_default(name, &field_type, expr, context, &[], &[])?;
+    let staged = stage_column_default(name, &field_type, expr, context)?;
     // Go `updateColumnDefaultValue` turns a staged value that carries no
     // default at all into `ErrInvalidDefaultValue`, which is why
     // `sql_mode=''` plus `SET DEFAULT ''` on TEXT is 1067 here even though
@@ -3961,8 +3859,6 @@ fn stage_column_default(
     field_type: &FieldType,
     expr: &Expr,
     context: &tidb_metabuild::Context,
-    preceding_names: &[String],
-    preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
     let built = tidb_table::column_default::build_with_current_database(
         expr,
@@ -3975,12 +3871,12 @@ fn stage_column_default(
             .as_deref(),
         context.get_expr_ctx().get_charset_info().0,
         |expr| {
-            // go resolves a DEFAULT expression against the table's own columns
-            // (`getDefaultValue` runs the expression resolver over them), so an
-            // unknown name fails with ErrBadField (1054) 'expression'.
+            // Go `getDefaultValue` evaluates the expression with
+            // `expression.EvalSimpleAst`, against no columns, so any column
+            // name fails with ErrBadField (1054) 'expression'.
             let resolver = tidb_table::generated_column::TableColumnResolver::with_like_default_escape(
-                preceding_names,
-                preceding_types,
+                &[],
+                &[],
                 context.get_expr_ctx().get_eval_ctx().time_zone(),
                 context.get_expr_ctx().get_eval_ctx().like_default_escape(),
             );
@@ -4111,29 +4007,6 @@ fn persist_column_default(
         }
     }
     Ok(())
-}
-
-fn describe_column_option(option: &ColumnOption) -> &'static str {
-    match option {
-        ColumnOption::Generated { .. } => "a generated expression",
-        ColumnOption::Check(_) => "a CHECK constraint",
-        ColumnOption::Reference(_) => "a REFERENCES clause",
-        ColumnOption::ColumnFormat(_) => "COLUMN_FORMAT",
-        ColumnOption::Storage(_) => "STORAGE",
-        ColumnOption::AutoRandom(_) => "AUTO_RANDOM",
-        ColumnOption::SecondaryEngineAttribute(_) => "SECONDARY_ENGINE_ATTRIBUTE",
-        ColumnOption::MariaDbRowStart => "ROW START",
-        ColumnOption::MariaDbRowEnd => "ROW END",
-        // Handled by the caller before it reaches this description.
-        ColumnOption::NotNull
-        | ColumnOption::Null
-        | ColumnOption::InlineKey(_)
-        | ColumnOption::AutoIncrement
-        | ColumnOption::Default(_)
-        | ColumnOption::OnUpdate(_)
-        | ColumnOption::Comment(_)
-        | ColumnOption::Collate(_) => "a key, nullability, default, or comment option",
-    }
 }
 
 /// TiDB's shipped DDL mode in UTC, for non-session live compatibility

@@ -862,12 +862,10 @@ fn build_alter_table_spec<S: MetaSnapshot>(
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             alter_table_no_job(catalog, &schema, &table, None)
         }
-        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::from_terror(
-            &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION.gen_with_stack_by_args(&[]),
-        )
-        .into()),
-        // Go `AlterTable`'s default arm: the specifications it has no job for.
-        tidb_ast::AlterTableAction::Force
+        // Go `AlterTable`'s default arm: the specifications it has no job for
+        // (`AlterTableStatsOptions` has no case there either).
+        tidb_ast::AlterTableAction::SetStatsOptions(_)
+        | tidb_ast::AlterTableAction::Force
         | tidb_ast::AlterTableAction::TablespaceImport(_)
         | tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::ImportTablespace { .. }

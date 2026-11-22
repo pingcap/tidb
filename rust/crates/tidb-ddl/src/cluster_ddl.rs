@@ -1596,7 +1596,7 @@ pub(super) fn build_add_column(
         &info.collate,
         &context.metabuild_context(),
         context.enable_check_constraint(),
-        Some(&generated_namespace),
+        &generated_namespace,
     )
     .map_err(DdlPlanError::Admission)?;
     // Go `verifyColumnGenerationSingle`: a generated column it reads must

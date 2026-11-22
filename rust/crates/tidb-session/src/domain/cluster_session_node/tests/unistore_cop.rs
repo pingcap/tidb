@@ -20861,6 +20861,34 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
             "Unsupported Unsupported/unknown ALTER TABLE specification",
         ),
         (
+            "ALTER TABLE pt STATS_OPTIONS = 'buckets=10'",
+            8200,
+            "Unsupported Unsupported/unknown ALTER TABLE specification",
+        ),
+        (
+            "CREATE SPATIAL INDEX s1 ON pt (a)",
+            8200,
+            "SPATIAL index is not supported",
+        ),
+        // Go `getDefaultValue` evaluates a non-call DEFAULT with
+        // `EvalSimpleAst`, against no columns: a column it names is unknown
+        // whether or not the table has it.
+        (
+            "CREATE TABLE q1 (x INT, y INT DEFAULT (x + 1))",
+            1054,
+            "Unknown column 'x' in 'expression'",
+        ),
+        (
+            "CREATE TABLE q3 (x INT, y INT DEFAULT (x))",
+            1054,
+            "Unknown column 'x' in 'expression'",
+        ),
+        (
+            "ALTER TABLE pt ADD COLUMN z INT DEFAULT (a + 1)",
+            1054,
+            "Unknown column 'a' in 'expression'",
+        ),
+        (
             "ALTER TABLE ge ADD COLUMN cc INT, AUTO_ID_CACHE = 10",
             8200,
             "Unsupported multi schema change for modify auto id cache",
@@ -21019,6 +21047,68 @@ fn rejected_statements_answer_with_go_codes_and_messages() {
 /// string form. A cast whose result is JSON is never folded, so the constant
 /// operands stay `cast(1, json BINARY)` in the plan. Each operator info below
 /// is the Go oracle's text (database `pl17`/`pl18` renamed to `test`).
+/// Go `columnDefToCol` has no default arm: COLUMN_FORMAT, STORAGE,
+/// SECONDARY_ENGINE_ATTRIBUTE and an inline REFERENCES are parsed and never
+/// read, by CREATE TABLE and ADD COLUMN alike; `buildTablePartitionInfo`
+/// warns for PARTITION BY SYSTEM_TIME and builds a normal table (both
+/// captured from a Go tidb-server).
+#[test]
+fn ignored_column_options_and_system_time_partitioning_follow_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1131)).unwrap();
+    session.node_conn().execute_write("USE test").unwrap();
+    for ddl in [
+        "CREATE TABLE c1 (a INT COLUMN_FORMAT FIXED, b INT STORAGE DISK, \
+         c INT SECONDARY_ENGINE_ATTRIBUTE = 'x')",
+        "CREATE TABLE c3 (id INT PRIMARY KEY, a INT)",
+        "ALTER TABLE c3 ADD COLUMN b INT COLUMN_FORMAT DYNAMIC",
+        "ALTER TABLE c3 ADD COLUMN c INT STORAGE MEMORY",
+        "ALTER TABLE c3 ADD COLUMN d INT SECONDARY_ENGINE_ATTRIBUTE = 'y'",
+        "ALTER TABLE c3 ADD COLUMN e INT REFERENCES c1(a)",
+    ] {
+        session
+            .node_conn()
+            .execute_write(ddl)
+            .unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW CREATE TABLE c1"))[0][1],
+        "CREATE TABLE `c1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL,\n  \
+         `c` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW CREATE TABLE c3"))[0][1],
+        "CREATE TABLE `c3` (\n  `id` int NOT NULL,\n  `a` int DEFAULT NULL,\n  \
+         `b` int DEFAULT NULL,\n  `c` int DEFAULT NULL,\n  `d` int DEFAULT NULL,\n  \
+         `e` int DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n\
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    for ddl in [
+        "CREATE TABLE sy (a INT) PARTITION BY SYSTEM_TIME (PARTITION p0 HISTORY, PARTITION pn CURRENT)",
+        "CREATE TABLE sy2 (a INT) PARTITION BY SYSTEM_TIME INTERVAL 1 DAY \
+         (PARTITION p0 HISTORY, PARTITION pn CURRENT)",
+    ] {
+        session
+            .node_conn()
+            .execute_write(ddl)
+            .unwrap_or_else(|error| panic!("{ddl}: {error:?}"));
+        assert_eq!(
+            displayed(rows(&mut session, "SHOW WARNINGS")),
+            [[
+                "Warning".to_owned(),
+                "8200".to_owned(),
+                "Unsupported partition type SYSTEM_TIME, treat as normal table".to_owned(),
+            ]],
+            "{ddl}"
+        );
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SHOW CREATE TABLE sy"))[0][1],
+        "CREATE TABLE `sy` (\n  `a` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT \
+         CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+}
+
 #[test]
 fn json_function_arguments_carry_go_implicit_casts() {
     let (stack, _users) = cop_backed_stack();
