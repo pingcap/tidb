@@ -281,6 +281,7 @@ go_test(
         "restart_test.go",
         "rollingback_internal_test.go",
         "rollingback_test.go",
+        "schema_internal_test.go",
         "schema_read_only_test.go",
         "schema_test.go",
         "sequence_test.go",

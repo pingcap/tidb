@@ -152,7 +152,6 @@ func TestNewSessionVars(t *testing.T) {
 				<-done
 				<-done
 			})
-
 		})
 	}
 

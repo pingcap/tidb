@@ -287,7 +287,7 @@ func TestMergeCreateTableJobs(t *testing.T) {
 			jobs = append(jobs, NewJobWrapperWithArgs(&model.Job{
 				Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable,
 				CheckSchemaReadOnly: check,
-			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t")}}, false))
+			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: pmodel.NewCIStr("t")}}, false))
 		}
 		_, err := mergeCreateTableJobs(jobs)
 		require.True(t, infoschema.ErrTableExists.Equal(err), "duplicate jobs must use the unmerged submission order")
