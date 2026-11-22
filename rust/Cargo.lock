@@ -10408,10 +10408,18 @@ dependencies = [
  "tidb-codec",
  "tidb-cpuprofile",
  "tidb-datatype",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-model",
  "tidb-mysql",
+ "tidb-sqlexec",
  "tidb-sqlkiller",
  "tidb-stats",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-storage",
+ "tidb-stats-handle-util",
+ "tidb-store-driver-error",
+ "tidb-terror",
 ]
 
 [[package]]

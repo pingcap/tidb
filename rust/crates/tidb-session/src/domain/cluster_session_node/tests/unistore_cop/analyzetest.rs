@@ -552,3 +552,109 @@ fn test_single_column_index_ndv() {
     .collect();
     assert_eq!(got, want);
 }
+
+/// Go `TestAnalyzePartitionStaticToDynamic`. Go's `h.SetLease(1)` only
+/// paces the background reload; the bucket count is read through SQL.
+#[test]
+fn test_analyze_partition_static_to_dynamic() {
+    let _force_dynamic_prune =
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", "return(true)");
+    let (stack, _users, mut session) = stack_and_session(409);
+    rows(&mut session, "set @@session.tidb_analyze_version = 2");
+    rows(&mut session, "set @@session.tidb_stats_load_sync_wait = 20000");
+    rows(&mut session, "set @@session.tidb_skip_missing_partition_stats = 0");
+    rows(
+        &mut session,
+        "CREATE TABLE t (a int, b int, c varchar(10), d int, primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)",
+    );
+    rows(&mut session, "insert into t values (1,1,1,1),(2,1,2,2),(3,1,3,3),(4,1,4,4),(5,1,5,5),(6,1,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9)");
+    rows(&mut session, "insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)");
+    trigger_predicate_columns_collection(&stack, &mut session, "t", &["a", "b", "c", "d"]);
+    let table_id: i64 = displayed(rows(
+        &mut session,
+        "SELECT TIDB_TABLE_ID FROM information_schema.tables WHERE table_schema = 'test' AND table_name = 't'",
+    ))[0][0]
+        .parse()
+        .expect("table id");
+    let partitions = partition_ids(&mut session, "t");
+
+    // generate old partition stats
+    rows(&mut session, "set global tidb_persist_analyze_options = false");
+    rows(&mut session, "set @@session.tidb_partition_prune_mode = 'static'");
+    rows(&mut session, "analyze table t partition p0 columns a,c with 1 topn, 3 buckets");
+    rows(&mut session, "select * from t where a > 1 and b > 1 and c > 1 and d > 1");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "show stats_buckets where db_name = 'test' and table_name = 't' and partition_name = 'p0' and column_name = 'c' and is_index = 0"
+        ))
+        .len(),
+        3
+    );
+
+    let missing = "Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `t` partition `p0` column `d`, please run analyze table to refresh columns of all partitions";
+    let ignored = "Warning 1105 Ignore columns and options when analyze partition in dynamic mode";
+    // analyze partition with existing stats of other partitions under dynamic
+    rows(&mut session, "set @@session.tidb_partition_prune_mode = 'dynamic'");
+    rows(&mut session, "analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets");
+    assert_eq!(
+        joined(sorted(displayed(rows(&mut session, "show warnings")))),
+        [
+            "Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+            missing,
+        ]
+    );
+
+    // analyze partition with existing table-level options and existing partition stats under dynamic
+    rows(
+        &mut session,
+        &format!(
+            "insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values ({table_id},0,0,2,2,'DEFAULT','')"
+        ),
+    );
+    rows(&mut session, "set global tidb_persist_analyze_options = true");
+    rows(&mut session, "analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets");
+    let note = "Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1, reason to use this rate is \"use min(1, 110000/5) as the sample-rate=1\"";
+    assert_eq!(joined(sorted(displayed(rows(&mut session, "show warnings")))), [note, ignored, missing]);
+
+    // analyze partition with existing table-level & partition-level options and existing partition stats under dynamic
+    rows(
+        &mut session,
+        &format!(
+            "insert into mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) values ({},0,0,1,1,'DEFAULT','')",
+            partitions[1]
+        ),
+    );
+    rows(&mut session, "analyze table t partition p1 columns a,b,d with 1 topn, 3 buckets");
+    assert_eq!(joined(sorted(displayed(rows(&mut session, "show warnings")))), [note, ignored, missing]);
+}
+
+/// Go `dealErrPartitionColumnStatsMissing` names the table, partition and
+/// column by `Name.L` (`FindColumnNameByID`), whatever case the DDL and the
+/// statement use.
+#[test]
+fn global_stats_missing_column_warning_uses_lower_case_names() {
+    let _force_dynamic_prune =
+        tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", "return(true)");
+    let (stack, _users, mut session) = stack_and_session(410);
+    rows(&mut session, "set @@session.tidb_skip_missing_partition_stats = 0");
+    rows(
+        &mut session,
+        "CREATE TABLE MixedT (A int, B int, primary key(A)) PARTITION BY RANGE (A) (PARTITION P0 VALUES LESS THAN (10), PARTITION P1 VALUES LESS THAN (20))",
+    );
+    rows(&mut session, "insert into MixedT values (1,1),(11,11)");
+    trigger_predicate_columns_collection(&stack, &mut session, "MixedT", &["A", "B"]);
+    rows(&mut session, "set @@session.tidb_partition_prune_mode = 'static'");
+    rows(&mut session, "analyze table MixedT partition P0 columns A");
+    rows(&mut session, "set @@session.tidb_partition_prune_mode = 'dynamic'");
+    rows(&mut session, "analyze table MixedT partition P1 columns A,B");
+    let warnings = joined(displayed(rows(&mut session, "show warnings")));
+    assert!(
+        warnings.contains(&"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `mixedt` partition `p0` column `b`, please run analyze table to refresh columns of all partitions".to_owned()),
+        "{warnings:?}"
+    );
+}

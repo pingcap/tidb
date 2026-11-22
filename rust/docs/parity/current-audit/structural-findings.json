@@ -3,20 +3,20 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
   "counts": {
     "unresolved": 1,
-    "open": 1,
-    "partial": 0
+    "open": 0,
+    "partial": 1
   },
   "findings": [
     {
       "id": "R03",
-      "status": "open",
+      "status": "partial",
       "group": "Statistics",
-      "finding": "ANALYZE is not in Go's shape. One 3,055-line `real_tikv_analyze.rs` holds the planner's `buildAnalyze*` / `getMustAnalyzedColumns`, the executor's `AnalyzeExec` and globalstats' async merge; Go's `AnalyzeExec` worker pool (`analyzeWorker`, `handleResultsError`, `handleGlobalStats`), `AnalyzeColumnsExec`'s sampling build (`buildSamplingStats`, `subMergeWorker`, `subBuildWorker`, `readDataAndSendTask`, `handleNDVForSpecialIndexes`), `analyze_idx.go`'s `fetchAnalyzeResult`, `analyze_global_stats.go` and `analyze_worker.go` have no counterparts.",
+      "finding": "ANALYZE is not in Go's shape. `real_tikv_analyze.rs` holds the planner's `buildAnalyze*` / `getMustAnalyzedColumns` and the executor's `AnalyzeExec`; Go's `AnalyzeExec` worker pool (`analyzeWorker`, `handleResultsError`, `handleGlobalStats`), `AnalyzeColumnsExec`'s sampling build (`buildSamplingStats`, `subMergeWorker`, `subBuildWorker`, `readDataAndSendTask`, `handleNDVForSpecialIndexes`), `analyze_idx.go`'s `fetchAnalyzeResult`, `analyze_global_stats.go` and `analyze_worker.go` have no counterparts. Done: globalstats' `MergePartitionStats2GlobalStats(ByTableID)`, `globalStatsMerger` and `WriteGlobalStatsToStorage` live in `tidb-stats-handle-globalstats/src/global_stats.rs`.",
       "rust_evidence": "`tidb-executor/src/real_tikv_analyze.rs`, `analyze.rs`, `cluster_analyze.rs`, `cluster_analyze/sampling.rs`, `analyze/exec.rs`",
-      "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/statistics/handle/globalstats`"
+      "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/executor/builder.go` (`buildAnalyze*`)"
     }
   ],
   "unresolved": 1,
-  "open": 1,
-  "partial": 0
+  "open": 0,
+  "partial": 1
 }

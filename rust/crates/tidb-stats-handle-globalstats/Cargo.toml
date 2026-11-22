@@ -20,6 +20,14 @@ chrono.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
+tidb-terror = { path = "../tidb-terror" }
 
 [[bench]]
 name = "global_stats"

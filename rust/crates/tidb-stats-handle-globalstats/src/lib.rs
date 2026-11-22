@@ -14,6 +14,8 @@
 
 //! Partition TopN merging from `pkg/statistics/handle/globalstats/topn.go`.
 
+pub mod global_stats;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};

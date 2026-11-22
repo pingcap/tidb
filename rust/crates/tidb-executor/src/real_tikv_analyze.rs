@@ -23,24 +23,18 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc::sync_channel;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
-use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
+use tidb_datatype::{SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_mysql::errors::SqlError;
-use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::get_adjusted_sample_rate;
-use tidb_stats::fm_sketch_ndv;
-use tidb_stats::merge_fm_sketch;
-use tidb_stats_handle_globalstats::merge_partition_histogram_topn;
-use tidb_stats::CmsSketch;
-use tidb_stats::FmSketch;
-use tidb_stats_handle_globalstats::GlobalStatsItem;
 use tidb_stats_handle_globalstats::GlobalStatsMergeError;
-use tidb_stats::StatsLoadedStatus;
-use tidb_stats::TopN;
+use tidb_stats_handle_globalstats::global_stats::{
+    merge_partition_stats_2_global_stats_by_table_id, write_global_stats_to_storage, GlobalStats,
+    GlobalStatsError, GlobalStatsInfo, MergeSession,
+};
 use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
@@ -51,7 +45,7 @@ use crate::cluster_analyze::{
 };
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use tidb_stats_handle_storage::cluster_stats_load::{
-    column_types_of, ClusterStatsItem,
+    ClusterStatsItem,
 };
 use tidb_stats_handle_storage::save::{AnalyzeResults, STATS_VERSION_2};
 use tidb_stats_handle_storage::stats_read_writer::{self, StatsSessionPool};
@@ -1369,572 +1363,74 @@ fn commit_cluster_global_stats<S: StoreClient>(
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (logical_id, total_count, modify_count, items) = {
+    let table = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_info_schema(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-        let table = find_statement_table(&catalog, &resolved.statement)?;
-        let table = table.read();
-        let definitions = table
-            .partition
-            .as_ref()
-            .expect("a dynamic target is partitioned")
-            .read()
-            .definitions
-            .snapshot();
-        let column_types = column_types_of(&table);
-        let column_names = table
-            .cols()
-            .iter_deref()
-            .map(|column| {
-                let column = column.read();
-                (column.id, column.name.original().to_owned())
-            })
-            .collect();
-        let index_names = table
-            .indices
-            .iter_deref()
-            .map(|index| {
-                let index = index.read();
-                (index.id, index.name.original().to_owned())
-            })
-            .collect();
-        {
-            // Go `AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats`:
-            // `prepare` and the IO worker on one statistics session.
-            let mut merged = Err(ClusterAnalyzeError::Other("global stats merge did not run".to_owned()));
-            stats_pool
-                .call_with_sctx(
-                    &mut |sctx| {
-                        merged = match merge_async_on(
-                            sctx,
-                            &table,
-                            &definitions,
-                            column_ids,
-                            index_ids,
-                            &column_types,
-                            &column_names,
-                            &index_names,
-                            &resolved.statement,
-                            killer,
-                        ) {
-                            Err(ClusterAnalyzeError::StatsRead(error)) => return Err(error),
-                            result => result,
-                        };
-                        Ok(())
-                    },
-                    &[],
-                )
-                .map_err(ClusterAnalyzeError::Sql)?;
-            let (total_count, modify_count, items) = merged?;
-            (table.id, total_count, modify_count, items)
-        }
+        let table = find_statement_table(&catalog, &resolved.statement)?.read().clone();
+        table
     };
     transaction
         .finish_without_writes()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
 
-    write_global_stats_items(
-        items,
-        |item| {
-            commit_global_stats_item(stats_pool, logical_id, total_count, modify_count, item, stats_lease)
-        },
-        |write| {
-            report.version = report.version.max(write.0);
-            report.histogram_count += write.1;
-            report.bucket_count += write.2;
-            report.topn_count += write.3;
-        },
-    )?;
-    report.table_id = logical_id;
-    Ok(())
-}
-
-/// The async global-stats merge on one statistics session: Go `prepare`,
-/// then the IO and CPU workers.
-#[allow(clippy::too_many_arguments)]
-fn merge_async_on(
-    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
-    table: &tidb_model::TableInfo,
-    definitions: &[tidb_model::PartitionDefinition],
-    column_ids: &[i64],
-    index_ids: &[i64],
-    column_types: &std::collections::BTreeMap<i64, FieldType>,
-    column_names: &std::collections::BTreeMap<i64, String>,
-    index_names: &std::collections::BTreeMap<i64, String>,
-    statement: &AnalyzeStatement,
-    killer: &SqlKiller,
-) -> Result<(i64, i64, Vec<ClusterStatsItem>), ClusterAnalyzeError> {
-    let partitions = prepare_async_global_partitions(
-        sctx,
-        definitions
-            .iter()
-            .map(|definition| (definition.id, definition.name.original().to_owned())),
-        !column_ids.is_empty(),
-        !index_ids.is_empty(),
-    )?;
-    let total_count = partitions.iter().fold(0_i64, |total, partition| {
-        total.wrapping_add(partition.row_count)
-    });
-    let modify_count = partitions.iter().fold(0_i64, |total, partition| {
-        total.wrapping_add(partition.modify_count)
-    });
-    let items = match &statement.eval_context.session_zone() {
-        SessionTimeZone::Local => merge_global_items_async(
-            table,
-            sctx,
-            Some(&chrono::Local),
-            &partitions,
-            column_ids,
-            index_ids,
-            column_types,
-            column_names,
-            index_names,
-            statement,
-            total_count,
-            killer,
-        ),
-        SessionTimeZone::Named(zone) => merge_global_items_async(
-            table,
-            sctx,
-            Some(zone),
-            &partitions,
-            column_ids,
-            index_ids,
-            column_types,
-            column_names,
-            index_names,
-            statement,
-            total_count,
-            killer,
-        ),
+    // Go `statsGlobalImpl.MergePartitionStats2GlobalStatsByTableID`: the
+    // merge, then `WriteGlobalStatsToStorage`.
+    let info = GlobalStatsInfo {
+        is_index: !index_ids.is_empty(),
+        hist_ids: if index_ids.is_empty() { column_ids.to_vec() } else { index_ids.to_vec() },
+        stats_version: STATS_VERSION_2,
+    };
+    let statement = &resolved.statement;
+    let global_stats = match &statement.eval_context.session_zone() {
+        SessionTimeZone::Local => merge_global_stats(Some(&chrono::Local), stats_pool, &table, &info, statement, killer),
+        SessionTimeZone::Named(zone) => merge_global_stats(Some(zone), stats_pool, &table, &info, statement, killer),
         SessionTimeZone::Fixed { offset_secs, .. } => {
             let zone = chrono::FixedOffset::east_opt(*offset_secs).ok_or_else(|| {
                 ClusterAnalyzeError::Other("invalid session timezone offset".to_owned())
             })?;
-            merge_global_items_async(
-                table,
-                sctx,
-                Some(&zone),
-                &partitions,
-                column_ids,
-                index_ids,
-                column_types,
-                column_names,
-                index_names,
-                statement,
-                total_count,
-                killer,
-            )
+            merge_global_stats(Some(&zone), stats_pool, &table, &info, statement, killer)
         }
     }?;
-    Ok((total_count, modify_count, items))
-}
-
-/// A statistics-session read failure inside the merge's callback.
-fn sql_exec_error(error: Box<dyn std::error::Error + Send + Sync>) -> ClusterAnalyzeError {
-    ClusterAnalyzeError::StatsRead(error)
-}
-
-fn write_global_stats_items<T, E>(
-    items: impl IntoIterator<Item = T>,
-    mut write: impl FnMut(T) -> Result<(u64, usize, usize, usize), E>,
-    mut record: impl FnMut((u64, usize, usize, usize)),
-) -> Result<(), E> {
-    let mut result = Ok(());
-    for item in items {
-        result = match write(item) {
-            Ok(receipt) => {
-                record(receipt);
-                Ok(())
-            }
-            Err(error) => Err(error),
-        };
-    }
-    result
-}
-
-#[derive(Clone, Debug)]
-struct AsyncGlobalPartition {
-    id: i64,
-    name: String,
-    row_count: i64,
-    modify_count: i64,
-    has_columns: bool,
-    has_indexes: bool,
-}
-
-struct AsyncGlobalItem<'a> {
-    id: i64,
-    is_index: bool,
-    field_type: FieldType,
-    partitions: Vec<&'a AsyncGlobalPartition>,
-}
-
-/// Go `AsyncMergePartitionStats2GlobalStats.prepare` on a statistics session.
-fn prepare_async_global_partitions(
-    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
-    definitions: impl IntoIterator<Item = (i64, String)>,
-    merge_columns: bool,
-    merge_indexes: bool,
-) -> Result<Vec<AsyncGlobalPartition>, ClusterAnalyzeError> {
-    let mut partitions = Vec::new();
-    for (id, name) in definitions {
-        let (count, modify, is_null) =
-            tidb_stats_handle_storage::read::stats_meta_count_and_modify_count(sctx, id, false)
-                .map_err(sql_exec_error)?;
-        // Go: a partition counts once, unless it has no `stats_meta` row.
-        let (modify_count, row_count) = if is_null { (0, 0) } else { (modify, count) };
-        let has_columns = merge_columns
-            && tidb_stats_handle_storage::read::check_skip_partition(sctx, id, false)
-                .map_err(sql_exec_error)?;
-        let has_indexes = merge_indexes
-            && tidb_stats_handle_storage::read::check_skip_partition(sctx, id, true)
-                .map_err(sql_exec_error)?;
-        partitions.push(AsyncGlobalPartition {
-            id,
-            name,
-            row_count,
-            modify_count,
-            has_columns,
-            has_indexes,
-        });
-    }
-    Ok(partitions)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn merge_global_items_async<TZ>(
-    table: &tidb_model::TableInfo,
-    sctx: &dyn tidb_stats_handle_util::StatsSessionContext,
-    timezone: Option<&TZ>,
-    partitions: &[AsyncGlobalPartition],
-    column_ids: &[i64],
-    index_ids: &[i64],
-    column_types: &std::collections::BTreeMap<i64, FieldType>,
-    column_names: &std::collections::BTreeMap<i64, String>,
-    index_names: &std::collections::BTreeMap<i64, String>,
-    statement: &AnalyzeStatement,
-    total_count: i64,
-    killer: &SqlKiller,
-) -> Result<Vec<ClusterStatsItem>, ClusterAnalyzeError>
-where
-    TZ: TimeZone + Sync,
-{
-    let mut items = Vec::with_capacity(column_ids.len() + index_ids.len());
-    for (is_index, ids) in [(false, column_ids), (true, index_ids)] {
-        for &id in ids {
-            let field_type = if is_index {
-                FieldType::new(FieldTypeCode::Blob)
-            } else {
-                column_types.get(&id).cloned().ok_or_else(|| {
-                    ClusterAnalyzeError::Other(format!("unknown analyzed column ID {id}"))
-                })?
-            };
-            let mut active = Vec::with_capacity(partitions.len());
-            for partition in partitions {
-                if if is_index {
-                    !partition.has_indexes
-                } else {
-                    !partition.has_columns
-                } {
-                    continue;
-                }
-                // Go `skipColumnPartition` (`CheckSkipColumnPartiion`).
-                let exists =
-                    tidb_stats_handle_storage::read::check_skip_column_partiion(sctx, partition.id, is_index, id)
-                        .map_err(sql_exec_error)?;
-                if !exists {
-                    if statement.skip_missing_partition_stats {
-                        continue;
-                    }
-                    let name = if is_index {
-                        index_names.get(&id)
-                    } else {
-                        column_names.get(&id)
-                    }
-                    .map_or("", String::as_str);
-                    return Err(
-                        tidb_datatype::types_errors::ERR_PARTITION_COLUMN_STATS_MISSING
-                            .gen_with_stack_by_args(&[format!(
-                                "table `{}` partition `{}` {} `{name}`",
-                                statement.table,
-                                partition.name,
-                                if is_index { "index" } else { "column" }
-                            )
-                            .into()])
-                            .into(),
-                    );
-                }
-                active.push(partition);
-            }
-            items.push(AsyncGlobalItem {
-                id,
-                is_index,
-                field_type,
-                partitions: active,
-            });
+    write_global_stats_to_storage(stats_pool, stats_lease, &global_stats, &info, table.id)
+        .map_err(ClusterAnalyzeError::Sql)?;
+    for (hg, topn) in global_stats.hg.iter().zip(&global_stats.topn) {
+        if let Some(hg) = hg {
+            report.histogram_count += 1;
+            report.bucket_count += hg.buckets.len();
+            report.topn_count += topn.as_ref().map_or(0, |topn| topn.entries().len());
         }
     }
-
-    type SketchMessage<T> = (usize, Option<T>);
-    type HistogramMessage = (usize, Vec<Histogram>, Vec<Option<TopN>>);
-    let merged = std::thread::scope(|scope| {
-        // These capacities are part of pinned Go's worker contract.
-        let (fm_sender, fm_receiver) = sync_channel::<SketchMessage<FmSketch>>(5);
-        let (cms_sender, cms_receiver) = sync_channel::<SketchMessage<CmsSketch>>(5);
-        let (histogram_sender, histogram_receiver) = sync_channel::<HistogramMessage>(0);
-        let worker_items = &items;
-        let requested_topn = statement.options.num_topn as u32;
-        let expected_buckets = statement.options.num_buckets as usize;
-        let merge_concurrency = statement.partition_merge_concurrency;
-        let cpu_worker = scope.spawn(tidb_cpuprofile::labels::inherit(
-            move || -> Result<Vec<Option<GlobalStatsItem>>, ClusterAnalyzeError> {
-                let mut fm_sketches: Vec<Option<FmSketch>> = vec![None; worker_items.len()];
-                while let Ok((index, source)) = fm_receiver.recv() {
-                    if let Some(source) = source {
-                        if let Some(destination) = &mut fm_sketches[index] {
-                            merge_fm_sketch(Some(destination), Some(&source));
-                        } else {
-                            fm_sketches[index] = Some(source);
-                        }
-                    }
-                }
-                let global_ndvs = fm_sketches
-                    .iter()
-                    .map(|sketch| fm_sketch_ndv(sketch.as_ref()).min(total_count))
-                    .collect::<Vec<_>>();
-                drop(fm_sketches);
-
-                let mut cmsketches: Vec<Option<CmsSketch>> = vec![None; worker_items.len()];
-                while let Ok((index, source)) = cms_receiver.recv() {
-                    if let Some(source) = source {
-                        if let Some(destination) = &mut cmsketches[index] {
-                            destination
-                                .merge(&source)
-                                .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-                        } else {
-                            cmsketches[index] = Some(source);
-                        }
-                    }
-                }
-
-                let mut merged = vec![None; worker_items.len()];
-                while let Ok((index, histograms, topns)) = histogram_receiver.recv() {
-                    let item = &worker_items[index];
-                    let ndv =
-                        if tidb_stats_handle_globalstats::is_local_unique(table, item.is_index, item.id)
-                        {
-                            tidb_stats_handle_globalstats::unique_global_ndv(&histograms, total_count)
-                        } else {
-                            global_ndvs[index]
-                        };
-                    merged[index] = Some(
-                        merge_partition_histogram_topn(
-                            timezone,
-                            2,
-                            requested_topn,
-                            expected_buckets,
-                            &item.field_type,
-                            item.is_index,
-                            merge_concurrency,
-                            ndv,
-                            cmsketches[index].take(),
-                            histograms,
-                            topns,
-                            killer,
-                        )
-                        .map_err(global_stats_merge_error)?,
-                    );
-                }
-                Ok(merged)
-            },
-        ));
-
-        let mut fm_sender = Some(fm_sender);
-        let mut cms_sender = Some(cms_sender);
-        let mut histogram_sender = Some(histogram_sender);
-        let io_result = catch_unwind(AssertUnwindSafe(|| -> Result<(), ClusterAnalyzeError> {
-            for (index, item) in items.iter().enumerate() {
-                for partition in &item.partitions {
-                    let sketch = tidb_stats_handle_storage::read::fm_sketch_from_storage(
-                        sctx,
-                        partition.id,
-                        item.is_index,
-                        item.id,
-                    )
-                    .map_err(sql_exec_error)?;
-                    if fm_sender
-                        .as_ref()
-                        .expect("FM sender remains open during the FM phase")
-                        .send((index, sketch))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-            drop(fm_sender.take());
-
-            for (index, item) in items.iter().enumerate() {
-                for partition in &item.partitions {
-                    let sketch = tidb_stats_handle_storage::read::cm_sketch_from_storage(
-                        sctx,
-                        partition.id,
-                        item.is_index,
-                        item.id,
-                    )
-                    .map_err(sql_exec_error)?;
-                    if cms_sender
-                        .as_ref()
-                        .expect("CMS sender remains open during the CMS phase")
-                        .send((index, sketch))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-            drop(cms_sender.take());
-
-            for (index, item) in items.iter().enumerate() {
-                let mut histograms = Vec::with_capacity(item.partitions.len());
-                let mut topns = Vec::with_capacity(item.partitions.len());
-                for partition in &item.partitions {
-                    // Go `loadHistogramAndTopN`: `LoadHistogram`, then
-                    // `TopNFromStorage`.
-                    let histogram = tidb_stats_handle_storage::read::load_histogram(
-                        sctx,
-                        partition.id,
-                        item.is_index,
-                        item.id,
-                        table,
-                    )
-                    .map_err(sql_exec_error)?
-                    .ok_or_else(|| {
-                        ClusterAnalyzeError::Other(format!(
-                            "histogram {} disappeared from partition {}",
-                            item.id, partition.id
-                        ))
-                    })?;
-                    histograms.push(histogram);
-                    topns.push(
-                        tidb_stats_handle_storage::read::top_n_from_storage(
-                            sctx,
-                            partition.id,
-                            item.is_index,
-                            item.id,
-                        )
-                        .map_err(sql_exec_error)?,
-                    );
-                }
-                if !histograms.is_empty() || !topns.is_empty() {
-                    if histogram_sender
-                        .as_ref()
-                        .expect("histogram sender remains open during its phase")
-                        .send((index, histograms, topns))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-            drop(histogram_sender.take());
-            Ok(())
-        }))
-        .map_err(|panic| {
-            let detail = panic
-                .downcast_ref::<&str>()
-                .map_or_else(
-                    || {
-                        panic
-                            .downcast_ref::<String>()
-                            .map_or("unknown panic", String::as_str)
-                    },
-                    |message| *message,
-                )
-                .to_owned();
-            ClusterAnalyzeError::Other(detail)
-        })
-        .and_then(|result| result);
-        drop(fm_sender);
-        drop(cms_sender);
-        drop(histogram_sender);
-
-        let cpu_result = cpu_worker
-            .join()
-            .map_err(|panic| {
-                let detail = panic
-                    .downcast_ref::<&str>()
-                    .map_or_else(
-                        || {
-                            panic
-                                .downcast_ref::<String>()
-                                .map_or("unknown panic", String::as_str)
-                        },
-                        |message| *message,
-                    )
-                    .to_owned();
-                ClusterAnalyzeError::Other(detail)
-            })
-            .and_then(|result| result);
-        join_async_global_worker_results(io_result, cpu_result)
-    })?;
-
-    Ok(items
-        .iter()
-        .zip(merged)
-        .filter_map(|(item, merged)| {
-            let merged = merged?;
-            Some(ClusterStatsItem {
-                id: item.id,
-                is_index: item.is_index,
-                stats_ver: 2,
-                flag: 0,
-                load_status: StatsLoadedStatus::full_load(),
-                histogram: merged.histogram?,
-                topn: merged.topn,
-                cms: merged.cmsketch,
-                fm_sketch: None,
-            })
-        })
-        .collect())
+    report.table_id = table.id;
+    Ok(())
 }
 
-fn join_async_global_worker_results<T>(
-    io_result: Result<(), ClusterAnalyzeError>,
-    cpu_result: Result<T, ClusterAnalyzeError>,
-) -> Result<T, ClusterAnalyzeError> {
-    match (io_result, cpu_result) {
-        (Ok(()), result) => result,
-        (Err(io), Ok(_)) => Err(io),
-        (Err(io), Err(cpu)) => Err(ClusterAnalyzeError::Other(format!("{io}\n{cpu}"))),
-    }
-}
-
-/// Go `statsReadWriter.SaveColOrIdxStatsToStorage` for one merged global
-/// histogram, with its `handleSlowStatsSaving`.
-fn commit_global_stats_item(
+/// Go `MergePartitionStats2GlobalStatsByTableID` under the statement's time
+/// zone, with what Go reads from the session and the analyze options.
+fn merge_global_stats<TZ: TimeZone + Sync>(
+    timezone: Option<&TZ>,
     stats_pool: &dyn StatsSessionPool,
-    table_id: i64,
-    row_count: i64,
-    modify_count: i64,
-    item: ClusterStatsItem,
-    stats_lease: Duration,
-) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
-    let (histogram_count, bucket_count, topn_count) = saved_item_counts([&item]);
-    let version = stats_read_writer::save_col_or_idx_stats_to_storage(
-        stats_pool,
-        stats_lease,
-        table_id,
-        row_count,
-        modify_count,
-        &item,
-        STATS_VERSION_2,
-        true,
-    )
-    .map_err(ClusterAnalyzeError::Sql)?;
-    Ok((version, histogram_count, bucket_count, topn_count))
+    table: &TableInfo,
+    info: &GlobalStatsInfo,
+    statement: &AnalyzeStatement,
+    killer: &SqlKiller,
+) -> Result<GlobalStats, ClusterAnalyzeError> {
+    let session = MergeSession {
+        skip_missing_partition_stats: statement.skip_missing_partition_stats,
+        timezone,
+        killer,
+        num_topn: statement.options.num_topn as u32,
+        num_buckets: statement.options.num_buckets as usize,
+        partition_merge_concurrency: statement.partition_merge_concurrency,
+    };
+    merge_partition_stats_2_global_stats_by_table_id(&session, stats_pool, table, info.is_index, &info.hist_ids)
+        .map_err(|error| match error {
+            GlobalStatsError::Exec(error) => ClusterAnalyzeError::StatsRead(error),
+            GlobalStatsError::Sql(error) => ClusterAnalyzeError::Sql(error),
+            GlobalStatsError::Mysql(error) => ClusterAnalyzeError::Mysql(error),
+            GlobalStatsError::Merge(error) => global_stats_merge_error(error),
+            GlobalStatsError::Other(detail) => ClusterAnalyzeError::Other(detail),
+        })
 }
 
 /// The histogram, bucket and TopN rows a save of `items` writes.
@@ -2539,11 +2035,11 @@ mod tests {
         collect_cache_update_physical_ids, fail_analyze_jobs, filter_skipped_column_types,
         final_column_choice,
         select_index_tasks,
-        write_global_stats_items, AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
+        AnalyzeJobHandle, AnalyzeJobKind, AnalyzeJobLifecycle,
         AnalyzeJobProgress, AnalyzeJobSpec, ApproximateTableCountProvider, ClusterAnalyzeError,
         ANALYZE_JOB_MAX_DELTA,
     };
-    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use std::collections::{BTreeSet, HashSet};
     use std::thread;
     use std::time::Duration;
     use tidb_ast::CiString;
@@ -2685,9 +2181,6 @@ mod tests {
         );
     }
     use tidb_model::SchemaState;
-    use tidb_stats::histogram::{Bucket, Histogram};
-    use tidb_stats::FmSketch;
-        use tidb_stats::MAX_SKETCH_SIZE;
     use tidb_txnkv::rpc::UnaryCallContext;
     fn global_statement(skip_missing: bool) -> AnalyzeStatement {
         AnalyzeStatement {
@@ -2845,40 +2338,6 @@ mod tests {
     }
 
     #[test]
-    fn global_stats_storage_attempts_every_item_and_returns_the_final_attempt_result() {
-        let mut attempted = Vec::new();
-        let mut recorded = Vec::new();
-        write_global_stats_items(
-            [1_u64, 2, 3, 4],
-            |item| {
-                attempted.push(item);
-                match item {
-                    1 => Err("first"),
-                    3 => Err("last"),
-                    _ => Ok((item, 1, 2, 3)),
-                }
-            },
-            |receipt| recorded.push(receipt),
-        )
-        .expect("the final successful item clears an earlier storage error in Go");
-
-        assert_eq!(attempted, vec![1, 2, 3, 4]);
-        assert_eq!(recorded, vec![(2, 1, 2, 3), (4, 1, 2, 3)]);
-
-        let error = write_global_stats_items(
-            [1_u64, 2, 3],
-            |item| match item {
-                1 => Err("first"),
-                3 => Err("last"),
-                _ => Ok((item, 1, 2, 3)),
-            },
-            |_| {},
-        )
-        .expect_err("Go returns an error when the final attempted storage write fails");
-        assert_eq!(error, "last");
-    }
-
-    #[test]
     fn partition_targets_follow_go_definition_and_requested_order() {
         let table = TableInfo {
             name: CiString::new("t"),
@@ -3012,16 +2471,6 @@ mod tests {
             commit_call.timeout() > Duration::ZERO,
             "the commit mints its own full budget at commit time"
         );
-    }
-
-    #[test]
-    fn simultaneous_async_global_worker_failures_are_joined_in_go_order() {
-        let error = super::join_async_global_worker_results::<()>(
-            Err(ClusterAnalyzeError::Other("io failure".to_owned())),
-            Err(ClusterAnalyzeError::Other("cpu failure".to_owned())),
-        )
-        .expect_err("both worker errors are returned");
-        assert_eq!(error.to_string(), "io failure\ncpu failure");
     }
 
     #[test]
