@@ -5,7 +5,6 @@
 //! the distinct path a `DISTINCT` select takes through the same operator.
 
 use crate::StatsStmtCtx as _;
-use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use super::*;
 
 #[test]
