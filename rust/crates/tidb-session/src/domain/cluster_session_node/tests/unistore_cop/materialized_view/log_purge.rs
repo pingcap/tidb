@@ -504,6 +504,43 @@ fn test_purge_materialized_view_log_finalize_retry_succeeds() {
     assert_eq!(last_purge_hist_row(&mut tk, mlog_id, "PURGE_STATUS, PURGE_END_TIME is not null, PURGE_ROWS"), vec!["success 1 0"]);
 }
 
+/// Go `TestPurgeMaterializedViewLogFinalizeFailureUsesWithoutCancel`: a
+/// purge whose statement context is canceled after its running history row
+/// fails with the context's error, and its history row is still finalized
+/// (`finalizeCtx`).
+#[test]
+fn test_purge_materialized_view_log_finalize_failure_uses_without_cancel() {
+    let (stack, _users, mut tk) = mview_test_kit();
+    let mut observer = super::create::new_mview_test_kit(&stack, 3923);
+    must_exec_all(&mut tk, &[
+        "create table t_purge_cancel_finalize (id int primary key, v int)",
+        "create materialized view log on t_purge_cancel_finalize (id, v) purge next date_add(now(), interval 1 hour)",
+        "insert into t_purge_cancel_finalize values (1, 10)",
+    ]);
+    let mlog_id = mlog_table_id(&stack, "$mlog$t_purge_cancel_finalize");
+    let pause = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning",
+        "pause",
+    );
+    let (ctx, cancel) = tidb_gocontext::Context::with_cancel(&tidb_gocontext::Context::background());
+    let purge = std::thread::spawn(move || {
+        tk.exec_with_context(&ctx, "purge materialized view log on t_purge_cancel_finalize").map(|_| ()).map_err(|e| format!("{e:?}"))
+    });
+    eventually_single_value(
+        &mut observer,
+        &format!("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = {mlog_id} and PURGE_STATUS = 'running'"),
+        "1",
+    );
+    cancel.cancel();
+    drop(pause);
+    let error = purge.join().unwrap().unwrap_err();
+    assert!(error.contains("context canceled"), "{error}");
+    assert_eq!(
+        last_purge_hist_row(&mut observer, mlog_id, "PURGE_STATUS, PURGE_END_TIME is not null, PURGE_FAILED_REASON like '%context canceled%'"),
+        vec!["failed 1 1"]
+    );
+}
+
 fn next_purge_unix_seconds(tk: &mut Session, mlog_id: i64) -> String {
     super::refresh::go_check(tk, &format!("select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = {mlog_id}")).remove(0)
 }

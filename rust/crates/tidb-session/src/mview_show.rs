@@ -359,6 +359,8 @@ impl Session {
         let Some(mlog_schema) = catalog.0.schema_name_by_table_id(mlog.id) else {
             return Err(plain(format!("schema does not exist for materialized view log {}", mlog.name.original())));
         };
+        // Go passes the statement's context.
+        let exec_ctx = self.exec_ctx.clone();
         self.with_mview_log_show_txn(|sys, show_start_ts| {
             let rows = sys_sql(sys, "SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", &[SqlArg::Signed(mlog.id)])
                 .map_err(|error| {
@@ -375,9 +377,10 @@ impl Session {
                 )));
             };
             let last_purged_tso = row.first().and_then(datum_u64);
-            let (public, building) = crate::mlog_purge::collect_dependent_mview_ids_for_mlog_purge(sys, &base, mlog.id)?;
+            let (public, building) = crate::mlog_purge::collect_dependent_mview_ids_for_mlog_purge(sys, &exec_ctx, &base, mlog.id)?;
             let safe_purge_tso = crate::mlog_purge::calc_materialized_view_log_safe_purge_tso(
                 sys,
+                &exec_ctx,
                 schema,
                 base.name.original(),
                 show_start_ts,

@@ -574,7 +574,7 @@ fn cutover_fixture(
     let old = latest_table(stack, view);
     let shadow_id = create_shadow_like(stack, tk, view, shadow_name);
     let expected = get_last_success_read_tso(tk, old.id);
-    let sources = crate::mview_refresh::resolve_refresh_sources(&stack.factory.catalog.get_latest(), old.id).unwrap();
+    let sources = crate::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old.id).unwrap();
     (old.id, shadow_id, expected, sources, old.revision)
 }
 
@@ -687,7 +687,7 @@ fn test_materialized_view_out_of_place_cutover_failure_keeps_old_affinity_group(
 
     let shadow_id = create_shadow_like(&stack, &mut tk, "mv_cutover_affinity", "__mv_shadow_cutover_affinity");
     let expected = get_last_success_read_tso(&mut tk, old_id);
-    let sources = crate::mview_refresh::resolve_refresh_sources(&stack.factory.catalog.get_latest(), old_id).unwrap();
+    let sources = crate::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old_id).unwrap();
     // "The fixture updates metadata directly, so this test intentionally does
     // not pass an expected revision to the cutover job."
     let error = {

@@ -33,7 +33,7 @@ use tidb_terror::MysqlError;
 
 use crate::mview_refresh::{
     annotate, datum_i64, datum_u64, driver_message, format_duration_seconds_between, hist_time, is_table_not_exists,
-    plain, session_current_tso, sys_sql,
+    plain, session_current_tso, sys_sql, sys_sql_ctx,
 };
 use crate::mview_task::{read_hist_cancel_request, start_mv_task_monitor, MvTaskCancelController, MvTaskMonitor};
 use crate::Session;
@@ -325,6 +325,7 @@ fn restore_vars(session: &mut Session, vars: &[(&'static str, String)]) {
 /// locked without waiting; its checkpoint and next purge time.
 fn acquire_materialized_view_log_purge_lock(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     schema: &str,
     base_table: &str,
     mlog_id: i64,
@@ -339,8 +340,9 @@ fn acquire_materialized_view_log_purge_lock(
     if failpoint_on("mockPurgeMaterializedViewLogLockConflict") {
         return Err(conflict());
     }
-    let rows = sys_sql(
+    let rows = sys_sql_ctx(
         session,
+        kctx,
         "SELECT LAST_PURGED_TSO, NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT",
         &[SqlArg::Signed(mlog_id)],
     )
@@ -368,6 +370,7 @@ fn acquire_materialized_view_log_purge_lock(
 /// building over the log.
 pub(crate) fn collect_dependent_mview_ids_for_mlog_purge(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     base_table: &tidb_model::TableInfo,
     mlog_id: i64,
 ) -> Result<(Vec<i64>, Vec<i64>), DriverError> {
@@ -379,8 +382,9 @@ pub(crate) fn collect_dependent_mview_ids_for_mlog_purge(
             }
         }
     }
-    let rows = sys_sql(
+    let rows = sys_sql_ctx(
         session,
+        kctx,
         "SELECT job_meta FROM mysql.tidb_ddl_job WHERE type = %? AND FIND_IN_SET(%?, table_ids)",
         &[
             SqlArg::Signed(i64::from(tidb_model::ActionType::ACTION_CREATE_MATERIALIZED_VIEW.0)),
@@ -421,6 +425,7 @@ fn build_in_list(ids: &[i64]) -> String {
 /// lowered to the least last-read TSO of the dependent views.
 pub(crate) fn calc_materialized_view_log_safe_purge_tso(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     base_schema: &str,
     base_table: &str,
     purge_start_ts: u64,
@@ -436,8 +441,9 @@ pub(crate) fn calc_materialized_view_log_safe_purge_tso(
     };
     let mut safe_purge_tso = purge_start_ts;
     if !public.is_empty() {
-        let rows = sys_sql(
+        let rows = sys_sql_ctx(
             session,
+            kctx,
             &format!("SELECT COUNT(1) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({})", build_in_list(public)),
             &[],
         )
@@ -454,8 +460,9 @@ pub(crate) fn calc_materialized_view_log_safe_purge_tso(
     if all.is_empty() {
         return Ok(safe_purge_tso);
     }
-    let rows = sys_sql(
+    let rows = sys_sql_ctx(
         session,
+        kctx,
         &format!(
             "SELECT MIN(COALESCE(LAST_SUCCESS_READ_TSO, CAST(0 AS UNSIGNED))) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({})",
             build_in_list(&all)
@@ -509,6 +516,7 @@ fn build_purge_materialized_view_log_delete_sql(
 /// session; the rows it deleted.
 fn purge_materialized_view_log_data(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     schema: &str,
     mlog_name: &str,
     last_purged_tso: Option<u64>,
@@ -528,7 +536,7 @@ fn purge_materialized_view_log_data(
     tidb_failpoint::inject_call(&format!("{FP}purgeMaterializedViewLogDeleteSQL"), &mut delete_sql.clone());
     // Go master: the delete runs in materialized view maintenance.
     let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
-    let deleted = sys_sql(session, &delete_sql, &[]);
+    let deleted = sys_sql_ctx(session, kctx, &delete_sql, &[]);
     session.vars.in_mview_maintenance = original_maintenance;
     deleted?;
     Ok(i64::try_from(session.affected_rows()).unwrap_or(i64::MAX))
@@ -538,6 +546,7 @@ fn purge_materialized_view_log_data(
 /// and row-id bounds, read on TiFlash only.
 fn read_mlog_purge_pending_row_stats_on_tiflash(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     schema: &str,
     mlog_name: &str,
     last_purged_tso: Option<u64>,
@@ -576,8 +585,9 @@ fn read_mlog_purge_pending_row_stats_on_tiflash(
         arguments.push(SqlArg::Unsigned(safe_purge_tso));
         // Go master: the count runs in materialized view maintenance.
         let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
-        let counted = sys_sql(
+        let counted = sys_sql_ctx(
             session,
+            kctx,
             &format!(
                 "SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*), MIN(_tidb_rowid), MAX(_tidb_rowid) FROM %n.%n WHERE {filter}"
             ),
@@ -815,9 +825,10 @@ fn update_purge_hist_heartbeat(session: &mut Session, purge_job_id: u64, mlog_id
 }
 
 /// Go master `readLatestMLogPurgeCutoffFenceTSO`.
-fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, mlog_id: i64) -> Result<Option<u64>, DriverError> {
-    let rows = sys_sql(
+fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, kctx: &tidb_gocontext::Context, mlog_id: i64) -> Result<Option<u64>, DriverError> {
+    let rows = sys_sql_ctx(
         session,
+        kctx,
         "SELECT PURGE_CUTOFF_TSO\nFROM mysql.tidb_mlog_purge_hist\nWHERE MLOG_ID = %? AND PURGE_CUTOFF_TSO IS NOT NULL\nORDER BY PURGE_JOB_ID DESC LIMIT 1",
         &[SqlArg::Signed(mlog_id)],
     )
@@ -835,6 +846,7 @@ fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, mlog_id: i64) 
 #[allow(clippy::too_many_arguments)]
 fn insert_mlog_purge_hist_running(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     purge_job_id: u64,
     mlog_id: i64,
     base_schema: &str,
@@ -843,8 +855,9 @@ fn insert_mlog_purge_hist_running(
     cutoff_tso: u64,
     start: &str,
 ) -> Result<(), DriverError> {
-    sys_sql(
+    sys_sql_ctx(
         session,
+        kctx,
         "INSERT INTO mysql.tidb_mlog_purge_hist (\nPURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,\nPURGE_START_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_TIME)\nVALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
         &[
             SqlArg::Unsigned(purge_job_id),
@@ -956,6 +969,7 @@ fn finalize_mlog_purge_hist_with_retry(
 /// purge: the checkpoint advanced, the next purge time left alone.
 fn update_materialized_view_log_purge_info_on_success(
     session: &mut Session,
+    kctx: &tidb_gocontext::Context,
     mlog_id: i64,
     last_purged_tso: Option<u64>,
     next_unix_seconds: Option<i64>,
@@ -963,8 +977,9 @@ fn update_materialized_view_log_purge_info_on_success(
 ) -> Result<(), DriverError> {
     let missing = |error: DriverError| if is_table_not_exists(&error) { purge_info_missing_table() } else { error };
     if let Some(last) = last_purged_tso {
-        sys_sql(
+        sys_sql_ctx(
             session,
+            kctx,
             "UPDATE mysql.tidb_mlog_purge_info\nSET LAST_PURGED_TSO = %?\nWHERE MLOG_ID = %? AND (LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?)",
             &[SqlArg::Unsigned(last), SqlArg::Signed(mlog_id), SqlArg::Unsigned(last)],
         )
@@ -974,8 +989,9 @@ fn update_materialized_view_log_purge_info_on_success(
         return Ok(());
     }
     let next = next_unix_seconds.map_or(SqlArg::Null, SqlArg::Signed);
-    sys_sql(
+    sys_sql_ctx(
         session,
+        kctx,
         "UPDATE mysql.tidb_mlog_purge_info\nSET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?",
         &[next, SqlArg::Signed(mlog_id)],
     )
@@ -992,7 +1008,8 @@ impl Session {
         let mut target = self.resolve_purge_materialized_view_log_meta(stmt)?;
         target.is_internal_sql = is_internal_sql;
         let mut progress = PurgeProgress::default();
-        let controller = std::sync::Arc::new(MvTaskCancelController::default());
+        // Go `newMVTaskCancelController(kctx)` over the statement's context.
+        let controller = std::sync::Arc::new(MvTaskCancelController::new(&self.exec_ctx));
         // Go's deferred `recover()`: a panic fails the purge with its value.
         let result = crate::mview_refresh::recover_refresh_panic(|| {
             self.check_operate_view_on_mlog(&target.schema, &target.mlog_name)
@@ -1264,6 +1281,10 @@ fn purge_locked(
     purge_handle: &tidb_sqlkiller::StatementCancellation,
     open_session: &dyn Fn() -> Result<Session, DriverError>,
 ) -> Result<(i64, Option<DriverError>), DriverError> {
+    // Go `kctx = taskCancelController.context()`: the running statements'
+    // context; the cleanup runs on `finalizeCtx` (uncanceled).
+    let kctx = controller.context().clone();
+    let kctx = &kctx;
     // Go `stopTaskMonitor`, deferred: dropping the monitor stops it.
     let mut _monitor: Option<MvTaskMonitor> = None;
     let schema = target.schema.as_str();
@@ -1306,7 +1327,7 @@ fn purge_locked(
     if failpoint_on("mockPurgeMaterializedViewLogBeginErr") {
         return Err(finalize_failure(purge, hist, progress, false, txn_finished, plain("mock purge begin error")));
     }
-    if let Err(error) = sys_sql(purge, "BEGIN PESSIMISTIC", &[]) {
+    if let Err(error) = sys_sql_ctx(purge, kctx, "BEGIN PESSIMISTIC", &[]) {
         return Err(finalize_failure(purge, hist, progress, false, txn_finished, error));
     }
     *txn_started = true;
@@ -1321,7 +1342,7 @@ fn purge_locked(
     }
 
     let (locked_last_purged_tso, locked_next_time) =
-        try_purge!(acquire_materialized_view_log_purge_lock(purge, schema, base_table, mlog_id));
+        try_purge!(acquire_materialized_view_log_purge_lock(purge, kctx, schema, base_table, mlog_id));
     // Go `purgeSctx.Txn(true).StartTS()`: the lock above activated the
     // transaction.
     let mut purge_start_tso = purge.node_conn().explicit_start_ts().unwrap_or(0);
@@ -1333,18 +1354,19 @@ fn purge_locked(
     }
     progress.purge_job_id = purge_start_tso;
 
-    let (public, building) = try_purge!(collect_dependent_mview_ids_for_mlog_purge(purge, &target.base_table, mlog_id));
+    let (public, building) = try_purge!(collect_dependent_mview_ids_for_mlog_purge(purge, kctx, &target.base_table, mlog_id));
     let safe_purge_tso =
-        try_purge!(calc_materialized_view_log_safe_purge_tso(purge, schema, base_table, purge_start_tso, &public, &building));
+        try_purge!(calc_materialized_view_log_safe_purge_tso(purge, kctx, schema, base_table, purge_start_tso, &public, &building));
 
     let mut purge_cutoff_fence_tso = locked_last_purged_tso.unwrap_or(0);
-    if let Some(latest) = try_purge!(read_latest_mlog_purge_cutoff_fence_tso(hist, mlog_id)) {
+    if let Some(latest) = try_purge!(read_latest_mlog_purge_cutoff_fence_tso(hist, kctx, mlog_id)) {
         purge_cutoff_fence_tso = purge_cutoff_fence_tso.max(latest);
     }
     let skip_purge_by_cutoff_fence = safe_purge_tso < purge_cutoff_fence_tso;
     if !skip_purge_by_cutoff_fence {
         try_purge!(insert_mlog_purge_hist_running(
             hist,
+            kctx,
             progress.purge_job_id,
             mlog_id,
             schema,
@@ -1371,6 +1393,7 @@ fn purge_locked(
     if !skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint && safe_purge_tso > 0 {
         let delete_plan = try_build_mlog_purge_delete_plan_best_effort(
             delete,
+            kctx,
             target,
             locked_last_purged_tso,
             safe_purge_tso,
@@ -1392,6 +1415,7 @@ fn purge_locked(
                         loop {
                             let deleted = purge_materialized_view_log_data(
                                 delete,
+                                kctx,
                                 schema,
                                 &target.mlog_name,
                                 locked_last_purged_tso,
@@ -1429,6 +1453,7 @@ fn purge_locked(
             _ => loop {
                 let deleted = purge_materialized_view_log_data(
                     delete,
+                    kctx,
                     schema,
                     &target.mlog_name,
                     locked_last_purged_tso,
@@ -1449,8 +1474,8 @@ fn purge_locked(
     let (next_unix_seconds, should_update_next) =
         if target.is_internal_sql { try_purge!(derive_mlog_purge_next_unix_seconds(target)) } else { (None, false) };
     let checkpoint = (!skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint).then_some(safe_purge_tso);
-    try_purge!(update_materialized_view_log_purge_info_on_success(purge, mlog_id, checkpoint, next_unix_seconds, should_update_next));
-    try_purge!(sys_sql(purge, "COMMIT", &[]));
+    try_purge!(update_materialized_view_log_purge_info_on_success(purge, kctx, mlog_id, checkpoint, next_unix_seconds, should_update_next));
+    try_purge!(sys_sql_ctx(purge, kctx, "COMMIT", &[]));
     *txn_finished = true;
 
     let mut history_error = None;
@@ -1478,6 +1503,7 @@ fn purge_locked(
 /// counted.
 fn try_build_mlog_purge_delete_plan_best_effort(
     delete: &mut Session,
+    kctx: &tidb_gocontext::Context,
     target: &PurgeTarget,
     last_purged_tso: Option<u64>,
     safe_purge_tso: u64,
@@ -1487,7 +1513,7 @@ fn try_build_mlog_purge_delete_plan_best_effort(
     if safe_purge_tso == 0 {
         return None;
     }
-    let stats = match read_mlog_purge_pending_row_stats_on_tiflash(delete, &target.schema, &target.mlog_name, last_purged_tso, safe_purge_tso) {
+    let stats = match read_mlog_purge_pending_row_stats_on_tiflash(delete, kctx, &target.schema, &target.mlog_name, last_purged_tso, safe_purge_tso) {
         Ok(stats) => stats,
         Err(error) => {
             log_purge_warn("purge materialized view log: failed to read pending row stats, fallback to unscoped unthrottled purge", &target.schema, &target.mlog_name, Some(&error));

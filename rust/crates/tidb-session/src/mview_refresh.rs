@@ -103,10 +103,29 @@ pub(crate) fn datum_text(datum: &Datum) -> String {
 
 /// One statement on a system session (Go `sqlExec.ExecuteInternal`).
 pub(crate) fn sys_sql(session: &mut Session, sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<Vec<Datum>>, DriverError> {
+    sys_sql_under(session, &tidb_sqlexec::BackgroundContext, sql, arguments)
+}
+
+/// [`sys_sql`] under the caller's context (Go `ExecuteInternal(ctx, ...)`):
+/// a canceled context fails the statement with its error.
+pub(crate) fn sys_sql_ctx(
+    session: &mut Session,
+    ctx: &tidb_gocontext::Context,
+    sql: &str,
+    arguments: &[SqlArg<'_>],
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    sys_sql_under(session, ctx, sql, arguments)
+}
+
+fn sys_sql_under(
+    session: &mut Session,
+    context: &dyn tidb_sqlexec::ExecutionContext,
+    sql: &str,
+    arguments: &[SqlArg<'_>],
+) -> Result<Vec<Vec<Datum>>, DriverError> {
     let sql = crate::domain::cluster_session_node::sql_with_params(sql, arguments)
         .map_err(|error| plain(error.to_string()))?;
-    let context = tidb_sqlexec::BackgroundContext;
-    crate::domain::cluster_session_node::execute_internal_under(session, &context, &sql)
+    crate::domain::cluster_session_node::execute_internal_under(session, context, &sql)
         .map(|(rows, _)| rows)
         .map_err(|error| match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
             Ok(error) => DriverError::Mysql((*error).into()),
@@ -782,7 +801,8 @@ impl Session {
         let name = info.name.original().to_owned();
         let mut refresh_job_id = 0u64;
         let mut hist_inserted = false;
-        let controller = std::sync::Arc::new(MvTaskCancelController::default());
+        // Go `newMVTaskCancelController(kctx)` over the statement's context.
+        let controller = std::sync::Arc::new(MvTaskCancelController::new(&self.exec_ctx));
         // Go's deferred `recover()`: a panic fails the refresh with its value.
         let result = recover_refresh_panic(|| {
             self.refresh_complete(
@@ -1152,7 +1172,7 @@ impl Session {
             }
             let latest = self.refresh_latest_info_schema();
             if fast {
-                check_mv_refresh_log_baseline(&latest, mview_id, &resolve_refresh_sources(&latest, mview_id)?, &registered_logs)?;
+                check_mv_refresh_log_baseline(latest.as_ref(), mview_id, &resolve_refresh_sources(latest.as_ref(), mview_id)?, &registered_logs)?;
             }
             let bounded_fast = fast && target_tso > 0 && target_tso > locked.last_success_read_tso;
             // Go `checkFastRefreshMLogIntegrity`, on the history session so it
@@ -1285,8 +1305,15 @@ impl Session {
                 // Go `captureMVRefreshStmtResult`, before the next statement
                 // resets the statement context.
                 let message = refresh.statement_message().to_owned();
-                let read_tso = get_refresh_read_tso_for_success(refresh)?;
-                Ok::<_, DriverError>((affected_rows, message, read_tso, refresh_rows))
+                // Go: COMPLETE DELTA APPLY's statement plan carries the read
+                // TSO and sources its executor builder confirmed
+                // (`RefreshReadTSO`, `RefreshSources`); FAST reads the
+                // for-update TS (`getRefreshReadTSOForSuccess`).
+                let (read_tso, sources) = match refresh.refresh_plan_input.take() {
+                    Some((read_tso, sources)) if !fast => (read_tso, sources),
+                    _ => (get_refresh_read_tso_for_success(refresh)?, Vec::new()),
+                };
+                Ok::<_, DriverError>((affected_rows, message, read_tso, refresh_rows, sources))
             });
             // Go master `executeRefreshMaterializedViewCompleteInPlace`.
             let mut in_place = || {
@@ -1309,6 +1336,7 @@ impl Session {
                     format!("Rows inserted: {insert_rows}  Updated: 0  Deleted: {delete_rows}"),
                     read_tso,
                     None,
+                    Vec::new(),
                 ))
             };
             let data = match delta_apply {
@@ -1316,7 +1344,7 @@ impl Session {
                 None => in_place(),
             };
             refresh.vars.in_mview_maintenance = original_maintenance;
-            let (affected_rows, statement_message, actual_read_tso, refresh_rows) = match data {
+            let (affected_rows, statement_message, actual_read_tso, refresh_rows, mut confirmed_sources) = match data {
                 Ok(data) => data,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
@@ -1324,6 +1352,25 @@ impl Session {
             // actualRefreshReadTSO)`: the refresh session, whose for-update
             // timestamp the read TSO is.
             tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", &mut *refresh);
+            // Go's test closures reach the refresh session they captured;
+            // the call hands it to them.
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", &mut *refresh);
+            if let Some(value) =
+                tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges")
+            {
+                let message = value
+                    .as_string()
+                    .map_or_else(|| "mock refresh materialized view error after data changes".to_owned(), str::to_owned);
+                return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, plain(message)));
+            }
+            // Go master `resolveMVCompleteRefreshSources` for COMPLETE IN
+            // PLACE: the sources its read confirmed.
+            if mode == RefreshMaterializedViewMode::CompleteInPlace {
+                confirmed_sources = match self.resolve_mv_complete_refresh_sources(mview_id, actual_read_tso) {
+                    Ok(sources) => sources,
+                    Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
+                };
+            }
             let mut read_tso = actual_read_tso;
             if bounded_fast {
                 if target_tso > actual_read_tso {
@@ -1334,28 +1381,18 @@ impl Session {
                 }
                 read_tso = target_tso;
             }
-            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", &mut ());
-            if let Some(value) =
-                tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorAfterDataChanges")
-            {
-                let message = value
-                    .as_string()
-                    .map_or_else(|| "mock refresh materialized view error after data changes".to_owned(), str::to_owned);
-                return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, plain(message)));
-            }
             // Go master `deriveRuntimeMaterializedScheduleNextUnixSeconds`.
             let next_refresh = match derive_runtime_materialized_schedule_next_unix_seconds(mview, self.vars.restricted_sql) {
                 Ok(next) => next,
                 Err(error) => return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, error)),
             };
-            // Go master `resolveMVCompleteRefreshSources` and the source
-            // baseline replaced when the logs changed.
+            // The source baseline replaced when the logs changed.
             let persisted = (|| {
                 self.observe_mv_refresh_step("PERSIST_REFRESH_INFO", || {
                     // FAST keeps its registered logs; a COMPLETE refresh
                     // re-registers the ones its read confirmed.
                     if !fast {
-                        let confirmed = tidb_mviewutil::refresh_source::refresh_source_log_ids(&self.resolve_mv_complete_refresh_sources(mview_id, read_tso)?);
+                        let confirmed = tidb_mviewutil::refresh_source::refresh_source_log_ids(&confirmed_sources);
                         if registered_logs != confirmed {
                             replace_refresh_source_ids(refresh, mview_id, &confirmed)?;
                         }
@@ -1762,7 +1799,13 @@ impl Session {
         mview_id: i64,
         read_tso: u64,
     ) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {
-        resolve_refresh_sources(&self.computation_snapshot_info_schema(read_tso)?, mview_id)
+        let mut input = MvRefreshResolveInputSnapshot {
+            read_tso,
+            mview_id,
+            snapshot: Box::new(self.computation_snapshot_info_schema(read_tso)?),
+        };
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", &mut input);
+        resolve_refresh_sources(input.snapshot.as_ref(), mview_id)
     }
 
     /// Go master `buildRefreshMaterializedViewImplement`'s
@@ -1817,8 +1860,44 @@ impl Session {
 
 /// Go master `mviewutil.ResolveRefreshSources`: the view's sources and their
 /// logs in `catalog`, sorted by table ID.
+/// Go `infoschema.InfoSchema` as `mviewutil.ResolveRefreshSources` and
+/// `checkMVRefreshLogBaseline` read it (`TableByID`, `TableItemByID`); a
+/// test substitutes tables by wrapping it, as Go's tests wrap the interface.
+pub trait RefreshSourceSchema: Send + Sync {
+    /// Go `TableByID(id).Meta()`.
+    fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>>;
+    /// Go `TableItemByID(id).DBName`.
+    fn schema_name_by_table_id(&self, id: i64) -> Option<String>;
+}
+
+impl RefreshSourceSchema for tidb_infoschema::SessionExtendedInfoSchema {
+    fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        tidb_infoschema::SessionExtendedInfoSchema::table_info_by_id(self, id)
+    }
+    fn schema_name_by_table_id(&self, id: i64) -> Option<String> {
+        tidb_infoschema::SessionExtendedInfoSchema::schema_name_by_table_id(self, id)
+    }
+}
+
+/// Go `failpoint.InjectCall("mvRefreshValidateInputSnapshot", readTSO, plan,
+/// &snapshotIS)`: the FAST refresh's computation read TSO, its planned log
+/// (`plan.MLogTableID`) and the computation snapshot, each replaceable.
+pub struct MvRefreshValidateInputSnapshot {
+    pub read_tso: u64,
+    pub plan_mlog_table_id: i64,
+    pub snapshot: Box<dyn RefreshSourceSchema>,
+}
+
+/// Go `failpoint.InjectCall("mvRefreshResolveInputSnapshot", readTSO,
+/// mviewID, &snapshotIS)`.
+pub struct MvRefreshResolveInputSnapshot {
+    pub read_tso: u64,
+    pub mview_id: i64,
+    pub snapshot: Box<dyn RefreshSourceSchema>,
+}
+
 pub(crate) fn resolve_refresh_sources(
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    catalog: &dyn RefreshSourceSchema,
     mview_id: i64,
 ) -> Result<Vec<tidb_model::MViewRefreshSource>, DriverError> {
     let mview = catalog
@@ -1874,6 +1953,15 @@ impl Session {
         use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
         let current_db = self.current_database().to_owned();
         let ctx = self.refresh_implement_statement_context();
+        // Go `buildMViewCompleteDeltaApply`: the sources confirmed at the
+        // statement's for-update TS before its source is read, kept on the
+        // plan (`RefreshReadTSO`, `RefreshSources`) for the refresh.
+        let read_tso = match ctx.txn_store() {
+            Some(store) => store.stmt_for_update_ts().map_err(|error| plain(error.to_string()))?,
+            None => u64::try_from(self.current_for_update_ts().value()).unwrap_or_default(),
+        };
+        let sources = self.resolve_mv_complete_refresh_sources(apply.diff.mv_table_id, read_tso)?;
+        self.refresh_plan_input = Some((read_tso, sources));
         let stats = self.with_staged_catalog(|catalog| {
             tidb_executor::driver::mview_delta_apply::run_mview_complete_delta_apply(apply, catalog, &current_db, &ctx)
         })?;
@@ -1903,10 +1991,16 @@ impl Session {
             Some(store) => store.stmt_for_update_ts().map_err(|error| plain(error.to_string()))?,
             None => u64::try_from(self.current_for_update_ts().value()).unwrap_or_default(),
         };
-        let snapshot_is = self.computation_snapshot_info_schema(read_tso)?;
-        let sources = resolve_refresh_sources(&snapshot_is, build.mv_table_id)?;
-        check_mv_refresh_log_baseline(&snapshot_is, build.mv_table_id, &sources, &merge.registered_mlog_ids)?;
-        if !sources.iter().any(|source| source.table_id == build.base_table_id && source.mlog_id == build.mlog_table_id) {
+        // Go `validateMVFastRefreshInput`.
+        let mut input = MvRefreshValidateInputSnapshot {
+            read_tso,
+            plan_mlog_table_id: build.mlog_table_id,
+            snapshot: Box::new(self.computation_snapshot_info_schema(read_tso)?),
+        };
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", &mut input);
+        let sources = resolve_refresh_sources(input.snapshot.as_ref(), build.mv_table_id)?;
+        check_mv_refresh_log_baseline(input.snapshot.as_ref(), build.mv_table_id, &sources, &merge.registered_mlog_ids)?;
+        if !sources.iter().any(|source| source.table_id == build.base_table_id && source.mlog_id == input.plan_mlog_table_id) {
             return Err(plain(
                 "refresh materialized view: planned source/log binding differs from the computation snapshot; retry refresh",
             ));
@@ -2019,7 +2113,7 @@ fn check_mv_refresh_out_of_place_mlog_schema(
 /// Go master `checkMVRefreshLogBaseline`. "Keep diagnostic name lookups on
 /// error paths: every FAST refresh runs this check."
 fn check_mv_refresh_log_baseline(
-    is: &tidb_infoschema::SessionExtendedInfoSchema,
+    is: &dyn RefreshSourceSchema,
     mview_id: i64,
     sources: &[tidb_model::MViewRefreshSource],
     registered: &[i64],

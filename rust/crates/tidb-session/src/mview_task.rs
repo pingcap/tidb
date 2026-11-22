@@ -56,9 +56,19 @@ fn interval(failpoint: &str, default: Duration) -> Duration {
 /// Go master `mvTaskCancelController`: whether a manual cancel was
 /// requested and by whom, and the task sessions' statement handles it
 /// interrupts.
-#[derive(Default)]
 pub(crate) struct MvTaskCancelController {
+    /// Go `ctx`: the task's context, canceled with its parent (the
+    /// statement's) or by a manual cancel.
+    ctx: tidb_gocontext::Context,
+    cancel: tidb_gocontext::CancelFunc,
     state: Mutex<CancelState>,
+}
+
+impl Drop for MvTaskCancelController {
+    /// Go's `defer taskCancelController.cancel()`.
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
 }
 
 #[derive(Default)]
@@ -69,6 +79,17 @@ struct CancelState {
 }
 
 impl MvTaskCancelController {
+    /// Go master `newMVTaskCancelController(parent)`.
+    pub(crate) fn new(parent: &tidb_gocontext::Context) -> Self {
+        let (ctx, cancel) = tidb_gocontext::Context::with_cancel(parent);
+        Self { ctx, cancel, state: Mutex::default() }
+    }
+
+    /// Go master `context()`: the task's context (`kctx`).
+    pub(crate) fn context(&self) -> &tidb_gocontext::Context {
+        &self.ctx
+    }
+
     /// A task session whose statements a cancel interrupts (Go: the session
     /// runs under the controller's context).
     pub(crate) fn watch(&self, session: &Session) -> Arc<tidb_sqlkiller::StatementCancellation> {
@@ -81,14 +102,12 @@ impl MvTaskCancelController {
         handle
     }
 
-    /// Go `kctx.Err()` on the task's cancelable context: `context canceled`
-    /// once a manual cancel was requested.
+    /// Go `kctx.Err()` on the task's cancelable context.
     pub(crate) fn err(&self) -> Result<(), DriverError> {
-        let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.manual {
-            return Err(plain("context canceled"));
+        match self.ctx.err() {
+            Some(error) => Err(plain(error.to_string())),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// [`Self::watch`] for the guard's lifetime: dropping it resets the
@@ -108,6 +127,8 @@ impl MvTaskCancelController {
         for handle in &state.handles {
             handle.cancel();
         }
+        drop(state);
+        self.cancel.cancel();
     }
 
     /// Go master `normalizeTaskFailure`: a manually canceled task fails with

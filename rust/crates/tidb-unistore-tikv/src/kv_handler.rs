@@ -638,6 +638,22 @@ impl KvHandler {
         kvrpcpb::PessimisticLockResponse,
         Option<PessimisticLockWait>,
     ) {
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict")
+            .is_some_and(|value| value.bool())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let error = KvError::Conflict {
+                reason: kvrpcpb::write_conflict::Reason::Unknown,
+                start_ts: req.for_update_ts,
+                conflict_ts: req.for_update_ts + 1,
+                conflict_commit_ts: req.for_update_ts + 2,
+                key: Vec::new(),
+            };
+            return (
+                kvrpcpb::PessimisticLockResponse { errors: vec![convert_to_key_error(&error)], ..Default::default() },
+                None,
+            );
+        }
         let (_, region_error) = self.new_request_ctx(req.context.as_ref());
         if let Some(region_error) = region_error {
             return (

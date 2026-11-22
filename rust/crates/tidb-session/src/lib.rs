@@ -777,6 +777,15 @@ pub struct Session {
     /// Go `StmtCtx.RelatedTableIDs`: the tables, views and sequences the
     /// statement's planner resolved; a statement starts with none.
     pub(crate) stmt_related_table_ids: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<i64>>>,
+    /// Go `ExecuteStmt(ctx, ...)`'s `ctx`: the running statement's context,
+    /// which a materialized view task's context derives from (Go
+    /// `newMVTaskCancelController(kctx)`); a connection's statements run
+    /// under the background context.
+    pub(crate) exec_ctx: tidb_gocontext::Context,
+    /// Go `MViewCompleteDeltaApply.RefreshReadTSO` / `RefreshSources`: what
+    /// the refresh session's last COMPLETE DELTA APPLY statement confirmed
+    /// (`buildMViewCompleteDeltaApply`), which the refresh reads back.
+    pub(crate) refresh_plan_input: Option<(u64, Vec<tidb_model::MViewRefreshSource>)>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_sessionctx::StmtContext`] the statement builds, so an allocating
@@ -1150,6 +1159,8 @@ impl Session {
             mdl_statement_locks: false,
             mdl_statement_tables: std::sync::Arc::default(),
             stmt_related_table_ids: std::sync::Arc::default(),
+            exec_ctx: tidb_gocontext::Context::background(),
+            refresh_plan_input: None,
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
@@ -2807,6 +2818,14 @@ impl Session {
     /// once it committed.
     pub(crate) fn take_pending_explain_analyze(&mut self) -> Option<tidb_executor::AnalyzedWrite> {
         self.pending_explain_analyze.take()
+    }
+
+    /// Go `tk.ExecWithContext(ctx, sql)`: runs `sql` under `ctx`.
+    pub fn exec_with_context(&mut self, ctx: &tidb_gocontext::Context, sql: &str) -> Result<StmtResult, DriverError> {
+        let previous = std::mem::replace(&mut self.exec_ctx, ctx.clone());
+        let result = self.run(sql);
+        self.exec_ctx = previous;
+        result
     }
 
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {

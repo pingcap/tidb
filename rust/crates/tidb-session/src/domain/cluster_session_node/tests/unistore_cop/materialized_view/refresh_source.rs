@@ -257,3 +257,253 @@ fn test_m_view_refresh_source_info_recovery_atomicity() {
     assert_eq!(rows_text(&mut tk, peer), peer_before);
     assert_eq!(answer(&mut tk, "select * from mv_source_init order by a"), super::refresh::rows(&["1 15 2", "2 20 1", "3 7 1"]));
 }
+
+/// Go `mviewRefreshSourceSnapshot`: the snapshot with some tables replaced
+/// (`None` hides one), as `TableByID` reads them.
+struct ReplacedSnapshot {
+    inner: Box<dyn crate::mview_refresh::RefreshSourceSchema>,
+    replaced: std::collections::HashMap<i64, Option<tidb_model::GoShared<tidb_model::TableInfo>>>,
+}
+
+impl crate::mview_refresh::RefreshSourceSchema for ReplacedSnapshot {
+    fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        match self.replaced.get(&id) {
+            Some(table) => table.clone(),
+            None => self.inner.table_info_by_id(id),
+        }
+    }
+    fn schema_name_by_table_id(&self, id: i64) -> Option<String> {
+        self.inner.schema_name_by_table_id(id)
+    }
+}
+
+/// Go `replaceSnapshot` in `TestMViewRefreshSourceInfoSnapshotIdentity`:
+/// changes the computation snapshot (and for FAST the planned log) as
+/// `change` names. Each changed object is a copy, as a table definition read
+/// from storage is.
+fn replace_snapshot(
+    change: &str,
+    mview_id: i64,
+    mlog_id: i64,
+    plan_mlog_table_id: Option<&mut i64>,
+    snapshot: &mut Box<dyn crate::mview_refresh::RefreshSourceSchema>,
+) {
+    let mv = snapshot.table_info_by_id(mview_id).expect("the view").read().clone_like_go();
+    let source_id = mv.materialized_view.as_ref().unwrap().read().base_table_ids.iter().copied().next().unwrap();
+    let source = snapshot.table_info_by_id(source_id).expect("the source").read().clone_like_go();
+    let log = snapshot.table_info_by_id(mlog_id).expect("the log").read().clone_like_go();
+    let (mut new_mv, mut new_source, mut new_log) = (mv, source, log);
+    let copy_mv = |info: &mut tidb_model::TableInfo| {
+        let inner = info.materialized_view.as_ref().unwrap().read().clone();
+        info.materialized_view = Some(tidb_model::GoShared::new(inner));
+    };
+    let copy_base = |info: &mut tidb_model::TableInfo| {
+        let inner = info.materialized_view_base.as_ref().unwrap().read().clone();
+        info.materialized_view_base = Some(tidb_model::GoShared::new(inner));
+    };
+    let copy_log = |info: &mut tidb_model::TableInfo| {
+        let inner = info.materialized_view_log.as_ref().unwrap().read().clone();
+        info.materialized_view_log = Some(tidb_model::GoShared::new(inner));
+    };
+    copy_mv(&mut new_mv);
+    copy_base(&mut new_source);
+    copy_log(&mut new_log);
+    let mut replaced = std::collections::HashMap::new();
+    match change {
+        "source replaced" | "eliminated source replaced" => {
+            replaced.insert(new_source.id, None);
+            new_source.id += 10000;
+            new_log.materialized_view_log.as_ref().unwrap().write().base_table_id = new_source.id;
+            new_mv.materialized_view.as_ref().unwrap().write().base_table_ids = vec![new_source.id].into();
+        }
+        "log replaced" | "snapshot and plan log replaced" => {
+            new_log.id += 10000;
+            new_source.materialized_view_base.as_ref().unwrap().write().mlog_id = new_log.id;
+            replaced.insert(mlog_id, None);
+            if change == "snapshot and plan log replaced" {
+                *plan_mlog_table_id.expect("a FAST refresh's plan") = new_log.id;
+            }
+        }
+        "missing log" => new_source.materialized_view_base.as_ref().unwrap().write().mlog_id = 0,
+        "planned input replaced" => {
+            *plan_mlog_table_id.expect("a FAST refresh's plan") += 10000;
+            return;
+        }
+        other => unreachable!("{other}"),
+    }
+    for info in [new_mv, new_source, new_log] {
+        replaced.insert(info.id, Some(tidb_model::GoShared::new(info)));
+    }
+    let inner = std::mem::replace(snapshot, Box::new(EmptySnapshot));
+    *snapshot = Box::new(ReplacedSnapshot { inner, replaced });
+}
+
+/// A placeholder snapshot while [`replace_snapshot`] swaps the real one.
+struct EmptySnapshot;
+
+impl crate::mview_refresh::RefreshSourceSchema for EmptySnapshot {
+    fn table_info_by_id(&self, _: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
+        None
+    }
+    fn schema_name_by_table_id(&self, _: i64) -> Option<String> {
+        None
+    }
+}
+
+/// Go `TestMViewRefreshSourceInfoSnapshotIdentity`.
+#[test]
+fn test_m_view_refresh_source_info_snapshot_identity() {
+    for method in ["fast", "complete delta apply", "complete in place", "complete out of place"] {
+        for change in ["source replaced", "eliminated source replaced", "log replaced", "missing log", "planned input replaced", "snapshot and plan log replaced"] {
+            if method != "fast" && matches!(change, "source replaced" | "planned input replaced" | "snapshot and plan log replaced") {
+                continue;
+            }
+            let (_stack, mut tk, mut mview_id, mlog_id) = new_fixture();
+            if change == "eliminated source replaced" {
+                must_exec_all(&mut tk, &[
+                    "drop materialized view mv_source_init",
+                    "create materialized view mv_source_init (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_init where false group by a",
+                ]);
+                mview_id = current_mview_id(&mut tk);
+            }
+            let before = rows_text(&mut tk, "select * from mysql.tidb_mview_refresh_info");
+            let before_sources = rows_text(&mut tk, "select * from mysql.tidb_mview_fast_refresh_source_info");
+            let before_data = rows_text(&mut tk, "select * from mv_source_init order by a");
+            must_exec_all(&mut tk, &["insert into t_source_init values (1, 5)"]);
+            let checked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let change_owned = change.to_owned();
+            let _hook = if method == "fast" {
+                let checked = Arc::clone(&checked);
+                tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", move |input| {
+                    let input = input.downcast_mut::<crate::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
+                    checked.store(true, std::sync::atomic::Ordering::SeqCst);
+                    replace_snapshot(&change_owned, mview_id, mlog_id, Some(&mut input.plan_mlog_table_id), &mut input.snapshot);
+                })
+            } else {
+                let checked = Arc::clone(&checked);
+                tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", move |input| {
+                    let input = input.downcast_mut::<crate::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
+                    checked.store(true, std::sync::atomic::Ordering::SeqCst);
+                    replace_snapshot(&change_owned, mview_id, mlog_id, None, &mut input.snapshot);
+                })
+            };
+            let result = tk.run(&format!("refresh materialized view mv_source_init {method}"));
+            drop(_hook);
+            let case = format!("{method}/{change}");
+            if matches!(change, "eliminated source replaced" | "log replaced" | "missing log") && method != "fast" {
+                result.unwrap_or_else(|e| panic!("{case}: {e:?}"));
+                if change == "eliminated source replaced" {
+                    assert_eq!(rows_text(&mut tk, "select * from mv_source_init"), "RS:[]", "{case}");
+                } else {
+                    assert_eq!(rows_text(&mut tk, "select * from mv_source_init order by a"), super::refresh::rows(&["1 15 2", "2 20 1"]), "{case}");
+                }
+                let expected_log_id = match change {
+                    "log replaced" => mlog_id + 10000,
+                    "missing log" => 0,
+                    _ => mlog_id,
+                };
+                assert_eq!(
+                    rows_text(&mut tk, "select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info"),
+                    super::refresh::rows(&[&expected_log_id.to_string()]),
+                    "{case}"
+                );
+            } else {
+                let err = result.expect_err(&case);
+                let error = format!("{err:?}");
+                if method == "fast" && matches!(change, "log replaced" | "missing log" | "snapshot and plan log replaced") {
+                    let baseline = tidb_exeerrors::ERR_MV_REFRESH_LOG_BASELINE_CHANGED.identity();
+                    assert!(matches!(&err, tidb_driver_error::DriverError::Mysql(e) if e.identity == Some(baseline)), "{case}: {error}");
+                    assert!(error.contains("refresh materialized view test.mv_source_init fast:"), "{case}: {error}");
+                    if change == "missing log" {
+                        assert!(!error.contains("COMPLETE") && !error.contains("restore"), "{case}: {error}");
+                        assert!(error.contains("source has no materialized view log; cannot perform FAST refresh"), "{case}: {error}");
+                    }
+                }
+                assert_eq!(rows_text(&mut tk, "select * from mysql.tidb_mview_refresh_info"), before, "{case}");
+                assert_eq!(rows_text(&mut tk, "select * from mysql.tidb_mview_fast_refresh_source_info"), before_sources, "{case}");
+                assert_eq!(rows_text(&mut tk, "select * from mv_source_init order by a"), before_data, "{case}");
+            }
+            assert!(checked.load(std::sync::atomic::Ordering::SeqCst), "{case}");
+        }
+    }
+}
+
+/// Go `TestMViewRefreshSourceInfoReadTSAfterRetry`: a refresh whose first
+/// attempt hits a write conflict retries, validates its input again at the
+/// retry's read TSO, and persists that TSO.
+#[test]
+fn test_m_view_refresh_source_info_read_ts_after_retry() {
+    use std::sync::Mutex;
+    for method in ["fast", "complete delta apply"] {
+        let (_stack, mut tk, mview_id, _mlog_id) = new_fixture();
+        must_exec_all(&mut tk, &["insert into t_source_init values (1, 5)"]);
+        let validated_ts = Arc::new(Mutex::new(Vec::<u64>::new()));
+        let computation_ts = Arc::new(Mutex::new(0u64));
+        let metadata_ts = Arc::new(Mutex::new(0u64));
+        let captured_validation_count = Arc::new(Mutex::new(0usize));
+        let _captured = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", {
+            let (validated_ts, computation_ts, captured_validation_count) =
+                (Arc::clone(&validated_ts), Arc::clone(&computation_ts), Arc::clone(&captured_validation_count));
+            move |session: &mut dyn std::any::Any| {
+                let session = session.downcast_mut::<Session>().expect("the refresh session");
+                // Go `actualRefreshReadTSO`: the refresh session's for-update TS.
+                let ts = u64::try_from(session.current_for_update_ts().value()).unwrap_or_default();
+                *computation_ts.lock().unwrap() = ts;
+                let validated = validated_ts.lock().unwrap();
+                assert!(!validated.is_empty());
+                *captured_validation_count.lock().unwrap() = validated.len();
+                assert_eq!(ts, *validated.last().unwrap());
+            }
+        });
+        let conflict = Arc::new(Mutex::new(None));
+        let _hist_running = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning",
+            {
+                let conflict = Arc::clone(&conflict);
+                move |_: &mut dyn std::any::Any| {
+                    *conflict.lock().unwrap() = Some(tidb_failpoint::enable_for_test(
+                        "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict",
+                        "1*return(true)",
+                    ));
+                }
+            },
+        );
+        let _data_changes = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", {
+            let metadata_ts = Arc::clone(&metadata_ts);
+            move |session: &mut dyn std::any::Any| {
+                let session = session.downcast_mut::<Session>().expect("the refresh session");
+                crate::mview_refresh::sys_sql(
+                    session,
+                    "UPDATE mysql.tidb_mview_fast_refresh_source_info SET MLOG_ID = MLOG_ID WHERE MVIEW_ID = %?",
+                    &[tidb_sqlescape::SqlArg::Signed(mview_id)],
+                )
+                .unwrap();
+                *metadata_ts.lock().unwrap() = u64::try_from(session.current_for_update_ts().value()).unwrap_or_default();
+            }
+        });
+        let _validate = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", {
+            let validated_ts = Arc::clone(&validated_ts);
+            move |input: &mut dyn std::any::Any| {
+                let input = input.downcast_mut::<crate::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
+                validated_ts.lock().unwrap().push(input.read_tso);
+            }
+        });
+        let _resolve = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", {
+            let validated_ts = Arc::clone(&validated_ts);
+            move |input: &mut dyn std::any::Any| {
+                let input = input.downcast_mut::<crate::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
+                validated_ts.lock().unwrap().push(input.read_tso);
+            }
+        });
+        must_exec_all(&mut tk, &[&format!("refresh materialized view mv_source_init {method}")]);
+        let validated = validated_ts.lock().unwrap().clone();
+        let count = *captured_validation_count.lock().unwrap();
+        let computation = *computation_ts.lock().unwrap();
+        assert!(count > 1, "{method}: {validated:?}");
+        assert_eq!(validated.len(), count, "{method}");
+        assert!(computation > validated[0], "{method}");
+        assert!(*metadata_ts.lock().unwrap() > computation, "{method}");
+        assert_eq!(last_success_read_tso(&mut tk, mview_id), computation, "{method}");
+        assert_eq!(rows_text(&mut tk, "select * from mv_source_init order by a"), super::refresh::rows(&["1 15 2", "2 20 1"]), "{method}");
+    }
+}

@@ -11469,6 +11469,7 @@ name = "tidb-unistore-tikv"
 version = "0.0.0"
 dependencies = [
  "tidb-codec",
+ "tidb-failpoint",
  "tidb-log",
  "tidb-proto",
  "tidb-txnkv",

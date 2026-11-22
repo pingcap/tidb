@@ -11,6 +11,7 @@ description = "TiDB pkg/store/mockstore/unistore/tikv: the in-process TiKV serve
 workspace = true
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }
 tidb-unistore-dbreader = { path = "../tidb-unistore-dbreader" }
 tidb-unistore-kverrors = { path = "../tidb-unistore-kverrors" }
