@@ -349,9 +349,12 @@ type StatsProvider interface {
 // estimateRowCountWithUniformDistribution estimates row count using uniform distribution assumption
 // for values not covered by TopN or histograms. This function handles the common logic used by
 // both equalRowCountOnIndex and equalRowCountOnColumn.
+// val is the value being estimated, in the histogram's encoding. It is only used to bound the
+// worst case (MaxEst) by the bucket that contains it.
 func estimateRowCountWithUniformDistribution(
 	sctx planctx.PlanContext,
 	stats StatsProvider,
+	val types.Datum,
 	realtimeRowCount int64,
 	modifyCount int64,
 ) statistics.RowEstimate {
@@ -385,21 +388,33 @@ func estimateRowCountWithUniformDistribution(
 		avgRowEstimate = notNullCount / histNDV
 	}
 
+	// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+	skewEstimate := notNullCount - (histNDV - 1)
+	minTopN := topN.MinCount()
+	if minTopN > 0 {
+		// The skewEstimate should not be larger than the minimum TopN value.
+		skewEstimate = min(skewEstimate, float64(minTopN))
+	}
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	result := statistics.DefaultRowEst(avgRowEstimate)
 	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate := notNullCount - (histNDV - 1)
-		minTopN := topN.MinCount()
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+		result = statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
 	}
-
-	return statistics.DefaultRowEst(avgRowEstimate)
+	// The uniform estimate is not an exact statistic, so report its worst case for risk
+	// estimation in skyline pruning regardless of skewRatio, which only moves Est. A value
+	// that falls inside a bucket cannot have more rows than that bucket holds.
+	worstCase := skewEstimate
+	if exceed, bucketIdx, inBucket, _ := histogram.LocateBucket(sctx, val); !exceed && inBucket {
+		bucketRows := float64(histogram.Buckets[bucketIdx].Count)
+		if bucketIdx > 0 {
+			bucketRows -= float64(histogram.Buckets[bucketIdx-1].Count)
+		}
+		worstCase = min(worstCase, bucketRows)
+	}
+	result.MaxEst = max(result.MaxEst, worstCase)
+	return result
 }
 
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
@@ -446,7 +461,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
+	return estimateRowCountWithUniformDistribution(sctx, idx, val, realtimeRowCount, modifyCount)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

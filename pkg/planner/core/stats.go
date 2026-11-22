@@ -321,6 +321,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	}
 	var err error
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	path.MaxCountAfterAccess = 0
 	path.TableFilters = conds
 	var pkCol *expression.Column
 	isUnsigned := false
@@ -397,6 +398,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 		var countEst statistics.RowEstimate
 		countEst, err = cardinality.GetRowCountByColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges, true)
 		path.CountAfterAccess = countEst.Est
+		// Handle points are exact, but handle ranges are interpolated from the histogram, so
+		// keep their worst case for risk comparison in skyline pruning, as index paths do.
+		path.MaxCountAfterAccess = countEst.MaxEst
 	}
 	if !isIm {
 		// Check if we need to apply a lower bound to CountAfterAccess

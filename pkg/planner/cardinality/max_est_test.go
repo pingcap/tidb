@@ -196,3 +196,97 @@ func TestPartialStatsKeepsMaxEst(t *testing.T) {
 		require.InDelta(t, single.MaxEst, maxCount, 1e-6)
 	})
 }
+
+// newTwoBucketColumn builds a V2 integer column with buckets [0, 100] (1000 rows, upper
+// value repeated 10 times) and [101, 200] (100 rows, upper value repeated 10 times), and
+// NDV 100. topNCnt > 0 adds the TopN value 300.
+func newTwoBucketColumn(id int64, topNCnt uint64) *statistics.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	hist := statistics.NewHistogram(id, 100, 0, 0, tp, 2, 0)
+	l0, u0 := types.NewIntDatum(0), types.NewIntDatum(100)
+	l1, u1 := types.NewIntDatum(101), types.NewIntDatum(200)
+	hist.AppendBucket(&l0, &u0, 1000, 10)
+	hist.AppendBucket(&l1, &u1, 1100, 10)
+	topN := statistics.NewTopN(1)
+	if topNCnt > 0 {
+		key, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(300))
+		if err != nil {
+			panic(err)
+		}
+		topN.AppendTopN(key, topNCnt)
+	}
+	return &statistics.Column{
+		Histogram:         *hist,
+		TopN:              topN,
+		Info:              &model.ColumnInfo{ID: id, FieldType: *tp, State: model.StatePublic},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          statistics.Version2,
+	}
+}
+
+// TestUniformEqualityReportsWorstCase: a value found neither in TopN nor at a bucket upper
+// bound is estimated as the average, which is not an exact statistic. Its worst case must be
+// reported even with the default tidb_opt_risk_eq_skew_ratio = 0, bounded by the smallest
+// TopN count and by the bucket that contains the value. Est must not change.
+func TestUniformEqualityReportsWorstCase(t *testing.T) {
+	sctx := mock.NewContext()
+	require.Zero(t, sctx.GetSessionVars().RiskEqSkewRatio)
+
+	t.Run("bounded by bucket", func(t *testing.T) {
+		col := newTwoBucketColumn(1, 0)
+		realtime := int64(col.TotalRowCount())
+		// 150 falls inside the second bucket, which holds 100 rows.
+		est, err := getColumnRowCount(sctx, col, intRange(150, 150, false), realtime, 0, false)
+		require.NoError(t, err)
+		require.InDelta(t, 1100.0/100, est.Est, 1e-6)
+		require.InDelta(t, est.Est, est.MinEst, 1e-6)
+		require.InDelta(t, 100, est.MaxEst, 1e-6)
+	})
+
+	t.Run("bounded by smallest TopN", func(t *testing.T) {
+		col := newTwoBucketColumn(1, 40)
+		realtime := int64(col.TotalRowCount())
+		est, err := getColumnRowCount(sctx, col, intRange(150, 150, false), realtime, 0, false)
+		require.NoError(t, err)
+		// The TopN takes one NDV out of the histogram.
+		require.InDelta(t, 1100.0/99, est.Est, 1e-6)
+		require.InDelta(t, 40, est.MaxEst, 1e-6)
+	})
+
+	t.Run("exact statistics report no spread", func(t *testing.T) {
+		col := newTwoBucketColumn(1, 40)
+		realtime := int64(col.TotalRowCount())
+		for _, v := range []int64{100, 300} { // bucket upper bound, TopN value
+			est, err := getColumnRowCount(sctx, col, intRange(v, v, false), realtime, 0, false)
+			require.NoError(t, err)
+			require.InDelta(t, est.Est, est.MaxEst, 1e-6, "value %d", v)
+		}
+	})
+}
+
+// TestMultiBucketRangeReportsWorstCase: when the ends of a range fall strictly inside
+// different buckets, both edge buckets are interpolated, so in the worst case the range
+// covers all of their rows.
+func TestMultiBucketRangeReportsWorstCase(t *testing.T) {
+	sctx := mock.NewContext()
+	col := newTwoBucketColumn(1, 0)
+	realtime := int64(col.TotalRowCount())
+
+	// [50, 150): no point estimates at either end, so the result is the histogram alone.
+	ran := intRange(50, 150, false)
+	ran[0].HighExclude = true
+	est, err := getColumnRowCount(sctx, col, ran, realtime, 0, false)
+	require.NoError(t, err)
+	require.Less(t, est.Est, 1090.0)
+	// Worst case: every row from the start of the first bucket to below the second bucket's
+	// upper value.
+	require.InDelta(t, 1090, est.MaxEst, 1e-6)
+
+	// A range whose ends are exact (a bucket lower bound, a bucket upper bound) has no
+	// interpolated share and therefore no spread.
+	ran = intRange(0, 100, false)
+	ran[0].HighExclude = true
+	est, err = getColumnRowCount(sctx, col, ran, realtime, 0, false)
+	require.NoError(t, err)
+	require.InDelta(t, est.Est, est.MaxEst, 1e-6)
+}
