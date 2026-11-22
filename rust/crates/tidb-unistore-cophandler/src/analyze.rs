@@ -60,10 +60,9 @@ fn execute(
         .collect();
     let policy = SamplePolicy::new_row_sample_collector(columns.sample_size() as usize, columns.sample_rate())
         .ok_or_else(|| other_error("invalid sample policy"))?;
-    let mut collector = RowSampleCollector::with_memory_quota_and_fm_sketch_size(
+    let mut collector = RowSampleCollector::with_fm_sketch_size(
         columns.columns_info.len() + columns.column_groups.len(),
         policy,
-        tidb_stats::row_sample_collector::SampleMemoryQuota::unlimited(),
         columns.sketch_size() as usize,
     );
     for range in &req.ranges {
@@ -228,12 +227,10 @@ fn execute(
                         is_null: nulls[i],
                     })
                     .collect();
-                collector
-                    .collect(&ScannedRow {
-                        columns: &sampled,
-                        slots: &slots,
-                    })
-                    .map_err(|e| other_error(&e.to_string()))?;
+                collector.collect(&ScannedRow {
+                    columns: &sampled,
+                    slots: &slots,
+                });
             }
             cursor = next;
             if cursor >= range.end {

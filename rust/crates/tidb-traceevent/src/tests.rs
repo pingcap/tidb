@@ -34,7 +34,7 @@ fn lock_global_state() -> MutexGuard<'static, ()> {
 fn all_categories_config() -> FlightRecorderConfig {
     let mut config = FlightRecorderConfig::default();
     config.initialize();
-    config.enabled_categories = vec!["*".to_owned()];
+    config.enabled_categories = Some(vec!["*".to_owned()]);
     config
 }
 
@@ -739,7 +739,7 @@ fn default_configuration() {
     let mut config = FlightRecorderConfig::default();
     config.initialize();
 
-    let categories = parse_categories(&config.enabled_categories);
+    let categories = parse_categories(config.enabled_categories.as_deref().unwrap_or_default());
 
     assert!(
         categories.0 & TraceCategory::TIKV_REQUEST.0 != 0,

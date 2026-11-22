@@ -51,8 +51,9 @@
 //! (`pkg/executor/select.go:141`). Exceeding it aborts the statement --
 //! `globalPanicOnExceed` panics and `getAnalyzePanicErr` turns that into
 //! `errAnalyzeOOM` -- rather than quietly sampling less, because a silently
-//! smaller sample is a wrong histogram. [`SampleMemoryQuota`] is that bound,
-//! and Go's default (`-1`) is no bound at all.
+//! smaller sample is a wrong histogram. [`RowSampleCollector::from_proto`]
+//! consumes into that tracker as Go's `FromProto` does; the collector itself
+//! holds no bound, and Go's default (`-1`) is no bound at all.
 //!
 //! # Slots, and why they are not just columns
 //!
@@ -202,58 +203,6 @@ mod adjusted_sample_rate_tests {
     }
 }
 
-/// Go's analyze memory quota, as one `ANALYZE` reads it.
-///
-/// `tidb_mem_quota_analyze` is a byte count whose default is `-1`
-/// (`vardef.DefTiDBMemQuotaAnalyze`), which Go's `memory.Tracker` reads as
-/// unlimited. Any value `<= 0` means the same here.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SampleMemoryQuota(Option<u64>);
-
-impl SampleMemoryQuota {
-    /// Go's default: no bound.
-    #[must_use]
-    pub const fn unlimited() -> Self {
-        Self(None)
-    }
-
-    /// The quota as `tidb_mem_quota_analyze` states it: bytes, or `<= 0` for
-    /// unlimited.
-    #[must_use]
-    pub const fn from_setting(bytes: i64) -> Self {
-        if bytes <= 0 {
-            return Self(None);
-        }
-        Self(Some(bytes.unsigned_abs()))
-    }
-
-    /// The byte limit, when there is one.
-    #[must_use]
-    pub const fn bytes(self) -> Option<u64> {
-        self.0
-    }
-}
-
-/// The sample outgrew [`SampleMemoryQuota`].
-///
-/// Go reports this as `errAnalyzeOOM` (`pkg/executor/analyze_utils.go:88`),
-/// and its text is reproduced exactly: it is what a user sees, and it names
-/// the knob that fixes it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SampleMemoryExceeded;
-
-impl std::fmt::Display for SampleMemoryExceeded {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "analyze panic due to memory quota exceeds, please try with smaller \
-             samplerate(refer to {}/count)",
-            DEF_ROWS_FOR_SAMPLE_RATE as i64
-        )
-    }
-}
-
-impl std::error::Error for SampleMemoryExceeded {}
 
 /// What one collector slot counted over the whole scan.
 #[derive(Clone, Debug, Default)]
@@ -313,13 +262,8 @@ pub struct RowSampleCollector {
     /// The reservoir's min-heap on weight. The Bernoulli policy leaves every
     /// weight at zero and never evicts, exactly as Go's does.
     samples: Vec<(i64, Vec<Datum>)>,
-    /// The bound the kept rows are held to, and what they have consumed of
-    /// it. Go tracks the same quantity -- the sample items' datums and their
-    /// payloads -- through `GlobalAnalyzeMemoryTracker`.
-    quota: SampleMemoryQuota,
-    consumed_bytes: u64,
     /// Go `baseCollector.MemSize`, maintained by protobuf restoration and
-    /// collector merge independently of the external quota tracker.
+    /// collector merge; the analyze executor consumes it into its tracker.
     go_mem_size: i64,
 }
 
@@ -334,27 +278,12 @@ impl RowSampleCollector {
     /// Creates a collector with `slot_count` slots under `policy`.
     #[must_use]
     pub fn new(slot_count: usize, policy: SamplePolicy) -> Self {
-        Self::with_memory_quota(slot_count, policy, SampleMemoryQuota::unlimited())
-    }
-
-    /// Creates a collector whose kept rows are bounded by `quota`.
-    #[must_use]
-    pub fn with_memory_quota(
-        slot_count: usize,
-        policy: SamplePolicy,
-        quota: SampleMemoryQuota,
-    ) -> Self {
-        Self::with_memory_quota_and_fm_sketch_size(slot_count, policy, quota, MAX_SKETCH_SIZE)
+        Self::with_fm_sketch_size(slot_count, policy, MAX_SKETCH_SIZE)
     }
 
     /// Creates a collector with Go `RowSampleBuilder.MaxFMSketchSize`.
     #[must_use]
-    pub fn with_memory_quota_and_fm_sketch_size(
-        slot_count: usize,
-        policy: SamplePolicy,
-        quota: SampleMemoryQuota,
-        max_fm_sketch_size: usize,
-    ) -> Self {
+    pub fn with_fm_sketch_size(slot_count: usize, policy: SamplePolicy, max_fm_sketch_size: usize) -> Self {
         Self {
             policy,
             count: 0,
@@ -364,8 +293,6 @@ impl RowSampleCollector {
                 .map(|_| Some(FmSketch::new(max_fm_sketch_size)))
                 .collect(),
             samples: Vec::new(),
-            quota,
-            consumed_bytes: 0,
             go_mem_size: 0,
         }
     }
@@ -388,19 +315,15 @@ impl RowSampleCollector {
     /// Offers one scanned row.
     ///
     /// The whole-table facts (`count`, `null_count`, the sizes and the FM
-    /// sketches) are recorded before the sampling decision and cost nothing
-    /// per row, so only the *kept* rows are charged against the quota -- the
-    /// same items Go's tracker consumes. An error means the statement is
-    /// over `tidb_mem_quota_analyze` and must stop: continuing without the
-    /// rows it could not keep would answer with a histogram built from a
-    /// sample smaller than the one the rate describes.
+    /// sketches) are recorded before the sampling decision. Go's TiKV-side
+    /// collector tracks no memory; the TiDB side consumes what it restores.
     ///
     /// # Panics
     ///
     /// Panics when the row does not carry one value per slot: a short row
     /// would silently stop counting the slots it omits, which is a wrong
     /// answer rather than an error.
-    pub fn collect(&mut self, row: &ScannedRow<'_>) -> Result<(), SampleMemoryExceeded> {
+    pub fn collect(&mut self, row: &ScannedRow<'_>) {
         let mut rng = GlobalRowSampleRng;
         self.collect_with_rng(row, &mut rng)
     }
@@ -410,7 +333,7 @@ impl RowSampleCollector {
         &mut self,
         row: &ScannedRow<'_>,
         rng: &mut impl RowSampleRng,
-    ) -> Result<(), SampleMemoryExceeded> {
+    ) {
         assert_eq!(
             row.slots.len(),
             self.null_counts.len(),
@@ -487,7 +410,6 @@ impl RowSampleCollector {
                 self.go_mem_size = self.go_mem_size.wrapping_add(other.go_mem_size);
             }
         }
-        self.consumed_bytes = u64::try_from(self.go_mem_size).unwrap_or_default();
     }
 
     /// Go `DestroyAndPutToPool`: release only the FM-sketch slice.
@@ -521,21 +443,30 @@ impl RowSampleCollector {
         }
     }
 
-    /// Go `baseCollector.FromProto`, including independent repeated fields.
+    /// Go `baseCollector.FromProto`, including independent repeated fields:
+    /// the sample items' mandatory memory is consumed into `mem_tracker`
+    /// first (a fast failure when it alone exceeds the analyze quota), then
+    /// each item's payload.
     pub fn from_proto(
         proto: &RowSampleCollectorProto,
         policy: SamplePolicy,
-        quota: SampleMemoryQuota,
-    ) -> Result<Self, SampleMemoryExceeded> {
+        mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    ) -> Self {
         let sketches: Vec<_> = proto
             .fm_sketches
             .iter()
             .map(|sketch| fm_sketch_from_proto(sketch.as_ref()))
             .collect();
+        if !proto.samples.is_empty() {
+            mem_tracker.consume(proto_mandatory_memory(proto));
+        }
+        let mut buffered_mem_size = 0;
         let samples = proto
             .samples
             .iter()
             .map(|sample| {
+                let payload: i64 = sample.row.iter().map(|column| column.len() as i64).sum();
+                mem_tracker.buffered_consume(&mut buffered_mem_size, payload);
                 (
                     sample.weight,
                     sample
@@ -546,29 +477,16 @@ impl RowSampleCollector {
                 )
             })
             .collect();
-        let memory_size = proto_memory_usage(proto);
-        if quota
-            .bytes()
-            .is_some_and(|limit| memory_size as u64 > limit)
-        {
-            return Err(SampleMemoryExceeded);
-        }
-        Ok(Self {
+        mem_tracker.consume(buffered_mem_size);
+        Self {
             policy,
             count: proto.count,
             null_counts: proto.null_counts.clone(),
             total_sizes: proto.total_sizes.clone(),
             sketches,
             samples,
-            quota,
-            consumed_bytes: memory_size as u64,
-            go_mem_size: memory_size,
-        })
-    }
-
-    #[must_use]
-    pub const fn consumed_memory_bytes(&self) -> u64 {
-        self.consumed_bytes
+            go_mem_size: proto_memory_usage(proto),
+        }
     }
 
     /// Go `baseCollector.MemSize` after protobuf restoration/merge.
@@ -577,47 +495,12 @@ impl RowSampleCollector {
         self.go_mem_size
     }
 
-    /// The bytes one kept row costs.
-    ///
-    /// Go's `SampleItem` accounting (`pkg/statistics/row_sampler.go:77`) is
-    /// the datum structs plus the bytes they point at, which is what a row
-    /// held in the sample actually occupies.
-    fn row_bytes(columns: &[Datum]) -> u64 {
-        let structs = columns.len() as u64 * std::mem::size_of::<Datum>() as u64;
-        let payload: u64 = columns
-            .iter()
-            .map(|column| match column {
-                Datum::Bytes(bytes) => bytes.len() as u64,
-                Datum::String(string) => string.bytes().len() as u64,
-                _ => 0,
-            })
-            .sum();
-        structs + payload
-    }
-
-    /// Charges one kept row, or reports the quota exhausted.
-    fn charge(&mut self, columns: &[Datum]) -> Result<(), SampleMemoryExceeded> {
-        let Some(limit) = self.quota.bytes() else {
-            return Ok(());
-        };
-        self.consumed_bytes = self.consumed_bytes.saturating_add(Self::row_bytes(columns));
-        if self.consumed_bytes > limit {
-            return Err(SampleMemoryExceeded);
-        }
-        Ok(())
-    }
-
-    fn sample_row(
-        &mut self,
-        columns: &[Datum],
-        rng: &mut impl RowSampleRng,
-    ) -> Result<(), SampleMemoryExceeded> {
+    fn sample_row(&mut self, columns: &[Datum], rng: &mut impl RowSampleRng) {
         match self.policy {
             SamplePolicy::Bernoulli { sample_rate } => {
                 if rng.float64() > sample_rate {
-                    return Ok(());
+                    return;
                 }
-                self.charge(columns)?;
                 self.samples.push((0, columns.to_vec()));
             }
             SamplePolicy::Reservoir { max_sample_size } => {
@@ -627,23 +510,21 @@ impl RowSampleCollector {
                 // that state unreachable by selecting no reservoir policy.
                 let weight = rng.int63();
                 if self.samples.len() < max_sample_size {
-                    self.charge(columns)?;
                     self.samples.push((weight, columns.to_vec()));
                     if self.samples.len() == max_sample_size {
                         self.heapify();
                     }
-                    return Ok(());
+                    return;
                 }
                 // Keeping the `max_sample_size` largest of uniformly drawn
                 // weights is a uniform sample of the rows. An eviction leaves
-                // the sample's size where it was, so it is not charged again.
+                // the sample's size where it was.
                 if self.samples[0].0 < weight {
                     self.samples[0] = (weight, columns.to_vec());
                     self.sift_down(0);
                 }
             }
         }
-        Ok(())
     }
 
     /// Answers the scan totals after reproducing the executor-owned handle
@@ -751,19 +632,24 @@ fn sample_column_bytes(column: &Datum) -> Vec<u8> {
     }
 }
 
-fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
+/// Go `FromProto`'s `initMemSize`: every empty sample item, its reference
+/// and its empty datums, sized from the first row's width.
+fn proto_mandatory_memory(proto: &RowSampleCollectorProto) -> i64 {
     const EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE: i64 = 48;
     const REFERENCE_SIZE: i64 = 8;
-    if proto.samples.is_empty() {
+    let Some(first) = proto.samples.first() else {
         return 0;
-    }
-    let row_len = proto.samples[0].row.len() as i64;
-    let mandatory = (proto.samples.len() as i64).wrapping_mul(
-        row_len
+    };
+    (proto.samples.len() as i64).wrapping_mul(
+        (first.row.len() as i64)
             .wrapping_mul(tidb_datatype::EMPTY_DATUM_SIZE)
             .wrapping_add(EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE)
             .wrapping_add(REFERENCE_SIZE),
-    );
+    )
+}
+
+fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
+    let mandatory = proto_mandatory_memory(proto);
     proto.samples.iter().fold(mandatory, |total, sample| {
         sample.row.iter().fold(total, |total, column| {
             total.wrapping_add(column.len() as i64)

@@ -23,6 +23,13 @@ mod pool;
 mod process;
 mod tracker;
 
+mod global_analyze;
+pub mod gctuner;
+pub use global_analyze::{
+    get_mem_quota_analyze, set_mem_quota_analyze, GlobalPanicOnExceed,
+    GLOBAL_ANALYZE_MEMORY_TRACKER, GLOBAL_PANIC_ANALYZE_MEMORY_EXCEED, GLOBAL_PANIC_MEMORY_EXCEED,
+    GLOBAL_PANIC_STORAGE_EXCEED, LABEL_FOR_ANALYZE_MEMORY, LABEL_FOR_GLOBAL_MEMORY,
+};
 pub use action::{
     mem_exceed_error, ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction, LogOnExceed,
     PanicOnExceed,
@@ -54,6 +61,8 @@ pub use process::{
     handle_global_mem_arbitrator_runtime, install_process_arbitrator, mem_total, mem_used,
     override_mem_total, parse_server_memory_limit, read_mem_stats, using_global_mem_arbitration,
     validate_process_memory_setting, ProcessArbitratorRegistration, SERVER_MEMORY_LIMIT,
+    global_mem_arbitrator_soft_limit_text, global_mem_arbitrator_work_mode_text,
+    server_memory_limit_origin_text,
     SERVER_MEMORY_LIMIT_SESS_MIN_SIZE,
 };
 pub use tracker::{

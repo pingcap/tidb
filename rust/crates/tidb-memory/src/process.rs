@@ -12,6 +12,41 @@ use super::{parse_soft_limit_text, parse_work_mode_text, MemArbitrator, MemStats
 /// Process-wide `tidb_server_memory_limit` value.
 pub static SERVER_MEMORY_LIMIT: AtomicU64 = AtomicU64::new(0);
 
+/// Go `memory.ServerMemoryLimitOriginText`: the normalized text the last
+/// `tidb_server_memory_limit` `SetGlobal` stored, which its `GetGlobal` reads.
+static SERVER_MEMORY_LIMIT_ORIGIN_TEXT: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+/// Go `globalArbitrator.workMode.originText` (init `ArbitratorModeDisable`).
+static MEM_ARBITRATOR_WORK_MODE_TEXT: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+/// Go `globalArbitrator.softLimit.originText` (init `ArbitratorSoftLimitModDisableName`).
+static MEM_ARBITRATOR_SOFT_LIMIT_TEXT: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+fn read_text(text: &std::sync::RwLock<String>, initial: &str) -> String {
+    let text = text.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if text.is_empty() { initial.to_owned() } else { text.clone() }
+}
+
+fn store_text(text: &std::sync::RwLock<String>, value: &str) {
+    *text.write().unwrap_or_else(std::sync::PoisonError::into_inner) = value.to_owned();
+}
+
+/// Go `memory.ServerMemoryLimitOriginText.Load()` (initially `"0"`).
+#[must_use]
+pub fn server_memory_limit_origin_text() -> String {
+    read_text(&SERVER_MEMORY_LIMIT_ORIGIN_TEXT, "0")
+}
+
+/// Go `memory.GetGlobalMemArbitratorWorkModeText`.
+#[must_use]
+pub fn global_mem_arbitrator_work_mode_text() -> String {
+    read_text(&MEM_ARBITRATOR_WORK_MODE_TEXT, "disable")
+}
+
+/// Go `memory.GetGlobalMemArbitratorSoftLimitText`.
+#[must_use]
+pub fn global_mem_arbitrator_soft_limit_text() -> String {
+    read_text(&MEM_ARBITRATOR_SOFT_LIMIT_TEXT, "0")
+}
+
 /// Minimum session memory consumption eligible for server-limit killing.
 pub static SERVER_MEMORY_LIMIT_SESS_MIN_SIZE: AtomicU64 = AtomicU64::new(128 << 20);
 
@@ -219,7 +254,19 @@ pub fn apply_process_memory_setting(name: &str, value: &str) -> Result<(), Strin
         .then(|| parse_server_memory_limit(value))
         .transpose()?;
     if let Some(limit) = server_memory_limit {
+        // Go `SetGlobal`: `ServerMemoryLimitOriginText.Store(str)` then
+        // `ServerMemoryLimit.Store(bt)`; the validated value is the
+        // normalized text.
+        store_text(&SERVER_MEMORY_LIMIT_ORIGIN_TEXT, value);
         SERVER_MEMORY_LIMIT.store(limit, SeqCst);
+    }
+    // Go `SetGlobalMemArbitratorWorkMode` / `SetGlobalMemArbitratorSoftLimit`
+    // store the text before looking for the arbitrator.
+    if name.eq_ignore_ascii_case("tidb_mem_arbitrator_mode") {
+        store_text(&MEM_ARBITRATOR_WORK_MODE_TEXT, value);
+    }
+    if name.eq_ignore_ascii_case("tidb_mem_arbitrator_soft_limit") {
+        store_text(&MEM_ARBITRATOR_SOFT_LIMIT_TEXT, value);
     }
     let arbitrator = process_arbitrator()
         .lock()

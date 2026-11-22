@@ -510,6 +510,14 @@ set_global! {
     set_tidb_enable_noop_variables => |s| tidb_vardef::ENABLE_NOOP_VARIABLES.store(on(s), SeqCst);
     set_tidb_enable_tmp_storage_on_oom => |s| tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.store(on(s), SeqCst);
     set_tidb_enable_gc_aware_memory_track => |s| tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.store(on(s), SeqCst);
+    // Go `gctuner.SetMaxGCPercent` / `SetMinGCPercent(uint32(TidbOptInt64(val, Def)))`.
+    set_tidb_gogc_tuner_max_value => |s| tidb_memory::gctuner::set_max_gc_percent(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE) as u32);
+    set_tidb_gogc_tuner_min_value => |s| tidb_memory::gctuner::set_min_gc_percent(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE) as u32);
+    // Go `vardef.GOGCTunerThreshold.Store(factor)` (the tuner it feeds acts on Go's collector).
+    set_tidb_gogc_tuner_threshold => |s| tidb_vardef::set_gogc_tuner_threshold(opt_float64(s, tidb_vardef::defaults::DEF_TIDB_GOGC_TUNER_THRESHOLD));
+    // Go `gctuner.GlobalMemoryLimitTuner.SetPercentage`.
+    set_tidb_server_memory_limit_gc_trigger => |s| tidb_memory::gctuner::set_memory_limit_percentage(opt_float64(s, tidb_vardef::defaults::DEF_TIDB_SERVER_MEMORY_LIMIT_GC_TRIGGER));
+    set_tidb_mem_quota_analyze => |s| tidb_memory::set_mem_quota_analyze(crate::varsutil::tidb_opt_int64(s, tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_ANALYZE));
     set_tidb_enable_binding_usage => |s| tidb_vardef::ENABLE_BINDING_USAGE.store(on(s), SeqCst);
     set_tidb_mlog_log_slow_purge => |s| tidb_vardef::M_LOG_LOG_SLOW_PURGE.store(on(s), SeqCst);
     set_tidb_ignore_inlist_plan_digest => |s| tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.store(on(s), SeqCst);
@@ -542,6 +550,17 @@ get_global! {
     get_tidb_enable_noop_variables => on_off(tidb_vardef::ENABLE_NOOP_VARIABLES.load(SeqCst));
     get_tidb_enable_tmp_storage_on_oom => on_off(tidb_vardef::ENABLE_TMP_STORAGE_ON_OOM.load(SeqCst));
     get_tidb_enable_gc_aware_memory_track => on_off(tidb_memory::ENABLE_GC_AWARE_MEMORY_TRACK.load(SeqCst));
+    get_tidb_gogc_tuner_max_value => tidb_memory::gctuner::max_gc_percent().to_string();
+    get_tidb_gogc_tuner_min_value => tidb_memory::gctuner::min_gc_percent().to_string();
+    get_tidb_gogc_tuner_threshold => tidb_goruntime::go_strconv::format_float(tidb_vardef::gogc_tuner_threshold(), b'f', -1, 64);
+    get_tidb_server_memory_limit_gc_trigger => tidb_goruntime::go_strconv::format_float(tidb_memory::gctuner::memory_limit_percentage(), b'f', -1, 64);
+    // Go `memory.ServerMemoryLimitOriginText.Load()`.
+    get_tidb_server_memory_limit => tidb_memory::server_memory_limit_origin_text();
+    // Go `memory.ServerMemoryLimitSessMinSize.String()`.
+    get_tidb_server_memory_limit_sess_min_size => tidb_memory::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.load(SeqCst).to_string();
+    get_tidb_mem_arbitrator_mode => tidb_memory::global_mem_arbitrator_work_mode_text();
+    get_tidb_mem_arbitrator_soft_limit => tidb_memory::global_mem_arbitrator_soft_limit_text();
+    get_tidb_mem_quota_analyze => tidb_memory::get_mem_quota_analyze().to_string();
     get_tidb_enable_binding_usage => on_off(tidb_vardef::ENABLE_BINDING_USAGE.load(SeqCst));
     get_tidb_mlog_log_slow_purge => on_off(tidb_vardef::M_LOG_LOG_SLOW_PURGE.load(SeqCst));
     get_tidb_ignore_inlist_plan_digest => on_off(tidb_vardef::IGNORE_INLIST_PLAN_DIGEST.load(SeqCst));
@@ -715,4 +734,61 @@ get_global! {
     get_tidb_ddl_reorg_max_write_speed => tidb_vardef::DDL_REORG_MAX_WRITE_SPEED.load(SeqCst).to_string();
     get_tidb_top_sql_max_time_series_count => tidb_topsql_state::GLOBAL_STATE.max_statement_count.load(SeqCst).to_string();
     get_tidb_top_sql_max_meta_count => tidb_topsql_state::GLOBAL_STATE.max_collect.load(SeqCst).to_string();
+}
+
+/// Go `tidb_trace_event`'s `SetGlobal`: refused on the classic kernel; an
+/// empty value closes the flight recorder, a JSON configuration starts one.
+pub(super) fn set_tidb_trace_event(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+    if tidb_config_kerneltype::is_classic() {
+        return Err(VarError::unknown("can only be set for TiDB X kernel"));
+    }
+    if value.is_empty() {
+        if let Some(recorder) = tidb_traceevent::get_flight_recorder() {
+            recorder.close();
+        }
+        return Ok(());
+    }
+    let config = serde_json::from_str::<tidb_traceevent::FlightRecorderConfig>(value)
+        .map_err(|error| VarError::unknown(error.to_string()))?;
+    tidb_traceevent::start_log_flight_recorder(config).map_err(VarError::unknown)
+}
+
+/// Go `tidb_trace_event`'s `GetGlobal`: the running recorder's configuration
+/// re-marshalled, or empty.
+pub(super) fn get_tidb_trace_event() -> String {
+    tidb_traceevent::get_flight_recorder()
+        .and_then(|recorder| serde_json::to_string(&recorder.config).ok())
+        .unwrap_or_default()
+}
+
+/// Go `tidb_slow_log_max_per_sec`'s `SetGlobal` (`TidbOptInt(s, 0)`).
+pub(super) fn set_tidb_slow_log_max_per_sec(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+    crate::slow_log::set_slow_log_max_per_sec(crate::varsutil::tidb_opt_int64(value, 0));
+    Ok(())
+}
+
+/// Go `tidb_slow_log_max_per_sec`'s `GetGlobal`.
+pub(super) fn get_tidb_slow_log_max_per_sec() -> String {
+    crate::slow_log::slow_log_max_per_sec().to_string()
+}
+
+/// Go `tidb_slow_log_rules`' `SetGlobal`.
+pub(super) fn set_tidb_slow_log_rules(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+    crate::slow_log_rules::set_global_slow_log_rules(value).map_err(VarError::unknown)
+}
+
+/// Go `tidb_slow_log_rules`' `GetGlobal`.
+pub(super) fn get_tidb_slow_log_rules() -> String {
+    crate::slow_log_rules::global_slow_log_rules()
+}
+
+/// Go `variable.GenerateBinaryPlan` (`session.go`): whether the slow log and
+/// the statement summary record binary plans. Go's zero value, set by the
+/// variable's `SetGlobal` when the sysvar cache is built.
+pub static GENERATE_BINARY_PLAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Go `tidb_generate_binary_plan`'s `SetGlobal`: `GenerateBinaryPlan.Store(TiDBOptOn(val))`.
+pub(super) fn set_tidb_generate_binary_plan(_vars: &mut SessionVars, value: &str) -> Result<(), VarError> {
+    GENERATE_BINARY_PLAN.store(on(value), SeqCst);
+    Ok(())
 }

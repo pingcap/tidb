@@ -23,8 +23,9 @@
 //! none of its rows, as Go's do.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-use crate::analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
+use crate::analyze::AnalyzeStatement;
 use crate::analyze::ClusterAnalyzeReport;
 use crate::{DriverError, TableEntry};
 
@@ -58,23 +59,6 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         })
     }
 
-    /// Go's analyze memory quota, as one `ANALYZE` reads it.
-    ///
-    /// `tidb_mem_quota_analyze` is process-wide and read at execution time
-    /// (`variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`,
-    /// `pkg/executor/select.go:141`), so the value in force is whatever the
-    /// last `SET GLOBAL` stored. Its default, `-1`, is no bound.
-    fn analyze_memory_quota(&self) -> SampleMemoryQuota {
-        self.session_vars()
-            .get_global(MEM_QUOTA_ANALYZE_VARIABLE)
-            .ok()
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            .map_or_else(
-                SampleMemoryQuota::unlimited,
-                SampleMemoryQuota::from_setting,
-            )
-    }
-
     /// Go `AnalyzeExec.Next`'s `FLUSH STATS_DELTA` of this session's own
     /// pending deltas before sampling.
     fn publish_table_delta(&self);
@@ -100,19 +84,24 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
         // sampling; this session's pending deltas are published first.
         self.publish_table_delta();
+        // Go `ResetContextOfStmt`'s ANALYZE branch: the session's MemTracker
+        // takes no limit of its own and joins `GlobalAnalyzeMemoryTracker`,
+        // whose limit is `tidb_mem_quota_analyze`; it stays there until the
+        // session closes.
+        let session_tracker = Arc::clone(self.analyze_statement_context().statement_memory().session_tracker());
+        session_tracker.set_bytes_limit(-1);
+        session_tracker.attach_to(&tidb_memory::GLOBAL_ANALYZE_MEMORY_TRACKER);
         let column_task_tables = tables
             .iter()
             .filter(|statement| service.builds_column_task(statement))
             .cloned()
             .collect::<Vec<_>>();
         self.flush_stats_delta_for_analyze(&column_task_tables, service)?;
-        let memory_quota = self.analyze_memory_quota();
         self.begin_routed_statement_warnings();
         let mut cache_update_physical_ids: Option<Vec<i64>> = None;
         let mut local_temporary_tables = Vec::new();
         for statement in tables {
             let mut statement = self.analyze_statement_with_session_options(statement);
-            statement.options.memory_quota = memory_quota;
             // A temporary table is analyzed as any other: its requests go to
             // TiKV, which holds none of its rows.
             statement.local_temporary_table = self.local_temporary_table(&statement)?;

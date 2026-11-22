@@ -384,6 +384,20 @@ const OOM_ACTION_LOG: u8 = 1;
 /// Go `vardef.OOMAction`'s typed process-wide value.
 static OOM_ACTION: AtomicU8 = AtomicU8::new(OOM_ACTION_CANCEL);
 
+/// Go `vardef.GOGCTunerThreshold`.
+static GOGC_TUNER_THRESHOLD: AtomicU64 = AtomicU64::new(defaults::DEF_TIDB_GOGC_TUNER_THRESHOLD.to_bits());
+
+/// Loads Go `vardef.GOGCTunerThreshold`.
+#[must_use]
+pub fn gogc_tuner_threshold() -> f64 {
+    f64::from_bits(GOGC_TUNER_THRESHOLD.load(Ordering::SeqCst))
+}
+
+/// Stores Go `vardef.GOGCTunerThreshold`.
+pub fn set_gogc_tuner_threshold(value: f64) {
+    GOGC_TUNER_THRESHOLD.store(value.to_bits(), Ordering::SeqCst);
+}
+
 /// Loads Go `vardef.MemoryUsageAlarmRatio`.
 #[must_use]
 pub fn memory_usage_alarm_ratio() -> f64 {

@@ -62,16 +62,8 @@ use tidb_stats::row_sample_collector::{
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
-use tidb_stats::row_sample_collector::{SampleMemoryExceeded, SampleMemoryQuota};
-
 /// `statistics.Version2`, the only generation this engine writes.
 pub const STATS_VERSION_2: i64 = 2;
-
-/// The system variable that carries [`AnalyzeOptions::memory_quota`].
-///
-/// Named here so the caller that reads a session's variables does not have to
-/// depend on the variable registry to spell it.
-pub const MEM_QUOTA_ANALYZE_VARIABLE: &str = "tidb_mem_quota_analyze";
 
 /// Pinned Go `CMSketchSizeLimit`: legacy CMS width/depth are still parsed and
 /// validated even though Analyze v2 does not build a CMSketch.
@@ -91,8 +83,6 @@ pub enum AnalyzeError {
     /// A table or statement shape whose statistics this engine does not
     /// produce. The detail names it.
     Unsupported(String),
-    /// The kept sample outgrew `tidb_mem_quota_analyze`.
-    MemoryQuota(SampleMemoryExceeded),
 }
 
 impl std::fmt::Display for AnalyzeError {
@@ -101,7 +91,6 @@ impl std::fmt::Display for AnalyzeError {
             Self::Execution(error) => write!(formatter, "{error}"),
             Self::Encode(detail) => write!(formatter, "a sampled value did not encode: {detail}"),
             Self::Unsupported(detail) => formatter.write_str(detail),
-            Self::MemoryQuota(exceeded) => write!(formatter, "{exceeded}"),
         }
     }
 }
@@ -124,9 +113,9 @@ impl From<AnalyzeError> for crate::DriverError {
     fn from(error: AnalyzeError) -> Self {
         match error {
             AnalyzeError::Execution(error) => *error,
-            other @ (AnalyzeError::Encode(_)
-            | AnalyzeError::Unsupported(_)
-            | AnalyzeError::MemoryQuota(_)) => Self::unsupported(other.to_string()),
+            other @ (AnalyzeError::Encode(_) | AnalyzeError::Unsupported(_)) => {
+                Self::unsupported(other.to_string())
+            }
         }
     }
 }
@@ -145,9 +134,6 @@ pub struct AnalyzeOptions {
     pub num_samples: usize,
     /// `WITH r SAMPLERATE`; `None` derives it from the table's row count.
     pub sample_rate: Option<f64>,
-    /// `tidb_mem_quota_analyze`: the bound on what the kept sample may
-    /// occupy. Go's default is `-1`, no bound.
-    pub memory_quota: SampleMemoryQuota,
 }
 
 /// The ANALYZE options explicitly present in a statement or persisted row.
@@ -186,7 +172,6 @@ impl AnalyzeOptionOverrides {
             num_topn: self.num_topn.unwrap_or(defaults.num_topn),
             num_samples: self.num_samples.unwrap_or(defaults.num_samples),
             sample_rate: self.sample_rate.or(defaults.sample_rate),
-            memory_quota: defaults.memory_quota,
         }
     }
 }
@@ -200,7 +185,6 @@ impl Default for AnalyzeOptions {
                 .load(std::sync::atomic::Ordering::SeqCst) as isize,
             num_samples: 0,
             sample_rate: None,
-            memory_quota: SampleMemoryQuota::unlimited(),
         }
     }
 }
@@ -1039,11 +1023,7 @@ impl<'a> AnalyzeRun<'a> {
         Ok(Self {
             plan,
             options: *options,
-            collector: RowSampleCollector::with_memory_quota(
-                plan.slot_count(),
-                policy,
-                options.memory_quota,
-            ),
+            collector: RowSampleCollector::new(plan.slot_count(), policy),
             sample_rate,
             next_handle_order: 0,
         })
@@ -1070,12 +1050,11 @@ impl<'a> AnalyzeRun<'a> {
                 is_null: slot.is_null,
             })
             .collect();
-        self.collector
-            .collect(&ScannedRow {
-                columns: &row.sampled,
-                slots: &slots,
-            })
-            .map_err(AnalyzeError::MemoryQuota)
+        self.collector.collect(&ScannedRow {
+            columns: &row.sampled,
+            slots: &slots,
+        });
+        Ok(())
     }
 
     /// Builds every histogram from the rows pushed so far.
@@ -1280,7 +1259,6 @@ mod tests {
         for error in [
             AnalyzeError::Unsupported("unsupported table shape".to_owned()),
             AnalyzeError::Encode("invalid key".to_owned()),
-            AnalyzeError::MemoryQuota(SampleMemoryExceeded),
         ] {
             let message = error.to_string();
             let delivered = crate::DriverError::from(error).to_mysql_error();
@@ -1372,9 +1350,8 @@ mod tests {
         let collector = RowSampleCollector::from_proto(
             &proto,
             SamplePolicy::Bernoulli { sample_rate: 0.1 },
-            SampleMemoryQuota::unlimited(),
-        )
-        .unwrap();
+            &tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_ANALYZE_MEMORY, -1),
+        );
         let options = AnalyzeOptions {
             sample_rate: Some(0.1),
             ..full_options

@@ -33,7 +33,7 @@
 
 use tidb_datatype::{BinaryJSON, Datum, VectorFloat32};
 use tidb_stats::row_sample_collector::{
-    RowSampleCollector, RowSampleCollectorProto, RowSampleProto, RowSampleRng, SampleMemoryQuota,
+    RowSampleCollector, RowSampleCollectorProto, RowSampleProto, RowSampleRng,
     SamplePolicy, SampledRow, ScannedRow, SlotStats, SlotValue,
 };
 use tidb_stats::FmSketchProto;
@@ -76,7 +76,7 @@ fn finish(collector: RowSampleCollector) -> (i64, Vec<SlotStats>, Vec<SampledRow
         .expect("test handle construction is infallible")
 }
 
-fn offer(collector: &mut RowSampleCollector, value: i64) -> Result<(), String> {
+fn offer(collector: &mut RowSampleCollector, value: i64) {
     let encoded = value.to_be_bytes().to_vec();
     let columns = [Datum::Int(value)];
     let slots = [SlotValue {
@@ -88,59 +88,12 @@ fn offer(collector: &mut RowSampleCollector, value: i64) -> Result<(), String> {
         .collect(&ScannedRow {
             columns: &columns,
             slots: &slots,
-        })
-        .map_err(|exceeded| exceeded.to_string())
+        });
 }
 
-#[test]
-fn a_bernoulli_sample_past_the_quota_fails_the_statement() {
-    // One row's worth of budget: the second kept row is over it.
-    let mut collector = RowSampleCollector::with_memory_quota(
-        1,
-        SamplePolicy::Bernoulli { sample_rate: 1.0 },
-        SampleMemoryQuota::from_setting(std::mem::size_of::<Datum>() as i64),
-    );
-    offer(&mut collector, 1).expect("the first kept row fits the quota");
-    let error = (2..=10_000)
-        .find_map(|value| offer(&mut collector, value).err())
-        .expect("a full-rate Bernoulli sample of 10000 rows outgrows a one-row quota");
-    assert_eq!(
-        error,
-        "analyze panic due to memory quota exceeds, please try with smaller \
-         samplerate(refer to 110000/count)"
-    );
-}
-
-#[test]
-fn a_reservoir_sample_past_the_quota_fails_the_statement_too() {
-    let mut collector = RowSampleCollector::with_memory_quota(
-        1,
-        SamplePolicy::Reservoir {
-            max_sample_size: 10_000,
-        },
-        SampleMemoryQuota::from_setting(std::mem::size_of::<Datum>() as i64),
-    );
-    offer(&mut collector, 1).expect("the first kept row fits the quota");
-    assert!(offer(&mut collector, 2).is_err());
-}
-
-#[test]
-fn gos_default_quota_is_no_bound_at_all() {
-    // `vardef.DefTiDBMemQuotaAnalyze = -1`, which the tracker reads as
-    // unlimited -- so this node's default must keep every row a full-rate
-    // sample selects, exactly as Go's does.
-    assert_eq!(SampleMemoryQuota::from_setting(-1).bytes(), None);
-    assert_eq!(SampleMemoryQuota::from_setting(0).bytes(), None);
-    assert_eq!(SampleMemoryQuota::unlimited().bytes(), None);
-    assert_eq!(SampleMemoryQuota::from_setting(4096).bytes(), Some(4096));
-
-    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
-    for value in 0..5_000 {
-        offer(&mut collector, value).expect("the default quota bounds nothing");
-    }
-    let (scanned, _, sampled) = finish(collector);
-    assert_eq!(scanned, 5_000);
-    assert_eq!(sampled.len(), 5_000);
+/// A free-standing ANALYZE tracker with no limit (Go `memory.NewTracker(id, -1)`).
+fn tracker() -> std::sync::Arc<tidb_memory::Tracker> {
+    tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_ANALYZE_MEMORY, -1)
 }
 
 #[test]
@@ -148,8 +101,8 @@ fn source_bernoulli_merge_combines_scan_facts_and_samples() {
     let policy = SamplePolicy::Bernoulli { sample_rate: 1.0 };
     let mut left = RowSampleCollector::new(1, policy);
     let mut right = RowSampleCollector::new(1, policy);
-    offer(&mut left, 1).unwrap();
-    offer(&mut right, 2).unwrap();
+    offer(&mut left, 1);
+    offer(&mut right, 2);
     left.merge(right);
     let (count, slots, samples) = finish(left);
     assert_eq!(count, 2);
@@ -161,7 +114,7 @@ fn source_bernoulli_merge_combines_scan_facts_and_samples() {
 #[test]
 fn source_destroy_releases_only_the_fm_sketch_slice() {
     let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
-    offer(&mut collector, 1).unwrap();
+    offer(&mut collector, 1);
     let before = collector.to_proto();
     collector.destroy();
     let after = collector.to_proto();
@@ -194,22 +147,17 @@ fn source_row_sample_proto_restores_weights_bytes_and_memory_accounting() {
         ],
         total_sizes: vec![10, 20],
     };
+    let mem_tracker = tracker();
     let collector = RowSampleCollector::from_proto(
         &proto,
         SamplePolicy::Reservoir { max_sample_size: 2 },
-        SampleMemoryQuota::unlimited(),
-    )
-    .unwrap();
-    // 2 * (2 Datum structs * 72 + empty item 48 + reference 8) + 7 payload bytes.
-    assert_eq!(collector.consumed_memory_bytes(), 407);
+        &mem_tracker,
+    );
+    // 2 * (2 Datum structs * 72 + empty item 48 + reference 8) + 7 payload bytes,
+    // consumed into the tracker as Go's `FromProto` does.
+    assert_eq!(collector.go_mem_size(), 407);
+    assert_eq!(mem_tracker.bytes_consumed(), 407);
     assert_eq!(collector.to_proto(), proto);
-
-    assert!(RowSampleCollector::from_proto(
-        &proto,
-        SamplePolicy::Reservoir { max_sample_size: 2 },
-        SampleMemoryQuota::from_setting(406),
-    )
-    .is_err());
 }
 
 #[test]
@@ -225,8 +173,7 @@ fn source_row_samples_to_proto_encodes_null_as_the_nil_flag() {
         .collect(&ScannedRow {
             columns: &columns,
             slots: &slots,
-        })
-        .unwrap();
+        });
     assert_eq!(
         collector.to_proto().samples[0].row[0],
         [tidb_codec::NIL_FLAG]
@@ -246,8 +193,7 @@ fn source_row_samples_to_proto_uses_get_bytes_for_non_byte_datums() {
         .collect(&ScannedRow {
             columns: &columns,
             slots: &slots,
-        })
-        .unwrap();
+        });
     assert_eq!(collector.to_proto().samples[0].row[0], Vec::<u8>::new());
 }
 
@@ -265,8 +211,7 @@ fn source_row_samples_to_proto_reads_json_and_vector_backing_bytes() {
         .collect(&ScannedRow {
             columns: &columns,
             slots: &slots,
-        })
-        .unwrap();
+        });
     assert_eq!(
         collector.to_proto().samples[0].row,
         [json.value().to_vec(), vector.serialize()]
@@ -283,9 +228,8 @@ fn source_from_proto_accepts_independent_parallel_field_lengths_and_nil_fm() {
             ..RowSampleCollectorProto::default()
         },
         SamplePolicy::Bernoulli { sample_rate: 1.0 },
-        SampleMemoryQuota::unlimited(),
-    )
-    .unwrap();
+        &tracker(),
+    );
     let restored = collector.to_proto();
     assert_eq!(restored.null_counts, [7]);
     assert!(restored.total_sizes.is_empty());
@@ -309,9 +253,8 @@ fn source_row_scan_int64_counters_wrap_at_boundaries() {
     let mut collector = RowSampleCollector::from_proto(
         &proto,
         SamplePolicy::Bernoulli { sample_rate: 0.0 },
-        SampleMemoryQuota::unlimited(),
-    )
-    .unwrap();
+        &tracker(),
+    );
     let columns = [Datum::Bytes(vec![1]), Datum::Null];
     let slots = [
         SlotValue {
@@ -333,8 +276,7 @@ fn source_row_scan_int64_counters_wrap_at_boundaries() {
                 slots: &slots,
             },
             &mut rng,
-        )
-        .unwrap();
+        );
     let wrapped = collector.to_proto();
     assert_eq!(wrapped.count, i64::MIN);
     assert_eq!(wrapped.total_sizes[0], i64::MIN);
@@ -358,9 +300,8 @@ fn source_destination_policy_controls_cross_policy_merge() {
         SamplePolicy::Reservoir {
             max_sample_size: 99,
         },
-        SampleMemoryQuota::unlimited(),
-    )
-    .unwrap();
+        &tracker(),
+    );
     let mut bernoulli = RowSampleCollector::new(2, SamplePolicy::Bernoulli { sample_rate: 0.01 });
     bernoulli.merge(source);
     let merged = bernoulli.to_proto();
@@ -390,9 +331,8 @@ fn source_destination_policy_controls_cross_policy_merge() {
             ..RowSampleCollectorProto::default()
         },
         SamplePolicy::Bernoulli { sample_rate: 1.0 },
-        SampleMemoryQuota::unlimited(),
-    )
-    .unwrap();
+        &tracker(),
+    );
     let mut reservoir = RowSampleCollector::new(0, SamplePolicy::Reservoir { max_sample_size: 1 });
     reservoir.merge(source);
     assert_eq!(reservoir.to_proto().samples[0].weight, 7);
@@ -410,9 +350,8 @@ fn source_merge_updates_base_collector_mem_size_by_destination_policy() {
                 ..RowSampleCollectorProto::default()
             },
             policy,
-            SampleMemoryQuota::unlimited(),
+            &tracker(),
         )
-        .unwrap()
     };
 
     let policy = SamplePolicy::Reservoir { max_sample_size: 1 };
@@ -443,15 +382,14 @@ fn source_go_float64_consumes_int63_without_low_bit_truncation() {
     };
     let mut collector = RowSampleCollector::new(0, SamplePolicy::Bernoulli { sample_rate: 0.25 });
     let mut half = WordRng::from([1_i64 << 62]);
-    collector.collect_with_rng(&row, &mut half).unwrap();
+    collector.collect_with_rng(&row, &mut half);
     assert!(collector.to_proto().samples.is_empty());
     assert_eq!(half.consumed, 1);
 
     let mut collector = RowSampleCollector::new(0, SamplePolicy::Bernoulli { sample_rate: 0.25 });
     let mut rounded_one_then_zero = WordRng::from([i64::MAX, 0]);
     collector
-        .collect_with_rng(&row, &mut rounded_one_then_zero)
-        .unwrap();
+        .collect_with_rng(&row, &mut rounded_one_then_zero);
     assert_eq!(collector.to_proto().samples.len(), 1);
     assert_eq!(rounded_one_then_zero.consumed, 2);
 }
@@ -470,8 +408,7 @@ fn source_reservoir_consumes_one_int63_and_handle_order_sets_ordinals() {
                     slots: &slots,
                 },
                 &mut rng,
-            )
-            .unwrap();
+            );
     }
     assert_eq!(rng.consumed, 2);
     let (_, _, rows) = finish(collector);
@@ -483,10 +420,9 @@ fn source_reservoir_consumes_one_int63_and_handle_order_sets_ordinals() {
 
 #[test]
 fn source_max_fm_sketch_size_is_applied_to_every_slot() {
-    let collector = RowSampleCollector::with_memory_quota_and_fm_sketch_size(
+    let collector = RowSampleCollector::with_fm_sketch_size(
         3,
         SamplePolicy::Bernoulli { sample_rate: 1.0 },
-        SampleMemoryQuota::unlimited(),
         2,
     );
     assert_eq!(collector.fm_sketch_max_sizes(), [Some(2), Some(2), Some(2)]);

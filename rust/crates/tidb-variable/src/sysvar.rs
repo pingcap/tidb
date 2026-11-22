@@ -882,6 +882,12 @@ use tidb_mysql::errors::{FormatArg, SqlError};
 mod catalog;
 mod ldap_hooks;
 mod process_hooks;
+
+/// Go `variable.GenerateBinaryPlan.Load()`.
+#[must_use]
+pub fn generate_binary_plan() -> bool {
+    process_hooks::GENERATE_BINARY_PLAN.load(std::sync::atomic::Ordering::SeqCst)
+}
 mod validation;
 
 pub use catalog::SYS_VARS;
@@ -1265,6 +1271,15 @@ impl SysVarDef {
     /// form that distinguishes the scopes.
     pub fn validate(&self, value: &str) -> Result<Validated, ValidationError> {
         self.validate_in_scope(value, SCOPE_SESSION)
+    }
+
+    /// Go `SysVar.GetGlobalFromHook`'s getter half: the variable's
+    /// `GetGlobal` answer, validated as Go validates it ("since some are read
+    /// directly from tables") -- an out-of-range process value is clamped.
+    #[must_use]
+    pub fn get_global_from_hook(&self) -> Option<String> {
+        self.get_global
+            .map(|get_global| self.validate_with_relaxed_validation(&get_global(), SCOPE_GLOBAL))
     }
 
     /// Go `SysVar.ValidateWithRelaxedValidation`: normalize values when

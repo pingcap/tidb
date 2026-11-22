@@ -42,7 +42,7 @@ fn measure(name: &str, mut operation: impl FnMut(u64)) {
 fn configuration() -> FlightRecorderConfig {
     let mut config = FlightRecorderConfig::default();
     config.initialize();
-    config.enabled_categories = vec!["*".to_owned()];
+    config.enabled_categories = Some(vec!["*".to_owned()]);
     config
 }
 

@@ -599,7 +599,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         set_session: None,
         set_global: Some(super::super::process_hooks::set_tidb_mem_arbitrator_mode),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_mem_arbitrator_mode),
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_query_reserved",
@@ -635,7 +635,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         set_session: None,
         set_global: Some(super::super::process_hooks::set_tidb_mem_arbitrator_soft_limit),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_mem_arbitrator_soft_limit),
     },
     SysVarDef {
         name: "tidb_mem_arbitrator_wait_averse",
@@ -815,7 +815,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         set_session: None,
         set_global: Some(super::super::process_hooks::set_tidb_server_memory_limit),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_server_memory_limit),
     },
     SysVarDef {
         name: "tidb_server_memory_limit_sess_min_size",
@@ -833,7 +833,7 @@ pub(super) static ENTRIES: [SysVarDef; 50] = [
         set_session: None,
         set_global: Some(super::super::process_hooks::set_tidb_server_memory_limit_sess_min_size),
         get_session: None,
-        get_global: None,
+        get_global: Some(super::super::process_hooks::get_tidb_server_memory_limit_sess_min_size),
     },
     SysVarDef {
         name: "tidb_shard_allocate_step",

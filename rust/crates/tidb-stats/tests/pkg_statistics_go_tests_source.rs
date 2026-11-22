@@ -127,8 +127,7 @@ fn offer_int(collector: &mut RowSampleCollector, value: i64, rng: &mut StepRng) 
                 slots: &slots,
             },
             rng,
-        )
-        .expect("no memory quota is installed");
+        );
 }
 
 // ---------------------------------------------------------------------------

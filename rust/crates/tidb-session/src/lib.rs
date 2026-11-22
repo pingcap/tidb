@@ -1322,6 +1322,10 @@ impl Drop for Session {
         self.advisory_locks.release_all();
         // Go `session.Close`'s `WithdrawAllPreparedStmt`.
         self.vars.withdraw_all_prepared_stmt();
+        // Go `session.Close`: ANALYZE attached the session's MemTracker to
+        // `GlobalAnalyzeMemoryTracker`; a closed session leaves it.
+        self.session_memory.session_tracker().detach();
+        self.session_memory.session_disk_tracker().detach();
     }
 }
 

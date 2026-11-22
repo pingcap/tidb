@@ -580,7 +580,6 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
     resolved.raw_options = logical.raw;
     resolved.columns = logical.columns.clone();
     resolved.options = logical.effective;
-    resolved.options.memory_quota = statement.options.memory_quota;
     let partitioned = table.partition.is_some();
     Ok(ResolvedClusterAnalyze {
         statement: resolved,
@@ -2006,7 +2005,6 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         target_statement.columns = options.columns.clone();
         target_statement.raw_options = options.raw;
         target_statement.options = options.effective;
-        target_statement.options.memory_quota = statement.options.memory_quota;
         let report = crate::cluster_analyze::sampling::analyze_table(
             opener,
             &table,

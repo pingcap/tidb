@@ -47,7 +47,7 @@ use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterTab
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_table::origin_default::origin_default;
 
-pub use crate::analyze::{resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2};
+pub use crate::analyze::{resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement, STATS_VERSION_2};
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
 /// which tables.
@@ -489,9 +489,8 @@ mod tests {
             let mut collector = RowSampleCollector::from_proto(
                 &proto,
                 SamplePolicy::Bernoulli { sample_rate: 1.0 },
-                tidb_stats::row_sample_collector::SampleMemoryQuota::unlimited(),
-            )
-            .unwrap();
+                &tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_ANALYZE_MEMORY, -1),
+            );
             let mut sketch = tidb_stats::FmSketch::new(1000);
             if !all_null {
                 sketch.insert_hashes([3, 4, 5]);

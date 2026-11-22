@@ -1766,8 +1766,8 @@ impl SessionVars {
         if !def.has_global_scope() {
             return Ok(default);
         }
-        if let Some(get_global) = def.get_global {
-            return Ok(get_global());
+        if let Some(value) = def.get_global_from_hook() {
+            return Ok(value);
         }
         if let Some(stored) = self.globals().overrides().get(def.name) {
             return Ok(stored.clone());
@@ -1938,10 +1938,7 @@ pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
 /// Go `SysVar.GetGlobalFromHook`: the variable's `GetGlobal` hook, else the
 /// stored GLOBAL value.
 pub fn global_get_hook(def: &SysVarDef, value: String) -> String {
-    match def.get_global {
-        Some(get_global) => get_global(),
-        None => value,
-    }
+    def.get_global_from_hook().unwrap_or(value)
 }
 
 /// Go `SessionVars.GetRelatedTableForMDL().Store(id, ...)`: records one stored

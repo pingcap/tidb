@@ -11580,6 +11580,7 @@ dependencies = [
  "tidb-timeutil",
  "tidb-tls",
  "tidb-topsql-state",
+ "tidb-traceevent",
  "tidb-txnkv",
  "tidb-vardef",
  "tikv-client",

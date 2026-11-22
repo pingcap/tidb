@@ -1018,15 +1018,33 @@ static GLOBAL_SLOW_LOG_RATE_LIMITER: std::sync::LazyLock<std::sync::Mutex<SlowLo
         })
     });
 
-/// Go `vardef.GlobalSlowLogRateLimiter.Allow()` under the current
-/// `tidb_slow_log_max_per_sec`.
-pub fn slow_log_rate_limiter_allow(max_per_sec: i64) -> bool {
-    let now = std::time::Instant::now();
-    let mut limiter = GLOBAL_SLOW_LOG_RATE_LIMITER
+/// Go `tidb_slow_log_max_per_sec`'s `SetGlobal`: an unchanged limit is
+/// left alone, `0` is `rate.Inf`, `d` is `SetLimit(d)` + `SetBurst(d)`.
+pub fn set_slow_log_max_per_sec(max_per_sec: i64) {
+    GLOBAL_SLOW_LOG_RATE_LIMITER
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    limiter.configure(max_per_sec.max(0), now);
-    limiter.allow(now)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .configure(max_per_sec.max(0), std::time::Instant::now());
+}
+
+/// Go `int(vardef.GlobalSlowLogRateLimiter.Limit())`: an unlimited limiter's
+/// `rate.Inf` converts, on amd64, to the minimum int, which the variable's
+/// read then clamps to its minimum (`0`).
+#[must_use]
+pub fn slow_log_max_per_sec() -> i64 {
+    let limit = GLOBAL_SLOW_LOG_RATE_LIMITER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .limit;
+    if limit > 0 { limit } else { i64::MIN }
+}
+
+/// Go `vardef.GlobalSlowLogRateLimiter.Allow()`.
+pub fn slow_log_rate_limiter_allow() -> bool {
+    GLOBAL_SLOW_LOG_RATE_LIMITER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .allow(std::time::Instant::now())
 }
 
 /// Go `executor.QueryReplacer`: carriage returns, newlines and tabs become

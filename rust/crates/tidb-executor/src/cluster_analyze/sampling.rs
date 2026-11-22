@@ -451,6 +451,12 @@ where
         statement.eval_context.push_down_flags(),
         statement.eval_context.session_zone().dag_zone().1,
     )?;
+    // Go `AnalyzeColumnsExec.open`: `memTracker = memory.NewTracker(PlanID, -1)`
+    // attached to the statement's tracker, which ANALYZE attached to
+    // `GlobalAnalyzeMemoryTracker`; its bytes are released when the build ends.
+    let mem_tracker = tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_ANALYZE_MEMORY, -1);
+    mem_tracker.attach_to(statement.eval_context.statement_memory().stmt_tracker());
+    let _release = TrackerRelease(&mem_tracker);
     let mut collector = collect_regions(
         opener,
         &schema,
@@ -466,6 +472,7 @@ where
         cancellation.clone(),
         resource_group,
         progress,
+        &mem_tracker,
     )?;
     for (position, index) in plan.indexes().iter().enumerate() {
         if !index_requires_ndv_scan(table, &plan, index) {
@@ -580,6 +587,7 @@ pub(super) fn collect_regions<S>(
     cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     resource_group: &str,
     progress: &dyn Fn(i64),
+    mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
 ) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
@@ -613,29 +621,35 @@ where
     let mut result = runtime
         .analyze(&request, true)
         .map_err(|e| error(e.to_string()))?;
-    let mut merged =
-        RowSampleCollector::with_memory_quota(plan.slot_count(), policy, options.memory_quota);
+    // Go `subMergeWorker` over `AnalyzeColumnsExec.memTracker`: each response's
+    // data and decoded size are consumed while it is in flight, its
+    // collector's samples as `FromProto` restores them, and the merge's net
+    // growth of the root collector; the in-flight bytes are then released.
+    let mut merged = RowSampleCollector::new(plan.slot_count(), policy);
     let outcome = (|| {
         while let Some(bytes) = result.next_raw().map_err(|e| error(e.to_string()))? {
-            let response = tipb::AnalyzeColumnsResp::decode(bytes.as_slice())
-                .map_err(|e| error(e.to_string()))?;
+            let inflight_data_size = bytes.capacity() as i64;
+            mem_tracker.consume(inflight_data_size);
+            let response = match tipb::AnalyzeColumnsResp::decode(bytes.as_slice()) {
+                Ok(response) => response,
+                Err(e) => {
+                    mem_tracker.release(inflight_data_size);
+                    return Err(error(e.to_string()));
+                }
+            };
+            let inflight_resp_size = response.encoded_len() as i64;
+            mem_tracker.consume(inflight_resp_size);
             let raw = response
                 .row_collector
                 .ok_or_else(|| error("TiKV ANALYZE response has no row collector".to_owned()))?;
             let projected = schema.project_collector(plan, raw)?;
             progress(projected.count);
-            let fragment = RowSampleCollector::from_proto(&projected, policy, options.memory_quota)
-                .map_err(|e| error(e.to_string()))?;
+            let fragment = RowSampleCollector::from_proto(&projected, policy, mem_tracker);
+            let old_merged_size = merged.go_mem_size();
+            let fragment_size = fragment.go_mem_size();
             merged.merge(fragment);
-            if options
-                .memory_quota
-                .bytes()
-                .is_some_and(|limit| merged.consumed_memory_bytes() > limit)
-            {
-                return Err(error(
-                    "ANALYZE merged samples exceed tidb_mem_quota_analyze".to_owned(),
-                ));
-            }
+            mem_tracker.consume(merged.go_mem_size() - old_merged_size - fragment_size);
+            mem_tracker.release(inflight_data_size + inflight_resp_size);
         }
         Ok(merged)
     })();
@@ -1079,4 +1093,16 @@ fn native_transport<S: tidb_store_driver_txn::transaction::StoreClient>(
             ..Default::default()
         },
     ))
+}
+
+/// Go `defer e.memTracker.Release(...)` / `Detach()`: an ANALYZE job's
+/// tracker gives its bytes back and leaves the statement's tracker however
+/// the build ends.
+struct TrackerRelease<'a>(&'a std::sync::Arc<tidb_memory::Tracker>);
+
+impl Drop for TrackerRelease<'_> {
+    fn drop(&mut self) {
+        self.0.release(self.0.bytes_consumed());
+        self.0.detach();
+    }
 }

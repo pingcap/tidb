@@ -13065,17 +13065,22 @@ fn analyze_sampling_memory_quota_rejects_then_session_recovers() {
         &mut session,
         "INSERT INTO test.sample_quota VALUES (1,'one'),(2,'two'),(3,'three')",
     );
+    // Go `tidb_mem_quota_analyze`'s `SetGlobal` / `GetGlobal` are
+    // `GlobalAnalyzeMemoryTracker`'s limit; its `globalPanicOnExceed` turns
+    // into `errAnalyzeOOM` (`getAnalyzePanicErr`).
     rows(&mut session, "SET GLOBAL tidb_mem_quota_analyze = 1");
+    assert_eq!(tidb_memory::get_mem_quota_analyze(), 1);
+    assert_eq!(displayed(rows(&mut session, "SELECT @@global.tidb_mem_quota_analyze")), [["1"]]);
     let error = session
         .node_conn()
         .execute_write("ANALYZE TABLE test.sample_quota WITH 1 SAMPLERATE")
         .expect_err("sample exceeds quota");
-    assert!(
-        error.message.contains("memory") || error.message.contains("quota"),
-        "{}",
-        error.message
+    assert_eq!(
+        error.message,
+        "analyze panic due to memory quota exceeds, please try with smaller samplerate(refer to 110000/count)"
     );
     rows(&mut session, "SET GLOBAL tidb_mem_quota_analyze = -1");
+    assert_eq!(tidb_memory::get_mem_quota_analyze(), -1);
     rows(
         &mut session,
         "ANALYZE TABLE test.sample_quota WITH 1 SAMPLERATE",

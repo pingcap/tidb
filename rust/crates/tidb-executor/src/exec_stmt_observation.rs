@@ -305,10 +305,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                     .session_vars()
                     .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_RULES)
                     .unwrap_or_default(),
-                &self
-                    .session_vars()
-                    .get_global(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_RULES)
-                    .unwrap_or_default(),
+                &tidb_variable::slow_log_rules::global_slow_log_rules(),
                 conn_id,
             );
             if effective.is_empty() {
@@ -377,13 +374,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             }
         }
 
-        let max_per_sec = self
-            .session_vars()
-            .get_global(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_MAX_PER_SEC)
-            .ok()
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
-        if !tidb_variable::slow_log::slow_log_rate_limiter_allow(max_per_sec) {
+        if !tidb_variable::slow_log::slow_log_rate_limiter_allow() {
+            let max_per_sec = tidb_variable::slow_log::slow_log_max_per_sec();
             slow_log_sample_logger().info(
                 "slow log skipped due to rate limiting",
                 &[tidb_log::Field::new(
@@ -486,10 +478,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             plan_digest,
             binary_plan: if !observation.routed
                 && !summary_binary_plan.is_empty()
-                && self
-                    .session_vars()
-                    .get_global(tidb_vardef::tidb_vars::TIDB_GENERATE_BINARY_PLAN)
-                    .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+                && tidb_variable::sysvar::generate_binary_plan()
             {
                 format!(
                     "{}{}{}",
@@ -804,11 +793,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 } else {
                     plan.plan_digest
                 },
-                binary_plan_enabled: !observation.routed
-                    && self
-                        .session_vars()
-                        .get_global("tidb_generate_binary_plan")
-                        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON")),
+                binary_plan_enabled: !observation.routed && tidb_variable::sysvar::generate_binary_plan(),
                 plan_source: (!observation.routed).then_some(plan.plan_source).flatten(),
                 rendered_plan: std::sync::OnceLock::new(),
             }),

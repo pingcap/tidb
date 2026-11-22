@@ -3258,3 +3258,40 @@ fn require_secure_transport_validation_follows_go() {
         "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled"
     );
 }
+
+/// Go's `GetGlobal` hooks over process state, as a Go server answers them
+/// (captured with gorun): the GOGC tuner's bounds and threshold, the memory
+/// limit tuner's trigger, `ServerMemoryLimitOriginText`, the memory
+/// arbitrator's texts, `ServerMemoryLimitSessMinSize`, the slow-log rate
+/// limiter (an unlimited one reads `0`) and the global slow-log rules'
+/// `RawRules`.
+#[test]
+fn process_state_global_getters_answer_like_go() {
+    let (mut session, _, _) = two_sessions_sharing_globals();
+    let read = |session: &mut crate::Session, name: &str| scalar_text(session, &format!("SELECT @@global.{name}"));
+    for (name, want) in [
+        ("tidb_gogc_tuner_threshold", "0.6"),
+        ("tidb_server_memory_limit_gc_trigger", "0.7"),
+        ("tidb_gogc_tuner_max_value", "500"),
+        ("tidb_gogc_tuner_min_value", "100"),
+        ("tidb_mem_arbitrator_mode", "disable"),
+        ("tidb_mem_arbitrator_soft_limit", "0"),
+        ("tidb_server_memory_limit_sess_min_size", "134217728"),
+        ("tidb_slow_log_max_per_sec", "0"),
+        ("tidb_slow_log_rules", ""),
+    ] {
+        assert_eq!(read(&mut session, name), Some(want.to_owned()), "{name}");
+    }
+    session.run("SET GLOBAL tidb_server_memory_limit = '1GB'").unwrap();
+    assert_eq!(read(&mut session, "tidb_server_memory_limit"), Some("1GB".to_owned()));
+    assert_eq!(tidb_memory::server_memory_limit_origin_text(), "1GB");
+    session.run("SET GLOBAL tidb_slow_log_max_per_sec = 5").unwrap();
+    assert_eq!(read(&mut session, "tidb_slow_log_max_per_sec"), Some("5".to_owned()));
+    assert_eq!(tidb_variable::slow_log::slow_log_max_per_sec(), 5);
+    session.run("SET GLOBAL tidb_slow_log_rules = 'Query_time: 1'").unwrap();
+    assert_eq!(read(&mut session, "tidb_slow_log_rules"), Some("query_time:1".to_owned()));
+    assert_eq!(tidb_variable::slow_log_rules::global_slow_log_rules(), "query_time:1");
+    session.run("SET GLOBAL tidb_gogc_tuner_max_value = 600").unwrap();
+    assert_eq!(tidb_memory::gctuner::max_gc_percent(), 600);
+    assert_eq!(read(&mut session, "tidb_gogc_tuner_max_value"), Some("600".to_owned()));
+}

@@ -25,7 +25,7 @@ use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// The exact panic text emitted by the source global analyze-memory tracker.
-pub const GLOBAL_PANIC_ANALYZE_MEMORY_EXCEED: &str = "Out Of Global Analyze Memory Limit!";
+pub use tidb_memory::GLOBAL_PANIC_ANALYZE_MEMORY_EXCEED;
 
 const ANALYZE_WORKER_PANIC_MESSAGE: &str = "analyze worker panic";
 const ANALYZE_OOM_MESSAGE: &str =

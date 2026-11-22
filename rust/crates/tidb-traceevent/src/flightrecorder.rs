@@ -470,9 +470,10 @@ pub fn check_flight_recorder_dump_trigger(
 /// ```
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FlightRecorderConfig {
-    /// Go `enabled_categories`.
+    /// Go `enabled_categories`: a nil slice when the JSON omits it, which
+    /// `json.Marshal` writes back as `null`.
     #[serde(default)]
-    pub enabled_categories: Vec<String>,
+    pub enabled_categories: Option<Vec<String>>,
     /// Go `dump_trigger`.
     #[serde(default)]
     pub dump_trigger: DumpTriggerConfig,
@@ -483,12 +484,12 @@ impl FlightRecorderConfig {
     /// write/read detail and developer-debug categories, whose volume would be
     /// excessive.
     pub fn initialize(&mut self) {
-        self.enabled_categories = vec![
+        self.enabled_categories = Some(vec![
             "-".to_owned(),
             "tikv_write_details".to_owned(),
             "tikv_read_details".to_owned(),
             "dev_debug".to_owned(),
-        ];
+        ]);
         self.dump_trigger.kind = "sampling".to_owned();
         self.dump_trigger.sampling = 1;
     }
@@ -571,7 +572,7 @@ fn new_http_flight_recorder(
     ch: Option<Sender<Vec<Event>>>,
 ) -> Result<Arc<HttpFlightRecorder>, String> {
     let compiled = config.compile()?;
-    let categories = parse_categories(&config.enabled_categories);
+    let categories = parse_categories(config.enabled_categories.as_deref().unwrap_or_default());
     let recorder = Arc::new(HttpFlightRecorder {
         ch,
         enabled_categories: AtomicU64::new(categories.0),

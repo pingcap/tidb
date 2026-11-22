@@ -563,6 +563,24 @@ fn match_condition(field: &str, threshold: &Threshold, values: &SlowLogRuleValue
     }
 }
 
+/// Go `vardef.GlobalSlowLogRules`: the global rules the last
+/// `tidb_slow_log_rules` `SetGlobal` stored, as their encoded `RawRules`.
+static GLOBAL_SLOW_LOG_RULES: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Go `tidb_slow_log_rules`' `SetGlobal`: `ParseGlobalSlowLogRules` then
+/// `vardef.GlobalSlowLogRules.Store`.
+pub fn set_global_slow_log_rules(raw: &str) -> Result<(), String> {
+    let encoded = global_rules(raw)?;
+    *GLOBAL_SLOW_LOG_RULES.write().unwrap_or_else(std::sync::PoisonError::into_inner) = encoded;
+    Ok(())
+}
+
+/// Go `vardef.GlobalSlowLogRules.Load().RawRules`.
+#[must_use]
+pub fn global_slow_log_rules() -> String {
+    GLOBAL_SLOW_LOG_RULES.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
 /// The rules visible to one session: its own (`SessionVars.SlowLogRules`)
 /// and, from Go's `GlobalSlowLogRules`, the ones bound to its connection and
 /// the unbound ones.

@@ -1487,19 +1487,6 @@ pub(super) fn tidb_enable_ddl(
     Ok(validated)
 }
 
-/// go: the trace-event pipeline is TiDB-X-only; a classic kernel
-/// answers bare 1105 for every assignment.
-pub(super) fn tidb_trace_event(
-    def: &SysVarDef,
-    validated: Validated,
-    original: &str,
-    scope: u8,
-    lookup: Lookup<'_>,
-) -> Result<Validated, ValidationError> {
-    Err(ValidationError::Refused(
-        "can only be set for TiDB X kernel".to_owned(),
-    ))
-}
 
 /// Go `tidb_snapshot`: `parseTSFromNumberOrTime` accepts an unsigned TSO
 /// before datetime parsing, and `tidb_read_staleness` must be clear.
@@ -2169,4 +2156,40 @@ pub(super) fn require_secure_transport(
         }
     }
     Ok(validated)
+}
+
+/// Go `tidb_gogc_tuner_max_value`'s Validation: the new maximum must stay
+/// above the tuner's current minimum (`gctuner.MinGCPercent()`).
+pub(super) fn tidb_gogc_tuner_max_value(
+    _def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    _scope: u8,
+    _lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let max_value = crate::varsutil::tidb_opt_int64(original, tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
+    if max_value <= i64::from(tidb_memory::gctuner::min_gc_percent()) {
+        return Err(ValidationError::Refused(
+            "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value".to_owned(),
+        ));
+    }
+    Ok(Validated { value: original.to_owned(), truncated: validated.truncated })
+}
+
+/// Go `tidb_gogc_tuner_min_value`'s Validation: the new minimum must stay
+/// below the tuner's current maximum (`gctuner.MaxGCPercent()`).
+pub(super) fn tidb_gogc_tuner_min_value(
+    _def: &SysVarDef,
+    validated: Validated,
+    original: &str,
+    _scope: u8,
+    _lookup: Lookup<'_>,
+) -> Result<Validated, ValidationError> {
+    let min_value = crate::varsutil::tidb_opt_int64(original, tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
+    if min_value >= i64::from(tidb_memory::gctuner::max_gc_percent()) {
+        return Err(ValidationError::Refused(
+            "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value".to_owned(),
+        ));
+    }
+    Ok(Validated { value: original.to_owned(), truncated: validated.truncated })
 }

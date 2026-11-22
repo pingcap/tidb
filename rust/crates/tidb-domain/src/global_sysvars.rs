@@ -638,8 +638,8 @@ impl GlobalSysvars {
             }
             // Go `SysVar.GetGlobal`: the variable's process-wide value is the
             // live table's answer (a scratch table answers what it stores).
-            if let Some(get_global) = def.get_global {
-                return Ok(get_global());
+            if let Some(value) = def.get_global_from_hook() {
+                return Ok(value);
             }
         }
         let snapshot = Arc::clone(
@@ -858,8 +858,8 @@ impl GlobalSysvars {
             if let Some(value) = runtime_instance_value(self, def) {
                 return Ok(value);
             }
-            if let Some(get_global) = def.get_global {
-                return Ok(get_global());
+            if let Some(value) = def.get_global_from_hook() {
+                return Ok(value);
             }
         }
         let snapshot = Arc::clone(
@@ -1131,37 +1131,6 @@ impl GlobalSysvars {
                 tidb_variable::cloud_storage::validate_cloud_storage_uri(&tidb_gocontext::Context::background(), &stored_value).map_err(VarError::unknown)?;
             }
         }
-        // Go's GOGC tuner bounds are cross-validated against the current
-        // process values: max must stay strictly above min, and min strictly
-        // below max. The Rust registry has no separate tuner singleton, so
-        // use the authoritative GLOBAL image that owns the SQL-visible
-        // values; this also keeps scratch cluster tables self-contained.
-        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE {
-            let min_value = self
-                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
-            if stored_value.parse::<i64>().unwrap_or_default() <= min_value {
-                return Err(tidb_terror::MysqlError::unknown(
-                    "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
-                        .to_owned(),
-                ));
-            }
-        }
-        if key == tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MIN_VALUE {
-            let max_value = self
-                .get(tidb_vardef::tidb_vars::TIDB_GOGC_TUNER_MAX_VALUE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
-            if stored_value.parse::<i64>().unwrap_or_default() >= max_value {
-                return Err(tidb_terror::MysqlError::unknown(
-                    "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
-                        .to_owned(),
-                ));
-            }
-        }
         // Go's `tidb_super_read_only` Validation (`sysvar.go:999`): turning
         // the flag OFF through a user SET is refused while
         // `tidb_restricted_read_only` is ON.
@@ -1177,25 +1146,6 @@ impl GlobalSysvars {
         if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
             tidb_memory::validate_process_memory_setting(&key, &stored_value)
                 .map_err(VarError::unknown)?;
-        }
-        // Go's `tidb_trace_event` GLOBAL hook owns the process-wide flight
-        // recorder. A JSON configuration starts/replaces the recorder, while
-        // an empty assignment closes it. Keep this publication after all
-        // registry validation but before storing the SQL-facing value so a
-        // malformed trigger cannot leave a half-applied setting behind.
-        if self.publishes_runtime_settings && key == "tidb_trace_event" {
-            if stored_value.is_empty() {
-                if let Some(recorder) = tidb_traceevent::get_flight_recorder() {
-                    recorder.close();
-                }
-            } else {
-                let config = serde_json::from_str::<tidb_traceevent::FlightRecorderConfig>(
-                    &stored_value,
-                )
-                .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
-                tidb_traceevent::start_log_flight_recorder(config)
-                    .map_err(VarError::unknown)?;
-            }
         }
         // Go's `validate_password.*` Validation closures (`sysvar.go:717-790`)
         // keep the five settings coupled: a count raise lifts the sibling
