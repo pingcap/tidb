@@ -165,6 +165,7 @@ tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }

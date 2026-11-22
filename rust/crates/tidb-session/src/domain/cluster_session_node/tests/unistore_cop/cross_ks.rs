@@ -665,7 +665,8 @@ fn test_manager_etcd() {
     loop {
         // Go `GetAllDDLJobs` over the target's DDL session pool.
         let jobs = tidb_ddl::ddl_history::with_pool_session(runtime.ddl_client.ddl_pool.as_ref(), |se| {
-            tidb_ddl::ddl_history::get_jobs_by_sql(se, "job_id >= 0 order by job_id")
+            tidb_ddl::ddl_job_scheduler::get_jobs_by_sql(se, "job_id >= 0 order by job_id")
+                .map_err(|error| error.to_string())
         })
         .unwrap();
         if let Some(job) = jobs.iter().find(|job| job.table_id == table.read().id) {

@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-22; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-22.md](structural-audit-2026-11-22.md).
 
-**3 unresolved: 3 open, 0 partial.**
+**2 unresolved: 2 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -16,7 +16,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| X02 | open | Go's DDL `sess.Session` (`Execute`, `Begin`, `Commit`, `Rollback`) has two Rust ports: `tidb_ddl_session::Session` over a session context, and the `StepSqlSession` trait (with its own `execute`, `begin`, ...) that job steps hold, so code that runs on either is written twice (`getJobsBySQL` in `ddl_history.rs` and in `job_control.rs`). Rust: `tidb-ddl-session/src/lib.rs` (`Session`), `tidb-ddl-build/src/session_pool.rs` (`StepSqlSession`), `tidb-ddl/src/ddl_history.rs`, `tidb-ddl/src/job_control.rs` | `pkg/ddl/session` (`Session`), `pkg/ddl/job_worker.go` (`w.sess`), `pkg/ddl/ddl_history.go` (`getJobsBySQL`) |
 
 ### System tables and startup
 

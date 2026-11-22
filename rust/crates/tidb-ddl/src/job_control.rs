@@ -19,7 +19,9 @@
 //! `mysql.tidb_ddl_job`; the owner's next step of the job acts on the state.
 
 use tidb_dbterror as dbterror;
-use tidb_ddl_build::session_pool::StepSqlSession;
+use crate::ddl_job_scheduler::{get_jobs_by_sql, update_ddl_job_2_table};
+use tidb_ddl_build::session_pool::session_error;
+use tidb_ddl_session::DdlSession;
 use tidb_model::{AdminCommandOperator, Job, JobState};
 use tidb_terror::{MysqlError, TerrorError};
 
@@ -146,7 +148,7 @@ fn can_end_user_resume_system_paused_job(job: &Job, by_who: AdminCommandOperator
 /// The transaction's begin or read error, or the last commit's.
 pub fn process_jobs(
     process: JobCommand,
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
     ids: &[i64],
     by_who: AdminCommandOperator,
 ) -> Result<Vec<Option<JobCommandError>>, MysqlError> {
@@ -163,7 +165,7 @@ pub fn process_jobs(
 
         // Go `ns.Begin`: `sessiontxn.NewTxn` enters an optimistic
         // transaction.
-        sess.begin()?;
+        sess.begin(&tidb_sqlexec::BackgroundContext).map_err(session_error)?;
         let jobs = match get_jobs_by_sql(
             sess,
             &format!("job_id in ({}) order by job_id", ids_str.join(", ")),
@@ -191,9 +193,9 @@ pub fn process_jobs(
             }
         }
         // A conflicting update retries the whole command.
-        if let Err(error) = sess.commit() {
+        if let Err(error) = sess.commit(&tidb_sqlexec::BackgroundContext) {
             sess.rollback();
-            last_error = Some(error);
+            last_error = Some(session_error(error));
             continue;
         }
         for (id, idx) in job_map {
@@ -213,7 +215,7 @@ pub fn process_jobs(
 ///
 /// The job's command error or the transaction's.
 pub fn pause_job_by_system(
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
     job_id: i64,
 ) -> Result<(), JobCommandError> {
     one_job(process_jobs(pause_running_job, sess, &[job_id], AdminCommandOperator::BY_SYSTEM))
@@ -225,7 +227,7 @@ pub fn pause_job_by_system(
 ///
 /// The job's command error or the transaction's.
 pub fn resume_job_by_system(
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
     job_id: i64,
 ) -> Result<(), JobCommandError> {
     one_job(process_jobs(resume_paused_job, sess, &[job_id], AdminCommandOperator::BY_SYSTEM))
@@ -252,44 +254,6 @@ pub fn has_sys_db(job: &Job) -> bool {
         .any(|info| tidb_metadef::db::is_system_related_db(&info.database.to_utf8_lossy_go()))
 }
 
-/// Go `getJobsBySQL`: the jobs of `mysql.tidb_ddl_job` matching
-/// `condition`.
-fn get_jobs_by_sql(sess: &mut dyn StepSqlSession, condition: &str) -> Result<Vec<Job>, MysqlError> {
-    let rows = sess.execute(
-        &format!("select job_meta from mysql.tidb_ddl_job where {condition}"),
-        &[],
-    )?;
-    rows.into_iter()
-        .map(|row| {
-            let mut job = Job::default();
-            let bytes = row.first().map_or(&[][..], tidb_datatype::Datum::go_bytes);
-            job.decode(bytes)
-                .map_err(|error| MysqlError::unknown(error.to_string()))?;
-            Ok(job)
-        })
-        .collect()
-}
-
-/// Go `updateDDLJob2Table` on `sess`.
-fn update_ddl_job_2_table(
-    sess: &mut dyn StepSqlSession,
-    job: &mut Job,
-    update_raw_args: bool,
-) -> Result<(), MysqlError> {
-    let encoded = job
-        .encode(update_raw_args)
-        .map_err(|error| MysqlError::unknown(error.to_string()))?;
-    sess.execute(
-        &format!(
-            "update mysql.tidb_ddl_job set job_meta = {} where job_id = {}",
-            crate::cluster_ddl::wrap_key_2_string(&encoded),
-            job.id
-        ),
-        &[],
-    )?;
-    Ok(())
-}
-
 /// Go `resumePausedJobForUpgradeFinish`: a job the system paused for a full
 /// KV disk stays paused.
 pub fn resume_paused_job_for_upgrade_finish(
@@ -311,12 +275,12 @@ pub fn resume_paused_job_for_upgrade_finish(
 /// The transaction's begin, read or commit error.
 pub fn process_all_jobs(
     process: JobCommand,
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
     by_who: AdminCommandOperator,
 ) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
     let mut job_errs = std::collections::BTreeMap::new();
 
-    sess.begin()?;
+    sess.begin(&tidb_sqlexec::BackgroundContext).map_err(session_error)?;
 
     let mut job_id: i64 = 0;
     let mut job_id_max: i64 = 0;
@@ -360,7 +324,7 @@ pub fn process_all_jobs(
         job_id = job_id_max + 1;
     }
 
-    sess.commit()?;
+    sess.commit(&tidb_sqlexec::BackgroundContext).map_err(session_error)?;
     Ok(job_errs)
 }
 
@@ -371,7 +335,7 @@ pub fn process_all_jobs(
 ///
 /// See [`process_all_jobs`].
 pub fn pause_all_jobs_by_system(
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
 ) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
     process_all_jobs(pause_running_job, sess, AdminCommandOperator::BY_SYSTEM)
 }
@@ -383,7 +347,7 @@ pub fn pause_all_jobs_by_system(
 ///
 /// See [`process_all_jobs`].
 pub fn resume_all_jobs_by_system(
-    sess: &mut dyn StepSqlSession,
+    sess: &DdlSession,
 ) -> Result<std::collections::BTreeMap<i64, JobCommandError>, MysqlError> {
     process_all_jobs(resume_paused_job_for_upgrade_finish, sess, AdminCommandOperator::BY_SYSTEM)
 }

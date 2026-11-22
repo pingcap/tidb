@@ -21,6 +21,56 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 const JOB_RECORD_CAPACITY: usize = 16;
+
+/// Go `getJobsBySQL`: the jobs of `mysql.tidb_ddl_job` matching
+/// `condition`, selected on `se`.
+///
+/// # Errors
+///
+/// The statement's error, or a job that does not decode.
+pub fn get_jobs_by_sql(
+    se: &tidb_ddl_session::DdlSession,
+    condition: &str,
+) -> Result<Vec<tidb_model::Job>, tidb_terror::MysqlError> {
+    let rows = tidb_ddl_build::session_pool::execute(
+        se,
+        &format!("select job_meta from mysql.tidb_ddl_job where {condition}"),
+        "get_job",
+        &[],
+    )?;
+    rows.iter()
+        .map(|row| {
+            let mut job = tidb_model::Job::default();
+            let bytes = row.first().map_or(&[][..], tidb_datatype::Datum::go_bytes);
+            job.decode(bytes)
+                .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+            Ok(job)
+        })
+        .collect()
+}
+
+/// Go `updateDDLJob2Table`: rewrites the job's row of `mysql.tidb_ddl_job`
+/// through `se`.
+///
+/// # Errors
+///
+/// The job's encoding or the statement's error.
+pub fn update_ddl_job_2_table(
+    se: &tidb_ddl_session::DdlSession,
+    job: &mut tidb_model::Job,
+    update_raw_args: bool,
+) -> Result<(), tidb_terror::MysqlError> {
+    let encoded = job
+        .encode(update_raw_args)
+        .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
+    let sql = format!(
+        "update mysql.tidb_ddl_job set job_meta = {} where job_id = {}",
+        crate::cluster_ddl::wrap_key_2_string(&encoded),
+        job.id
+    );
+    tidb_ddl_build::session_pool::execute(se, &sql, "update_job", &[])?;
+    Ok(())
+}
 const JOB_ONCE_CAPACITY: usize = 1_000;
 
 /// Go `SchemaLoader`.

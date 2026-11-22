@@ -15,10 +15,11 @@ The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structura
 - [x] (2026-11-23) R04: `SortExec` runs Go's parallel mode (`parallel_sort.rs`: `ExecutorConcurrency` workers over a bounded chunk channel, batch sorts of `maxChunkSize*30` rows merged per worker, `parallelSortSpillAction` / `parallelSortSpillHelper` spilling the merged worker runs, the in-memory result spilling when the action fires mid-merge); the unparallel mode stays Go's test hook. TopN's spill workers were already Go's `topn_worker.go` (`topn.rs`); the crate docs that said otherwise are fixed and `TestKillSignalInTopN` carries its Go name. Go's `TestParallelSort`, `TestFailpoint`, `TestParallelSortSpillDisk`, `TestParallelSortSpillDiskFailpoint`, `TestIssue59655`, `TestIssue63216`, `TestIssue55344` are ported (with `util/chunk`'s `ChunkInDiskError` failpoint and Go's package-level `rand.Int31n`).
 - [ ] R02: EXPLAIN EXPLORE.
 - [ ] R03: ANALYZE in Go's shape.
-- [ ] X02: one DDL session port.
+- [x] (2026-11-23) X02: one port of Go's `sess.Session`. The `StepSqlSession` trait is gone: the DDL pools hand out `tidb_ddl_session::DdlSession` over the node's `ClusterStatsSessionContext` (a step session is `new_step`, whose drop commits into and releases the step's buffer), `getJobsBySQL` and `updateDDLJob2Table` have one body each (`ddl_job_scheduler.rs`), `initDDLReorgHandle` / `cleanDDLReorgHandles` / the ingest checkpoint use `Session.RunInTxn`, every `Execute` carries Go's metric label, `tidb_ddl_session::Error` keeps the error it wraps (Go's `errors.Trace`), and the session context's `ExecuteInternal` is the session's own (request source, cancellation, goroutine labels restored).
 
 ## Surprises & Discoveries
 
+- X02: the node's DDL-pool session context answered `ExecuteInternal` through the plain `Execute` path, so internal SQL did not restore the caller's goroutine labels (Go's `ExecuteInternal` defers `SetGoroutineLabels`); two label tests caught it once the DDL sessions moved onto it.
 - R04: the fetcher runs on the thread that calls `Next` (Go's fetcher goroutine runs while `Next` blocks on `resultChannel`), and a failed worker keeps draining the chunk channel: a worker that stopped draining left the fetcher waiting on its in-flight chunk forever (the mutant hangs `TestFailpoint`).
 - R01: the planner marked every pushed-down and point-plan Selection `FromDataSource`; Go marks only the root Selection over `RootTaskConds`. Version 2 never reads the flag, so it was invisible until version 1 priced the Selection.
 

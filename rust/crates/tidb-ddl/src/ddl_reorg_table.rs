@@ -18,6 +18,7 @@
 //! statements on a pooled session.
 
 use crate::cluster_ddl::add_index::ReorgHandle;
+use tidb_ddl_build::session_pool::{execute, session_error, txn_error};
 
 /// Go `ingest.JobReorgMeta{Checkpoint: &ReorgCheckpoint{PhysicalID,
 /// Version: JobCheckpointVersionCurrent}}` as Go's `json.Marshal` writes it:
@@ -30,23 +31,6 @@ pub fn job_reorg_meta(physical_id: i64) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Go `sess.Session.RunInTxn`: `f` in one transaction of `s`, rolled back
-/// when it fails.
-fn run_in_txn(
-    s: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
-    f: impl FnOnce(
-        &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
-    ) -> Result<(), tidb_terror::MysqlError>,
-) -> Result<(), tidb_terror::MysqlError> {
-    // Go `Begin`: `sessiontxn.NewTxn` enters an optimistic transaction.
-    s.begin()?;
-    if let Err(error) = f(s) {
-        s.rollback();
-        return Err(error);
-    }
-    s.commit()
-}
-
 /// Go `initDDLReorgHandle`: in one transaction, the job's rows replaced by
 /// the handle's.
 ///
@@ -54,7 +38,7 @@ fn run_in_txn(
 ///
 /// The insert's or the transaction's error.
 pub fn init_ddl_reorg_handle(
-    s: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    s: &tidb_ddl_session::DdlSession,
     job_id: i64,
     handle: &ReorgHandle,
 ) -> Result<(), tidb_terror::MysqlError> {
@@ -71,8 +55,8 @@ pub fn init_ddl_reorg_handle(
         handle.physical_id,
         wrap_key_2_string(&raw_reorg_meta),
     );
-    run_in_txn(s, |se| {
-        if let Err(error) = se.execute(&del, &[]) {
+    s.run_in_txn(|se| {
+        if let Err(error) = execute(se, &del, "init_handle", &[]) {
             tidb_ddl_logutil::ddl_logger().info(
                 "initDDLReorgHandle failed to delete",
                 &[
@@ -81,8 +65,9 @@ pub fn init_ddl_reorg_handle(
                 ],
             );
         }
-        se.execute(&ins, &[]).map(|_| ())
+        execute(se, &ins, "init_handle", &[]).map(drop).map_err(txn_error)
     })
+    .map_err(session_error)
 }
 
 /// Go `reorgInfo.UpdateReorgMeta`: `updateDDLReorgHandle` in a transaction
@@ -92,7 +77,7 @@ pub fn init_ddl_reorg_handle(
 ///
 /// The update's error, else the commit's.
 pub fn update_reorg_meta(
-    se: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    se: &tidb_ddl_session::DdlSession,
     job_id: i64,
     handle: &ReorgHandle,
 ) -> Result<(), tidb_terror::MysqlError> {
@@ -100,7 +85,7 @@ pub fn update_reorg_meta(
     if handle.start_key.is_empty() && handle.end_key.is_empty() {
         return Ok(());
     }
-    se.begin()?;
+    se.begin(&tidb_sqlexec::BackgroundContext).map_err(session_error)?;
     // Go `updateDDLReorgHandle`.
     let sql = format!(
         "update mysql.tidb_ddl_reorg set ele_id = {}, ele_type = {}, start_key = {}, end_key = {}, physical_id = {} where job_id = {}",
@@ -111,8 +96,8 @@ pub fn update_reorg_meta(
         handle.physical_id,
         job_id,
     );
-    let updated = se.execute(&sql, &[]).map(|_| ());
-    let committed = se.commit();
+    let updated = execute(se, &sql, "update_handle", &[]).map(drop);
+    let committed = se.commit(&tidb_sqlexec::BackgroundContext).map_err(session_error);
     updated.and(committed)
 }
 
@@ -122,11 +107,12 @@ pub fn update_reorg_meta(
 ///
 /// The delete's or the transaction's error.
 pub fn clean_ddl_reorg_handles(
-    se: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    se: &tidb_ddl_session::DdlSession,
     job_id: i64,
 ) -> Result<(), tidb_terror::MysqlError> {
     let sql = format!("delete from mysql.tidb_ddl_reorg where job_id = {job_id}");
-    run_in_txn(se, |se| se.execute(&sql, &[]).map(|_| ()))
+    se.run_in_txn(|se| execute(se, &sql, "clean_handle", &[]).map(drop).map_err(txn_error))
+        .map_err(session_error)
 }
 
 #[cfg(test)]

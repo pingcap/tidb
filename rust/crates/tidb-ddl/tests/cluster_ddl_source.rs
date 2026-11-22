@@ -481,27 +481,27 @@ fn test_manager() {
         true, Duration::from_millis(500),
     ).unwrap();
     let manager = SystemTableManager::new(pool.sess_pool().unwrap());
-    let mut se = pool.open_sql_session().unwrap();
+    let se = pool.open_sql_session().unwrap();
     assert!(matches!(manager.get_job_by_id(9999), Err(SystemTableManagerError::NotFound)));
-    se.execute(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
-        values(9999, 0, '1', '1', '{"id":9999}', 1, 0)"#, &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(9999, 0, '1', '1', '{"id":9999}', 1, 0)"#, "test", &[]).unwrap();
     let loaded = manager.get_job_by_id(9999).unwrap();
     assert_eq!(loaded.bytes.snapshot(), br#"{"id":9999}"#);
     assert_eq!(loaded.job.unwrap().read().id, 9999);
     assert!(matches!(manager.get_mdl_ver(9999), Err(SystemTableManagerError::NotFound)));
-    se.execute("replace into mysql.tidb_mdl_info(job_id, version, table_ids) values(9999, 123, '1')", &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, "replace into mysql.tidb_mdl_info(job_id, version, table_ids) values(9999, 123, '1')", "test", &[]).unwrap();
     assert_eq!(manager.get_mdl_ver(9999).unwrap(), 123);
-    se.execute("delete from mysql.tidb_ddl_job", &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, "delete from mysql.tidb_ddl_job", "test", &[]).unwrap();
     assert_eq!(manager.get_min_job_id(0).unwrap(), 0);
-    se.execute(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
-        values(123456, 0, '1', '1', '{"id":9998}', 1, 0)"#, &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(123456, 0, '1', '1', '{"id":9998}', 1, 0)"#, "test", &[]).unwrap();
     assert_eq!(manager.get_min_job_id(0).unwrap(), 123456);
     assert_eq!(manager.get_min_job_id(123456).unwrap(), 123456);
     assert_eq!(manager.get_min_job_id(123457).unwrap(), 0);
-    se.execute("delete from mysql.tidb_ddl_job", &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, "delete from mysql.tidb_ddl_job", "test", &[]).unwrap();
     assert!(!manager.has_flashback_cluster_job(0).unwrap());
-    se.execute(&format!(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
-        values(123, 0, '1', '1', '{{"id":9998}}', {}, 0)"#, ActionType::ACTION_FLASHBACK_CLUSTER.0), &[]).unwrap();
+    tidb_ddl_build::session_pool::execute(&se, &format!(r#"insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing)
+        values(123, 0, '1', '1', '{{"id":9998}}', {}, 0)"#, ActionType::ACTION_FLASHBACK_CLUSTER.0), "test", &[]).unwrap();
     assert!(manager.has_flashback_cluster_job(0).unwrap());
     assert!(manager.has_flashback_cluster_job(123).unwrap());
     assert!(!manager.has_flashback_cluster_job(124).unwrap());
@@ -553,7 +553,7 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
             };
             mdl.register(&session, 20_000 + phases as u64, job.id, step.write.schema_version, "first-owner").unwrap();
             let rows = session.execute(20_000 + phases as u64,
-                &format!("select table_ids from mysql.tidb_mdl_info where job_id = {}", job.id), &[]).unwrap();
+                &format!("select table_ids from mysql.tidb_mdl_info where job_id = {}", job.id), "test", &[]).unwrap();
             assert_eq!(rows[0][0].go_bytes(), ids.as_bytes());
             drop(session);
             drop(state);

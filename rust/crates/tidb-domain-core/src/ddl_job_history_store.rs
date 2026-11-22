@@ -56,7 +56,8 @@ where
         // Go `GetAllDDLJobs`: `select job_meta from mysql.tidb_ddl_job ...
         // order by job_id`.
         let running = tidb_ddl::ddl_history::with_pool_session(self.sess_pool.as_ref(), |se| {
-            tidb_ddl::ddl_history::get_jobs_by_sql(se, "1 order by job_id")
+            tidb_ddl::ddl_job_scheduler::get_jobs_by_sql(se, "1 order by job_id")
+                .map_err(|error| error.to_string())
         })?;
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);
         let mut transaction = storage.begin().map_err(|error| error.to_string())?;
@@ -83,11 +84,12 @@ where
         // `reorg order by job_id limit 1`.
         let jobs = tidb_ddl::ddl_history::with_pool_session(self.sess_pool.as_ref(), |se| {
             let mut jobs =
-                tidb_ddl::ddl_history::get_jobs_by_sql(se, "not reorg order by job_id limit 1")?;
-            jobs.extend(tidb_ddl::ddl_history::get_jobs_by_sql(
-                se,
-                "reorg order by job_id limit 1",
-            )?);
+                tidb_ddl::ddl_job_scheduler::get_jobs_by_sql(se, "not reorg order by job_id limit 1")
+                    .map_err(|error| error.to_string())?;
+            jobs.extend(
+                tidb_ddl::ddl_job_scheduler::get_jobs_by_sql(se, "reorg order by job_id limit 1")
+                    .map_err(|error| error.to_string())?,
+            );
             Ok(jobs)
         })?;
         let mut storage = MetaTxnStorage::new(&self.opener, self.timeout);

@@ -491,52 +491,52 @@ pub struct NormalCheckpointStorage {
 }
 impl CheckpointStorage for NormalCheckpointStorage {
     fn load_checkpoint(&self) -> Result<Option<ReorgCheckpoint>> {
-        let mut session = self
+        use tidb_ddl_build::session_pool::{execute, txn_error};
+        let ddl_sess = self
             .sess_pool
             .open_sql_session()
             .map_err(|e| Error::Other(e.to_string()))?;
-        session.begin().map_err(|e| Error::Other(e.to_string()))?;
-        let result = (|| {
-            let rows=session.execute(&format!("select reorg_meta from mysql.tidb_ddl_reorg where job_id = {} and ele_type = x'5f6964785f';",self.job_id),&[]).map_err(|e|Error::Other(e.to_string()))?;
-            if rows.is_empty() || rows[0][0].is_null() {
-                return Ok(None);
-            }
-            let meta: JobReorgMeta = serde_json::from_slice(rows[0][0].go_bytes())?;
-            Ok(meta
-                .reorg_checkpoint
-                .filter(|cp| cp.physical_id == self.physical_id))
-        })();
-        match result {
-            Ok(cp) => {
-                session.commit().map_err(|e| Error::Other(e.to_string()))?;
-                Ok(cp)
-            }
-            Err(e) => {
-                session.rollback();
-                Err(e)
-            }
-        }
+        let mut checkpoint = None;
+        ddl_sess
+            .run_in_txn(|se| {
+                let sql = format!(
+                    "select reorg_meta from mysql.tidb_ddl_reorg where job_id = {} and ele_type = x'5f6964785f';",
+                    self.job_id
+                );
+                let rows = execute(se, &sql, "get_checkpoint", &[]).map_err(txn_error)?;
+                if rows.is_empty() || rows[0][0].is_null() {
+                    return Ok(());
+                }
+                let meta: JobReorgMeta = serde_json::from_slice(rows[0][0].go_bytes())
+                    .map_err(|e| tidb_ddl_session::Error::from_source(Box::new(e)))?;
+                // Skip a mismatched physical ID.
+                checkpoint = meta.reorg_checkpoint.filter(|cp| cp.physical_id == self.physical_id);
+                Ok(())
+            })
+            .map_err(|e| Error::Other(e.to_string()))?;
+        Ok(checkpoint)
     }
     fn save_checkpoint(&self, checkpoint: &ReorgCheckpoint) -> Result<()> {
-        let mut session = self
+        use tidb_ddl_build::session_pool::{execute, txn_error};
+        let ddl_sess = self
             .sess_pool
             .open_sql_session()
             .map_err(|e| Error::Other(e.to_string()))?;
-        session.begin().map_err(|e| Error::Other(e.to_string()))?;
-        let result = (|| {
-            let raw = serde_json::to_vec(&JobReorgMeta {
-                reorg_checkpoint: Some(checkpoint.clone()),
-            })?;
-            session.execute(&format!("update mysql.tidb_ddl_reorg set reorg_meta = x'{}' where job_id = {} and ele_type = x'5f6964785f';",hex::encode(raw),self.job_id),&[]).map_err(|e|Error::Other(e.to_string()))?;
-            Ok(())
-        })();
-        match result {
-            Ok(()) => session.commit().map_err(|e| Error::Other(e.to_string())),
-            Err(e) => {
-                session.rollback();
-                Err(e)
-            }
-        }
+        ddl_sess
+            .run_in_txn(|se| {
+                let raw = serde_json::to_vec(&JobReorgMeta {
+                    reorg_checkpoint: Some(checkpoint.clone()),
+                })
+                .map_err(|e| tidb_ddl_session::Error::from_source(Box::new(e)))?;
+                let sql = format!(
+                    "update mysql.tidb_ddl_reorg set reorg_meta = x'{}' where job_id = {} and ele_type = x'5f6964785f';",
+                    hex::encode(raw),
+                    self.job_id
+                );
+                execute(se, &sql, "update_checkpoint", &[]).map_err(txn_error)?;
+                Ok(())
+            })
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 /// Go `DistTaskCheckpointStorage`, persisted in DXF subtask checkpoints.

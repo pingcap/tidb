@@ -70,20 +70,38 @@ impl Drop for RecordSetCloser {
     }
 }
 
-/// Package error preserving the source message.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Error(String);
+/// Package error: the source error itself, as Go's `errors.Trace` keeps it.
+#[derive(Clone, Debug)]
+pub struct Error(Arc<dyn StdError + Send + Sync>);
 
 impl Error {
     /// Creates an error with the source message.
     pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self(Arc::from(Box::<dyn StdError + Send + Sync>::from(message.into())))
+    }
+
+    /// Go `errors.Trace(err)`: wraps the source error, keeping it.
+    pub fn from_source(source: Box<dyn StdError + Send + Sync>) -> Self {
+        Self(Arc::from(source))
+    }
+
+    /// The error this one wraps.
+    pub fn source_error(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        &*self.0
     }
 }
 
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_string() == other.to_string()
+    }
+}
+
+impl Eq for Error {}
+
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        fmt::Display::fmt(&self.0, formatter)
     }
 }
 
@@ -120,6 +138,8 @@ pub trait SessionContext: Send + Sync + 'static {
     fn rollback_txn(&self, context: &dyn ExecutionContext);
     /// Request source carried by the caller's context, if present.
     fn request_source(&self, context: &dyn ExecutionContext) -> Option<String>;
+    /// Go `GetSQLExecutor()`.
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor;
     /// Go `GetSQLExecutor().ExecuteInternal`, with the resolved request source.
     fn execute_internal(
         &self,
@@ -157,6 +177,9 @@ pub trait SessionContext: Send + Sync + 'static {
     /// Go `pools.Resource.Close`.
     fn close(&self);
 }
+
+/// Go `*sess.Session` over a pooled `sessionctx.Context`.
+pub type DdlSession = Session<dyn SessionContext>;
 
 /// Go `Session`.
 pub struct Session<C: SessionContext + ?Sized> {

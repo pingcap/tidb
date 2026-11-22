@@ -15,7 +15,8 @@
 //! Go `pkg/executor/operate_ddl_jobs.go`: `AlterDDLJobExec`, which rewrites
 //! a queued or running job's reorg configuration in `mysql.tidb_ddl_job`.
 
-use tidb_ddl_build::session_pool::StepSqlSession;
+use tidb_ddl_build::session_pool::{execute, session_error};
+use tidb_ddl_session::DdlSession;
 use tidb_model::{AdminCommandOperator, Job};
 use tidb_planner::common_plans::{
     AlterDdlJobOpt, ALTER_DDL_JOB_BATCH_SIZE, ALTER_DDL_JOB_MAX_WRITE_SPEED, ALTER_DDL_JOB_THREAD,
@@ -33,9 +34,9 @@ pub fn ddl_job_not_running(job_id: i64) -> MysqlError {
 }
 
 /// Go `getJobMetaFromTable`.
-fn get_job_meta_from_table(se: &mut dyn StepSqlSession, job_id: i64) -> Result<Job, MysqlError> {
+fn get_job_meta_from_table(se: &DdlSession, job_id: i64) -> Result<Job, MysqlError> {
     let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {job_id}");
-    let rows = se.execute(&sql, &[])?;
+    let rows = execute(se, &sql, "get_job_by_id", &[])?;
     let Some(row) = rows.first() else {
         return Err(ddl_job_not_running(job_id));
     };
@@ -46,14 +47,14 @@ fn get_job_meta_from_table(se: &mut dyn StepSqlSession, job_id: i64) -> Result<J
 }
 
 /// Go `updateJobMeta2Table`.
-fn update_job_meta_2_table(se: &mut dyn StepSqlSession, job: &mut Job) -> Result<(), MysqlError> {
+fn update_job_meta_2_table(se: &DdlSession, job: &mut Job) -> Result<(), MysqlError> {
     let b = job.encode(false).map_err(|error| MysqlError::unknown(error.to_string()))?;
     let sql = format!(
         "update mysql.tidb_ddl_job set job_meta = {} where job_id = {}",
         tidb_ddl_jobsubmit::wrap_key_2_string(&b),
         job.id
     );
-    se.execute(&sql, &[])?;
+    execute(se, &sql, "update_job", &[])?;
     Ok(())
 }
 
@@ -66,14 +67,14 @@ fn update_job_meta_2_table(se: &mut dyn StepSqlSession, job: &mut Job) -> Result
 /// The unsupported-job errors at once; otherwise the last attempt's error
 /// (`ddl job N is not running` when the job is not in `mysql.tidb_ddl_job`).
 pub fn process_alter_ddl_job_config(
-    ns: &mut dyn StepSqlSession,
+    ns: &DdlSession,
     job_id: i64,
     alter_opts: &[AlterDdlJobOpt],
 ) -> Result<(), MysqlError> {
     let mut err = None;
     for _ in 0..ALTER_DDL_JOB_MAX_RETRY_CNT {
-        if let Err(error) = ns.begin() {
-            err = Some(error);
+        if let Err(error) = ns.begin(&tidb_sqlexec::BackgroundContext) {
+            err = Some(session_error(error));
             continue;
         }
         let mut job = match get_job_meta_from_table(ns, job_id) {
@@ -111,9 +112,9 @@ pub fn process_alter_ddl_job_config(
             ns.rollback();
             return Err(MysqlError::unknown("mock commit failed on admin alter ddl jobs"));
         }
-        if let Err(error) = ns.commit() {
+        if let Err(error) = ns.commit(&tidb_sqlexec::BackgroundContext) {
             ns.rollback();
-            err = Some(error);
+            err = Some(session_error(error));
             continue;
         }
         return Ok(());

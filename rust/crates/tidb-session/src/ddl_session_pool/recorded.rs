@@ -120,12 +120,12 @@ impl RecordedDdlSession {
         start_ts: u64,
         specs: &mut [tidb_ddl_jobsubmit::JobSpec],
     ) -> Result<(), DdlPlanError> {
-        let mut session = self
+        let session = self
             .pool
             .open_step_session(start_ts, &self.buffer)
             .map_err(DdlPlanError::from_mysql_error)?;
         tidb_ddl_jobsubmit::insert_ddl_jobs_2_table(
-            &mut |sql| session.execute(sql, &[]).map(drop),
+            &mut |sql| tidb_ddl_build::session_pool::execute(&session, sql, "insert_job", &[]).map(drop),
             specs,
         )
         .map_err(error)

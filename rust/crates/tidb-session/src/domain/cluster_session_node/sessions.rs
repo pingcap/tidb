@@ -592,6 +592,27 @@ impl ClusterStatsSessionState {
         callback(&mut conn)
     }
 
+    /// Go `ExecuteInternal` on this session: the caller's request source,
+    /// its cancellation, and its goroutine labels restored afterwards.
+    pub(crate) fn execute_internal(
+        &self,
+        context: &dyn tidb_sqlexec::ExecutionContext,
+        sql: &str,
+    ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
+        let mut slot = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let session = slot
+            .as_mut()
+            .ok_or_else(|| stats_session_error("system session is closed"))?;
+        let (rows, fields) = super::execute_internal_under(session, context, sql)?;
+        Ok((!fields.is_empty()).then(|| {
+            Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
+                as Box<dyn tidb_sqlexec::RecordSet>
+        }))
+    }
+
     /// Go `session.setRequestSource` for an internal session: the source
     /// type its caller's context carries (`ctx.Value(kv.RequestSourceKey)`).
     pub(crate) fn adopt_request_source(&self, context: &dyn tidb_sqlexec::ExecutionContext) {
@@ -789,9 +810,8 @@ impl tidb_sqlexec::SqlExecutor for ClusterStatsSqlExecutor {
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         self.state.adopt_request_source(context);
-        honor_canceled_caller(context)?;
         let escaped = super::sql_with_params(sql, arguments)?;
-        self.materialized_record_set(&escaped)
+        self.state.execute_internal(context, &escaped)
     }
 
     fn execute_stmt(
@@ -852,16 +872,34 @@ impl tidb_sqlexec::RestrictedSqlExecutor for ClusterStatsSqlExecutor {
 
 pub(crate) struct ClusterStatsSessionContext {
     pub(crate) state: Arc<ClusterStatsSessionState>,
+    /// Go `GetSQLExecutor()`.
+    executor: ClusterStatsSqlExecutor,
+    /// The session is a DDL job step's `w.sess`: its writes stage into the
+    /// step's buffer, which the step commits with its meta writes.
+    step: bool,
 }
 
 impl ClusterStatsSessionContext {
     pub(crate) fn new(session: Session, global_vars: GlobalSysvars) -> Self {
+        Self::with_step(session, global_vars, false)
+    }
+
+    /// A DDL job step's `w.sess` over `session`, whose transaction reads at
+    /// the step's start timestamp and stages into the step's buffer.
+    pub(crate) fn new_step(session: Session, global_vars: GlobalSysvars) -> Self {
+        Self::with_step(session, global_vars, true)
+    }
+
+    fn with_step(session: Session, global_vars: GlobalSysvars, step: bool) -> Self {
+        let state = Arc::new(ClusterStatsSessionState {
+            session: Mutex::new(Some(session)),
+            global_vars,
+            registered: std::sync::atomic::AtomicBool::new(false),
+        });
         Self {
-            state: Arc::new(ClusterStatsSessionState {
-                session: Mutex::new(Some(session)),
-                global_vars,
-                registered: std::sync::atomic::AtomicBool::new(false),
-            }),
+            executor: ClusterStatsSqlExecutor::new(Arc::clone(&state)),
+            state,
+            step,
         }
     }
 
@@ -891,6 +929,21 @@ impl ClusterStatsSessionContext {
         .expect("validated global variable must be valid in an internal session");
     }
 
+}
+
+impl Drop for ClusterStatsSessionContext {
+    /// A step session ends; its writes stay in the step's buffer, which the
+    /// step commits (the transaction's own commit publishes nothing) --
+    /// closing would otherwise reset the buffer.
+    fn drop(&mut self) {
+        if self.step {
+            let _ = self.with_session(|session| {
+                let _ = session.commit_txn();
+                session.release_step_buffer();
+                Ok(())
+            });
+        }
+    }
 }
 
 impl tidb_stats_handle_autoanalyze_exec::AutoAnalyzeSessionContext for ClusterStatsSessionContext {
@@ -1247,6 +1300,10 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
 /// Go `pkg/ddl/session`'s `sessionctx.Context`: the node's pooled system
 /// session as the DDL packages' sessions see it.
 impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        &self.executor
+    }
+
     fn new_txn(&self, context: &dyn tidb_sqlexec::ExecutionContext) -> tidb_ddl_session::Result<()> {
         // Go activates the transaction on the first statement, after its
         // context's source type reached the session.
@@ -1254,9 +1311,9 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         self.with_session(|session| {
             session
                 .new_txn(tidb_ast::TransactionMode::Optimistic)
-                .map_err(|error| stats_session_error(error.message))
+                .map_err(super::boxed_sql_query_error)
         })
-        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+        .map_err(tidb_ddl_session::Error::from_source)
     }
 
     fn enter_new_pessimistic_txn(
@@ -1267,9 +1324,9 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         self.with_session(|session| {
             session
                 .new_txn(tidb_ast::TransactionMode::Pessimistic)
-                .map_err(|error| stats_session_error(error.message))
+                .map_err(super::boxed_sql_query_error)
         })
-        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+        .map_err(tidb_ddl_session::Error::from_source)
     }
 
     /// Go `SessionVars.SetInTxn`: this session's `InTxn` is its open
@@ -1285,9 +1342,9 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
         self.with_session(|session| {
             session
                 .commit_txn()
-                .map_err(|error| stats_session_error(error.message))
+                .map_err(super::boxed_sql_query_error)
         })
-        .map_err(|error| tidb_ddl_session::Error::new(error.to_string()))
+        .map_err(tidb_ddl_session::Error::from_source)
     }
 
     fn txn(
@@ -1318,17 +1375,13 @@ impl tidb_ddl_session::SessionContext for ClusterStatsSessionContext {
 
     fn execute_internal(
         &self,
-        _context: &dyn tidb_sqlexec::ExecutionContext,
+        context: &dyn tidb_sqlexec::ExecutionContext,
         _request_source: &str,
         query: &str,
         arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> Result<Option<Box<dyn tidb_sqlexec::RecordSet>>, tidb_sqlexec::SqlExecError> {
         let escaped = super::sql_with_params(query, arguments)?;
-        let (rows, fields) = self.state.materialize(&escaped)?;
-        Ok((!fields.is_empty()).then(|| {
-            Box::new(tidb_sqlexec::SimpleRecordSet::new(fields, rows, 1024))
-                as Box<dyn tidb_sqlexec::RecordSet>
-        }))
+        self.state.execute_internal(context, &escaped)
     }
 
     fn set_autocommit(&self, enabled: bool) {

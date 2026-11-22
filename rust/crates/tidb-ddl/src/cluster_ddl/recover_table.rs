@@ -630,7 +630,7 @@ fn recover_schema_materialized_view_infos(
                 columns.join(", "),
                 format!("{values},").repeat(rows.len() - 1)
             );
-            let mut result = txn.execute(&insert_sql, &write_args).map(|_| ());
+            let mut result = txn.execute(&insert_sql, "recover-schema-mview-info", &write_args).map(|_| ());
             if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockRecoverSchemaMaterializedViewInfoError") {
                 result = Err(tidb_terror::MysqlError::unknown(value.string()));
             }

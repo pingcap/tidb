@@ -746,7 +746,7 @@ fn clean_up_temp_dir_loop(
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             _ => return,
         }
-        let mut se = match session_pool.open_sql_session() {
+        let se = match session_pool.open_sql_session() {
             Ok(se) => se,
             Err(error) => {
                 tidb_ddl_logutil::ddl_logger()
@@ -754,15 +754,20 @@ fn clean_up_temp_dir_loop(
                 return;
             }
         };
-        clean_up_temp_dir(se.as_mut(), path);
+        clean_up_temp_dir(&se, path);
     }
 }
 
 /// Go `ingest.CleanUpTempDir(ctx, se, path)`: its `filterProcessingJobIDs`
 /// runs on `se`.
-pub fn clean_up_temp_dir(se: &mut dyn tidb_ddl_build::session_pool::StepSqlSession, path: &std::path::Path) {
+pub fn clean_up_temp_dir(se: &tidb_ddl_session::DdlSession, path: &std::path::Path) {
     tidb_ddl_ingest::env::clean_up_temp_dir(path, |job_ids| {
-        se.execute(&tidb_ddl_ingest::env::filter_processing_job_ids_sql(job_ids), &[])
+        tidb_ddl_build::session_pool::execute(
+            se,
+            &tidb_ddl_ingest::env::filter_processing_job_ids_sql(job_ids),
+            "filter_processing_job_ids",
+            &[],
+        )
             .map(|rows| rows.iter().map(|row| row[0].get_int64()).collect())
             .map_err(|error| error.to_string())
     });
@@ -916,8 +921,8 @@ fn process_job_during_upgrade(
             return Ok(true);
         }
         // During binary upgrade, pause all running DDL jobs.
-        let mut sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
-        match pause_job_by_system(sess.as_mut(), job.id) {
+        let sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
+        match pause_job_by_system(&sess, job.id) {
             Err(error) => {
                 let is_cannot_pause_ddl_job_err = matches!(
                     &error,
@@ -948,8 +953,8 @@ fn process_job_during_upgrade(
         if job.has_pause_reason(tidb_model::job::JOB_PAUSE_REASON_KV_DISK_FULL) {
             return Ok(false);
         }
-        let mut sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
-        if let Err(error) = resume_job_by_system(sess.as_mut(), job.id) {
+        let sess = sess_pool.open_sql_session().map_err(|error| error.to_string())?;
+        if let Err(error) = resume_job_by_system(&sess, job.id) {
             tidb_ddl_logutil::ddl_upgrading_logger().warn(
                 "normal cluster state, resume the job failed",
                 &[job_field(), zap_error(&error)],
@@ -2165,7 +2170,8 @@ mod schema_sync_tests {
         let backfiller = test_backfiller(&opener);
         let pool = backfiller.session_pool().unwrap();
         crate::ddl_history::with_pool_session(pool.as_ref(), |se| {
-            crate::ddl_history::get_jobs_by_sql(se, &format!("job_id >= {min_job_id} order by job_id"))
+            crate::ddl_job_scheduler::get_jobs_by_sql(se, &format!("job_id >= {min_job_id} order by job_id"))
+                .map_err(|error| error.to_string())
         }).map_err(crate::real_tikv_ddl::ClusterDdlError::NotCommitted)
     }
 
@@ -3412,9 +3418,9 @@ mod schema_sync_tests {
         insert_job_row(&opener, timeout, &mut job, false, "701", "0", false);
         {
             use tidb_ddl_build::session_pool::DdlSessionPool as _;
-            let mut se = sql_pool(&opener, timeout).open_sql_session().unwrap();
+            let se = sql_pool(&opener, timeout).open_sql_session().unwrap();
             crate::ddl_reorg_table::init_ddl_reorg_handle(
-                se.as_mut(),
+                &se,
                 job.id,
                 &crate::cluster_ddl::add_index::ReorgHandle {
                     element_id: 1,

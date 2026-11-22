@@ -72,8 +72,8 @@ probes a Go and a Rust server side by side.
 
 ## Duplicate scan (X01, X02)
 
-All but one were collapsed to one body in this pass (X01 closed); `getJobsBySQL`
-(X02, two DDL session ports) remains. `AggFunctionModeToPB`
+All were collapsed to one body: X01 in this pass, and `getJobsBySQL` with
+X02 (one DDL session port, 2026-11-23). `AggFunctionModeToPB`
 was the visible end of a whole second ToPB family in `builder_utils.rs` for
 TiDB-store readers, removed with it.
 

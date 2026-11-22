@@ -1157,8 +1157,8 @@ fn convert_purge_info_table_not_exists(error: tidb_terror::MysqlError) -> DdlPla
     DdlPlanError::from_mysql_error(error)
 }
 
-fn execute_job_sql(txn: &JobTxn<'_>, sql: &str) -> Result<(), tidb_terror::MysqlError> {
-    txn.execute(sql, &[]).map(|_| ())
+fn execute_job_sql(txn: &JobTxn<'_>, sql: &str, label: &str) -> Result<(), tidb_terror::MysqlError> {
+    txn.execute(sql, label, &[]).map(|_| ())
 }
 
 /// Go `upsertCreateMaterializedViewLogPurgeInfo`: the log's purge schedule
@@ -1179,7 +1179,7 @@ fn upsert_create_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog: &Table
     .map_err(DdlPlanError::from_mysql_error)?;
     let sql = create_materialized_view_log_purge_info_upsert_sql(mlog.id, next, should_update);
     txn.set_must_rollback_txn_on_error();
-    let mut result = execute_job_sql(txn, &sql);
+    let mut result = execute_job_sql(txn, &sql, "mlog-purge-info-upsert");
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockInsertMLogPurgeTableNotExists").is_some_and(|value| value.bool()) {
         result = Err(system_table_not_exists("tidb_mlog_purge_info"));
     }
@@ -1190,7 +1190,7 @@ fn upsert_create_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog: &Table
 pub(crate) fn delete_materialized_view_log_purge_info(txn: &JobTxn<'_>, mlog_id: i64) -> Result<(), DdlPlanError> {
     let sql = format!("DELETE FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID IN ({mlog_id})");
     txn.set_must_rollback_txn_on_error();
-    let mut result = execute_job_sql(txn, &sql);
+    let mut result = execute_job_sql(txn, &sql, "mlog-purge-info-delete");
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteMaterializedViewLogPurgeInfoTableNotExists")
         .is_some_and(|value| value.bool())
     {
@@ -2431,7 +2431,11 @@ fn insert_mview_refresh_source_info(txn: &JobTxn<'_>, mview_id: i64, mlog_ids: &
 fn job_sql_exec<'t, 's>(
     txn: &'t JobTxn<'s>,
 ) -> impl FnMut(&str, &[tidb_sqlescape::SqlArg<'_>]) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> + use<'t, 's> {
-    move |sql, args| job_sql_rows(txn, sql, args)
+    move |sql, args| {
+        let se = txn.sess()?;
+        tidb_sqlexec::execute_sql(&tidb_sqlexec::BackgroundContext, se.session().get_sql_executor(), sql, args)
+            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+    }
 }
 
 /// Go master `deleteCreateMaterializedViewRefreshInfos` (with
@@ -2442,7 +2446,11 @@ pub(crate) fn delete_create_materialized_view_refresh_info(txn: &JobTxn<'_>, mvi
     tidb_mviewutil::refresh_source::delete_refresh_source_info(&mut job_sql_exec(txn), &[mview_id])
         .map_err(DdlPlanError::from_mysql_error)?;
     txn.set_must_rollback_txn_on_error();
-    let mut result = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})"))
+    let mut result = execute_job_sql(
+        txn,
+        &format!("DELETE FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN ({mview_id})"),
+        "mview-refresh-info-delete",
+    )
         .map(|_| ());
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockDeleteCreateMaterializedViewRefreshInfoTableNotExists")
         .is_some_and(|value| value.bool())
@@ -2476,7 +2484,11 @@ pub(crate) fn delete_create_materialized_view_refresh_alert(txn: &JobTxn<'_>, mv
     }
     if result.is_ok() {
         txn.set_must_rollback_txn_on_error();
-        result = execute_job_sql(txn, &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"))
+        result = execute_job_sql(
+            txn,
+            &format!("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ({mview_id})"),
+            "mview-refresh-alert-delete",
+        )
             .map(|_| ());
     }
     match result {
@@ -2523,7 +2535,7 @@ fn upsert_create_materialized_view_refresh_info(
     let last_success = chrono::Utc::now().timestamp();
     let sql = create_materialized_view_refresh_info_upsert_sql(mview.id, read_ts, Some(last_success), next, should_update);
     txn.set_must_rollback_txn_on_error();
-    refresh_info_upsert_result(execute_job_sql(txn, &sql))
+    refresh_info_upsert_result(execute_job_sql(txn, &sql, "mview-refresh-info-upsert"))
 }
 
 /// Go master `(*worker).onCreateMaterializedView`.
@@ -2640,7 +2652,11 @@ pub(super) fn on_create_materialized_view(
                     tidb_sqlescape::SqlArg::String(mview.name.original().as_bytes()),
                 ];
                 // Go master `mview_worker.go`: in materialized view maintenance.
-                match txn.execute_in_mview_maintenance("SELECT 1 FROM %n.%n LIMIT 1", &check_args) {
+                match txn.execute_in_mview_maintenance(
+                    "SELECT 1 FROM %n.%n LIMIT 1",
+                    "create-materialized-view-check-build-rows",
+                    &check_args,
+                ) {
                     Ok(rows) if !rows.is_empty() => {
                         active.job.state = JobState::ROLLINGBACK;
                         return Err(DdlPlanError::from_mysql_error(invalid_ddl_job(
@@ -3057,9 +3073,10 @@ fn convert_cutover_refresh_info_table_not_exists(error: tidb_terror::MysqlError)
 fn job_sql_rows(
     txn: &JobTxn<'_>,
     sql: &str,
+    label: &str,
     args: &[tidb_sqlescape::SqlArg<'_>],
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-    txn.execute(sql, args)
+    txn.execute(sql, label, args)
 }
 
 /// Go master `migrateMViewRefreshInfoForOutOfPlaceCutover`: the view's
@@ -3080,6 +3097,7 @@ fn migrate_mview_refresh_info_for_out_of_place_cutover(
     let rows = job_sql_rows(
         txn,
         "SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS, NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+        "mview-refresh-cutover-read-refresh-info",
         &[SqlArg::Signed(args.old_mview_id)],
     )
     .map_err(convert_cutover_refresh_info_table_not_exists)?;
@@ -3123,7 +3141,7 @@ fn migrate_mview_refresh_info_for_out_of_place_cutover(
     }
     sql.push_str(" WHERE MVIEW_ID = %?");
     params.push(SqlArg::Signed(args.old_mview_id));
-    job_sql_rows(txn, &sql, &params).map(|_| ()).map_err(convert_cutover_refresh_info_table_not_exists)
+    job_sql_rows(txn, &sql, "mview-refresh-cutover-migrate-refresh-info", &params).map(|_| ()).map_err(convert_cutover_refresh_info_table_not_exists)
 }
 
 /// Go master `migrateMViewRefreshSourceInfo`: the view's registered input
@@ -3162,6 +3180,7 @@ fn migrate_mview_refresh_source_info(
         return job_sql_rows(
             txn,
             &format!("UPDATE mysql.{table} SET MVIEW_ID = %? WHERE MVIEW_ID = %?"),
+            "mview-refresh-cutover-migrate-source-info",
             &[SqlArg::Signed(new_mview_id), SqlArg::Signed(old_mview_id)],
         )
         .map(|_| ())
@@ -3623,6 +3642,7 @@ pub(super) fn cleanup_mview_out_of_place_cutover_after_commit(
     if let Err(error) = session.execute(
         start_ts,
         "DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?",
+        "mview-refresh-cutover-delete-refresh-alert",
         &[tidb_sqlescape::SqlArg::Signed(old)],
     ) {
         warn(

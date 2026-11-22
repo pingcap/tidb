@@ -1309,13 +1309,15 @@ where
                     .snapshot_at_for(for_update_ts, true)
                     .map_err(|error| ClusterDdlError::backfill_storage(error))?,
             );
-            let mut ddl_se = sess_pool.open_step_session(for_update_ts, &buffer)
+            let ddl_se = sess_pool.open_step_session(for_update_ts, &buffer)
                 .map_err(DdlPlanError::from_mysql_error)?;
             // The session's BEGIN found an empty buffer; bound now, the
             // statement stages into the transaction that holds the lock (an
             // empty handle attaches without replacing its locks).
             transaction.bind_mutation_buffer(&buffer);
-            let mut execute = |sql: &str| ddl_se.execute(sql, &[]).map(drop);
+            let mut execute = |sql: &str| {
+                tidb_ddl_build::session_pool::execute(&ddl_se, sql, "insert_job", &[]).map(drop)
+            };
             // Go `GenGIDAndInsertJobsWithRetry`: metadata allocates IDs;
             // the session resolves its own table for the SQL insert.
             let mutations = tidb_ddl_jobsubmit::plan_assign_global_ids(&mut snapshot, specs)?;

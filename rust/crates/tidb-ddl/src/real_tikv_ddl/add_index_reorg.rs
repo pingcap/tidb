@@ -204,8 +204,8 @@ pub(super) fn clean_ddl_reorg_handles(
     sess_pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
     job_id: i64,
 ) -> Result<(), ClusterDdlError> {
-    let mut se = sess_pool.open_sql_session().map_err(DdlPlanError::from_mysql_error)?;
-    crate::ddl_reorg_table::clean_ddl_reorg_handles(se.as_mut(), job_id)
+    let se = sess_pool.open_sql_session().map_err(DdlPlanError::from_mysql_error)?;
+    crate::ddl_reorg_table::clean_ddl_reorg_handles(&se, job_id)
         .map_err(DdlPlanError::from_mysql_error)?;
     Ok(())
 }
@@ -491,10 +491,10 @@ where
         Ok((ReorgResult::Initialized(start_ts), Vec::new()))
     })?;
     if let Some(handle) = initialized {
-        let mut se = sess_pool
+        let se = sess_pool
             .open_sql_session()
             .map_err(DdlPlanError::from_mysql_error)?;
-        crate::ddl_reorg_table::init_ddl_reorg_handle(se.as_mut(), reorg.job_id, &handle)
+        crate::ddl_reorg_table::init_ddl_reorg_handle(&se, reorg.job_id, &handle)
             .map_err(DdlPlanError::from_mysql_error)?;
     }
     Ok(result)
@@ -1187,7 +1187,7 @@ fn update_reorg_meta(
     next: &ReorgHandle,
 ) {
     let updated = sess_pool.open_sql_session()
-        .and_then(|mut se| crate::ddl_reorg_table::update_reorg_meta(se.as_mut(), reorg.job_id, next));
+        .and_then(|se| crate::ddl_reorg_table::update_reorg_meta(&se, reorg.job_id, next));
     if let Err(error) = updated {
         tidb_ddl_logutil::ddl_logger().warn(
             "update reorg meta failed",

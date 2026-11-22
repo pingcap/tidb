@@ -3562,9 +3562,9 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         // Go `AlterDDLJobExec.Open` releases its system session under
         // `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`.
         session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_DDL);
-        let mut sess = crate::ddl_session_pool::NodeSqlSession::new(session);
+        let sess = crate::ddl_session_pool::ddl_session(session, domain.global_vars.clone());
         tidb_executor::operate_ddl_jobs::process_alter_ddl_job_config(
-            &mut sess,
+            &sess,
             plan.job_id,
             &plan.options,
         )
@@ -3586,7 +3586,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         // Go `CommandDDLJobsExec`'s system session runs under
         // `kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)`.
         session.set_internal_request_source(tidb_txnkv::INTERNAL_TXN_DDL);
-        let mut sess = crate::ddl_session_pool::NodeSqlSession::new(session);
+        let sess = crate::ddl_session_pool::ddl_session(session, domain.global_vars.clone());
         let process: job_control::JobCommand = match kind {
             tidb_ast::AdminDdlJobControlKind::Cancel => job_control::cancel_running_job,
             tidb_ast::AdminDdlJobControlKind::Pause => job_control::pause_running_job,
@@ -3594,7 +3594,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         };
         let errs = job_control::process_jobs(
             process,
-            &mut sess,
+            &sess,
             job_ids,
             tidb_model::AdminCommandOperator::BY_END_USER,
         )

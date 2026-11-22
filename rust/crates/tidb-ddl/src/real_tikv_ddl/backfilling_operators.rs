@@ -422,7 +422,7 @@ struct TableScanWorker<S: StoreClient> {
     ctx: Arc<Context>,
     scan: Arc<ScanContext<S>>,
     /// Go `se`: the pooled session whose transaction the scan reads at.
-    se: Option<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>>,
+    se: Option<tidb_ddl_session::DdlSession>,
     cp_op: Option<Arc<dyn BackendCtx>>,
     reorg_meta: Option<tidb_model::GoShared<tidb_model::DDLReorgMeta>>,
     hint_batch_size: usize,
@@ -495,14 +495,27 @@ impl<S: StoreClient + 'static> TableScanWorker<S> {
             }
             total_count.fetch_add(rows, Ordering::SeqCst);
         };
-        let mut start_ts = match self.se.as_deref_mut() {
+        let mut start_ts = match self.se.as_ref() {
             Some(se) => {
-                se.begin().map_err(|error| operator_error(PipelineError::Sql(LockSqlError::from(error))))?;
-                match se.txn_start_ts() {
-                    Ok(start_ts) => Some(start_ts),
+                se.begin(&tidb_sqlexec::BackgroundContext).map_err(|error| {
+                    operator_error(PipelineError::Sql(LockSqlError::from(
+                        tidb_ddl_build::session_pool::session_error(error),
+                    )))
+                })?;
+                // Go `txn, err := se.Txn(); startTS := txn.StartTS()`.
+                match se.txn() {
+                    Ok(Some(txn)) => Some(txn.start_ts()),
+                    Ok(None) => {
+                        se.rollback();
+                        return Err(operator_error(PipelineError::Sql(LockSqlError::from(
+                            tidb_terror::MysqlError::unknown("the session has no transaction"),
+                        ))));
+                    }
                     Err(error) => {
                         se.rollback();
-                        return Err(operator_error(PipelineError::Sql(LockSqlError::from(error))));
+                        return Err(operator_error(PipelineError::Sql(LockSqlError::from(
+                            tidb_ddl_build::session_pool::session_error(error),
+                        ))));
                     }
                 }
             }
@@ -594,7 +607,7 @@ impl<S: StoreClient + 'static> TableScanWorker<S> {
             },
         );
         tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", &mut ());
-        if let Some(se) = self.se.as_deref_mut() {
+        if let Some(se) = self.se.as_ref() {
             se.rollback();
         }
         if !enable_streaming {

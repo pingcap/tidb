@@ -101,8 +101,8 @@ pub fn sync_normal_running(
     match sess_pool
         .open_sql_session()
         .map_err(|error| error.to_string())
-        .and_then(|mut sess| {
-            tidb_ddl::job_control::resume_all_jobs_by_system(sess.as_mut())
+        .and_then(|sess| {
+            tidb_ddl::job_control::resume_all_jobs_by_system(&sess)
                 .map_err(|error| error.to_string())
         }) {
         Err(error) => logger.warn("resume all paused jobs failed", &[tidb_logutil::zap_error(&error)]),

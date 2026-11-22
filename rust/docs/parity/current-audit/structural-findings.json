@@ -2,8 +2,8 @@
   "date": "2026-11-22",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
   "counts": {
-    "unresolved": 3,
-    "open": 3,
+    "unresolved": 2,
+    "open": 2,
     "partial": 0
   },
   "findings": [
@@ -22,17 +22,9 @@
       "finding": "ANALYZE is not in Go's shape. One 3,055-line `real_tikv_analyze.rs` holds the planner's `buildAnalyze*` / `getMustAnalyzedColumns`, the executor's `AnalyzeExec` and globalstats' async merge; Go's `AnalyzeExec` worker pool (`analyzeWorker`, `handleResultsError`, `handleGlobalStats`), `AnalyzeColumnsExec`'s sampling build (`buildSamplingStats`, `subMergeWorker`, `subBuildWorker`, `readDataAndSendTask`, `handleNDVForSpecialIndexes`), `analyze_idx.go`'s `fetchAnalyzeResult`, `analyze_global_stats.go` and `analyze_worker.go` have no counterparts.",
       "rust_evidence": "`tidb-executor/src/real_tikv_analyze.rs`, `analyze.rs`, `cluster_analyze.rs`, `cluster_analyze/sampling.rs`, `analyze/exec.rs`",
       "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/statistics/handle/globalstats`"
-    },
-    {
-      "id": "X02",
-      "status": "open",
-      "group": "Structure: Go's shape before more ports",
-      "finding": "Go's DDL `sess.Session` (`Execute`, `Begin`, `Commit`, `Rollback`) has two Rust ports: `tidb_ddl_session::Session` over a session context, and the `StepSqlSession` trait (with its own `execute`, `begin`, ...) that job steps hold, so code that runs on either is written twice (`getJobsBySQL` in `ddl_history.rs` and in `job_control.rs`).",
-      "rust_evidence": "`tidb-ddl-session/src/lib.rs` (`Session`), `tidb-ddl-build/src/session_pool.rs` (`StepSqlSession`), `tidb-ddl/src/ddl_history.rs`, `tidb-ddl/src/job_control.rs`",
-      "go_owner": "`pkg/ddl/session` (`Session`), `pkg/ddl/job_worker.go` (`w.sess`), `pkg/ddl/ddl_history.go` (`getJobsBySQL`)"
     }
   ],
-  "unresolved": 3,
-  "open": 3,
+  "unresolved": 2,
+  "open": 2,
   "partial": 0
 }

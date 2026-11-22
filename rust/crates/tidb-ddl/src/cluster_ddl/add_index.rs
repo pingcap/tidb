@@ -1610,7 +1610,7 @@ fn check_columnar_index_process_once(
     let sql = format!(
         "select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = {table_id} and index_id = {index_id};"
     );
-    let rows = match txn.execute(&sql, &[]) {
+    let rows = match txn.execute(&sql, "add_vector_index_check_result", &[]) {
         Ok(rows) if !rows.is_empty() => rows,
         Err(error) => return Err(DdlPlanError::from_mysql_error(error)),
         Ok(_) => return Ok((false, 0, 0)),
@@ -2279,7 +2279,7 @@ pub(super) fn get_ddl_reorg_handle(
         active.job.id
     );
     let handle = txn
-        .execute(&sql, &[])
+        .execute(&sql, "get_handle", &[])
         .map_err(DdlPlanError::from_mysql_error)?
         .first()
         .map(|row| ReorgHandle {

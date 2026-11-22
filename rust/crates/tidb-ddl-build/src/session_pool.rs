@@ -251,13 +251,13 @@ pub trait DdlSessionPool: Send + Sync {
         ))
     }
 
-    /// Go `sessPool.Get()`: a system session of the pool whose statements
-    /// run in its own transactions.
+    /// Go `sess.NewSession(sessPool.Get())`: a system session of the pool
+    /// whose statements run in their own transactions.
     ///
     /// # Errors
     ///
     /// The session's failure to open.
-    fn open_sql_session(&self) -> Result<Box<dyn StepSqlSession>, tidb_terror::MysqlError> {
+    fn open_sql_session(&self) -> Result<tidb_ddl_session::DdlSession, tidb_terror::MysqlError> {
         Err(tidb_terror::MysqlError::unknown(
             "this DDL session pool has no sessions",
         ))
@@ -267,7 +267,8 @@ pub trait DdlSessionPool: Send + Sync {
     /// an optimistic transaction that reads at the step's `start_ts` and
     /// stages its writes, key flags included, into the step's `buffer`; the
     /// step commits them with its meta writes. Every statement of the step
-    /// runs on the one session, as Go's do.
+    /// runs on the one session, as Go's do. Dropping the last handle ends the
+    /// session and leaves its writes in the step's buffer.
     ///
     /// # Errors
     ///
@@ -276,93 +277,43 @@ pub trait DdlSessionPool: Send + Sync {
         &self,
         _start_ts: u64,
         _buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-    ) -> Result<Box<dyn StepSqlSession>, tidb_terror::MysqlError> {
+    ) -> Result<tidb_ddl_session::DdlSession, tidb_terror::MysqlError> {
         Err(tidb_terror::MysqlError::unknown(
             "this DDL session pool has no step session",
         ))
     }
+}
 
-    /// One statement on a step session of its own
-    /// ([`Self::open_step_session`]).
-    ///
-    /// # Errors
-    ///
-    /// The session's, the escaping's or the statement's error.
-    fn exec_in_step_txn(
-        &self,
-        start_ts: u64,
-        buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-        self.open_step_session(start_ts, buffer)?.execute(sql, args)
+/// Go `Session.Execute`'s rows, its error as the MySQL error it carries.
+///
+/// # Errors
+///
+/// The escaping's or the statement's error.
+pub fn execute(
+    se: &tidb_ddl_session::DdlSession,
+    sql: &str,
+    label: &str,
+    args: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+    se.execute(&tidb_sqlexec::BackgroundContext, sql, label, args)
+        .map(Option::unwrap_or_default)
+        .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
+}
+
+/// Go `Session.Begin`, `Commit` and `BeginPessimistic`'s error as a MySQL
+/// error.
+pub fn session_error(error: tidb_ddl_session::Error) -> tidb_terror::MysqlError {
+    let source = error.source_error();
+    if let Some(error) = source.downcast_ref::<tidb_terror::MysqlError>() {
+        return error.clone();
+    }
+    match source.downcast_ref::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
+        Some(error) => error.clone().into(),
+        None => tidb_terror::MysqlError::unknown(error.to_string()),
     }
 }
 
-/// Go `w.sess` during one step (see [`DdlSessionPool::open_step_session`]).
-/// Dropping it ends the session and leaves its writes in the step's buffer.
-pub trait StepSqlSession: Send {
-    /// Go `sess.Context.GetSQLExecutor()`.
-    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor;
-
-    /// Go `Session.Execute(ctx, sql, label, args...)`: `ExecuteInternal`
-    /// under `kv.InternalTxnDDL`, its record set drained.
-    ///
-    /// # Errors
-    ///
-    /// The escaping's or the statement's error.
-    fn execute(
-        &mut self,
-        sql: &str,
-        args: &[tidb_sqlescape::SqlArg<'_>],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
-        let ctx = tikv_client::util::with_internal_source_type(
-            &tikv_client::trace::TraceContext::new(),
-            tidb_txnkv::INTERNAL_TXN_DDL,
-        );
-        tidb_sqlexec::execute_sql(&ctx, self.get_sql_executor(), sql, args)
-            .map_err(tidb_store_driver_error::sql_query_error::mysql_error_of)
-    }
-
-    /// Sets Go master `SessionVars.InMViewMaintenance`, answering the value
-    /// it replaces (a session that runs no materialized view maintenance
-    /// keeps none).
-    fn swap_in_mview_maintenance(&mut self, _enabled: bool) -> bool {
-        false
-    }
-
-    /// Go `Session.Begin`: `sessiontxn.NewTxn`, an optimistic transaction
-    /// entered through the session's API, not a statement.
-    ///
-    /// # Errors
-    ///
-    /// The transaction's failure to start.
-    fn begin(&mut self) -> Result<(), tidb_terror::MysqlError>;
-
-    /// Go `Session.BeginPessimistic`.
-    ///
-    /// # Errors
-    ///
-    /// The transaction's failure to start.
-    fn begin_pessimistic(&mut self) -> Result<(), tidb_terror::MysqlError>;
-
-    /// Go `Session.Commit`: `StmtCommit` + `CommitTxn`.
-    ///
-    /// # Errors
-    ///
-    /// The commit's error.
-    fn commit(&mut self) -> Result<(), tidb_terror::MysqlError>;
-
-    /// Go `Session.Rollback`: `RollbackTxn`, which returns nothing.
-    fn rollback(&mut self);
-
-    /// Go `Session.Txn()` then `StartTS()`: the start timestamp of the
-    /// transaction [`Self::begin`] opened.
-    ///
-    /// # Errors
-    ///
-    /// No transaction is open.
-    fn txn_start_ts(&mut self) -> Result<u64, tidb_terror::MysqlError> {
-        Err(tidb_terror::MysqlError::unknown("the session has no transaction"))
-    }
+/// A MySQL error as the error of a `Session.RunInTxn` callback.
+pub fn txn_error(error: tidb_terror::MysqlError) -> tidb_ddl_session::Error {
+    tidb_ddl_session::Error::from_source(Box::new(error))
 }

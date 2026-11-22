@@ -253,13 +253,13 @@ mod tests {
             opener, Duration::from_secs(20), Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
             true, Duration::from_millis(500),
         ).unwrap();
-        let mut se = pool.open_sql_session().unwrap();
-        let root = se.execute("select Host, User from mysql.user", &[]).unwrap();
+        let se = pool.open_sql_session().unwrap();
+        let root = tidb_ddl_build::session_pool::execute(&se, "select Host, User from mysql.user", "test", &[]).unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(root[0][0].go_bytes(), b"%");
         assert_eq!(root[0][1].go_bytes(), b"root");
-        assert!(se.execute("select variable_name from mysql.global_variables", &[]).unwrap().len() > 1);
-        assert!(se.execute("select job_id from mysql.tidb_ddl_job", &[]).unwrap().is_empty());
+        assert!(tidb_ddl_build::session_pool::execute(&se, "select variable_name from mysql.global_variables", "test", &[]).unwrap().len() > 1);
+        assert!(tidb_ddl_build::session_pool::execute(&se, "select job_id from mysql.tidb_ddl_job", "test", &[]).unwrap().is_empty());
         restore_config();
     }
 
@@ -286,8 +286,8 @@ mod tests {
             opener, timeout, Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
             true, Duration::from_millis(500),
         ).unwrap();
-        let mut se = pool.open_sql_session().unwrap();
-        let rows = se.execute("select Host, User from mysql.user", &[]).unwrap();
+        let se = pool.open_sql_session().unwrap();
+        let rows = tidb_ddl_build::session_pool::execute(&se, "select Host, User from mysql.user", "test", &[]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].go_bytes(), b"%");
         assert_eq!(rows[0][1].go_bytes(), b"root");
@@ -301,7 +301,7 @@ mod tests {
             opener, Duration::from_secs(20), Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
             true, Duration::from_millis(500),
         ).unwrap();
-        let mut se = pool.open_sql_session().unwrap();
+        let se = pool.open_sql_session().unwrap();
         let mut rendered = Vec::new();
         for sql in [
             "select table_name, tidb_table_id from information_schema.tables where table_schema in ('mysql', 'sys') order by table_name",
@@ -309,7 +309,7 @@ mod tests {
             "select variable_name, variable_value from mysql.global_variables order by variable_name",
             "select variable_name from mysql.tidb where variable_name not in ('bootstrapped_time') order by variable_name",
         ] {
-            for row in se.execute(sql, &[]).unwrap() {
+            for row in tidb_ddl_build::session_pool::execute(&se, sql, "test", &[]).unwrap() {
                 rendered.push(
                     row.iter()
                         .map(|datum| match datum {

@@ -29,8 +29,7 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 
 use tidb_syssession::mysql_system_tables::SystemTableError;
 
-/// Go `session.Session` over a session of the DDL's pool.
-pub type DdlSession = tidb_ddl_session::Session<dyn tidb_ddl_session::SessionContext>;
+pub use tidb_ddl_session::DdlSession;
 
 /// Go `systable.Manager`.
 pub trait Manager: Send + Sync {

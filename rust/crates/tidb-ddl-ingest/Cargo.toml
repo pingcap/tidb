@@ -27,6 +27,7 @@ hex = "0.4"
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-model = { path = "../tidb-model" }

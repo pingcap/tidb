@@ -416,9 +416,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .map_err(|error| MysqlError::from_parts(error.code, error.state, error.message))
     }
 
-    fn open_sql_session(
-        &self,
-    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+    fn open_sql_session(&self) -> Result<tidb_ddl_session::DdlSession, MysqlError> {
         let domain = self
             .domain
             .get()
@@ -426,14 +424,14 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
         let mut session = domain.open_system_session().map_err(sql_to_mysql)?;
         set_ddl_request_source(&mut session);
-        Ok(Box::new(NodeSqlSession::new(session)))
+        Ok(ddl_session(session, domain.global_vars.clone()))
     }
 
     fn open_step_session(
         &self,
         start_ts: u64,
         buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+    ) -> Result<tidb_ddl_session::DdlSession, MysqlError> {
         let domain = self
             .domain
             .get()
@@ -452,7 +450,7 @@ impl DdlSessionPool for NodeDdlSessionPool {
             .node_conn()
             .new_txn(tidb_ast::TransactionMode::Optimistic)
             .map_err(sql_to_mysql)?;
-        Ok(Box::new(NodeStepSession(NodeSqlSession::new(session))))
+        Ok(step_session(session, domain.global_vars.clone()))
     }
 }
 
@@ -612,17 +610,15 @@ impl DdlSessionPool for CrossKsDdlSessionPool {
         self.resources.target.transactions.min_safe_ts("global")
     }
 
-    fn open_sql_session(
-        &self,
-    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
-        Ok(Box::new(NodeSqlSession::new(self.resources.open_fresh()?)))
+    fn open_sql_session(&self) -> Result<tidb_ddl_session::DdlSession, MysqlError> {
+        Ok(ddl_session(self.resources.open_fresh()?, self.resources.target.global_vars.clone()))
     }
 
     fn open_step_session(
         &self,
         start_ts: u64,
         buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
-    ) -> Result<Box<dyn tidb_ddl_build::session_pool::StepSqlSession>, MysqlError> {
+    ) -> Result<tidb_ddl_session::DdlSession, MysqlError> {
         let transactions: Arc<dyn ClusterTransactions> = Arc::new(StepTransactions {
             inner: Arc::clone(&self.resources.target.transactions),
             start_ts,
@@ -633,7 +629,7 @@ impl DdlSessionPool for CrossKsDdlSessionPool {
             .node_conn()
             .new_txn(tidb_ast::TransactionMode::Optimistic)
             .map_err(sql_to_mysql)?;
-        Ok(Box::new(NodeStepSession(NodeSqlSession::new(session))))
+        Ok(step_session(session, self.resources.target.global_vars.clone()))
     }
 }
 
@@ -641,89 +637,25 @@ fn sql_to_mysql(error: tidb_store_driver_error::sql_query_error::SqlQueryError) 
     MysqlError::from_parts(error.code, error.state, error.message).with_identity_opt(error.identity)
 }
 
-/// A node system session the DDL runs SQL on (Go `sess.NewSession(se)`
-/// over a pooled session).
-pub(crate) struct NodeSqlSession(crate::domain::cluster_session_node::SystemSqlExecutor);
-
-impl NodeSqlSession {
-    pub(crate) fn new(session: crate::Session) -> Self {
-        Self(crate::domain::cluster_session_node::SystemSqlExecutor::new(session))
-    }
+/// Go `sess.NewSession(se)` over a pooled system session.
+pub(crate) fn ddl_session(
+    session: crate::Session,
+    global_vars: crate::GlobalSysvars,
+) -> tidb_ddl_session::DdlSession {
+    tidb_ddl_session::Session::new(Arc::new(
+        crate::domain::cluster_session_node::ClusterStatsSessionContext::new(session, global_vars),
+    ))
 }
 
-impl tidb_ddl_build::session_pool::StepSqlSession for NodeSqlSession {
-    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
-        &self.0
-    }
-
-    fn begin(&mut self) -> Result<(), MysqlError> {
-        self.0
-            .with_session(|session| session.node_conn().new_txn(tidb_ast::TransactionMode::Optimistic))
-            .map_err(sql_to_mysql)
-    }
-
-    fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
-        self.0
-            .with_session(|session| session.node_conn().new_txn(tidb_ast::TransactionMode::Pessimistic))
-            .map_err(sql_to_mysql)
-    }
-
-    fn commit(&mut self) -> Result<(), MysqlError> {
-        self.0.with_session(|session| session.node_conn().commit_txn()).map_err(sql_to_mysql)
-    }
-
-    fn rollback(&mut self) {
-        // Go `RollbackTxn` returns nothing.
-        let _ = self.0.with_session(|session| session.node_conn().rollback_txn());
-    }
-
-    fn txn_start_ts(&mut self) -> Result<u64, MysqlError> {
-        self.0
-            .with_session(|session| session.node_conn().explicit_start_ts())
-            .ok_or_else(|| MysqlError::unknown("the session has no transaction"))
-    }
-}
-
-/// A node system session serving as one DDL step's `w.sess`.
-struct NodeStepSession(NodeSqlSession);
-
-impl tidb_ddl_build::session_pool::StepSqlSession for NodeStepSession {
-    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
-        self.0.get_sql_executor()
-    }
-
-    fn begin(&mut self) -> Result<(), MysqlError> {
-        self.0.begin()
-    }
-
-    fn begin_pessimistic(&mut self) -> Result<(), MysqlError> {
-        self.0.begin_pessimistic()
-    }
-
-    fn commit(&mut self) -> Result<(), MysqlError> {
-        self.0.commit()
-    }
-
-    fn rollback(&mut self) {
-        self.0.rollback();
-    }
-
-    fn swap_in_mview_maintenance(&mut self, enabled: bool) -> bool {
-        self.0 .0.with_session(|session| std::mem::replace(&mut session.vars.in_mview_maintenance, enabled))
-    }
-}
-
-impl Drop for NodeStepSession {
-    /// The session ends; its writes stay in the step's buffer, which the step
-    /// commits (the transaction's own commit publishes nothing) -- closing
-    /// would otherwise reset the buffer.
-    fn drop(&mut self) {
-        self.0 .0.with_session(|session| {
-            let mut conn = session.node_conn();
-            let _ = conn.commit_txn();
-            conn.release_step_buffer();
-        });
-    }
+/// A node system session serving as one DDL step's `w.sess`; dropping the
+/// last handle ends it and leaves its writes in the step's buffer.
+fn step_session(
+    session: crate::Session,
+    global_vars: crate::GlobalSysvars,
+) -> tidb_ddl_session::DdlSession {
+    tidb_ddl_session::Session::new(Arc::new(
+        crate::domain::cluster_session_node::ClusterStatsSessionContext::new_step(session, global_vars),
+    ))
 }
 
 /// Go `w.sess`'s transaction as the DDL job step owns it: every read is at
@@ -903,8 +835,8 @@ mod tests {
         assert_eq!(validator.lease(), Duration::from_millis(500));
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
         assert!(!validator.is_lease_expired(i64::try_from(now.as_nanos()).unwrap()));
-        let mut session = pool.open_sql_session().unwrap();
-        let rows = session.execute("select 1", &[]).unwrap();
+        let session = pool.open_sql_session().unwrap();
+        let rows = tidb_ddl_build::session_pool::execute(&session, "select 1", "test", &[]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], tidb_datatype::Datum::Int(1));
     }
@@ -919,13 +851,13 @@ mod tests {
             Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
             true, Duration::from_millis(500),
         ).unwrap();
-        let mut session = pool.open_sql_session().unwrap();
+        let session = pool.open_sql_session().unwrap();
         tidb_topsql_state::enable_top_sql();
         let labels = tidb_cpuprofile::labels::with_labels(None, &[("outer", "ddl".to_owned())]);
         tidb_cpuprofile::labels::set_goroutine_labels(Some(labels.clone()));
-        assert!(session.execute("select 1", &[]).is_ok());
+        assert!(tidb_ddl_build::session_pool::execute(&session, "select 1", "test", &[]).is_ok());
         assert_eq!(tidb_cpuprofile::labels::goroutine_labels(), Some(labels.clone()));
-        assert!(session.execute("select * from test.missing_table", &[]).is_err());
+        assert!(tidb_ddl_build::session_pool::execute(&session, "select * from test.missing_table", "test", &[]).is_err());
         assert_eq!(tidb_cpuprofile::labels::goroutine_labels(), Some(labels));
         tidb_topsql_state::disable_top_sql();
         tidb_cpuprofile::labels::set_goroutine_labels(None);

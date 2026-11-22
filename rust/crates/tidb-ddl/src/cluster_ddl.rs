@@ -3135,7 +3135,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     // but execute the delivered object, never a decoded transaction row.
     let session = step_session(&schema_state.worker);
     let sql = format!("select job_meta from mysql.tidb_ddl_job where job_id = {ddl_job_id}");
-    let rows = session.execute(start_ts, &sql, &[]).map_err(DdlPlanError::from_mysql_error)?;
+    let rows = session.execute(start_ts, &sql, "get-job-by-id", &[]).map_err(DdlPlanError::from_mysql_error)?;
     let bytes = rows.first().and_then(|row| row.first())
         .ok_or_else(|| DdlPlanError::Encode("not found".to_owned()))?;
     if bytes.go_bytes() != job_w.bytes.snapshot() {
@@ -3200,12 +3200,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
     if active.job.is_pausing() {
         active.job.state = JobState::PAUSED;
         let mutations = Vec::new();
-        update_ddl_job_2_table(
-            &session,
-            start_ts,
-            &mut active,
-            false,
-        )?;
+        update_ddl_job_2_table(&session, start_ts, &mut active.job, false)?;
         return Ok(PersistedDdlJobPlan::Step(PersistedDdlJobStep {
             job: Box::new(active.job.clone()),
             write: job_only_write(ddl_job_id, mutations),
@@ -3301,13 +3296,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         // The statements the failed handler ran on `w.sess` go too.
         schema_state.worker.step_buffer.reset();
     }
-    let mut update_err = update_ddl_job_2_table(
-        &session,
-        start_ts,
-        &mut active,
-        step.update_raw_args,
-    )
-    .err();
+    let mut update_err = update_ddl_job_2_table(&session, start_ts, &mut active.job, step.update_raw_args).err();
     tidb_failpoint::inject_call_ref::<AfterUpdateJobToTable>(
         "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable",
         |f| f(&active.job, &mut update_err),
@@ -3339,27 +3328,17 @@ pub(crate) use tidb_ddl_jobsubmit::wrap_key_2_string;
 /// row update, which the test may replace (Go `job, &err`).
 pub type AfterUpdateJobToTable = dyn Fn(&Job, &mut Option<DdlPlanError>) + Send + Sync;
 
-/// Go `updateDDLJob2Table`: `update mysql.tidb_ddl_job set job_meta = ...`
-/// through the step's session.
+/// Go `updateDDLJob2Table(ctx, w.sess, job, updateRawArgs)` on the step's
+/// session, opened at the step's start timestamp.
 fn update_ddl_job_2_table(
     session: &crate::job_txn::StepSession,
     start_ts: u64,
-    active: &mut tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
+    job: &mut Job,
     update_raw_args: bool,
 ) -> Result<(), DdlPlanError> {
-    let encoded = active
-        .job
-        .encode(update_raw_args)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-    let sql = format!(
-        "update mysql.tidb_ddl_job set job_meta = {} where job_id = {}",
-        wrap_key_2_string(&encoded),
-        active.job.id
-    );
-    session
-        .execute(start_ts, &sql, &[])
-        .map_err(DdlPlanError::from_mysql_error)?;
-    Ok(())
+    let se = session.sess(start_ts).map_err(DdlPlanError::from_mysql_error)?;
+    crate::ddl_job_scheduler::update_ddl_job_2_table(&se, job, update_raw_args)
+        .map_err(DdlPlanError::from_mysql_error)
 }
 
 // Go handleJobDone/finishDDLJob. Cancellation calls this in its current
@@ -3401,6 +3380,7 @@ fn finish_persisted_ddl_job(
                     "delete from mysql.table_cache_meta where tid = {}",
                     active.job.table_id
                 ),
+                "alter_table_nocache_cleanup",
                 &[],
             )
             .map_err(DdlPlanError::from_mysql_error)?;
@@ -3410,6 +3390,7 @@ fn finish_persisted_ddl_job(
         .execute(
             start_ts,
             &format!("delete from mysql.tidb_ddl_job where job_id = {}", active.job.id),
+            "delete_job",
             &[],
         )
         .map_err(DdlPlanError::from_mysql_error)?;
@@ -5067,7 +5048,7 @@ pub fn plan_persisted_ddl_job_failure(
         );
     }
     let mutations = Vec::new();
-    update_ddl_job_2_table(session, start_ts, &mut active, false)?;
+    update_ddl_job_2_table(session, start_ts, &mut active.job, false)?;
     Ok(PersistedDdlJobStep {
         job: Box::new(active.job.clone()),
         write: job_only_write(ddl_job_id, mutations),
@@ -5213,6 +5194,7 @@ impl MdlInfoUpdate {
             .execute(
                 start_ts,
                 &format!("select table_ids from mysql.tidb_ddl_job where job_id = {ddl_job_id}"),
+                "register-mdl-info",
                 &[],
             )
             .map_err(DdlPlanError::from_mysql_error)?;
@@ -5236,7 +5218,7 @@ impl MdlInfoUpdate {
             )
         };
         session
-            .execute(start_ts, &sql, &[])
+            .execute(start_ts, &sql, "register-mdl-info", &[])
             .map_err(DdlPlanError::from_mysql_error)?;
         Ok(())
     }
@@ -5739,7 +5721,7 @@ fn add_history_ddl_job(
             tidb_model::GoTime::from_tso(job.start_ts).unix_milli(),
         )),
     );
-    if let Err(error) = session.execute(start_ts, &sql, &[]) {
+    if let Err(error) = session.execute(start_ts, &sql, "insert_history", &[]) {
         tidb_ddl_logutil::ddl_logger().info(
             "failed to add DDL job to history table",
             &[tidb_log::Field::new(
@@ -6491,6 +6473,7 @@ fn append_schema_change_mutations(
             serde_json::to_vec(event).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
         txn.execute(
             &sql,
+            "ddl_notifier",
             &[
                 tidb_sqlescape::SqlArg::Signed(ddl_job_id),
                 tidb_sqlescape::SqlArg::Signed(*sub_job_id),

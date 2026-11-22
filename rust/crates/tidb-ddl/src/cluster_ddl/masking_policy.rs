@@ -130,9 +130,10 @@ fn masking_policy_job(
 fn execute(
     txn: &JobTxn<'_>,
     sql: &str,
+    label: &str,
     args: &[SqlArg<'_>],
 ) -> Result<Vec<Vec<Datum>>, MysqlError> {
-    txn.execute(sql, args)
+    txn.execute(sql, label, args)
 }
 
 /// Go `queryMaskingPoliciesFromSysTable`.
@@ -147,7 +148,7 @@ fn query_masking_policies_from_sys_table(
                 .gen_with_stack_by_args(&["mysql".into(), "tidb_masking_policy".into()]),
         ));
     }
-    let rows = execute(txn, &format!("{SELECT_MASKING_POLICY_SQL}{condition}"), args)?;
+    let rows = execute(txn, &format!("{SELECT_MASKING_POLICY_SQL}{condition}"), "query-masking-policy", args)?;
     rows.iter()
         .map(|row| masking_policy_from_sys_table_row(row).map_err(MysqlError::unknown))
         .collect()
@@ -299,6 +300,7 @@ fn insert_masking_policy_into_sys_table(
     execute(
         txn,
         INSERT_SQL,
+        "create-masking-policy",
         &[
             SqlArg::from(policy.name.original()),
             SqlArg::from(policy.db_name.original()),
@@ -315,7 +317,7 @@ fn insert_masking_policy_into_sys_table(
             SqlArg::from(policy.created_by.as_str()),
         ],
     )?;
-    let rows = execute(txn, "SELECT LAST_INSERT_ID()", &[])?;
+    let rows = execute(txn, "SELECT LAST_INSERT_ID()", "last-insert-id-masking-policy", &[])?;
     if rows.len() != 1 {
         return Err(MysqlError::unknown(format!(
             "unexpected last insert id row count: {}",
@@ -340,6 +342,7 @@ fn update_masking_policy_in_sys_table(
     execute(
         txn,
         UPDATE_SQL,
+        "update-masking-policy",
         &[
             SqlArg::from(policy.name.original()),
             SqlArg::from(policy.db_name.original()),
@@ -372,6 +375,7 @@ fn delete_masking_policy_from_sys_table(txn: &JobTxn<'_>, policy_id: i64) -> Res
     execute(
         txn,
         "DELETE FROM mysql.tidb_masking_policy WHERE policy_id = %?",
+        "drop-masking-policy",
         &[SqlArg::Signed(policy_id)],
     )?;
     Ok(())
@@ -427,6 +431,7 @@ pub(super) fn drop_masking_policies_by_db_name(
 ) -> Result<(), MysqlError> {
     match txn.execute(
         "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?",
+        "drop-masking-policies-by-db",
         &[SqlArg::from(db_name)],
     ) {
         Err(error) if error.code != tidb_errno::errcode::ErrNoSuchTable => Err(error),
@@ -454,6 +459,7 @@ pub(super) fn update_masking_policy_table_id_after_truncate(
         execute(
             txn,
             UPDATE_SQL,
+            "update-masking-policy-table-id",
             &[
                 SqlArg::Signed(new_table_id),
                 SqlArg::Time(Some(now)),
@@ -510,6 +516,7 @@ pub(super) fn update_masking_policy_names_after_rename(
         execute(
             txn,
             UPDATE_SQL,
+            "update-masking-policy-names",
             &[
                 SqlArg::from(new_db_name.original()),
                 SqlArg::from(new_table_name.original()),

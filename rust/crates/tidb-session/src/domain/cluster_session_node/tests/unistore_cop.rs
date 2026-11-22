@@ -27250,6 +27250,20 @@ fn flashback_database_brings_a_dropped_schema_back_as_go() {
 /// that buffer and vanish when it does not. The INSERT's presume-not-exist
 /// flag travels with the buffer, so a duplicate the optimistic statement did
 /// not check in place is refused at the step's commit.
+
+/// One statement on a DDL step session of its own (Go `w.sess.Execute` in
+/// the step's transaction), the session ended after it.
+fn exec_in_step_txn(
+    pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    start_ts: u64,
+    buffer: &tidb_store_driver_txn::cluster_storage::MutationBuffer,
+    sql: &str,
+    args: &[tidb_sqlescape::SqlArg<'_>],
+) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
+    let se = pool.open_step_session(start_ts, buffer)?;
+    tidb_ddl_build::session_pool::execute(&se, sql, "test", args)
+}
+
 #[test]
 fn a_step_session_statement_commits_with_its_step_as_go() {
     use tidb_ddl_build::session_pool::DdlSessionPool;
@@ -27272,7 +27286,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     // Staged, then dropped: nothing is published.
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
     let buffer = MutationBuffer::new();
-    pool.exec_in_step_txn(
+    exec_in_step_txn(&pool, 
         start_ts,
         &buffer,
         insert,
@@ -27287,7 +27301,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     // Staged, then committed with the step.
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
     let buffer = MutationBuffer::new();
-    pool.exec_in_step_txn(
+    exec_in_step_txn(&pool, 
         start_ts,
         &buffer,
         insert,
@@ -27306,7 +27320,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     // A delete staged by the step session commits with the step.
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
     let buffer = MutationBuffer::new();
-    pool.exec_in_step_txn(start_ts, &buffer, "DELETE FROM test.st WHERE a = 2", &[])
+    exec_in_step_txn(&pool, start_ts, &buffer, "DELETE FROM test.st WHERE a = 2", &[])
         .unwrap();
     assert!(!buffer.is_empty());
     domain
@@ -27314,7 +27328,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
         .commit(&buffer, Some(start_ts), "", options())
         .unwrap();
     assert_eq!(displayed(rows(&mut session, select)), [["1", "one"]]);
-    pool.exec_in_step_txn(
+    exec_in_step_txn(&pool, 
         domain.transactions.fresh_timestamp().unwrap(),
         &MutationBuffer::new(),
         "SELECT 1",
@@ -27323,7 +27337,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     .unwrap();
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
     let buffer = MutationBuffer::new();
-    pool.exec_in_step_txn(
+    exec_in_step_txn(&pool, 
         start_ts,
         &buffer,
         insert,
@@ -27339,7 +27353,7 @@ fn a_step_session_statement_commits_with_its_step_as_go() {
     // step commits it.
     let start_ts = domain.transactions.fresh_timestamp().unwrap();
     let buffer = MutationBuffer::new();
-    let staged = pool.exec_in_step_txn(
+    let staged = exec_in_step_txn(&pool, 
         start_ts,
         &buffer,
         insert,
@@ -27445,6 +27459,7 @@ fn a_step_sessions_statements_all_commit_with_the_step_as_go() {
             step.execute(
                 start_ts,
                 "INSERT INTO test.st2 VALUES (%?)",
+                "test",
                 &[tidb_sqlescape::SqlArg::Signed(a)],
             )
             .unwrap();

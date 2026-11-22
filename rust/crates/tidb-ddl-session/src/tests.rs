@@ -120,7 +120,38 @@ impl MockContext {
     }
 }
 
+impl tidb_sqlexec::SqlExecutor for MockContext {
+    fn execute(
+        &self,
+        _context: &dyn ExecutionContext,
+        sql: &str,
+    ) -> std::result::Result<Vec<Box<dyn RecordSet>>, tidb_sqlexec::SqlExecError> {
+        Err(std::io::Error::other(format!("unexpected SQL: {sql}")).into())
+    }
+
+    fn execute_internal(
+        &self,
+        context: &dyn ExecutionContext,
+        sql: &str,
+        arguments: &[SqlArg<'_>],
+    ) -> std::result::Result<Option<Box<dyn RecordSet>>, tidb_sqlexec::SqlExecError> {
+        <Self as SessionContext>::execute_internal(self, context, "ddl", sql, arguments)
+    }
+
+    fn execute_stmt(
+        &self,
+        _context: &dyn ExecutionContext,
+        _statement: &tidb_ast::Stmt,
+    ) -> std::result::Result<Option<Box<dyn RecordSet>>, tidb_sqlexec::SqlExecError> {
+        Err(std::io::Error::other("unexpected statement").into())
+    }
+}
+
 impl SessionContext for MockContext {
+    fn get_sql_executor(&self) -> &dyn tidb_sqlexec::SqlExecutor {
+        self
+    }
+
     fn new_txn(&self, _context: &dyn ExecutionContext) -> Result<()> {
         self.start();
         Ok(())

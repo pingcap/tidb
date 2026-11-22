@@ -451,7 +451,7 @@ fn refresh_mdl_check_table_info_on(
         tidb_txnkv::INTERNAL_TXN_META,
     );
     let mut execute = |sql: &str| {
-        tidb_sqlexec::execute_sql(&ctx, session.get_sql_executor(), sql, &[])
+        tidb_sqlexec::execute_sql(&ctx, session.session().get_sql_executor(), sql, &[])
             .map_err(|error| error.to_string())
     };
     execute("rollback")?;

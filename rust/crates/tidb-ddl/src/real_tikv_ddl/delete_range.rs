@@ -115,7 +115,7 @@ pub fn do_del_range_work<S>(
 where
     S: StoreClient,
 {
-    let mut sctx = sess_pool.open_sql_session().map_err(|error| {
+    let sctx = sess_pool.open_sql_session().map_err(|error| {
         log_error("delRange emulator get session failed", &error);
         DdlPlanError::from_mysql_error(error)
     })?;
@@ -124,13 +124,13 @@ where
         &tikv_client::trace::TraceContext::new(),
         tidb_txnkv::INTERNAL_TXN_DDL,
     );
-    let ranges = crate::ddl_delete_range::load_delete_ranges(&ctx, sctx.get_sql_executor(), i64::MAX as u64)
+    let ranges = crate::ddl_delete_range::load_delete_ranges(&ctx, sctx.session().get_sql_executor(), i64::MAX as u64)
         .map_err(|error| {
             log_error("delRange emulator load tasks failed", &error);
             DdlPlanError::from_mysql_error(error)
         })?;
     for r in &ranges {
-        if let Err(error) = do_task(opener, timeout, sctx.as_mut(), r) {
+        if let Err(error) = do_task(opener, timeout, &sctx, r) {
             log_error("delRange emulator do task failed", &error);
             return Err(error);
         }
@@ -142,7 +142,7 @@ where
 fn do_task<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    sctx: &mut dyn tidb_ddl_build::session_pool::StepSqlSession,
+    sctx: &tidb_ddl_session::DdlSession,
     task: &crate::ddl_delete_range::DelRangeTask,
 ) -> Result<(), ClusterDdlError>
 where
@@ -170,14 +170,14 @@ where
             Ok((Some(next), mutations))
         })?;
         let Some(next_start_key) = next_start_key else {
-            if let Err(error) = crate::ddl_delete_range::complete_delete_range(sctx.get_sql_executor(), task, true) {
+            if let Err(error) = crate::ddl_delete_range::complete_delete_range(sctx.session().get_sql_executor(), task, true) {
                 log_error("delRange emulator complete task failed", &error);
                 return Err(DdlPlanError::from_mysql_error(error).into());
             }
             return Ok(());
         };
         if let Err(error) = crate::ddl_delete_range::update_delete_range(
-            sctx.get_sql_executor(),
+            sctx.session().get_sql_executor(),
             task,
             &next_start_key,
             &old_start_key,

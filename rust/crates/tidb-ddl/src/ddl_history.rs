@@ -44,35 +44,6 @@ pub fn get_2_jobs_from_table(jobs: &[tidb_model::Job]) -> Vec<tidb_model::Job> {
     general.into_iter().chain(reorg).cloned().collect()
 }
 
-/// Go `getJobsBySQL`: the jobs of `mysql.tidb_ddl_job` matching
-/// `condition`, selected on `se`.
-///
-/// # Errors
-///
-/// The statement's error, or a job that does not decode.
-pub fn get_jobs_by_sql(
-    se: &tidb_ddl_systable::DdlSession,
-    condition: &str,
-) -> Result<Vec<tidb_model::Job>, String> {
-    let rows = se
-        .execute(
-            &tidb_sqlexec::BackgroundContext,
-            &format!("select job_meta from mysql.tidb_ddl_job where {condition}"),
-            "get_job",
-            &[],
-        )
-        .map_err(|error| error.to_string())?
-        .unwrap_or_default();
-    rows.iter()
-        .map(|row| {
-            let mut job = tidb_model::Job::default();
-            job.decode(row[0].go_bytes())
-                .map_err(|error| error.to_string())?;
-            Ok(job)
-        })
-        .collect()
-}
-
 /// Runs `read` on a session of the DDL's pool (Go `sess.NewSession` over a
 /// pooled context). An unavailable pool is an error, as with Go Pool.Get.
 pub fn with_pool_session<T>(
