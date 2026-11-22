@@ -1368,3 +1368,61 @@ Example `POST` response with `detail=1`:
   ]
 }
 ```
+
+
+## Active jobs across keyspaces
+
+`POST /keyspaces/jobs/active` counts DDL jobs in the queue and active IMPORT INTO
+jobs in a batch of user keyspaces. It is available only on a NextGen TiDB server
+running in the `SYSTEM` keyspace. Classic TiDB, user-keyspace servers, and
+diagnostic mode do not expose this endpoint.
+
+Send a JSON object with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `keyspaces` | Required array of 1 to 1,000 valid user-keyspace names. Duplicates count toward the limit and are checked once, in first-occurrence order. `SYSTEM` is not accepted. |
+| `concurrency` | Optional integer limiting simultaneous keyspace checks. Defaults to 1. Values below 1 become 1; values above the process's usable CPU count become that CPU count. |
+
+```shell
+curl -X POST 'http://{TiDBIP}:10080/keyspaces/jobs/active' \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspaces":["tenant_a","tenant_b"],"concurrency":2}'
+```
+
+Example HTTP 200 response:
+
+```json
+{
+  "keyspaces": [
+    {"keyspace": "tenant_a", "ddl_jobs": 2, "import_jobs": 1},
+    {"keyspace": "tenant_b", "error": "failed to check keyspace"}
+  ]
+}
+```
+
+Each successful result includes both counts, including zeros. An unsuccessful
+result contains `error` and omits both counts; successful results from other
+keyspaces are preserved. Results follow the input order after deduplication.
+The JSON request body can be up to 256 KiB, including whitespace. Split larger
+bodies or lists longer than 1,000 entries across requests. Oversized or
+malformed requests return HTTP 400 before any keyspace is checked. Methods
+other than POST return HTTP 405.
+
+DDL counts include every row in `mysql.tidb_ddl_job`. A job counts until DDL
+removes it from the queue during finalization, including while a job marked
+`done` awaits schema synchronization. IMPORT INTO counts include pending and
+running jobs in each user keyspace's import-job table. Pausing an underlying
+DXF task keeps its import job active. Finished, failed, and cancelled imports are
+excluded. Counts are observations made during the request, not a cluster-wide
+atomic snapshot.
+
+PD keyspace lookups, SQL queries, waits for another caller to open or close a
+runtime, and storage-open retry delays honor request cancellation. They share
+one two-minute timeout across the batch, subject to any earlier request deadline.
+Individual runtime and session initialization operations and teardown can take longer.
+The handler returns the borrowed session to the pool on success and discards it
+if a query fails, including during result-set cleanup. It then releases its
+runtime handle. If it was the last holder, the handler closes the runtime
+immediately. Other holders can continue using the shared runtime and release it
+under their usual policy.
