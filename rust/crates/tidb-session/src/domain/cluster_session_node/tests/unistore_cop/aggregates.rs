@@ -376,3 +376,68 @@ fn a_delivered_grouped_aggregate_matches_the_planned_statement() {
     answer.sort();
     assert_eq!(answer, [["10", "3"], ["20", "3"]]);
 }
+
+/// A grouped COUNT over a key prefix range: the cop partial StreamAgg counts,
+/// the root final StreamAgg carries the group key as `firstrow`, and a
+/// Projection restores the SELECT list.
+#[test]
+fn grouped_partial_count_carries_the_group_key() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 488);
+    rows(
+        &mut tk,
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, ol_number INT NOT NULL, PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+    );
+    rows(&mut tk, "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)");
+    let sql = "SELECT ol_d_id, COUNT(*) cn FROM order_line WHERE ol_w_id=1 GROUP BY ol_d_id";
+    assert_eq!(displayed(rows(&mut tk, sql)), [["1", "2"], ["2", "1"]]);
+    let plan = explain_brief(&mut tk, sql);
+    assert_eq!(
+        operators(&plan),
+        ["Projection", "└─StreamAgg", "  └─TableReader", "    └─StreamAgg", "      └─TableRangeScan"]
+    );
+    assert!(plan[0][4].starts_with("test.order_line.ol_d_id, Column#"), "{plan:?}");
+    assert!(plan[1][4].contains("funcs:count(Column#"), "{plan:?}");
+    assert!(plan[1][4].contains("funcs:firstrow(test.order_line.ol_d_id)"), "{plan:?}");
+    assert!(!plan[3][4].contains("firstrow"), "{plan:?}");
+}
+
+/// Go `buildSelect`: a derived table's ORDER BY is built only with a LIMIT,
+/// with `tidb_remove_orderby_in_subquery` off, or at the top level.
+#[test]
+fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 489);
+    rows(&mut tk, "CREATE TABLE s (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))");
+    rows(&mut tk, "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))");
+    let ops = |tk: &mut Session, sql: &str| -> Vec<String> {
+        explain_brief(tk, sql).into_iter().map(|row| row[0].clone()).collect()
+    };
+    let derived = "SELECT COUNT(*) FROM (SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY s.a + 0) d, t WHERE t.a = d.a";
+    let plan = ops(&mut tk, derived);
+    assert!(!plan.iter().any(|op| op.contains("Sort")), "{plan:?}");
+    let with_limit = "SELECT COUNT(*) FROM (SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY s.a + 0 LIMIT 3) d, t WHERE t.a = d.a";
+    let plan = ops(&mut tk, with_limit);
+    assert!(plan.iter().any(|op| op.contains("Sort") || op.contains("TopN")), "{plan:?}");
+    rows(&mut tk, "SET tidb_remove_orderby_in_subquery = OFF");
+    let plan = ops(&mut tk, derived);
+    assert!(plan.iter().any(|op| op.contains("Sort")), "{plan:?}");
+    rows(&mut tk, "SET tidb_remove_orderby_in_subquery = DEFAULT");
+    let plan = ops(&mut tk, "SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY SUM(s.b)");
+    assert!(plan.iter().any(|op| op.contains("Sort")), "{plan:?}");
+}
+
+/// A DISTINCT scalar subquery with a residual predicate explains as a root
+/// HashAgg over a Selection, and answers.
+#[test]
+fn explain_distinct_scalar_subquery_with_filter() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 490);
+    rows(&mut tk, "CREATE TABLE date_dim (d_month_seq BIGINT, d_year BIGINT, d_moy BIGINT)");
+    rows(&mut tk, "INSERT INTO date_dim VALUES (1201, 2000, 2), (1201, 2000, 2)");
+    let sql = "SELECT (SELECT DISTINCT d_month_seq FROM date_dim WHERE d_year = 2000 AND d_moy = 2)";
+    let plan = explain_brief(&mut tk, sql);
+    assert!(plan.iter().any(|row| row[0].contains("HashAgg")), "{plan:?}");
+    assert!(plan.iter().any(|row| row[0].contains("Selection")), "{plan:?}");
+    assert_eq!(displayed(rows(&mut tk, sql)), [["1201"]]);
+}

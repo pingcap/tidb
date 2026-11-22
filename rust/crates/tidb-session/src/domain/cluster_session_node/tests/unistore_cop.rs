@@ -29410,7 +29410,15 @@ fn explain_for_connection_renders_the_targets_runtime_stats_like_go() {
         "{}",
         plan[0][5]
     );
-    assert_eq!(plan[0][7], "272 Bytes");
+    // A reader's memory is the bytes of its coprocessor responses, which
+    // carry the store's execution times as varints (one byte longer once a
+    // duration crosses a power of 128): Go's recorded 272 bytes, give or take
+    // those bytes -- in Go too.
+    let reader_bytes: i64 = plan[0][7]
+        .strip_suffix(" Bytes")
+        .and_then(|bytes| bytes.parse().ok())
+        .unwrap_or_else(|| panic!("{}", plan[0][7]));
+    assert!((reader_bytes - 272).abs() <= 24, "{} vs Go 272 Bytes", plan[0][7]);
 }
 
 /// `tidb_enable_resource_control` reaches client-rust's resource-control
