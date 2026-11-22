@@ -246,6 +246,61 @@ func TestLimitCostFactorAtRootLimit(t *testing.T) {
 	require.InEpsilon(t, base*0.1, rootCost("0.1"), 0.01)
 }
 
+// TestTopNCostFactorAppliedOnce checks that tidb_opt_topn_cost_factor applies exactly once per
+// query TopN: at the root TopN, not again at the copy pushed down into the cop task. A TopN
+// derived from a window function has no root TopN, so its pushed-down copy keeps the factor.
+func TestTopNCostFactorAppliedOnce(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key (a), key(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@session.tidb_opt_derive_topn=1")
+
+	// costs returns the estCost of the root TopN (or -1 if none) and of the cop TopN.
+	costs := func(query, factor string) (root, cop float64) {
+		tk.MustExec("set @@session.tidb_opt_topn_cost_factor=" + factor)
+		rows := tk.MustQuery("explain format=verbose " + query).Rows()
+		root, cop = -1, -1
+		for _, row := range rows {
+			if !strings.Contains(row[0].(string), "TopN") {
+				continue
+			}
+			cost, err := strconv.ParseFloat(row[2].(string), 64)
+			require.NoError(t, err)
+			if row[3] == "root" {
+				root = cost
+			} else if strings.HasPrefix(row[3].(string), "cop") {
+				cop = cost
+			}
+		}
+		require.Positive(t, cop, "expected a pushed-down cop TopN: %v", rows)
+		return root, cop
+	}
+
+	// estCost is printed with two decimals, so compare with a tolerance that still tells a
+	// single application (10x) from a compounded one.
+	for _, query := range []string{
+		"select * from t ignore index(b) order by c limit 1",
+		"select b from t use index(b) where b > 3 order by c limit 1",
+	} {
+		baseRoot, baseCop := costs(query, "1")
+		require.Positive(t, baseRoot, "expected a root TopN for %s", query)
+		root, cop := costs(query, "10")
+		require.InEpsilon(t, baseRoot*10, root, 0.01, query)
+		require.InEpsilon(t, baseCop, cop, 0.01, query)
+		root, _ = costs(query, "0.1")
+		require.InEpsilon(t, baseRoot*0.1, root, 0.01, query)
+	}
+
+	const windowQuery = "select * from (select a, row_number() over (partition by a order by c) rn from t) x where rn <= 1"
+	baseRoot, baseCop := costs(windowQuery, "1")
+	require.Equal(t, float64(-1), baseRoot, "a derived TopN must not have a root TopN")
+	_, cop := costs(windowQuery, "10")
+	require.InEpsilon(t, baseCop*10, cop, 0.01)
+}
+
 func TestOptimizerCostFactors(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		store := tk.Session().GetStore()

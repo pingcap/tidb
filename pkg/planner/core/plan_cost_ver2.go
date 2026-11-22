@@ -600,9 +600,15 @@ func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, topNCPUCost, topNMemCost)
 	p.PlanCostInit = true
-	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
-	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
-	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTopNCostFactor)
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model.
+	// Apply it once per query TopN: attach2Task4PhysicalTopN keeps the original TopN at the root and
+	// pushes copies into cop/mpp tasks, and the root cost already includes the copies, so scaling the
+	// copies as well would compound the factor. A TopN derived from a window function (PARTITION BY)
+	// has no root TopN, so its pushed-down copy carries the factor instead.
+	if taskType == property.RootTaskType || len(p.GetPartitionBy()) > 0 {
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
+		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptTopNCostFactor)
+	}
 	return p.PlanCostVer2, nil
 }
 
