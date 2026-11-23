@@ -714,7 +714,11 @@ func snapshotJobStepState(job *model.Job) (restoreAll, restoreKV func()) {
 		}
 	}
 	restoreKV = func() {
-		job.SchemaState = schemaState
+		// ALTER SCHEMA READ ONLY records the attempted change in its schema
+		// state so cancellation can run the rollback even after a failed step.
+		if job.Type != model.ActionModifySchemaReadOnly {
+			job.SchemaState = schemaState
+		}
 		job.BinlogInfo = binlogInfo
 		job.ResumeReason = resumeReason
 		job.LastSchemaVersion = 0

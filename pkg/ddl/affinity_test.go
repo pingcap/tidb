@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -427,14 +428,40 @@ func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
 }
 
 func TestAffinityTruncatePartitionWithStaleIDs(t *testing.T) {
-	for _, partitionNames := range []string{"p0", "p0,p1"} {
-		t.Run(partitionNames, func(t *testing.T) {
+	cases := []struct {
+		name            string
+		partitionNames  string
+		withGlobalIndex bool
+	}{
+		{"p0", "p0", false},
+		{"p0,p1", "p0,p1", false},
+		{"p0/global_index", "p0", true},
+		{"p0,p1/global_index", "p0,p1", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := make(chan *notifier.SchemaChangeEvent, 2)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated", func(n *notifier.DDLNotifier) {
+				n.RegisterHandler(notifier.TestHandlerID, func(ctx context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+					if event.GetType() == model.ActionTruncateTablePartition {
+						select {
+						case events <- event:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+					return nil
+				})
+			})
 			s := newAffinityDDLTest(t)
-			s.tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
-			s.tk.MustExec("insert into p values (1),(11)")
+			s.tk.MustExec("create table p(a int, b int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			if tc.withGlobalIndex {
+				s.tk.MustExec("alter table p add unique index idx_b(b) global")
+			}
+			s.tk.MustExec("insert into p values (1,1),(11,11)")
 			before := s.tableInfo(t, "p")
 			oldIDs := []int64{before.Partition.Definitions[0].ID}
-			if partitionNames == "p0,p1" {
+			if tc.partitionNames == "p0,p1" {
 				oldIDs = append(oldIDs, before.Partition.Definitions[1].ID)
 			}
 			// Capture the same IDs a queued job would see before the first truncate.
@@ -444,25 +471,67 @@ func TestAffinityTruncatePartitionWithStaleIDs(t *testing.T) {
 			s.tk.MustExec("alter table p truncate partition p0")
 			afterFirst := s.persisted(t, before.ID)
 			require.NotEqual(t, oldIDs[0], afterFirst.Partition.Definitions[0].ID)
-			s.tk.MustExec("insert into p values (2)")
+			s.tk.MustExec("insert into p values (2,2)")
+
+			var writeOnlyTable atomic.Pointer[model.TableInfo]
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(runningJob *model.Job) {
+				if runningJob.Type != model.ActionTruncateTablePartition || runningJob.SchemaState != model.StateWriteOnly {
+					return
+				}
+				info, err := meta.NewReader(s.store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, before.ID)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				writeOnlyTable.Store(info)
+			})
 
 			se := s.tk.Session()
-			se.SetValue(sessionctx.QueryString, "alter table p truncate partition "+partitionNames)
+			se.SetValue(sessionctx.QueryString, "alter table p truncate partition "+tc.partitionNames)
 			exec := s.dom.DDLExecutor().(ddl.ExecutorForTest)
 			require.NoError(t, exec.DoDDLJobWrapper(se, ddl.NewJobWrapperWithArgs(job, args, false)))
+			require.Eventually(t, func() bool { return len(events) == 2 }, 10*time.Second, 10*time.Millisecond)
+			// Discard the notification for the first truncate, which made p0's queued ID stale.
+			<-events
+			eventTable, added, dropped := (<-events).GetTruncatePartitionInfo()
+			require.Equal(t, before.ID, eventTable.ID)
 			require.Len(t, args.NewPartitionIDs, len(oldIDs))
+			prepared := writeOnlyTable.Load()
+			require.NotNil(t, prepared)
+			require.ElementsMatch(t, args.NewPartitionIDs[1:], prepared.Partition.NewPartitionIDs)
 			staleGroup := ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, args.NewPartitionIDs[0])
 			_, created := s.cli.everCreated.Load(staleGroup)
 			require.False(t, created, "a replacement group must not be created for stale partition ID %d", oldIDs[0])
 
+			history, err := ddl.GetHistoryJobByID(se, job.ID)
+			require.NoError(t, err)
+			finishedArgs, err := model.GetFinishedTruncateTableArgs(history)
+			require.NoError(t, err)
+			diff, err := meta.NewReader(s.store.GetSnapshot(kv.MaxVersion)).GetSchemaDiff(history.BinlogInfo.SchemaVersion)
+			require.NoError(t, err)
+			require.NotNil(t, diff)
 			after := s.persisted(t, before.ID)
 			require.Equal(t, afterFirst.Partition.Definitions[0].ID, after.Partition.Definitions[0].ID)
 			if len(oldIDs) == 2 {
-				require.Equal(t, args.NewPartitionIDs[1], after.Partition.Definitions[1].ID)
-				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("2"))
+				newPartitionID := after.Partition.Definitions[1].ID
+				require.Equal(t, args.NewPartitionIDs[1], newPartitionID)
+				require.Len(t, added.Definitions, 1)
+				require.Len(t, dropped.Definitions, 1)
+				require.Equal(t, oldIDs[1], dropped.Definitions[0].ID)
+				require.Equal(t, newPartitionID, added.Definitions[0].ID)
+				require.Equal(t, oldIDs[1:], finishedArgs.OldPartitionIDs)
+				require.Equal(t, []*model.AffectedOption{{OldTableID: oldIDs[1], TableID: newPartitionID}}, diff.AffectedOpts)
+				s.tk.MustQuery("select a from p order by a").Check(testkit.Rows("2"))
 			} else {
+				require.Empty(t, added.Definitions)
+				require.Empty(t, dropped.Definitions)
+				require.Empty(t, finishedArgs.OldPartitionIDs)
+				require.Empty(t, diff.AffectedOpts)
 				require.Equal(t, afterFirst.Partition.Definitions[1].ID, after.Partition.Definitions[1].ID)
-				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("2", "11"))
+				s.tk.MustQuery("select a from p order by a").Check(testkit.Rows("2", "11"))
+			}
+			if tc.withGlobalIndex {
+				s.tk.MustExec("admin check table p")
 			}
 			requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, after), true, "the current partition groups must remain")
 		})

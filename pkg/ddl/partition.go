@@ -2738,28 +2738,20 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 	})
 
-	var oldDefinitions []model.PartitionDefinition
-	var newDefinitions []model.PartitionDefinition
-
 	switch job.SchemaState {
 	case model.StatePublic:
+		// A queued job can still reference partitions a previous DDL has replaced.
+		_, replacements := replaceTruncatePartitions(slices.Clone(pi.Definitions), oldIDs, newIDs)
 		// Prepare the replacement groups while cancellation is still safe.
 		// Publishing new partition IDs before this succeeds can lose data if a
 		// later PD failure cancels the job instead of finishing the truncate.
-		if tblInfo.Affinity != nil {
-			replacement := tblInfo.Clone()
-			_, replacements := replaceTruncatePartitions(replacement.Partition.Definitions, oldIDs, newIDs)
-			// A queued job can still reference partitions a previous DDL has replaced.
-			if len(replacements) > 0 {
-				if err = createTableAffinityGroupsInPD(jobCtx, replacement, replacements...); err != nil {
-					return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
-				}
+		if tblInfo.Affinity != nil && len(replacements) > 0 {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo, replacements...); err != nil {
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
 			}
 		}
-		// This work as a flag to ignore Global Index entries from the new partitions!
-		// Used in IDsInDDLToIgnore() for filtering new partitions from
-		// the global index
-		pi.NewPartitionIDs = newIDs[:]
+		// IDsInDDLToIgnore uses these IDs to filter global index entries.
+		pi.NewPartitionIDs = getPartitionIDsFromDefinitions(replacements)
 		pi.DDLAction = model.ActionTruncateTablePartition
 
 		job.SchemaState = model.StateWriteOnly
@@ -2767,21 +2759,23 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
-		oldDefinitions, newDefinitions = replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
-		if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
-			return ver, errors.Trace(err)
+		oldDefinitions, newDefinitions := replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
+		if len(newDefinitions) > 0 {
+			if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, getPartitionIDsFromDefinitions(oldDefinitions)); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = publishTruncatePartitionPlacementBundles(jobCtx.metaMut, tblInfo, oldDefinitions, newDefinitions); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if err = updateTruncatePartitionLabelRules(jobCtx, job, newDefinitions, tblInfo); err != nil {
+				return ver, errors.Trace(err)
+			}
+			var scatterScope string
+			if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+				scatterScope = val
+			}
+			preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
 		}
-		if err = publishTruncatePartitionPlacementBundles(jobCtx.metaMut, tblInfo, oldDefinitions, newDefinitions); err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = updateTruncatePartitionLabelRules(jobCtx, job, newDefinitions, tblInfo); err != nil {
-			return ver, errors.Trace(err)
-		}
-		var scatterScope string
-		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
@@ -2810,11 +2804,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// Now the old partitions are no longer accessible, but they are still referenced in
 		// the global indexes (although allowed to be overwritten).
 		// So time to clear them.
-
-		var done bool
-		done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, job, tblInfo, oldIDs)
-		if err != nil || !done {
-			return ver, errors.Trace(err)
+		oldDefinitions := pi.DroppingDefinitions
+		droppedIDs := getPartitionIDsFromDefinitions(oldDefinitions)
+		if len(droppedIDs) > 0 {
+			done, err := w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, job, tblInfo, droppedIDs)
+			if err != nil || !done {
+				return ver, errors.Trace(err)
+			}
 		}
 		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
 			if val.(bool) {
@@ -2823,13 +2819,16 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 				failpoint.Return(ver, err)
 			}
 		})
-		// For the truncatePartitionEvent
-		oldDefinitions = pi.DroppingDefinitions
-		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+		// DroppingDefinitions contains only the partitions replaced in StateWriteOnly.
+		// Recover their replacements by old ID because queued IDs can be stale.
+		newIDByOldID := make(map[int64]int64, len(oldIDs))
+		for i, oldID := range oldIDs {
+			newIDByOldID[oldID] = newIDs[i]
+		}
+		newDefinitions := make([]model.PartitionDefinition, len(oldDefinitions))
 		for i, def := range oldDefinitions {
-			newDef := def.Clone()
-			newDef.ID = newIDs[i]
-			newDefinitions = append(newDefinitions, newDef)
+			newDefinitions[i] = def.Clone()
+			newDefinitions[i].ID = newIDByOldID[def.ID]
 		}
 
 		pi.DroppingDefinitions = nil
@@ -2860,8 +2859,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 				failpoint.Return(ver, err)
 			}
 		})
-		// used by ApplyDiff in updateSchemaVersion
-		args.ShouldUpdateAffectedPartitions = true
+		// Use the matched pairs for the schema diff, keeping the queued arguments for retries.
+		jobCtx.jobArgs = &model.TruncateTableArgs{
+			OldPartitionIDs:                droppedIDs,
+			NewPartitionIDs:                getPartitionIDsFromDefinitions(newDefinitions),
+			ShouldUpdateAffectedPartitions: true,
+		}
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		accountPendingReorgRU(jobCtx, job, err)
 		if err != nil {
@@ -2880,7 +2883,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// A delete-range task will be enqueued when this DDL job finishes.
 		job.FillFinishedArgs(&model.TruncateTableArgs{
-			OldPartitionIDs: oldIDs,
+			OldPartitionIDs: droppedIDs,
 		})
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)

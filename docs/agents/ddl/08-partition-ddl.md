@@ -119,11 +119,14 @@ Key behaviors:
 - It replaces old partition IDs with new ones in table metadata:
   - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
 - During intermediate states, it sets flags to filter global index reads/writes correctly:
-  - `pi.NewPartitionIDs` and `pi.DroppingDefinitions` are used by global-index filtering logic (see comments near `onTruncateTablePartition`)
-- If global indexes exist, it reuses the same cleanup as drop-partition:
-  - `cleanGlobalIndexEntriesFromDroppedPartitions`
-- Job finishes and delete-range GC cleans old partition data:
-  - `pkg/ddl/delete_range.go` (`ActionTruncateTablePartition` cases)
+  - `pi.NewPartitionIDs` contains only matched replacement IDs.
+  - `pi.DroppingDefinitions` contains the old definitions that were replaced.
+- The job keeps the queued ID pairs for retries and cancellation. If none of the
+  old IDs still match, no partition is replaced and existing rows are preserved.
+- At finalization, `DroppingDefinitions` limits global-index cleanup, the schema
+  diff, and delete-range GC to the partitions this job replaced. The truncate
+  notification pairs each dropped definition with the replacement ID originally
+  assigned to its old ID.
 
 ## REORGANIZE PARTITION (`ActionReorganizePartition`)
 

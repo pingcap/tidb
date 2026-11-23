@@ -64,6 +64,10 @@ and durable `ReorgMeta` choices survive restoration. Storage-class history
 staging failures use the same snapshot when restoring their transaction
 checkpoint.
 
+`ALTER SCHEMA ... READ ONLY` retains its schema state after a failed step.
+The rollback handler uses `StatePendingReadOnly` to distinguish a job that
+attempted a metadata change from a job cancelled while queued.
+
 If a partition-affinity table has gained partitions since job submission,
 TRUNCATE TABLE first reserves the missing replacement IDs and persists them
 with the job in one transaction, before any external group creation. Retries
