@@ -628,6 +628,17 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+		if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		renewCtx, stopBarrierRenew, barrierRenewErr := startRecoverGCBarrierRenewer(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS)
+		defer stopBarrierRenew()
+		origStepCtx := jobCtx.stepCtx
+		jobCtx.stepCtx = renewCtx
+		defer func() {
+			jobCtx.stepCtx = origStepCtx
+		}()
 
 		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
@@ -637,14 +648,20 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			tables, err2 := snapMeta.ListTables(jobCtx.stepCtx, sid)
 			if err2 != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err2)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err2)
+			}
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
 			}
 			recoverTbls = make([]*model.RecoverTableInfo, 0, len(tables))
 			for _, tblInfo := range tables {
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
+				}
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err3)
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err3)
 				}
 				recoverTbls = append(recoverTbls, &model.RecoverTableInfo{
 					SchemaID:      sid,
@@ -660,55 +677,71 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 
 		if schemaInfo.Name.L != recoverSchemaInfo.OldSchemaName.L {
 			for _, recoverInfo := range recoverTbls {
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
+				}
 				if err = rewriteRecoveredViewSchema(recoverInfo.TableInfo, recoverSchemaInfo.OldSchemaName, schemaInfo.Name); err != nil {
 					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 				}
 			}
 		}
 
 		if schemaInfo.ReadOnly {
 			// Cluster membership may have changed since the job was submitted.
-			if err := checkSchemaReadOnlyCompatibility(jobCtx.stepCtx); err != nil {
+			if err = checkSchemaReadOnlyCompatibility(jobCtx.stepCtx); err != nil {
 				job.State = model.JobStateCancelled
-				return ver, err
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 			}
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = jobCtx.metaMut.CreateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// check GC safe point
 		err = checkSafePoint(w, recoverSchemaInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+
+		if err = w.removeRecoverSchemaGCDeleteRange(jobCtx, recoverSchemaInfo.DropJobID, recoverTbls); err != nil {
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 
 		for _, recoverInfo := range recoverTbls {
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
+			}
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 			}
 		}
 		if err = w.recoverSchemaMaterializedViewInfos(jobCtx, recoverTbls, recoverSchemaInfo.SnapshotTS); err != nil {
 			if dbterror.ErrInvalidDDLJob.Equal(err) {
 				job.State = model.JobStateCancelled
 			}
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
 		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, schemaInfo)
@@ -718,6 +751,35 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Errorf("invalid db state %v", schemaInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+// removeRecoverSchemaGCDeleteRange deletes gc_delete_range entries once per
+// shared DropJobID for the database recovery instead of repeating per table.
+func (w *worker) removeRecoverSchemaGCDeleteRange(
+	jobCtx *jobContext,
+	schemaDropJobID int64,
+	recoverTbls []*model.RecoverTableInfo,
+) error {
+	if schemaDropJobID != 0 {
+		return w.removeRecoverGCDeleteRange(jobCtx, schemaDropJobID)
+	}
+	if len(recoverTbls) == 0 {
+		return nil
+	}
+	seenDropJobIDs := make(map[int64]struct{}, 1)
+	for _, recoverInfo := range recoverTbls {
+		if recoverInfo.DropJobID == 0 {
+			continue
+		}
+		if _, ok := seenDropJobIDs[recoverInfo.DropJobID]; ok {
+			continue
+		}
+		seenDropJobIDs[recoverInfo.DropJobID] = struct{}{}
+		if err := w.removeRecoverGCDeleteRange(jobCtx, recoverInfo.DropJobID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *worker) dropSchemaTTLTablesFromExternalWorkload(

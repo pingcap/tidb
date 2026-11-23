@@ -36,6 +36,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//clients/gc",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],

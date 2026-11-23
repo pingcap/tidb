@@ -47,6 +47,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
 func TestRecoverTable(t *testing.T) {
@@ -936,10 +937,13 @@ func TestFlashbackReadOnlySchemaCompatibility(t *testing.T) {
 	snapshot, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	require.NoError(t, err)
 	tk.MustExec("drop database flashback_source")
-	recovery := func(readOnly bool, ts uint64) *model.RecoverSchemaInfo {
+	pdStore, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	gcStates := pdStore.GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
+	readOnlyRecovery := func() *model.RecoverSchemaInfo {
 		db := source.Clone()
-		db.ReadOnly = readOnly
-		return &model.RecoverSchemaInfo{DBInfo: db, OldSchemaName: source.Name, SnapshotTS: ts}
+		db.ReadOnly = true
+		return &model.RecoverSchemaInfo{DBInfo: db, OldSchemaName: source.Name, SnapshotTS: snapshot.Ver}
 	}
 
 	const serverInfo = "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"
@@ -959,15 +963,18 @@ func TestFlashbackReadOnlySchemaCompatibility(t *testing.T) {
 					testfailpoint.Enable(t, serverInfo, mixed)
 				}
 			})
-			// An expired snapshot keeps this fixture from publishing metadata even
-			// if the compatibility check is missing.
-			err := dom.DDLExecutor().RecoverSchema(tk.Session(), recovery(true, 1))
+			err := dom.DDLExecutor().RecoverSchema(tk.Session(), readOnlyRecovery())
 			require.ErrorContains(t, err, "do not support database read-only mode")
 			require.Equal(t, stage == "publication", reachedOwner.Load())
 			require.False(t, dom.InfoSchema().SchemaExists(source.Name))
 			enabled, err := gcutil.CheckGCEnable(tk.Session())
 			require.NoError(t, err)
 			require.True(t, enabled)
+			state, err := gcStates.GetGCState(t.Context(), pdgc.ExcludeGCBarriers(false))
+			require.NoError(t, err)
+			barriers, err := state.GetGCBarriers()
+			require.NoError(t, err)
+			require.Empty(t, barriers)
 		})
 	}
 
@@ -979,7 +986,7 @@ func TestFlashbackReadOnlySchemaCompatibility(t *testing.T) {
 		require.False(t, db.ReadOnly)
 		tk.MustExec("drop database flashback_source")
 	})
-	require.NoError(t, dom.DDLExecutor().RecoverSchema(tk.Session(), recovery(true, snapshot.Ver)))
+	require.NoError(t, dom.DDLExecutor().RecoverSchema(tk.Session(), readOnlyRecovery()))
 	db, ok := dom.InfoSchema().SchemaByName(source.Name)
 	require.True(t, ok)
 	require.True(t, db.ReadOnly)
