@@ -1029,6 +1029,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
             max_allowed_packet,
             tls,
             server_port: None,
+            client_registration: None,
         },
     )
 }
@@ -1086,6 +1087,9 @@ pub(crate) struct MysqlConnectionRuntime<'a> {
     pub(crate) server_port: Option<u16>,
     pub(crate) max_allowed_packet: usize,
     pub(crate) tls: Option<&'a MysqlServerTls>,
+    /// The connection's entry in the server's drained and killed clients
+    /// (Go `s.clients`), which the connection leaves as it closes.
+    pub(crate) client_registration: Option<crate::sql_node::ActiveSocketRegistration>,
 }
 
 /// What Go `checkAuthPlugin` does with the connection after reading the
@@ -1282,7 +1286,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
-    runtime: MysqlConnectionRuntime<'_>,
+    mut runtime: MysqlConnectionRuntime<'_>,
     commands: &mut ConnectionCommandCounts,
     command_limiter: &CommandLimiter,
     user_resource: &crate::user_connections::UserResource,
@@ -1961,6 +1965,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         reader,
         output,
         close,
+        client_registration: runtime.client_registration.take(),
     }
     .run(CommandContext {
         connection_id,
@@ -2046,6 +2051,8 @@ struct CommandConnection<S: QuerySession> {
     reader: PacketIoReader<BufReader<ClientStream>>,
     output: PacketIoWriter<ClientErrorRecordingOutput<ClientStream>>,
     close: ConnectionClose,
+    /// Go `s.clients[cc.connectionID]`, deleted by `clientConn.Close`.
+    client_registration: Option<crate::sql_node::ActiveSocketRegistration>,
 }
 
 struct CommandContext<'a, S: QuerySession> {
@@ -2299,8 +2306,12 @@ impl<S: QuerySession> CommandConnection<S> {
 
 impl<S: QuerySession> Drop for CommandConnection<S> {
     fn drop(&mut self) {
-        // Go closeConn closes transport before statements/session. Shutdown
-        // also retires retained raw clones (KILL handles and test/session refs).
+        // Go `clientConn.Close`: the connection leaves `s.clients` first, so
+        // a drain or `KillAllConnections` after its transport closed no longer
+        // reaches it. Then closeConn closes transport before
+        // statements/session. Shutdown also retires retained raw clones (KILL
+        // handles and test/session refs).
+        drop(self.client_registration.take());
         self.close.request();
     }
 }
@@ -2333,6 +2344,7 @@ fn run_connection_commands<S: QuerySession>(
         reader,
         output,
         close,
+        client_registration: _,
     } = connection;
     let CommandContext {
         connection_id,

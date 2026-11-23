@@ -460,7 +460,7 @@ struct ActiveSocket {
     cancellation: ConnectionCancellation,
 }
 
-struct ActiveSocketRegistration {
+pub(crate) struct ActiveSocketRegistration {
     key: u64,
     sockets: Arc<ActiveSockets>,
 }
@@ -1228,7 +1228,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
         stream,
         peer_addr,
         cancellation,
-        registration: _registration,
+        registration,
     } = work;
     let tls = connection
         .tls
@@ -1245,6 +1245,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
             server_port: Some(connection.server_port),
             max_allowed_packet: connection.max_allowed_packet,
             tls: tls.as_ref(),
+            client_registration: Some(registration),
         },
     ) {
         log_connection_error(&error, peer_addr);
