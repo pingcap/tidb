@@ -224,14 +224,15 @@ type baseAggFunc struct {
 }
 
 func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
-	return 0, nil
+	panic("Not implemented")
 }
 
 func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SerializeHelper) {
+	panic("Not implemented")
 }
 
 func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
+	panic("Not implemented")
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
