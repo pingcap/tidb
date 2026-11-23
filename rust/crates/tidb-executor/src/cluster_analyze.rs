@@ -79,7 +79,7 @@ pub enum AnalyzeError {
 
 impl AnalyzeError {
     /// A table shape whose statistics this node does not produce.
-    fn unsupported(detail: String) -> Self {
+    pub(crate) fn unsupported(detail: String) -> Self {
         Self::Compute(ComputeError::Unsupported(detail))
     }
 }
@@ -211,19 +211,35 @@ pub(crate) fn analyze_independent_index_with_progress<S>(
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
 {
-    let (built, count) = sampling::collect_index_stats(
+    let error = |e: String| AnalyzeError::unsupported(e);
+    let num_buckets = usize::try_from(options.num_buckets).map_err(|_| error("invalid ANALYZE bucket count".to_owned()))?;
+    let num_topn = u32::try_from(options.num_topn).map_err(|_| error("invalid ANALYZE TopN count".to_owned()))?;
+    let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
+    let _cancel_guard = sampling::SamplingCancellation::start(killer, cancellation.clone())?;
+    // Go `buildAnalyzeIndexPushdown`.
+    let exec = crate::analyze_idx::AnalyzeIndexExec {
         opener,
         physical_id,
-        index,
-        statement,
-        options,
-        version,
+        index_id: index.id,
+        num_columns: index.columns.len(),
+        is_common_handle_primary: false,
+        analyze_pb: crate::analyze_idx::analyze_index_req(
+            index.columns.len(),
+            options.num_buckets as i64,
+            num_topn,
+            statement.eval_context.push_down_flags(),
+            statement.eval_context.session_zone().dag_zone().1,
+        ),
+        num_buckets,
+        num_topn,
         concurrency,
+        snapshot: version,
+        analyze_snapshot: statement.analyze_snapshot,
         timeout,
-        killer,
+        cancellation,
         resource_group,
-        progress,
-    )?;
+    };
+    let (built, count) = exec.analyze_index_pushdown(progress)?;
     Ok(AnalyzeReport {
         stats: ClusterTableStats {
             table_id: physical_id,

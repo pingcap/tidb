@@ -725,3 +725,22 @@ fn test_analyze_sampling_work_panic() {
     );
     session.node_conn().execute_write("analyze table t").expect_err("a merge worker panics");
 }
+
+/// Go `TestFailedAnalyzeRequestV2`.
+#[test]
+fn test_failed_analyze_request_v2() {
+    let (_stack, _users, mut session) = stack_and_session(414);
+    rows(&mut session, "set @@tidb_analyze_version = 2");
+    rows(
+        &mut session,
+        "create table t(
+		a int,
+		b varchar(20),
+		index idx_b (b(3)) global
+	) partition by hash(a) partitions 2",
+    );
+    rows(&mut session, "insert into t values (1, 'abc'), (2, 'abd')");
+    let _fail = tidb_failpoint::enable_for_test("github.com/pingcap/tidb/pkg/executor/buildStatsFromResult", "return(true)");
+    let error = session.node_conn().execute_write("analyze table t index idx_b").expect_err("the index request fails");
+    assert_eq!(error.message, "mock buildStatsFromResult error");
+}

@@ -11,8 +11,8 @@
       "id": "R03",
       "status": "partial",
       "group": "Statistics",
-      "finding": "ANALYZE is not fully in Go's shape. The planner's `buildAnalyze*` / `getMustAnalyzedColumns` / `genV2AnalyzeOptions` still run at execution time in `real_tikv_analyze.rs` (`resolve_cluster_analyze_statement`, over a fresh TiKV catalog snapshot), and `analyze_idx.go`'s `AnalyzeIndexExec` (`buildStats`, `fetchAnalyzeResult`, `buildStatsFromResult`) is folded into `cluster_analyze/sampling.rs`'s `collect_index_stats`. Done: globalstats (`tidb-stats-handle-globalstats/src/global_stats.rs`), `AnalyzeExec.Next` (`analyze_exec_next`, `analyze_worker.rs`, `analyze_global_stats.rs`), and `buildSamplingStats`' `readDataAndSendTask` / `subMergeWorker` / `subBuildWorker` / `handleNDVForSpecialIndexes`.",
-      "rust_evidence": "`tidb-executor/src/real_tikv_analyze.rs`, `analyze.rs`, `cluster_analyze.rs`, `cluster_analyze/sampling.rs`, `analyze/exec.rs`",
+      "finding": "ANALYZE's planning is not in Go's shape: the planner's `buildAnalyze*` / `getMustAnalyzedColumns` / `genV2AnalyzeOptions` / `getSavedAnalyzeOpts` and the executor builder's `buildAnalyzeSamplingPushdown` (sample rate) still run at execution time in `real_tikv_analyze.rs` (`resolve_cluster_analyze_statement`, over a fresh TiKV catalog snapshot) instead of building `core.Analyze` at compile time. Done: globalstats, `AnalyzeExec.Next` (`analyze_exec_next`, `analyze_worker.rs`, `analyze_global_stats.rs`), `buildSamplingStats`' workers, and `analyze_idx.rs`'s `AnalyzeIndexExec`.",
+      "rust_evidence": "`tidb-executor/src/real_tikv_analyze.rs` (`resolve_cluster_analyze_statement`, `select_index_tasks`, `final_column_choice`, `selected_columns`, `get_saved_analyze_opts`), `analyze.rs` (`lower_analyze_admin`, `resolve_analyze_options`)",
       "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/executor/builder.go` (`buildAnalyze*`)"
     }
   ],

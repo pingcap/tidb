@@ -379,13 +379,13 @@ pub(crate) fn adaptive_anlayze_dist_sql_concurrency(
     }
 }
 
-struct SamplingCancellation {
+pub(crate) struct SamplingCancellation {
     done: crossbeam_channel::Sender<()>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SamplingCancellation {
-    fn start(
+    pub(crate) fn start(
         killer: &tidb_sqlkiller::SqlKiller,
         cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     ) -> Result<Self, AnalyzeError> {
@@ -561,18 +561,29 @@ where
                     let (position, index) = special_indexes[task];
                     let primary = table.is_common_handle
                         && table.get_primary_key().is_some_and(|primary| primary.read().id == index.id);
-                    match collect_index_ndv(
+                    // Go `buildSubIndexJobForSpecialIndex`.
+                    let exec = crate::analyze_idx::AnalyzeIndexExec {
                         opener,
                         physical_id,
-                        index,
-                        primary,
-                        statement,
-                        snapshot,
+                        index_id: index.id,
+                        num_columns: index.column_positions.len(),
+                        is_common_handle_primary: primary,
+                        analyze_pb: crate::analyze_idx::analyze_index_ndv_req(
+                            index.column_positions.len(),
+                            primary,
+                            statement.eval_context.push_down_flags(),
+                            statement.eval_context.session_zone().dag_zone().1,
+                        ),
+                        num_buckets: 1,
+                        num_topn: 0,
                         concurrency,
+                        snapshot,
+                        analyze_snapshot: statement.analyze_snapshot,
                         timeout,
-                        cancellation.clone(),
+                        cancellation: cancellation.clone(),
                         resource_group,
-                    ) {
+                    };
+                    match exec.analyze_index_ndv_push_down() {
                         Ok((null_count, sketch)) => results
                             .lock()
                             .expect("special index NDV results")
@@ -632,7 +643,7 @@ pub(super) fn index_requires_ndv_scan(
         })
 }
 
-fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_txnkv::IsolationLevel) {
+pub(crate) fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_txnkv::IsolationLevel) {
     if snapshot_enabled {
         (snapshot, tidb_txnkv::IsolationLevel::Snapshot)
     } else {
@@ -879,288 +890,10 @@ fn sub_merge_worker(
     Ok(ret_collector)
 }
 
-/// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
-/// column's NULL range has a separate histogram and never enters its sketch.
-/// Go `analyzeIndexNDVPushDown`'s and `analyzeIndexPushdown`'s key ranges, encoded as `EncodeIndexKey`
-/// does (`[low, PrefixNext(high))` for an inclusive high): a single-column
-/// index reads `FullNotNullRange` -- `[MinNotNull, MaxValue]`, the codec's
-/// `bytesFlag` (1) through `maxFlag` (250) -- and then `NullRange`
-/// (`[NULL, NULL]`, `NilFlag` 0) for its NULL count (`AnalyzeIndexExec.open`);
-/// any other index reads `FullRange`, `[NULL, MaxValue]`. Each entry is
-/// `(is_null_range, start, end)` in Go's request order.
-fn index_ndv_key_ranges(prefix: &[u8], single_column: bool) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
-    const NIL_FLAG: u8 = 0;
-    const BYTES_FLAG: u8 = 1;
-    const MAX_FLAG: u8 = 250;
-    let key = |flag: u8| [prefix, &[flag]].concat();
-    if single_column {
-        vec![
-            (false, key(BYTES_FLAG), key(MAX_FLAG + 1)),
-            (true, key(NIL_FLAG), key(NIL_FLAG + 1)),
-        ]
-    } else {
-        vec![(false, key(NIL_FLAG), key(MAX_FLAG + 1))]
-    }
-}
-
-fn collect_index_ndv<S>(
-    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-    physical_id: i64,
-    index: &crate::analyze::AnalyzedIndex,
-    common_handle: bool,
-    statement: &super::AnalyzeStatement,
-    snapshot: u64,
-    concurrency: u64,
-    timeout: std::time::Duration,
-    cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
-    resource_group: &str,
-) -> Result<(i64, tidb_stats::FmSketch), AnalyzeError>
-where
-    S: tidb_store_driver_txn::transaction::StoreClient,
-{
-    use prost::Message;
-    let error = |e: String| AnalyzeError::unsupported(e);
-    let prefix = if common_handle {
-        tidb_tablecodec::table_key::gen_table_record_prefix(physical_id)
-    } else {
-        tidb_tablecodec::table_key::encode_index_seek_key(physical_id, index.id, &[])
-    };
-    let ranges = index_ndv_key_ranges(&prefix, index.column_positions.len() == 1);
-    let request = tipb::AnalyzeReq {
-        tp: Some(if common_handle {
-            tipb::AnalyzeType::TypeCommonHandle
-        } else {
-            tipb::AnalyzeType::TypeIndex
-        } as i32),
-        flags: Some(statement.eval_context.push_down_flags()),
-        time_zone_offset: Some(statement.eval_context.session_zone().dag_zone().1),
-        idx_req: Some(tipb::AnalyzeIndexReq {
-            bucket_size: Some(1),
-            num_columns: Some(index.column_positions.len() as i32),
-            cmsketch_depth: Some(0),
-            cmsketch_width: Some(0),
-            top_n_size: Some(0),
-            version: Some(2),
-            sketch_size: Some(tidb_stats::MAX_SKETCH_SIZE as i64),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let transport = native_transport(opener, timeout).map_err(error)?;
-    let mut runtime = tidb_distsql::InjectedQueryRuntime::new(transport);
-    let (read_ts, isolation) = read_policy(statement.analyze_snapshot, snapshot);
-    let mut sketch = tidb_stats::FmSketch::new(tidb_stats::MAX_SKETCH_SIZE);
-    let mut null_count = 0;
-    for (is_null, start, end) in ranges {
-        let mut builder = tidb_distsql::RequestBuilder::new();
-        builder
-            .set_analyze_request(request.encode_to_vec(), isolation)
-            .set_paging(false)
-            .set_start_ts(read_ts)
-            .set_keep_order(true)
-            .set_non_partitioned_key_ranges(vec![tidb_txnkv::KeyRange {
-                start_key: start.into(),
-                end_key: end.into(),
-            }])
-            .set_concurrency(concurrency)
-            .set_resource_group_name(resource_group);
-        let transport_request = builder
-            .build_transport_request(cancellation.clone())
-            .map_err(|e| error(format!("{e:?}")))?;
-        let mut result = runtime
-            .analyze(&transport_request, true)
-            .map_err(|e| error(e.to_string()))?;
-        let outcome: Result<(), AnalyzeError> = (|| {
-            while let Some(bytes) = result.next_raw().map_err(|e| error(e.to_string()))? {
-                let response = tipb::AnalyzeIndexResp::decode(bytes.as_slice())
-                    .map_err(|e| error(e.to_string()))?;
-                if is_null {
-                    null_count += response
-                        .hist
-                        .as_ref()
-                        .and_then(|hist| hist.buckets.last())
-                        .map_or(0, |bucket| bucket.count());
-                } else {
-                    let fm = response
-                        .collector
-                        .and_then(|collector| collector.fm_sketch)
-                        .ok_or_else(|| {
-                            error("TiKV index ANALYZE response has no FM sketch".to_owned())
-                        })?;
-                    sketch.merge(&tidb_stats::FmSketch::from_raw_parts(
-                        fm.mask.unwrap_or_default(),
-                        tidb_stats::MAX_SKETCH_SIZE,
-                        fm.hashset,
-                    ));
-                }
-            }
-            Ok(())
-        })();
-        let _ = result.close();
-        outcome?;
-    }
-    Ok((null_count, sketch))
-}
-
-/// Go `analyzeIndexPushdown` for one physical table's keys of an index
-/// (`buildAnalyzeIndexPushdown`'s `AnalyzeIndexReq`, `AnalyzeIndexExec.buildStats`):
-/// the store summarizes each region's keys; TiDB merges the responses
-/// (`updateIndexResult`) and takes a single-column index's NULL count from a
-/// second request over the NULL range. Returns the index's histogram, TopN
-/// and FMSketch with the row count Go reports.
-pub(crate) fn collect_index_stats<S>(
-    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
-    physical_id: i64,
-    index: &tidb_model::index::IndexInfo,
-    statement: &super::AnalyzeStatement,
-    options: &crate::analyze::AnalyzeOptions,
-    snapshot: u64,
-    concurrency: u64,
-    timeout: std::time::Duration,
-    killer: &tidb_sqlkiller::SqlKiller,
-    resource_group: &str,
-    progress: &dyn Fn(i64),
-) -> Result<(tidb_stats::AnalyzeIndexStatistics, i64), AnalyzeError>
-where
-    S: tidb_store_driver_txn::transaction::StoreClient,
-{
-    use prost::Message;
-    let error = |e: String| AnalyzeError::unsupported(e);
-    let num_buckets = usize::try_from(options.num_buckets).map_err(|_| error("invalid ANALYZE bucket count".to_owned()))?;
-    let num_topn = u32::try_from(options.num_topn).map_err(|_| error("invalid ANALYZE TopN count".to_owned()))?;
-    let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
-    let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
-    let prefix = tidb_tablecodec::table_key::encode_index_seek_key(physical_id, index.id, &[]);
-    let ranges = index_ndv_key_ranges(&prefix, index.columns.len() == 1);
-    let request = tipb::AnalyzeReq {
-        tp: Some(tipb::AnalyzeType::TypeIndex as i32),
-        flags: Some(statement.eval_context.push_down_flags()),
-        time_zone_offset: Some(statement.eval_context.session_zone().dag_zone().1),
-        idx_req: Some(tipb::AnalyzeIndexReq {
-            bucket_size: Some(options.num_buckets as i64),
-            num_columns: Some(index.columns.len() as i32),
-            top_n_size: Some(num_topn as i32),
-            version: Some(2),
-            sketch_size: Some(tidb_stats::MAX_SKETCH_SIZE as i64),
-            cmsketch_depth: Some(tidb_stats::DEFAULT_INDEX_CMS_DEPTH as i32),
-            cmsketch_width: Some(tidb_stats::DEFAULT_INDEX_CMS_WIDTH as i32),
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let transport = native_transport(opener, timeout).map_err(error)?;
-    let mut runtime = tidb_distsql::InjectedQueryRuntime::new(transport);
-    let (read_ts, isolation) = read_policy(statement.analyze_snapshot, snapshot);
-    let mut built = None;
-    let mut null_count = 0;
-    for (is_null, start, end) in ranges {
-        let mut result = tidb_stats::AnalyzeIndexResult::new(
-            !is_null,
-            tidb_stats::DEFAULT_INDEX_CMS_DEPTH,
-            tidb_stats::DEFAULT_INDEX_CMS_WIDTH,
-            num_buckets,
-            num_topn,
-        );
-        let mut builder = tidb_distsql::RequestBuilder::new();
-        builder
-            .set_analyze_request(request.encode_to_vec(), isolation)
-            .set_paging(false)
-            .set_start_ts(read_ts)
-            .set_keep_order(true)
-            .set_non_partitioned_key_ranges(vec![tidb_txnkv::KeyRange {
-                start_key: start.into(),
-                end_key: end.into(),
-            }])
-            .set_concurrency(concurrency)
-            .set_resource_group_name(resource_group);
-        let transport_request = builder
-            .build_transport_request(cancellation.clone())
-            .map_err(|e| error(format!("{e:?}")))?;
-        let mut stream = runtime
-            .analyze(&transport_request, true)
-            .map_err(|e| error(e.to_string()))?;
-        let outcome: Result<(), AnalyzeError> = (|| {
-            while let Some(bytes) = stream.next_raw().map_err(|e| error(e.to_string()))? {
-                let response = tipb::AnalyzeIndexResp::decode(bytes.as_slice())
-                    .map_err(|e| error(e.to_string()))?;
-                let histogram = histogram_from_proto(response.hist.as_ref());
-                progress(histogram.buckets.last().map_or(0, |bucket| bucket.count));
-                let cms_and_topn = response
-                    .cms
-                    .map(|cms| tidb_stats::decode_cmsketch_and_embedded_topn(&cms.encode_to_vec()))
-                    .transpose()
-                    .map_err(|e| error(format!("{e:?}")))?;
-                let fm_sketch = response.collector.and_then(|collector| collector.fm_sketch).map(|fm| {
-                    tidb_stats::FmSketch::from_raw_parts(fm.mask.unwrap_or_default(), tidb_stats::MAX_SKETCH_SIZE, fm.hashset)
-                });
-                result.update(histogram, cms_and_topn, fm_sketch).map_err(|e| error(e.to_string()))?;
-            }
-            Ok(())
-        })();
-        let _ = stream.close();
-        outcome?;
-        let finished = result.finish().map_err(|e| error(e.to_string()))?;
-        if is_null {
-            null_count = finished.histogram.buckets.last().map_or(0, |bucket| bucket.count);
-        } else {
-            built = Some(finished);
-        }
-    }
-    let mut built = built.ok_or_else(|| error("index ANALYZE read no distribution range".to_owned()))?;
-    built.histogram.id = index.id;
-    built.histogram.null_count = null_count;
-    // Go `analyzeIndexPushdown`'s `Count`.
-    let count = null_count
-        .wrapping_add(built.histogram.buckets.last().map_or(0, |bucket| bucket.count))
-        .wrapping_add(built.topn.as_ref().map_or(0, |topn| topn.total_count() as i64));
-    Ok((built, count))
-}
-
-/// Go `statistics.HistogramFromProto`: BLOB bounds, each bucket's NDV when
-/// the store sent one.
-fn histogram_from_proto(proto: Option<&tipb::Histogram>) -> tidb_stats::Histogram {
-    let empty = tipb::Histogram::default();
-    let proto = proto.unwrap_or(&empty);
-    let mut histogram = tidb_stats::Histogram::new(
-        0,
-        proto.ndv(),
-        0,
-        0,
-        &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Blob),
-        proto.buckets.len(),
-        0,
-    );
-    for bucket in &proto.buckets {
-        let lower = tidb_datatype::Datum::Bytes(bucket.lower_bound().to_vec());
-        let upper = tidb_datatype::Datum::Bytes(bucket.upper_bound().to_vec());
-        match bucket.ndv {
-            Some(ndv) => histogram.append_bucket_with_ndv(lower, upper, bucket.count(), bucket.repeats(), ndv),
-            None => histogram.append_bucket(lower, upper, bucket.count(), bucket.repeats()),
-        }
-    }
-    histogram
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Go `EncodeIndexKey` over `FullNotNullRange`/`NullRange` (single
-    /// column) and `FullRange`: the high bound is `PrefixNext` of the
-    /// `maxFlag` byte, `prefix\xfb`, never `PrefixNext(prefix)`.
-    #[test]
-    fn index_ndv_key_ranges_match_go_encode_index_key() {
-        let prefix = b"t\x80\x00\x00\x00\x00\x00\x00\x01_i\x80\x00\x00\x00\x00\x00\x00\x02";
-        let key = |flag: u8| [&prefix[..], &[flag]].concat();
-        assert_eq!(
-            super::index_ndv_key_ranges(prefix, true),
-            vec![(false, key(0x01), key(0xfb)), (true, key(0x00), key(0x01))]
-        );
-        assert_eq!(
-            super::index_ndv_key_ranges(prefix, false),
-            vec![(false, key(0x00), key(0xfb))]
-        );
-    }
-
     /// Go `buildResp`'s `SetStoreBatchSize(AnalyzeStoreBatchSize)`,
     /// `SetAllowBatchTaskDataMerge` and `SetExecuteBatchTasksSerially`, both
     /// true exactly when the size is positive.
@@ -1298,7 +1031,7 @@ mod tests {
 /// Go's ANALYZE sends its sampling and index requests through the store's
 /// coprocessor client (`copr.CopClient` over the `KVStore`): here the node's
 /// client-rust store, which the opener carries.
-fn native_transport<S: tidb_store_driver_txn::transaction::StoreClient>(
+pub(crate) fn native_transport<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
 ) -> Result<
