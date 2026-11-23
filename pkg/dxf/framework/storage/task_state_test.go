@@ -15,10 +15,12 @@
 package storage_test
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -433,11 +435,13 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 		pausedID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePaused, "test", 1)
 		runningID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStateRunning, "test", 1)
 
+		// CancelTask persists cancelling first without cascading subtask updates in the same txn.
 		require.NoError(t, gm.CancelTask(ctx, id))
 		task, err := gm.GetTaskByID(ctx, id)
 		require.NoError(t, err)
 		require.Equal(t, proto.TaskStateCancelling, task.State)
 
+		require.NoError(t, gm.CancelPausedSubtasks(ctx, id))
 		subtasks, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepOne)
 		require.NoError(t, err)
 		statesByID := make(map[int64]proto.SubtaskState, len(subtasks))
@@ -449,7 +453,7 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 		require.Equal(t, proto.SubtaskStateRunning, statesByID[runningID])
 	}
 
-	// Verify CancelTaskByKeySession also cancels paused tasks and cascades paused subtasks.
+	// Verify CancelTaskByKeySession also cancels paused tasks cleanly and CancelPausedSubtasks drains them.
 	id, err := gm.CreateTask(ctx, "cancel-key-paused", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
@@ -465,6 +469,7 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 	task, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateCancelling, task.State)
+	require.NoError(t, gm.CancelPausedSubtasks(ctx, id))
 	subtasks, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepOne)
 	require.NoError(t, err)
 	require.Len(t, subtasks, 1)
@@ -479,4 +484,156 @@ func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
 	pendingSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
 	require.NoError(t, gm.CancelSubtask(ctx, ":4000", id))
 	require.ErrorIs(t, gm.StartSubtask(ctx, pendingSubtaskID, ":4000"), storage.ErrSubtaskNotFound)
+}
+
+func TestCancelPausedSubtasksBoundedAndRetryable(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	id, err := gm.CreateTask(ctx, "cancel-paused-bounded", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`update mysql.tidb_global_task set state = %? where id = %?`, proto.TaskStatePaused, id)
+		return execErr
+	}))
+
+	// Create 4 paused subtasks whose combined meta size (16 KiB) exceeds the lowered TxnTotalSizeLimit (12 KiB).
+	meta4K := bytes.Repeat([]byte("a"), 4*1024)
+	for range 4 {
+		testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", meta4K, proto.SubtaskStatePaused, "test", 1)
+	}
+
+	bak := kv.TxnTotalSizeLimit.Load()
+	kv.TxnTotalSizeLimit.Store(12 * 1024)
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+
+	// Cancelling the parent task must still succeed even when total paused subtask size exceeds TxnTotalSizeLimit.
+	require.NoError(t, gm.CancelTask(ctx, id))
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateCancelling, task.State)
+
+	// Inject a failure on the 2nd batch to verify batching and retryable partial progress.
+	var batchCalls atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeCancelPausedSubtasksBatch", func(ids []int64, errP *error) {
+		require.Len(t, ids, 1)
+		if batchCalls.Add(1) == 2 {
+			*errP = errors.New("injected batch failure")
+		}
+	})
+	require.ErrorContains(t, gm.CancelPausedSubtasks(ctx, id), "injected batch failure")
+
+	cntByStates, err := gm.GetSubtaskCntGroupByStates(ctx, id, proto.StepOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateCanceled])
+	require.Equal(t, int64(3), cntByStates[proto.SubtaskStatePaused])
+
+	// Retry drains the remaining paused subtasks cleanly.
+	require.NoError(t, gm.CancelPausedSubtasks(ctx, id))
+	cntByStates, err = gm.GetSubtaskCntGroupByStates(ctx, id, proto.StepOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), cntByStates[proto.SubtaskStateCanceled])
+	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePaused])
+}
+
+func TestPauseSubtasksSerializedWithCancelTask(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	// Case 1: Executor observed pausing, then PauseSubtasks is delayed until after CancelTask commits.
+	id1, err := gm.CreateTask(ctx, "race-cancel-first", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	found, err := gm.PauseTask(ctx, "race-cancel-first")
+	require.NoError(t, err)
+	require.True(t, found)
+	st1 := testutil.InsertSubtask(t, gm, id1, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`update mysql.tidb_background_subtask set state_update_time = null where id = %?`, st1)
+		return execErr
+	}))
+
+	pauseEntered := make(chan struct{})
+	releasePause := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforePauseSubtasks", func() {
+		close(pauseEntered)
+		<-releasePause
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var pauseErr error
+	go func() {
+		defer wg.Done()
+		pauseErr = gm.PauseSubtasks(ctx, ":4000", id1)
+	}()
+
+	<-pauseEntered
+	require.NoError(t, gm.CancelTask(ctx, id1))
+	close(releasePause)
+	wg.Wait()
+	require.NoError(t, pauseErr)
+
+	// Subtask must remain pending (not paused) so reverting executor CancelSubtask transitions it to canceled.
+	subtasks, err := gm.GetSubtasksWithHistory(ctx, id1, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+	require.Equal(t, proto.SubtaskStatePending, subtasks[0].State)
+	require.NoError(t, gm.CancelSubtask(ctx, ":4000", id1))
+	rs, err := gm.ExecuteSQLWithNewSession(ctx,
+		`select state, state_update_time from mysql.tidb_background_subtask where id = %?`, st1)
+	require.NoError(t, err)
+	require.Len(t, rs, 1)
+	require.Equal(t, string(proto.SubtaskStateCanceled), rs[0].GetString(0))
+	require.False(t, rs[0].IsNull(1))
+
+	// Case 2: PauseSubtasks holds the parent task FOR UPDATE lock first; concurrent CancelTask waits,
+	// and CancelPausedSubtasks cancels the newly paused subtask afterwards.
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforePauseSubtasks")
+	id2, err := gm.CreateTask(ctx, "race-pause-lock-first", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	found, err = gm.PauseTask(ctx, "race-pause-lock-first")
+	require.NoError(t, err)
+	require.True(t, found)
+	st2 := testutil.InsertSubtask(t, gm, id2, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+
+	updateReached := make(chan struct{})
+	releaseUpdate := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforePauseSubtasksUpdate", func() {
+		close(updateReached)
+		<-releaseUpdate
+	})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pauseErr = gm.PauseSubtasks(ctx, ":4000", id2)
+	}()
+	<-updateReached
+
+	cancelDone := make(chan error, 1)
+	go func() {
+		cancelDone <- gm.CancelTask(ctx, id2)
+	}()
+	select {
+	case err := <-cancelDone:
+		require.FailNowf(t, "CancelTask should wait for PauseSubtasks lock", "err=%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseUpdate)
+	wg.Wait()
+	require.NoError(t, pauseErr)
+	require.NoError(t, <-cancelDone)
+
+	require.NoError(t, gm.CancelPausedSubtasks(ctx, id2))
+	rs, err = gm.ExecuteSQLWithNewSession(ctx,
+		`select state, state_update_time, end_time from mysql.tidb_background_subtask where id = %?`, st2)
+	require.NoError(t, err)
+	require.Len(t, rs, 1)
+	require.Equal(t, string(proto.SubtaskStateCanceled), rs[0].GetString(0))
+	require.False(t, rs[0].IsNull(1))
+	require.False(t, rs[0].IsNull(2))
 }
