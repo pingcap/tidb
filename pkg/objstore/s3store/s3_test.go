@@ -29,6 +29,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -908,7 +909,7 @@ func TestOpenAsBufio(t *testing.T) {
 
 	reader, err := s.Storage.Open(ctx, "plain-text-file", nil)
 	require.NoError(t, err)
-	require.Nil(t, reader.Close())
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	bufReader := bufio.NewReaderSize(reader, 5)
 	content, err := bufReader.ReadString('\n')
 	require.NoError(t, err)
@@ -1078,9 +1079,9 @@ func TestS3RangeReaderRetryReadAndUnRetryableCase(t *testing.T) {
 			}).Times(times)
 		reader, err := s.Storage.Open(ctx, "random", &storeapi.ReaderOption{StartOffset: aws.Int64(3)})
 		require.NoError(t, err)
-		defer func() {
+		t.Cleanup(func() {
 			require.NoError(t, reader.Close())
-		}()
+		})
 		slice := make([]byte, 2)
 		n, err := reader.Read(slice)
 		require.NoError(t, err)
@@ -1110,6 +1111,44 @@ func TestS3RangeReaderRetryReadAndUnRetryableCase(t *testing.T) {
 		require.ErrorContains(t, err, "mock read error")
 		require.Zero(t, n)
 	})
+
+	for _, operation := range []string{"read", "seek"} {
+		for _, prefetchSize := range []int{0, 16} {
+			t.Run(fmt.Sprintf("retry after failed %s reopen/prefetch=%d", operation, prefetchSize), func(t *testing.T) {
+				s := CreateS3Suite(t)
+				ctx := context.Background()
+				pipeReader, pipeWriter := io.Pipe()
+				defer pipeReader.Close()
+				require.NoError(t, pipeWriter.CloseWithError(io.ErrUnexpectedEOF))
+				content := strings.Repeat("r", 128*1024)
+				openErr := errors.New("temporary open failure")
+				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&s3.GetObjectOutput{Body: pipeReader, ContentLength: aws.Int64(int64(len(content)))}, nil)
+				failed := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
+					Return(nil, openErr)
+				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(failed).
+					Return(&s3.GetObjectOutput{
+						Body: io.NopCloser(strings.NewReader(content)), ContentLength: aws.Int64(int64(len(content))),
+					}, nil)
+				reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+				require.NoError(t, err)
+				defer reader.Close()
+				buf := make([]byte, 1)
+				if operation == "read" {
+					_, err = reader.Read(buf)
+					require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				} else {
+					_, err = reader.Seek(64*1024+1, io.SeekStart)
+					require.ErrorIs(t, err, openErr)
+				}
+				// A failed reopen must not prevent the caller from retrying Read.
+				n, err := reader.Read(buf)
+				require.NoError(t, err)
+				require.Equal(t, 1, n)
+				require.Equal(t, "r", string(buf))
+			})
+		}
+	}
 }
 
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
@@ -1163,6 +1202,130 @@ type alwaysFailReader struct{}
 
 func (alwaysFailReader) Read([]byte) (n int, err error) {
 	return 0, errors.New("always fail read")
+}
+
+type closeCountingReader struct {
+	io.ReadCloser
+	closeCount atomic.Int32
+}
+
+func (r *closeCountingReader) Close() error {
+	r.closeCount.Add(1)
+	return r.ReadCloser.Close()
+}
+
+func TestS3ReaderCloseDuringRetry(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		for _, timing := range []string{"before retry", "during open", "after replacement", "retry success"} {
+			t.Run(fmt.Sprintf("prefetch=%d/%s", prefetchSize, timing), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					s := CreateS3Suite(t)
+					ctx := context.Background()
+					pipeReader, pipeWriter := io.Pipe()
+					defer pipeReader.Close()
+					defer pipeWriter.Close()
+					initial := &closeCountingReader{ReadCloser: io.NopCloser(alwaysFailReader{})}
+					replacement := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("replacement data"))}
+					if timing == "before retry" {
+						initial.ReadCloser = pipeReader
+					} else if timing == "after replacement" {
+						replacement.ReadCloser = pipeReader
+					}
+					defer initial.ReadCloser.Close()
+					defer replacement.ReadCloser.Close()
+					resumeOpen := make(chan struct{})
+					openCount := 0
+					s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+						DoAndReturn(func(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+							openCount++
+							var body io.ReadCloser = io.NopCloser(strings.NewReader("unexpected retry"))
+							switch openCount {
+							case 1:
+								body = initial
+							case 2:
+								if timing == "during open" {
+									<-resumeOpen
+								}
+								body = replacement
+							}
+							return &s3.GetObjectOutput{Body: body, ContentLength: aws.Int64(16)}, nil
+						}).AnyTimes()
+					reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+					require.NoError(t, err)
+					defer reader.Close()
+					resume := sync.OnceFunc(func() { close(resumeOpen) })
+					defer resume()
+					readDone := make(chan error, 1)
+					go func() {
+						_, err := reader.Read(make([]byte, 1))
+						readDone <- err
+					}()
+					// Wait for Read to block on the source or on the retry's GetObject.
+					synctest.Wait()
+					if timing != "retry success" {
+						require.NoError(t, reader.Close())
+					}
+					resume()
+					synctest.Wait()
+					if timing == "retry success" {
+						require.NoError(t, <-readDone)
+						require.NoError(t, reader.Close())
+					} else {
+						require.ErrorIs(t, <-readDone, io.ErrClosedPipe)
+					}
+					require.NoError(t, ctx.Err())
+					require.EqualValues(t, 1, initial.closeCount.Load())
+					if timing == "before retry" {
+						require.Equal(t, 1, openCount)
+						require.Zero(t, replacement.closeCount.Load())
+					} else {
+						require.Equal(t, 2, openCount)
+						require.EqualValues(t, 1, replacement.closeCount.Load())
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestS3ReaderCloseDuringSeek(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				ctx := context.Background()
+				initial := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("initial data"))}
+				replacement := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("replacement data"))}
+				resumeOpen := make(chan struct{})
+				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&s3.GetObjectOutput{Body: initial, ContentLength: aws.Int64(12)}, nil)
+				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
+					DoAndReturn(func(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+						<-resumeOpen
+						return &s3.GetObjectOutput{Body: replacement, ContentLength: aws.Int64(16)}, nil
+					})
+				reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+				require.NoError(t, err)
+				defer reader.Close()
+				resume := sync.OnceFunc(func() { close(resumeOpen) })
+				defer resume()
+				_, err = reader.Read(make([]byte, 1))
+				require.NoError(t, err)
+				seekDone := make(chan error, 1)
+				go func() {
+					_, err := reader.Seek(0, io.SeekStart)
+					seekDone <- err
+				}()
+				synctest.Wait()
+				require.NoError(t, reader.Close())
+				resume()
+				synctest.Wait()
+				require.ErrorIs(t, <-seekDone, io.ErrClosedPipe)
+				require.EqualValues(t, 1, initial.closeCount.Load())
+				require.EqualValues(t, 1, replacement.closeCount.Load())
+			})
+		})
+	}
 }
 
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.

@@ -34,16 +34,29 @@ import (
 type s3ObjectReader struct {
 	storage   *Storage
 	name      string
-	reader    io.ReadCloser
 	pos       int64
 	rangeInfo RangeInfo
 	// reader context used for implement `io.Seek`
 	ctx          context.Context
 	prefetchSize int
+
+	// mu protects the reader lifecycle and serializes closing the underlying reader.
+	// Read and Seek must not be called concurrently with each other.
+	mu           sync.Mutex
+	reader       io.ReadCloser
+	readerClosed bool
+	closed       bool
 }
 
 // Read implement the io.Reader interface.
 func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
+	reader := r.reader
+	r.mu.Unlock()
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt == 0 {
@@ -52,11 +65,19 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
-	n, err = r.reader.Read(p[:maxCnt])
+	n, err = reader.Read(p[:maxCnt])
 	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
+		r.mu.Lock()
+		if r.closed {
+			r.mu.Unlock()
+			err = io.ErrClosedPipe
+			break
+		}
+		_ = r.closeReaderLocked()
+		r.mu.Unlock()
 		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
@@ -69,19 +90,17 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		if end == r.rangeInfo.Size {
 			end = 0
 		}
-		_ = r.reader.Close()
-
 		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
-		r.reader = newReader
-		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
+		reader, err1 = r.setReader(newReader, rangeInfo)
+		if err1 != nil {
+			return n, err1
 		}
 		retryCnt++
-		n, err = r.reader.Read(p[:maxCnt])
+		n, err = reader.Read(p[:maxCnt])
 	}
 
 	r.storage.accessRec.RecRead(n)
@@ -89,9 +108,40 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// Close implement the io.Closer interface.
+// Close implements io.Closer and can run concurrently with Read or Seek.
 func (r *s3ObjectReader) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	return r.closeReaderLocked()
+}
+
+// closeReaderLocked closes the current reader once without marking r closed, so
+// retries and seeks can replace it. The caller must hold mu.
+func (r *s3ObjectReader) closeReaderLocked() error {
+	if r.readerClosed {
+		return nil
+	}
+	// Retain the closed reader so a failed reopen can be retried by the next Read.
+	r.readerClosed = true
 	return r.reader.Close()
+}
+
+func (r *s3ObjectReader) setReader(reader io.ReadCloser, info RangeInfo) (io.ReadCloser, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Opening happens without mu so Close can interrupt a pending read. A late
+	// response must be closed before it can start another prefetch goroutine.
+	if r.closed {
+		_ = reader.Close()
+		return nil, io.ErrClosedPipe
+	}
+	if r.prefetchSize > 0 {
+		reader = prefetch.NewReader(reader, info.RangeSize(), r.prefetchSize)
+	}
+	r.reader = reader
+	r.readerClosed = false
+	return reader, nil
 }
 
 // Seek implement the io.Seeker interface.
@@ -113,7 +163,13 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Annotatef(errors2.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
 	}
 
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
 	if realOffset == r.pos {
+		r.mu.Unlock()
 		return realOffset, nil
 	} else if realOffset >= r.rangeInfo.Size {
 		// See: https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35
@@ -121,14 +177,17 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		// so if the position is out of range, we need to always return io.EOF after the seek operation.
 
 		// close current read and open a new one which target offset
-		if err := r.reader.Close(); err != nil {
+		if err := r.closeReaderLocked(); err != nil {
 			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
 		}
 
 		r.reader = io.NopCloser(bytes.NewReader(nil))
+		r.readerClosed = false
 		r.pos = r.rangeInfo.Size
+		r.mu.Unlock()
 		return r.pos, nil
 	}
+	r.mu.Unlock()
 
 	// if seek ahead no more than 64k, we discard these data
 	if realOffset > r.pos && realOffset-r.pos <= maxSkipOffsetByRead {
@@ -140,7 +199,13 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	// close current read and open a new one which target offset
-	err := r.reader.Close()
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
+	err := r.closeReaderLocked()
+	r.mu.Unlock()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -149,9 +214,8 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	r.reader = newReader
-	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
+	if _, err := r.setReader(newReader, info); err != nil {
+		return 0, err
 	}
 	r.rangeInfo = info
 	r.pos = realOffset
