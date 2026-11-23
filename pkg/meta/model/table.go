@@ -1191,6 +1191,17 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			}
 			return ids
 		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		// Reorganize-family DDLs populate DroppingDefinitions before backfill;
+		// Definitions still includes them during StateDeleteOnly/WriteOnly/WriteReorganization.
+		// Only ignore them once backfill swaps Definitions (StateDeleteReorganization/StatePublic).
+		if (pi.DDLState == StateDeleteReorganization || pi.DDLState == StatePublic) && len(pi.DroppingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
 	case ActionAddTablePartition:
 		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
 		if len(pi.AddingDefinitions) > 0 {
