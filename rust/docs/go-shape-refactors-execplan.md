@@ -18,6 +18,8 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - [ ] T08: the AST expression rewriter in `tidb-expr` (Go's is `pkg/planner/core/expression_rewriter.go`, reached from lower layers through `expression.BuildSimpleExpr`).
 - [ ] T10: `pkg/executor` code implemented as `Session` methods in `tidb-session`.
 - [ ] T14, then T01: a transaction's writes in the store transaction's MemDB (`LazyTxn`), then pipelined DML over it.
+- [ ] T16-T20 (duplicates and executor shapes found after the audit): the unused warning-handler port, the second row decoder, index merge's partial workers, the `kv.TiDB` table reader, IMPORT INTO's URI handling.
+- [ ] Re-verify on a live cluster the realtikv transaction tests the retired realtikv-txn plan last left failing (2026-11-16): the stale-read group (`test_stale_*`, `test_staleness_and_history_read`, `test_stmt_ctx_stale_flag`, `test_validate_read_only_in_staleness_transaction`), `test_replica_read_effect_scope`, `test_stale_read_no_backoff`, `test_stale_select`, pessimistictest `test_plan_cache_schema_change` and `test_statements_interrupted_on_disconnect`; register any that still fail.
 
 ## Surprises & Discoveries
 

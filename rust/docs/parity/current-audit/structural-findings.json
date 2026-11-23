@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 8,
-    "open": 8,
+    "unresolved": 11,
+    "open": 11,
     "partial": 0
   },
   "findings": [
@@ -70,9 +70,33 @@
       "finding": "Two row decoders: `PreparedPointGetRowDecoder` (`tidb-table/src/tables/row_decoder.rs`) is a second decoder beside `RowDecoder`, kept as a fast path for batch handle reads in `tidb-executor/src/kv_table/table_scan.rs` after the prepared point get that introduced it was removed (T15). Go decodes rows through one `rowcodec` decoder.",
       "rust_evidence": "`tidb-table/src/tables/row_decoder.rs` (`PreparedPointGetRowDecoder`), `tidb-table/src/tables/table_meta.rs` (`PreparedPointGetDecodeContext`), `tidb-executor/src/kv_table/table_scan.rs`.",
       "go_owner": "`pkg/util/rowcodec/decoder.go`"
+    },
+    {
+      "id": "T18",
+      "group": "Executors",
+      "status": "open",
+      "finding": "`IndexMergeReaderExecutor`'s partial sources and table side are not Go's partial workers: handles come through the `PartialHandleSource` offer path (`MaterializedHandleSource` over `access_path`, `TableCommon` and its storage), not `partialIndexWorker` / `partialTableWorker` over each partial plan's `ConstructDAGReq`, and the final table read is not `buildFinalTableReader`'s handle-built `TableReaderExecutor`. The handle algebra (`fetchLoopUnion` / `fetchLoopIntersection`) is already Go's.",
+      "rust_evidence": "`tidb-executor/src/index_merge_reader.rs` (`PartialHandleSource`, `MaterializedHandleSource`), `driver/physical_builder.rs`.",
+      "go_owner": "`pkg/executor/index_merge_reader.go`"
+    },
+    {
+      "id": "T19",
+      "group": "Executors",
+      "status": "open",
+      "finding": "The `kv.TiDB` store's table read is a separate executor, `TiDbTableReaderExecutor`, whose request `build_tidb_cop_request` assembles by hand, because that store's table scan has no `ToPB`; Go has one `TableReaderExecutor` whose DAG is the plan's `ToPB` for every store.",
+      "rust_evidence": "`tidb-executor/src/table_reader.rs` (`TiDbTableReaderExecutor`), `tidb-executor/src/builder_utils.rs` (`build_tidb_cop_request`).",
+      "go_owner": "`pkg/executor/table_reader.go`, `pkg/planner/core/operator/physicalop` `ToPB`"
+    },
+    {
+      "id": "T20",
+      "group": "Executors",
+      "status": "open",
+      "finding": "IMPORT INTO's server-disk discovery percent-encodes the storage URI by hand instead of `InitDataStore` over the parsed URL (`net/url`).",
+      "rust_evidence": "`tidb-executor/src/importer/local.rs`.",
+      "go_owner": "`pkg/executor/importer/import.go` (`InitDataStore`)"
     }
   ],
-  "unresolved": 8,
-  "open": 8,
+  "unresolved": 11,
+  "open": 11,
   "partial": 0
 }

@@ -58,7 +58,7 @@ pub struct TiDbStoreReader {
 
 /// Go `TableReaderExecutor` over the `kv.TiDB` store, its request built by
 /// [`crate::builder_utils::build_tidb_cop_request`] until that store's scan
-/// has its `ToPB` (`docs/tikv-reader-execplan.md`).
+/// has its `ToPB` (register row T19).
 pub struct TiDbTableReaderExecutor {
     meta: ExecutorMeta,
     ctx: crate::StmtContext,
