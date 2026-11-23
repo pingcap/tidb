@@ -119,9 +119,9 @@ func (h *Handle) Lease() time.Duration {
 	return h.lease.Lease()
 }
 
-// SetLease sets the stats lease. Only used for test.
-func (h *Handle) SetLease(lease time.Duration) {
-	h.lease.SetLease(lease)
+// SetLeaseForTest sets the stats lease.
+func (h *Handle) SetLeaseForTest(lease time.Duration) {
+	h.lease.SetLeaseForTest(lease)
 }
 
 // AutoAnalyze returns the component that analyzes the outdated tables in the background.
@@ -169,8 +169,8 @@ func (h *Handle) AnalyzeHandle() *AnalyzeHandle {
 	return h.analyzeHandle
 }
 
-// Clear the statsCache, only for test.
-func (h *Handle) Clear() {
+// ClearForTest clears the stats cache, the DDL events and the session stats of the handle.
+func (h *Handle) ClearForTest() {
 	h.cache.Clear()
 	for len(h.ddlHandler.DDLEventCh()) > 0 {
 		<-h.ddlHandler.DDLEventCh()

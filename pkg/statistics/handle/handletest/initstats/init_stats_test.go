@@ -256,7 +256,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 	}
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	h.Clear()
+	h.ClearForTest()
 	require.Equal(t, h.Cache().MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
 	for i := 1; i < 10; i++ {
@@ -348,7 +348,7 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	tk.MustExec("drop table dropped_t")
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta where table_id = %d", droppedTableID)).Check(testkit.Rows("1"))
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is = dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	_, ok := h.Cache().Get(droppedTableID)

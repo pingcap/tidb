@@ -249,12 +249,12 @@ func TestTableAnalyzed(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
-	h.Clear()
+	h.ClearForTest()
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	require.NoError(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)

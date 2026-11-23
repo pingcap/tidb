@@ -722,7 +722,7 @@ func TestDropStats(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -748,7 +748,7 @@ func TestDropStats(t *testing.T) {
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -764,7 +764,7 @@ func TestDropStats(t *testing.T) {
 		require.False(t, idx.IsStatsInitialized())
 		return false
 	})
-	h.SetLease(0)
+	h.SetLeaseForTest(0)
 }
 
 func TestDropStatsForMultipleTable(t *testing.T) {
@@ -784,7 +784,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	tableInfo2 := tbl2.Meta()
 
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	testKit.MustExec("analyze table t1, t2")
 	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
@@ -820,7 +820,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
@@ -839,7 +839,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	h.SetLease(0)
+	h.SetLeaseForTest(0)
 }
 
 func TestKillStmt(t *testing.T) {

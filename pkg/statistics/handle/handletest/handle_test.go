@@ -87,7 +87,7 @@ func TestColumnIDs(t *testing.T) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().ClearForTest()
 	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -695,7 +695,7 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 
 func TestUninitializedStatsStatus(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.StatsHandle().SetLease(0)
+	dom.StatsHandle().SetLeaseForTest(0)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -790,9 +790,9 @@ func TestInitStatsLite(t *testing.T) {
 
 	h := dom.StatsHandle()
 	// set lease > 0 to trigger on-demand stats load.
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -808,7 +808,7 @@ func TestInitStatsLite(t *testing.T) {
 	statsTbl0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	statsTbl1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, statsTbl1)
@@ -899,7 +899,7 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	require.Nil(t, statsTbl.GetCol(colBID).TopN)
 	require.Equal(t, statsTbl.GetCol(colBID).Histogram.Len(), 1)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(ctx, dom.InfoSchema(), tblInfo.ID))
 
 	statsTblLite := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
@@ -1052,7 +1052,7 @@ func TestStatsCacheShouldNotCacheSystemTable(t *testing.T) {
 	tk.MustExec("show stats_healthy")
 	require.Equal(t, 1, h.Cache().Len())
 	require.NotZero(t, h.GetSystemDBIDCacheLenForTest())
-	h.Clear()
+	h.ClearForTest()
 	require.Zero(t, h.GetSystemDBIDCacheLenForTest())
 }
 
@@ -1109,9 +1109,9 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -1131,7 +1131,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	tblStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, tblStats0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check stats are evicted
@@ -1209,9 +1209,9 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 
 	is := dom.InfoSchema()
@@ -1231,7 +1231,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	globalStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	checkAllEvicted(t, globalStats0)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 
 	// After InitStatsLite, check global stats are evicted
@@ -1306,9 +1306,9 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 	) PARTITION BY HASH(a) PARTITIONS 4`)
 	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
 	h := dom.StatsHandle()
-	h.SetLease(time.Millisecond)
+	h.SetLeaseForTest(time.Millisecond)
 	defer func() {
-		h.SetLease(0)
+		h.SetLeaseForTest(0)
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
@@ -1332,7 +1332,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 		partStats := h.GetPhysicalTableStats(pid, tblInfo)
 		checkAllEvicted(t, partStats)
 	}
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
 	// After InitStatsLite, check partition stats are evicted
 	for _, pid := range partitionIDs {

@@ -54,7 +54,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		tk.MustExec("delete from mysql.stats_meta")
 		tk.MustExec("delete from mysql.stats_histograms")
 		tk.MustExec("delete from mysql.stats_buckets")
-		dom.StatsHandle().Clear()
+		dom.StatsHandle().ClearForTest()
 	}()
 
 	tk := testkit.NewTestKit(t, store)
@@ -308,7 +308,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where table_id = ? order by stats_ver", tableID).
 		Check(testkit.Rows("1"))
 
-	h.Clear()
+	h.ClearForTest()
 	// Test init stats.
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl := h.GetPhysicalTableStats(tableID, tblInfo)
@@ -325,7 +325,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
@@ -357,7 +357,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
@@ -377,7 +377,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 1 and table_id = ? order by stats_ver", tableID).
 		Check(testkit.Rows("2"))
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.Equal(t, statistics.Version2, statsTbl.StatsVer)

@@ -2467,9 +2467,9 @@ func TestIssue48257(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		h := dom.StatsHandle()
 		oriLease := h.Lease()
-		h.SetLease(1)
+		h.SetLeaseForTest(1)
 		defer func() {
-			h.SetLease(oriLease)
+			h.SetLeaseForTest(oriLease)
 		}()
 		tk.MustExec("use test")
 

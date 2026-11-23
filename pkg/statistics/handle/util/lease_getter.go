@@ -50,7 +50,7 @@ func (g *LeaseHolder) Lease() time.Duration {
 	return g.lease.Load()
 }
 
-// SetLease sets the stats lease. Only used for test.
-func (g *LeaseHolder) SetLease(lease time.Duration) {
+// SetLeaseForTest sets the stats lease.
+func (g *LeaseHolder) SetLeaseForTest(lease time.Duration) {
 	g.lease.Store(lease)
 }

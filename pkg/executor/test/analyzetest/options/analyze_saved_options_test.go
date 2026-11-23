@@ -57,9 +57,9 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
 	is := dom.InfoSchema()
@@ -393,9 +393,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(3 * time.Second)
+	h.SetLeaseForTest(3 * time.Second)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

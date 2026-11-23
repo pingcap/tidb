@@ -1149,9 +1149,9 @@ func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
 	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1243,9 +1243,9 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1382,9 +1382,9 @@ PARTITION BY RANGE ( a ) (
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c", "d")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1420,7 +1420,7 @@ PARTITION BY RANGE ( a ) (
 		"update mysql.stats_histograms set stats_ver = 1 where table_id in (?,?,?)",
 		legacyTableIDs[0], legacyTableIDs[1], legacyTableIDs[2],
 	)
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema(), legacyTableIDs...))
 	require.Equal(t, statistics.Version1, h.GetPhysicalTableStats(tableInfo.ID, tableInfo).StatsVer)
 	require.Equal(t, statistics.Version1, h.GetPhysicalTableStats(pi.Definitions[0].ID, tableInfo).StatsVer)
@@ -1465,7 +1465,7 @@ partition by range (a) (
 		tk.MustExec("analyze table t partition p1")
 		// HACK: Downgrade the persisted stats version of p1 to simulate legacy v1 stats left on the partition, which is incompatible with the session's analyze version.
 		tk.MustExec("update mysql.stats_histograms set stats_ver = 1 where table_id = ?", pi.Definitions[1].ID)
-		h.Clear()
+		h.ClearForTest()
 		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema(), pi.Definitions[0].ID, pi.Definitions[1].ID))
 
 		p0HistSQL := fmt.Sprintf(
@@ -1508,9 +1508,9 @@ PARTITION BY RANGE ( a ) (
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c", "d")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1584,9 +1584,9 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("insert into t values (11),(12),(14)")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	h.AutoAnalyze().HandleAutoAnalyze()
@@ -1619,9 +1619,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into t values (11),(12),(14)")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1744,9 +1744,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLeaseForTest(1)
 	defer func() {
-		h.SetLease(oriLease)
+		h.SetLeaseForTest(oriLease)
 	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2344,7 +2344,7 @@ partition by range (a) (
 	tk.MustExec(fmt.Sprintf(
 		"update mysql.stats_histograms set stats_ver = 1 where table_id = %d", p1ID,
 	))
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema(), p1ID, p0ID, tblInfo.ID))
 	require.Equal(t, statistics.Version1, h.GetPhysicalTableStats(p1ID, tblInfo).StatsVer)
 	require.Equal(t, statistics.Version2, h.GetPhysicalTableStats(p0ID, tblInfo).StatsVer)

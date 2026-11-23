@@ -172,7 +172,7 @@ func TestUserPrivileges(t *testing.T) {
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 	tk := testkit.NewTestKit(t, store)
 
@@ -225,7 +225,7 @@ func TestDataForTableStatsField(t *testing.T) {
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 
 	tk := testkit.NewTestKit(t, store)

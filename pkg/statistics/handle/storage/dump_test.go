@@ -80,7 +80,7 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.column_stats_usage")
-	do.StatsHandle().Clear()
+	do.StatsHandle().ClearForTest()
 }
 
 func TestConversion(t *testing.T) {
@@ -192,7 +192,7 @@ func TestLoadGlobalStats(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	dom.StatsHandle().Clear()
+	dom.StatsHandle().ClearForTest()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
@@ -222,7 +222,7 @@ func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
 	origLastStatsHistVersion := statsTbl.LastStatsHistVersion
 
 	jsonTbl := getStatsJSON(t, dom, "test", "t")
-	dom.StatsHandle().Clear()
+	dom.StatsHandle().ClearForTest()
 	require.Nil(t, statsHandle.Storage().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
 	require.NoError(t, statsHandle.Cache().Update(context.Background(), dom.InfoSchema()))
 	statsTbl = statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -274,7 +274,7 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
-	dom.StatsHandle().Clear()
+	dom.StatsHandle().ClearForTest()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
@@ -386,7 +386,7 @@ func TestLoadPredicateColumns(t *testing.T) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.column_stats_usage")
-	h.Clear()
+	h.ClearForTest()
 
 	// load stats back
 	require.NoError(t, h.Storage().LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
@@ -474,7 +474,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	h.Clear()
+	h.ClearForTest()
 
 	err = h.Storage().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0)
 	require.NoError(t, err)
@@ -491,8 +491,8 @@ func TestDumpAlteredTable(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
-	defer func() { h.SetLease(oriLease) }()
+	h.SetLeaseForTest(1)
+	defer func() { h.SetLeaseForTest(oriLease) }()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t drop column a")

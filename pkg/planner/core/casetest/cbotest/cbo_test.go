@@ -642,7 +642,7 @@ func TestNullCount(t *testing.T) {
 			tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 		}
 		h := dom.StatsHandle()
-		h.Clear()
+		h.ClearForTest()
 		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		for i := 2; i < 4; i++ {
 			testdata.OnRecord(func() {
@@ -687,7 +687,7 @@ func testInconsistentEstimation(t *testing.T, tk *testkit.TestKit, dom *domain.D
 	tk.MustExec("analyze table t all columns with 2 buckets ")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear()
+	dom.StatsHandle().ClearForTest()
 	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {

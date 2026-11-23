@@ -44,9 +44,9 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -87,9 +87,9 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -139,9 +139,9 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -171,7 +171,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 	for _, fp := range failpoints {
 		// clear statsCache
-		h.Clear()
+		h.ClearForTest()
 		require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 
 		// no stats at beginning
@@ -254,9 +254,9 @@ func TestRetry(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -272,7 +272,7 @@ func TestRetry(t *testing.T) {
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	// clear statsCache
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 
 	// no stats at beginning
@@ -343,9 +343,9 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
@@ -390,9 +390,9 @@ func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t")
 	h := dom.StatsHandle()

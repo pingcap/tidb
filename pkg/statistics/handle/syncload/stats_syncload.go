@@ -244,8 +244,8 @@ func (s *Loader) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []mo
 	return remainedItems
 }
 
-// AppendNeededItem appends needed columns/indices to ch, it is only used for test
-func (s *Loader) AppendNeededItem(task *statstypes.NeededItemTask, timeout time.Duration) error {
+// AppendNeededItemForTest appends needed columns/indices to ch.
+func (s *Loader) AppendNeededItemForTest(task *statstypes.NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {

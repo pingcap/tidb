@@ -118,7 +118,7 @@ partition by range (a) (
 		"update mysql.stats_histograms set stats_ver = 1 where table_id in (?,?,?)",
 		legacyTableIDs[0], legacyTableIDs[1], legacyTableIDs[2],
 	)
-	handle.Clear()
+	handle.ClearForTest()
 	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema(), legacyTableIDs...))
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(partitionedTbl.Meta().ID, partitionedTbl.Meta()).StatsVer)
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[0].ID, partitionedTbl.Meta()).StatsVer)

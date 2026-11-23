@@ -41,9 +41,9 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,1),(5,5,1)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 

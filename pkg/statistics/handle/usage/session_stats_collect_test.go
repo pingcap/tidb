@@ -359,11 +359,11 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	usage.SetDumpStatsMaxDurationForTest(time.Second)
 	usage.DumpStatsDeltaRatio = 0.5
 	// The stats cache looks back 5 * lease = 500ms, and the blocked first dump takes more than 1s.
-	dom.StatsHandle().SetLease(100 * time.Millisecond)
+	dom.StatsHandle().SetLeaseForTest(100 * time.Millisecond)
 	t.Cleanup(func() {
 		usage.SetDumpStatsMaxDurationForTest(origMaxDuration)
 		usage.DumpStatsDeltaRatio = origRatio
-		dom.StatsHandle().SetLease(origLease)
+		dom.StatsHandle().SetLeaseForTest(origLease)
 	})
 
 	baseRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()

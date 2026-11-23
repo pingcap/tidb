@@ -61,9 +61,9 @@ func TestPlanStatsLoad(t *testing.T) {
 		testKit.MustExec("insert into pt values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
 
 		oriLease := dom.StatsHandle().Lease()
-		dom.StatsHandle().SetLease(1)
+		dom.StatsHandle().SetLeaseForTest(1)
 		defer func() {
-			dom.StatsHandle().SetLease(oriLease)
+			dom.StatsHandle().SetLeaseForTest(oriLease)
 		}()
 		testKit.MustExec("analyze table t all columns")
 		testKit.MustExec("analyze table pt all columns")
@@ -197,7 +197,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				continue
 			}
 			is := dom.InfoSchema()
-			dom.StatsHandle().Clear() // clear statsCache
+			dom.StatsHandle().ClearForTest() // clear statsCache
 			require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 			stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 			require.NoError(t, err)
@@ -250,9 +250,9 @@ func TestPlanStatsLoad(t *testing.T) {
 		}
 		h := dom.StatsHandle()
 		oriLeaseIssue := h.Lease()
-		h.SetLease(1)
+		h.SetLeaseForTest(1)
 		defer func() {
-			h.SetLease(oriLeaseIssue)
+			h.SetLeaseForTest(oriLeaseIssue)
 		}()
 
 		testKit.MustExec("create table t_issue48257(a int)")
@@ -305,9 +305,9 @@ func TestPlanStatsLoadForCTE(t *testing.T) {
 		testKit.MustExec("insert into pt values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
 
 		oriLease := dom.StatsHandle().Lease()
-		dom.StatsHandle().SetLease(1)
+		dom.StatsHandle().SetLeaseForTest(1)
 		defer func() {
-			dom.StatsHandle().SetLease(oriLease)
+			dom.StatsHandle().SetLeaseForTest(oriLease)
 		}()
 		testKit.MustExec("analyze table t all columns")
 		testKit.MustExec("analyze table pt all columns")
@@ -368,9 +368,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 		oriLease := dom.StatsHandle().Lease()
-		dom.StatsHandle().SetLease(1)
+		dom.StatsHandle().SetLeaseForTest(1)
 		defer func() {
-			dom.StatsHandle().SetLease(oriLease)
+			dom.StatsHandle().SetLeaseForTest(oriLease)
 		}()
 		testKit.MustExec("analyze table t all columns")
 		is := dom.InfoSchema()
@@ -386,7 +386,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 			ResultCh:  resultCh,
 			ToTimeout: time.Now().Local().Add(timeout),
 		}
-		dom.StatsHandle().SyncLoad().AppendNeededItem(task, timeout) // make channel queue full
+		dom.StatsHandle().SyncLoad().AppendNeededItemForTest(task, timeout) // make channel queue full
 		sql := "select /*+ MAX_EXECUTION_TIME(1000) */ * from t where c>1"
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
@@ -439,9 +439,9 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	}()
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout = 1")
@@ -689,9 +689,9 @@ func TestPartialStatsInExplain(t *testing.T) {
 		testKit.MustExec("insert into tp values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
 
 		oriLease := dom.StatsHandle().Lease()
-		dom.StatsHandle().SetLease(1)
+		dom.StatsHandle().SetLeaseForTest(1)
 		defer func() {
-			dom.StatsHandle().SetLease(oriLease)
+			dom.StatsHandle().SetLeaseForTest(oriLease)
 		}()
 		testKit.MustExec("analyze table t all columns")
 		testKit.MustExec("analyze table t2")
