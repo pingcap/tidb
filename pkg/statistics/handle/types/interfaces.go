@@ -197,30 +197,36 @@ type UpdateOptions struct {
 	SkipMoveForward bool
 }
 
-// StatsCache is used to manage all table statistics in memory.
-type StatsCache interface {
-	// Close closes this cache.
-	Close()
+// StatsCacheGetter gives the cached statistics of a table.
+type StatsCacheGetter interface {
+	// Get returns the specified table's stats.
+	Get(tableID int64) (*statistics.Table, bool)
+}
 
-	// Clear clears this cache.
-	Clear()
+// StatsCacheUpdater applies changes to the cached statistics.
+type StatsCacheUpdater interface {
+	// UpdateStatsCache applies a batch of changes to the cache
+	UpdateStatsCache(update CacheUpdate)
+}
 
+// StatsCacheLoader loads the statistics of tables from the storage into the cache.
+type StatsCacheLoader interface {
 	// Update reads stats meta from store and updates the stats cache.
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
+}
 
-	// MemConsumed returns its memory usage.
-	MemConsumed() (size int64)
+// StatsCacheLister lists the cached statistics.
+type StatsCacheLister interface {
+	// Values returns all values in this cache.
+	Values() []*statistics.Table
 
-	// Get returns the specified table's stats.
-	Get(tableID int64) (*statistics.Table, bool)
+	// Len returns the length of this cache.
+	Len() int
+}
 
-	// Put puts this table stats into the cache.
-	Put(tableID int64, t *statistics.Table)
-
-	// UpdateStatsCache applies a batch of changes to the cache
-	UpdateStatsCache(update CacheUpdate)
-
+// StatsCacheVersionGetter gives the stats versions that the cache has seen.
+type StatsCacheVersionGetter interface {
 	// GetNextCheckVersionWithOffset returns the last version with offset.
 	// It is used to fetch updated statistics from the stats meta table.
 	GetNextCheckVersionWithOffset() uint64
@@ -228,12 +234,27 @@ type StatsCache interface {
 	// MaxTableStatsVersion returns the version of the current cache, which is defined as
 	// the max table stats version the cache has in its lifecycle.
 	MaxTableStatsVersion() uint64
+}
 
-	// Values returns all values in this cache.
-	Values() []*statistics.Table
+// StatsCache is used to manage all table statistics in memory.
+type StatsCache interface {
+	StatsCacheGetter
+	StatsCacheUpdater
+	StatsCacheLoader
+	StatsCacheLister
+	StatsCacheVersionGetter
 
-	// Len returns the length of this cache.
-	Len() int
+	// Close closes this cache.
+	Close()
+
+	// Clear clears this cache.
+	Clear()
+
+	// MemConsumed returns its memory usage.
+	MemConsumed() (size int64)
+
+	// Put puts this table stats into the cache.
+	Put(tableID int64, t *statistics.Table)
 
 	// SetStatsCacheCapacity sets the cache's capacity.
 	SetStatsCacheCapacity(capBytes int64)
@@ -452,6 +473,21 @@ type DDL interface {
 	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
 
+// PhysicalTableStatsGetter gives the statistics of a table or partition.
+type PhysicalTableStatsGetter interface {
+	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
+	// physicalTableID can be a table ID or partition ID.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+}
+
+// NonPseudoPhysicalTableStatsGetter gives the cached statistics of a table or partition.
+type NonPseudoPhysicalTableStatsGetter interface {
+	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+	// physicalTableID can be a table ID or partition ID.
+	// Note: this function may return nil if the table is not found in the cache.
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
+}
+
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Pool is used to get a session or a goroutine to execute stats updating.
@@ -460,20 +496,17 @@ type StatsHandle interface {
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
 	handleutil.AutoAnalyzeProcIDGenerator
 
-	// LeaseGetter is used to get stats lease.
-	handleutil.LeaseGetter
+	// LeaseHolder is used to get stats lease.
+	handleutil.LeaseHolder
 
 	// TableInfoGetter is used to get table meta info.
 	handleutil.TableInfoGetter
 
-	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
-	// physicalTableID can be a table ID or partition ID.
-	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+	// PhysicalTableStatsGetter is used to get the stats of a table or partition.
+	PhysicalTableStatsGetter
 
-	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
-	// physicalTableID can be a table ID or partition ID.
-	// Note: this function may return nil if the table is not found in the cache.
-	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
+	// NonPseudoPhysicalTableStatsGetter is used to get the cached stats of a table or partition.
+	NonPseudoPhysicalTableStatsGetter
 
 	// StatsGC is used to do the GC job.
 	StatsGC

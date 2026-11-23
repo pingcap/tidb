@@ -24,29 +24,28 @@ import (
 type LeaseGetter interface {
 	// Lease returns the stats lease.
 	Lease() time.Duration
-	// SetLease sets the stats lease. Only used for test.
-	SetLease(lease time.Duration)
 }
 
-var _ LeaseGetter = (*leaseGetter)(nil)
-
-type leaseGetter struct {
+// LeaseHolder holds the stats lease, which tests can change.
+type LeaseHolder struct {
 	lease *atomic.Duration
 }
 
-// NewLeaseGetter creates a new LeaseGetter.
-func NewLeaseGetter(lease time.Duration) LeaseGetter {
-	return &leaseGetter{
+var _ LeaseGetter = (*LeaseHolder)(nil)
+
+// NewLeaseHolder creates a new LeaseHolder.
+func NewLeaseHolder(lease time.Duration) *LeaseHolder {
+	return &LeaseHolder{
 		lease: atomic.NewDuration(lease),
 	}
 }
 
 // Lease implements LeaseGetter.
-func (g *leaseGetter) Lease() time.Duration {
+func (g *LeaseHolder) Lease() time.Duration {
 	return g.lease.Load()
 }
 
 // SetLease sets the stats lease. Only used for test.
-func (g *leaseGetter) SetLease(lease time.Duration) {
+func (g *LeaseHolder) SetLease(lease time.Duration) {
 	g.lease.Store(lease)
 }

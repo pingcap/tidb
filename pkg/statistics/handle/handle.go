@@ -73,8 +73,8 @@ type Handle struct {
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
 	util.AutoAnalyzeProcIDGenerator
 
-	// LeaseGetter is used to get stats lease.
-	util.LeaseGetter
+	// LeaseHolder is used to get stats lease.
+	*util.LeaseHolder
 
 	// TableInfoGetter is used to fetch table meta info.
 	util.TableInfoGetter
@@ -160,7 +160,7 @@ func NewHandle(
 	}
 	handle.Pool = util.NewPool(pool)
 	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
-	handle.LeaseGetter = util.NewLeaseGetter(lease)
+	handle.LeaseHolder = util.NewLeaseHolder(lease)
 	handle.StatsCache = statsCache
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
