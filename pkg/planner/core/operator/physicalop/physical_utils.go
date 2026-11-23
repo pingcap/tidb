@@ -257,9 +257,8 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		}
 	}
 
-	// The probe key must match the stored encoding: descending index columns
-	// (pingcap/tidb#2519) are written bitwise-complemented, so an ASC-encoded
-	// probe would silently miss the row. Mirrors tablecodec.GenIndexKey.
+	// The probe key must use the stored encoding, in which DESC columns are
+	// complemented. Mirrors tablecodec.GenIndexKey.
 	var encodedIdxVals []byte
 	if idxInfo.HasDescColumn() {
 		desc := make([]bool, len(idxInfo.Columns))

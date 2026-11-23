@@ -123,11 +123,8 @@ func TestOnlyPointRange(t *testing.T) {
 }
 
 func TestAccessPathCloneCopiesMatchedScanDesc(t *testing.T) {
-	// Regression for pingcap/tidb#2519: AccessPath.Clone() must propagate
-	// MatchedScanDesc, otherwise plan rebuilds and index-merge alternative
-	// cloning silently reset the field to false and a path that needed a
-	// reverse cop scan ends up doing a forward scan instead, producing
-	// rows in the wrong order.
+	// A clone that drops MatchedScanDesc would turn a reverse scan into a
+	// forward one and return rows in the wrong order.
 	original := &util.AccessPath{
 		IsCommonHandlePath: true,
 		MatchedScanDesc:    true,
@@ -135,7 +132,6 @@ func TestAccessPathCloneCopiesMatchedScanDesc(t *testing.T) {
 	cloned := original.Clone()
 	require.True(t, cloned.MatchedScanDesc, "MatchedScanDesc must survive Clone()")
 
-	// Mutating the clone must not leak back.
 	cloned.MatchedScanDesc = false
 	require.True(t, original.MatchedScanDesc)
 }

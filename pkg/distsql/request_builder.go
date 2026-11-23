@@ -765,10 +765,8 @@ func IndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ra
 	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, nil, ranges, nil, nil)
 }
 
-// IndexRangesToKVRangesWithDesc is like IndexRangesToKVRanges but threads a
-// per-column desc flag slice down to the byte encoder. Columns marked
-// descending are complemented and, if the resulting byte low/high pair is
-// inverted, automatically swapped. See EncodeIndexKeyWithDesc.
+// IndexRangesToKVRangesWithDesc is like IndexRangesToKVRanges but honors
+// per-column descending flags; see EncodeIndexKeyWithDesc.
 func IndexRangesToKVRangesWithDesc(dctx *distsqlctx.DistSQLContext, tid, idxID int64, desc []bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, desc, ranges, nil, nil)
 }
@@ -779,9 +777,9 @@ func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, t
 	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, nil, ranges, memTracker, interruptSignal)
 }
 
-// IndexRangesToKVRangesWithDescAndInterruptSignal is the full-featured entry
-// point that takes both per-column desc flags and an interrupt signal. The
-// other IndexRangesToKVRanges* helpers delegate here with sensible defaults.
+// IndexRangesToKVRangesWithDescAndInterruptSignal converts index ranges to
+// "KeyRange" honoring per-column descending flags. The process can be
+// interrupted by setting `interruptSignal` to true.
 func IndexRangesToKVRangesWithDescAndInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, desc []bool, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
 	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, desc, ranges, memTracker, interruptSignal)
 	if err != nil {
@@ -913,23 +911,11 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) (low, hi
 	return EncodeIndexKeyWithDesc(dctx, ran, nil)
 }
 
-// EncodeIndexKeyWithDesc encodes a range's bounds into the byte low/high pair
-// fed to TiKV, honoring per-column descending-order flags (pingcap/tidb#2519).
-//
-// When desc is nil or all-false the result is byte-identical to EncodeIndexKey:
-// no allocations beyond what the ascending path already needs, no semantic
-// change. When any column is descending, its memcomparable bytes are
-// bitwise-complemented so forward byte-order iteration yields the declared
-// direction.
-//
-// Descending encoding reverses comparison order, so a semantic range like
-// `col IN (low, high)` can encode to byte low ≥ byte high. If that happens
-// we swap the two byte strings and swap the LowExclude/HighExclude flags,
-// restoring a well-ordered [byteLow, byteHigh] pair before the usual
-// PrefixNext adjustments run. This one-shot swap is correct for single-
-// column DESC ranges and for composite ranges whose differentiating column
-// is DESC; point ranges (byteLow == byteHigh) skip the swap and behave
-// identically to the ascending path.
+// EncodeIndexKeyWithDesc is like EncodeIndexKey but honors per-column
+// descending flags; with nil or all-false desc the result is identical.
+// DESC columns invert byte order, so the semantic low bound may encode above
+// the high bound; the bounds and their exclude flags are then swapped so the
+// caller always gets a well-ordered pair.
 func EncodeIndexKeyWithDesc(dctx *distsqlctx.DistSQLContext, ran *ranger.Range, desc []bool) (low, high []byte, err error) {
 	tz := time.UTC
 	errCtx := errctx.StrictNoWarningContext
@@ -967,10 +953,7 @@ func EncodeIndexKeyWithDesc(dctx *distsqlctx.DistSQLContext, ran *ranger.Range, 
 
 	lowExclude, highExclude := ran.LowExclude, ran.HighExclude
 	if hasDesc && bytes.Compare(low, high) > 0 {
-		// The semantic low encoded to a larger byte than the semantic high
-		// because descending columns flip byte ordering. Swap so the caller
-		// always sees a well-ordered [low, high] pair, and swap the exclude
-		// flags so PrefixNext gets applied to the correct side.
+		// Swap the exclude flags too so PrefixNext applies to the right side.
 		low, high = high, low
 		lowExclude, highExclude = highExclude, lowExclude
 	}
@@ -984,11 +967,8 @@ func EncodeIndexKeyWithDesc(dctx *distsqlctx.DistSQLContext, ran *ranger.Range, 
 	return low, high, nil
 }
 
-// indexDescFlags returns a per-column descending-order slice derived from
-// idxInfo, or nil when the index has no DESC columns. Returning nil lets
-// downstream encoders stay on the ascending fast path. Used at distsql
-// callsites that have an *IndexInfo in hand but were originally written
-// against the legacy idxID-only range helpers.
+// indexDescFlags returns the per-column descending flags of idxInfo, or nil
+// when no column is descending so encoders stay on the ascending fast path.
 func indexDescFlags(idxInfo *model.IndexInfo) []bool {
 	if idxInfo == nil || !idxInfo.HasDescColumn() {
 		return nil

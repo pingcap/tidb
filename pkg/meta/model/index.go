@@ -308,18 +308,13 @@ type IndexInfo struct {
 // Bump this when adding index-level features that older binaries cannot safely ignore.
 const maxKnownIndexVersion uint8 = 1
 
-// IsServable reports whether this TiDB binary can safely serve queries against
-// the index. It returns false if the index metadata uses a newer format version
-// than this binary knows about — the caller should surface a clear error rather
-// than risk returning wrong rows.
+// IsServable reports whether this TiDB binary understands the index metadata
+// version. Callers must reject unservable indexes rather than risk wrong rows.
 func (index *IndexInfo) IsServable() bool {
 	return index.Version <= maxKnownIndexVersion
 }
 
-// UnservableErr returns the error to surface when an unservable index is
-// encountered during query planning or DDL. The message names the index and
-// the version mismatch so an operator can tell whether to upgrade TiDB or
-// drop the index before downgrading.
+// UnservableErr returns the error reported for an index this binary cannot serve.
 func (index *IndexInfo) UnservableErr(tableName string) error {
 	return errors.Errorf(
 		"index `%s`%s uses metadata version %d, which is newer than this TiDB binary supports (max %d); upgrade TiDB or DROP INDEX to roll back",
@@ -614,9 +609,8 @@ type IndexColumn struct {
 	Length int `json:"length"`
 	// Whether this index column use changing type
 	UseChangingType bool `json:"using_changing_type,omitempty"`
-	// Desc indicates that this index column is stored in descending order.
-	// False (the zero value) means ascending order; this preserves backward
-	// compatibility with schemas written before descending indexes were supported.
+	// Desc marks a column stored in descending order. The zero value
+	// (ascending) is omitted from JSON for compatibility with older schemas.
 	Desc bool `json:"desc,omitempty"`
 }
 

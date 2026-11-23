@@ -1079,11 +1079,8 @@ const (
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 
 	// TiDBEnableDescendingIndex controls whether CREATE INDEX ... (col DESC) is
-	// honored. When off (the default), the DESC keyword is silently ignored to
-	// preserve historical behavior and allow migration scripts written for MySQL
-	// 5.7 to continue working. When on, the descending order is persisted into
-	// IndexColumn and (once supporting TiKV is available) used for physical
-	// encoding. See pingcap/tidb#2519.
+	// honored. When off (the default), DESC is silently ignored as in MySQL 5.7;
+	// when on, the order is persisted and used for key encoding.
 	TiDBEnableDescendingIndex = "tidb_enable_descending_index"
 
 	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.

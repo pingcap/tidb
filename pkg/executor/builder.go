@@ -4638,7 +4638,7 @@ func (builder *dataReaderBuilder) buildPartitionedTableReaderKVRangesForIndexJoi
 		}
 		if canLocateByKey {
 			for pid, contents := range contentsByPID {
-				// Common handle PK is always ascending (no per-column DESC), so desc=nil.
+				// Clustered PK columns are always ascending.
 				tmp, err := buildKvRangesForIndexJoin(dctx, rctx, pid, -1, nil, contents, indexRanges, keyOff2IdxOff, cwc, kvRangeMemTracker, interruptSignal)
 				if err != nil {
 					return nil, err
@@ -5980,8 +5980,7 @@ func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*jo
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-// desc carries the per-column descending flags of the index (nil or all-false for
-// ascending-only indexes, which preserves the original encoder fast path).
+// desc holds the index's per-column descending flags; nil for ascending-only indexes.
 func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.RangerContext, tableID, indexID int64, desc []bool, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (_ []kv.KeyRange, err error) {
@@ -6057,9 +6056,8 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 	return tmpKeyRanges.FirstPartitionRange(), err
 }
 
-// indexColDescFlags returns a per-column descending-order slice derived from
-// idxInfo, or nil when the index has no DESC columns. Returning nil lets
-// downstream encoders stay on the ascending fast path.
+// indexColDescFlags returns the per-column descending flags of idxInfo, or nil
+// when no column is descending so encoders stay on the ascending fast path.
 func indexColDescFlags(idxInfo *model.IndexInfo) []bool {
 	if idxInfo == nil || !idxInfo.HasDescColumn() {
 		return nil

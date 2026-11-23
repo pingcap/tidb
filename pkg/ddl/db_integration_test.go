@@ -3282,8 +3282,7 @@ func TestDescendingIndexMetadataPlumbing(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// With the feature gate off (the default), DESC is silently ignored at
-	// DDL time — preserving historical MySQL 5.7 behavior.
+	// Gate off (the default): DESC is silently ignored, as in MySQL 5.7.
 	tk.MustExec("set @@global.tidb_enable_descending_index = off")
 	tk.MustExec("create table t_desc_off (a int, b int, index idx_off (a, b desc))")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -3296,9 +3295,8 @@ func TestDescendingIndexMetadataPlumbing(t *testing.T) {
 	tk.MustQuery("select collation from information_schema.statistics where index_name='idx_off' order by seq_in_index").
 		Check(testkit.Rows("A", "A"))
 
-	// With the feature gate on, DESC is persisted and reflected in SHOW CREATE
-	// TABLE and information_schema.STATISTICS. IndexInfo.Version bumps to 1 so
-	// an older TiDB reading this schema will refuse to serve queries.
+	// Gate on: DESC is persisted, surfaced in SHOW CREATE TABLE and
+	// information_schema.STATISTICS, and bumps IndexInfo.Version to 1.
 	tk.MustExec("set @@global.tidb_enable_descending_index = on")
 	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
 	tk.MustExec("create table t_desc_on (a int, b int, index idx_on (a, b desc))")
@@ -3318,7 +3316,7 @@ func TestDescendingIndexMetadataPlumbing(t *testing.T) {
 	require.NotContains(t, showCreate, "`a` DESC", "ascending columns must render without an explicit direction")
 }
 
-// explainHas reports whether any line of an EXPLAIN rowset contains the given substring.
+// explainHasString reports whether any cell of an EXPLAIN rowset contains substr.
 func explainHasString(rows [][]any, substr string) bool {
 	for _, row := range rows {
 		for _, col := range row {
@@ -3330,10 +3328,8 @@ func explainHasString(rows [][]any, substr string) bool {
 	return false
 }
 
-// TestDescendingIndexScanDirection verifies that the planner picks the right
-// scan direction once an index column is stored descending. It does NOT verify
-// result correctness — that depends on the physical-encoding work in a later
-// phase. The assertion here is purely on plan shape.
+// TestDescendingIndexScanDirection checks the scan direction the planner picks
+// for descending and mixed-direction indexes. It asserts plan shape only.
 func TestDescendingIndexScanDirection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3341,36 +3337,26 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_descending_index = on")
 	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
 
-	// Descending-stored single-column index. A forward scan on this index
-	// (physically) yields rows in the declared order; the planner should
-	// therefore reach the required direction by flipping scan.Desc rather
-	// than mirroring the ORDER BY direction unconditionally.
 	tk.MustExec("drop table if exists t_desc")
 	tk.MustExec("create table t_desc (a int, b int, index idx_b_desc (b desc))")
 
-	// ORDER BY b DESC on a DESC-stored index: a FORWARD scan satisfies the
-	// property, so the IndexRangeScan must NOT be marked as a reverse scan.
+	// ORDER BY b DESC on a DESC index is a forward scan.
 	rows := tk.MustQuery("explain format='brief' select b from t_desc use index(idx_b_desc) order by b desc").Rows()
 	require.True(t, explainHasString(rows, "keep order:true"),
 		"DESC idx + ORDER BY DESC: expected keep order:true")
 	require.False(t, explainHasString(rows, "keep order:true, desc"),
 		"DESC idx + ORDER BY DESC: expected forward scan (no ', desc'), got reverse")
 
-	// ORDER BY b ASC on a DESC-stored index: a REVERSE scan satisfies the
-	// property. The scan must be marked as desc.
+	// ORDER BY b ASC on a DESC index is a reverse scan.
 	rows = tk.MustQuery("explain format='brief' select b from t_desc use index(idx_b_desc) order by b asc").Rows()
 	require.True(t, explainHasString(rows, "keep order:true, desc"),
 		"DESC idx + ORDER BY ASC: expected reverse scan (', desc')")
 
-	// Mixed-direction composite (a ASC, b DESC) — this is the MySQL 8.0
-	// flagship use case. Forward scan satisfies "ORDER BY a ASC, b DESC"
-	// directly; reverse scan satisfies "ORDER BY a DESC, b ASC"; uniform
-	// "ORDER BY a, b" is unsatisfiable by either direction and must fall
-	// back to a Sort.
+	// Mixed composite (a ASC, b DESC): forward scan serves ORDER BY a, b DESC,
+	// reverse scan serves ORDER BY a DESC, b, and ORDER BY a, b needs a Sort.
 	tk.MustExec("drop table if exists t_mixed")
 	tk.MustExec("create table t_mixed (a int, b int, index idx_mixed (a, b desc))")
 
-	// Matching the index direction-for-direction: forward scan, no Sort.
 	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a asc, b desc").Rows()
 	require.False(t, explainHasString(rows, "Sort"),
 		"INDEX(a, b DESC) ORDER BY a ASC, b DESC must use the index without a Sort")
@@ -3379,23 +3365,17 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 	require.False(t, explainHasString(rows, "keep order:true, desc"),
 		"forward scan must not be marked desc")
 
-	// Inverted direction-for-direction: reverse scan, still no Sort.
 	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a desc, b asc").Rows()
 	require.False(t, explainHasString(rows, "Sort"),
 		"INDEX(a, b DESC) ORDER BY a DESC, b ASC must use the index in reverse without a Sort")
 	require.True(t, explainHasString(rows, "keep order:true, desc"),
 		"reverse scan should be marked desc")
 
-	// Mixed mismatch: forward gives (a ASC, b DESC), reverse gives (a DESC,
-	// b ASC); neither matches "ORDER BY a, b" uniformly ASC, so a Sort is
-	// required.
 	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a, b").Rows()
 	require.True(t, explainHasString(rows, "Sort"),
 		"INDEX(a, b DESC) ORDER BY a ASC, b ASC is unsatisfiable; expected a Sort")
 
-	// With the feature gate off, DESC is dropped at DDL time, so the same
-	// index behaves like an ascending one — ORDER BY DESC should drive a
-	// reverse scan, preserving historical behavior.
+	// Gate off: DESC is dropped at DDL time, so ORDER BY DESC is a reverse scan.
 	tk.MustExec("set @@global.tidb_enable_descending_index = off")
 	tk.MustExec("drop table if exists t_off")
 	tk.MustExec("create table t_off (a int, b int, index idx_off (b desc))")
@@ -3404,12 +3384,9 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
 }
 
-// TestDescendingIndexSysvarIsCreateTimeOnly nails down the gate's semantic:
-// tidb_enable_descending_index controls whether *new* CREATE INDEX statements
-// persist DESC, but turning it off later must not invalidate or rewrite any
-// existing DESC index. The persisted IndexColumn.Desc + IndexInfo.Version
-// remain in metadata, the planner keeps using the index, and INSERT/SELECT
-// continue to round-trip correctly.
+// TestDescendingIndexSysvarIsCreateTimeOnly checks that turning the gate off
+// affects only new indexes: existing DESC indexes keep their metadata and
+// keep serving reads and writes.
 func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3441,15 +3418,12 @@ func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
 	tk3.MustQuery("select b from t_sysvar_flip use index(idx_b) order by b desc").
 		Check(testkit.Rows("20", "12", "5"))
 
-	// Inserts continue to be encoded correctly (the table's existing index
-	// has Desc=true, so GenIndexKey will go through the DESC path even
-	// though the gate is off).
+	// Writes still use the DESC encoding of the existing index.
 	tk3.MustExec("insert into t_sysvar_flip values (4, 30)")
 	tk3.MustQuery("select b from t_sysvar_flip use index(idx_b) order by b desc").
 		Check(testkit.Rows("30", "20", "12", "5"))
 
-	// A *new* index built while the gate is off must drop DESC silently
-	// (preserving MySQL 5.7 compatibility for migration scripts).
+	// A new index built while the gate is off drops DESC silently.
 	tk3.MustExec("alter table t_sysvar_flip add index idx_a (a desc)")
 	is = domain.GetDomain(tk3.Session()).InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_sysvar_flip"))
@@ -3461,20 +3435,13 @@ func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
 			break
 		}
 	}
-	// Assert presence outside the loop — without this, an upstream
-	// regression that fails to create idx_a (or renames it) would make
-	// the assertions vacuously skip and the test would falsely pass.
 	require.NotNil(t, newIdx, "expected idx_a to be present after ALTER TABLE")
 	require.False(t, newIdx.Columns[0].Desc, "new index built with gate off must drop DESC")
 	require.Equal(t, uint8(0), newIdx.Version, "new ASC-only index must stay at Version=0")
 }
 
-// TestDescOnClusteredPrimaryKeyIsRejected verifies the DDL guard that
-// refuses DESC on the columns of a clustered PRIMARY KEY. The PK columns
-// determine the row's physical key bytes; allowing DESC there would
-// require coordinated changes across many code paths that currently
-// assume the row key is ordered ascending. The DDL guard protects us
-// until that work is done.
+// TestDescOnClusteredPrimaryKeyIsRejected checks that DESC is refused on the
+// columns of a clustered PRIMARY KEY, whose bytes form the row key.
 func TestDescOnClusteredPrimaryKeyIsRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3485,35 +3452,29 @@ func TestDescOnClusteredPrimaryKeyIsRejected(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("set @@tidb_enable_clustered_index = ON")
 
-	// Sanity: sysvar is actually on for this session before exercising DDL.
 	tk2.MustQuery("select @@global.tidb_enable_descending_index").Check(testkit.Rows("1"))
 
-	// Multi-column PRIMARY KEY ... CLUSTERED with DESC must error.
 	tk2.MustExec("drop table if exists t_clustered_desc")
 	err := tk2.ExecToErr("create table t_clustered_desc (a int, b int, c int, primary key (a, b desc) clustered)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "DESC is not supported on the columns of a clustered PRIMARY KEY")
 
-	// Single-int PRIMARY KEY with DESC also rejected (PKIsHandle path).
+	// Single-int PK (PKIsHandle path).
 	err = tk2.ExecToErr("create table t_pk_handle_desc (a int, b int, primary key (a desc) clustered)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "DESC is not supported on the columns of a clustered PRIMARY KEY")
 
-	// NONCLUSTERED primary key with DESC is fine — at this layer it's
-	// just a unique secondary index.
+	// A NONCLUSTERED primary key is an ordinary unique index and may use DESC.
 	tk2.MustExec("drop table if exists t_nonclustered_desc")
 	tk2.MustExec("create table t_nonclustered_desc (a int, b int, primary key (a desc) nonclustered)")
 
-	// Regular DESC index on a clustered table is fine — only the PK
-	// columns themselves are restricted.
+	// Secondary DESC indexes on a clustered table are fine.
 	tk2.MustExec("drop table if exists t_clustered_secondary_desc")
 	tk2.MustExec("create table t_clustered_secondary_desc (a varchar(10), b int, primary key (a) clustered, index idx_b (b desc))")
 }
 
-// TestExpressionIndexDescPersists verifies that DESC on an expression index
-// part is preserved end-to-end. The parser already accepts
-// `INDEX((expr) DESC)`; this test asserts the rest of the pipeline (DDL,
-// SHOW CREATE TABLE, INFORMATION_SCHEMA) reflects the order correctly.
+// TestExpressionIndexDescPersists checks that DESC on an expression index part
+// is persisted and shown by SHOW CREATE TABLE and INFORMATION_SCHEMA.
 func TestExpressionIndexDescPersists(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3534,19 +3495,15 @@ func TestExpressionIndexDescPersists(t *testing.T) {
 	require.True(t, idx.Columns[0].Desc, "expression index column must be marked DESC")
 	require.Equal(t, uint8(1), idx.Version, "DESC expression index must bump IndexInfo.Version")
 
-	// SHOW CREATE TABLE must round-trip the DESC.
 	showCreate := tk2.MustQuery("show create table t_expr_desc").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "DESC", "SHOW CREATE TABLE must preserve DESC on the expression part")
 
-	// information_schema reports collation 'D' for the expression part.
 	tk2.MustQuery("select collation from information_schema.statistics where table_name='t_expr_desc' and index_name='idx_expr'").
 		Check(testkit.Rows("D"))
 }
 
-// TestMixedDirectionCompositeIndex covers the MySQL 8.0 flagship use case:
-// a composite index with mixed ASC/DESC columns must satisfy "ORDER BY"
-// requests that match its direction vector (forward) or are the bitwise
-// complement of it (reverse), with row data coming back correctly ordered.
+// TestMixedDirectionCompositeIndex checks row order for a mixed ASC/DESC
+// composite index under forward, reverse and unsatisfiable ORDER BY.
 func TestMixedDirectionCompositeIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3558,37 +3515,29 @@ func TestMixedDirectionCompositeIndex(t *testing.T) {
 
 	tk2.MustExec("drop table if exists t_mixed_e2e")
 	tk2.MustExec("create table t_mixed_e2e (a int, b int, index idx_ab (a, b desc))")
-	// Two values of a, several b values per a, and one DISTINCT b across
-	// the two groups so the join key isn't trivial.
 	tk2.MustExec("insert into t_mixed_e2e values (1, 10), (1, 5), (1, 15), (2, 20), (2, 8), (2, 12)")
 
-	// Forward scan satisfies ORDER BY a ASC, b DESC: rows must come back
-	// (a ascending, b descending within each a).
+	// Forward scan.
 	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a asc, b desc").Check(testkit.Rows(
 		"1 15", "1 10", "1 5",
 		"2 20", "2 12", "2 8",
 	))
 
-	// Reverse scan satisfies ORDER BY a DESC, b ASC.
+	// Reverse scan.
 	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a desc, b asc").Check(testkit.Rows(
 		"2 8", "2 12", "2 20",
 		"1 5", "1 10", "1 15",
 	))
 
-	// "ORDER BY a, b" is unsatisfiable by either direction; results must
-	// still be correct (planner falls back to a Sort) but we don't assert
-	// scan direction here, just row order.
+	// Unsatisfiable by either direction; the planner adds a Sort.
 	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a, b").Check(testkit.Rows(
 		"1 5", "1 10", "1 15",
 		"2 8", "2 12", "2 20",
 	))
 }
 
-// TestDescendingIndexUniqueDupKeyAndAdminCheck verifies that uniqueness is
-// enforced through the complement-encoded key of a DESC unique index (the
-// duplicate probe reads the same encoding the writer produced) and that
-// `admin check table` / `admin check index` can verify row/index consistency
-// over DESC encodings after a mix of DML.
+// TestDescendingIndexUniqueDupKeyAndAdminCheck checks duplicate-key detection,
+// point lookups and admin check over a DESC unique index after mixed DML.
 func TestDescendingIndexUniqueDupKeyAndAdminCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3602,14 +3551,10 @@ func TestDescendingIndexUniqueDupKeyAndAdminCheck(t *testing.T) {
 	tk2.MustExec("create table t_desc_uniq (a int, b int, c varchar(32), unique key uk_b (b desc), key idx_ac (a, c desc))")
 	tk2.MustExec("insert into t_desc_uniq values (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')")
 
-	// Duplicate-key detection must fire through the DESC-encoded unique key.
 	tk2.MustGetErrCode("insert into t_desc_uniq values (4, 20, 'w')", errno.ErrDupEntry)
-	// INSERT ... ON DUPLICATE KEY UPDATE must locate the conflicting row via
-	// the same encoding.
 	tk2.MustExec("insert into t_desc_uniq values (5, 30, 'v') on duplicate key update a = 99")
 	tk2.MustQuery("select a from t_desc_uniq where b = 30").Check(testkit.Rows("99"))
 
-	// UPDATE / DELETE must maintain the DESC index entries consistently.
 	tk2.MustExec("update t_desc_uniq set b = 25 where b = 10")
 	tk2.MustExec("delete from t_desc_uniq where b = 20")
 	tk2.MustQuery("select b from t_desc_uniq use index(uk_b) order by b desc").Check(testkit.Rows("30", "25"))
@@ -3618,19 +3563,15 @@ func TestDescendingIndexUniqueDupKeyAndAdminCheck(t *testing.T) {
 	tk2.MustExec("admin check index t_desc_uniq uk_b")
 	tk2.MustExec("admin check index t_desc_uniq idx_ac")
 
-	// Point_Get and Batch_Point_Get probe the unique index with a directly
-	// encoded key (not a coprocessor range); the probe must use the DESC
-	// encoding or it silently misses the row.
+	// Point_Get and Batch_Point_Get encode the probe key directly and must use
+	// the DESC encoding.
 	tk2.MustHavePlan("select a from t_desc_uniq where b = 30", "Point_Get")
 	tk2.MustHavePlan("select a from t_desc_uniq where b in (25, 30)", "Batch_Point_Get")
 	tk2.MustQuery("select a from t_desc_uniq where b in (25, 30) order by a").Check(testkit.Rows("1", "99"))
 }
 
-// TestDescendingIndexAnalyze verifies that ANALYZE works on tables with DESC
-// indexes: the default sampling-based path builds index stats from row values
-// (which are never DESC-encoded), while the index-analyze pushdown — which
-// would read complement-encoded keys TiKV cannot build histogram bounds from
-// — is skipped with a warning for descending indexes.
+// TestDescendingIndexAnalyze checks that sampling-based ANALYZE builds stats
+// for DESC indexes and that the index-analyze pushdown skips them with a warning.
 func TestDescendingIndexAnalyze(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3644,16 +3585,12 @@ func TestDescendingIndexAnalyze(t *testing.T) {
 	tk2.MustExec("create table t_desc_stats (a int, b int, key idx_b (b desc))")
 	tk2.MustExec("insert into t_desc_stats values (1,10),(2,20),(3,30),(4,40),(5,50)")
 
-	// Sampling-based ANALYZE (the default) must succeed and produce index
-	// stats for the DESC index.
 	tk2.MustExec("analyze table t_desc_stats all columns")
 	tk2.MustQuery("show stats_histograms where table_name = 't_desc_stats' and column_name = 'idx_b'").
 		CheckAt([]int{4, 6}, testkit.Rows("1 5"))
 
-	// A DESC index that can only be analyzed via the index pushdown (a
-	// special global index — global + prefix column — on a partitioned
-	// table) must be skipped with a warning instead of pushing
-	// complement-encoded keys into the histogram builder.
+	// A special global index (global + prefix column) can only be analyzed by
+	// the index pushdown, which must skip the DESC index with a warning.
 	tk2.MustExec("drop table if exists t_desc_global")
 	tk2.MustExec("create table t_desc_global (a int, b int, c varchar(32), primary key (a) nonclustered, " +
 		"unique key uk_bc (b desc, c(3)) global) partition by hash(a) partitions 4")
@@ -3667,14 +3604,10 @@ func TestDescendingIndexAnalyze(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected a skip warning for the DESC global index, got: %v", warnings)
-	// The skipped pushdown must not fail the statement, and admin check
-	// still passes.
 	tk2.MustExec("admin check table t_desc_global")
 }
 
-// TestDescendingIndexIndexMerge verifies the IndexMerge read path over a DESC
-// index: partial ranges on the complement-encoded index must produce correct
-// rows when merged with an ASC index.
+// TestDescendingIndexIndexMerge checks IndexMerge over a DESC and an ASC index.
 func TestDescendingIndexIndexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3693,10 +3626,7 @@ func TestDescendingIndexIndexMerge(t *testing.T) {
 	tk2.MustQuery(query).Check(testkit.Rows("1 10", "4 40", "5 50"))
 }
 
-// TestDescendingIndexEndToEnd verifies INSERT + SELECT through a DESC index
-// end-to-end: writes go through the complement-encoded path, the mutation
-// consistency check tolerates them, and the unistore coprocessor emulation
-// decodes the returned keys correctly via auto-detecting DESC flag bytes.
+// TestDescendingIndexEndToEnd checks INSERT and SELECT through a DESC index.
 func TestDescendingIndexEndToEnd(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3710,27 +3640,20 @@ func TestDescendingIndexEndToEnd(t *testing.T) {
 	tk2.MustExec("create table t_desc_e2e (a int, b int, index idx_b (b desc))")
 	tk2.MustExec("insert into t_desc_e2e values (1, 10), (2, 20), (3, 5), (4, 30), (5, 15)")
 
-	// Sanity: the index really is stored as DESC.
 	tk2.MustQuery("select collation from information_schema.statistics where table_name='t_desc_e2e' and index_name='idx_b'").
 		Check(testkit.Rows("D"))
 
-	// Point lookup on DESC column must find the row.
 	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 20").Check(testkit.Rows("2"))
 	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 5").Check(testkit.Rows("3"))
 	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 999").Check(testkit.Rows())
 
-	// Full ordered scan of the DESC index returns rows in b-descending order
-	// via a forward keyspace scan (no reverse-scan flag on the IndexReader).
+	// Forward scan, then reverse scan.
 	tk2.MustQuery("select b from t_desc_e2e use index(idx_b) order by b desc").Check(testkit.Rows("30", "20", "15", "10", "5"))
-	// The ORDER BY ASC variant exercises the reverse-scan path on the DESC
-	// index and must also return the correct order.
 	tk2.MustQuery("select b from t_desc_e2e use index(idx_b) order by b asc").Check(testkit.Rows("5", "10", "15", "20", "30"))
 }
 
-// TestUnservableIndexRejectsQueries exercises the IsServable fence: if a
-// table contains an index whose metadata Version is newer than this binary
-// understands, every plan-building entry point (SELECT, INSERT) must surface
-// a clear error rather than silently produce wrong rows.
+// TestUnservableIndexRejectsQueries checks that every plan-building entry
+// point rejects a table with an index whose metadata version is too new.
 func TestUnservableIndexRejectsQueries(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3738,10 +3661,7 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 	tk.MustExec("drop table if exists t_unservable")
 	tk.MustExec("create table t_unservable (a int, b int, key idx_b (b))")
 
-	// Forge a forward-version index by mutating the in-memory schema. We
-	// can't create one through DDL because the current TiDB binary won't
-	// emit Version > maxKnownIndexVersion — the point of the fence is to
-	// guard a downlevel binary reading what some future binary wrote.
+	// DDL cannot produce a too-new version, so forge one in the in-memory schema.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_unservable"))
 	require.NoError(t, err)
@@ -3749,25 +3669,16 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 	require.Len(t, tblInfo.Indices, 1)
 	tblInfo.Indices[0].Version = 99
 
-	// SELECT planning must reject the table because the planner's
-	// getPossibleAccessPaths walks tableInfo.Indices.
 	_, err = tk.Exec("select * from t_unservable where b = 1")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "metadata version 99")
 	require.Contains(t, err.Error(), "DROP INDEX")
 
-	// INSERT VALUES doesn't enumerate access paths but still lands on the
-	// same fence via checkAllIndicesServable in buildInsert.
 	_, err = tk.Exec("insert into t_unservable values (1, 2)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "metadata version 99")
 
-	// Writable non-public states must also be fenced. tables.IsIndexWritable
-	// returns true for StateWriteOnly and StateWriteReorganization, so the
-	// mutation paths in pkg/table/tables/tables.go would write to an index
-	// in those states. checkAllIndicesServable must reject them too,
-	// otherwise an older TiDB binary running DML against a table whose
-	// new-format index is mid-DDL would silently corrupt the index.
+	// Writable non-public states are fenced too, since DML maintains them.
 	for _, st := range []model.SchemaState{model.StateWriteOnly, model.StateWriteReorganization} {
 		tblInfo.Indices[0].State = st
 		_, err = tk.Exec("insert into t_unservable values (3, 4)")
@@ -3775,9 +3686,7 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 		require.Contains(t, err.Error(), "metadata version 99")
 	}
 
-	// And the inverse: StateDeleteOnly / StateDeleteReorganization are NOT
-	// writable, so the fence intentionally lets them through. Restore to
-	// public afterwards so the table-cleanup teardown is well-formed.
+	// Non-writable states pass the fence. Restore to public afterwards.
 	for _, st := range []model.SchemaState{model.StateDeleteOnly, model.StateDeleteReorganization} {
 		tblInfo.Indices[0].State = st
 		_, err = tk.Exec("insert into t_unservable values (5, 6)")
@@ -3785,8 +3694,7 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 	}
 	tblInfo.Indices[0].State = model.StatePublic
 
-	// LOAD DATA and IMPORT INTO write through the same index-mutation paths
-	// and must hit the fence at plan-build time, before any file access.
+	// LOAD DATA and IMPORT INTO hit the fence at plan time, before any file access.
 	err = tk.ExecToErr("load data local infile '/nonexistent' into table t_unservable")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "metadata version 99")

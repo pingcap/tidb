@@ -22,8 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// store builds a synthetic *metapb.Store for the version-check tests.
-// Pass an empty version to simulate a store that hasn't reported one yet.
+// storeAt builds a *metapb.Store for the version-check tests.
 func storeAt(id uint64, version string, isTiFlash bool) *metapb.Store {
 	s := &metapb.Store{Id: id, Version: version, Address: "mock"}
 	if isTiFlash {
@@ -59,9 +58,7 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("TiFlash stores are excluded from the check", func(t *testing.T) {
-		// A TiFlash store on an old version must not block the gate; the
-		// check is for TiKV only because TiKV alone runs the coprocessor
-		// path that needs the new decoder.
+		// Only TiKV runs the coprocessor path that needs the new decoder.
 		stores := []*metapb.Store{
 			storeAt(1, "9.0.0", false),
 			storeAt(2, "1.0.0", true), // ancient TiFlash, ignored
@@ -80,10 +77,6 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("empty version fails closed in production", func(t *testing.T) {
-		// A store that hasn't reported a clean semver yet cannot prove it
-		// can decode descending-order keys. The gate must reject the DDL
-		// rather than fall through and risk silent corruption. The operator
-		// can retry once PD has reconciled.
 		stores := []*metapb.Store{
 			storeAt(1, "9.0.0", false),
 			storeAt(2, "", false),
@@ -95,9 +88,7 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("empty version is tolerated in tests", func(t *testing.T) {
-		// In `intest` builds the mock store fixture reports empty versions
-		// for every replica, so the gate must let DDL through to allow
-		// integration tests to run.
+		// The mock store fixture reports empty versions.
 		stores := []*metapb.Store{
 			storeAt(1, "9.0.0", false),
 			storeAt(2, "", false),
@@ -106,8 +97,6 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("garbage version always fails closed", func(t *testing.T) {
-		// Unparsable version strings are unambiguously a bug or a
-		// misconfigured store; never tolerate them, even in tests.
 		stores := []*metapb.Store{
 			storeAt(1, "9.0.0", false),
 			storeAt(2, "not-a-semver", false),
@@ -124,12 +113,8 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("pre-release at the floor base version is accepted", func(t *testing.T) {
-		// Strict semver treats `9.0.0-beta.2` < `9.0.0`, but a nightly /
-		// release-candidate cluster cut from the branch that contains the
-		// feature does carry the new decoder. Reject only when the base
-		// (Major.Minor.Patch) is below the floor; pre-release tags at the
-		// floor base pass. tiup playground reports versions like
-		// `9.0.0-beta.2` so this is what the e2e runner relies on.
+		// Only Major.Minor.Patch is compared; tiup playground reports
+		// versions like 9.0.0-beta.2.
 		stores := []*metapb.Store{
 			storeAt(1, "9.0.0-beta.2", false),
 			storeAt(2, "9.0.0-rc.1", false),
@@ -138,10 +123,6 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 	})
 
 	t.Run("pre-release below the floor base still fails", func(t *testing.T) {
-		// `8.5.0-beta.2`'s base (8.5.0) is below the floor (9.0.0), so the
-		// pre-release relaxation must NOT let it through. This guards
-		// against accidentally degrading the check to "any pre-release
-		// passes".
 		stores := []*metapb.Store{
 			storeAt(1, "8.5.0-beta.2", false),
 		}

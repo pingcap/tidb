@@ -902,11 +902,8 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
-	// Apply tidb_enable_descending_index gate up front, before any constraint
-	// processing. See ApplyDescGateToIndexParts for the rationale: baking the
-	// decision in at submission time prevents a `SET GLOBAL` between statement
-	// submission and DDL owner replay from silently flipping the persisted
-	// schema.
+	// Fix the tidb_enable_descending_index decision at submission time; see
+	// ApplyDescGateToIndexParts.
 	for _, c := range s.Constraints {
 		ApplyDescGateToIndexParts(c.Keys)
 	}
@@ -1474,12 +1471,8 @@ func BuildTableInfo(
 			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
 
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
-				// Reject DESC on the columns of a clustered PRIMARY KEY.
-				// For PKIsHandle (single-int PK) the column becomes the
-				// row's int handle directly and BuildIndexInfo is never
-				// invoked, so this guard catches that case. For
-				// IsCommonHandle the same check fires again inside
-				// BuildIndexInfo for defence-in-depth. See pingcap/tidb#2519.
+				// A single-int clustered PK becomes the row handle without
+				// going through BuildIndexInfo, so DESC is rejected here too.
 				for _, key := range constr.Keys {
 					if key.Desc {
 						return nil, errors.Errorf(

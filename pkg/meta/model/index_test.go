@@ -106,8 +106,7 @@ func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
 }
 
 func TestIndexColumnDescRoundTrip(t *testing.T) {
-	// Ascending is the zero value and must be omitted from JSON for backward
-	// compatibility with schemas written before descending indexes were supported.
+	// Ascending is the zero value and is omitted from JSON.
 	ascCol := IndexColumn{Name: ast.NewCIStr("a"), Offset: 0, Length: -1}
 	ascJSON, err := json.Marshal(ascCol)
 	require.NoError(t, err)
@@ -118,12 +117,10 @@ func TestIndexColumnDescRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(descJSON), `"desc":true`)
 
-	// Unknown fields from a newer TiDB must decode cleanly on an older binary.
 	var decoded IndexColumn
 	require.NoError(t, json.Unmarshal(descJSON, &decoded))
 	require.True(t, decoded.Desc)
 
-	// Clone preserves Desc.
 	require.True(t, descCol.Clone().Desc)
 }
 
@@ -141,13 +138,10 @@ func TestIndexInfoHasDescColumn(t *testing.T) {
 func TestIndexInfoIsServable(t *testing.T) {
 	idx := newIndexForTest(1, newColumnForTest(0, 0))
 
-	// Version 0 (legacy) and 1 (introduces Desc) are both serviceable today.
 	require.True(t, idx.IsServable())
 	idx.Version = 1
 	require.True(t, idx.IsServable())
 
-	// A newer-than-known version must be rejected so old binaries refuse to
-	// serve queries against indexes whose semantics they do not understand.
 	idx.Version = 255
 	require.False(t, idx.IsServable())
 }
@@ -158,14 +152,11 @@ func TestIndexInfoUnservableErr(t *testing.T) {
 
 	err := idx.UnservableErr("orders")
 	require.Error(t, err)
-	// The message must name the index, the table, and the version mismatch
-	// so an operator can decide whether to upgrade or DROP INDEX.
 	msg := err.Error()
 	require.Contains(t, msg, idx.Name.O)
 	require.Contains(t, msg, "orders")
 	require.Contains(t, msg, "99")
 	require.Contains(t, msg, "DROP INDEX")
 
-	// Empty table name is allowed (callers without context just leave it off).
 	require.NotPanics(t, func() { _ = idx.UnservableErr("") })
 }

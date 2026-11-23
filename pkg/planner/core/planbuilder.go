@@ -1349,24 +1349,13 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
-// checkAllIndicesServable returns an error if tableInfo carries any
-// writable index whose metadata format is newer than this TiDB binary
-// understands. Used by DML builders (INSERT / REPLACE / UPDATE / DELETE
-// / LOAD DATA / IMPORT INTO) to fail fast before reaching table-level
-// mutation paths that would silently mis-maintain the index.
-//
-// "Writable" here matches `tables.IsIndexWritable`, i.e. every state
-// except StateDeleteOnly / StateDeleteReorganization. Restricting to
-// StatePublic is wrong: StateWriteOnly and StateWriteReorganization
-// indexes (mid-DDL) are also written by `addRowIndices` and
-// `rebuildUpdateRecordIndices` in pkg/table/tables/tables.go via the
-// same IsIndexWritable predicate. An older TiDB binary running DML
-// against a table whose new DESC index is in WriteOnly would otherwise
-// pass the planner gate and corrupt the index in the mutation path.
+// checkAllIndicesServable returns an error if tableInfo has a writable index
+// whose metadata version this TiDB binary does not understand. DML builders
+// call it to fail fast before the mutation path would mis-maintain the index.
+// "Writable" mirrors tables.IsIndexWritable: every state except DeleteOnly
+// and DeleteReorganization, since mid-DDL WriteOnly indexes are maintained too.
 func checkAllIndicesServable(tableInfo *model.TableInfo) error {
 	for _, idx := range tableInfo.Indices {
-		// Mirror tables.IsIndexWritable on the bare IndexInfo, so the
-		// fence stays in lockstep with the actual write predicate.
 		if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
 			continue
 		}
@@ -1452,15 +1441,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			// Refuse to plan against an index whose metadata format is newer
-			// than this binary understands (pingcap/tidb#2519). Silently
-			// skipping would risk wrong results — surface a clear error so
-			// the operator upgrades TiDB or drops the index.
-			//
-			// This check fires AFTER latest-index reconciliation so a snapshot
-			// copy of an index that the latest schema has dropped or moved out
-			// of StatePublic gets skipped before we error on its (now
-			// irrelevant) format version.
+			// Refuse to plan against an index with a newer metadata version
+			// than this binary understands. This runs after the latest-index
+			// reconciliation above so a dropped or non-public snapshot index
+			// is skipped first.
 			if !index.IsServable() {
 				return nil, index.UnservableErr(tblName.O)
 			}
@@ -2649,12 +2633,10 @@ func getModifiedIndexesInfoForAnalyze(
 	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
 }
 
-// skipDescIndexAnalyzeTask reports whether an index must be excluded from the
-// index-analyze pushdown because it has descending columns, appending a
-// warning when it is skipped. TiKV's index-analyze handler builds histogram
-// bucket bounds from raw index keys and would either fail on or mis-order the
-// bitwise-complemented bytes of descending columns, so such indexes rely on
-// the sampling-based stats built from row values instead.
+// skipDescIndexAnalyzeTask reports whether idx must be left out of the
+// index-analyze pushdown, appending a warning if so. TiKV builds histogram
+// bounds from raw index keys and cannot order complemented DESC bytes; such
+// indexes get their stats from row-value sampling instead.
 func (b *PlanBuilder) skipDescIndexAnalyzeTask(idx *model.IndexInfo) bool {
 	if !idx.HasDescColumn() {
 		return false

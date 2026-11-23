@@ -283,19 +283,10 @@ func checkIndexKeys(
 		loc := tc.Location()
 		for i, v := range decodedIndexValues {
 			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
-			// DecodeIndexKV returns column bytes whose origin depends on the
-			// index encoding version: for some columns the bytes were lifted
-			// from the key (and therefore bitwise-complemented when the
-			// column is DESC), for others they came from the index value
-			// (the restored-data path used for _bin collations and clustered
-			// v1 indexes), where the bytes are never complemented regardless
-			// of the column direction.
-			//
-			// Auto-detect rather than blindly trust IndexColumn.Desc: only
-			// un-complement when the leading flag byte is recognisably a
-			// DESC marker. ASC bytes (whether from key or value) decode
-			// directly. Restored bytes for a DESC column appear as ASC here
-			// and are correctly left untouched.
+			// DecodeIndexKV may return a DESC column's bytes either from the
+			// key (complemented) or from the restored value (not complemented),
+			// so detect the complemented flag byte instead of trusting
+			// IndexColumn.Desc alone.
 			if indexInfo.Columns[i].Desc && len(v) > 0 && codec.IsDescFlag(v[0]) {
 				cp := make([]byte, len(v))
 				for j := range v {
@@ -386,9 +377,8 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 					}
 				}
 			} else {
-				// Only the index ID is consumed downstream. Avoid DecodeIndexKey,
-				// which also parses every column value as a string and therefore
-				// fails on descending-complemented bytes.
+				// Only the index ID is needed; DecodeIndexKey would also parse
+				// the column values and fail on complemented DESC bytes.
 				_, m.indexID, _, err = tablecodec.DecodeKeyHead(m.key)
 				if err != nil {
 					err = errors.Trace(err)

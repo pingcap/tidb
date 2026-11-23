@@ -1163,11 +1163,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	}
 
 	// Match SortItems physical property.
-	// We no longer reject mixed-direction sort items up-front (pingcap/tidb#2519):
-	// the per-item loop below decides whether a forward or reverse scan can
-	// satisfy the request, and rejects the path only when the per-column
-	// mismatch pattern is itself mixed (some columns naturally satisfied,
-	// others requiring a flipped scan — unsatisfiable by any single scan).
+	// Mixed-direction sort items are handled by the per-item loop below, which
+	// decides whether a forward or a reverse scan satisfies them.
 	if prop.IsSortItemEmpty() {
 		return property.PropNotMatched, nil
 	}
@@ -1239,16 +1236,10 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchedCols := make([]*expression.Column, 0, len(prop.SortItems))
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
-	// matchedScanDescSet/matchedScanDesc record whether a forward or a reverse
-	// cop scan satisfies the property. For each (sortItem, idxCol) pair the
-	// "natural" direction is forward iff sortItem.Desc == idxCol.Desc;
-	// otherwise the scan would have to be reversed for that single column.
-	// All matched pairs must agree — if some need forward and others reverse,
-	// no single scan direction can satisfy the property and we reject the
-	// path. This is the unlock for mixed-direction composites such as
-	// INDEX(a ASC, b DESC) satisfying ORDER BY a ASC, b DESC with a forward
-	// scan, or INDEX(a, b) (both ASC) satisfying ORDER BY a DESC, b DESC
-	// with a reverse scan. See pingcap/tidb#2519.
+	// A matched (sortItem, idxCol) pair needs a reverse scan iff
+	// sortItem.Desc != idxCol.Desc. All pairs must agree, otherwise no single
+	// scan direction satisfies the property. This lets INDEX(a, b DESC) serve
+	// ORDER BY a, b DESC with a forward scan.
 	var matchedScanDesc bool
 	matchedScanDescSet := false
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
@@ -1267,13 +1258,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 				(sortItem.Col.EqualColumn(idxCol) ||
 					mysql.HasNotNullFlag(sortItem.Col.RetType.GetFlag()) == mysql.HasNotNullFlag(idxCol.RetType.GetFlag()) &&
 						sortItem.Col.EqualByExprAndID(evalCtx, idxCol)) {
-				// Index columns at colIdx >= len(path.Index.Columns) are the
-				// appended CommonHandle PK suffix. DDL rejects DESC on the
-				// columns of a clustered PRIMARY KEY (see BuildIndexInfo in
-				// pkg/ddl/index.go), so those suffix columns are guaranteed
-				// to be ascending and the default below is safe. If that
-				// guard is ever loosened, this code must be updated to read
-				// per-column direction from the primary index metadata.
+				// Columns past len(path.Index.Columns) are the appended
+				// clustered-PK suffix, which DDL guarantees to be ascending.
 				thisIdxDesc := false
 				if path.Index != nil && colIdx < len(path.Index.Columns) {
 					thisIdxDesc = path.Index.Columns[colIdx].Desc
@@ -3501,9 +3487,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
-			// matchProperty already encoded "do we need to flip the byte
-			// scan?" into MatchedScanDesc, accounting for any descending
-			// columns in the index. Just consume that decision.
+			// MatchedScanDesc already accounts for descending index columns.
 			batchPointGetPlan.Desc = candidate.path.MatchedScanDesc
 		}
 		if candidate.path.IsSingleScan {
