@@ -6351,3 +6351,39 @@ fn check_not_multi_column_row(expr: &Expression) -> Result<(), PlanError> {
     tidb_expr::expr_util::check_args_not_multi_column_row(std::slice::from_ref(expr))
         .map_err(|_| PlanError::from(EvalError::OperandColumns(1)))
 }
+
+impl<S: TableSource> PlanBuilder<'_, S, tidb_sessionctx::StmtContext> {
+    /// Go `PlanBuilder.Init(sctx, is, processor)`'s reads of the session: the
+    /// variables and statement state the build consults
+    /// (`EnablePipelinedWindowExec`, `EnableFullOuterJoin`, the
+    /// `ONLY_FULL_GROUP_BY` checks, the CTE switches, `IsolationReadEngines`,
+    /// the subquery rewrite switches, `InExplainStmt`, ...).
+    pub fn init_session_vars(&mut self) {
+        self.enable_pipelined_window_exec = self.ctx.enable_pipelined_window_exec();
+        self.enable_full_outer_join = self.ctx.enable_full_outer_join();
+        self.enable_cascades_planner = self.ctx.enable_cascades_planner();
+        self.new_only_full_group_by_check = self.ctx.new_only_full_group_by_check();
+        self.only_full_group_by = self.ctx.only_full_group_by();
+        self.enable_unsafe_substitute = self.ctx.enable_unsafe_substitute();
+        self.enable_force_inline_cte = self.ctx.enable_force_inline_cte();
+        self.enable_mpp_shared_cte_execution = self.ctx.enable_mpp_shared_cte_execution();
+        self.skip_cte_consumer_counts = self.ctx.skip_cte_consumer_counts();
+        self.oracle_mode = self.ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+        self.remove_orderby_in_subquery = self.ctx.remove_orderby_in_subquery();
+        self.set_isolation_read_engines(self.ctx.isolation_read_engines());
+        self.set_tiflash_engine_removed_due_to_strict_sql_mode(
+            self.ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        );
+        self.advanced_join_hint = self.ctx.enable_advanced_join_hint();
+        self.in_explain_stmt = self.ctx.in_explain_stmt();
+        self.in_explain_analyze_stmt = self.ctx.in_explain_analyze_stmt();
+        self.explain_non_evaled_sub_query = self.ctx.explain_non_evaled_sub_query();
+        self.parser_config = self.ctx.parser_config();
+        self.flags.allow_in_subq_to_join_and_agg = self.ctx.allow_in_subq_to_join_and_agg();
+        self.flags.enable_semi_join_rewrite = self.ctx.enable_semi_join_rewrite();
+        self.flags.enable_correlate_subquery = self.ctx.enable_correlate_subquery();
+        self.flags.enable_no_decorrelate_in_select = self.ctx.enable_no_decorrelate_in_select();
+        self.enable_skew_distinct_agg = self.ctx.enable_skew_distinct_agg();
+        self.index_lookup_push_down_session = self.ctx.index_lookup_push_down_session();
+    }
+}
