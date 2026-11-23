@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -355,18 +356,28 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		renewCtx, stopBarrierRenew, barrierRenewErr := startRecoverGCBarrierRenewer(jobCtx.stepCtx, w, job.ID, recoverInfo.SnapshotTS)
+		defer stopBarrierRenew()
+		origStepCtx := jobCtx.stepCtx
+		jobCtx.stepCtx = renewCtx
+		defer func() {
+			jobCtx.stepCtx = origStepCtx
+		}()
 		// check GC safe point
 		err = checkSafePoint(w, recoverInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		if err = w.removeRecoverGCDeleteRange(jobCtx, recoverInfo.DropJobID); err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		ver, err = w.recoverTable(jobCtx, metaMut, job, recoverInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
@@ -382,7 +393,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		args.AffectedPhysicalIDs = tids
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tableInfo, true)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = metaMut.StartTS
@@ -526,6 +537,8 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 
 const recoverGCBarrierTTL = time.Hour
 
+var recoverGCBarrierRenewInterval = recoverGCBarrierTTL / 2
+
 func recoverGCBarrierID(keyspaceID uint32, jobID int64) string {
 	return fmt.Sprintf("ddl-recover-%d-%d", keyspaceID, jobID)
 }
@@ -555,22 +568,100 @@ func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS
 	return nil
 }
 
-func renewRecoverGCBarrierIfNeeded(
-	ctx context.Context,
+// startRecoverGCBarrierRenewer periodically renews the recovery GC barrier in
+// the background so long-running preparation or metadata scans cannot outlive
+// recoverGCBarrierTTL. Callers must invoke stop before returning so renewal
+// cannot race with barrier deletion.
+func startRecoverGCBarrierRenewer(
+	parentCtx context.Context,
 	w *worker,
-	job *model.Job,
+	jobID int64,
 	snapshotTS uint64,
-	lastRenew *time.Time,
-) error {
-	if time.Since(*lastRenew) <= recoverGCBarrierTTL/2 {
-		return nil
+) (context.Context, func(), func() error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
-	if err := setRecoverGCBarrier(ctx, w, job.ID, snapshotTS); err != nil {
+	if w == nil || w.store == nil {
+		return parentCtx, func() {}, func() error { return nil }
+	}
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return parentCtx, func() {}, func() error { return nil }
+	}
+
+	interval := recoverGCBarrierRenewInterval
+	if interval <= 0 {
+		interval = recoverGCBarrierTTL / 2
+	}
+
+	workCtx, cancelWork := context.WithCancelCause(parentCtx)
+	callCtx, cancelCall := context.WithCancel(parentCtx)
+	stopCh := make(chan struct{})
+	var (
+		wg       sync.WaitGroup
+		stopOnce sync.Once
+		errMu    sync.Mutex
+		renewErr error
+	)
+	getErr := func() error {
+		errMu.Lock()
+		defer errMu.Unlock()
+		return renewErr
+	}
+	setErr := func(err error) {
+		errMu.Lock()
+		if renewErr == nil {
+			renewErr = err
+		}
+		errMu.Unlock()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-parentCtx.Done():
+				return
+			case <-ticker.C:
+				if err := setRecoverGCBarrier(callCtx, w, jobID, snapshotTS); err != nil {
+					select {
+					case <-stopCh:
+						return
+					default:
+					}
+					if parentCtx.Err() != nil {
+						return
+					}
+					setErr(err)
+					cancelWork(err)
+					return
+				}
+			}
+		}
+	}()
+
+	stop := func() {
+		stopOnce.Do(func() {
+			close(stopCh)
+			cancelCall()
+			wg.Wait()
+			cancelWork(nil)
+		})
+	}
+	return workCtx, stop, getErr
+}
+
+func cancelOnRecoverBarrierRenewErr(job *model.Job, barrierRenewErr func() error, fallbackErr error) error {
+	if renewErr := barrierRenewErr(); renewErr != nil {
 		job.State = model.JobStateCancelled
-		return errors.Trace(err)
+		return errors.Trace(renewErr)
 	}
-	*lastRenew = time.Now()
-	return nil
+	return errors.Trace(fallbackErr)
 }
 
 func deleteRecoverGCBarrier(ctx context.Context, w *worker, jobID int64) error {

@@ -632,7 +632,13 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		lastBarrierRenew := time.Now()
+		renewCtx, stopBarrierRenew, barrierRenewErr := startRecoverGCBarrierRenewer(jobCtx.stepCtx, w, job.ID, recoverSchemaInfo.SnapshotTS)
+		defer stopBarrierRenew()
+		origStepCtx := jobCtx.stepCtx
+		jobCtx.stepCtx = renewCtx
+		defer func() {
+			jobCtx.stepCtx = origStepCtx
+		}()
 
 		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
@@ -642,20 +648,20 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			tables, err2 := snapMeta.ListTables(jobCtx.stepCtx, sid)
 			if err2 != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err2)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err2)
 			}
-			if err = renewRecoverGCBarrierIfNeeded(jobCtx.stepCtx, w, job, recoverSchemaInfo.SnapshotTS, &lastBarrierRenew); err != nil {
-				return ver, errors.Trace(err)
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
 			}
 			recoverTbls = make([]*model.RecoverTableInfo, 0, len(tables))
 			for _, tblInfo := range tables {
-				if err = renewRecoverGCBarrierIfNeeded(jobCtx.stepCtx, w, job, recoverSchemaInfo.SnapshotTS, &lastBarrierRenew); err != nil {
-					return ver, errors.Trace(err)
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
 				}
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err3)
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err3)
 				}
 				recoverTbls = append(recoverTbls, &model.RecoverTableInfo{
 					SchemaID:      sid,
@@ -671,39 +677,39 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 
 		if schemaInfo.Name.L != recoverSchemaInfo.OldSchemaName.L {
 			for _, recoverInfo := range recoverTbls {
-				if err = renewRecoverGCBarrierIfNeeded(jobCtx.stepCtx, w, job, recoverSchemaInfo.SnapshotTS, &lastBarrierRenew); err != nil {
-					return ver, errors.Trace(err)
+				if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+					return ver, err
 				}
 				if err = rewriteRecoveredViewSchema(recoverInfo.TableInfo, recoverSchemaInfo.OldSchemaName, schemaInfo.Name); err != nil {
 					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
+					return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 				}
 			}
 		}
 
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
+		}
 		dbInfo := schemaInfo.Clone()
 		dbInfo.State = model.StatePublic
 		err = jobCtx.metaMut.CreateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// check GC safe point
 		err = checkSafePoint(w, recoverSchemaInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 
-		if err = renewRecoverGCBarrierIfNeeded(jobCtx.stepCtx, w, job, recoverSchemaInfo.SnapshotTS, &lastBarrierRenew); err != nil {
-			return ver, errors.Trace(err)
-		}
 		if err = w.removeRecoverSchemaGCDeleteRange(jobCtx, recoverSchemaInfo.DropJobID, recoverTbls); err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 
 		for _, recoverInfo := range recoverTbls {
-			if err = renewRecoverGCBarrierIfNeeded(jobCtx.stepCtx, w, job, recoverSchemaInfo.SnapshotTS, &lastBarrierRenew); err != nil {
-				return ver, errors.Trace(err)
+			if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+				return ver, err
 			}
 			if recoverInfo.TableInfo.TTLInfo != nil {
 				// force disable TTL job schedule for recovered table
@@ -711,21 +717,24 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			}
 			ver, err = w.recoverTable(jobCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 			}
 		}
 		if err = w.recoverSchemaMaterializedViewInfos(jobCtx, recoverTbls, recoverSchemaInfo.SnapshotTS); err != nil {
 			if dbterror.ErrInvalidDDLJob.Equal(err) {
 				job.State = model.JobStateCancelled
 			}
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
 		ver, err = updateSchemaVersion(jobCtx, job)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, schemaInfo)
