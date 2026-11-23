@@ -1597,7 +1597,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         labels: &[String],
     ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
-        self.session.run_set_tiflash_replica(
+        tidb_executor::ddl_exec::DdlExecSession::run_set_tiflash_replica(&mut *self.session, 
             sql,
             parsed,
             schema,
@@ -1618,7 +1618,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         info: &tidb_model::TableInfo,
     ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
-        self.session.run_create_view(
+        tidb_executor::ddl_exec::DdlExecSession::run_create_view(&mut *self.session, 
             sql,
             parsed,
             schema,
@@ -1636,8 +1636,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         job: tidb_ddl::JobWrapper,
     ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
-        self.session
-            .run_ddl_job_wrapper(sql, parsed, job, service.as_ref())
+        tidb_executor::ddl_exec::DdlExecSession::run_ddl_job_wrapper(&mut *self.session, sql, parsed, job, service.as_ref())
     }
 
     fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
@@ -1824,8 +1823,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         parsed: &Stmt,
     ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
-        self.session
-            .run_executor_statement(sql, parsed, service.as_ref())
+        tidb_executor::ddl_exec::DdlExecSession::run_executor_statement(&mut *self.session, sql, parsed, service.as_ref())
     }
 
     fn tiflash_store_count(&self) -> Result<u64, String> {
@@ -2952,7 +2950,7 @@ impl<'s> ClusterServerSession<'s> {
 }
 
 
-/// The cluster's [`ClusterDdl`] as the session's [`crate::ddl_service::DdlService`]:
+/// The cluster's [`ClusterDdl`] as the session's [`tidb_executor::ddl_exec::DdlService`]:
 /// the same publish-and-refresh call, with its client error carried across the
 /// crate boundary as the already-classified `(code, state, message)` triple.
 /// The cluster account writer and this node's system sessions as the
@@ -3444,7 +3442,7 @@ struct ClusterDdlService {
     domain: Weak<Domain>,
 }
 
-impl crate::ddl_service::DdlService for ClusterDdlService {
+impl tidb_executor::ddl_exec::DdlService for ClusterDdlService {
     fn set_tiflash_replica(
         &self,
         schema: &str,

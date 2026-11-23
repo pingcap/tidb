@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use tidb_executor::analyze::exec::AnalyzeService;
-use crate::ddl_service::DdlService;
+use tidb_executor::ddl_exec::DdlService;
 use tidb_executor::stats_exec::StatsStatementService;
 use crate::stored_state_service::{AccountService, SysvarService};
 use crate::Session;

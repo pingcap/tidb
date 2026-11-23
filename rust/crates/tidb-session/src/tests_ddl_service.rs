@@ -4,7 +4,7 @@
 //! behavior around the call (not the publish itself) is pinned.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use crate::ddl_service::DdlService;
+use tidb_executor::ddl_exec::{DdlExecSession as _, DdlService};
 use crate::tests_support::*;
 use crate::*;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;

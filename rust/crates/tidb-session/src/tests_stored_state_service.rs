@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use tidb_executor::analyze::exec::AnalyzeService;
-use crate::ddl_service::DdlService;
+use tidb_executor::ddl_exec::DdlService;
 use crate::domain_services::DomainServices;
 use tidb_executor::stats_exec::StatsStatementService;
 use crate::stored_state_service::{AccountService, PendingSysvarChange, SysvarService};
