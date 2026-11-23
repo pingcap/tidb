@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -80,6 +79,14 @@ func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 	require.Equal(t, 0, len(statFiles))
 }
 
+func waitGlobalSortTasksCleaned(t *testing.T, tk *testkit.TestKit) {
+	// Finished tasks still reference this test's GCS endpoint until cleanup
+	// transfers them to history. Keep the server alive until that finishes.
+	require.Eventually(t, func() bool {
+		return tk.MustQuery("select count(*) from mysql.tidb_global_task").Rows()[0][0] == "0"
+	}, 30*time.Second, 100*time.Millisecond, "global sort tasks were not cleaned up")
+}
+
 func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	tk.MustExec("admin check table t;")
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
@@ -99,21 +106,22 @@ func TestGlobalSortBasic(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
+	t.Cleanup(server.Stop)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	defer func() {
+	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
-	}()
+		waitGlobalSortTasksCleaned(t, tk)
+	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
@@ -135,18 +143,18 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
-	<-scheduler.WaitCleanUpFinished
+	waitGlobalSortTasksCleaned(t, tk)
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
-	<-scheduler.WaitCleanUpFinished
+	waitGlobalSortTasksCleaned(t, tk)
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	checkDataAndShowJobs(t, tk, size)
-	<-scheduler.WaitCleanUpFinished
+	waitGlobalSortTasksCleaned(t, tk)
 	checkFileCleaned(t, jobID, cloudStorageURI)
 }
 
@@ -170,6 +178,11 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+		waitGlobalSortTasksCleaned(t, tk)
+	})
 
 	tk.MustExec("create table t_rowid (a int, b bigint, c varchar(255));")
 	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
@@ -221,9 +234,6 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 			)
 		})
 	}
-
-	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
 
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
@@ -275,6 +285,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
+	t.Cleanup(server.Stop)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -292,6 +303,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		variable.CloudStorageURI.Store("")
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 		tk.MustExec("set @@session.tidb_scatter_region = ''")
+		waitGlobalSortTasksCleaned(t, tk)
 	})
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
@@ -359,15 +371,25 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		testErrStep = proto.StepInit
 	}
 
-	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+	checkRedactMsgAndReset := func(tt *testing.T, tk *testkit.TestKit, addUniqueKeySQL string) {
+		globalRedactLog := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0]
+		sessionRedactLog := tk.Session().GetSessionVars().EnableRedactLog
+		defer func() {
+			tk.MustExec(fmt.Sprintf("set global tidb_redact_log = '%s'", globalRedactLog))
+			tk.MustExec(fmt.Sprintf("set session tidb_redact_log = '%s'", sessionRedactLog))
+		}()
+		// Error redaction is shared by all sessions in the process. New worker
+		// sessions must inherit the setting instead of resetting the shared state.
+		tk.MustExec("set global tidb_redact_log = on;")
 		tk.MustExec("set session tidb_redact_log = on;")
+		testkit.NewTestKit(tt, store).MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("ON"))
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
-		tk.MustExec("set session tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.caseName, func(tt *testing.T) {
+			tk := testkit.NewTestKitWithSession(tt, store, tk.Session())
 			// init
 			tk.MustExec(tc.createTableSQL)
 			tk.MustExec(tc.initDataSQL)
@@ -392,11 +414,11 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			} else {
 				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
 			}
-			checkRedactMsgAndReset(tc.addUniqueKeySQL)
+			checkRedactMsgAndReset(tt, tk, tc.addUniqueKeySQL)
 
 			// 2. merge sort
 			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
-			require.NoError(tt, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 			tk.MustContainErrMsg(tc.addUniqueKeySQL, tc.errMsg)
 			checkSubtaskStepAndReset(tt, proto.BackfillStepMergeSort)
 
