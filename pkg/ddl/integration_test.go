@@ -116,6 +116,9 @@ func TestPartialIndex(t *testing.T) {
 	tk.MustExec("alter table t4 alter index uk invisible;")
 
 	t.Run("standalone transactional merge", func(t *testing.T) {
+		if *testkit.WithTiKV != "" {
+			t.Skip("requires standalone unistore without ingest")
+		}
 		standalone := kv.StandAloneTiDB
 		fastReorg := vardef.EnableFastReorg.Swap(true)
 		kv.StandAloneTiDB = true
@@ -160,6 +163,42 @@ func TestPartialIndex(t *testing.T) {
 		tk.MustGetDBError("insert into standalone_idx values (5, 10, 1)", kv.ErrKeyExists)
 		tk.MustGetDBError("insert into standalone_idx values (5, 30, 1)", kv.ErrKeyExists)
 		tk.MustExec("insert into standalone_idx values (5, 20, 1), (6, 10, 0)")
+
+		t.Run("timestamp predicate", func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set time_zone = '+00:00'")
+			tk.MustExec("create table standalone_ts (id int primary key, k int, ts timestamp null)")
+			tk.MustExec("insert into standalone_ts values (1, 10, '2025-07-28 00:00:00')")
+			tk.MustExec("set time_zone = '+08:00'")
+			// Backfill and DML in different time zones must not disagree on index membership.
+			for _, condition := range []string{
+				"ts = '2025-07-28 00:00:00'",
+				"ts != '2025-07-28 00:00:00'",
+				"ts > '2025-07-28 00:00:00'",
+				"ts < '2025-07-28 00:00:00'",
+				"ts >= '2025-07-28 00:00:00'",
+				"ts <= '2025-07-28 00:00:00'",
+				"'2025-07-28 00:00:00' = ts",
+			} {
+				tk.MustGetDBError("create unique index idx_ts on standalone_ts(k) where "+condition,
+					dbterror.ErrUnsupportedAddPartialIndex)
+			}
+			tk.MustExec("create table standalone_ts_empty like standalone_ts")
+			tk.MustGetDBError("alter table standalone_ts_empty add index idx_ts(k) where ts = '2025-07-28 00:00:00'",
+				dbterror.ErrUnsupportedAddPartialIndex)
+
+			// NULL predicates do not depend on the session time zone and remain supported.
+			tk.MustExec("insert into standalone_ts values (2, 10, null)")
+			tk.MustExec("create unique index idx_not_null on standalone_ts(k) where ts is not null")
+			tk.MustExec("create unique index idx_null on standalone_ts(k) where ts is null")
+			tk.MustExec("create index idx_ts_key on standalone_ts(ts) where k > 0")
+			tk.MustExec("set time_zone = '+00:00'")
+			tk.MustGetDBError("insert into standalone_ts values (3, 10, '2025-07-28 00:00:00')", kv.ErrKeyExists)
+			tk.MustGetDBError("insert into standalone_ts values (3, 10, null)", kv.ErrKeyExists)
+			tk.MustExec("set tidb_enable_fast_table_check = on")
+			tk.MustExec("admin check table standalone_ts")
+		})
 	})
 
 	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
