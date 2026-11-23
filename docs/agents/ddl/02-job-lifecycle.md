@@ -76,14 +76,19 @@ Affinity groups follow two rules:
   TRUNCATE TABLE and ALTER TABLE ... AFFINITY delete the old groups in the
   done-job branch of `transitOneJobStep`.
 - When a CREATE TABLE, materialized view shadow creation, batch create,
-  TRUNCATE TABLE, or ALTER TABLE ... AFFINITY job ends cancelled,
-  `deleteAffinityGroupsOfCancelledJob` runs before cancellation commits. It
+  TRUNCATE TABLE, TRUNCATE PARTITION, or ALTER TABLE ... AFFINITY job ends
+  cancelled, `deleteAffinityGroupsOfCancelledJob` runs before cancellation commits. It
   deletes groups identified by the job arguments that the metadata in that
   transaction does not use. If the job-row write returns `kv.ErrEntryTooLarge`,
   the worker rolls back the step and runs the same cleanup in the new
-  transaction that records the cancellation. The helper covers PD committing
-  only part of a creation request, groups left by an earlier attempt, and
-  cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
+  transaction that records the cancellation. For truncate jobs, cleanup reads
+  the arguments from before the job-row update so it can find the replacement
+  IDs even if encoding wrote finished arguments. The history entry still uses
+  the encoded job arguments. For partition truncation, cleanup preserves groups
+  for IDs already in committed definitions.
+  The helper covers PD committing only part of a creation request, groups left
+  by an earlier attempt, and cancellation by `ADMIN CANCEL DDL JOBS` or the
+  error count limit.
   PD deletion is best effort and uses a 10-second timeout from the DDL owner's
   context. If deletion fails or times out, the worker logs the failure and
   continues cancellation, so unused groups may remain in PD.

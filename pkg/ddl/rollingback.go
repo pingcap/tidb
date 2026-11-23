@@ -651,6 +651,8 @@ func deleteAffinityGroupsOfCancelledJob(jobCtx *jobContext, job *model.Job) {
 		err = deleteAlterTableAffinityNewGroups(jobCtx, job)
 	case model.ActionTruncateTable:
 		err = deleteTruncateTableReplacementAffinityGroups(jobCtx, job)
+	case model.ActionTruncateTablePartition:
+		err = deleteTruncatePartitionReplacementAffinityGroups(jobCtx, job)
 	default:
 		return
 	}
@@ -738,6 +740,33 @@ func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model
 	}
 	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
 	return deleteTableAffinityGroupsOnRollback(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+}
+
+func deleteTruncatePartitionReplacementAffinityGroups(jobCtx *jobContext, job *model.Job) error {
+	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
+	if err != nil || tblInfo == nil || tblInfo.Affinity == nil || tblInfo.Affinity.Level != ast.TableAffinityLevelPartition {
+		return errors.Trace(err)
+	}
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil || len(args.NewPartitionIDs) == 0 {
+		return errors.Trace(err)
+	}
+
+	// A previous step may already have committed some replacement partitions.
+	committedIDs := make(map[int64]struct{}, len(tblInfo.Partition.Definitions))
+	for _, def := range tblInfo.Partition.Definitions {
+		committedIDs[def.ID] = struct{}{}
+	}
+	var unused []model.PartitionDefinition
+	for _, id := range args.NewPartitionIDs {
+		if _, committed := committedIDs[id]; !committed {
+			unused = append(unused, model.PartitionDefinition{ID: id})
+		}
+	}
+	if len(unused) == 0 {
+		return nil
+	}
+	return deleteTableAffinityGroupsOnRollback(jobCtx, tblInfo, unused)
 }
 
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {

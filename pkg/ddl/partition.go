@@ -2748,9 +2748,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// later PD failure cancels the job instead of finishing the truncate.
 		if tblInfo.Affinity != nil {
 			replacement := tblInfo.Clone()
-			replaceTruncatePartitions(replacement.Partition.Definitions, oldIDs, newIDs)
-			if err = createTableAffinityGroupsInPD(jobCtx, replacement, partitionDefinitionsFromIDs(newIDs)...); err != nil {
-				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+			_, replacements := replaceTruncatePartitions(replacement.Partition.Definitions, oldIDs, newIDs)
+			// A queued job can still reference partitions a previous DDL has replaced.
+			if len(replacements) > 0 {
+				if err = createTableAffinityGroupsInPD(jobCtx, replacement, replacements...); err != nil {
+					return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+				}
 			}
 		}
 		// This work as a flag to ignore Global Index entries from the new partitions!
@@ -2844,7 +2847,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 
 		// Delete old affinity groups (best-effort cleanup - ignore errors)
-		if tblInfo.Affinity != nil {
+		if tblInfo.Affinity != nil && len(oldDefinitions) > 0 {
 			if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, oldDefinitions); err != nil {
 				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
 			}

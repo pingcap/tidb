@@ -110,8 +110,10 @@ State machine (`job.SchemaState`):
 Key behaviors:
 
 - Affinity groups for replacement partitions are prepared in `StatePublic`, before
-  new partition IDs are published. Preparation errors use the rollback cleanup
-  path because PD may have created groups before its response failed. Cleanup
+  new partition IDs are published. Preparation uses the replacement IDs for the
+  old IDs that still match a current partition. A queued job can carry IDs that
+  an earlier truncate has replaced. Preparation errors use the rollback cleanup
+  path because PD may have created groups before its response failed. Rollback
   deletes only replacement partition groups and uses a 10-second timeout
   derived from the DDL owner's context so it can run after step cancellation.
 - It replaces old partition IDs with new ones in table metadata:

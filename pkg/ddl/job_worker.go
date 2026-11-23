@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -317,7 +318,7 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, rawArgsBeforeUpdate []byte, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -339,7 +340,19 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
-		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
+		cleanupJob := job
+		if rawArgsBeforeUpdate != nil {
+			// Decode the original arguments for cleanup without growing the history entry.
+			cleanupJob = &model.Job{
+				ID:       job.ID,
+				Type:     job.Type,
+				SchemaID: job.SchemaID,
+				TableID:  job.TableID,
+				Version:  job.Version,
+				RawArgs:  rawArgsBeforeUpdate,
+			}
+		}
+		deleteAffinityGroupsOfCancelledJob(jobCtx, cleanupJob)
 		err = w.finishDDLJob(jobCtx, job)
 	}
 	return errors.Trace(err)
@@ -877,9 +890,13 @@ func (w *worker) transitOneJobStep(
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
+	var rawArgsBeforeUpdate []byte
+	if job.Type == model.ActionTruncateTable || job.Type == model.ActionTruncateTablePartition {
+		rawArgsBeforeUpdate = slices.Clone(job.RawArgs)
+	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
+	if err = w.handleUpdateJobError(jobCtx, job, rawArgsBeforeUpdate, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err

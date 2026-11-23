@@ -288,6 +288,80 @@ func TestAffinityCancelledCreateOnEntryTooLarge(t *testing.T) {
 	}
 }
 
+func TestAffinityCancelledTruncateOnEntryTooLarge(t *testing.T) {
+	cases := []struct {
+		name         string
+		query        string
+		action       model.ActionType
+		updatedState model.SchemaState
+	}{
+		{"table", "truncate table p", model.ActionTruncateTable, model.StatePublic},
+		{"partition before replacement commit", "alter table p truncate partition p0", model.ActionTruncateTablePartition, model.StateWriteOnly},
+		{"partition after replacement commit", "alter table p truncate partition p0", model.ActionTruncateTablePartition, model.StateNone},
+	}
+	originalVersion := model.GetJobVerInUse()
+	t.Cleanup(func() { model.SetJobVerInUse(originalVersion) })
+	for _, version := range []model.JobVersion{model.JobVersion1, model.JobVersion2} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("v%d/%s", version, tc.name), func(t *testing.T) {
+				s := newAffinityDDLTest(t)
+				model.SetJobVerInUse(version)
+				s.tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+				s.tk.MustExec("insert into p values (1),(11)")
+				before := s.tableInfo(t, "p")
+				persistedBefore := s.persisted(t, before.ID)
+				originalGroups := s.groupsOf(t, before)
+				var replacementGroups atomic.Value
+				var encodedArgs atomic.Value
+				var jobID atomic.Int64
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
+					if job.Type != tc.action || job.TableID != before.ID || *err != nil {
+						return
+					}
+					if job.Type == model.ActionTruncateTable && job.IsDone() ||
+						job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly {
+						replacementGroups.Store(s.cli.lastCreatedGroups.Load())
+					}
+					// Fail after encoding the job, which also replaces its raw arguments.
+					if job.SchemaState == tc.updatedState {
+						encodedArgs.Store(string(job.RawArgs))
+						jobID.Store(job.ID)
+						*err = kv.ErrEntryTooLarge
+					}
+				})
+
+				err := s.tk.ExecToErr(tc.query)
+				require.True(t, kv.ErrEntryTooLarge.Equal(err), "unexpected TRUNCATE error: %v", err)
+				job, err := ddl.GetHistoryJobByID(s.tk.Session(), jobID.Load())
+				require.NoError(t, err)
+				require.Equal(t, version, job.Version)
+				require.Equal(t, model.JobStateCancelled, job.State)
+				groups := replacementGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
+				s.cli.requireEverCreated(t, groups)
+				for id := range groups {
+					require.NotContains(t, originalGroups, id)
+				}
+
+				persisted := s.persisted(t, before.ID)
+				if tc.updatedState == model.StateNone {
+					committedGroups := s.groupsOf(t, persisted)
+					for id := range groups {
+						require.Contains(t, committedGroups, id)
+					}
+					requireAffinityGroupsWithLabelRules(t, s.cli, committedGroups, true, "cancellation must preserve the committed replacement and untouched partition groups")
+					s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("11"))
+				} else {
+					require.Equal(t, persistedBefore, persisted)
+					requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "cancellation must preserve the original partition groups")
+					requireAffinityGroupsWithLabelRules(t, s.cli, groups, false, "cancellation must delete the uncommitted replacement groups")
+					s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
+				}
+				require.JSONEq(t, encodedArgs.Load().(string), string(job.RawArgs), "cleanup must preserve the history argument encoding")
+			})
+		}
+	}
+}
+
 func TestAffinityCancelledCreateAfterAsyncNotify(t *testing.T) {
 	var failedTableID atomic.Int64
 	mgr := &recordingExternalWorkloadManager{
@@ -348,6 +422,49 @@ func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
 				require.NotContains(t, originalGroups, id)
 			}
 			requireAffinityGroupsWithLabelRules(t, s.cli, replacementGroups, failDelete, "failed cleanup must not prevent cancellation")
+		})
+	}
+}
+
+func TestAffinityTruncatePartitionWithStaleIDs(t *testing.T) {
+	for _, partitionNames := range []string{"p0", "p0,p1"} {
+		t.Run(partitionNames, func(t *testing.T) {
+			s := newAffinityDDLTest(t)
+			s.tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			s.tk.MustExec("insert into p values (1),(11)")
+			before := s.tableInfo(t, "p")
+			oldIDs := []int64{before.Partition.Definitions[0].ID}
+			if partitionNames == "p0,p1" {
+				oldIDs = append(oldIDs, before.Partition.Definitions[1].ID)
+			}
+			// Capture the same IDs a queued job would see before the first truncate.
+			db, ok := s.dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			job, args := buildTruncatePartitionJob(db, before, oldIDs, nil)
+			s.tk.MustExec("alter table p truncate partition p0")
+			afterFirst := s.persisted(t, before.ID)
+			require.NotEqual(t, oldIDs[0], afterFirst.Partition.Definitions[0].ID)
+			s.tk.MustExec("insert into p values (2)")
+
+			se := s.tk.Session()
+			se.SetValue(sessionctx.QueryString, "alter table p truncate partition "+partitionNames)
+			exec := s.dom.DDLExecutor().(ddl.ExecutorForTest)
+			require.NoError(t, exec.DoDDLJobWrapper(se, ddl.NewJobWrapperWithArgs(job, args, false)))
+			require.Len(t, args.NewPartitionIDs, len(oldIDs))
+			staleGroup := ddl.GetPartitionAffinityGroupID(s.store.GetCodec(), before.ID, args.NewPartitionIDs[0])
+			_, created := s.cli.everCreated.Load(staleGroup)
+			require.False(t, created, "a replacement group must not be created for stale partition ID %d", oldIDs[0])
+
+			after := s.persisted(t, before.ID)
+			require.Equal(t, afterFirst.Partition.Definitions[0].ID, after.Partition.Definitions[0].ID)
+			if len(oldIDs) == 2 {
+				require.Equal(t, args.NewPartitionIDs[1], after.Partition.Definitions[1].ID)
+				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("2"))
+			} else {
+				require.Equal(t, afterFirst.Partition.Definitions[1].ID, after.Partition.Definitions[1].ID)
+				s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("2", "11"))
+			}
+			requireAffinityGroupsWithLabelRules(t, s.cli, s.groupsOf(t, after), true, "the current partition groups must remain")
 		})
 	}
 }
