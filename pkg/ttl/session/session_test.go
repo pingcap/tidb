@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -32,6 +33,9 @@ import (
 )
 
 func TestSessionTTLJobRU(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("statement RU collection requires NextGen")
+	}
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.ReportMode = config.RUReportModeFull })
 	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()

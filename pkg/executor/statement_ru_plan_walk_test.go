@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -785,17 +786,19 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		recordRootRows(fixture, left, 3)
 		recordRootRows(fixture, right, 2)
 		recordRootRows(fixture, join, 4)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(join.ID(), &execdetails.JoinedRowsRuntimeStats{Rows: 4})
 	}
 
 	for _, tc := range []struct {
 		kind            string
 		expressionCount int64
+		otherCount      int64
 	}{
-		{kind: "hash", expressionCount: 12},
-		{kind: "merge", expressionCount: 10},
-		{kind: "index", expressionCount: 15},
-		{kind: "index_hash", expressionCount: 15},
-		{kind: "index_merge", expressionCount: 21},
+		{kind: "hash", expressionCount: 12, otherCount: 4},
+		{kind: "merge", expressionCount: 10, otherCount: 4},
+		{kind: "index", expressionCount: 15, otherCount: 4},
+		{kind: "index_hash", expressionCount: 15, otherCount: 4},
+		{kind: "index_merge", expressionCount: 21, otherCount: 5},
 	} {
 		t.Run("Join formula counts every expression family "+tc.kind, func(t *testing.T) {
 			fixture := newStatementRUSimpleSelectFixture(t)
@@ -834,7 +837,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			}
 			setPlan(fixture, join)
 			want := ruv2.StmtUnits{
-				CPUWork:              5 * float64(tc.expressionCount),
+				CPUWork:              5*float64(tc.expressionCount-tc.otherCount) + 4*float64(tc.otherCount),
 				NetBytes:             20,
 				FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 				JoinOutputRows:       4,
@@ -844,6 +847,45 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			}
 			requirePublication(t, fixture, want)
 		})
+	}
+
+	for _, kind := range []string{"hash", "merge", "index", "index_hash", "index_merge"} {
+		for _, candidateRows := range []int64{0, 1, 12, -1} {
+			for _, otherCount := range []int{0, 1, 3} {
+				t.Run(fmt.Sprintf("Join residual work %s pairs %d expressions %d", kind, candidateRows, otherCount), func(t *testing.T) {
+					fixture := newStatementRUSimpleSelectFixture(t)
+					join, left, right := newJoin(fixture, kind)
+					conditions := make(expression.CNFExprs, otherCount)
+					switch typed := join.(type) {
+					case *physicalop.PhysicalHashJoin:
+						typed.OtherConditions = conditions
+					case *physicalop.PhysicalMergeJoin:
+						typed.OtherConditions = conditions
+					case *physicalop.PhysicalIndexJoin:
+						typed.OtherConditions = conditions
+					case *physicalop.PhysicalIndexHashJoin:
+						typed.OtherConditions = conditions
+					case *physicalop.PhysicalIndexMergeJoin:
+						typed.OtherConditions = conditions
+					}
+					recordRootRows(fixture, left, 3)
+					recordRootRows(fixture, right, 4)
+					// All candidates fail the residual filter; output cannot price the work.
+					recordRootRows(fixture, join, 0)
+					fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(join.ID(), &execdetails.JoinedRowsRuntimeStats{Rows: candidateRows})
+					setPlan(fixture, join)
+					if candidateRows < 0 {
+						requireNoPublication(t, fixture)
+						return
+					}
+					requirePublication(t, fixture, ruv2.StmtUnits{
+						CPUWork: 7 + float64(candidateRows)*float64(otherCount), NetBytes: 20,
+						FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+						JoinOutputRows:       float64(candidateRows),
+					})
+				})
+			}
+		}
 	}
 
 	t.Run("Join accepts build-side-first display order", func(t *testing.T) {
@@ -897,6 +939,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		join, left, _ := newJoin(fixture, "merge")
 		recordRootRows(fixture, left, 3)
 		recordRootRows(fixture, join, 4)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(join.ID(), &execdetails.JoinedRowsRuntimeStats{Rows: 4})
 		setPlan(fixture, join)
 		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              3,
