@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 7,
-    "open": 7,
+    "unresolved": 6,
+    "open": 6,
     "partial": 0
   },
   "findings": [
@@ -54,17 +54,9 @@
       "finding": "A transaction's writes are not Go's `LazyTxn` over the store transaction's MemDB: executors stage them in the session's `MutationBuffer`, and an autocommit statement publishes the buffer at commit through `ClusterTransactions::commit_with_schema_lease`. Go activates the `kv.Transaction` (or its pending future) before the statement writes and commits that transaction; pipelined DML (T01) flushes that MemDB while the statement runs.",
       "rust_evidence": "`tidb-session/src/txn_manager.rs` (`buffer`, `commit_autocommit_buffer`), `tidb-domain-core/src/cluster_transactions.rs`.",
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
-    },
-    {
-      "id": "T18",
-      "group": "Executors",
-      "status": "open",
-      "finding": "`IndexMergeReaderExecutor`'s partial sources and table side are not Go's partial workers: handles come through the `PartialHandleSource` offer path (`MaterializedHandleSource` over `access_path`, `TableCommon` and its storage), not `partialIndexWorker` / `partialTableWorker` over each partial plan's `ConstructDAGReq`, and the final table read is not `buildFinalTableReader`'s handle-built `TableReaderExecutor`. The handle algebra (`fetchLoopUnion` / `fetchLoopIntersection`) is already Go's.",
-      "rust_evidence": "`tidb-executor/src/index_merge_reader.rs` (`PartialHandleSource`, `MaterializedHandleSource`), `driver/physical_builder.rs`.",
-      "go_owner": "`pkg/executor/index_merge_reader.go`"
     }
   ],
-  "unresolved": 7,
-  "open": 7,
+  "unresolved": 6,
+  "open": 6,
   "partial": 0
 }

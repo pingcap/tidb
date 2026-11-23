@@ -361,8 +361,9 @@ pub trait PartialHandleSource: Send {
     fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError>;
 
     /// Remaining raw handles allowed by a union worker's pushed LIMIT.
-    /// Production sources use this before fetching, like Go's RequiredRows;
-    /// materialized sources need only retain the permitted prefix.
+    /// The partial workers use this before fetching, like Go's RequiredRows;
+    /// a source of materialized batches need only retain the permitted
+    /// prefix.
     fn next_batch_with_max_handles(
         &mut self,
         maximum: usize,
@@ -383,44 +384,6 @@ pub trait PartialHandleSource: Send {
         Ok(())
     }
 }
-
-/// A partial path whose handles are already materialized.
-///
-/// This is the dependency-closed source: Go's coverage of index merge runs
-/// through `testkit` end to end, so the merge algebra itself is exercised
-/// here by feeding it batches directly.
-pub struct MaterializedHandleSource {
-    batches: VecDeque<PartialHandleBatch>,
-}
-
-impl MaterializedHandleSource {
-    /// A path that emits `batches` in order.
-    #[must_use]
-    pub fn new(batches: Vec<PartialHandleBatch>) -> Self {
-        MaterializedHandleSource {
-            batches: batches.into(),
-        }
-    }
-
-    /// A path that emits one batch of int handles with no sort keys.
-    #[must_use]
-    pub fn from_int_handles(handles: &[i64]) -> Self {
-        Self::new(vec![PartialHandleBatch {
-            handles: handles
-                .iter()
-                .map(|h| HandleRef::new(TableHandle::Int(*h)))
-                .collect(),
-            sort_keys: MergeSortKeys::default(),
-        }])
-    }
-}
-
-impl PartialHandleSource for MaterializedHandleSource {
-    fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
-        Ok(self.batches.pop_front())
-    }
-}
-
 
 /// One `plannerutil.ByItems` entry, reduced to what `handleHeap.Less` (:1031)
 /// needs: the comparison Go picks with `chunk.GetCompareFunc(keyType)` and the
@@ -1466,6 +1429,38 @@ impl Executor for IndexMergeReaderExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A partial path whose handles are already materialized, which feeds the
+    /// merge algebra batches directly.
+    struct MaterializedHandleSource {
+        batches: VecDeque<PartialHandleBatch>,
+    }
+
+    impl MaterializedHandleSource {
+        /// A path that emits `batches` in order.
+        fn new(batches: Vec<PartialHandleBatch>) -> Self {
+            MaterializedHandleSource {
+                batches: batches.into(),
+            }
+        }
+
+        /// A path that emits one batch of int handles with no sort keys.
+        fn from_int_handles(handles: &[i64]) -> Self {
+            Self::new(vec![PartialHandleBatch {
+                handles: handles
+                    .iter()
+                    .map(|h| HandleRef::new(TableHandle::Int(*h)))
+                    .collect(),
+                sort_keys: MergeSortKeys::default(),
+            }])
+        }
+    }
+
+    impl PartialHandleSource for MaterializedHandleSource {
+        fn next_batch(&mut self) -> Result<Option<PartialHandleBatch>, ExecError> {
+            Ok(self.batches.pop_front())
+        }
+    }
 
     /// WRITTEN test (Go's own coverage of index merge runs through
     /// `testkit`/`tests/integrationtest`, which is not dependency-closed
