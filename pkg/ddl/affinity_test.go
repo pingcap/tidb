@@ -342,13 +342,11 @@ func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
 			require.Equal(t, persistedBefore, s.persisted(t, before.ID))
 			s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
 			requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "cleanup must preserve both original partition groups")
-			replacementGroups := make(map[string][]pdhttp.AffinityGroupKeyRange)
-			for id, ranges := range s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange) {
-				if _, original := originalGroups[id]; !original {
-					replacementGroups[id] = ranges
-				}
+			replacementGroups := s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)
+			require.Len(t, replacementGroups, 1, "the PD request must contain only the replacement partition group")
+			for id := range replacementGroups {
+				require.NotContains(t, originalGroups, id)
 			}
-			require.Len(t, replacementGroups, 1)
 			requireAffinityGroupsWithLabelRules(t, s.cli, replacementGroups, failDelete, "failed cleanup must not prevent cancellation")
 		})
 	}
@@ -598,17 +596,16 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 				readTable, resume := make(chan struct{}), make(chan struct{})
 				var resumeOnce sync.Once
 				release := func() { resumeOnce.Do(func() { close(resume) }) }
-				defer release()
-				var held, armed, reservationFailed atomic.Bool
+				var held, reservationFailed atomic.Bool
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTruncateTableMaterializedViewConstraints", func(id int64) {
 					if id == original.ID && held.CompareAndSwap(false, true) {
 						close(readTable)
 						<-resume
 					}
 				})
-				var initialIDs atomic.Int64
+				var jobID, initialIDs atomic.Int64
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-					if job.Type == model.ActionTruncateTable && job.TableID == original.ID && armed.CompareAndSwap(false, true) {
+					if job.Type == model.ActionTruncateTable && job.TableID == original.ID && jobID.CompareAndSwap(0, job.ID) {
 						args, err := model.GetTruncateTableArgs(job)
 						require.NoError(t, err)
 						initialIDs.Store(int64(len(args.NewPartitionIDs)))
@@ -618,7 +615,6 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 				rolledBack, retry := make(chan struct{}), make(chan struct{})
 				var retryOnce, pauseOnce sync.Once
 				resumeRetry := func() { retryOnce.Do(func() { close(retry) }) }
-				defer resumeRetry()
 				if rollbackReservation {
 					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, err *error) {
 						if job.Type == model.ActionTruncateTable && job.TableID == original.ID && job.IsRunning() && reservationFailed.CompareAndSwap(false, true) {
@@ -633,12 +629,47 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 				}
 				tk := testkit.NewTestKit(t, s.store)
 				tk.MustExec("use test")
-				done := make(chan error, 1)
-				go func() { done <- tk.ExecToErr("truncate table p") }()
+				done := make(chan struct{})
+				var truncateErr error
+				go func() {
+					defer close(done)
+					truncateErr = tk.ExecToErr("truncate table p")
+				}()
+				defer func() {
+					release()
+					resumeRetry()
+					select {
+					case <-done:
+						return
+					default:
+					}
+					cancelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if id := jobID.Load(); id != 0 {
+						jobErrs, err := ddl.CancelJobs(cancelCtx, s.tkCancel.Session(), []int64{id})
+						if err == nil {
+							err = jobErrs[0]
+						}
+						if err != nil {
+							t.Logf("cancelling TRUNCATE job %d: %v", id, err)
+						}
+					}
+					select {
+					case <-done:
+					case <-cancelCtx.Done():
+						t.Error("TRUNCATE did not exit after releasing the hooks and attempting cancellation")
+						// Stopping DDL joins the workers and cancels the submitting session's DDL wait.
+						if err := s.dom.DDL().Stop(); err != nil {
+							t.Errorf("stopping DDL: %v", err)
+						}
+						<-done
+					}
+				}()
 				select {
 				case <-readTable:
 				case <-time.After(30 * time.Second):
-					t.Fatal("TRUNCATE did not read the table")
+					t.Error("TRUNCATE did not read the table")
+					return
 				}
 				s.tk.MustExec("alter table p add partition (partition p1 values less than (20))")
 				s.tk.MustExec("alter table p affinity='partition'")
@@ -649,21 +680,23 @@ func TestAffinityTruncateTablePartitionGrowth(t *testing.T) {
 					select {
 					case <-rolledBack:
 					case <-time.After(30 * time.Second):
-						t.Fatal("ID reservation did not roll back")
+						t.Error("ID reservation did not roll back")
+						return
 					}
 					s.tk.MustExec("create table q(a int)")
 					unrelatedID = s.tableInfo(t, "q").ID
 					resumeRetry()
 				}
 				select {
-				case err := <-done:
+				case <-done:
 					if rollbackReservation {
-						require.NoError(t, err)
+						require.NoError(t, truncateErr)
 					} else {
-						require.ErrorContains(t, err, "injected response loss after affinity creation")
+						require.ErrorContains(t, truncateErr, "injected response loss after affinity creation")
 					}
 				case <-time.After(30 * time.Second):
-					t.Fatal("TRUNCATE did not finish")
+					t.Error("TRUNCATE did not finish")
+					return
 				}
 				require.EqualValues(t, 1, initialIDs.Load())
 				created := s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange)

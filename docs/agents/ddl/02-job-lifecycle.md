@@ -77,14 +77,16 @@ Affinity groups follow two rules:
   done-job branch of `transitOneJobStep`.
 - When a CREATE TABLE, materialized view shadow creation, batch create,
   TRUNCATE TABLE, or ALTER TABLE ... AFFINITY job ends cancelled,
-  `deleteAffinityGroupsOfCancelledJob` deletes the groups identified by the
-  job arguments that the table metadata no longer uses. For an oversized
-  job-row write, the worker rolls back and runs this cleanup using the new
-  transaction that records the cancellation. The same helper covers PD
-  committing only part of a creation request, groups left by an earlier
-  attempt, and cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
-  PD deletion uses a 10-second timeout from the DDL owner's context. A delete
-  failure is logged so cancellation can continue.
+  `deleteAffinityGroupsOfCancelledJob` runs before cancellation commits. It
+  deletes groups identified by the job arguments that the metadata in that
+  transaction does not use. If the job-row write returns `kv.ErrEntryTooLarge`,
+  the worker rolls back the step and runs the same cleanup in the new
+  transaction that records the cancellation. The helper covers PD committing
+  only part of a creation request, groups left by an earlier attempt, and
+  cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
+  PD deletion is best effort and uses a 10-second timeout from the DDL owner's
+  context. If deletion fails or times out, the worker logs the failure and
+  continues cancellation, so unused groups may remain in PD.
 
 ## Schema version + diff and cluster-wide synchronization
 
