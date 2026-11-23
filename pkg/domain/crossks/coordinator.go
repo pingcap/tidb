@@ -64,14 +64,18 @@ func (c *schemaCoordinator) InternalSessionCount() int {
 }
 
 func (c *schemaCoordinator) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
 	printLog := false
 	if time.Since(c.printMDLLogTime) > 10*time.Second {
 		printLog = true
 		c.printMDLLogTime = time.Now()
 	}
+	sessions := make([]sessionctx.Context, 0, len(c.sessions))
 	for se := range c.sessions {
+		sessions = append(sessions, se)
+	}
+	c.mu.Unlock()
+	for _, se := range sessions {
 		variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
 	}
 }

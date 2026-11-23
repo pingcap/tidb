@@ -161,4 +161,5 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	wg.Wait()
 	ti.Backend().CloseEngineMgr()
 	checkImportDirEmpty(t)
+	require.NoError(t, importer.FlushTableStats(ctx, tk.Session(), table.Meta().ID, 3))
 }

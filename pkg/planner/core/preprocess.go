@@ -2709,6 +2709,48 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	if IsAutoCommitTxn(sctx.GetSessionVars()) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
 		return tbl, nil
 	}
+	// Non-pessimistic read-only statements in internal explicit transactions skip MDL so
+	// long scans (such as TTL scans) do not stall user-table DDL. Active internal sessions
+	// keep GC blocked at their startTS, keeping snapshot reads safe; if the transaction
+	// later writes, the recorded table IDs are validated against schema deltas at commit
+	// and transparent write-only retry is disabled.
+	if sctx.GetSessionVars().InRestrictedSQL &&
+		sctx.GetSessionVars().StmtCtx.IsReadOnly &&
+		!sctx.GetSessionVars().TxnCtx.IsPessimistic &&
+		!sctx.GetSessionVars().BulkDMLEnabled &&
+		!isTxnPipelined(sctx) {
+		if !skipLock {
+			if _, locked := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID); locked {
+				return tbl, nil
+			}
+			roTables := sctx.GetSessionVars().GetRelatedTableForReadOnly()
+			if _, loaded := roTables.LoadOrStore(tbl.Meta().ID, dbName); !loaded {
+				dbInfo, exists := is.SchemaByName(dbName)
+				latestIS := sctx.GetLatestISWithoutSessExt()
+				latestDB, latestExists := latestIS.SchemaByName(dbName)
+				if exists && latestExists && dbInfo.ReadOnly != latestDB.ReadOnly {
+					roTables.Delete(tbl.Meta().ID)
+					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
+				}
+			}
+			sctx.GetSessionVars().AddSchemaDeltaCheckTable(tbl.Meta())
+			sctx.GetSessionVars().MarkReadOnlySkippedMDL()
+			return tbl, nil
+		}
+	}
+	// Internal sessions do not take MDL on system-related schemas (`mysql`, `sys`,
+	// `workload_schema`): those tables are only changed during upgrade or internal
+	// housekeeping, and letting internal transactions block upgrade DDL (for example the
+	// stats bootstrap, or the DDL framework's own writes to mysql.tidb_ddl_job) could
+	// stall the upgrade. Keep the latest-table refresh below, and validate non-readonly
+	// writes at commit via the schema delta check. User tables accessed by internal
+	// sessions still take MDL, see issue #71055.
+	if sctx.GetSessionVars().InRestrictedSQL && metadef.IsSystemRelatedDB(dbName.L) {
+		skipLock = true
+		if !sctx.GetSessionVars().StmtCtx.IsReadOnly && tbl.Meta().TempTableType == model.TempTableNone {
+			sctx.GetSessionVars().AddSchemaDeltaCheckTable(tbl.Meta())
+		}
+	}
 	tableInfo := tbl.Meta()
 	dbInfo, _ := is.SchemaByName(dbName)
 	// Activation must recheck these accesses even with MDL: a database-level
@@ -2795,6 +2837,14 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
+		if se.MdlTables != nil {
+			if attachedTbl, attached := se.MdlTables.TableByID(tbl.Meta().ID); attached {
+				if attachedTbl.Meta().Revision != tbl.Meta().Revision {
+					return nil, domain.ErrInfoSchemaChanged.GenWithStack("table %s.%s has changed", dbName.L, tbl.Meta().Name.L)
+				}
+				return attachedTbl, nil
+			}
+		}
 		db, _ := infoschema.SchemaByTable(latestIS, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
@@ -2828,6 +2878,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		}
 	}
 	return tbl, nil
+}
+
+func isTxnPipelined(sctx base.PlanContext) bool {
+	txn, err := sctx.Txn(false)
+	return err == nil && txn != nil && txn.Valid() && txn.IsPipelined()
 }
 
 // skipLockMDL returns true if the preprocessor should skip the lock of MDL.

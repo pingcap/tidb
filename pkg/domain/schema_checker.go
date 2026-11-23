@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	atomicutil "go.uber.org/atomic"
@@ -29,6 +30,8 @@ type SchemaChecker struct {
 	validatorapi.Validator
 	schemaVer              int64
 	relatedTableIDs        []int64
+	deltaCheckTableIDs     []int64
+	hasDeltaCheckTableIDs  bool
 	needCheckSchemaByDelta bool
 }
 
@@ -55,6 +58,20 @@ func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, related
 	}
 }
 
+// NewSchemaCheckerWithDeltaCheckIDs creates a schema checker that validates only
+// deltaCheckTableIDs while MDL is enabled, but retains relatedTableIDs in case MDL
+// is disabled before the commit check runs.
+func NewSchemaCheckerWithDeltaCheckIDs(validator validatorapi.Validator, schemaVer int64, relatedTableIDs, deltaCheckTableIDs []int64, needCheckSchemaByDelta bool) *SchemaChecker {
+	return &SchemaChecker{
+		Validator:              validator,
+		schemaVer:              schemaVer,
+		relatedTableIDs:        relatedTableIDs,
+		deltaCheckTableIDs:     deltaCheckTableIDs,
+		hasDeltaCheckTableIDs:  len(deltaCheckTableIDs) > 0,
+		needCheckSchemaByDelta: needCheckSchemaByDelta,
+	}
+}
+
 // Check checks the validity of the schema version.
 func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, error) {
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
@@ -65,7 +82,11 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchemaByDelta)
+		checkIDs := s.relatedTableIDs
+		if s.hasDeltaCheckTableIDs && vardef.IsMDLEnabled() {
+			checkIDs = s.deltaCheckTableIDs
+		}
+		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
 		switch checkResult {
 		case validatorapi.ResultSucc:
 			return nil, nil

@@ -122,9 +122,11 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	p.infoSchema = p.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			CreateTime: time.Now(),
-			InfoSchema: p.infoSchema,
-			TxnScope:   sessVars.CheckAndGetTxnScope(),
+			CreateTime:        time.Now(),
+			InfoSchema:        p.infoSchema,
+			TxnScope:          sessVars.CheckAndGetTxnScope(),
+			IsInternal:        sessVars.InRestrictedSQL,
+			RequestSourceType: sessVars.RequestSourceType,
 		},
 	}
 	if p.onInitializeTxnCtx != nil {
@@ -608,31 +610,58 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	// Get accessed temporary tables in the transaction.
 	temporaryTables := sessVars.TxnCtx.TemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	seen := make(map[int64]struct{}, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
 		if _, ok := temporaryTables[id]; ok {
 			continue
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
+		seen[id] = struct{}{}
 	}
-	needCheckSchemaByDelta := true
-	// Set this option for 2 phase commit to validate schema lease.
+	var nonTempDeltaIDs []int64
 	if sessVars.TxnCtx != nil {
-		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
+		if deltaCheckIDs := sessVars.GetSchemaDeltaCheckTableIDs(); len(deltaCheckIDs) > 0 {
+			nonTempDeltaIDs = make([]int64, 0, len(deltaCheckIDs))
+			for _, id := range deltaCheckIDs {
+				if _, ok := temporaryTables[id]; ok {
+					continue
+				}
+				nonTempDeltaIDs = append(nonTempDeltaIDs, id)
+				if _, ok := seen[id]; !ok {
+					physicalTableIDs = append(physicalTableIDs, id)
+					seen[id] = struct{}{}
+				}
+			}
+		}
+	}
+	// Set this option for 2 phase commit to validate schema lease. When MDL is active,
+	// only tables that intentionally skipped MDL (system-related tables for internal sessions,
+	// or non-pessimistic internal read-only accesses in a transaction that later writes) are
+	// checked via schema delta so MDL-locked user tables are not falsely invalidated, while
+	// retaining all written/skipped IDs in case MDL is disabled before commit validation runs.
+	var checker *domain.SchemaChecker
+	if sessVars.TxnCtx != nil && sessVars.TxnCtx.EnableMDL && vardef.IsMDLEnabled() {
+		checker = domain.NewSchemaCheckerWithDeltaCheckIDs(
+			p.sctx.GetSchemaValidator(),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			nonTempDeltaIDs,
+			len(nonTempDeltaIDs) > 0,
+		)
+	} else {
+		checker = domain.NewSchemaChecker(
+			p.sctx.GetSchemaValidator(),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			true,
+		)
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
 	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	// to avoid session set overlap the txn set.
-	txn.SetOption(
-		kv.SchemaChecker,
-		domain.NewSchemaChecker(
-			p.sctx.GetSchemaValidator(),
-			p.GetTxnInfoSchema().SchemaMetaVersion(),
-			physicalTableIDs,
-			needCheckSchemaByDelta,
-		),
-	)
+	txn.SetOption(kv.SchemaChecker, checker)
 
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
