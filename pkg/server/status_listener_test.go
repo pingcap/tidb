@@ -20,10 +20,17 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -54,7 +61,249 @@ func (c *statusReadConn) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
+type statusShutdownController struct {
+	testStandbyController
+	onShutdown func(StandbyShutdownServer)
+}
+
+func (c *statusShutdownController) OnServerShutdown(s StandbyShutdownServer) {
+	c.onShutdown(s)
+}
+
 func TestStatusServerClose(t *testing.T) {
+	t.Run("before initialization", func(t *testing.T) {
+		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+		cfg := util.NewTestConfig()
+		cfg.Status.StatusPort = 0
+		cfg.Store = config.StoreTypeTiKV
+		// If initialization is incorrectly attempted, fail before opening a store.
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		require.NoError(t, s.listenStatusHTTPServer())
+		defer s.Close()
+		autoIDStarted := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeAutoIDService", func() {
+			autoIDStarted = true
+		})
+		s.Close()
+		s.startStatusServerAndRPCServer(http.NewServeMux())
+		require.False(t, autoIDStarted, "shutdown must prevent late AutoID initialization")
+		require.Nil(t, s.statusServer.Load())
+		require.Nil(t, s.grpcServer)
+	})
+
+	for _, tc := range []struct {
+		name       string
+		diagnostic bool
+	}{
+		{name: "normal"},
+		{name: "diagnostic", diagnostic: true},
+	} {
+		t.Run("startup after close/"+tc.name, func(t *testing.T) {
+			t.Cleanup(diagnosticmode.SetForTest(tc.diagnostic))
+			cfg := util.NewTestConfig()
+			cfg.Status.StatusPort = 0
+			s := NewTestServer(cfg)
+			if !tc.diagnostic {
+				store, dom := testkit.CreateMockStoreAndDomain(t)
+				s.driver = NewTiDBDriver(store)
+				s.dom = dom
+			}
+			defer s.Close()
+			s.Close()
+			require.ErrorIs(t, s.startStatusHTTP(), net.ErrClosed)
+			require.Nil(t, s.statusListener)
+		})
+	}
+
+	t.Run("during asynchronous initialization", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+		cfg := util.NewTestConfig()
+		cfg.Status.StatusPort = 0
+		s := NewTestServer(cfg)
+		s.driver = NewTiDBDriver(store)
+		s.dom = dom
+		initializing := make(chan struct{})
+		resume := make(chan struct{})
+		closed := make(chan struct{})
+		closeServer := sync.OnceFunc(func() {
+			s.Close()
+			close(closed)
+		})
+		defer func() {
+			if !isClosed(resume) {
+				close(resume)
+			}
+			go closeServer()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Error("status shutdown did not finish during cleanup")
+			}
+		}()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeStatusServerInit", func() {
+			close(initializing)
+			<-resume
+			// Close must not hold the client lock while joining initialization.
+			s.rwlock.Lock()
+			s.rwlock.Unlock()
+		})
+		resourcesClosed := make(chan struct{}, 1)
+		s.authTokenCancelFunc = func() {
+			select {
+			case resourcesClosed <- struct{}{}:
+			default:
+			}
+		}
+		require.NoError(t, s.startStatusHTTP())
+		select {
+		case <-initializing:
+		case <-time.After(5 * time.Second):
+			t.Fatal("status initialization did not start")
+		}
+		go closeServer()
+		select {
+		case <-resourcesClosed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("status resources were not closed")
+		}
+		select {
+		case <-closed:
+			t.Error("Close returned while status initialization was still running")
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(resume)
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("shutdown did not finish after initialization was released")
+		}
+		require.Nil(t, s.statusServer.Load())
+		require.Nil(t, s.grpcServer)
+	})
+
+	t.Run("during AutoID initialization", func(t *testing.T) {
+		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+		cfg := util.NewTestConfig()
+		cfg.Status.StatusPort = 0
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		s.health.Store(true)
+		require.NoError(t, s.listenStatusHTTPServer())
+		initializing := make(chan struct{})
+		resume := make(chan struct{})
+		closed := make(chan struct{})
+		closeServer := sync.OnceFunc(func() {
+			s.Close()
+			close(closed)
+		})
+		defer func() {
+			if !isClosed(resume) {
+				close(resume)
+			}
+			go closeServer()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Error("status shutdown did not finish during cleanup")
+			}
+		}()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeAutoIDService", func() {
+			close(initializing)
+			<-resume
+		})
+		servingDone := make(chan struct{})
+		go func() {
+			s.startStatusServerAndRPCServer(http.NewServeMux())
+			close(servingDone)
+		}()
+		select {
+		case <-initializing:
+		case <-time.After(5 * time.Second):
+			t.Fatal("AutoID initialization did not start")
+		}
+		go closeServer()
+		require.Eventually(t, func() bool { return !s.Health() }, 5*time.Second, time.Millisecond)
+		select {
+		case <-closed:
+			t.Error("Close returned while AutoID initialization was still running")
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(resume)
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("shutdown did not finish after AutoID initialization was released")
+		}
+		select {
+		case <-servingDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("status serving did not finish")
+		}
+		require.Nil(t, s.statusServer.Load())
+		require.Nil(t, s.grpcServer)
+	})
+
+	t.Run("during Starter drain", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("only for nextgen kernel")
+		}
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(originalMode)) })
+		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+		cfg := util.NewTestConfig()
+		cfg.Status.StatusPort = 0
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		require.NoError(t, s.listenStatusHTTPServer())
+		autoIDClosed := make(chan struct{})
+		drained := make(chan struct{})
+		s.StandbyController = &statusShutdownController{onShutdown: func(server StandbyShutdownServer) {
+			server.AutoIDServiceClose()
+			close(autoIDClosed)
+			<-drained
+		}}
+		autoIDStarted := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeAutoIDService", func() {
+			autoIDStarted = true
+		})
+		closed := make(chan struct{})
+		go func() {
+			s.Close()
+			close(closed)
+		}()
+		defer func() {
+			close(drained)
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Error("Starter shutdown did not finish")
+			}
+		}()
+		select {
+		case <-autoIDClosed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Starter did not relinquish AutoID ownership")
+		}
+		initialized := make(chan struct{})
+		go func() {
+			s.startStatusServerAndRPCServer(http.NewServeMux())
+			close(initialized)
+		}()
+		select {
+		case <-initialized:
+		case <-time.After(5 * time.Second):
+			t.Fatal("status initialization was not rejected while Starter was draining")
+		}
+		require.False(t, autoIDStarted)
+		require.Nil(t, s.statusServer.Load())
+		require.Nil(t, s.grpcServer)
+	})
+
 	for _, tc := range []struct {
 		name   string
 		tls    bool

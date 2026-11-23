@@ -85,6 +85,11 @@ func (s *Server) startStatusHTTP() error {
 	if !s.cfg.Status.ReportStatus {
 		return nil
 	}
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.statusClosed {
+		return net.ErrClosed
+	}
 	if diagnosticmode.Enabled() {
 		return s.startDiagnosticHTTP()
 	}
@@ -92,7 +97,11 @@ func (s *Server) startStatusHTTP() error {
 	if err != nil {
 		return err
 	}
-	go s.startHTTPServer()
+	s.statusWG.Add(1)
+	go func() {
+		defer s.statusWG.Done()
+		s.startHTTPServer()
+	}()
 	return nil
 }
 
@@ -116,7 +125,9 @@ func (s *Server) startDiagnosticHTTP() error {
 	// Publish before Serve starts so closeListener also handles early shutdown.
 	s.statusServer.Store(statusServer)
 	listener := s.statusListener
+	s.statusWG.Add(1)
 	go util.WithRecovery(func() {
+		defer s.statusWG.Done()
 		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
 		}
@@ -657,6 +668,7 @@ func (s *Server) startHTTPServer() {
 
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores
 func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
+	failpoint.InjectCall("beforeAutoIDService")
 	keyspaceName := config.GetGlobalKeyspaceName()
 
 	var fullPath string
@@ -691,6 +703,12 @@ func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
+	failpoint.InjectCall("beforeStatusServerInit")
+	s.statusMu.Lock()
+	if s.statusClosed {
+		s.statusMu.Unlock()
+		return
+	}
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
@@ -707,15 +725,19 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
+	s.statusWG.Add(2)
 	go util.WithRecovery(func() {
+		defer s.statusWG.Done()
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
+		defer s.statusWG.Done()
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
+	s.statusMu.Unlock()
 
 	err := m.Serve()
 	if err != nil {
