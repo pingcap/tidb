@@ -97,6 +97,7 @@ pub mod rule;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
 pub mod optimize;
+pub mod privilege_check;
 pub mod plan_cache_utils;
 pub mod pb_to_plan;
 pub mod planner_optimize;

@@ -1,0 +1,164 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/planner/core/stats/stats.go`: the statistics one statement plans a
+//! table from (`GetStatsTable`) and its `UsedStatsInfo` record
+//! (`LoadTableStats`).
+
+use tidb_stats::Table;
+use tidb_stats_handle::stmt_ctx::StatsStmtCtx as _;
+use crate::stmt_ctx::PlannerStmtCtx as _;
+
+/// One table's loaded statistics as the statement's statistics handle holds
+/// them (Go `sctx.GetStatsHandle().GetPhysicalTableStats`); `None` is Go's
+/// `PseudoTable`.
+#[must_use]
+pub fn table_statistics(
+    ctx: &tidb_sessionctx::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    table_id: i64,
+) -> Option<std::sync::Arc<Table>> {
+    ctx.stats_handle()
+        .table_statistics(table_id, || catalog.statistics_schema(table_id))
+}
+
+/// Go `pkg/planner/core/stats.GetStatsTable`: the statistics one statement
+/// plans `physical_table_id` from. `None` is a fresh `statistics.PseudoTable`
+/// (`RealtimeCount` 10000, `ModifyCount` 0, uninitialized pseudo items).
+///
+/// The caller passes the id Go's `pid == tblInfo.ID ||
+/// UseDynamicPartitionPrune()` choice resolves to: the logical id for an
+/// ordinary or dynamic-pruning source, one partition's id for a
+/// static-pruning child. Rule 1 (no statistics handle yet) has no
+/// counterpart, since the catalog always answers; a table the cache does not
+/// hold is the same `PseudoTable`.
+///
+/// The cached object is never mutated: the determinate-objective and pseudo
+/// decisions are session-local, so they land on a copy as Go's `CopyAs` and
+/// `tbl := *statsTbl` do.
+#[must_use]
+pub fn get_stats_table(
+    ctx: &tidb_sessionctx::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    physical_table_id: i64,
+) -> Option<std::sync::Arc<Table>> {
+    let opt_objective_determinate = !ctx
+        .optimizer_cost_env()
+        .session
+        .estimator_options
+        .allow_use_modify_count;
+    stats_table_for_session(
+        table_statistics(ctx, catalog, physical_table_id)?,
+        opt_objective_determinate,
+        ctx.enable_pseudo_for_outdated_stats(),
+    )
+}
+
+/// The session rules of [`get_stats_table`] over one cached table.
+fn stats_table_for_session(
+    mut statistics: std::sync::Arc<Table>,
+    opt_objective_determinate: bool,
+    enable_pseudo_for_outdated_stats: bool,
+) -> Option<std::sync::Arc<Table>> {
+    // `OptObjectiveDeterminate` ignores the real-time statistics: the copy's
+    // `RealtimeCount` is the row count the loaded histograms observed at
+    // ANALYZE time, and its `ModifyCount` is zero.
+    if opt_objective_determinate {
+        let analyze_count = statistics.hist_coll.analyze_row_count().max(0.0) as i64;
+        if statistics.hist_coll.realtime_count != analyze_count
+            || statistics.hist_coll.modify_count != 0
+        {
+            let mut copied = statistics.copy_as(tidb_stats::CopyIntent::MetaOnly);
+            copied.hist_coll.realtime_count = analyze_count;
+            copied.hist_coll.modify_count = 0;
+            statistics = std::sync::Arc::new(copied);
+        }
+    }
+    // Rule 2: a zero `RealtimeCount` plans from a fresh `PseudoTable`; none of
+    // the cached objects survive.
+    if statistics.hist_coll.realtime_count == 0 {
+        return None;
+    }
+    // Rule 3: an uninitialized or (when enabled) outdated table plans from
+    // Go's struct copy `tbl := *statsTbl` with `Pseudo` set. Outdatedness is
+    // judged on the table this statement plans from, so the determinate
+    // copy's zero `ModifyCount` is never outdated.
+    if !statistics.is_initialized()
+        || (enable_pseudo_for_outdated_stats && statistics.is_outdated())
+    {
+        let mut copied = (*statistics).clone();
+        copied.hist_coll.pseudo = true;
+        statistics = std::sync::Arc::new(copied);
+    }
+    Some(statistics)
+}
+
+/// Go `stats.LoadTableStats`: records the statement's `UsedStatsInfo` entry
+/// for `physical_table_id` from `GetStatsTable` unless planning already did,
+/// and returns that entry.
+pub fn load_table_stats(
+    ctx: &tidb_sessionctx::StmtContext,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    physical_table_id: i64,
+) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
+    if ctx.used_stats_info(physical_table_id).is_none() {
+        let statistics = get_stats_table(ctx, catalog, physical_table_id);
+        // A `None` from `get_stats_table` is Go's `PseudoTable`.
+        let (version, realtime_count, modify_count) = statistics.map_or(
+            (tidb_stats::PSEUDO_VERSION, tidb_stats::PSEUDO_ROW_COUNT, 0),
+            |statistics| {
+                let version = if statistics.hist_coll.pseudo {
+                    tidb_stats::PSEUDO_VERSION
+                } else {
+                    statistics.version
+                };
+                (
+                    version,
+                    statistics.hist_coll.realtime_count,
+                    statistics.hist_coll.modify_count,
+                )
+            },
+        );
+        ctx.record_used_stats_info(
+            physical_table_id,
+            catalog.get_tbl_info_for_used_stats_by_physical_id(physical_table_id),
+            version,
+            realtime_count,
+            modify_count,
+        );
+    }
+    ctx.used_stats_info(physical_table_id)
+}
+
+/// The table's realtime row count: `stats_meta.count` when analyzed, Go's
+/// `statistics.PseudoRowCount` when not.
+pub fn realtime_row_count(stats: Option<&Table>) -> f64 {
+    match stats {
+        Some(stats) if stats.hist_coll.realtime_count > 0 => stats.hist_coll.realtime_count as f64,
+        // A count of zero on a table with no histograms is not the statement
+        // "this table is empty" -- it is `mysql.stats_meta` not having caught
+        // up with the rows yet, and Go answers it with
+        // `PseudoHistColl`'s `RealtimeCount: PseudoRowCount`
+        // (`pkg/statistics/table.go`). Taking the zero literally makes every
+        // path cost nothing and the choice arbitrary; a live playground shows
+        // exactly that on a freshly loaded table, where Go still says 10000.
+        //
+        // An ANALYZED table that really is empty lands here too, because a
+        // zero count is one of Go's own routes to `PseudoTable` -- see
+        // [`get_stats_table`], where that rule lives.
+        Some(stats) if stats.hist_coll.pseudo => tidb_stats::PSEUDO_ROW_COUNT as f64,
+        Some(stats) => stats.hist_coll.realtime_count.max(0) as f64,
+        None => tidb_stats::PSEUDO_ROW_COUNT as f64,
+    }
+}

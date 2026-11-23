@@ -12,6 +12,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-stmtctx = { path = "../tidb-stmtctx" }
+tidb-lock = { path = "../tidb-lock" }
+tidb-privilege = { path = "../tidb-privilege" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-mviewutil = { path = "../tidb-mviewutil" }
 tidb-config = { path = "../tidb-config" }

@@ -24,7 +24,7 @@ use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 pub use tidb_planner::pb_to_plan::{PBPlanBuilder, PbMemTable, PbPlan, PbPlanNode};
 use tidb_planner::pb_to_plan::validate_pb_expr;
-use tidb_proto::{coprocessor, tipb};
+use tidb_proto::tipb;
 
 /// Go `kv.ReqTypeDAG`.
 pub const REQ_TYPE_DAG: i64 = 103;

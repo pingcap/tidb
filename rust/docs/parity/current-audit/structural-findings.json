@@ -19,7 +19,7 @@
       "id": "T05",
       "group": "Structure: Go's shape before more ports",
       "status": "open",
-      "finding": "Go `pkg/planner/optimize.go`'s statement entry (`Optimize`, `optimizeNoCache`: binding match, fast plan, plan cache), `buildLogicalPlan`'s catalog and evaluator wiring, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` live in the executor. (`optimize`'s rounds and `buildAndOptimizeLogicalPlanRound` are `tidb-planner/src/planner_optimize.rs`; `PlanBuilder.Init`'s session reads are `PlanBuilder::init_session_vars`; `TryFastPlan`'s global-index bypass is `point_get_plan::static_global_index_point_lookup`.)",
+      "finding": "Go `pkg/planner/optimize.go`'s statement entry (`Optimize`, `optimizeNoCache`: binding match, fast plan, plan cache), `buildLogicalPlan`'s catalog and evaluator wiring, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` live in the executor. (`optimize`'s rounds and `buildAndOptimizeLogicalPlanRound` are `tidb-planner/src/planner_optimize.rs`; `PlanBuilder.Init`'s session reads are `PlanBuilder::init_session_vars`; `TryFastPlan`'s global-index bypass is `point_get_plan::static_global_index_point_lookup`; `CheckPrivilege` / `CheckTableLock` are `privilege_check.rs`; `stats.GetStatsTable` / `LoadTableStats` are `stats/stats_table.rs`.)",
       "rust_evidence": "`tidb-executor/src/driver.rs`, `driver/dml.rs` (statement entry), `driver/planner_bridge.rs` (`QueryBuilderParts::build`, `planner_built_query_with_allocators`), `tidb-executor/src/explain.rs` (`query_plan_cost`, `gen_brief_plan`, `calculate_plan_digest`), `foreign_key.rs`.",
       "go_owner": "`pkg/planner/optimize.go`"
     },

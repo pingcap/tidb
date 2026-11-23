@@ -18,6 +18,7 @@
 //! `cardinality.Selectivity` wrappers it estimates with.
 
 pub mod init_stats;
+pub mod stats_table;
 #[cfg(test)]
 mod access_path_context_tests;
 #[cfg(test)]
