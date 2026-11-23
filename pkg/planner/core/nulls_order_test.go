@@ -132,6 +132,41 @@ func TestNullsHighOrderAvoidSort(t *testing.T) {
 		Check(testkit.Rows("1 <nil>", "2 40"))
 	tk.MustQuery("select o.id, (select i.b from ti i use index(ica) where i.c = o.x order by i.a is null, i.a limit 1) from o order by o.id").
 		Check(testkit.Rows("1 <nil>", "2 10"))
+
+	// String CASE/IF literals are compared under the result collation. Literals equal under it
+	// (case or trailing spaces under PAD SPACE) give equal keys, so the sort is kept; distinct
+	// ones decide the NULL side by that collation. Non-covering access (s, x) is checked too.
+	tk.MustExec("create table ts (id int primary key, s varchar(10) collate utf8mb4_general_ci, x int, key is_(s))")
+	tk.MustExec("insert into ts values (1, 'b', 1), (2, null, 2), (3, 'A', 3), (4, 'c', 4), (5, null, 5)")
+	nullsLow := []string{"<nil> 2", "<nil> 5", "A 3", "b 1", "c 4"}
+	nullsHigh := []string{"A 3", "b 1", "c 4", "<nil> 2", "<nil> 5"}
+	for _, tc := range []struct {
+		names    string
+		order    string
+		needSort bool
+		rows     []string
+	}{
+		{"utf8mb4_general_ci", "case when s is null then 'A' else 'a' end, s", true, nullsLow},
+		{"utf8mb4_general_ci", "if(s is null, 'A', 'a'), s", true, nullsLow},
+		{"utf8mb4_general_ci", "case when s is null then 'a ' else 'a' end, s", true, nullsLow},
+		{"utf8mb4_general_ci", "if(s is null, 'a ', 'a'), s", true, nullsLow},
+		{"utf8mb4_bin", "case when s is null then 'a ' else 'a' end, s", true, nullsLow},
+		{"utf8mb4_general_ci", "case when s is null then 'B' else 'a' end, s", false, nullsHigh},
+		{"utf8mb4_general_ci", "if(s is null, 'B', 'a'), s", false, nullsHigh},
+		// Under utf8mb4_bin 'B' < 'a', so the NULLs stay low.
+		{"utf8mb4_bin", "case when s is null then 'B' else 'a' end, s", false, nullsLow},
+		{"utf8mb4_general_ci", "case when s is null then 'B' collate utf8mb4_bin else 'a' end, s", false, nullsLow},
+	} {
+		tk.MustExec("set names utf8mb4 collate " + tc.names)
+		sql := "select s, x from ts use index(is_) order by " + tc.order
+		if tc.needSort {
+			tk.MustQuery("explain format = 'brief' " + sql).CheckContain("Sort")
+		} else {
+			tk.MustQuery("explain format = 'brief' " + sql).CheckNotContain("Sort")
+		}
+		tk.MustQuery(sql).Check(testkit.Rows(tc.rows...))
+	}
+	tk.MustExec("set names utf8mb4")
 }
 
 func TestNullsHighOrderPlanCache(t *testing.T) {
