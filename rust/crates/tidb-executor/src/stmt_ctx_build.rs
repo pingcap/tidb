@@ -850,7 +850,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let mut scanned = stmt.clone();
         let has_as_of = tidb_planner::preprocess::preprocess(
             &mut scanned,
-            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.session_vars().enable_mview() },
+            self.preprocess_context(),
         )
         .map_err(crate::driver::planner_error_to_driver)?
         .has_as_of;
@@ -2227,6 +2227,9 @@ pub type StatementChunkPool = (
 /// builders read: Go's `sctx` and the `SessionVars` fields this tier still
 /// keeps on the session.
 pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
+    /// The session facts Go's preprocessor reads through `sctx`.
+    fn preprocess_context(&self) -> &dyn tidb_planner::preprocess::PreprocessContext;
+
     /// Go `domain.GetDomain(ctx).StatsHandle()`.
     fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle>;
     /// Go `clientConn.chunkAlloc` as `SetAlloc` installs it: the session's

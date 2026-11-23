@@ -358,7 +358,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         // statement, its requests and every EXECUTE name the same tables.
         tidb_planner::preprocess::preprocess(
             &mut statement,
-            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.session_vars().enable_mview() },
+            self.preprocess_context(),
         )
         .map_err(crate::driver::planner_error_to_driver)?;
         tidb_bindinfo::binding::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;

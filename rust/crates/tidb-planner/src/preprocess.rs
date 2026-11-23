@@ -83,13 +83,26 @@ enum StmtType {
     Show,
 }
 
-/// The session facts Go's `preprocessor` reads through its `sctx` and
-/// `PreprocessOpt`s.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PreprocessOptions {
+/// The session facts Go's `preprocessor` reads through its `sctx`.
+pub trait PreprocessContext {
+    /// Go `SessionVars.CurrentDB`.
+    fn current_db(&self) -> &str;
+    /// Go `SessionVars.SQLMode.HasStrictMode()`, which decides whether an
+    /// over-long VARCHAR is an error (`hasAutoConvertWarning`).
+    fn strict_sql_mode(&self) -> bool;
     /// Go `SessionVars.EnableMVIEW` (`tidb_mview_enable`), which admits the
     /// commit-TS pseudo column.
-    pub enable_mview: bool,
+    fn enable_mview(&self) -> bool;
+    /// Whether `path` names one of the session's local temporary tables
+    /// (Go `checkCreateTableGrammar`'s LIKE source).
+    fn is_local_temporary_table(&self, path: &[String]) -> bool;
+    /// Go `checkDropTemporaryTableGrammar` for `DROP GLOBAL TEMPORARY TABLE`:
+    /// whether `path` names a table that is not a global temporary table.
+    ///
+    /// # Errors
+    ///
+    /// When the catalog cannot be read.
+    fn is_not_global_temporary_table(&self, path: &[String]) -> Result<bool, PlanError>;
 }
 
 /// Go `PreprocessorReturn` and what the walk learns for its callers.
@@ -112,9 +125,9 @@ pub struct PreprocessorReturn {
 /// # Errors
 ///
 /// The preprocessor's error for the first node it refuses.
-pub fn preprocess(stmt: &mut tidb_ast::Stmt, options: PreprocessOptions) -> Result<PreprocessorReturn, PlanError> {
+pub fn preprocess(stmt: &mut tidb_ast::Stmt, ctx: &dyn PreprocessContext) -> Result<PreprocessorReturn, PlanError> {
     let mut preprocessor = Preprocessor {
-        options,
+        ctx,
         stmt_tp: StmtType::Invalid,
         vars_mutable: std::collections::HashSet::new(),
         result: PreprocessorReturn::default(),
@@ -128,8 +141,8 @@ pub fn preprocess(stmt: &mut tidb_ast::Stmt, options: PreprocessOptions) -> Resu
 }
 
 /// Go `preprocessor`.
-struct Preprocessor {
-    options: PreprocessOptions,
+struct Preprocessor<'a> {
+    ctx: &'a dyn PreprocessContext,
     stmt_tp: StmtType,
     /// Go `varsMutable`.
     vars_mutable: std::collections::HashSet<String>,
@@ -137,7 +150,7 @@ struct Preprocessor {
     err: Option<PlanError>,
 }
 
-impl Preprocessor {
+impl Preprocessor<'_> {
     fn collect_table_name(&mut self, name: &[String]) {
         let (schema, table) = match name {
             [table] => (String::new(), table.clone()),
@@ -147,6 +160,82 @@ impl Preprocessor {
         self.result.table_names.push((go_to_lower(schema), go_to_lower(table)));
     }
 
+    /// Go `handleTableName`'s schema fill for a repair lookup: the lowered
+    /// schema (the current one for a bare name, `ErrNoDB` without one) and
+    /// table names.
+    fn repair_table_name(&self, path: &[String]) -> Result<(String, String), PlanError> {
+        let (schema, name) = match path {
+            [schema, name] => (schema.as_str(), name.as_str()),
+            [name] if !self.ctx.current_db().is_empty() => (self.ctx.current_db(), name.as_str()),
+            _ => return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))),
+        };
+        Ok((
+            tidb_ast::CiString::new(schema).lowercase().to_owned(),
+            tidb_ast::CiString::new(name).lowercase().to_owned(),
+        ))
+    }
+
+    /// Go `Enter`'s DDL arms: `checkRepairTableGrammar` and `handleRepairName`
+    /// for an `ADMIN REPAIR TABLE`; the grammar checks over the statement's
+    /// own names and declarations, before anything reads the catalog (its
+    /// `handleTableName` has already given an unqualified CREATE TABLE the
+    /// current schema, which `checkContainDotColumn` compares against); in
+    /// REPAIR MODE, no created, dropped or renamed table is under repair;
+    /// `checkCreateTableGrammar`'s refusal of a local temporary LIKE source;
+    /// `checkDropTemporaryTableGrammar`.
+    fn check_ddl(&self, ddl: &tidb_ast::DdlStmt) -> Result<(), PlanError> {
+        let repair_info = &*tidb_domainutil::REPAIR_INFO;
+        if let DdlStmt::RepairTable(repair) = ddl {
+            check_repair_table_grammar(
+                repair,
+                repair_info.in_repair_mode(),
+                repair_info.get_repair_table_list().is_empty(),
+            )?;
+            let (schema, name) = self.repair_table_name(&repair.table)?;
+            handle_repair_name(&schema, &name, repair_info.get_repaired_table_info_by_table_name(&schema, &name))?;
+        }
+        let qualified;
+        let graded = match ddl {
+            DdlStmt::CreateTable(create) if create.name.len() == 1 && !self.ctx.current_db().is_empty() => {
+                let mut create = create.clone();
+                create.name.insert(0, self.ctx.current_db().to_owned());
+                qualified = Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateTable(create)));
+                &qualified
+            }
+            _ => {
+                qualified = Stmt::Ddl(tidb_ast::NodeBox::new(ddl.clone()));
+                &qualified
+            }
+        };
+        check_ddl_grammar(graded, self.ctx.strict_sql_mode())?;
+        if repair_info.in_repair_mode() {
+            for path in create_or_drop_table_names(ddl) {
+                let (schema, name) = self.repair_table_name(path)?;
+                let (table, _) = repair_info.get_repaired_table_info_by_table_name(&schema, &name);
+                check_not_in_repair(&name, table.is_some())?;
+            }
+        }
+        if let DdlStmt::CreateTable(create) = ddl {
+            if create.like_table.as_ref().is_some_and(|name| self.ctx.is_local_temporary_table(name)) {
+                return Err(PlanError::from(
+                    tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE.gen_with_stack_by_args(&["create table like".into()]),
+                ));
+            }
+        }
+        if let DdlStmt::DropTable(drop) = ddl {
+            if drop.temporary == tidb_ast::DropTemporary::Global {
+                for path in &drop.names {
+                    if self.ctx.is_not_global_temporary_table(path)? {
+                        return Err(PlanError::from(
+                            tidb_plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE.gen_with_stack_by_args(&[]),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Go `Enter`'s `*ast.ColumnName` arm.
     fn check_column_name(&mut self, path: &[String]) {
         let names_commit_ts = path
@@ -154,7 +243,7 @@ impl Preprocessor {
             .is_some_and(|name| go_to_lower(name.clone()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME);
         if names_commit_ts
             && matches!(self.stmt_tp, StmtType::Select | StmtType::Update | StmtType::Delete)
-            && !self.options.enable_mview
+            && !self.ctx.enable_mview()
         {
             self.err = Some(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
                 "Usage of column name '{}' is not supported for now",
@@ -164,7 +253,7 @@ impl Preprocessor {
     }
 }
 
-impl Visitor for Preprocessor {
+impl Visitor for Preprocessor<'_> {
     fn enter(&mut self, node: &mut dyn Any) -> bool {
         if node.is::<tidb_ast::SelectStmt>() {
             self.stmt_tp = StmtType::Select;
@@ -176,6 +265,10 @@ impl Visitor for Preprocessor {
             self.stmt_tp = StmtType::Insert;
         } else if node.is::<tidb_ast::ShowStmt>() {
             self.stmt_tp = StmtType::Show;
+        } else if let Some(ddl) = node.downcast_ref::<tidb_ast::DdlStmt>() {
+            if let Err(error) = self.check_ddl(ddl) {
+                self.err = Some(error);
+            }
         } else if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
             if table_ref.as_of.is_some() {
                 self.result.has_as_of = true;
@@ -241,6 +334,25 @@ impl Visitor for Preprocessor {
             }
         }
         self.err.is_none()
+    }
+}
+
+/// The table names Go's preprocessor visits under `inCreateOrDropTable`: a
+/// created, dropped or renamed table, view or sequence, and a CREATE TABLE
+/// LIKE source.
+fn create_or_drop_table_names(ddl: &DdlStmt) -> Vec<&[String]> {
+    match ddl {
+        DdlStmt::CreateTable(create) => {
+            std::iter::once(create.name.as_slice()).chain(create.like_table.as_deref()).collect()
+        }
+        DdlStmt::CreateView(create) => vec![create.name.as_slice()],
+        DdlStmt::CreateSequence(create) => vec![create.name.as_slice()],
+        DdlStmt::DropTable(drop) => drop.names.iter().map(Vec::as_slice).collect(),
+        DdlStmt::DropSequence(drop) => drop.names.iter().map(Vec::as_slice).collect(),
+        DdlStmt::RenameTable(rename) => {
+            rename.pairs.iter().flat_map(|(old, new)| [old.as_slice(), new.as_slice()]).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -1673,6 +1785,28 @@ mod ddl_grammar_tests {
 mod preprocessor_tests {
     use super::*;
 
+    /// A session in `test`, strict, `tidb_mview_enable` off, no temporary
+    /// tables.
+    struct TestContext;
+
+    impl PreprocessContext for TestContext {
+        fn current_db(&self) -> &str {
+            "test"
+        }
+        fn strict_sql_mode(&self) -> bool {
+            true
+        }
+        fn enable_mview(&self) -> bool {
+            false
+        }
+        fn is_local_temporary_table(&self, _path: &[String]) -> bool {
+            false
+        }
+        fn is_not_global_temporary_table(&self, _path: &[String]) -> Result<bool, PlanError> {
+            Ok(false)
+        }
+    }
+
     #[test]
     fn name_const_requires_the_source_literal_shapes() {
         use tidb_ast::{BinaryOp, Expr, UnaryOp};
@@ -1715,7 +1849,7 @@ mod preprocessor_tests {
     fn preprocess_refuses_cast_declarations_and_name_const_shapes() {
         let run = |sql: &str| {
             let mut stmt = tidb_parser::parse(sql).expect("parses");
-            preprocess(&mut stmt, PreprocessOptions::default())
+            preprocess(&mut stmt, &TestContext)
         };
         let eval = |result: Result<PreprocessorReturn, PlanError>| match result {
             Err(error) => match error.kind() {

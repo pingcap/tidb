@@ -860,127 +860,12 @@ impl Session {
         ))
     }
 
-    /// Go `handleTableName`'s schema fill for a repair lookup: the lowered
-    /// schema (the current one for a bare name, `ErrNoDB` without one) and
-    /// table names.
-    fn repair_table_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
-        let (schema, name) = match path {
-            [schema, name] => (schema.as_str(), name.as_str()),
-            [name] if !self.vars.current_db.is_empty() => {
-                (self.vars.current_db.as_str(), name.as_str())
-            }
-            _ => {
-                return Err(DriverError::from(
-                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
-                ))
-            }
-        };
-        Ok((
-            tidb_ast::CiString::new(schema).lowercase().to_owned(),
-            tidb_ast::CiString::new(name).lowercase().to_owned(),
-        ))
-    }
-
-    /// Preprocessor errors precede both grant checking and implicit commits.
+    /// Go `Preprocess`, whose errors precede both grant checking and
+    /// implicit commits.
     pub fn validate_ddl_preprocess(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
-        // Go's walk enters an `ADMIN REPAIR TABLE` before its CREATE TABLE,
-        // and `checkRepairTableGrammar` reads the process's REPAIR MODE.
-        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-            if let tidb_ast::DdlStmt::RepairTable(repair) = ddl.as_ref() {
-                let repair_info = &*tidb_domainutil::REPAIR_INFO;
-                tidb_planner::preprocess::check_repair_table_grammar(
-                    repair,
-                    repair_info.in_repair_mode(),
-                    repair_info.get_repair_table_list().is_empty(),
-                )?;
-                let (schema, name) = self.repair_table_name(&repair.table)?;
-                tidb_planner::preprocess::handle_repair_name(
-                    &schema,
-                    &name,
-                    repair_info.get_repaired_table_info_by_table_name(&schema, &name),
-                )?;
-            }
-        }
-        // Go's preprocessor grammar checks over the statement's own names
-        // and declarations, before anything reads the catalog. Its
-        // `handleTableName` has already given an unqualified CREATE TABLE the
-        // current schema, which `checkContainDotColumn` compares against.
-        let named;
-        let graded = match stmt {
-            tidb_ast::Stmt::Ddl(ddl) => match ddl.as_ref() {
-                tidb_ast::DdlStmt::CreateTable(create)
-                    if create.name.len() == 1 && !self.vars.current_db.is_empty() =>
-                {
-                    let mut create = create.clone();
-                    create.name.insert(0, self.vars.current_db.clone());
-                    named = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::CreateTable(create)));
-                    &named
-                }
-                _ => stmt,
-            },
-            _ => stmt,
-        };
-        tidb_planner::preprocess::check_ddl_grammar(
-            graded,
-            self.vars.sql_mode().has_strict_mode(),
-        )?;
-        // Go `handleTableName` under `inCreateOrDropTable`: in REPAIR MODE no
-        // create, drop or rename names a table under repair.
-        if tidb_domainutil::REPAIR_INFO.in_repair_mode() {
-            if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-                for path in create_or_drop_table_names(ddl) {
-                    let (schema, name) = self.repair_table_name(path)?;
-                    let (table, _) = tidb_domainutil::REPAIR_INFO
-                        .get_repaired_table_info_by_table_name(&schema, &name);
-                    tidb_planner::preprocess::check_not_in_repair(&name, table.is_some())?;
-                }
-            }
-        }
-        // Go checkCreateTableGrammar resolves LIKE through the session
-        // infoschema and rejects temporary sources before privilege checking.
-        // A cluster lowerer must never clone the permanent table hidden by a
-        // local temporary source with the same name.
-        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-            if let tidb_ast::DdlStmt::CreateTable(create) = ddl.as_ref() {
-                if create
-                    .like_table
-                    .as_ref()
-                    .is_some_and(|name| self.is_local_temporary_table_path(name))
-                {
-                    return Err(DriverError::from(
-                        tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
-                            .gen_with_stack_by_args(&["create table like".into()]),
-                    ));
-                }
-            }
-        }
-        if let tidb_ast::Stmt::Ddl(ddl) = stmt {
-            if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
-                if drop.temporary == tidb_ast::DropTemporary::Global {
-                    let shared = self.lock_catalog()?;
-                    let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
-                    for path in &drop.names {
-                        let (db, name) = match path.as_slice() {
-                            [name] => (self.vars.current_db.as_str(), name.as_str()),
-                            [db, name] => (db.as_str(), name.as_str()),
-                            _ => continue,
-                        };
-                        if self.is_local_temporary_table(db, name)
-                            || catalog.table_in(db, name).is_some_and(|table| {
-                                !matches!(table, tidb_infoschema::TableEntry::Kv(table)
-                                    if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
-                            })
-                        {
-                            return Err(DriverError::from(
-                                tidb_plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE
-                                    .gen_with_stack_by_args(&[]),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+        tidb_planner::preprocess::preprocess(&mut stmt.clone(), self)
+            .map(drop)
+            .map_err(tidb_executor::driver::planner_error_to_driver)
     }
 
     /// Go `CheckPrivilege` (and `CheckTableLock`) over a plan's visit
@@ -1786,27 +1671,6 @@ impl Session {
     }
 }
 
-/// The table names Go's preprocessor visits under `inCreateOrDropTable`: a
-/// created, dropped or renamed table, view or sequence, and a CREATE TABLE
-/// LIKE source.
-fn create_or_drop_table_names(ddl: &tidb_ast::DdlStmt) -> Vec<&[String]> {
-    match ddl {
-        tidb_ast::DdlStmt::CreateTable(create) => std::iter::once(create.name.as_slice())
-            .chain(create.like_table.as_deref())
-            .collect(),
-        tidb_ast::DdlStmt::CreateView(create) => vec![create.name.as_slice()],
-        tidb_ast::DdlStmt::CreateSequence(create) => vec![create.name.as_slice()],
-        tidb_ast::DdlStmt::DropTable(drop) => drop.names.iter().map(Vec::as_slice).collect(),
-        tidb_ast::DdlStmt::DropSequence(drop) => drop.names.iter().map(Vec::as_slice).collect(),
-        tidb_ast::DdlStmt::RenameTable(rename) => rename
-            .pairs
-            .iter()
-            .flat_map(|(old, new)| [old.as_slice(), new.as_slice()])
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 /// Go `UserPrivileges.RequestDynamicVerification` for the session's bound plugin.
 fn dynamic_privilege(
     registry: &tidb_privilege::PrivilegeRegistry,
@@ -1825,4 +1689,45 @@ fn dynamic_privilege(
         auth_plugin,
     }
     .request_dynamic_verification(roles, name, grantable)
+}
+
+/// The session facts Go's preprocessor reads through `sctx`.
+impl tidb_planner::preprocess::PreprocessContext for Session {
+    fn current_db(&self) -> &str {
+        &self.vars.current_db
+    }
+
+    fn strict_sql_mode(&self) -> bool {
+        self.vars.sql_mode().has_strict_mode()
+    }
+
+    fn enable_mview(&self) -> bool {
+        self.vars.enable_mview()
+    }
+
+    fn is_local_temporary_table(&self, path: &[String]) -> bool {
+        self.is_local_temporary_table_path(path)
+    }
+
+    fn is_not_global_temporary_table(
+        &self,
+        path: &[String],
+    ) -> Result<bool, tidb_planner_core_base::PlanError> {
+        let (db, name) = match path {
+            [name] => (self.vars.current_db.as_str(), name.as_str()),
+            [db, name] => (db.as_str(), name.as_str()),
+            _ => return Ok(false),
+        };
+        if self.is_local_temporary_table(db, name) {
+            return Ok(true);
+        }
+        let shared = self
+            .lock_catalog()
+            .map_err(|error| tidb_planner_core_base::PlanError::internal(error.to_string()))?;
+        let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
+        Ok(catalog.table_in(db, name).is_some_and(|table| {
+            !matches!(table, tidb_infoschema::TableEntry::Kv(table)
+                if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
+        }))
+    }
 }

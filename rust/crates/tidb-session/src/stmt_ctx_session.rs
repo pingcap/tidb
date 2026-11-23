@@ -19,6 +19,10 @@
 use crate::*;
 
 impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
+    fn preprocess_context(&self) -> &dyn tidb_planner::preprocess::PreprocessContext {
+        self
+    }
+
 
 
     fn stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {

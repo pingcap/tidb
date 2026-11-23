@@ -1370,7 +1370,7 @@ impl Session {
         let mut stmt = template.clone();
         let names = tidb_planner::preprocess::preprocess(
             &mut stmt,
-            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.vars.enable_mview() },
+            &*self,
         )
         .map_err(tidb_executor::driver::planner_error_to_driver)?
         .table_names;
@@ -1789,7 +1789,7 @@ impl Session {
             .then(|| tidb_tracing::start_thread_region("planner.Preprocess"));
         let mut scan = tidb_planner::preprocess::preprocess(
             &mut stmt,
-            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.vars.enable_mview() },
+            &*self,
         )
         .map_err(tidb_executor::driver::planner_error_to_driver)?;
         drop(region);

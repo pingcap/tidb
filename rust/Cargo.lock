@@ -8676,6 +8676,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-disjointset",
+ "tidb-domainutil",
  "tidb-driver-error",
  "tidb-execdetails",
  "tidb-exeerrors",
