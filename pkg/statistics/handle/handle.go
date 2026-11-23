@@ -159,7 +159,7 @@ func NewHandle(
 	procIDs := util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
 	leaseHolder := util.NewLeaseHolder(lease)
 	tables := util.NewTableInfoGetter()
-	statsLock := lockstats.NewStatsLock(pool)
+	statsLock := lockstats.NewStatsLock(statsPool)
 	statsCache, err := cache.NewStatsCacheImpl(statsPool, leaseHolder, tables)
 	if err != nil {
 		return nil, err

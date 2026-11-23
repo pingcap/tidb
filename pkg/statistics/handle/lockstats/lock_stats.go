@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -40,11 +39,11 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool syssession.Pool
+	pool util.SessionPool
 }
 
-// NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool syssession.Pool) types.StatsLock {
+// NewStatsLock creates a new StatsLock that locks the stats in the sessions of pool.
+func NewStatsLock(pool util.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
@@ -52,7 +51,7 @@ func NewStatsLock(pool syssession.Pool) types.StatsLock {
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
 func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
-	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedTables(sctx, tables)
 		return err
 	}, util.FlagWrapTxn)
@@ -71,7 +70,7 @@ func (sl *statsLockImpl) LockPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (skipped string, err error) {
-	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedPartitions(sctx, tid, tableName, pidNames)
 		return err
 	}, util.FlagWrapTxn)
@@ -82,7 +81,7 @@ func (sl *statsLockImpl) LockPartitions(
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
 func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
-	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedTables(sctx, tables)
 		return err
 	}, util.FlagWrapTxn)
@@ -99,7 +98,7 @@ func (sl *statsLockImpl) RemoveLockedPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (skipped string, err error) {
-	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedPartitions(sctx, tid, tableName, pidNames)
 		return err
 	}, util.FlagWrapTxn)
@@ -108,7 +107,7 @@ func (sl *statsLockImpl) RemoveLockedPartitions(
 
 // queryLockedTables query locked tables from store.
 func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err error) {
-	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		tables, err = QueryLockedTables(util.StatsCtx, sctx)
 		return err
 	})
