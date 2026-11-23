@@ -8964,9 +8964,11 @@ fn an_index_join_table_probe_has_no_memory_tracker_like_go() {
 /// Go `buildNoRangeIndexReader`: a covering IndexReader's DAG `OutputOffsets`
 /// are its `OutputColumns`, so a response carries only the columns the
 /// reader returns, and the reader's peak memory is that response's size. Go
-/// tidb-server capture over 199 rows: the plain reader peaks at 1.87 KB and
-/// an index join's probe reader at 1.90 KB (with the handle also on the wire,
-/// both near 3.5 KB).
+/// capture (`gorun`, three runs) over 100 rows, one page under the 128-row
+/// minimum paging size: the plain reader peaks at 1.04 KB and an index join's
+/// probe reader at 1.06 KB. (Over two pages the peak depends on whether the
+/// coprocessor worker queues page 2 before the consumer releases page 1, in
+/// Go as here, so it is not a fixed number.)
 #[test]
 fn a_covering_index_reader_returns_only_its_output_columns_like_go() {
     let mut session = Session::new();
@@ -8976,8 +8978,8 @@ fn a_covering_index_reader_returns_only_its_output_columns_like_go() {
     for sql in [
         "CREATE TABLE o (a INT, b INT)".to_owned(),
         "CREATE TABLE i (a INT PRIMARY KEY, b INT, KEY (b))".to_owned(),
-        format!("INSERT INTO o VALUES {}", values(1..=199)),
-        format!("INSERT INTO i VALUES {}", values(1..=199)),
+        format!("INSERT INTO o VALUES {}", values(1..=100)),
+        format!("INSERT INTO i VALUES {}", values(1..=100)),
     ] {
         session.run(&sql).unwrap();
     }
@@ -8988,13 +8990,13 @@ fn a_covering_index_reader_returns_only_its_output_columns_like_go() {
             .unwrap_or_else(|| panic!("{label}: {rows:?}"))[7]
             .clone()
     };
-    assert_eq!(reader_memory("SELECT b FROM i WHERE b > 0", "IndexReader"), "1.87 KB");
+    assert_eq!(reader_memory("SELECT b FROM i WHERE b > 0", "IndexReader"), "1.04 KB");
     assert_eq!(
         reader_memory(
             "SELECT /*+ INL_JOIN(i) */ COUNT(*) FROM o JOIN i ON o.b = i.b",
             "IndexReader",
         ),
-        "1.90 KB"
+        "1.06 KB"
     );
 }
 
