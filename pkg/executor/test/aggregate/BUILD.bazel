@@ -9,7 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/executor/aggregate",
@@ -17,6 +17,7 @@ go_test(
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/types",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
