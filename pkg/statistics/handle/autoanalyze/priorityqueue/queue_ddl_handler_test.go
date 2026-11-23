@@ -109,7 +109,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	go func() {
 		defer close(down)
 		require.NoError(t, failpoint.Enable(fp, "return(1)"))
-		require.NoError(t, job1.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker())))
+		require.NoError(t, job1.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil)))
 	}()
 
 	// Create a new index on t1.
@@ -968,7 +968,7 @@ func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker(), nil)))
 
 	// Check the stats of the indexes.
 	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -1037,12 +1037,12 @@ func TestAddIndexTriggerAutoAnalyzeWithStaticPartition(t *testing.T) {
 	require.NoError(t, err)
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker(), nil)))
 	job, err = pq.Pop()
 	require.NoError(t, err)
 	valid, _ = job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker(), nil)))
 
 	// Check the stats of the indexes for each partition.
 	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)

@@ -265,7 +265,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	runner *exec.Runner,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
-	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
@@ -279,7 +279,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
-	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.GlobalTableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

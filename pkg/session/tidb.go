@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	dxfautoanalyze "github.com/pingcap/tidb/pkg/dxf/autoanalyze"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extworkload"
@@ -45,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	autoanalyzeexec "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -63,6 +66,12 @@ const StoreBootstrappedKey = "bootstrap"
 type domainMap struct {
 	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
+}
+
+// newAutoAnalyzeDispatcher creates the dispatcher that runs the auto-analyze statements of a
+// stats handle as DXF tasks.
+func newAutoAnalyzeDispatcher(statsCache statstypes.StatsCacheLoader) autoanalyzeexec.Dispatcher {
+	return dxfautoanalyze.NewDispatcher(statsCache)
 }
 
 type domainCreateOptions struct {
@@ -134,6 +143,7 @@ func (dm *domainMap) getWithEtcdClient(
 			opts.serverInfoSyncerOptions...,
 		)
 		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
+		d.SetAutoAnalyzeDispatcher(newAutoAnalyzeDispatcher)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {

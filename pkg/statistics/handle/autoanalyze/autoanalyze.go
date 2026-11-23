@@ -77,7 +77,8 @@ type Analyzer struct {
 }
 
 // NewAnalyzer creates an Analyzer that analyzes the outdated tables in the sessions
-// of pool. It finds them from the stats in statsCache and tableStats.
+// of pool. It finds them from the stats in statsCache and tableStats. A non-nil dispatcher
+// runs the statements when tidb_enable_dist_auto_analyze is ON.
 func NewAnalyzer(
 	ctx context.Context,
 	pool statsutil.SessionPool,
@@ -87,10 +88,11 @@ func NewAnalyzer(
 	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
+	dispatcher exec.Dispatcher,
 ) *Analyzer {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	runner := exec.NewRunner(procIDs, sysProcTracker)
+	runner := exec.NewRunner(procIDs, sysProcTracker, dispatcher)
 	r := refresher.NewRefresher(ctx, pool, tables, statsCache, tableStats, runner, ddlNotifier)
 	return &Analyzer{
 		analyzeJobRecorder: newAnalyzeJobRecorder(pool),
@@ -479,7 +481,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				}
 
 				sql := "analyze table %n.%n"
-				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -513,7 +515,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := partitionStats[def.ID]
-				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := tryAutoAnalyzeTable(sctx, runner, tblInfo, statsTbl, autoAnalyzeRatio, exec.AnalyzedTable{ID: tblInfo.ID}, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -559,6 +561,7 @@ func tryAutoAnalyzeTable(
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
+	table exec.AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
@@ -587,7 +590,7 @@ func tryAutoAnalyzeTable(
 			zap.String("reason", reason),
 		)
 
-		runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, sql, params...)
+		runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, table, sql, params...)
 
 		return true
 	}
@@ -610,7 +613,7 @@ func tryAutoAnalyzeTable(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
-			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, sqlWithIdx, paramsWithIdx...)
+			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, table, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -722,7 +725,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, sql, params...)
+			runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 		}
 
 		return true
@@ -763,7 +766,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, sql, params...)
+				runner.AutoAnalyze(sctx, requestedVersion, !versionMatches, exec.AnalyzedTable{ID: tblInfo.ID}, sql, params...)
 			}
 
 			return true

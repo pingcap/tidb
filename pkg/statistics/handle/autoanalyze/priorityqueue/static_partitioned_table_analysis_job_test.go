@@ -92,7 +92,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
-	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()))
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -132,7 +132,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
-	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()))
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker(), nil))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

@@ -41,7 +41,7 @@ func (do *Domain) StartDiagnostic() error {
 // statistics GC, or usage/history persistence is started.
 func (do *Domain) LoadStatsDiagnostic(ctx context.Context, concurrency int) error {
 	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.advancedSysSessionPool,
-		&do.sysProcesses, nil, do.NextConnID, do.ReleaseConnID)
+		&do.sysProcesses, nil, do.NextConnID, do.ReleaseConnID, nil)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,120 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package autoanalyze
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
+
+type taskExecutor struct {
+	*taskexecutor.BaseTaskExecutor
+}
+
+var _ taskexecutor.TaskExecutor = (*taskExecutor)(nil)
+
+func newTaskExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param) *taskExecutor {
+	e := &taskExecutor{BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param)}
+	e.BaseTaskExecutor.Extension = e
+	return e
+}
+
+// IsIdempotent returns true: re-running ANALYZE only refreshes the statistics again.
+func (*taskExecutor) IsIdempotent(*proto.Subtask) bool {
+	return true
+}
+
+func (e *taskExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
+	return &stepExecutor{keyspace: task.Keyspace, taskTable: e.GetTaskTable()}, nil
+}
+
+// IsRetryableError returns false: the priority queue of the stats owner
+// analyzes the table again later if the statement fails.
+func (*taskExecutor) IsRetryableError(error) bool {
+	return false
+}
+
+type stepExecutor struct {
+	taskexecutor.BaseStepExecutor
+	keyspace  string
+	taskTable taskexecutor.TaskTable
+}
+
+// RunSubtask runs the analyze statement in the task keyspace.
+func (s *stepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	meta := &TaskMeta{}
+	if err := json.Unmarshal(subtask.Meta, meta); err != nil {
+		return errors.Trace(err)
+	}
+	// The domain of the current node, which must serve the task keyspace.
+	var localDom *domain.Domain
+	if err := s.taskTable.WithNewSession(func(se sessionctx.Context) error {
+		localDom = domain.GetDomain(se)
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if localDom == nil {
+		return errors.New("the current node has no domain")
+	}
+	if ks := localDom.Store().GetKeyspace(); ks != s.keyspace {
+		return errors.Errorf("a node of keyspace %q cannot run an auto analyze statement of keyspace %q", ks, s.keyspace)
+	}
+
+	start := time.Now()
+	err := runInLocalKeyspace(ctx, localDom, meta)
+	logutil.Logger(ctx).Info("dist auto analyze subtask finished",
+		zap.String("taskKeyspace", s.keyspace), zap.String("sql", meta.SQL), zap.Strings("params", meta.Params),
+		zap.Duration("cost", time.Since(start)), zap.Error(err))
+	return err
+}
+
+// runInLocalKeyspace requires dom to serve the task's keyspace.
+func runInLocalKeyspace(ctx context.Context, dom *domain.Domain, meta *TaskMeta) error {
+	statsHandle := dom.StatsHandle()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	return statsutil.CallWithSCtx(statsHandle.Pool().SPool(), func(sctx sessionctx.Context) error {
+		return runAnalyze(ctx, sctx, statsHandle.ProcIDs(), dom.SysProcTracker(), meta)
+	})
+}
+
+// runAnalyze runs the statement of meta in the session. The slot of the subtask does not
+// limit it: it builds with tidb_auto_build_stats_concurrency, as on the stats owner.
+func runAnalyze(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	procIDGenerator statsutil.AutoAnalyzeProcIDGenerator,
+	sysProcTracker sysproctrack.Tracker,
+	meta *TaskMeta,
+) error {
+	_, _, err := exec.RunAnalyzeStmtWithCtx(ctx, sctx, procIDGenerator, sysProcTracker,
+		statistics.Version2, false, meta.SQL, meta.args()...)
+	return err
+}

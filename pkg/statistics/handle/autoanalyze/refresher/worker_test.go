@@ -78,21 +78,21 @@ func TestWorker(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 
 	t.Run("NewWorker", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 5)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 5)
 		require.NotNil(t, w)
 		require.Equal(t, 5, w.GetMaxConcurrency())
 		w.Stop()
 	})
 
 	t.Run("UpdateConcurrency", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 5)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 5)
 		w.UpdateConcurrency(10)
 		require.Equal(t, 10, w.GetMaxConcurrency())
 		w.Stop()
 	})
 
 	t.Run("SubmitJob", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		job1 := &mockAnalysisJob{tableID: 1}
 		job2 := &mockAnalysisJob{tableID: 2}
 		job3 := &mockAnalysisJob{tableID: 3}
@@ -107,7 +107,7 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("GetRunningJobs", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		jobStarted := make(chan struct{}, 2)
 
 		// Create a custom job that signals when it starts
@@ -143,7 +143,7 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("PanicInJob", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 1)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 1)
 		panicJob := &mockAnalysisJob{
 			tableID: 1,
 			analyze: func(statsutil.SessionPool, *exec.Runner) error {
@@ -158,7 +158,7 @@ func TestWorker(t *testing.T) {
 	})
 
 	t.Run("PanicInMultipleJobs", func(t *testing.T) {
-		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker), 2)
+		w := refresher.NewWorker(handle.Pool(), exec.NewRunner(handle.ProcIDs(), sysProcTracker, nil), 2)
 		panicJob1 := &mockAnalysisJob{
 			tableID: 1,
 			analyze: func(statsutil.SessionPool, *exec.Runner) error {

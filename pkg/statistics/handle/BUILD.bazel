@@ -23,6 +23,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/ddl",
         "//pkg/statistics/handle/globalstats",

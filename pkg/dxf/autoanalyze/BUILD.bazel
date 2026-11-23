@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "autoanalyze",
+    srcs = [
+        "dispatch.go",
+        "proto.go",
+        "scheduler.go",
+        "task_executor.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/autoanalyze",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/domain",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/logutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "autoanalyze_test",
+    timeout = "short",
+    srcs = ["dispatch_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

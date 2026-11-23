@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	dxfautoanalyze "github.com/pingcap/tidb/pkg/dxf/autoanalyze"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -4711,6 +4712,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return importinto.NewImportExecutor(ctx, task, param)
 		},
 	)
+	dxfautoanalyze.Register()
 
 	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
 	if concurrency == 0 {

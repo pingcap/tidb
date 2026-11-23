@@ -229,7 +229,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	runner *exec.Runner,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.TableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -251,7 +251,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return runner.AutoAnalyze(sctx, j.TableStatsVer, j.NeedVersionRewriteWarn, exec.AnalyzedTable{ID: j.TableID}, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

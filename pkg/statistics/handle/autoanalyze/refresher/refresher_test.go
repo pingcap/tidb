@@ -35,7 +35,7 @@ import (
 
 // newRefresher creates a refresher on the stats components of h.
 func newRefresher(h *handle.Handle, tracker sysproctrack.Tracker, ddlNotifier *notifier.DDLNotifier) *refresher.Refresher {
-	return refresher.NewRefresher(context.Background(), h.Pool(), h.Tables(), h.Cache(), h, exec.NewRunner(h.ProcIDs(), tracker), ddlNotifier)
+	return refresher.NewRefresher(context.Background(), h.Pool(), h.Tables(), h.Cache(), h, exec.NewRunner(h.ProcIDs(), tracker, nil), ddlNotifier)
 }
 
 func TestTurnOffAndOnAutoAnalyze(t *testing.T) {

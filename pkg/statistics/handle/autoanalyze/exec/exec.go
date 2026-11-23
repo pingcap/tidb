@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -37,44 +38,76 @@ import (
 	"go.uber.org/zap"
 )
 
+func warnAnalyzeVersionRewrite(sql string, params ...any) {
+	escapedSQL, err := sqlescape.EscapeSQL(sql, params...)
+	intest.Assert(err == nil, "sql escaping should not fail")
+	// No need to fail the analyze task if the SQL escaping fails, just log the original SQL.
+	if err != nil {
+		escapedSQL = sql
+	}
+	statslogutil.StatsLogger().Warn(
+		"auto analyze rewrites legacy statistics version 1 to version 2",
+		zap.String("sql", escapedSQL),
+	)
+}
+
 func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql string, params ...any) sqlexec.OptionFuncAlias {
 	if needVersionRewriteWarn {
-		escapedSQL, err := sqlescape.EscapeSQL(sql, params...)
-		intest.Assert(err == nil, "sql escaping should not fail")
-		// No need to fail the analyze task if the SQL escaping fails, just log the original SQL.
-		if err != nil {
-			escapedSQL = sql
-		}
-		statslogutil.StatsLogger().Warn(
-			"auto analyze rewrites legacy statistics version 1 to version 2",
-			zap.String("sql", escapedSQL),
-		)
+		warnAnalyzeVersionRewrite(sql, params...)
 	}
 	intest.Assert(statsVer == statistics.Version2, "auto analyze should use stats version 2")
 	return sqlexec.ExecOptionAnalyzeVer2
 }
 
+// AnalyzedTable is the table that an auto-analyze statement analyzes.
+type AnalyzedTable struct {
+	ID int64
+}
+
+// Dispatcher runs an auto-analyze statement on some TiDB node and waits for the result.
+type Dispatcher interface {
+	// Dispatch runs the statement. sctx is an idle session of the statement's keyspace.
+	Dispatch(sctx sessionctx.Context, table AnalyzedTable, sql string, params ...any) error
+}
+
+// NewDispatcherFunc creates the Dispatcher of a stats handle from the parts of the handle that the
+// dispatcher shares: the stats cache.
+type NewDispatcherFunc func(statsCache statstypes.StatsCacheLoader) Dispatcher
+
 // Runner runs the auto-analyze statements of this node.
 type Runner struct {
 	procIDs        statsutil.AutoAnalyzeProcIDGenerator
 	sysProcTracker sysproctrack.Tracker
+	dispatcher     Dispatcher
 }
 
 // NewRunner creates a Runner that tracks each statement in sysProcTracker under an ID from procIDs.
-func NewRunner(procIDs statsutil.AutoAnalyzeProcIDGenerator, sysProcTracker sysproctrack.Tracker) *Runner {
-	return &Runner{procIDs: procIDs, sysProcTracker: sysProcTracker}
+// When tidb_enable_dist_auto_analyze is ON, it runs the statements through dispatcher instead, if
+// dispatcher is not nil.
+func NewRunner(procIDs statsutil.AutoAnalyzeProcIDGenerator, sysProcTracker sysproctrack.Tracker, dispatcher Dispatcher) *Runner {
+	return &Runner{procIDs: procIDs, sysProcTracker: sysProcTracker, dispatcher: dispatcher}
 }
 
-// AutoAnalyze runs one auto-analyze statement in sctx and reports whether it succeeded.
+// AutoAnalyze runs one auto-analyze statement of table in sctx and reports whether it succeeded.
 func (r *Runner) AutoAnalyze(
 	sctx sessionctx.Context,
 	statsVer int,
 	needVersionRewriteWarn bool,
+	table AnalyzedTable,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, r.procIDs, r.sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	var err error
+	if r.dispatcher != nil && vardef.EnableDistAutoAnalyze.Load() {
+		// Log on the owner so DXF metadata does not need a warning-only flag.
+		if needVersionRewriteWarn {
+			warnAnalyzeVersionRewrite(sql, params...)
+		}
+		err = r.dispatcher.Dispatch(sctx, table, sql, params...)
+	} else {
+		_, _, err = RunAnalyzeStmt(sctx, r.procIDs, r.sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	}
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

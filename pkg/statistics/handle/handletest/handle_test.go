@@ -128,6 +128,7 @@ func TestVersion(t *testing.T) {
 		do.DDLNotifier(),
 		do.NextConnID,
 		do.ReleaseConnID,
+		nil,
 	)
 	defer func() {
 		h.Close()
