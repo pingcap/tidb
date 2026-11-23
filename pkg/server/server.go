@@ -150,6 +150,10 @@ type Server struct {
 	capability uint32
 	dom        *domain.Domain
 
+	statusInitOnce   sync.Once
+	statusInitCtx    context.Context
+	statusInitCancel context.CancelFunc
+
 	// statusMu serializes status service initialization and shutdown, including AutoID.
 	// Once statusClosed is set, no initializer may publish resources or add to statusWG.
 	statusMu       sync.Mutex
@@ -675,9 +679,24 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	})
 }
 
+// Initialize independently of statusMu so shutdown can cancel an initializer
+// that is holding the lifecycle lock while waiting for its AutoID lease.
+func (s *Server) statusInitializationContext() context.Context {
+	s.statusInitOnce.Do(func() {
+		s.statusInitCtx, s.statusInitCancel = context.WithCancel(context.Background())
+	})
+	return s.statusInitCtx
+}
+
+func (s *Server) cancelStatusInitialization() {
+	s.statusInitializationContext()
+	s.statusInitCancel()
+}
+
 func (s *Server) startShutdown() {
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
 	s.health.Store(false)
+	s.cancelStatusInitialization()
 	// Finish any in-progress service initialization before Starter relinquishes
 	// AutoID ownership, and prevent pending initializers from starting it again.
 	s.statusMu.Lock()
@@ -704,6 +723,7 @@ func (s *Server) enterShutdownMode() {
 }
 
 func (s *Server) closeListener() {
+	s.cancelStatusInitialization()
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))

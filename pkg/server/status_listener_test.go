@@ -15,6 +15,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
@@ -28,11 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.uber.org/goleak"
+	"google.golang.org/grpc"
 )
 
 type statusReadListener struct {
@@ -70,7 +74,125 @@ func (c *statusShutdownController) OnServerShutdown(s StandbyShutdownServer) {
 	c.onShutdown(s)
 }
 
+type statusAutoIDStore struct {
+	kv.Storage
+	kv.EtcdBackend
+	etcdAddr string
+}
+
+func (s *statusAutoIDStore) EtcdAddrs() ([]string, error) {
+	return []string{s.etcdAddr}, nil
+}
+
+func (*statusAutoIDStore) TLSConfig() *tls.Config { return nil }
+
+type blockingStatusLeaseServer struct {
+	etcdserverpb.UnimplementedLeaseServer
+	entered      chan struct{}
+	canceled     chan struct{}
+	release      chan struct{}
+	enteredOnce  sync.Once
+	canceledOnce sync.Once
+}
+
+func (s *blockingStatusLeaseServer) LeaseGrant(ctx context.Context, _ *etcdserverpb.LeaseGrantRequest) (*etcdserverpb.LeaseGrantResponse, error) {
+	s.enteredOnce.Do(func() { close(s.entered) })
+	select {
+	case <-ctx.Done():
+		s.canceledOnce.Do(func() { close(s.canceled) })
+		return nil, ctx.Err()
+	case <-s.release:
+		// Let an uncanceled constructor complete during failing-test cleanup.
+		return &etcdserverpb.LeaseGrantResponse{ID: 1, TTL: 10}, nil
+	}
+}
+
+func (*blockingStatusLeaseServer) LeaseRevoke(context.Context, *etcdserverpb.LeaseRevokeRequest) (*etcdserverpb.LeaseRevokeResponse, error) {
+	return &etcdserverpb.LeaseRevokeResponse{}, nil
+}
+
+func (*blockingStatusLeaseServer) LeaseKeepAlive(stream etcdserverpb.Lease_LeaseKeepAliveServer) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(&etcdserverpb.LeaseKeepAliveResponse{ID: req.ID, TTL: 10}); err != nil {
+			return err
+		}
+	}
+}
+
 func TestStatusServerClose(t *testing.T) {
+	t.Run("blocked AutoID lease grant", func(t *testing.T) {
+		ignoreCurrent := goleak.IgnoreCurrent()
+		t.Cleanup(func() { goleak.VerifyNone(t, ignoreCurrent) })
+		store := testkit.CreateMockStore(t)
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer listener.Close()
+		leaseServer := &blockingStatusLeaseServer{
+			entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}),
+		}
+		grpcServer := grpc.NewServer()
+		etcdserverpb.RegisterLeaseServer(grpcServer, leaseServer)
+		go func() { _ = grpcServer.Serve(listener) }()
+		defer grpcServer.Stop()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/autoIDServiceStore", func(storage *kv.Storage, err *error) {
+			*storage = &statusAutoIDStore{Storage: store, etcdAddr: listener.Addr().String()}
+			*err = nil
+		})
+		cfg := util.NewTestConfig()
+		cfg.Status.StatusPort = 0
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		require.NoError(t, s.listenStatusHTTPServer())
+		closed := make(chan struct{})
+		servingDone := make(chan struct{})
+		closeServer := sync.OnceFunc(func() {
+			s.Close()
+			close(closed)
+		})
+		defer func() {
+			close(leaseServer.release)
+			go closeServer()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Error("status shutdown did not finish during cleanup")
+			}
+			select {
+			case <-servingDone:
+			case <-time.After(5 * time.Second):
+				t.Error("status initializer did not finish during cleanup")
+			}
+		}()
+		go func() {
+			s.startStatusServerAndRPCServer(http.NewServeMux())
+			close(servingDone)
+		}()
+		select {
+		case <-leaseServer.entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("AutoID initialization did not request a lease")
+		}
+		go closeServer()
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("shutdown must cancel the blocked AutoID lease grant")
+		}
+		select {
+		case <-leaseServer.canceled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("AutoID lease grant was not canceled")
+		}
+		require.Nil(t, s.autoIDService)
+		require.Nil(t, s.statusServer.Load())
+		require.Nil(t, s.grpcServer)
+	})
+
 	t.Run("before initialization", func(t *testing.T) {
 		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 		cfg := util.NewTestConfig()

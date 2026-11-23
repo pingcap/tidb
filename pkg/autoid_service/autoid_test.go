@@ -244,8 +244,15 @@ func TestGRPC(t *testing.T) {
 	defer listener.Close()
 	addr := listener.Addr().String()
 
-	service := newWithCli(addr, etcdCli, store)
-	defer service.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service, err := NewWithContext(ctx, addr, etcdCli.Endpoints(), store, nil)
+	require.NoError(t, err)
+	closeService := sync.OnceFunc(service.Close)
+	defer closeService()
+	// Once construction succeeds, startup cancellation must not abandon the
+	// live ownership session or prevent Close from revoking its lease.
+	cancel()
 
 	var i int
 	for !service.leaderShip.IsOwner() {
@@ -256,6 +263,9 @@ func TestGRPC(t *testing.T) {
 		}
 	}
 	require.Less(t, i, 20)
+	leases, err := etcdCli.Leases(context.Background())
+	require.NoError(t, err)
+	require.Len(t, leases.Leases, 1)
 
 	grpcServer := grpc.NewServer()
 	autoid.RegisterAutoIDAllocServer(grpcServer, service)
@@ -284,4 +294,8 @@ func TestGRPC(t *testing.T) {
 		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	})
 	require.NoError(t, err)
+	closeService()
+	lease, err := etcdCli.TimeToLive(context.Background(), leases.Leases[0].ID)
+	require.NoError(t, err)
+	require.EqualValues(t, -1, lease.TTL, "shutdown must revoke ownership without waiting for lease expiry")
 }

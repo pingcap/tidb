@@ -300,10 +300,27 @@ type Service struct {
 
 	leaderShip owner.Manager
 	store      kv.Storage
+	cancel     context.CancelFunc
+	// etcdCli is owned by this service; clients passed to newWithCli remain caller-owned.
+	etcdCli   *clientv3.Client
+	closeOnce sync.Once
 }
 
 // New return a Service instance.
 func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
+	service, err := NewWithContext(context.Background(), selfAddr, etcdAddr, store, tlsConfig)
+	if err != nil {
+		panic(err)
+	}
+	return service
+}
+
+// NewWithContext allows cancellation while initializing the AutoID service.
+// After it succeeds, ctx no longer controls the service; the caller must Close it.
+func NewWithContext(ctx context.Context, selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) (*Service, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 
@@ -321,21 +338,35 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		},
 		TLS: tlsConfig,
 	})
+	if err != nil {
+		return nil, err
+	}
 	if store.GetCodec().GetKeyspace() != nil {
 		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 	}
+	service, err := newWithCli(ctx, selfAddr, cli, store)
 	if err != nil {
-		panic(err)
+		if closeErr := cli.Close(); closeErr != nil {
+			logutil.BgLogger().Warn("close auto ID service etcd client failed", zap.Error(closeErr))
+		}
+		return nil, err
 	}
-	return newWithCli(selfAddr, cli, store)
+	service.etcdCli = cli
+	return service, nil
 }
 
-func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
-	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+func newWithCli(ctx context.Context, selfAddr string, cli *clientv3.Client, store kv.Storage) (*Service, error) {
+	// Keep the established session alive until Close can revoke its lease.
+	// Startup cancellation is forwarded only until construction completes.
+	ownerCtx, cancel := context.WithCancel(context.Background())
+	stopCancel := context.AfterFunc(ctx, cancel)
+	defer stopCancel()
+	l := owner.NewOwnerManager(ownerCtx, cli, "autoid", selfAddr, autoIDLeaderPath)
 	service := &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
 		store:      store,
+		cancel:     cancel,
 	}
 	l.SetListener(&ownerListener{
 		Service:  service,
@@ -343,11 +374,18 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
+	if !stopCancel() {
+		// The callback may not have run yet. Cancel before joining the owner loop.
+		cancel()
+		err = ctx.Err()
+	}
 	if err != nil {
-		panic(err)
+		cancel()
+		service.Close()
+		return nil, err
 	}
 
-	return service
+	return service, nil
 }
 
 type mockClient struct {
@@ -383,9 +421,19 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil {
-		s.leaderShip.Close()
-	}
+	s.closeOnce.Do(func() {
+		if s.leaderShip != nil {
+			s.leaderShip.Close()
+		}
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.etcdCli != nil {
+			if err := s.etcdCli.Close(); err != nil {
+				logutil.BgLogger().Warn("close auto ID service etcd client failed", zap.Error(err))
+			}
+		}
+	})
 }
 
 // IsOwner returns whether this service is the current auto ID owner.

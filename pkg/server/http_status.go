@@ -85,9 +85,10 @@ func (s *Server) startStatusHTTP() error {
 	if !s.cfg.Status.ReportStatus {
 		return nil
 	}
+	ctx := s.statusInitializationContext()
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-	if s.statusClosed {
+	if s.statusClosed || ctx.Err() != nil {
 		return net.ErrClosed
 	}
 	if diagnosticmode.Enabled() {
@@ -667,7 +668,7 @@ func (s *Server) startHTTPServer() {
 }
 
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores
-func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
+func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server) *autoid.Service {
 	failpoint.InjectCall("beforeAutoIDService")
 	keyspaceName := config.GetGlobalKeyspaceName()
 
@@ -679,33 +680,41 @@ func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 	}
 
 	store, err := store.New(fullPath)
+	failpoint.InjectCall("autoIDServiceStore", &store, &err)
 	if err != nil {
 		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-		return
+		return nil
 	}
 
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
-		return
+		return nil
 	}
 
 	etcdAddr, err := ebd.EtcdAddrs()
 	if err != nil {
 		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-		return
+		return nil
 	}
 
 	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-	service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+	service, err := autoid.NewWithContext(ctx, selfAddr, etcdAddr, store, ebd.TLSConfig())
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		panic(err)
+	}
 	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 	pb.RegisterAutoIDAllocServer(grpcServer, service)
-	s.autoIDService = service
+	return service
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	failpoint.InjectCall("beforeStatusServerInit")
+	ctx := s.statusInitializationContext()
 	s.statusMu.Lock()
-	if s.statusClosed {
+	if s.statusClosed || ctx.Err() != nil {
 		s.statusMu.Unlock()
 		return
 	}
@@ -718,10 +727,20 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	var autoIDService *autoid.Service
 	if s.cfg.Store == config.StoreTypeTiKV {
-		s.setupAutoIDService(grpcServer)
+		autoIDService = s.setupAutoIDService(ctx, grpcServer)
+	}
+	if ctx.Err() != nil {
+		if autoIDService != nil {
+			autoIDService.Close()
+		}
+		grpcServer.Stop()
+		s.statusMu.Unlock()
+		return
 	}
 
+	s.autoIDService = autoIDService
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
