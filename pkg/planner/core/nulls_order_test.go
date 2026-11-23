@@ -63,6 +63,7 @@ func TestNullsHighOrderAvoidSort(t *testing.T) {
 		{"select a from t use index(ia) order by case when a is not null then 0 else 1 end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by case when a is null then 1 end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by case when a is null then 'z' else 'a' end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		{"select a from t use index(ia) order by case when a is null then cast(1.5 as float) else cast(0.5 as float) end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by if(a is null, 1, 0), a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by if(a is null, 0, 1), a", []string{"<nil>", "<nil>", "1", "2", "3"}},
 		{"select a from t use index(ia) order by a is not null, a", []string{"<nil>", "<nil>", "1", "2", "3"}},
@@ -90,6 +91,9 @@ func TestNullsHighOrderAvoidSort(t *testing.T) {
 		{"select /*+ use_index_merge(t, ia, icab) */ a from t where a = 1 or c = 2 order by a is null, a", []string{"1", "<nil>"}},
 		// The CASE must take two distinct literal values, decided by the NULL test of the next column alone.
 		{"select a from t use index(ia) order by case when a is null then 1 else 1 end, a", []string{"<nil>", "<nil>", "1", "2", "3"}},
+		// A FLOAT result is materialized as float32, where these two literals are equal.
+		{"select a from t use index(ia) order by case when a is null then cast(16777217 as float) else cast(16777216 as float) end, a",
+			[]string{"<nil>", "<nil>", "1", "2", "3"}},
 		{"select a from t use index(ia) order by case when a is null then b else 0 end, a", []string{"<nil>", "1", "2", "3", "<nil>"}},
 		{"select a from t use index(ia) order by case when a is null then 1 when a > 2 then 2 else 0 end, a", []string{"1", "2", "<nil>", "<nil>", "3"}},
 		{"select a from t use index(ia) order by case when b is null then 1 else 0 end, a", []string{"<nil>", "1", "3", "<nil>", "2"}},
@@ -111,6 +115,18 @@ func TestNullsHighOrderAvoidSort(t *testing.T) {
 		Check(testkit.Rows("1 2", "2 2", "3 1", "4 1", "5 2"))
 	tk.MustQuery("select id, (select t2.a from t t2 use index(icab) where t2.c = t1.c order by t2.a is null desc, t2.a desc limit 1) from t t1 order by id").
 		Check(testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 <nil>", "5 <nil>"))
+
+	// Apply reopens a non-covering IndexLookUp with correlated ranges: the first execution
+	// (o.x is NULL) has one empty range group, the next one has a non-NULL and a NULL group.
+	// The merge sort must still be used for the second execution.
+	tk.MustExec("create table ti (id int primary key, c int, a int, b int, key ica(c, a))")
+	tk.MustExec("insert into ti values (1, 1, 5, 10), (2, 1, null, 40)")
+	tk.MustExec("create table o (id int primary key, x int)")
+	tk.MustExec("insert into o values (1, null), (2, 1)")
+	tk.MustQuery("select o.id, (select i.b from ti i use index(ica) where i.c = o.x order by i.a is null desc, i.a desc limit 1) from o order by o.id").
+		Check(testkit.Rows("1 <nil>", "2 40"))
+	tk.MustQuery("select o.id, (select i.b from ti i use index(ica) where i.c = o.x order by i.a is null, i.a limit 1) from o order by o.id").
+		Check(testkit.Rows("1 <nil>", "2 10"))
 }
 
 func TestNullsHighOrderPlanCache(t *testing.T) {

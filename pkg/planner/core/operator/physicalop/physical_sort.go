@@ -411,8 +411,21 @@ func literalForOrder(expr expression.Expression, retType *types.FieldType) (type
 		return c.Value, true
 	}
 	switch et := retType.EvalType(); et {
-	case types.ETInt, types.ETReal, types.ETDecimal, types.ETString:
+	case types.ETInt, types.ETDecimal, types.ETString:
 		return c.Value, c.RetType.EvalType() == et
+	case types.ETReal:
+		if c.RetType.EvalType() != et {
+			return types.Datum{}, false
+		}
+		if retType.GetType() == mysql.TypeFloat {
+			// A FLOAT result is materialized as float32, which can make distinct
+			// float64 literals equal. Rounding preserves order, so comparing the
+			// rounded values is conservative.
+			var d types.Datum
+			d.SetFloat64(float64(float32(c.Value.GetFloat64())))
+			return d, true
+		}
+		return c.Value, true
 	}
 	return types.Datum{}, false
 }
