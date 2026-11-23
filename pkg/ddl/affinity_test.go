@@ -58,6 +58,7 @@ type truncateAffinityPDClient struct {
 	createCalls       atomic.Int64
 	createFailures    atomic.Int64
 	nilDeleteContext  atomic.Bool
+	afterCreate       func(context.Context) error
 	// labelRules maps a group ID to its key ranges. PD stores them in a label
 	// rule that is created and force-deleted together with the group.
 	labelRules sync.Map
@@ -73,6 +74,9 @@ func (c *truncateAffinityPDClient) labelRule(id string) ([]pdhttp.AffinityGroupK
 
 func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
 	c.createCalls.Add(1)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if c.failCreate.Load() || c.failOnce.Swap(false) {
 		c.createFailures.Add(1)
 		return nil, fmt.Errorf("injected affinity creation failure")
@@ -86,6 +90,9 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		if c.failAfterCreate.Swap(false) {
 			return nil, fmt.Errorf("injected response loss after affinity creation")
 		}
+		if c.afterCreate != nil {
+			return nil, c.afterCreate(ctx)
+		}
 	}
 	return nil, err
 }
@@ -94,6 +101,9 @@ func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context
 	// Match the real HTTP client's context validation; the mock manager ignores it.
 	if _, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://pd/affinity-groups", nil); err != nil {
 		c.nilDeleteContext.Store(ctx == nil)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if c.failDelete.Load() {
@@ -185,6 +195,71 @@ func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
 			requireAffinityGroupsWithLabelRules(t, s.cli, replacementGroups, failDelete, "failed cleanup must not prevent cancellation")
 		})
 	}
+}
+
+func TestAffinityTruncatePartitionCancelDuringCreate(t *testing.T) {
+	s := newAffinityDDLTest(t)
+	s.tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	s.tk.MustExec("insert into p values (1),(11)")
+	before := s.tableInfo(t, "p")
+	persistedBefore := s.persisted(t, before.ID)
+	originalGroups := s.groupsOf(t, before)
+	var jobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StatePublic {
+			jobID.Store(job.ID)
+		}
+	})
+	var canceledDuringCreate atomic.Bool
+	s.cli.afterCreate = func(ctx context.Context) error {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		jobErrs, err := ddl.CancelJobs(cancelCtx, s.tkCancel.Session(), []int64{jobID.Load()})
+		if err != nil {
+			return err
+		}
+		if jobErrs[0] != nil {
+			return jobErrs[0]
+		}
+		select {
+		case <-ctx.Done():
+			canceledDuringCreate.Store(true)
+			return ctx.Err()
+		case <-cancelCtx.Done():
+			return fmt.Errorf("waiting for the DDL step context to be canceled: %w", cancelCtx.Err())
+		}
+	}
+	// The cancel command can cause a write conflict and another rollback attempt.
+	// Check the first rollback before a retry gets a fresh context.
+	var checkedRollback, removedDuringRollback atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.ID != jobID.Load() || !job.IsCancelled() || !checkedRollback.CompareAndSwap(false, true) {
+			return
+		}
+		for id := range s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange) {
+			if _, original := originalGroups[id]; !original {
+				if _, exists := s.cli.labelRule(id); exists {
+					return
+				}
+			}
+		}
+		removedDuringRollback.Store(true)
+	})
+	require.Error(t, s.tk.ExecToErr("alter table p truncate partition p0"))
+	require.True(t, canceledDuringCreate.Load(), "PD must observe cancellation after storing the replacement group")
+	require.True(t, removedDuringRollback.Load(), "the in-step rollback must remove the replacement group's label rule")
+	require.Equal(t, before, s.tableInfo(t, "p"))
+	require.Equal(t, persistedBefore, s.persisted(t, before.ID))
+	s.tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
+	requireAffinityGroupsWithLabelRules(t, s.cli, originalGroups, true, "cleanup must preserve the original partition groups")
+	replacementGroups := make(map[string][]pdhttp.AffinityGroupKeyRange)
+	for id, ranges := range s.cli.lastCreatedGroups.Load().(map[string][]pdhttp.AffinityGroupKeyRange) {
+		if _, original := originalGroups[id]; !original {
+			replacementGroups[id] = ranges
+		}
+	}
+	require.Len(t, replacementGroups, 1)
+	requireAffinityGroupsWithLabelRules(t, s.cli, replacementGroups, false, "rollback must remove the replacement group")
 }
 
 func TestAffinityTruncateTableFailureAtomicity(t *testing.T) {

@@ -112,7 +112,8 @@ Key behaviors:
 - Affinity groups for replacement partitions are prepared in `StatePublic`, before
   new partition IDs are published. Preparation errors use the rollback cleanup
   path because PD may have created groups before its response failed. Cleanup
-  deletes only replacement partition groups and remains best effort.
+  deletes only replacement partition groups and uses a 10-second timeout
+  derived from the DDL owner's context so it can run after step cancellation.
 - It replaces old partition IDs with new ones in table metadata:
   - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
 - During intermediate states, it sets flags to filter global index reads/writes correctly:

@@ -604,7 +604,8 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, err
 	}
-	if pi := tblInfo.GetPartitionInfo(); tblInfo.Affinity != nil &&
+	pi := tblInfo.GetPartitionInfo()
+	if tblInfo.Affinity != nil &&
 		tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && pi != nil &&
 		len(args.NewPartitionIDs) < len(pi.Definitions) {
 		// Reserve additional IDs and persist them with the job before creating
@@ -795,10 +796,7 @@ func cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *mode
 	}
 	// TRUNCATE TABLE keeps the affinity level, and job.TableID is the old table ID.
 	oldTblInfo := &model.TableInfo{ID: job.TableID, Name: newTblInfo.Name, Affinity: newTblInfo.Affinity}
-	oldDefs := make([]model.PartitionDefinition, 0, len(args.OldPartitionIDs))
-	for _, id := range args.OldPartitionIDs {
-		oldDefs = append(oldDefs, model.PartitionDefinition{ID: id})
-	}
+	oldDefs := partitionDefinitionsFromIDs(args.OldPartitionIDs)
 	if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, oldDefs); err != nil {
 		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
 	}

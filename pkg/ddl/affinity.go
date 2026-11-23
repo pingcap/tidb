@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
@@ -28,6 +30,8 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
+
+const affinityCleanupTimeout = 10 * time.Second
 
 // GetTableAffinityGroupID returns the affinity group ID for a table, including
 // the keyspace ID when the table uses a NextGen keyspace codec.
@@ -144,30 +148,38 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 
 // deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
 // This is a best-effort cleanup operation. Failures are logged but the operation continues.
-// Used by: DROP TABLE, ALTER TABLE AFFINITY = ”, TRUNCATE TABLE, TRUNCATE PARTITION.
 // TODO: add gc for unused affinity groups, which is similar to the placement rules.
 func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
-	if tblInfo == nil || tblInfo.Affinity == nil {
-		return nil
-	}
-
 	ctx := jobCtx.stepCtx
 	if ctx == nil {
 		ctx = jobCtx.ctx
 	}
-	codec := jobCtx.store.GetCodec()
+	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
+}
 
+func deleteTableAffinityGroupsOnRollback(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
+	// The step context may already have been canceled while creating groups.
+	ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
+	defer cancel()
+	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
+}
+
+func deleteTableAffinityGroups(ctx context.Context, codec tikv.Codec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return affinity.DeleteGroupsWithRetry(ctx, collectAffinityGroupIDs(groups))
+}
 
-	if len(groups) == 0 {
-		return nil
+// partitionDefinitionsFromIDs returns an explicit list even when ids is empty.
+// A nil list would select all of a table's partitions for affinity operations.
+func partitionDefinitionsFromIDs(ids []int64) []model.PartitionDefinition {
+	definitions := make([]model.PartitionDefinition, 0, len(ids))
+	for _, id := range ids {
+		definitions = append(definitions, model.PartitionDefinition{ID: id})
 	}
-
-	ids := collectAffinityGroupIDs(groups)
-	return affinity.DeleteGroupsWithRetry(ctx, ids)
+	return definitions
 }
 
 // collectTableAffinityGroupIDs adds the affinity group IDs of a table to groupIDs.

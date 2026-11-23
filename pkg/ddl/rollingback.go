@@ -362,20 +362,13 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		return ver, nil
 	}
 	pi := tblInfo.Partition
-	// PD creation may have succeeded before the metadata transaction failed.
-	// In that case only the job arguments retain the replacement IDs.
-	replacementIDs := pi.NewPartitionIDs
-	if len(replacementIDs) == 0 {
-		if args, argsErr := model.GetTruncateTableArgs(job); argsErr == nil {
-			replacementIDs = args.NewPartitionIDs
+	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+		// PD may have created groups before the replacement IDs reached table metadata.
+		args, deleteErr := model.GetTruncateTableArgs(job)
+		if deleteErr == nil && len(args.NewPartitionIDs) != 0 {
+			deleteErr = deleteTableAffinityGroupsOnRollback(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 		}
-	}
-	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && len(replacementIDs) != 0 {
-		replacementDefs := make([]model.PartitionDefinition, 0, len(replacementIDs))
-		for _, id := range replacementIDs {
-			replacementDefs = append(replacementDefs, model.PartitionDefinition{ID: id})
-		}
-		if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, replacementDefs); deleteErr != nil {
+		if deleteErr != nil {
 			logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
 		}
 	}
@@ -673,17 +666,7 @@ func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model
 		return errors.Trace(err)
 	}
 	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
-	var replacementDefs []model.PartitionDefinition
-	if tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
-		if len(args.NewPartitionIDs) == 0 {
-			return nil
-		}
-		replacementDefs = make([]model.PartitionDefinition, 0, len(args.NewPartitionIDs))
-		for _, id := range args.NewPartitionIDs {
-			replacementDefs = append(replacementDefs, model.PartitionDefinition{ID: id})
-		}
-	}
-	return deleteTableAffinityGroupsInPD(jobCtx, replacement, replacementDefs)
+	return deleteTableAffinityGroupsOnRollback(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 }
 
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {

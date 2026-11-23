@@ -2748,14 +2748,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// later PD failure cancels the job instead of finishing the truncate.
 		if tblInfo.Affinity != nil {
 			replacement := tblInfo.Clone()
-			for i, oldID := range oldIDs {
-				for j := range replacement.Partition.Definitions {
-					if replacement.Partition.Definitions[j].ID == oldID {
-						replacement.Partition.Definitions[j].ID = newIDs[i]
-						break
-					}
-				}
-			}
+			replaceTruncatePartitions(replacement.Partition.Definitions, oldIDs, newIDs)
 			if err = createTableAffinityGroupsInPD(jobCtx, replacement); err != nil {
 				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
 			}

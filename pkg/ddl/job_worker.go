@@ -793,7 +793,7 @@ func (w *worker) transitOneJobStep(
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
 			schemaVer = 0
-		} else if !job.IsCancelled() && !job.IsRollingback() && !job.IsRollbackDone() {
+		} else if !job.IsRollingback() && !job.IsRollbackDone() {
 			// If the running job meets an error and the job state is rolling back,
 			// the rollback path may have intentionally updated table info and the
 			// schema version. Keep those mutations unless the error explicitly
@@ -807,9 +807,6 @@ func (w *worker) transitOneJobStep(
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
-		// Internal SQL may have flushed metadata into the transaction. Finish
-		// cancellation only after the full rollback above has discarded it.
-		w.sess.Reset()
 		// Delete PD groups before the cancellation commits. If the commit fails,
 		// the job runs again and repeats this idempotent cleanup.
 		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
