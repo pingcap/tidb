@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -74,6 +76,53 @@ func TestPartialIndex(t *testing.T) {
 	tk.MustGetDBError("create table t2 (a int, b int, primary key(b) where a = 1);",
 		dbterror.ErrUnsupportedAddPartialIndex)
 	tk.MustExec("drop table t;")
+
+	t.Run("standalone transactional merge", func(t *testing.T) {
+		standalone := kv.StandAloneTiDB
+		fastReorg := variable.EnableFastReorg.Swap(true)
+		kv.StandAloneTiDB = true
+		t.Cleanup(func() {
+			kv.StandAloneTiDB = standalone
+			variable.EnableFastReorg.Store(fastReorg)
+		})
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_fast_table_check = on")
+		tk.MustExec("create table standalone_idx (id int primary key, b int)")
+		tk.MustExec("insert into standalone_idx values (1, 10), (2, 10), (3, 10), (4, 20)")
+		tk.MustExec("alter table standalone_idx add column enabled int default 1")
+		tk.MustExec("update standalone_idx set enabled = 0 where id = 2")
+		tk.MustExec("update standalone_idx set enabled = null where id = 3")
+
+		var reorgType model.ReorgType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+			if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+				reorgType = job.ReorgMeta.ReorgTp
+			}
+		})
+		dml := testkit.NewTestKit(t, store)
+		dml.MustExec("use test")
+		const beforeMerge = "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge"
+		var ranMergeDML bool
+		var mergeDMLErr error
+		testfailpoint.EnableCall(t, beforeMerge, func() {
+			ranMergeDML = true
+			_, mergeDMLErr = dml.Exec("update standalone_idx set b = b + 20, enabled = 1 - enabled where id in (2, 4)")
+		})
+		tk.MustExec("create unique index idx_partial on standalone_idx(b) where enabled = 1")
+		testfailpoint.Disable(t, beforeMerge)
+		require.Equal(t, model.ReorgTypeTxnMerge, reorgType)
+		require.True(t, ranMergeDML)
+		require.NoError(t, mergeDMLErr)
+		reorgType = model.ReorgTypeNone
+		tk.MustExec("create index idx_normal on standalone_idx(b)")
+		require.Equal(t, model.ReorgTypeTxnMerge, reorgType)
+		tk.MustExec("alter table standalone_idx add index idx_empty(b) where enabled = 2, add index idx_mixed(id)")
+		tk.MustExec("admin check table standalone_idx")
+		tk.MustGetDBError("insert into standalone_idx values (5, 10, 1)", kv.ErrKeyExists)
+		tk.MustGetDBError("insert into standalone_idx values (5, 30, 1)", kv.ErrKeyExists)
+		tk.MustExec("insert into standalone_idx values (5, 20, 1), (6, 10, 0)")
+	})
 
 	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
 		for _, columnType := range columnTypes {
