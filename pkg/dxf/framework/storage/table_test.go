@@ -1514,6 +1514,7 @@ func TestTaskHistoryTable(t *testing.T) {
 
 func TestPauseAndResume(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
 
 	taskID, err := sm.CreateTask(ctx, "pause-and-resume", proto.TaskTypeExample, "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
