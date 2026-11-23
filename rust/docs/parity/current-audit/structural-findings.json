@@ -24,14 +24,6 @@
       "go_owner": "`pkg/privilege/privileges/tidb_auth_token.go`, `privileges.go` `ConnectionVerification`"
     },
     {
-      "id": "T04",
-      "group": "Executor, DML and expressions",
-      "status": "open",
-      "finding": "`consistency.Reporter` is not ported: admin-check and lookup inconsistencies build their errors ad hoc and never log Go's `admin check found data inconsistency` / `indexLookup found data inconsistency` records with the row and index MVCC (`GetMvccByKey`, `DecodeRowMvccData`, `DecodeIndexMvccData`) under the redaction mode.",
-      "rust_evidence": "`tidb-executor/src/admin_check.rs` `inconsistent`, `fast_check_table.rs`, `index_lookup.rs` build the errors themselves.",
-      "go_owner": "`pkg/util/logutil/consistency/reporter.go`"
-    },
-    {
       "id": "T05",
       "group": "Structure: Go's shape before more ports",
       "status": "open",
@@ -94,6 +86,14 @@
       "finding": "Login verification (`ConnectionVerification`'s plugin, password, lock and TLS checks) is split between the session crate and the privilege crate.",
       "rust_evidence": "`tidb-session/src/identity.rs`, `tidb-session/src/domain/configured_user_store.rs`.",
       "go_owner": "`pkg/privilege/privileges/privileges.go`"
+    },
+    {
+      "id": "T13",
+      "group": "Executor, DML and expressions",
+      "status": "open",
+      "finding": "Go's `PointGetExecutor` and `BatchPointGetExec` (`point_get.go`, `batch_point_get.go`) are not ported as executors: point and batch-point reads, and index range scans with row lookup, are `access_path` source executors over the Rust `TableStorage` seam (`MemStorage` / `ClusterTableStorage`), with the reads and locks in the storage layer.",
+      "rust_evidence": "`tidb-executor/src/access_path.rs`, `tidb-store-driver-txn/src/cluster_table_storage.rs` (`PointGetExecutor.get` / `lockKeyIfNeeded`), `tidb-table/src/tables/index_entries.rs`.",
+      "go_owner": "`pkg/executor/point_get.go`, `pkg/executor/batch_point_get.go`"
     }
   ],
   "unresolved": 11,

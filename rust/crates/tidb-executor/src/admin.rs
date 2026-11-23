@@ -806,6 +806,8 @@ pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
                 &database,
                 &table_info.read(),
                 &index_infos,
+                &crate::admin_check::ReportContext::of(&ctx),
+                decode_context.zone(),
             )?;
             return Ok(index_infos.len());
         }
@@ -1666,9 +1668,7 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
                 "table count {table_count} != index({index}) count {index_count}"
             )),
         ),
-        error @ (AdminCheckError::Inconsistent { .. } | AdminCheckError::ValueMismatch(_)) => {
-            DriverError::from(error.terror())
-        }
+        AdminCheckError::Report(error) => DriverError::from(error),
         AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
             crate::ExecError::internal(format!("secondary index {index} does not exist")),
         ),
@@ -1712,7 +1712,8 @@ impl<E: AdminExec + ?Sized> crate::check_table_index::CheckTableSession for Admi
                 return Ok(());
             };
             let mut store = crate::statement_store(ctx);
-            crate::admin_check::check_record_and_index(table, &mut *store, &index, decode_context)
+            let report = crate::admin_check::ReportContext::of(ctx);
+            crate::admin_check::check_record_and_index(table, &mut *store, &index, decode_context, &report)
                 .map_err(admin_check_error)
         })
     }

@@ -6835,6 +6835,7 @@ dependencies = [
  "tidb-lock",
  "tidb-log",
  "tidb-logutil",
+ "tidb-logutil-consistency",
  "tidb-mathutil",
  "tidb-memory",
  "tidb-meta",
@@ -8124,6 +8125,27 @@ dependencies = [
  "tidb-log",
  "tidb-tracing",
  "tracing",
+]
+
+[[package]]
+name = "tidb-logutil-consistency"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-dbterror",
+ "tidb-errno",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-redact",
+ "tidb-tablecodec",
+ "tidb-terror",
+ "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]

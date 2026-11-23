@@ -229,6 +229,7 @@ fn a_scan_has_at_most_one_retriever() {
         Box::new(crate::account_state::AccountRetriever::new(
             session.account_state(),
         )),
+        Box::new(crate::perfschema_retriever::PerfSchemaRetriever::new(&session)),
         Box::new(crate::account_state::VariablesRetriever::new(
             session.variables_state(),
         )),
@@ -267,6 +268,13 @@ fn a_scan_has_at_most_one_retriever() {
         ("information_schema", "ATTRIBUTES", 1),
         ("information_schema", "PLACEMENT_POLICIES", 1),
         ("performance_schema", "session_variables", 1),
+        ("performance_schema", "session_connect_attrs", 1),
+        ("performance_schema", "session_account_connect_attrs", 1),
+        ("performance_schema", "status_by_connection", 1),
+        ("performance_schema", "tidb_profile_cpu", 1),
+        ("performance_schema", "tikv_profile_cpu", 1),
+        ("performance_schema", "pd_profile_goroutines", 1),
+        ("performance_schema", "setup_actors", 0),
         ("information_schema", "CLUSTER_PROCESSLIST", 1),
         ("information_schema", "CLUSTER_SLOW_QUERY", 1),
         ("information_schema", "TIDB_TRX", 1),

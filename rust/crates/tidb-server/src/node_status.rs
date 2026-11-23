@@ -1244,6 +1244,27 @@ mod tests {
         .map(|byte| format!("{byte:02X}"))
         .collect();
         assert_eq!(deleted["key"], key);
+
+        // Go `PointGetExecutor.Next` / `BatchPointGetExec.initialize`: a
+        // unique-index entry whose row is gone is a lookup inconsistency
+        // (`consistency.Reporter.ReportLookupInconsistent`); a read by the
+        // handle itself finds no row.
+        run(factory, "create table tidb.delete_uk (a int primary key, b int, c varchar(10), unique key ub(b), unique key uc(c))");
+        run(factory, "insert into tidb.delete_uk values (1, 2, 'x'), (3, 4, 'y')");
+        answer("POST", "/test/delete/rowkey/tidb/delete_uk?handle=1").unwrap().unwrap();
+        for (sql, index) in [
+            ("select * from tidb.delete_uk where b = 2", "ub"),
+            ("select * from tidb.delete_uk where b in (2, 4)", "ub"),
+            ("select * from tidb.delete_uk where c = 'x'", "uc"),
+        ] {
+            let error = check(sql).expect_err(sql);
+            assert!(
+                error.contains(&format!("data inconsistency in table: delete_uk, index: {index}, index-count:1 != record-count:0")),
+                "{sql}: {error}"
+            );
+        }
+        check("select * from tidb.delete_uk where a = 1").unwrap();
+        check("select * from tidb.delete_uk where b = 4").unwrap();
         tidb_failpoint::disable("github.com/pingcap/tidb/pkg/server/enableTestAPI");
     }
 

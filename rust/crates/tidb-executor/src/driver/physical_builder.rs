@@ -4620,7 +4620,8 @@ fn build_point_get(
                 true,
             )
             .with_allowed_partitions(allowed)
-            .with_lock(point_lock(point.lock, point.select_lock, ctx)),
+            .with_lock(point_lock(point.lock, point.select_lock, ctx))
+            .with_consistency_report((!ctx.weak_consistency()).then(|| crate::admin_check::ReportContext::of(ctx))),
         );
         return Ok(wrap_point_index_usage(
             child,
@@ -4703,7 +4704,8 @@ fn build_batch_point_get(
                 false,
             )
             .with_allowed_partitions(allowed)
-            .with_lock(point_lock(batch.lock, batch.select_lock, ctx)),
+            .with_lock(point_lock(batch.lock, batch.select_lock, ctx))
+            .with_consistency_report((!ctx.weak_consistency()).then(|| crate::admin_check::ReportContext::of(ctx))),
         );
         return Ok(wrap_point_index_usage(
             child,

@@ -131,6 +131,7 @@ members = [
     "crates/tidb-topsql-state",
     "crates/tidb-cpuprofile",
     "crates/tidb-profile",
+    "crates/tidb-logutil-consistency",
     "crates/tidb-topsql",
     "crates/tidb-topsql-collector",
     "crates/tidb-topsql-stmtstats",

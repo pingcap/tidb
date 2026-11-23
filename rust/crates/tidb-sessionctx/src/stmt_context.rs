@@ -3176,7 +3176,6 @@ context_configuration! {
         self.txn_is_explicit = explicit;
         self
     }
-
     /// Records Go `SessionVars.EnableRedactLog` for the statement.
     #[must_use]
     pub fn with_enable_redact_log(mut self, enable_redact_log: String) -> Self {
@@ -4670,6 +4669,13 @@ impl StmtContext {
     pub fn enable_no_decorrelate_in_select(&self) -> bool {
         self.enable_no_decorrelate_in_select
     }
+
+    /// Go `SessionVars.EnableRedactLog`.
+    #[must_use]
+    pub fn enable_redact_log(&self) -> &str {
+        &self.enable_redact_log
+    }
+
 
     /// Returns `@@tidb_opt_skew_distinct_agg`.
     pub fn enable_skew_distinct_agg(&self) -> bool {

@@ -26,7 +26,7 @@ use tidb_datatype::Datum;
 use tidb_model::{GoShared, IndexInfo, TableInfo};
 use tidb_table::tables::TableHandle;
 
-use crate::admin_check::{inconsistent, AdminCheckError};
+use crate::admin_check::{kv_handle_of, AdminCheckError, ReportContext};
 use crate::DriverError;
 use tidb_sqlexec::{ExecutionContext, SqlExecutor};
 use tikv_client::trace::TraceContext;
@@ -82,11 +82,13 @@ pub fn fast_check_table(
     db_name: &str,
     table: &TableInfo,
     index_infos: &[GoShared<IndexInfo>],
+    report: &ReportContext,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     for idx_info in index_infos {
         let se = get_sys_session()?;
         init_sess_ctx(se.as_ref(), vars)?;
-        handle_task(se.as_ref(), db_name, table, &idx_info.read())?;
+        handle_task(se.as_ref(), db_name, table, &idx_info.read(), report, zone)?;
     }
     Ok(())
 }
@@ -199,6 +201,8 @@ fn handle_task(
     db_name: &str,
     tbl_meta: &TableInfo,
     idx_info: &IndexInfo,
+    report_ctx: &ReportContext,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let bucket_size = CHECK_TABLE_FAST_BUCKET_SIZE.load(std::sync::atomic::Ordering::Relaxed) as i64;
     let tbl_name = table_name(db_name, tbl_meta.name.original());
@@ -409,15 +413,48 @@ fn handle_task(
     };
     let get_value_from_row = |row: &[Datum]| row[pk_cols.len()..pk_cols.len() + idx_columns.len()].to_vec();
     let get_check_sum = |row: &[Datum]| row_u64(&row[pk_cols.len() + idx_columns.len()]);
-    // Go `consistency.Reporter.ReportAdminCheckInconsistent`.
+    // Go `ir()`: the reporter over the table's record keys and the index's
+    // keys of a record's values (`w.table.Indices()`' `GenIndexKey`).
     let report = |handle: &TableHandle, index: Option<&RecordData>, table: Option<&RecordData>| -> DriverError {
-        crate::admin::admin_check_error(inconsistent(
-            tbl_meta.name.original(),
-            idx_name,
-            handle,
-            index.map(|record| (&record.handle, record.values.as_slice())),
-            table.map(|record| (&record.handle, record.values.as_slice())),
-        ))
+        let kv = |record: &RecordData| -> Result<tidb_logutil_consistency::RecordData, DriverError> {
+            Ok(tidb_logutil_consistency::RecordData {
+                handle: kv_handle_of(&record.handle).map_err(crate::admin::admin_check_error)?,
+                values: record.values.clone(),
+            })
+        };
+        let (handle, idx_row, tbl_row) = match (kv_handle_of(handle), index.map(kv).transpose(), table.map(kv).transpose()) {
+            (Ok(handle), Ok(idx_row), Ok(tbl_row)) => (handle, idx_row, tbl_row),
+            (Err(error), _, _) => return crate::admin::admin_check_error(error),
+            (_, Err(error), _) | (_, _, Err(error)) => return error,
+        };
+        let w_table = tidb_table::table_from_meta::table_from_meta(tbl_meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).ok();
+        let handle_encode = |handle: &tidb_txnkv::Handle| {
+            Some(tidb_tablecodec::table_key::encode_row_key_with_handle(
+                tbl_meta.id,
+                &crate::admin_check::table_handle_of(handle).record_handle(),
+            ))
+        };
+        let index_encode = |idx_row: &tidb_logutil_consistency::RecordData| {
+            let w_table = w_table.as_ref()?;
+            let values = idx_row.values[..idx_info.columns.len().min(idx_row.values.len())].to_vec();
+            w_table
+                .gen_index_key(idx_info.id, values, Some(&crate::admin_check::table_handle_of(&idx_row.handle)), tbl_meta.id, zone)
+                .ok()
+                .map(|(key, _)| key)
+        };
+        let reporter = tidb_logutil_consistency::Reporter {
+            handle_encode: &handle_encode,
+            index_encode: Some(&index_encode),
+            tbl: tbl_meta,
+            idx: idx_info,
+            enable_redact_log: report_ctx.enable_redact_log.clone(),
+            storage: report_ctx.storage.clone(),
+        };
+        crate::admin::admin_check_error(AdminCheckError::Report(reporter.report_admin_check_inconsistent(
+            &handle,
+            idx_row.as_ref(),
+            tbl_row.as_ref(),
+        )))
     };
 
     let mut last_table_record: Option<RecordData> = None;

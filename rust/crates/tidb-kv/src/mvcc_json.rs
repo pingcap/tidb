@@ -142,31 +142,38 @@ pub fn response_json(response: &kvrpcpb::MvccGetByKeyResponse) -> MvccGetByKeyRe
                 last_change_ts: lock.last_change_ts,
                 versions_to_last_change: lock.versions_to_last_change,
             }),
-            writes: info
-                .writes
-                .iter()
-                .map(|write| MvccWriteJson {
-                    kind: write.r#type,
-                    start_ts: write.start_ts,
-                    commit_ts: write.commit_ts,
-                    short_value: base64_bytes(&write.short_value),
-                    has_overlapped_rollback: write.has_overlapped_rollback,
-                    has_gc_fence: write.has_gc_fence,
-                    gc_fence: write.gc_fence,
-                    last_change_ts: write.last_change_ts,
-                    versions_to_last_change: write.versions_to_last_change,
-                })
-                .collect(),
-            values: info
-                .values
-                .iter()
-                .map(|value| MvccValueJson {
-                    start_ts: value.start_ts,
-                    value: base64_bytes(&value.value),
-                })
-                .collect(),
+            writes: info.writes.iter().map(write_json).collect(),
+            values: info.values.iter().map(value_json).collect(),
         }),
     }
+}
+
+fn write_json(write: &kvrpcpb::MvccWrite) -> MvccWriteJson {
+    MvccWriteJson {
+        kind: write.r#type,
+        start_ts: write.start_ts,
+        commit_ts: write.commit_ts,
+        short_value: base64_bytes(&write.short_value),
+        has_overlapped_rollback: write.has_overlapped_rollback,
+        has_gc_fence: write.has_gc_fence,
+        gc_fence: write.gc_fence,
+        last_change_ts: write.last_change_ts,
+        versions_to_last_change: write.versions_to_last_change,
+    }
+}
+
+fn value_json(value: &kvrpcpb::MvccValue) -> MvccValueJson {
+    MvccValueJson { start_ts: value.start_ts, value: base64_bytes(&value.value) }
+}
+
+/// Go `json.Marshal` of a `kvrpcpb.MvccWrite`.
+pub fn marshal_write(write: &kvrpcpb::MvccWrite) -> String {
+    serde_json::to_string(&write_json(write)).expect("the MVCC write encodes")
+}
+
+/// Go `json.Marshal` of a `kvrpcpb.MvccValue`.
+pub fn marshal_value(value: &kvrpcpb::MvccValue) -> String {
+    serde_json::to_string(&value_json(value)).expect("the MVCC value encodes")
 }
 
 /// Go `json.Marshal` of a `kvrpcpb.MvccGetByKeyResponse`.

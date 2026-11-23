@@ -44,26 +44,11 @@ pub enum AdminCheckError {
         /// Entries in that index's key range.
         index_count: i64,
     },
-    /// Go `consistency.ErrAdminCheckInconsistent` (`ErrDataInconsistent`,
-    /// 8223): a row and an index entry do not agree. Go's message is
-    /// `data inconsistency in table: %s, index: %s, handle: %s,
-    /// index-values:%#v != record-values:%#v`.
-    Inconsistent {
-        /// The table being checked.
-        table: String,
-        /// The index the disagreement is in.
-        index: String,
-        /// The row handle, as Go prints it.
-        handle: String,
-        /// The index side of the disagreement, or `""` when the entry is
-        /// missing entirely -- Go prints an absent side as the empty string.
-        index_values: String,
-        /// The record side, or `""` when the row is missing.
-        record_values: String,
-    },
-    /// Go `ErrDataInconsistentMismatchIndex` (8134): an index entry names a
-    /// live row, but one indexed column differs from that row.
-    ValueMismatch(Box<AdminValueMismatch>),
+    /// Go `consistency.Reporter`'s error: `ErrAdminCheckInconsistent`
+    /// (8223), a row and an index entry that do not agree, or
+    /// `ErrAdminCheckInconsistentWithColInfo` (8134), an index entry whose
+    /// indexed column differs from its row. The reporter has logged it.
+    Report(tidb_terror::TerrorError),
     /// The named table is not stored as index-bearing bytes, so there is
     /// nothing to check it against. Refused rather than answered OK.
     NotStored(String),
@@ -92,48 +77,6 @@ pub enum AdminCheckError {
     },
 }
 
-impl AdminCheckError {
-    /// The Go error a consistency report carries:
-    /// `consistency.ErrAdminCheckInconsistent` (8223) or
-    /// `ErrAdminCheckInconsistentWithColInfo` (8134).
-    ///
-    /// # Panics
-    ///
-    /// On any other kind, which is not a consistency report.
-    #[must_use]
-    pub(crate) fn terror(self) -> tidb_terror::TerrorError {
-        match self {
-            AdminCheckError::Inconsistent {
-                table,
-                index,
-                handle,
-                index_values,
-                record_values,
-            } => crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT.gen_with_stack(format!(
-                "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
-             index-values:{index_values:?} != record-values:{record_values:?}"
-            )),
-            AdminCheckError::ValueMismatch(mismatch) => {
-                let AdminValueMismatch {
-                    table,
-                    index,
-                    column,
-                    handle,
-                    index_value,
-                    record_value,
-                    compare_error,
-                } = *mismatch;
-                crate::consistency_errors::ERR_ADMIN_CHECK_INCONSISTENT_WITH_COL_INFO.gen_with_stack(format!(
-                    "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
-                 {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
-                 compare err:{compare_error}"
-                ))
-            }
-            other => panic!("{other:?} is not a consistency report"),
-        }
-    }
-}
-
 /// Go `kv.Handle` as an inconsistency report names it.
 pub(crate) fn table_handle_of(handle: &tidb_txnkv::Handle) -> TableHandle {
     match handle {
@@ -143,99 +86,32 @@ pub(crate) fn table_handle_of(handle: &tidb_txnkv::Handle) -> TableHandle {
     }
 }
 
-/// The detail carried by [`AdminCheckError::ValueMismatch`].
-#[derive(Debug, Clone)]
-pub struct AdminValueMismatch {
-    /// The table being checked.
-    pub table: String,
-    /// The index the disagreement is in.
-    pub index: String,
-    /// The first mismatching indexed column.
-    pub column: String,
-    /// The row handle, as Go prints it before the error template quotes it.
-    pub handle: String,
-    /// Go's debug rendering of the stored index datum.
-    pub index_value: String,
-    /// Go's debug rendering of the row datum.
-    pub record_value: String,
-    /// Comparison failure, or `<nil>` for an ordinary unequal comparison.
-    pub compare_error: String,
+/// Go `kv.Handle` of a row handle the table layer names; a clustered
+/// handle that does not decode is the corruption Go's `NewCommonHandle`
+/// refuses.
+pub(crate) fn kv_handle_of(handle: &TableHandle) -> Result<tidb_txnkv::Handle, AdminCheckError> {
+    Ok(match handle {
+        TableHandle::Int(value) => tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(*value)),
+        TableHandle::Common(bytes) => tidb_txnkv::Handle::Common(
+            tidb_txnkv::CommonHandle::new(bytes.clone()).map_err(|error| AdminCheckError::Decode(error.to_string()))?,
+        ),
+    })
 }
 
-/// The value Go prints for one side of an inconsistency: the datums in
-/// `%#v` form, which for a slice of datums is its Go debug rendering. This
-/// engine prints the values it holds; the *presence* of the two sides is what
-/// the error is about, and both are named.
-/// Go `fmt.Sprint([]types.Datum)`: each datum's `String()`, space-separated.
-fn render_values(values: &[Datum]) -> String {
-    let rendered: Vec<String> = values.iter().map(render_go_datum).collect();
-    format!("[{}]", rendered.join(" "))
+/// The session state Go's `consistency.Reporter` reads: the redaction mode
+/// and the store it asks for MVCC records.
+#[derive(Clone)]
+pub struct ReportContext {
+    /// Go `SessionVars.EnableRedactLog`.
+    pub(crate) enable_redact_log: String,
+    /// Go `sctx.GetStore()` as a `helper.Storage`.
+    pub(crate) storage: Option<std::sync::Arc<dyn tidb_kv::region_map::RegionStore>>,
 }
 
-pub(crate) fn render_go_datum(value: &Datum) -> String {
-    fn quoted_content(bytes: &[u8]) -> String {
-        let quoted = format!("{:?}", String::from_utf8_lossy(bytes));
-        quoted[1..quoted.len() - 1].to_owned()
-    }
-
-    match value {
-        Datum::Null => "KindNull <nil>".to_owned(),
-        Datum::Int(value) => format!("KindInt64 {value}"),
-        Datum::UInt(value) => format!("KindUint64 {value}"),
-        Datum::Float32(value) => format!("KindFloat32 {value}"),
-        Datum::Real(value) => format!("KindFloat64 {value}"),
-        Datum::String(value) => format!("KindString {}", quoted_content(value.bytes())),
-        Datum::Bytes(value) => format!("KindBytes {}", quoted_content(value)),
-        Datum::BinaryLiteral(value) => format!("KindBinaryLiteral {value}"),
-        Datum::Decimal(value) => format!("KindMysqlDecimal {value}"),
-        Datum::Duration(value) => format!("KindMysqlDuration {value}"),
-        Datum::Enum(value, _) => format!("KindMysqlEnum {value}"),
-        Datum::Bit(value) => format!("KindMysqlBit {value}"),
-        Datum::Set(value, _) => format!("KindMysqlSet {value}"),
-        Datum::Time(value) => format!("KindMysqlTime {value}"),
-        Datum::Json(value) => format!("KindMysqlJSON {value}"),
-        Datum::Raw(_) => "KindRaw <nil>".to_owned(),
-        Datum::VectorFloat32(value) => format!("KindVectorFloat32 {value}"),
-        Datum::MinNotNull => "KindMinNotNull <nil>".to_owned(),
-        Datum::MaxValue => "KindMaxValue <nil>".to_owned(),
-    }
-}
-
-/// Go `consistency.RecordData.String`: both the handle and the indexed
-/// values belong to one side of an inconsistency report.
-fn render_record(handle: &TableHandle, values: &[Datum]) -> String {
-    format!(
-        "handle: {}, values: {}",
-        render_handle(handle),
-        render_values(values)
-    )
-}
-
-/// Go `consistency.Reporter.ReportAdminCheckInconsistent(handle, idxRow,
-/// tblRow)`'s error; an absent side prints as `""`.
-pub(crate) fn inconsistent(
-    table: &str,
-    index: &str,
-    handle: &TableHandle,
-    index_row: Option<(&TableHandle, &[Datum])>,
-    table_row: Option<(&TableHandle, &[Datum])>,
-) -> AdminCheckError {
-    let render = |row: Option<(&TableHandle, &[Datum])>| row.map_or_else(String::new, |(handle, values)| render_record(handle, values));
-    AdminCheckError::Inconsistent {
-        table: table.to_owned(),
-        index: index.to_owned(),
-        handle: render_handle(handle),
-        index_values: render(index_row),
-        record_values: render(table_row),
-    }
-}
-
-/// How Go prints a row handle in the inconsistency message: an integer handle
-/// is its number, a clustered handle its encoded bytes.
-pub(crate) fn render_handle(handle: &TableHandle) -> String {
-    match handle {
-        TableHandle::Int(value) => value.to_string(),
-        TableHandle::Common(bytes) => format!("{bytes:?}"),
+impl ReportContext {
+    /// The report context of a statement.
+    pub fn of(ctx: &crate::StmtContext) -> Self {
+        Self { enable_redact_log: ctx.enable_redact_log().to_owned(), storage: Some(ctx.region_store().clone()) }
     }
 }
 
@@ -246,9 +122,10 @@ pub(crate) fn check_record_and_index(
     store: &mut dyn tidb_kv::storage::TableStorage,
     index: &Index,
     context: &RowDecodeContext,
+    report: &ReportContext,
 ) -> Result<(), AdminCheckError> {
     for physical_id in table.record_physical_ids() {
-        check_record_and_index_in(table, store, index, physical_id, context)?;
+        check_record_and_index_in(table, store, index, physical_id, context, report)?;
     }
     Ok(())
 }
@@ -264,10 +141,14 @@ fn check_record_and_index_in(
     index: &Index,
     physical_id: i64,
     context: &RowDecodeContext,
+    report: &ReportContext,
 ) -> Result<(), AdminCheckError> {
     let decode = |error: tidb_table::tables::KvTableError| AdminCheckError::Decode(format!("{error:?}"));
-    let table_name = table.name();
-    let index_name = index.read().name.original().to_owned();
+    let tbl_meta = table.meta();
+    let tbl_meta = tbl_meta.read().clone();
+    let idx_meta = index.read().clone();
+    let index_id = idx_meta.id;
+    let zone = context.zone().clone();
     let decoder = crate::KvTableReader::row_decoder_recomputed(table, context).map_err(decode)?;
     let prefix = tidb_tablecodec::table_key::gen_table_record_prefix(physical_id);
     let upper = tidb_txnkv::Key::from_bytes(prefix.clone()).prefix_next();
@@ -289,7 +170,7 @@ fn check_record_and_index_in(
                 {
                     return Err(AdminCheckError::NotNullWithoutValue {
                         column: column.read().name.original().to_owned(),
-                        handle: render_handle(&handle),
+                        handle: kv_handle_of(&handle)?.to_string(),
                     });
                 }
                 // NULL value is regarded as its default value.
@@ -304,16 +185,23 @@ fn check_record_and_index_in(
                 tidb_table::tables::IndexExistence::Exists => {}
                 tidb_table::tables::IndexExistence::Missing => {
                     let values = table.index_values_for_check(index, &row);
-                    return Err(inconsistent(&table_name, &index_name, &handle, None, Some((&handle, &values))));
+                    let kv_handle = kv_handle_of(&handle)?;
+                    let tbl_row = tidb_logutil_consistency::RecordData { handle: kv_handle.clone(), values };
+                    return Err(AdminCheckError::Report(
+                        reporter(table, &tbl_meta, &idx_meta, index_id, physical_id, &zone, report, &|reporter| {
+                            reporter.report_admin_check_inconsistent(&kv_handle, None, Some(&tbl_row))
+                        }),
+                    ));
                 }
                 tidb_table::tables::IndexExistence::OtherHandle(other) => {
                     let values = table.index_values_for_check(index, &row);
-                    return Err(inconsistent(
-                        &table_name,
-                        &index_name,
-                        &handle,
-                        Some((&other, &values)),
-                        Some((&handle, &values)),
+                    let kv_handle = kv_handle_of(&handle)?;
+                    let idx_row = tidb_logutil_consistency::RecordData { handle: kv_handle_of(&other)?, values: values.clone() };
+                    let tbl_row = tidb_logutil_consistency::RecordData { handle: kv_handle.clone(), values };
+                    return Err(AdminCheckError::Report(
+                        reporter(table, &tbl_meta, &idx_meta, index_id, physical_id, &zone, report, &|reporter| {
+                            reporter.report_admin_check_inconsistent(&kv_handle, Some(&idx_row), Some(&tbl_row))
+                        }),
                     ));
                 }
             }
@@ -323,6 +211,39 @@ fn check_record_and_index_in(
     })();
     iterator.close();
     result
+}
+
+/// Go `admin.CheckRecordAndIndex`'s `ir()`: the reporter over the table's
+/// record keys and the index's keys of a record's values.
+#[allow(clippy::too_many_arguments)]
+fn reporter(
+    table: &TableCommon,
+    tbl_meta: &tidb_model::TableInfo,
+    idx_meta: &tidb_model::IndexInfo,
+    index_id: i64,
+    physical_id: i64,
+    zone: &tidb_datatype::SessionTimeZone,
+    report: &ReportContext,
+    run: &dyn Fn(&tidb_logutil_consistency::Reporter<'_>) -> tidb_terror::TerrorError,
+) -> tidb_terror::TerrorError {
+    let handle_encode = |handle: &tidb_txnkv::Handle| {
+        Some(tidb_tablecodec::table_key::encode_row_key_with_handle(physical_id, &table_handle_of(handle).record_handle()))
+    };
+    let index_encode = |idx_row: &tidb_logutil_consistency::RecordData| {
+        let values = idx_row.values[..idx_meta.columns.len().min(idx_row.values.len())].to_vec();
+        table
+            .gen_index_key(index_id, values, Some(&table_handle_of(&idx_row.handle)), physical_id, zone)
+            .ok()
+            .map(|(key, _)| key)
+    };
+    run(&tidb_logutil_consistency::Reporter {
+        handle_encode: &handle_encode,
+        index_encode: Some(&index_encode),
+        tbl: tbl_meta,
+        idx: idx_meta,
+        enable_redact_log: report.enable_redact_log.clone(),
+        storage: report.storage.clone(),
+    })
 }
 
 #[cfg(test)]

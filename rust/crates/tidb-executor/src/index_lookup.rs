@@ -75,8 +75,6 @@ struct Shared {
     primary_key_index: Option<tidb_tablecodec::IndexInfo>,
     /// The table as the key codec reads it.
     codec_table_info: tidb_tablecodec::TableInfo,
-    /// Go `index.Name.O`, which a lookup inconsistency names.
-    index_name: String,
     /// Go `handleCols`.
     handle_cols: Vec<Column>,
     /// Go `handleIdx`: the handle columns' offsets in a table row.
@@ -372,7 +370,6 @@ impl IndexLookUpExecutor {
             client,
             table_plans: table_plans.iter().copied().cloned().collect(),
             table_plan_ids,
-            index_name: index.name.original().to_owned(),
             index: index.clone(),
             check_index_value: None,
             codec_table_info: table.codec_table_info(),
@@ -1443,12 +1440,18 @@ fn execute_table_task(
     // inconsistency (`consistency.Reporter.ReportLookupInconsistent`).
     let handle_cnt = handles.len();
     if handle_cnt != order.len() && !shared.ctx.weak_consistency() && shared.table_plans.len() == 1 {
-        return Err(ExecError::from(crate::consistency_errors::ERR_LOOKUP_INCONSISTENT.gen_with_stack_by_args(&[
-            shared.table_info.name.original().into(),
-            shared.index_name.as_str().into(),
-            (handle_cnt as i64).into(),
-            (order.len() as i64).into(),
-        ])));
+        let mut obtained_handles_map = tidb_txnkv::HandleMap::new();
+        for &(chunk, row) in &order {
+            let handle = get_handle(shared, chunks[chunk].get_row(row), &shared.handle_idx, GetHandleType::FromTable)?;
+            obtained_handles_map.set(handle, true);
+        }
+        // Go `GetLackHandles`.
+        let miss_hds: Vec<Handle> =
+            handles.iter().filter(|handle| obtained_handles_map.get(handle).is_none()).cloned().collect();
+        let error = with_reporter(shared, None, &|reporter| {
+            reporter.report_lookup_inconsistent(handle_cnt, order.len(), &miss_hds, &handles, &[])
+        });
+        return Err(ExecError::from(error));
     }
     if let Some(index_order) = index_order {
         // Go `task.rowIdx = make([]int, 0, len(task.rows))`.
@@ -1484,8 +1487,6 @@ fn compare_data(
     duplicated_index_order: &tidb_txnkv::HandleMap<usize>,
     idx_rows: Option<&Chunk>,
 ) -> Result<(), ExecError> {
-    let table_name = shared.table_info.name.original().to_owned();
-    let index_name = shared.index.name.original().to_owned();
     let idx_row_values = |offset: usize| -> Vec<Datum> {
         idx_rows.map_or_else(Vec::new, |rows| {
             let row = rows.get_row(offset);
@@ -1503,17 +1504,11 @@ fn compare_data(
                 false
             });
             if let Some((handle, offset)) = first {
-                let handle = crate::admin_check::table_handle_of(&handle);
-                return Err(ExecError::from(
-                    crate::admin_check::inconsistent(
-                        &table_name,
-                        &index_name,
-                        &handle,
-                        Some((&handle, &idx_row_values(offset))),
-                        None,
-                    )
-                    .terror(),
-                ));
+                let idx_row = tidb_logutil_consistency::RecordData { handle: handle.clone(), values: idx_row_values(offset) };
+                let error = with_reporter(shared, Some(check), &|reporter| {
+                    reporter.report_admin_check_inconsistent(&handle, Some(&idx_row), None)
+                });
+                return Err(ExecError::from(error));
             }
             return Ok(());
         }
@@ -1557,36 +1552,80 @@ fn compare_data(
                     check.idx_col_tps[i].collation(),
                     cmp_mv_index,
                 );
-                let mismatch = |compare_error: String, reported: &Datum| {
-                    let handle = crate::admin_check::table_handle_of(&handle);
-                    ExecError::from(
-                        crate::admin_check::AdminCheckError::ValueMismatch(Box::new(
-                            crate::admin_check::AdminValueMismatch {
-                                table: table_name.clone(),
-                                index: index_name.clone(),
-                                column: col.name.original().to_owned(),
-                                handle: crate::admin_check::render_handle(&handle),
-                                index_value: crate::admin_check::render_go_datum(reported),
-                                record_value: crate::admin_check::render_go_datum(val),
-                                compare_error,
-                            },
-                        ))
-                        .terror(),
-                    )
+                let mismatch = |compare_error: Option<String>, reported: &Datum| {
+                    let idx_row = tidb_logutil_consistency::RecordData {
+                        handle: handle.clone(),
+                        values: idx_row_values(offset),
+                    };
+                    ExecError::from(with_reporter(shared, Some(check), &|reporter| {
+                        reporter.report_admin_check_inconsistent_with_col_info(
+                            &handle,
+                            col.name.original(),
+                            &reported.string(),
+                            &val.string(),
+                            compare_error.as_deref(),
+                            Some(&idx_row),
+                        )
+                    }))
                 };
                 match compared {
                     // Go prints the comparison's error (`%v`).
-                    Err(tidb_table::tables::KvTableError::Decode(message)) => return Err(mismatch(message, &idx_val)),
-                    Err(error) => return Err(mismatch(format!("{error:?}"), &idx_val)),
+                    Err(tidb_table::tables::KvTableError::Decode(message)) => return Err(mismatch(Some(message), &idx_val)),
+                    Err(error) => return Err(mismatch(Some(format!("{error:?}")), &idx_val)),
                     Ok(std::cmp::Ordering::Equal) => {}
                     Ok(_) => {
                         let reported = idx_row.map_or(Datum::Null, |row| row.get_datum(i, &check.idx_col_tps[i]));
-                        return Err(mismatch("<nil>".to_owned(), &reported));
+                        return Err(mismatch(None, &reported));
                     }
                 }
             }
         }
     }
+}
+
+/// Go `compareData`'s `ir()` and `executeTask`'s reporter: the table's record
+/// keys, and, comparing index values (`check`), the index's keys of a
+/// record's values (`w.idxLookup.table.Indices()`' `GenIndexKey`).
+fn with_reporter(
+    shared: &Shared,
+    check: Option<&CheckIndexValue>,
+    run: &dyn Fn(&tidb_logutil_consistency::Reporter<'_>) -> tidb_terror::TerrorError,
+) -> tidb_terror::TerrorError {
+    let physical_table_id = shared.physical_table_id;
+    let handle_encode = |handle: &Handle| {
+        Some(tidb_tablecodec::table_key::encode_row_key_with_handle(
+            physical_table_id,
+            &crate::admin_check::table_handle_of(handle).record_handle(),
+        ))
+    };
+    let table = check.and_then(|_| {
+        tidb_table::table_from_meta::table_from_meta(&shared.table_info, &tidb_table::table_from_meta::AutoIdSource::Unavailable).ok()
+    });
+    let zone = shared.ctx.session_zone();
+    let index_encode = |idx_row: &tidb_logutil_consistency::RecordData| {
+        let table = table.as_ref()?;
+        let values = idx_row.values[..shared.index.columns.len().min(idx_row.values.len())].to_vec();
+        table
+            .gen_index_key(
+                shared.index.id,
+                values,
+                Some(&crate::admin_check::table_handle_of(&idx_row.handle)),
+                physical_table_id,
+                &zone,
+            )
+            .ok()
+            .map(|(key, _)| key)
+    };
+    let index_encode: Option<&dyn Fn(&tidb_logutil_consistency::RecordData) -> Option<Vec<u8>>> =
+        check.map(|_| &index_encode as &dyn Fn(&tidb_logutil_consistency::RecordData) -> Option<Vec<u8>>);
+    run(&tidb_logutil_consistency::Reporter {
+        handle_encode: &handle_encode,
+        index_encode,
+        tbl: &shared.table_info,
+        idx: &shared.index,
+        enable_redact_log: shared.ctx.enable_redact_log().to_owned(),
+        storage: Some(shared.ctx.region_store().clone()),
+    })
 }
 
 /// One index select result as an executor, which the merge reads. Closing

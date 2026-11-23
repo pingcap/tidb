@@ -332,6 +332,47 @@ pub struct HandleSourceExec {
     /// rest before reading (Go `BatchPointGetExec`: "lock all keys in
     /// repeatable read isolation").
     lock_missing_index_keys: Vec<tidb_txnkv::Key>,
+    /// Go `PointGetExecutor.idxInfo` / `BatchPointGetExec.idxInfo` with the
+    /// index key each handle was found under: a handle whose row is absent
+    /// is a lookup inconsistency.
+    index_consistency: Option<PointIndexConsistency>,
+}
+
+/// What a point read through a unique index reports when the row its entry
+/// names is not there (Go `Next`'s `consistency.Reporter`).
+pub(crate) struct PointIndexConsistency {
+    /// Go `e.tblInfo`.
+    tbl: tidb_model::TableInfo,
+    /// Go `e.idxInfo`.
+    idx: tidb_model::IndexInfo,
+    /// Go `e.idxKey` / `indexKeys`, aligned with the retained handles.
+    index_keys: Vec<Option<Vec<u8>>>,
+    report: crate::admin_check::ReportContext,
+}
+
+impl PointIndexConsistency {
+    /// Go `ReportLookupInconsistent(ctx, 1, 0, handles[i:i+1], handles,
+    /// []RecordData{{}})` over the record key `record_key` of the handle at
+    /// `i`.
+    fn report(&self, handles: &[TableHandle], i: usize, record_key: Option<Vec<u8>>) -> ExecError {
+        let handles: Vec<tidb_txnkv::Handle> = match handles.iter().map(crate::admin_check::kv_handle_of).collect() {
+            Ok(handles) => handles,
+            Err(error) => return ExecError::unsupported(format!("{error:?}")),
+        };
+        let index_key = self.index_keys.get(i).cloned().flatten();
+        let handle_encode = |_: &tidb_txnkv::Handle| record_key.clone();
+        let index_encode = |_: &tidb_logutil_consistency::RecordData| index_key.clone();
+        let reporter = tidb_logutil_consistency::Reporter {
+            handle_encode: &handle_encode,
+            index_encode: Some(&index_encode),
+            tbl: &self.tbl,
+            idx: &self.idx,
+            enable_redact_log: self.report.enable_redact_log.clone(),
+            storage: self.report.storage.clone(),
+        };
+        let empty = tidb_logutil_consistency::RecordData { handle: handles[i].clone(), values: Vec::new() };
+        ExecError::from(reporter.report_lookup_inconsistent(1, 0, &handles[i..=i], &handles, &[empty]))
+    }
 }
 
 impl HandleSourceExec {
@@ -362,6 +403,7 @@ impl HandleSourceExec {
             lock: None,
             lock_index_keys: Vec::new(),
             lock_missing_index_keys: Vec::new(),
+            index_consistency: None,
         }
     }
 
@@ -377,6 +419,11 @@ impl HandleSourceExec {
 
     /// The unique-index keys the handles were found under (see
     /// [`HandleSourceExec::lock_index_keys`]).
+    pub(crate) fn with_index_consistency(mut self, consistency: Option<PointIndexConsistency>) -> Self {
+        self.index_consistency = consistency;
+        self
+    }
+
     pub(crate) fn with_lock_index_keys(
         mut self,
         keys: Vec<Option<tidb_txnkv::Key>>,
@@ -500,6 +547,23 @@ impl HandleSourceExec {
                 .stored_records_batched(&mut *self.store, &self.handles, self.partition_ids.as_deref())
                 .map_err(ExecError::from)?
         };
+        // Go `PointGetExecutor.Next` / `BatchPointGetExec.initialize`: the
+        // first handle the index named whose row is empty.
+        if let Some(consistency) = &self.index_consistency {
+            let missing = match &rows {
+                tidb_table::tables::PointReadValues::Single(row) => row.is_none().then_some(0),
+                // A handle's key is kept only when its row was found.
+                tidb_table::tables::PointReadValues::Batch { keys, .. } => keys.iter().position(Option::is_none),
+            };
+            if let Some(i) = missing {
+                let record_key = self
+                    .table
+                    .record_lock_keys(&self.handles, self.partition_ids.as_deref())
+                    .and_then(|keys| keys.into_iter().nth(i))
+                    .map(|key| key.as_bytes().to_vec());
+                return Err(consistency.report(&self.handles, i, record_key));
+            }
+        }
         // Counted only on an IndexMerge reader's table side, whose copy
         // carries the statement budget; a point get's copy does not.
         let found = match &rows {
@@ -749,6 +813,9 @@ pub(crate) struct UniqueIndexPointSourceExec {
     allowed_partitions: Option<Vec<i64>>,
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`.
     lock: Option<PointLock>,
+    /// The session's reporter state; `None` under weak consistency, where
+    /// Go reports no inconsistency.
+    consistency_report: Option<crate::admin_check::ReportContext>,
     source: Option<HandleSourceExec>,
     initialized: bool,
 }
@@ -790,9 +857,16 @@ impl UniqueIndexPointSourceExec {
             single_point,
             allowed_partitions: None,
             lock: None,
+            consistency_report: None,
             source: None,
             initialized: false,
         }
+    }
+
+    /// Go `!StmtCtx.WeakConsistency`: the reporter a missing row answers.
+    pub(crate) fn with_consistency_report(mut self, report: Option<crate::admin_check::ReportContext>) -> Self {
+        self.consistency_report = report;
+        self
     }
 }
 
@@ -919,6 +993,35 @@ impl UniqueIndexPointSourceExec {
             self.meta.max_chunk_size(),
         )
         .with_alloc_pool(self.meta.alloc_pool().cloned());
+        // Go `PointGetExecutor.Next` / `BatchPointGetExec.initialize` report
+        // a missing row of an index read that is not a clustered PRIMARY.
+        let index_consistency = match (&self.consistency_report, common_primary) {
+            (Some(report), false) => {
+                let index_keys: Vec<Option<Vec<u8>>> = if self.single_point {
+                    let [values] = self.index_values.as_slice() else { unreachable!("checked one key") };
+                    let key = self
+                        .table
+                        .encode_unique_index_key(self.index_id, values, self.decode_context.zone())
+                        .ok()
+                        .and_then(|keys| keys.into_iter().next())
+                        .map(|key| key.as_bytes().to_vec());
+                    vec![key]
+                } else {
+                    index_keys.iter().map(|key| key.as_ref().map(|key| key.as_bytes().to_vec())).collect()
+                };
+                let tbl = self.table.meta().read().clone();
+                self.table
+                    .plan_indexes()
+                    .find(|index| index.read().id == self.index_id)
+                    .map(|index| PointIndexConsistency {
+                        tbl,
+                        idx: index.read().clone(),
+                        index_keys,
+                        report: report.clone(),
+                    })
+            }
+            _ => None,
+        };
         let mut source = if self.single_point {
             HandleSourceExec::new_point_mapped_with_context(
                 meta,
@@ -929,6 +1032,7 @@ impl UniqueIndexPointSourceExec {
                 self.decode_context.clone(),
             )
             .with_lock_before_read(self.lock.clone())
+            .with_index_consistency(index_consistency)
         } else {
             HandleSourceExec::new_mapped_with_context(
                 meta,
@@ -941,6 +1045,7 @@ impl UniqueIndexPointSourceExec {
             .with_partition_ids(routed_partitions)
             .with_lock_before_read(self.lock.clone())
             .with_lock_index_keys(index_keys, missing_index_keys)
+            .with_index_consistency(index_consistency)
         };
         source.open()?;
         self.source = Some(source);

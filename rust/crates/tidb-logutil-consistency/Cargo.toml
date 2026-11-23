@@ -1,0 +1,30 @@
+[package]
+name = "tidb-logutil-consistency"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/logutil/consistency: Go pkg/util/logutil/consistency (Rust rewrite), the data-inconsistency reporter."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tikv-client = { workspace = true }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
