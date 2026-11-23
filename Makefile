@@ -621,7 +621,7 @@ data_parsers: pkg/lightning/mydump/parser_generated.go
 
 .PHONY: build_dumpling
 build_dumpling: ## Build Dumpling data export tool
-	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) ./dumpling/cmd/dumpling
 
 .PHONY: dumpling_unit_test
 dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))

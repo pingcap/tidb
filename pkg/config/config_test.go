@@ -1540,6 +1540,48 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
+func TestMaintenanceModeConfig(t *testing.T) {
+	require.False(t, NewConfig().MaintenanceMode)
+	encoded, err := json.Marshal(NewConfig())
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"maintenance-mode":false`)
+
+	modes := []string{""}
+	if kerneltype.IsNextGen() {
+		modes = append(modes, "premium", "premium_reserved", "starter")
+	}
+	for _, mode := range modes {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mode=%s/enabled=%t", mode, enabled), func(t *testing.T) {
+				content := fmt.Sprintf("maintenance-mode = %t\n", enabled)
+				if mode != "" {
+					content += fmt.Sprintf("deploy-mode = %q\n", mode)
+				}
+				configFile := filepath.Join(t.TempDir(), "config.toml")
+				require.NoError(t, os.WriteFile(configFile, []byte(content), 0644))
+				conf := NewConfig()
+				if kerneltype.IsClassic() {
+					require.ErrorContains(t, conf.Load(configFile), "maintenance-mode can only be configured for nextgen TiDB")
+					conf = NewConfig()
+					conf.MaintenanceMode = enabled
+					if enabled {
+						require.ErrorContains(t, conf.Valid(), "maintenance-mode can only be configured for nextgen TiDB")
+					} else {
+						require.NoError(t, conf.Valid())
+					}
+					return
+				}
+				require.NoError(t, conf.Load(configFile))
+				require.NoError(t, conf.Valid())
+				require.Equal(t, enabled, conf.MaintenanceMode)
+				encoded, err := json.Marshal(conf)
+				require.NoError(t, err)
+				require.Contains(t, string(encoded), fmt.Sprintf(`"maintenance-mode":%t`, enabled))
+			})
+		}
+	}
+}
+
 func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)

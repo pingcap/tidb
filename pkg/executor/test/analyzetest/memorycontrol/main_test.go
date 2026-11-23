@@ -17,15 +17,11 @@ package memorycontrol
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
 	vardef.StatsCacheMemQuota.Store(1000000)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

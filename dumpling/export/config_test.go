@@ -611,8 +611,43 @@ func TestParseIncludeGeneratedColumns(t *testing.T) {
 	require.ErrorContains(t, err, "invalid --include-generated-columns value 'true'")
 }
 
+func TestAskPasswordFlags(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		args     []string
+		password string
+		wantAsk  bool
+		wantErr  string
+	}{
+		{name: "default"},
+		{name: "long flag", args: []string{"--ask-password"}, wantAsk: true},
+		{name: "short flag", args: []string{"-a"}, wantAsk: true},
+		{name: "disabled", args: []string{"--ask-password=false", "-p", "secret"}, password: "secret"},
+		{name: "existing password", args: []string{"-p", "secret"}, password: "secret"},
+		{name: "explicit empty password", args: []string{"--password="}},
+		{name: "conflicting password", args: []string{"--ask-password", "-p", "secret"}, wantErr: "--ask-password cannot be combined with --password"},
+		{name: "conflicting empty password", args: []string{"--password=", "--ask-password"}, wantErr: "--ask-password cannot be combined with --password"},
+		{name: "dump service", args: []string{"--dump-service=unix:///tmp/dumper.sock", "--ask-password"}, wantErr: "--ask-password cannot be combined with --dump-service"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			conf, err := parseConfigFromArgsForTestWithErr(t, testCase.args...)
+			if testCase.wantErr != "" {
+				require.EqualError(t, err, testCase.wantErr)
+				require.NotContains(t, err.Error(), "secret")
+				return
+			}
+			require.NoError(t, err)
+			askPassword, err := pflag.CommandLine.GetBool(flagAskPassword)
+			require.NoError(t, err)
+			require.Equal(t, testCase.wantAsk, askPassword)
+			require.Equal(t, testCase.password, conf.Password)
+		})
+	}
+}
+
 func TestConfigStringRedactsCredentials(t *testing.T) {
 	conf := defaultConfigForTest(t)
+	conf.Password = "SQL_PASSWORD_SECRET"
 	conf.OutputDirPath = "s3://bucket/path?access-key=AKID&secret_access_key=SKEY&session-token=TOKEN&region=us-east-1"
 	conf.S3.AccessKey = "AKID"
 	conf.S3.SecretAccessKey = "SKEY"
@@ -623,7 +658,7 @@ func TestConfigStringRedactsCredentials(t *testing.T) {
 	conf.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SASQUERY"
 
 	str := conf.String()
-	for _, secret := range []string{"AKID", "SKEY", "TOKEN", "AZKEY", "SAS", "ENC", "SASQUERY"} {
+	for _, secret := range []string{"SQL_PASSWORD_SECRET", "AKID", "SKEY", "TOKEN", "AZKEY", "SAS", "ENC", "SASQUERY"} {
 		require.NotContains(t, str, secret)
 	}
 	require.Contains(t, str, "region=us-east-1")

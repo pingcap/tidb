@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -237,12 +238,16 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 			types.NewIntDatum(nextRefreshSec1),
 			types.NewIntDatum(101),
 			types.NewIntDatum(123456789),
+			types.NewStringDatum(mvRefreshAlertLevelWarning),
+			types.NewTimeDatum(types.NewTime(types.FromGoTime(mvsUnixMilli(oracle.ExtractPhysical(123456789))), mysql.TypeDatetime, types.MaxFsp)),
 		}).ToRow(),
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
 			types.NewIntDatum(nextRefreshSec2),
 			types.NewIntDatum(102),
 			types.NewIntDatum(223456789),
+			types.NewDatum(nil),
+			types.NewDatum(nil),
 		}).ToRow(),
 		// Invalid row with non-positive ID should be ignored.
 		chunk.MutRowFromDatums([]types.Datum{
@@ -271,6 +276,8 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	require.Equal(t, expect101.UnixMilli(), m101.orderTs)
 	require.Equal(t, uint64(123456789), m101.lastSuccessReadTSO)
 	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(123456789)), m101.lastSuccessTime)
+	require.Equal(t, mvRefreshAlertLevelWarning, m101.persistedAlertLevel)
+	require.True(t, m101.persistedAlertSnapshotMatches)
 
 	m102 := got[int64(102)]
 	require.NotNil(t, m102)
@@ -279,6 +286,154 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	require.Equal(t, expect102.UnixMilli(), m102.orderTs)
 	require.Equal(t, uint64(223456789), m102.lastSuccessReadTSO)
 	require.Equal(t, mvsUnixMilli(oracle.ExtractPhysical(223456789)), m102.lastSuccessTime)
+	require.Empty(t, m102.persistedAlertLevel)
+	require.False(t, m102.persistedAlertSnapshotMatches)
+}
+
+func TestMVServiceRefreshAlertRestoresMissingPersistedState(t *testing.T) {
+	for _, alertLevel := range []string{mvRefreshAlertLevelWarning, mvRefreshAlertLevelOverdue} {
+		for _, missingState := range []string{"alert", "snapshot_time", "current_snapshot_time"} {
+			t.Run(alertLevel+"/"+missingState, func(t *testing.T) {
+				clock := installMockTimeForTest(t)
+				now := mvsNow()
+				lastSuccessTime := now.Add(-90 * time.Second)
+				if alertLevel == mvRefreshAlertLevelOverdue {
+					lastSuccessTime = now.Add(-400 * time.Second)
+				}
+				lastSuccessReadTSO := oracle.GoTimeToTS(lastSuccessTime)
+				nextRefresh := now.Add(24 * time.Hour)
+				withMockInfoSchema(t, &meta.TableInfo{
+					ID:   101,
+					Name: pmodel.NewCIStr("mv"),
+					MaterializedView: &meta.MaterializedViewInfo{
+						AlertWarningSec: 60,
+						AlertOverdueSec: 300,
+					},
+				})
+
+				se := newRecordingSessionContext()
+				setPersistedAlert := func(level any, snapshotTime time.Time) {
+					var snapshot any
+					if !snapshotTime.IsZero() {
+						snapshot = types.NewTime(types.FromGoTime(snapshotTime), mysql.TypeDatetime, types.MaxFsp)
+					}
+					se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
+						chunk.MutRowFromValues(nextRefresh.Unix(), int64(101), lastSuccessReadTSO, level, snapshot).ToRow(),
+					}
+				}
+				setPersistedAlert(alertLevel, lastSuccessTime)
+				svc := NewMVService(context.Background(), recordingSessionPool{se: se}, &serviceHelper{}, DefaultMVServiceConfig())
+				defer svc.closeTaskExecutors()
+				setRefreshAlertCleanupOwnerForTest(svc, 10)
+
+				expectedUpsert := func(at time.Time) string {
+					return buildUpsertMVRefreshAlertSQL(at, []refreshAlertTask{{
+						mviewID:         101,
+						schemaName:      "test",
+						mviewName:       "mv",
+						lastSuccessTime: lastSuccessTime,
+						alertLevel:      alertLevel,
+					}})
+				}
+				svc.maybeLogRefreshAlertTasks(now)
+				require.Contains(t, se.executedRestrictedSQL, expectedUpsert(now))
+
+				switch missingState {
+				case "alert":
+					// Both schedule changes complete between scans. The alert is cleared,
+					// but the successful snapshot and even the next schedule can be unchanged.
+					setPersistedAlert(nil, time.Time{})
+				case "snapshot_time":
+					setPersistedAlert(alertLevel, time.Time{})
+				case "current_snapshot_time":
+					setPersistedAlert(alertLevel, lastSuccessTime.Add(-time.Minute))
+				}
+				clock.Advance(mvRefreshAlertScanInterval)
+				se.executedRestrictedSQL = nil
+				svc.maybeLogRefreshAlertTasks(mvsNow())
+				require.Contains(t, se.executedRestrictedSQL, expectedUpsert(mvsNow()))
+
+				// Once restored, an unchanged alert should not be written again.
+				setPersistedAlert(alertLevel, lastSuccessTime)
+				clock.Advance(mvRefreshAlertScanInterval)
+				se.executedRestrictedSQL = nil
+				svc.maybeLogRefreshAlertTasks(mvsNow())
+				require.Equal(t, []string{
+					testSQLFetchMVRefresh,
+					buildClearDisabledMVRefreshAlertLevelSQL(),
+					buildCleanupStaleMVRefreshAlertSQL(),
+				}, se.executedRestrictedSQL)
+			})
+		}
+	}
+
+	t.Run("delayed_checker_overwrites_newer_snapshot", func(t *testing.T) {
+		clock := installMockTimeForTest(t)
+		now := mvsNow()
+		oldSnapshotTime := now.Add(-400 * time.Second)
+		newSnapshotTime := now.Add(-90 * time.Second)
+		withMockInfoSchema(t, &meta.TableInfo{
+			ID:   101,
+			Name: pmodel.NewCIStr("mv"),
+			MaterializedView: &meta.MaterializedViewInfo{
+				AlertWarningSec: 60,
+				AlertOverdueSec: 300,
+			},
+		})
+		se := newRecordingSessionContext()
+		setPersistedState := func(readTime time.Time, level any, snapshotTime time.Time) {
+			se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
+				chunk.MutRowFromValues(now.Add(24*time.Hour).Unix(), int64(101), oracle.GoTimeToTS(readTime), level,
+					types.NewTime(types.FromGoTime(snapshotTime), mysql.TypeDatetime, types.MaxFsp)).ToRow(),
+			}
+		}
+		newChecker := func(id string) *MVService {
+			svc := NewMVService(context.Background(), recordingSessionPool{se: se}, &serviceHelper{}, DefaultMVServiceConfig())
+			t.Cleanup(svc.closeTaskExecutors)
+			setThreeNodeRefreshAlertOwnersForTest(svc, id)
+			return svc
+		}
+		checkerA, checkerB := newChecker("nodeA"), newChecker("nodeB")
+
+		// Pause A after it reads the old snapshot and computes an overdue alert.
+		setPersistedState(oldSnapshotTime, nil, oldSnapshotTime)
+		require.NoError(t, checkerA.refreshAllMVRefreshAlertTasks())
+		oldStates, _, _ := checkerA.collectRefreshAlertStates(now)
+		require.Len(t, oldStates, 1)
+		require.Equal(t, mvRefreshAlertLevelOverdue, oldStates[0].alertLevel)
+
+		// A refresh completes, and B persists a warning for the newer snapshot first.
+		setPersistedState(newSnapshotTime, nil, oldSnapshotTime)
+		checkerB.maybeLogRefreshAlertTasks(now)
+		require.Contains(t, se.executedRestrictedSQL, buildUpsertMVRefreshAlertSQL(now, []refreshAlertTask{{
+			mviewID: 101, schemaName: "test", mviewName: "mv",
+			lastSuccessTime: newSnapshotTime, alertLevel: mvRefreshAlertLevelWarning,
+		}}))
+
+		// A's delayed write overwrites B's row, then A stops being a checker owner.
+		require.True(t, checkerA.syncRefreshAlertStates(now, oldStates))
+		setPersistedState(newSnapshotTime, mvRefreshAlertLevelOverdue, oldSnapshotTime)
+		setThreeNodeRefreshAlertOwnersForTest(checkerA, "nodeC")
+		require.False(t, checkerA.isRefreshAlertCheckerOwner())
+
+		// When B's snapshot also becomes overdue, its level matches the stored level,
+		// but it must still correct the stale snapshot time without relying on A.
+		clock.Advance(240 * time.Second)
+		se.executedRestrictedSQL = nil
+		checkerB.maybeLogRefreshAlertTasks(mvsNow())
+		require.Contains(t, se.executedRestrictedSQL, buildUpsertMVRefreshAlertSQL(mvsNow(), []refreshAlertTask{{
+			mviewID: 101, schemaName: "test", mviewName: "mv",
+			lastSuccessTime: newSnapshotTime, alertLevel: mvRefreshAlertLevelOverdue,
+		}}))
+
+		setPersistedState(newSnapshotTime, mvRefreshAlertLevelOverdue, newSnapshotTime)
+		clock.Advance(mvRefreshAlertScanInterval)
+		se.executedRestrictedSQL = nil
+		checkerB.maybeLogRefreshAlertTasks(mvsNow())
+		for _, sql := range se.executedRestrictedSQL {
+			require.NotContains(t, sql, "INSERT INTO mysql.tidb_mview_refresh_alert")
+		}
+	})
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {

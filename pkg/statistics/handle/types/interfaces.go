@@ -191,10 +191,9 @@ type CacheUpdate struct {
 
 // UpdateOptions contains configuration for cache updates
 type UpdateOptions struct {
-	// SkipMoveForward controls whether to skip updating the cache's max version number.
-	// When true, the cache max version number stays unchanged even after updates.
-	// This improves performance when analyzing a small number of tables by avoiding
-	// unnecessary full cache reloads that would normally be triggered by version changes.
+	// SkipMoveForward keeps the cache's max version unchanged after this update. Set it when the
+	// update reads only some tables: a larger max version can make the next full update skip
+	// newer stats_meta rows of the other tables.
 	SkipMoveForward bool
 }
 
@@ -206,7 +205,7 @@ type StatsCache interface {
 	// Clear clears this cache.
 	Clear()
 
-	// Update reads stats meta from store and updates the stats map.
+	// Update reads stats meta from store and updates the stats cache.
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 

@@ -21,6 +21,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1372,10 +1373,11 @@ func GetRecoverSnapshotTS(job *model.Job) uint64 {
 	return job.StartTS
 }
 
-// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
-func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs.
+// extraJobTypes lets callers inspect additional candidates to explicitly reject unsupported objects.
+func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error), extraJobTypes ...model.ActionType) (bool, error) {
 	for _, job := range jobs {
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable && !slices.Contains(extraJobTypes, job.Type) {
 			continue
 		}
 

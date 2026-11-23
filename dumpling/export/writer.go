@@ -262,9 +262,11 @@ func (w *Writer) tryToWriteTableData(tctx, readCtx *tcontext.Context, cancel fun
 	}()
 	ir = reader
 
-	var wo *storeapi.WriterOption
+	// DirectIO is honored only by local storage, including through compression.
+	wo := &storeapi.WriterOption{DirectIO: true}
 	if format == FileFormatCSV || format == FileFormatSQLText {
-		wo = &storeapi.WriterOption{Concurrency: uploadConcurrency, PartSize: uploadPartSize}
+		wo.Concurrency = uploadConcurrency
+		wo.PartSize = uploadPartSize
 	}
 
 	somethingIsWritten := false

@@ -270,6 +270,11 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
 		return metaData, nil
 	}
+	if len(metaData) < CrypterIvLen {
+		return nil, errors.Errorf(
+			"encrypted backupmeta is too short: got %d bytes, need at least %d bytes for IV",
+			len(metaData), CrypterIvLen)
+	}
 	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
 	iv := metaData[:CrypterIvLen]
 	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)

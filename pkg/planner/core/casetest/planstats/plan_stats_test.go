@@ -492,10 +492,6 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 }
 
 func TestPlanStatsStatusRecord(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut

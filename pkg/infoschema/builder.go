@@ -115,6 +115,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return []int64{-1}, nil
 	case model.ActionRefreshMeta:
 		return applyRefreshMeta(b, m, diff)
+	case model.ActionModifySchemaReadOnly:
+		return nil, applyModifySchemaReadOnly(b, m, diff)
 	default:
 		return applyDefaultAction(b, m, diff)
 	}
@@ -250,7 +252,13 @@ func applyRefreshMeta(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int6
 
 			needsCharsetUpdate := currentSchema.Charset != dbInfo.Charset || currentSchema.Collate != dbInfo.Collate
 			needsPlacementUpdate := !equalPlacementPolicy(currentSchema.PlacementPolicyRef, dbInfo.PlacementPolicyRef)
+			needsReadOnlyUpdate := currentSchema.ReadOnly != dbInfo.ReadOnly
 
+			if needsReadOnlyUpdate {
+				if err := applyModifySchemaReadOnly(b, m, diff); err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
 			if needsCharsetUpdate {
 				charsetDiff := &model.SchemaDiff{
 					Version:       diff.Version,
@@ -894,6 +902,25 @@ func (b *Builder) applyRecoverSchema(m meta.Reader, diff *model.SchemaDiff) ([]i
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
 	})
 	return applyCreateTables(b, m, diff)
+}
+
+func (b *Builder) applyModifySchemaReadOnly(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	if _, ok := b.infoSchema.SchemaByID(diff.SchemaID); !ok {
+		return ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+	}
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo.ReadOnly = di.ReadOnly
+	return nil
 }
 
 // copySortedTables copies sortedTables for old table and new table for later modification.
