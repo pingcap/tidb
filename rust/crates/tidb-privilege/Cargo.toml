@@ -28,6 +28,10 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64.workspace = true
+openssl = "0.10.81"
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }

@@ -122,6 +122,7 @@ const USER_COLUMNS: &[&str] = &[
     "password_reuse_history",
     "password_reuse_time",
     "user_attributes",
+    "token_issuer",
     "select_priv",
     "insert_priv",
     "update_priv",
@@ -362,6 +363,11 @@ fn load_tables(
                     detail,
                 })?;
         loaded.users.push(LoadedUser {
+            token_issuer: if row.has_column("token_issuer") {
+                row.text("token_issuer")?.unwrap_or_default()
+            } else {
+                String::new()
+            },
             host: row.text("host")?.unwrap_or_default(),
             user: row.text("user")?.unwrap_or_default(),
             authentication_string: row.text("authentication_string")?.unwrap_or_default(),

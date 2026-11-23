@@ -583,6 +583,7 @@ mod tests {
             password_reuse_history: None,
             password_reuse_time: None,
             user_attributes: None,
+            token_issuer: String::new(),
             password_locking: None,
             privileges: privs,
         }

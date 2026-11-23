@@ -69,6 +69,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 mod export;
+pub mod tidb_auth_token;
 pub mod privileges_errors;
 pub mod account_policy;
 pub mod load;
@@ -165,6 +166,9 @@ struct UserRecord {
     /// Stored UTC TIMESTAMP; the login epoch is derived from this one value.
     /// NULL is retained instead of fabricating a password change on reload.
     password_last_changed: Option<tidb_datatype::Time>,
+    /// Go `AuthTokenIssuer`: `mysql.user.Token_issuer`, the `iss` a
+    /// `tidb_auth_token` login's JWT must carry.
+    auth_token_issuer: String,
 }
 
 /// One Go `mysql.Columns_priv` row: the privileges an account holds on a
@@ -299,6 +303,7 @@ impl PrivilegeRegistry {
                         password_lifetime: None,
                         max_user_connections: 0,
                         password_last_changed: Some(password_change_timestamp(bootstrapped_at)),
+                        auth_token_issuer: String::new(),
                     },
                 )
             })

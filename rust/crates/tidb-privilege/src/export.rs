@@ -60,6 +60,8 @@ pub struct ExportedUser {
     pub password_reuse_history: Option<i64>,
     /// Nullable time limit in days.
     pub password_reuse_time: Option<i64>,
+    /// `Token_issuer`.
+    pub token_issuer: String,
     /// Complete durable attributes, including current locking policy.
     pub user_attributes: Option<String>,
     /// Printed names of the global privileges this account holds.

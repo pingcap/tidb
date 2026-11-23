@@ -577,6 +577,8 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     /// This server's `SHOW STATUS` provider, unregistered when it drops.
     _statistics: crate::stat::RegisteredStatistics,
     _tls_rotation: Option<TlsRotation>,
+    /// Go `Server.authTokenCancelFunc`: stops the JWKS reload on drop.
+    _auth_token_jwks: Option<AuthTokenJwksReload>,
     /// The configured `Instance.MaxConnections` at startup, which bounds the
     /// warm pool; demand past it spawns one dedicated thread per connection.
     /// The limit itself is checked when a connection opens its session
@@ -704,6 +706,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             },
         ));
         let tls_rotation = TlsRotation::start(Arc::clone(&tls));
+        let auth_token_jwks = AuthTokenJwksReload::start(&tidb_config::config_tree::config::get_global_config().security);
         let session_manager = factory.session_manager();
         let server_memory_limit = session_manager
             .as_ref()
@@ -748,6 +751,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tls,
             _statistics: statistics,
             _tls_rotation: tls_rotation,
+            _auth_token_jwks: auth_token_jwks,
             worker_count: config.max_connections,
             shutdown,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
@@ -2198,5 +2202,51 @@ mod tests {
         assert_eq!(server.read_timeout().unwrap(), None);
         assert_eq!(server.write_timeout().unwrap(), None);
         drop(client);
+    }
+}
+
+/// Go `NewServer`: "Automatically reload JWKS for tidb_auth_token" every
+/// `security.auth-token-refresh-interval` (Go's default when it does not
+/// parse); dropping it is Go's `authTokenCancelFunc`.
+struct AuthTokenJwksReload {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AuthTokenJwksReload {
+    fn start(security: &tidb_config::config_tree::big_sections::Security) -> Option<Self> {
+        if security.auth_token_jwks.is_empty() {
+            return None;
+        }
+        let interval = match tidb_config_configtypes::parse_duration(&security.auth_token_refresh_interval) {
+            Ok(nanos) => std::time::Duration::from_nanos(nanos.max(0) as u64),
+            Err(_) => {
+                tidb_logutil::bg_logger().error(
+                    "Fail to parse security.auth-token-refresh-interval. Use default value",
+                    &[tidb_log::Field::new(
+                        "security.auth-token-refresh-interval",
+                        tidb_log::Value::Str(security.auth_token_refresh_interval.clone()),
+                    )],
+                );
+                // Go `config.DefAuthTokenRefreshInterval`.
+                std::time::Duration::from_secs(3600)
+            }
+        };
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if tidb_privilege::tidb_auth_token::GLOBAL_JWKS
+            .load_jwks_4_auth_token(Some((interval, Arc::clone(&stop))), &security.auth_token_jwks)
+            .is_err()
+        {
+            tidb_logutil::bg_logger().error(
+                "Fail to load JWKS from the path",
+                &[tidb_log::Field::new("jwks", tidb_log::Value::Str(security.auth_token_jwks.clone()))],
+            );
+        }
+        Some(Self { stop })
+    }
+}
+
+impl Drop for AuthTokenJwksReload {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
     }
 }

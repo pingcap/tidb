@@ -516,6 +516,71 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                         .to_owned(),
                 );
             }
+            // Go `authTokenOptionHandler`: whether the account's final
+            // plugin is `tidb_auth_token`, and whether it just became one.
+            #[derive(PartialEq)]
+            enum AuthTokenOptionHandler {
+                NoNeed,
+                Optional,
+                Require,
+            }
+            let mut auth_token_option_handler = if effective(&current_plugin) == tidb_mysql::consts::AuthTiDBAuthToken {
+                AuthTokenOptionHandler::Optional
+            } else {
+                AuthTokenOptionHandler::NoNeed
+            };
+            if let Some(tidb_ast::CreateUserAuth::With { plugin, .. }) = spec.auth.as_ref() {
+                let plugin = plugin.as_str();
+                if [
+                    tidb_mysql::consts::AuthNativePassword,
+                    tidb_mysql::consts::AuthCachingSha2Password,
+                    tidb_mysql::consts::AuthTiDBSM3Password,
+                    tidb_mysql::consts::AuthSocket,
+                    tidb_mysql::consts::AuthLDAPSimple,
+                    tidb_mysql::consts::AuthLDAPSASL,
+                    "",
+                ]
+                .contains(&plugin)
+                {
+                    auth_token_option_handler = AuthTokenOptionHandler::NoNeed;
+                } else if plugin == tidb_mysql::consts::AuthTiDBAuthToken
+                    && auth_token_option_handler != AuthTokenOptionHandler::Optional
+                {
+                    auth_token_option_handler = AuthTokenOptionHandler::Require;
+                }
+            }
+            let auth_token_options: Vec<&str> = alter
+                .tls_options
+                .iter()
+                .filter_map(|option| match option {
+                    tidb_ast::AlterUserTlsOption::TokenIssuer(value) => Some(value.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let warn = |this: &mut Self, message: &str| {
+                this.append_sql_warning(tidb_context::SqlWarn::with_code(
+                    tidb_context::WarningLevel::Warning,
+                    1105,
+                    message.to_owned(),
+                ));
+            };
+            match auth_token_option_handler {
+                AuthTokenOptionHandler::NoNeed => {
+                    if !auth_token_options.is_empty() {
+                        warn(self, "TOKEN_ISSUER is not needed for the auth plugin");
+                    }
+                }
+                AuthTokenOptionHandler::Optional | AuthTokenOptionHandler::Require => {
+                    if auth_token_options.is_empty() {
+                        if auth_token_option_handler == AuthTokenOptionHandler::Require {
+                            warn(self, "Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER");
+                        }
+                    }
+                    for value in &auth_token_options {
+                        mirror_fields.push(format!("token_issuer={}", super::account_tables::sql_str(value)));
+                    }
+                }
+            }
             self.mirror_global_priv(
                 &user,
                 &host,

@@ -4349,6 +4349,8 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
 
 #[cfg(test)]
 mod tests_extension_auth;
+#[cfg(test)]
+mod tests_auth_token;
 
 mod extension;
 

@@ -218,6 +218,7 @@ fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
         user.password_locking,
     );
     registry.set_max_user_connections(&user.user, &user.host, user.max_user_connections);
+    registry.restore_auth_token_issuer(&user.user, &user.host, &user.token_issuer);
     registry.restore_password_expiry(
         &user.user,
         &user.host,
@@ -309,6 +310,7 @@ pub fn cluster_image_from_registry(registry: &PrivilegeRegistry) -> ClusterPrivi
                     .map(tidb_datatype::Time::from_go_raw_like_go),
                 password_reuse_history: user.password_reuse_history,
                 password_reuse_time: user.password_reuse_time,
+                token_issuer: user.token_issuer,
                 password_locking: crate::account_policy::PasswordLocking::from_attributes(
                     user.user_attributes.as_deref(),
                 )

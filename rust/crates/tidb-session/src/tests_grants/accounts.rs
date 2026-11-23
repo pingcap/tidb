@@ -541,7 +541,8 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
         "SAN 'EMAIL:x'",
         "SAN 'missing-colon'",
         "SUBJECT '/CN=a' AND SUBJECT '/CN=b'",
-        "TOKEN_ISSUER 'issuer'",
+        // Go: `Duplicate require  clause` (no type name for TOKEN_ISSUER).
+        "TOKEN_ISSUER 'a' AND TOKEN_ISSUER 'b'",
     ] {
         assert!(
             session
@@ -551,6 +552,60 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
         );
         assert!(session.run("SHOW CREATE USER 'invalid'@'%'").is_err());
     }
+}
+
+/// Go `executeCreateUser` / `executeAlterUser`'s TOKEN_ISSUER: recorded in
+/// `mysql.user.Token_issuer` for a `tidb_auth_token` account (shown as
+/// `token_issuer <value>`), a warning otherwise. Captured from a Go server:
+///
+/// ```text
+/// CREATE USER 'invalid'@'%' REQUIRE TOKEN_ISSUER 'issuer'
+///   Warning 1105 TOKEN_ISSUER is not needed for 'mysql_native_password' user
+/// CREATE USER 'tok'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE TOKEN_ISSUER 'iss1' ATTRIBUTE '{"email": "a@b.c"}'
+/// CREATE USER 'tok2'@'%' IDENTIFIED WITH 'tidb_auth_token'
+///   Warning 1105 TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it
+/// ALTER USER 'tok2'@'%' REQUIRE TOKEN_ISSUER 'iss2'
+/// ALTER USER 'invalid'@'%' REQUIRE TOKEN_ISSUER 'x'
+///   Warning 1105 TOKEN_ISSUER is not needed for the auth plugin
+/// ALTER USER 'invalid'@'%' IDENTIFIED WITH 'tidb_auth_token'
+///   Warning 1105 Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER
+/// ```
+#[test]
+fn token_issuer_is_recorded_for_token_accounts_like_go() {
+    let mut session = session_with_privileges();
+    let shown = |session: &mut Session, account: &str| {
+        row_text(session.run(&format!("SHOW CREATE USER '{account}'@'%'")))[0][0].clone()
+    };
+    let warnings = |session: &Session| -> Vec<(u16, String)> { warnings_of(session) };
+    session.run("CREATE USER 'invalid'@'%' REQUIRE TOKEN_ISSUER 'issuer'").unwrap();
+    assert_eq!(warnings(&session), [(1105, "TOKEN_ISSUER is not needed for 'mysql_native_password' user".to_owned())]);
+    assert_eq!(
+        shown(&mut session, "invalid"),
+        "CREATE USER 'invalid'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+    );
+    session
+        .run(r#"CREATE USER 'tok'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE TOKEN_ISSUER 'iss1' ATTRIBUTE '{"email": "a@b.c"}'"#)
+        .unwrap();
+    assert!(warnings(&session).is_empty());
+    assert_eq!(
+        shown(&mut session, "tok"),
+        r#"CREATE USER 'tok'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss1 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"email": "a@b.c"}'"#
+    );
+    session.run("CREATE USER 'tok2'@'%' IDENTIFIED WITH 'tidb_auth_token'").unwrap();
+    assert_eq!(
+        warnings(&session),
+        [(1105, "TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it".to_owned())]
+    );
+    session.run("ALTER USER 'tok2'@'%' REQUIRE TOKEN_ISSUER 'iss2'").unwrap();
+    assert!(warnings(&session).is_empty());
+    assert_eq!(
+        shown(&mut session, "tok2"),
+        "CREATE USER 'tok2'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss2 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+    );
+    session.run("ALTER USER 'invalid'@'%' REQUIRE TOKEN_ISSUER 'x'").unwrap();
+    assert_eq!(warnings(&session), [(1105, "TOKEN_ISSUER is not needed for the auth plugin".to_owned())]);
+    session.run("ALTER USER 'invalid'@'%' IDENTIFIED WITH 'tidb_auth_token'").unwrap();
+    assert_eq!(warnings(&session), [(1105, "Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER".to_owned())]);
 }
 
 /// Go `executeCreateUser`/`executeAlterUser`: the anonymous account's password

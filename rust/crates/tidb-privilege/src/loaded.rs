@@ -44,6 +44,8 @@ pub struct LoadedUser {
     pub password_locking: Option<crate::account_policy::PasswordLocking>,
     /// Original user attributes, including locking state and unrelated metadata.
     pub user_attributes: Option<String>,
+    /// `Token_issuer` (Go `AuthTokenIssuer`).
+    pub token_issuer: String,
     /// Printed names of the global privileges whose column reads `Y`.
     pub privileges: Vec<&'static str>,
 }

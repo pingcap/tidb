@@ -709,9 +709,34 @@ impl ConfiguredUserStore {
                 return Err(AuthenticationFailure::AccessDenied);
             }
         } else if plugin == AuthTiDBAuthToken {
-            // Go verifies a JWT against `GlobalJWKS`; this server has none
-            // configured, which Go answers with access denied.
-            return Err(AuthenticationFailure::AccessDenied);
+            if response.is_empty() {
+                tidb_logutil::bg_logger().warn("empty authentication", &[]);
+                return Err(AuthenticationFailure::AccessDenied);
+            }
+            let token_string = String::from_utf8_lossy(&response[..response.len() - 1]);
+            let claims = match tidb_privilege::tidb_auth_token::GLOBAL_JWKS.check_sig_with_retry(&token_string, 1) {
+                Ok(claims) => claims,
+                Err(error) => {
+                    tidb_logutil::bg_logger()
+                        .warn("verify JWT failed", &[tidb_log::Field::new("error", tidb_log::Value::Str(error))]);
+                    return Err(AuthenticationFailure::AccessDenied);
+                }
+            };
+            let (auth_token_issuer, email) = self.accounts.auth_token_record(user, host).unwrap_or_default();
+            let record = tidb_privilege::tidb_auth_token::AuthTokenRecord {
+                user,
+                email: &email,
+                auth_token_issuer: &auth_token_issuer,
+            };
+            if let Err(error) = tidb_privilege::tidb_auth_token::check_auth_token_claims(
+                &claims,
+                &record,
+                tidb_privilege::tidb_auth_token::DEFAULT_TOKEN_LIFE,
+            ) {
+                tidb_logutil::bg_logger()
+                    .warn("check claims failed", &[tidb_log::Field::new("error", tidb_log::Value::Str(error))]);
+                return Err(AuthenticationFailure::AccessDenied);
+            }
         } else if plugin == AuthLDAPSASL {
             let Some(auth_conn) = auth_conn else {
                 return Err(AuthenticationFailure::AccessDenied);

@@ -416,6 +416,7 @@ impl PrivilegeRegistry {
                 password_lifetime: None,
                 max_user_connections: 0,
                 password_last_changed: Some(password_change_timestamp(created_at)),
+                auth_token_issuer: String::new(),
             },
         );
         true
@@ -474,6 +475,28 @@ impl PrivilegeRegistry {
                     });
                 (record.auth_string.clone(), record.plugin.clone(), secondary)
             })
+    }
+
+    /// Go `UserRecord.AuthTokenIssuer`, restored from `mysql.user.Token_issuer`.
+    pub(crate) fn restore_auth_token_issuer(&self, user: &str, host: &str, issuer: &str) {
+        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            record.auth_token_issuer = issuer.to_owned();
+        }
+    }
+
+    /// What Go's `checkAuthTokenClaims` reads of the account: its
+    /// `AuthTokenIssuer` and its `Email` (`User_attributes->>"$.metadata.email"`).
+    #[must_use]
+    pub fn auth_token_record(&self, user: &str, host: &str) -> Option<(String, String)> {
+        self.lock().get(&(user.to_owned(), host.to_owned())).map(|record| {
+            let email = record
+                .user_attributes
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|value| value.pointer("/metadata/email").and_then(serde_json::Value::as_str).map(str::to_owned))
+                .unwrap_or_default();
+            (record.auth_token_issuer.clone(), email)
+        })
     }
 
     /// The account's configured authentication plugin, or `None` when no
@@ -1943,6 +1966,7 @@ impl PrivilegeRegistry {
                     .map(tidb_datatype::Time::go_raw),
                 password_reuse_history: record.password_reuse_history,
                 password_reuse_time: record.password_reuse_time,
+                token_issuer: record.auth_token_issuer.clone(),
                 user_attributes: record.export_attributes(),
                 privileges: printed_privileges(record.privs),
             })

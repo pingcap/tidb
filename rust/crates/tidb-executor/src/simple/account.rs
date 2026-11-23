@@ -330,14 +330,15 @@ pub fn tls_policy_of(
             T::Issuer(v) => ("ISSUER", Some("x509_issuer"), Some(v)),
             T::Subject(v) => ("SUBJECT", Some("x509_subject"), Some(v)),
             T::San(v) => ("SAN", Some("san"), Some(v)),
-            T::TokenIssuer(_) => {
-                return Err(DriverError::unsupported(
-                    "REQUIRE TOKEN_ISSUER needs token authentication",
-                ))
-            }
+            // Go's `typeName` stays empty for a duplicate TOKEN_ISSUER.
+            T::TokenIssuer(_) => ("", None, None),
         };
         if !seen.insert(kind) {
             return Err(invalid(format!("Duplicate require {kind} clause")));
+        }
+        // Go `case ast.TokenIssuer:` sets no TLS property.
+        if matches!(option, T::TokenIssuer(_)) {
+            continue;
         }
         let policy = match option {
             T::None => 0,
@@ -623,6 +624,14 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         // Check `CREATE USER` privilege.
         self.require_create_user_privilege(is_create_role)?;
         let priv_data = tls_policy_of(tls_options)?;
+        let token_issuer = tls_options
+            .iter()
+            .rev()
+            .find_map(|option| match option {
+                tidb_ast::AlterUserTlsOption::TokenIssuer(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .unwrap_or_default();
         // Go `loadResourceOptions`.
         let max_user_connections = max_user_connections_option(resource_options).unwrap_or(0);
         let mut pl_options = PasswordOrLockOptions::load(password_options)?.create_user_info();
@@ -720,6 +729,21 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 self.validate_password_if_enabled(password)?;
             }
             let (pwd, auth_plugin) = Self::resolve_auth_string_and_plugin(*auth, &default_auth_plugin)?;
+            let mut record_token_issuer = token_issuer;
+            if !record_token_issuer.is_empty() && auth_plugin != tidb_mysql::consts::AuthTiDBAuthToken {
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                    tidb_context::WarningLevel::Warning,
+                    1105,
+                    format!("TOKEN_ISSUER is not needed for '{auth_plugin}' user"),
+                ));
+                record_token_issuer = "";
+            } else if record_token_issuer.is_empty() && auth_plugin == tidb_mysql::consts::AuthTiDBAuthToken {
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                    tidb_context::WarningLevel::Warning,
+                    1105,
+                    "TOKEN_ISSUER is needed for 'tidb_auth_token' user, please use 'alter user' to declare it".to_owned(),
+                ));
+            }
             let host_name = host.to_lowercase();
             let reuse_time = (pl_options.password_reuse_interval_change
                 && pl_options.password_reuse_interval != NOT_SPECIFIED)
@@ -727,13 +751,14 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             let history = (pl_options.password_history_change && pl_options.password_history != NOT_SPECIFIED)
                 .then_some(pl_options.password_history);
             values.push(format!(
-                "({}, {}, {}, {}, {}, {}, '', {}, {}, {}, {}, {})",
+                "({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 sql_str(&host_name),
                 sql_str(user),
                 sql_str(&pwd),
                 sql_str(&auth_plugin),
                 sql_str(&user_attributes_str),
                 sql_str(pl_options.lock_account),
+                sql_str(record_token_issuer),
                 sql_str(pl_options.password_expired),
                 null_or(pl_options.password_lifetime),
                 max_user_connections,

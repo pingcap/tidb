@@ -9139,7 +9139,9 @@ dependencies = [
 name = "tidb-privilege"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "openssl",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -9152,6 +9154,8 @@ dependencies = [
  "tidb-hack",
  "tidb-infoschema",
  "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-meta",
  "tidb-model",
  "tidb-mysql",
