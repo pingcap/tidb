@@ -2447,7 +2447,7 @@ pub(crate) struct PartialIndexWorker {
     /// Go `getRetTpsForIndexScan`.
     pub ret_types: Vec<FieldType>,
     /// The leading by-item columns of an index row.
-    pub by_items: Vec<tidb_executor_sortexec::SortByItem>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `partialWorkerKVRanges[workID]`: each request's physical table and
     /// key ranges.
     pub kv_ranges: Vec<(i64, Vec<tidb_txnkv::KeyRange>)>,

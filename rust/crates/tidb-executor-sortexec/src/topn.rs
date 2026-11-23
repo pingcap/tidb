@@ -84,7 +84,8 @@ use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 use tidb_variable::mem_quota::StatementMemory;
-use crate::{less_row, build_key_columns, SortByItem};
+use crate::{less_row, build_key_columns};
+use tidb_expression_aggregation::ByItems;
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
@@ -100,7 +101,7 @@ pub struct TopNExec<C: Columns> {
     output_columns: Option<Vec<usize>>,
     meta: ExecutorMeta,
     /// Go `ByItems`.
-    by_items: Vec<SortByItem>,
+    by_items: Vec<ByItems>,
     child: Box<dyn Executor>,
     /// Go `ColumnIdxsUsedByChild`: inline projection applied only while
     /// emitting retained child rows, after all ordering comparisons finish.
@@ -338,7 +339,7 @@ where
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
-        by_items: Vec<SortByItem>,
+        by_items: Vec<ByItems>,
         child: Box<dyn Executor>,
         ctx: C,
         offset: u64,
@@ -1284,10 +1285,10 @@ mod tests {
         })
     }
 
-    pub fn by(items: &[(usize, bool)]) -> Vec<SortByItem> {
+    pub fn by(items: &[(usize, bool)]) -> Vec<ByItems> {
         items
             .iter()
-            .map(|&(idx, desc)| SortByItem {
+            .map(|&(idx, desc)| ByItems {
                 expr: col_expr(idx),
                 desc,
             })
@@ -1427,13 +1428,13 @@ mod tests {
         Schema::new(columns)
     }
 
-    fn by_typed(items: &[(usize, bool, FieldType)]) -> Vec<SortByItem> {
+    fn by_typed(items: &[(usize, bool, FieldType)]) -> Vec<ByItems> {
         items
             .iter()
             .map(|(idx, desc, field_type)| {
                 let mut column = Column::new(*idx as i64 + 1, field_type.clone());
                 column.index = *idx as i64;
-                SortByItem {
+                ByItems {
                     expr: Expression::Column(column),
                     desc: *desc,
                 }
@@ -1851,7 +1852,7 @@ mod tests {
     fn topn_rejects_non_column_by_item_like_go() {
         let mut exec = TopNExec::new(
             ExecutorMeta::new(schema_of(1), 1, 4, 32),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: scalar_plus_col_expr(0),
                 desc: false,
             }],

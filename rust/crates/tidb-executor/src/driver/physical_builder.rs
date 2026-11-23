@@ -50,7 +50,8 @@ use crate::projection::ProjectionExec;
 use tidb_distsql::remote_scan::CopPlanId;
 use crate::select_lock::{SelectLockExec, SelectedRecordKey};
 use crate::selection::SelectionExec;
-use tidb_executor_sortexec::{SortByItem, SortExec};
+use tidb_executor_sortexec::SortExec;
+use tidb_expression_aggregation::ByItems;
 use tidb_executor_internal_exec::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
 use crate::table_sample::{EmptySampler, SampleOutputColumn, TableRegionSampler, TableSampleExecutor};
@@ -4870,7 +4871,7 @@ fn build_partial_index_worker(
         key.index = by_items.len() as i64;
         key.ret_type = Some(field_type.clone());
         ret_types.push(field_type);
-        by_items.push(SortByItem { expr: Expression::Column(key), desc: item.desc });
+        by_items.push(ByItems { expr: Expression::Column(key), desc: item.desc });
     }
     let index_columns = index.columns.len();
     let handle_len = handle_cols.num_cols();
@@ -6411,7 +6412,7 @@ fn build_with_state(
                 .by_items
                 .iter()
                 .map(|item| {
-                    Ok::<SortByItem, DriverError>(SortByItem {
+                    Ok::<ByItems, DriverError>(ByItems {
                         expr: {
                             let mut expr = item.expr.clone();
                             super::planner_bridge::materialize_physical_expression(&mut expr);
@@ -6441,7 +6442,7 @@ fn build_with_state(
                 .map(|item| {
                     let mut expr = item.expr.clone();
                     super::planner_bridge::materialize_physical_expression(&mut expr);
-                    Ok::<_, DriverError>(SortByItem {
+                    Ok::<_, DriverError>(ByItems {
                         expr,
                         desc: item.desc,
                     })

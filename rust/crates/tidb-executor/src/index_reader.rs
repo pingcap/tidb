@@ -92,7 +92,7 @@ pub struct IndexReaderExecutor {
     keep_order: bool,
     desc: bool,
     /// Go `byItems`.
-    by_items: Vec<tidb_executor_sortexec::SortByItem>,
+    by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `startTS`.
     start_ts: u64,
     /// Go `dagReq.OutputOffsets`: `v.OutputColumns`' offsets in the index
@@ -214,7 +214,7 @@ impl IndexReaderExecutor {
                     .map_err(|_| ExecError::Internal("an index reader's order key is absent from its output".into()))?;
                 let mut column = output.columns[position].clone();
                 column.index = i64::try_from(position).unwrap_or(i64::MAX);
-                Ok(tidb_executor_sortexec::SortByItem {
+                Ok(tidb_expression_aggregation::ByItems {
                     expr: tidb_expr::expression::Expression::Column(column),
                     desc: item.desc,
                 })

@@ -44,7 +44,7 @@ use crate::limit::LimitExec;
 use tidb_variable::mem_quota::StatementMemory;
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
-use tidb_executor_sortexec::SortByItem;
+use tidb_expression_aggregation::ByItems;
 
 use tidb_executor_sortexec::topn::TopNExec;
 
@@ -72,7 +72,7 @@ fn source_meta(init_cap: usize) -> ExecutorMeta {
     ExecutorMeta::new(source_schema(), 1, init_cap, MAX_CHUNK_SIZE)
 }
 
-fn by_items_over(column_offsets: &[usize]) -> Vec<SortByItem> {
+fn by_items_over(column_offsets: &[usize]) -> Vec<ByItems> {
     column_offsets
         .iter()
         .map(|&offset| {
@@ -81,7 +81,7 @@ fn by_items_over(column_offsets: &[usize]) -> Vec<SortByItem> {
                 if offset == 0 { double() } else { long() },
             );
             column.index = offset as i64;
-            SortByItem {
+            ByItems {
                 expr: Expression::Column(column),
                 desc: false,
             }

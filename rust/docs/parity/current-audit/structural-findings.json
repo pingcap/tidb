@@ -19,8 +19,8 @@
       "id": "T05",
       "group": "Structure: Go's shape before more ports",
       "status": "open",
-      "finding": "Go `pkg/planner/optimize.go` (`Optimize`, `optimizeNoCache`, `optimize`, `buildLogicalPlan`, `buildAndOptimizeLogicalPlanRound` and the alternative-round predicates, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx`) has no planner-side owner: it lives in the executor.",
-      "rust_evidence": "`tidb-executor/src/driver/planner_bridge.rs` (`planner_optimized_query_with_allocators`, `build_logical_plan_and_do_optimize`, `build_and_optimize_logical_plan_round`), `tidb-executor/src/explain.rs`.",
+      "finding": "Go `pkg/planner/optimize.go`'s statement entry (`Optimize`, `optimizeNoCache`: binding match, fast plan, plan cache) and `buildLogicalPlan`'s `PlanBuilder` setup, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` live in the executor. (`optimize`'s rounds, `buildAndOptimizeLogicalPlanRound` and the alternative-round predicates are `tidb-planner/src/planner_optimize.rs`.)",
+      "rust_evidence": "`tidb-executor/src/driver.rs`, `driver/dml.rs` (statement entry), `driver/planner_bridge.rs` (`QueryBuilderParts::build`, `planner_built_query_with_allocators`), `tidb-executor/src/explain.rs` (`query_plan_cost`, `gen_brief_plan`, `calculate_plan_digest`), `foreign_key.rs`.",
       "go_owner": "`pkg/planner/optimize.go`"
     },
     {
@@ -35,9 +35,9 @@
       "id": "T07",
       "group": "Planner and bindings",
       "status": "open",
-      "finding": "Planner code owned by the executor: `pb_to_plan.go` (`PBPlanBuilder`), the plan-cache utilities and cacheable checker, and `rule_collect_plan_stats.go`'s statistics loading live in `tidb-executor`.",
-      "rust_evidence": "`tidb-executor/src/coprocessor.rs`, `tidb-executor/src/driver/access.rs`, `tidb-executor/src/compiler/plan_cacheable_checker.rs`, `compiler/non_prepared_plan_cache.rs`, `driver/catalog_ctx.rs`.",
-      "go_owner": "`pkg/planner/core/pb_to_plan.go`, `plan_cache_utils.go`, `plan_cacheable_checker.go`, `rule/rule_collect_plan_stats.go`"
+      "finding": "Planner code owned by the executor: the prepared and non-prepared plan cache's statement and key (`plan_cache.go` / `plan_cache_utils.go`: `PlanCacheStmt`, `NewPlanCacheKey`, `GeneratePlanCacheStmtWithAST`) and `rule_collect_plan_stats.go`'s statistics loading (`RequestLoadStats` / `SyncWaitStatsLoad`) live in `tidb-executor`. (`pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk and `GetParamSQLFromAST` are `tidb-planner/src/plan_cacheable_checker.rs`.)",
+      "rust_evidence": "`tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`, `PlanCacheStmtInfo`, `PreparedPlanCacheEnvironment`), `driver/plan_cache.rs`, `driver/catalog_ctx.rs` (`CatalogStatisticsLoad`).",
+      "go_owner": "`pkg/planner/core/plan_cache.go`, `plan_cache_utils.go`, `rule/rule_collect_plan_stats.go`"
     },
     {
       "id": "T08",

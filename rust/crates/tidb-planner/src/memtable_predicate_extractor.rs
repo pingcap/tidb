@@ -1478,6 +1478,75 @@ impl SlowQueryExtractor {
         remained
     }
 
+    /// Go `SlowQueryExtractor.buildTimeRangeFromKeyRange`: each key range's
+    /// bounds, decoded as `Datetime` handles, become one time range.
+    ///
+    /// # Errors
+    /// A handle that does not decode as a time (Go `decodeToTime`'s error).
+    pub fn build_time_range_from_key_range(
+        &mut self,
+        key_ranges: &[tidb_proto::coprocessor::KeyRange],
+    ) -> Result<(), String> {
+        for kr in key_ranges {
+            let start_time = Self::decode_bytes_to_time(&kr.start)?;
+            let end_time = Self::decode_bytes_to_time(&kr.end)?;
+            self.set_time_range(start_time, end_time);
+        }
+        Ok(())
+    }
+
+    /// Go `SlowQueryExtractor.decodeBytesToTime`: a key too short for a row key,
+    /// or one `DecodeRowKey` refuses, is unbounded (zero).
+    fn decode_bytes_to_time(bs: &[u8]) -> Result<i64, String> {
+        if bs.len() >= tidb_tablecodec::table_key::RECORD_ROW_KEY_LEN {
+            let Ok(handle) = tidb_tablecodec::table_key::decode_row_key(bs) else {
+                return Ok(0);
+            };
+            return Self::decode_to_time(&handle);
+        }
+        Ok(0)
+    }
+
+    /// Go `SlowQueryExtractor.decodeToTime`: the handle's first column read as a
+    /// `Datetime`, its wall clock taken as UTC, in Unix nanoseconds.
+    fn decode_to_time(handle: &tidb_tablecodec::table_key::RecordHandle) -> Result<i64, String> {
+        use tidb_tablecodec::table_key::RecordHandle;
+        let encoded = match handle {
+            RecordHandle::Common(encoded) => encoded.as_slice(),
+            // Go `IntHandle.EncodedCol` panics; an int handle never reaches a
+            // slow-query scan, whose handle is the common `time` column.
+            _ => return Err("slow query handle is not a common handle".into()),
+        };
+        // Go `coder.DecodeOne(handle.EncodedCol(0), 0, Datetime)`: a time key
+        // column is its packed form under the uint flag.
+        let (_, datum) = tidb_codec::decode_one(encoded).map_err(|error| format!("{error:?}"))?;
+        let packed = match datum {
+            tidb_datatype::Datum::UInt(packed) => packed,
+            tidb_datatype::Datum::Int(packed) => packed as u64,
+            tidb_datatype::Datum::Null => return Ok(0),
+            other => return Err(format!("invalid slow query time handle {other:?}")),
+        };
+        let time = tidb_datatype::Time::from_packed_uint(packed, tidb_datatype::TimeType::DateTime, 6)
+            .map_err(|error| format!("{error:?}"))?;
+        let core = time.core_time();
+        let date = chrono::NaiveDate::from_ymd_opt(
+            core.year(),
+            u32::from(core.month()),
+            u32::from(core.day()),
+        );
+        let Some(datetime) = date.and_then(|date| {
+            date.and_hms_micro_opt(
+                u32::from(core.hour()),
+                u32::from(core.minute()),
+                u32::from(core.second()),
+                core.microsecond(),
+            )
+        }) else {
+            return Ok(0);
+        };
+        Ok(datetime.and_utc().timestamp_nanos_opt().unwrap_or(0))
+    }
+
     /// Go `SlowQueryExtractor.setTimeRange`: an open side reaches
     /// `MinDatetime` / `MaxDatetime` in UTC.
     pub fn set_time_range(&mut self, start: i64, end: i64) {

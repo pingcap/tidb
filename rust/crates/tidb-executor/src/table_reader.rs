@@ -683,7 +683,7 @@ impl TableReaderExecutor {
 
     /// Go `NewSortedSelectResults`' `buildKeyColumns` over `byItems`: each
     /// item's column at its position in the reader's schema.
-    fn sort_by_items(&self) -> Result<Vec<tidb_executor_sortexec::SortByItem>, ExecError> {
+    fn sort_by_items(&self) -> Result<Vec<tidb_expression_aggregation::ByItems>, ExecError> {
         let schema = self.meta.schema();
         self.by_items
             .iter()
@@ -695,7 +695,7 @@ impl TableReaderExecutor {
                     .map_err(|_| ExecError::Internal("a sorted table read's key is absent from its schema".into()))?;
                 let mut column = schema.columns[position].clone();
                 column.index = i64::try_from(position).unwrap_or(i64::MAX);
-                Ok(tidb_executor_sortexec::SortByItem {
+                Ok(tidb_expression_aggregation::ByItems {
                     expr: tidb_expr::expression::Expression::Column(column),
                     desc: item.desc,
                 })

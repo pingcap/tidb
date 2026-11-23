@@ -28,6 +28,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-vardef = { path = "../tidb-vardef" }

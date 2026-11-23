@@ -97,6 +97,8 @@ pub mod rule;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
 pub mod optimize;
+pub mod pb_to_plan;
+pub mod planner_optimize;
 #[cfg(test)]
 mod partidx_tests;
 pub mod post_optimize;

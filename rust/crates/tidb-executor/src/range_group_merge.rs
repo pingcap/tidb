@@ -24,7 +24,8 @@
 
 use std::cmp::Ordering;
 
-use tidb_executor_sortexec::{eval_sort_key, less_row, build_key_columns, SortByItem};
+use tidb_executor_sortexec::{eval_sort_key, less_row, build_key_columns};
+use tidb_expression_aggregation::ByItems;
 use tidb_goruntime::go_heap;
 use crate::ExecError;
 use crate::Executor;
@@ -93,7 +94,7 @@ impl SelectResult for tidb_distsql::select_response::SelectResponseIter {
 /// Go `distsql.sortedSelectResults` over already-built group readers.
 pub struct SortedSelectResults<C: Columns, R: SelectResult = Box<dyn Executor>> {
     meta: ExecutorMeta,
-    by_items: Vec<SortByItem>,
+    by_items: Vec<ByItems>,
     children: Vec<R>,
     ctx: C,
     /// Go `cachedChunks`: each group's current chunk.
@@ -112,7 +113,7 @@ where
     /// (shared) output schema, as Go's `buildKeyColumns` requires.
     pub fn new(
         meta: ExecutorMeta,
-        by_items: Vec<SortByItem>,
+        by_items: Vec<ByItems>,
         children: Vec<R>,
         ctx: C,
     ) -> Result<Self, ExecError> {

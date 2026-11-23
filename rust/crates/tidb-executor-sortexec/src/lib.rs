@@ -54,15 +54,7 @@ use crate::parallel_sort::{
 };
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
-/// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
-/// its direction.
-#[derive(Clone)]
-pub struct SortByItem {
-    /// Go `ByItems.Expr`.
-    pub expr: Expression,
-    /// Go `ByItems.Desc`.
-    pub desc: bool,
-}
+use tidb_expression_aggregation::ByItems;
 
 #[derive(Clone)]
 struct MergeHead {
@@ -77,7 +69,7 @@ struct MergeHead {
 /// retained chunks directly. Owned keys are needed only while merging run
 /// heads, including spilled rows whose source chunk can be reloaded.
 pub fn eval_sort_key<C: Columns>(
-    by_items: &[SortByItem],
+    by_items: &[ByItems],
     ctx: &C,
     row: Row<'_>,
 ) -> Result<Vec<Datum>, ExecError> {
@@ -101,7 +93,7 @@ pub fn eval_sort_key<C: Columns>(
 /// Go `SortExec.buildKeyColumns`: only direct child columns and constants are
 /// valid executor sort keys. Planner expressions must be materialized by a
 /// projection before they reach this operator.
-pub fn build_key_columns(by_items: &[SortByItem]) -> Result<(), ExecError> {
+pub fn build_key_columns(by_items: &[ByItems]) -> Result<(), ExecError> {
     if by_items
         .iter()
         .any(|item| !matches!(&item.expr, Expression::Column(_) | Expression::Constant(_)))
@@ -117,7 +109,7 @@ pub fn build_key_columns(by_items: &[SortByItem]) -> Result<(), ExecError> {
 /// from the by-item's `RetType`): `ORDER BY ci_col` orders `a, A, b, B`, not
 /// the byte order `A, B, a, b`.
 pub fn less_row(
-    by_items: &[SortByItem],
+    by_items: &[ByItems],
     a: &[Datum],
     b: &[Datum],
 ) -> Result<Ordering, ExecError> {
@@ -154,7 +146,7 @@ pub fn less_row(
 /// Go's physical Sort accepts columns and constants. Constants are handled as
 /// equal keys by `compare_rows`; the common physical-column path is
 /// allocation-free just like Go's.
-pub(crate) fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<ColumnCompareFunc>> {
+pub(crate) fn compile_compare_funcs(by_items: &[ByItems]) -> Vec<Option<ColumnCompareFunc>> {
     by_items
         .iter()
         .map(|item| {
@@ -168,7 +160,7 @@ pub(crate) fn compile_compare_funcs(by_items: &[SortByItem]) -> Vec<Option<Colum
 
 /// Go `lessRow`: compares two retained chunk rows without allocating keys.
 pub fn compare_rows<C: Columns>(
-    by_items: &[SortByItem],
+    by_items: &[ByItems],
     compare_funcs: &[Option<ColumnCompareFunc>],
     ctx: &C,
     left: Row<'_>,
@@ -217,7 +209,7 @@ pub fn compare_rows<C: Columns>(
 pub struct SortExec<C: Columns> {
     meta: ExecutorMeta,
     /// Go `ByItems`.
-    by_items: Vec<SortByItem>,
+    by_items: Vec<ByItems>,
     /// Go `keyCmpFuncs`, compiled once instead of allocating a Datum key for
     /// every retained row.
     compare_funcs: Vec<Option<ColumnCompareFunc>>,
@@ -286,7 +278,7 @@ where
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
-        by_items: Vec<SortByItem>,
+        by_items: Vec<ByItems>,
         child: Box<dyn Executor>,
         ctx: C,
         memory: StatementMemory,
@@ -840,7 +832,7 @@ mod tests {
     /// A sort over a MULTI-CHUNK source, which is what a spilling sort needs.
     fn multi_chunk_sorter(
         rows: &[Vec<Option<i64>>],
-        by: Vec<SortByItem>,
+        by: Vec<ByItems>,
         chunk_size: usize,
         memory: StatementMemory,
     ) -> SortExec<NoColumns> {
@@ -891,7 +883,7 @@ mod tests {
 
     /// Builds a sort over one chunk whose rows are given per column as
     /// `Option<i64>` (None = NULL).
-    fn sort_over(rows: &[Vec<Option<i64>>], by: Vec<SortByItem>) -> SortExec<NoColumns> {
+    fn sort_over(rows: &[Vec<Option<i64>>], by: Vec<ByItems>) -> SortExec<NoColumns> {
         let n_cols = rows.first().map_or(1, Vec::len);
         let fields: Vec<FieldType> = (0..n_cols).map(|_| long()).collect();
         let mut data = Chunk::new_chunk_with_capacity(&fields, rows.len().max(1));
@@ -921,7 +913,7 @@ mod tests {
     fn sorter_with_memory(
         n_cols: usize,
         rows: &[Vec<Option<i64>>],
-        by: Vec<SortByItem>,
+        by: Vec<ByItems>,
         memory: StatementMemory,
     ) -> SortExec<NoColumns> {
         let fields: Vec<FieldType> = (0..n_cols).map(|_| long()).collect();
@@ -957,7 +949,7 @@ mod tests {
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(64),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -990,7 +982,7 @@ mod tests {
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1010,7 +1002,7 @@ mod tests {
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1058,7 +1050,7 @@ mod tests {
     fn ascending_int_sort() {
         let mut e = sort_over(
             &rows1(&[Some(3), Some(1), Some(2)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1070,7 +1062,7 @@ mod tests {
     fn descending_int_sort() {
         let mut e = sort_over(
             &rows1(&[Some(3), Some(1), Some(2)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: true,
             }],
@@ -1085,7 +1077,7 @@ mod tests {
     fn sort_rejects_non_column_by_item_like_go() {
         let mut e = sort_over(
             &rows1(&[Some(2), Some(1)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: scalar_plus_col_expr(0),
                 desc: false,
             }],
@@ -1109,7 +1101,7 @@ mod tests {
     fn sort_does_not_evaluate_constant_by_item_like_go() {
         let mut constant = Constant::new(Datum::Int(7), long());
         constant.deferred_expr = Some(Box::new(scalar_plus_col_expr(0)));
-        let by = [SortByItem {
+        let by = [ByItems {
             expr: Expression::Constant(constant),
             desc: false,
         }];
@@ -1136,11 +1128,11 @@ mod tests {
                 vec![Some(1), Some(7)],
             ],
             vec![
-                SortByItem {
+                ByItems {
                     expr: col_expr(0),
                     desc: false,
                 },
-                SortByItem {
+                ByItems {
                     expr: col_expr(1),
                     desc: true,
                 },
@@ -1162,7 +1154,7 @@ mod tests {
         // Go chunk.cmpNull: NULL is below every value.
         let mut e = sort_over(
             &rows1(&[Some(2), None, Some(1)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1175,7 +1167,7 @@ mod tests {
         // Desc negates the whole comparison, so NULLs move to the end.
         let mut e = sort_over(
             &rows1(&[Some(2), None, Some(1)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: true,
             }],
@@ -1187,7 +1179,7 @@ mod tests {
     fn eof_after_emission() {
         let mut e = sort_over(
             &rows1(&[Some(2), Some(1)]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1221,7 +1213,7 @@ mod tests {
                 Some(1),
                 Some(0),
             ]),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1240,7 +1232,7 @@ mod tests {
     fn empty_child_is_empty() {
         let mut e = sort_over(
             &[],
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],
@@ -1285,8 +1277,8 @@ mod tests {
         }
     }
 
-    fn asc() -> Vec<SortByItem> {
-        vec![SortByItem {
+    fn asc() -> Vec<ByItems> {
+        vec![ByItems {
             expr: col_expr(0),
             desc: false,
         }]
@@ -1437,7 +1429,7 @@ mod tests {
             .with_spill_storage(test_storage(&dir));
         let mut exec = multi_chunk_sorter(
             &rows,
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: true,
             }],
@@ -1466,7 +1458,7 @@ mod tests {
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
-            vec![SortByItem {
+            vec![ByItems {
                 expr: col_expr(0),
                 desc: false,
             }],

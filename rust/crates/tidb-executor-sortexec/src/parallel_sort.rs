@@ -40,7 +40,7 @@ use tidb_spill_storage::SpillStorage;
 use tidb_variable::mem_quota::StatementMemory;
 
 use crate::sort_partition::SortPartition;
-use crate::SortByItem;
+use tidb_expression_aggregation::ByItems;
 
 /// Go `SignalCheckpointForSort`: comparator calls between SQL-killer polls in
 /// a parallel sort worker.
@@ -89,7 +89,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// by-items with their key comparators), the expression context, the
 /// statement's killer, and how a new run is built.
 pub(crate) struct SortKeys<'a, C> {
-    pub by_items: &'a [SortByItem],
+    pub by_items: &'a [ByItems],
     pub compare_funcs: &'a [Option<ColumnCompareFunc>],
     pub ctx: &'a C,
     pub memory: &'a StatementMemory,
@@ -688,11 +688,11 @@ mod tests {
             }
         }
 
-        fn by_items() -> Vec<SortByItem> {
+        fn by_items() -> Vec<ByItems> {
             schema()
                 .columns
                 .iter()
-                .map(|column| SortByItem {
+                .map(|column| ByItems {
                     expr: Expression::Column(column.clone()),
                     desc: false,
                 })

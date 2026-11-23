@@ -65,7 +65,8 @@ use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
 use tidb_variable::mem_quota::StatementMemory;
-use crate::{eval_sort_key, SortByItem};
+use crate::eval_sort_key;
+use tidb_expression_aggregation::ByItems;
 
 /// Go `spillChunkSize` for the TopN's `tmpSpillChunk`: rows per chunk written
 /// to a run.
@@ -232,7 +233,7 @@ impl SpilledRun {
     /// Returns `false` once the run is exhausted.
     pub fn load_head<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         ctx: &C,
     ) -> Result<bool, ExecError> {
         if self.head_key.is_some() {

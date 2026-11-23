@@ -81,7 +81,9 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
+tracing = "0.1"
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-table = { path = "../tidb-table" }
 tidb-metadef = { path = "../tidb-metadef" }

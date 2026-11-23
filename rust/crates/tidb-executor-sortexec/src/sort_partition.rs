@@ -49,7 +49,8 @@ use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
 use tidb_variable::mem_quota::StatementMemory;
-use crate::{compare_rows, eval_sort_key, SortByItem};
+use crate::{compare_rows, eval_sort_key};
+use tidb_expression_aggregation::ByItems;
 use tidb_chunk::compare::ColumnCompareFunc;
 use tidb_chunk::ColumnRead;
 
@@ -206,7 +207,7 @@ impl SortPartition {
         field_types: Vec<FieldType>,
         spill_storage: Arc<SpillStorage>,
         runs: Vec<SortPartition>,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
         mut check: impl FnMut(u64) -> Result<(), ExecError>,
@@ -280,7 +281,7 @@ impl SortPartition {
     /// parallel worker's signal checkpoint.
     pub(crate) fn sort_with_checkpoint<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
         memory: &StatementMemory,
@@ -352,7 +353,7 @@ impl SortPartition {
     ///
     pub fn sort<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
     ) -> Result<(), ExecError> {
@@ -364,7 +365,7 @@ impl SortPartition {
     /// comparator is running.
     pub fn sort_with_memory<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
         memory: &StatementMemory,
@@ -379,7 +380,7 @@ impl SortPartition {
 
     fn sort_impl<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
         memory: Option<(&StatementMemory, u64)>,
@@ -477,7 +478,7 @@ impl SortPartition {
     /// row out in sorted order, then release the in-memory rows.
     pub fn spill_to_disk<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
     ) -> Result<(), ExecError> {
@@ -489,7 +490,7 @@ impl SortPartition {
     /// same SQL-killer checkpoint before writing its sorted rows to disk.
     pub fn spill_to_disk_with_memory<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         compare_funcs: &[Option<ColumnCompareFunc>],
         ctx: &C,
         memory: &StatementMemory,
@@ -559,7 +560,7 @@ impl SortPartition {
     /// Returns `false` once the partition is exhausted (Go's empty `chunk.Row`).
     pub fn load_head<C: Columns>(
         &mut self,
-        by_items: &[SortByItem],
+        by_items: &[ByItems],
         ctx: &C,
     ) -> Result<bool, ExecError> {
         if self.head_key.is_some() {

@@ -2052,121 +2052,66 @@ fn dynamic_prune_fallback<'a>(
     }
 }
 
-/// Go `alternativeRound`: one more build of the statement's plan that
-/// `planner.optimize` costs against the first.
-struct AlternativeRound {
-    name: &'static str,
-    /// Go `adjustFlag`.
-    adjust_flag: fn(u64) -> u64,
-    /// Go `enabled`, read off the signals the first round left.
-    enabled: fn(&crate::StmtContext) -> bool,
-    /// Go `setup` and the cleanup it returns: the context the round builds
-    /// under, which shares the statement's state, and what to undo on the
-    /// statement once the round is over.
-    setup: for<'a> fn(&'a crate::StmtContext) -> (crate::StmtContext, Option<Box<dyn FnOnce() + 'a>>),
+/// One statement's planning rounds over its catalog and allocators: Go
+/// `buildAndOptimizeLogicalPlanRound`'s `buildLogicalPlan`,
+/// `CheckPrivilege` / `CheckTableLock` and `core.DoOptimize`, which
+/// [`tidb_planner::planner_optimize::optimize`] runs once per round.
+struct QueryRounds<'q, 'v> {
+    query: &'q tidb_ast::QueryStmt,
+    catalog: &'q SessionExtendedInfoSchema,
+    current_database: &'q str,
+    use_plan_cache: bool,
+    plan_ids: &'q PlanIdAllocator,
+    column_ids: &'q ColumnIdAllocator,
+    registry: &'q ScalarSubqueryRegistry,
+    visits: BuildVisits<'v>,
+    /// The statement's visit infos are checked once, after its first build.
+    checked: bool,
+    /// The plan id, column id and scalar-subquery count the first round
+    /// started from.
+    round_start: (i32, i64, usize),
 }
 
-fn signal(signal: &std::sync::atomic::AtomicBool) -> bool {
-    signal.load(std::sync::atomic::Ordering::Acquire)
+impl tidb_planner::planner_optimize::LogicalPlanRounds for QueryRounds<'_, '_> {
+    fn build_and_optimize(
+        &mut self,
+        ctx: &crate::StmtContext,
+        opt_flag_adjust: fn(u64) -> u64,
+    ) -> Result<(LogicalPlan, PhysicalPlan, f64), tidb_planner_core_base::PlanError> {
+        build_logical_plan_and_do_optimize(
+            self.query,
+            self.catalog,
+            self.current_database,
+            ctx,
+            self.use_plan_cache,
+            self.plan_ids,
+            self.column_ids,
+            self.registry,
+            &mut self.visits,
+            &mut self.checked,
+            opt_flag_adjust,
+        )
+    }
+
+    fn save_round_start(&mut self) {
+        self.round_start = (
+            self.plan_ids.current(),
+            self.column_ids.current(),
+            self.registry.borrow().len(),
+        );
+    }
+
+    fn restore_round_start(&mut self) {
+        let (plan_id, column_id, scalar_subqueries) = self.round_start;
+        self.plan_ids.store(plan_id);
+        self.column_ids.store(column_id);
+        self.registry.borrow_mut().truncate(scalar_subqueries);
+    }
 }
 
-/// Go `shouldTryEngineRestrictedRounds`.
-fn should_try_engine_restricted_rounds(ctx: &crate::StmtContext) -> bool {
-    let signals = ctx.alternative_logical_plan_signals();
-    signal(&signals.mixed_storage_engines)
-        && !signal(&signals.has_store_type_hint)
-        && !tidb_planner::optimize::OptimizeContext::optimizer_cost_env(ctx)
-            .session
-            .mpp_enforced
-}
-
-/// Go `alternativeRounds`, in the order `planner.optimize` runs them.
-const ALTERNATIVE_ROUNDS: [AlternativeRound; 7] = [
-    AlternativeRound {
-        name: "non-decorrelate",
-        adjust_flag: |flag| flag & !tidb_planner_core_rule::flags::DECORRELATE,
-        // Go `shouldTryNonDecorrelationRound`.
-        enabled: |ctx| {
-            let signals = ctx.alternative_logical_plan_signals();
-            signal(&signals.decorrelated_apply) && !signal(&signals.same_order_index_join)
-        },
-        setup: |ctx| (ctx.clone(), None),
-    },
-    AlternativeRound {
-        name: "order-aware-reorder",
-        adjust_flag: |flag| flag | tidb_planner_core_rule::flags::ORDER_AWARE_JOIN_REORDER,
-        // Go `shouldTryOrderAwareReorderRound`.
-        enabled: |ctx| signal(&ctx.alternative_logical_plan_signals().order_aware_join_reorder),
-        setup: |ctx| (ctx.clone(), None),
-    },
-    AlternativeRound {
-        name: "correlate",
-        adjust_flag: |flag| flag | tidb_planner_core_rule::flags::CORRELATE,
-        // Go `shouldTryCorrelateRound`.
-        enabled: |ctx| signal(&ctx.alternative_logical_plan_signals().prefer_correlate),
-        setup: |ctx| (ctx.clone().with_enable_correlate_subquery(true), None),
-    },
-    AlternativeRound {
-        name: "semi-join-rewrite",
-        adjust_flag: |flag| flag,
-        // Go `shouldTrySemiJoinRewriteRound`.
-        enabled: |ctx| {
-            signal(&ctx.alternative_logical_plan_signals().semi_join_rewrite)
-                && !ctx.enable_semi_join_rewrite()
-        },
-        setup: |ctx| (ctx.clone().with_enable_semi_join_rewrite(true), None),
-    },
-    AlternativeRound {
-        name: "fts-like-fallback",
-        adjust_flag: |flag| flag,
-        enabled: |ctx| {
-            let signals = ctx.alternative_logical_plan_signals();
-            signal(&signals.fts_like_fallback) || signal(&signals.has_predicate_context_match)
-        },
-        setup: |ctx| {
-            use std::sync::atomic::Ordering;
-            let fts_like_fallback = &ctx.alternative_logical_plan_signals().fts_like_fallback;
-            let saved = fts_like_fallback.swap(true, Ordering::AcqRel);
-            (
-                ctx.clone(),
-                Some(Box::new(move || fts_like_fallback.store(saved, Ordering::Release))),
-            )
-        },
-    },
-    AlternativeRound {
-        name: "tikv-only",
-        adjust_flag: |flag| flag,
-        // Go `shouldTryTiKVOnlyRound`.
-        enabled: should_try_engine_restricted_rounds,
-        setup: |ctx| (ctx.clone().with_isolation_read_engines("tikv,tidb".to_owned()), None),
-    },
-    AlternativeRound {
-        name: "tiflash-only",
-        adjust_flag: |flag| flag,
-        // Go `shouldTryTiFlashOnlyRound`.
-        enabled: |ctx| {
-            should_try_engine_restricted_rounds(ctx)
-                && !signal(&ctx.alternative_logical_plan_signals().missing_tiflash_path)
-                && tidb_planner::optimize::OptimizeContext::optimizer_cost_env(ctx)
-                    .session
-                    .mpp_allowed
-        },
-        setup: |ctx| (ctx.clone().with_isolation_read_engines("tiflash,tidb".to_owned()), None),
-    },
-];
-
-/// Go `planner.optimize`'s `bestPlan`, `bestCost` and `bestLogicalPlanCtx`.
-struct BestPlan {
-    logical: LogicalPlan,
-    physical: PhysicalPlan,
-    cost: f64,
-    logical_plan_ctx: tidb_sessionctx::LogicalPlanBuildState,
-}
-
-/// Go `planner.optimize`: the statement's first round and, under
-/// `tidb_opt_enable_alternative_logical_plans`, the alternative rounds the
-/// first round's signals ask for; the cheapest round's plan is the
-/// statement's.
+/// Go `planner.optimize` over a query: its rounds
+/// ([`tidb_planner::planner_optimize::optimize`]), or the one build of a
+/// DML's read.
 #[allow(clippy::too_many_arguments)]
 fn planner_optimized_query_with_allocators(
     query: &tidb_ast::QueryStmt,
@@ -2177,166 +2122,28 @@ fn planner_optimized_query_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     registry: &ScalarSubqueryRegistry,
-    mut visits: BuildVisits<'_>,
+    visits: BuildVisits<'_>,
     build: QueryBuild,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
-    let mut checked = false;
-    let mut best_plan = None;
-    if build == QueryBuild::DmlRead || !ctx.enable_alternative_logical_plans() {
-        return build_logical_plan_and_do_optimize(
-            query,
-            catalog,
-            current_database,
-            ctx,
-            use_plan_cache,
-            plan_ids,
-            column_ids,
-            registry,
-            &mut visits,
-            &mut checked,
-            |flag| flag,
-        )
-        .map(|(logical, physical, _)| (logical, physical));
-    }
-    use std::sync::atomic::Ordering;
-    let initial_logical_plan_ctx = ctx.save_logical_plan_build_ctx();
-    // Go `buildLogicalPlan` starts every round's `PlanID`, `PlanColumnID` and
-    // `MapScalarSubQ` where the first round started.
-    let initial_plan_id = plan_ids.current();
-    let initial_plan_column_id = column_ids.current();
-    let initial_scalar_subqueries = registry.borrow().len();
-    ctx.reset_alternative_logical_plan_signals();
-    let signals = ctx.alternative_logical_plan_signals();
-    let mut round = |ctx: &crate::StmtContext,
-                     opt_flag_adjust: fn(u64) -> u64,
-                     best_plan: &mut Option<BestPlan>| {
-        build_and_optimize_logical_plan_round(
-            query,
-            catalog,
-            current_database,
-            ctx,
-            use_plan_cache,
-            plan_ids,
-            column_ids,
-            registry,
-            &mut visits,
-            &mut checked,
-            best_plan,
-            opt_flag_adjust,
-        )
-    };
-    round(ctx, |flag| flag, &mut best_plan)?;
-    // The engine-restricted rounds arm on the shape of the first round's
-    // chosen plan: only a plan that mixes TiKV and TiFlash reads leaves a
-    // homogeneous alternative uncosted, and a single-scan index join is left
-    // as the first round built it.
-    if let Some(best) = &best_plan {
-        let (has_tikv, has_tiflash) =
-            tidb_planner_core_operator_physicalop::storage_engine_usage::storage_engine_usage(
-                &best.physical,
-            );
-        if has_tikv
-            && has_tiflash
-            && !tidb_planner_core_operator_physicalop::single_scan_index_join::has_single_scan_index_join(
-                &best.physical,
-            )
-        {
-            signals.mixed_storage_engines.store(true, Ordering::Release);
-        }
-    }
-    // Which rounds run is decided by the first round's signals alone: a later
-    // round's build sets signals too.
-    let enabled_rounds: Vec<&AlternativeRound> = ALTERNATIVE_ROUNDS
-        .iter()
-        .filter(|round| (round.enabled)(ctx))
-        .collect();
-    let mut last_alt_round_err = None;
-    for alternative in enabled_rounds {
-        ctx.restore_logical_plan_build_ctx(&initial_logical_plan_ctx);
-        ctx.reset_alternative_logical_plan_marks();
-        plan_ids.store(initial_plan_id);
-        column_ids.store(initial_plan_column_id);
-        registry.borrow_mut().truncate(initial_scalar_subqueries);
-        let (round_ctx, cleanup) = (alternative.setup)(ctx);
-        let result = round(&round_ctx, alternative.adjust_flag, &mut best_plan);
-        if let Some(cleanup) = cleanup {
-            cleanup();
-        }
-        if let Err(error) = result {
-            // The session answers this one by retrieving the rows and
-            // planning the statement again; it is no failure of the round.
-            if matches!(
-                error.kind(),
-                tidb_planner_core_base::PlanErrorKind::MemTableRetrievalNeeded
-            ) {
-                return Err(error);
-            }
-            // An alternative round is optional: the first round's plan
-            // stands. The fts-like-fallback round's error is the statement's
-            // when the first round's plan was discarded as non-executable.
-            tracing::warn!(round = alternative.name, %error, "alternative logical plan round failed");
-            last_alt_round_err = Some(error);
-        }
-    }
-    let Some(best) = best_plan else {
-        return Err(last_alt_round_err.unwrap_or_else(|| {
-            tidb_planner_core_base::PlanError::internal("failed to build logical plan")
-        }));
-    };
-    ctx.restore_logical_plan_build_ctx(&best.logical_plan_ctx);
-    Ok((best.logical, best.physical))
-}
-
-/// Go `buildAndOptimizeLogicalPlanRound`: one build of the statement's plan,
-/// kept in `best_plan` when it is the first or the cheapest so far.
-#[allow(clippy::too_many_arguments)]
-fn build_and_optimize_logical_plan_round(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    registry: &ScalarSubqueryRegistry,
-    visits: &mut BuildVisits<'_>,
-    checked: &mut bool,
-    best_plan: &mut Option<BestPlan>,
-    opt_flag_adjust: fn(u64) -> u64,
-) -> Result<(), tidb_planner_core_base::PlanError> {
-    use std::sync::atomic::Ordering;
-    let (logical, physical, cost) = build_logical_plan_and_do_optimize(
+    use tidb_planner::planner_optimize::LogicalPlanRounds as _;
+    let mut rounds = QueryRounds {
         query,
         catalog,
         current_database,
-        ctx,
         use_plan_cache,
         plan_ids,
         column_ids,
         registry,
         visits,
-        checked,
-        opt_flag_adjust,
-    )?;
-    let signals = ctx.alternative_logical_plan_signals();
-    if signals.predicate_match.load(Ordering::Acquire) {
-        signals.has_predicate_context_match.store(true, Ordering::Release);
+        checked: false,
+        round_start: (0, 0, 0),
+    };
+    if build == QueryBuild::DmlRead {
+        return rounds
+            .build_and_optimize(ctx, |flag| flag)
+            .map(|(logical, physical, _)| (logical, physical));
     }
-    // A predicate-context MATCH whose native form cannot run: the plan is no
-    // candidate, and every round that follows rewrites it to ILIKE.
-    if signals.non_viable_fts_match.load(Ordering::Acquire) {
-        signals.fts_like_fallback.store(true, Ordering::Release);
-        return Ok(());
-    }
-    if best_plan.as_ref().is_none_or(|best| cost < best.cost) {
-        *best_plan = Some(BestPlan {
-            logical,
-            physical,
-            cost,
-            logical_plan_ctx: ctx.save_logical_plan_build_ctx(),
-        });
-    }
-    Ok(())
+    tidb_planner::planner_optimize::optimize(ctx, &mut rounds)
 }
 
 /// The part of Go `buildAndOptimizeLogicalPlanRound` every query build runs,

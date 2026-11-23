@@ -28,7 +28,7 @@
 //!
 //! [`TopNChunkHeap`] is the row store AND the heap over it, exactly as Go's
 //! `topNChunkHeap` is: rows land in a chunk list, `rowPtrs` index them, and the
-//! heap orders the pointers by [`SortByItem`] with the MAX at the root, so the
+//! heap orders the pointers by [`ByItems`] with the MAX at the root, so the
 //! worst retained row is the one a new row is measured against.
 //!
 //! SOLE IMPLEMENTATION. [`crate::topn::TopNExec`] once carried its own
@@ -78,7 +78,8 @@ use tidb_chunk::row::Row;
 use tidb_datatype::FieldType;
 
 use tidb_driver_error::ExecError;
-use crate::{compare_rows, compile_compare_funcs, SortByItem};
+use crate::{compare_rows, compile_compare_funcs};
+use tidb_expression_aggregation::ByItems;
 
 /// Go `chunk.RowPtr`: `(chunk index, row index)` into the heap's row store.
 pub type RowPtr = (usize, usize);
@@ -88,7 +89,7 @@ pub type RowPtr = (usize, usize);
 pub struct TopNChunkHeap {
     /// Go `compareRow`/`greaterRow`, which this port derives from the by-items
     /// rather than carrying as two closures.
-    by_items: Vec<SortByItem>,
+    by_items: Vec<ByItems>,
     /// Go `keyCmpFuncs`, one per by-item.
     compare_funcs: Vec<Option<ColumnCompareFunc>>,
     /// The CHILD's output types -- see the module narrowings for why they are
@@ -153,7 +154,7 @@ impl TopNChunkHeap {
     /// and the emit cursor.
     pub fn init(
         &mut self,
-        by_items: Vec<SortByItem>,
+        by_items: Vec<ByItems>,
         field_types: Vec<FieldType>,
         init_cap: usize,
         max_chunk_size: usize,
@@ -523,15 +524,15 @@ use tidb_goruntime::GoString;
         Expression::Column(c)
     }
 
-    fn asc(idx: usize, ft: FieldType) -> Vec<SortByItem> {
-        vec![SortByItem {
+    fn asc(idx: usize, ft: FieldType) -> Vec<ByItems> {
+        vec![ByItems {
             expr: col(idx, ft),
             desc: false,
         }]
     }
 
     /// A heap bounded at `limit`, ordered by the first column.
-    fn heap_of(limit: u64, fields: Vec<FieldType>, by: Vec<SortByItem>) -> TopNChunkHeap {
+    fn heap_of(limit: u64, fields: Vec<FieldType>, by: Vec<ByItems>) -> TopNChunkHeap {
         let mut heap = TopNChunkHeap::new();
         heap.init(by, fields, 32, 32, limit, 0);
         heap
@@ -563,7 +564,7 @@ use tidb_goruntime::GoString;
     /// trim, then stream the rest through `process_chk`.
     fn run_ints(limit: u64, vals: &[i64], desc: bool) -> Vec<i64> {
         let fields = vec![long()];
-        let by = vec![SortByItem {
+        let by = vec![ByItems {
             expr: col(0, long()),
             desc,
         }];
@@ -670,7 +671,7 @@ use tidb_goruntime::GoString;
     fn nulls_order_below_every_value_and_desc_negates_that() {
         let fields = vec![long()];
         let by_asc = asc(0, long());
-        let by_desc = vec![SortByItem {
+        let by_desc = vec![ByItems {
             expr: col(0, long()),
             desc: true,
         }];
@@ -736,7 +737,7 @@ use tidb_goruntime::GoString;
         // A descending TopN over ascending input evicts on every row, which is
         // the case `doCompaction` exists for.
         let fields = vec![long()];
-        let by = vec![SortByItem {
+        let by = vec![ByItems {
             expr: col(0, long()),
             desc: true,
         }];

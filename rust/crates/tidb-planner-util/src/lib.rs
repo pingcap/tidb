@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //! Go `pkg/planner/util`: ORDER BY items, index-column helpers, null rejection and handle columns.
-pub mod by_item;
 pub mod column_length;
 pub mod column;
 pub mod misc;

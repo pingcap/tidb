@@ -187,7 +187,7 @@ pub struct IndexLookUpExecutor {
     range_rebuild: Option<crate::access_path::RangeRebuilder>,
     desc: bool,
     /// Go `byItems`, over the index request's output.
-    by_items: Vec<tidb_executor_sortexec::SortByItem>,
+    by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `dagPB.OutputOffsets` (`buildIndexScanOutputOffsets`).
     index_output_offsets: Vec<u32>,
     /// Go `getRetTpsForIndexReader()`.
@@ -332,7 +332,7 @@ impl IndexLookUpExecutor {
             let mut key = column.clone();
             key.index = by_items.len() as i64;
             index_types.push(column.ret_type.clone().unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::Null)));
-            by_items.push(tidb_executor_sortexec::SortByItem {
+            by_items.push(tidb_expression_aggregation::ByItems {
                 expr: tidb_expr::expression::Expression::Column(key),
                 desc: item.desc,
             });
@@ -845,7 +845,7 @@ struct IndexWorker {
     kv_ranges: Vec<Vec<tidb_txnkv::KeyRange>>,
     table_ids: Vec<i64>,
     index_types: Vec<FieldType>,
-    by_items: Vec<tidb_executor_sortexec::SortByItem>,
+    by_items: Vec<tidb_expression_aggregation::ByItems>,
     need_merge: bool,
     desc: bool,
     index_plan_ids: Vec<isize>,

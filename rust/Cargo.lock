@@ -7149,6 +7149,7 @@ dependencies = [
  "tidb-executor-internal-exec",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-expression-aggregation",
  "tidb-failpoint",
  "tidb-go-rand",
  "tidb-goruntime",
@@ -8724,12 +8725,14 @@ dependencies = [
  "tidb-stats-handle-util",
  "tidb-stringutil",
  "tidb-table",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-texttree",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
+ "tracing",
 ]
 
 [[package]]
