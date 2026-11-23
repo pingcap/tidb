@@ -724,7 +724,7 @@ impl<'s> ClusterServerSession<'s> {
 
     /// The `SimpleExec` transaction statements (`BEGIN`, `COMMIT`,
     /// `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT`) over this session's
-    /// transaction manager: [`Session::control_transaction_stmt`] with the
+    /// transaction manager: [`tidb_executor::simple::txn_control::TxnControlExec`] with the
     /// store half through [`StoreTxnOps`].
     pub fn control_transaction_stmt(&mut self, stmt: &Stmt) -> Result<Option<bool>, SqlQueryError> {
         let hooks = self.commit_hooks();
@@ -735,8 +735,7 @@ impl<'s> ClusterServerSession<'s> {
             follower: &mut node.follower,
             hooks,
         };
-        self.session
-            .control_transaction_stmt(stmt, &mut ops)
+        tidb_executor::simple::txn_control::TxnControlExec::control_transaction_stmt(&mut *self.session, stmt, &mut ops)
             .map_err(sql_query_error)
     }
 

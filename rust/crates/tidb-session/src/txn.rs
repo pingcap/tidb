@@ -853,124 +853,6 @@ impl Session {
         self.node_conn().run_transaction_control(sql)
     }
 
-    /// The `SimpleExec` transaction statements (`pkg/executor/simple.go`):
-    /// `executeBegin`, `executeCommit`, `executeRollback`, `executeSavepoint`
-    /// and `executeReleaseSavepoint`, with the store half through `txn`.
-    ///
-    /// Returns `Some(in_transaction)` for those statements and `None` for
-    /// anything else.
-    ///
-    /// `COMMIT` only leaves the transaction here, as Go's `executeCommit`
-    /// only clears `InTxn`; the store session commits it when the statement
-    /// finishes (Go `finishStmt` -> `CommitTxn`).
-    pub fn control_transaction_stmt(
-        &mut self,
-        stmt: &Stmt,
-        txn: &mut dyn TxnManagerOps,
-    ) -> Result<Option<bool>, DriverError> {
-        let Stmt::Session(session_stmt) = stmt else {
-            return Ok(None);
-        };
-        match &**session_stmt {
-            SessionStmt::Begin(begin) => {
-                self.execute_begin(begin, txn)?;
-                Ok(Some(true))
-            }
-            SessionStmt::Commit(_) => {
-                self.leave_txn_ctx_for_commit();
-                Ok(Some(false))
-            }
-            SessionStmt::Rollback { savepoint, .. } => {
-                if let Some(name) = savepoint {
-                    // ROLLBACK TO does NOT end the transaction: it restores
-                    // the data and leaves everything else running.
-                    self.rollback_to_savepoint(name, txn)?;
-                    return Ok(Some(true));
-                }
-                self.execute_rollback(txn)?;
-                Ok(Some(false))
-            }
-            SessionStmt::Savepoint(name) => {
-                self.set_savepoint(name, txn)?;
-                Ok(Some(self.txn_ctx.is_some()))
-            }
-            SessionStmt::ReleaseSavepoint(name) => {
-                self.release_savepoint(name)?;
-                Ok(Some(true))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// Go `SimpleExec.executeBegin` -> `EnterNewTxn(EnterNewTxnWithBeginStmt)`.
-    fn execute_begin(
-        &mut self,
-        begin: &tidb_ast::BeginStmt,
-        txn: &mut dyn TxnManagerOps,
-    ) -> Result<(), DriverError> {
-        // `START TRANSACTION READ ONLY` is a no-op clause -- TiDB does not
-        // actually stop writes -- so it goes through
-        // `tidb_enable_noop_functions`, refusing with 1235 at the OFF
-        // default, BEFORE `NewTxn` commits the open transaction. `AS OF
-        // TIMESTAMP` exempts it, because that spelling names a real
-        // historical read rather than the bare read-only claim.
-        if begin.read_only && begin.as_of.is_none() {
-            self.gate_noop_clause("READ ONLY", false)?;
-        }
-        // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` opens the
-        // transaction AT that timestamp (Go `StalenessTxnContextProvider`):
-        // the expression resolves through `CalculateAsOfTsExpr`'s rules when
-        // the statement is built, before any commit, and the transaction's
-        // `StartTS` -- which `@@tidb_current_ts` reports -- is that timestamp.
-        let as_of = match &begin.as_of {
-            Some(expr) => {
-                let ts = self.calculate_as_of_ts_expr(&expr.clone())?;
-                if self.vars.txn_read_ts() != 0 {
-                    if let Some(provider) = &self.snapshot_schema_provider {
-                        provider(ts, self.current_resource_group(), false)?;
-                    }
-                    return Err(DriverError::unsupported("start transaction read only as of is forbidden after set transaction read only as of"));
-                }
-                Some(ts)
-            }
-            None => None,
-        };
-        // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
-        // statement's own (`origTxnCtx`) is not the one it opens. Its GLOBAL
-        // temporary rows never reach a commit (`temporaryTableKVFilter`), and
-        // a BEGIN refused above leaves the open transaction's untouched.
-        self.statement_began_txn = true;
-        self.reset_transaction_scope();
-        self.commit_before_enter_new_txn(txn)?;
-        // The fresh `TxnCtx`'s `TemporaryTables`, after the old transaction
-        // committed under its own.
-        self.txn_temporary_tables = std::sync::Arc::default();
-        self.txn_cached_tables = std::sync::Arc::default();
-        let stale_ts = match as_of {
-            Some(ts) => Some(ts),
-            None => match self.vars.use_txn_read_ts() {
-                0 => self.external_read_ts()?,
-                read_ts => Some(read_ts),
-            },
-        };
-        match stale_ts {
-            Some(ts) => self.open_stale_transaction(ts, true)?,
-            None => {
-                let mode = self.resolve_begin_txn_mode(begin.mode);
-                self.open_txn_ctx(mode, Some(begin.causal_consistency_only));
-            }
-        }
-        // Go sets `InTxn` only once `ActivateTxn` succeeded
-        // (`isolation/base.go:108-114`): a failed activation leaves no
-        // transaction open.
-        if let Err(error) = txn.enter_new_txn_with_begin(self) {
-            drop(self.take_txn_ctx());
-            self.current_tso().clear();
-            return Err(error);
-        }
-        Ok(())
-    }
-
     /// Go `sessiontxn.NewTxnInStmt`'s commit (`executor/ddl.go:151`,
     /// `grant.go:144`, `revoke.go:71`, `simple.go:153`): the executor commits
     /// the open transaction before its own work, and the statement goes on
@@ -1032,12 +914,6 @@ impl Session {
         }
     }
 
-    /// Go `SimpleExec.executeRollback` without a savepoint: `RollbackTxn`.
-    fn execute_rollback(&mut self, txn: &mut dyn TxnManagerOps) -> Result<(), DriverError> {
-        self.leave_txn_ctx_for_rollback();
-        txn.rollback_txn(self)
-    }
-
     /// The session half of Go `RollbackTxn`: the context goes, and the rows
     /// of the local temporary tables go back to the transaction's start. The
     /// caller rolls the store transaction back.
@@ -1067,110 +943,6 @@ impl Session {
                 process.registry().transaction_finished(process.id());
             }
         }
-    }
-
-    /// `SAVEPOINT name` -- Go `SimpleExec.executeSavepoint`.
-    ///
-    /// The no-op arm is narrower than "no transaction open": Go returns `nil`
-    /// only when `!sessVars.InTxn() && sessVars.IsAutocommit()`. With
-    /// autocommit OFF and no transaction yet, `e.Ctx().Txn(true)` ACTIVATES
-    /// the pending transaction, so `SAVEPOINT` is what opens it and a later
-    /// `ROLLBACK TO` that name finds it. Only in autocommit does the
-    /// statement succeed while recording nothing, leaving `ROLLBACK TO` to
-    /// report 1305.
-    ///
-    /// Redefining an existing name is `AddSavepoint`: DELETE the old entry,
-    /// then APPEND the new one. The distinction matters -- the redefinition
-    /// moves the name to the END of the stack, so savepoints that were taken
-    /// after the original are no longer "after" it, and a later `ROLLBACK TO`
-    /// the redefined name no longer drops them.
-    fn set_savepoint(
-        &mut self,
-        name: &str,
-        txn: &mut dyn TxnManagerOps,
-    ) -> Result<(), DriverError> {
-        // Go's `Txn(true)`: with autocommit OFF this is the statement that
-        // opens the pending transaction.
-        self.begin_implicit_transaction()?;
-        if self.in_transaction()
-            && self.statement_txn_mode().is_pessimistic()
-            && !self.pessimistic_constraint_check_in_place()
-        {
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled",
-            )));
-        }
-        let buffer = txn.savepoint_checkpoint(self)?;
-        let table_delta = self.table_delta_savepoint();
-        let Some(ctx) = &mut self.txn_ctx else {
-            return Ok(());
-        };
-        ctx.savepoints.add(
-            name,
-            Savepoint {
-                buffer,
-                table_delta,
-            },
-        );
-        Ok(())
-    }
-
-    /// `ROLLBACK TO [SAVEPOINT] name` -- Go's `executeRollback` savepoint arm
-    /// plus `TxnCtx.RollbackToSavepoint`.
-    ///
-    /// Restores the transaction's data to the savepoint (Go:
-    /// `RollbackMemDBToCheckpoint`) and truncates the stack to `[:idx+1]`, so
-    /// the savepoint itself survives and every savepoint taken after it is
-    /// gone. The transaction stays OPEN -- Go returns before the
-    /// `SetInTxn(false)` that a plain `ROLLBACK` reaches.
-    ///
-    /// With no transaction open Go's `txn.Valid()` is false and the error is
-    /// the same 1305 an unknown name gets.
-    fn rollback_to_savepoint(
-        &mut self,
-        name: &str,
-        txn: &mut dyn TxnManagerOps,
-    ) -> Result<(), DriverError> {
-        let found = self.txn_ctx.as_mut().and_then(|ctx| {
-            ctx.savepoints.rollback_to_savepoint(name).map(|savepoint| {
-                (savepoint.buffer.clone(), savepoint.table_delta.clone())
-            })
-        });
-        let Some((buffer, table_delta)) = found else {
-            // go appends the statement error into the warning buffer as well
-            // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
-            // refused ROLLBACK TO carries the same 1305 row.
-            let error = DriverError::from(
-                tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS
-                    .gen_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
-            );
-            self.append_driver_error(crate::WarningLevel::Error, &error);
-            return Err(error);
-        };
-        if let Some(buffer) = &buffer {
-            txn.rollback_to_checkpoint(buffer);
-        }
-        self.restore_table_delta_savepoint(table_delta);
-        Ok(())
-    }
-
-    /// `RELEASE SAVEPOINT name` -- Go `SimpleExec.executeReleaseSavepoint`
-    /// plus `TxnCtx.ReleaseSavepoint`: drops the named savepoint AND every
-    /// savepoint taken after it (`Savepoints[:i]`), touching no data.
-    fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let released = self
-            .txn_ctx
-            .as_mut()
-            .is_some_and(|ctx| ctx.savepoints.release(name));
-        if !released {
-            let error = DriverError::from(
-                tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS
-                    .gen_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
-            );
-            self.append_driver_error(crate::WarningLevel::Error, &error);
-            return Err(error);
-        }
-        Ok(())
     }
 
     /// Runs `body` over the catalog the open transaction reads: a stale
@@ -1413,5 +1185,132 @@ impl Session {
             .map_or((false, false), |txn| (true, txn.begin_stmt.is_some()));
         let current_tso = self.current_tso();
         move || has_txn && (begin || current_tso.value() != 0)
+    }
+}
+
+/// Go `SimpleExec`'s transaction statements' `sctx`
+/// (`tidb_executor::simple::txn_control`): `sessiontxn` and `TxnCtx`.
+impl<'a> tidb_executor::simple::txn_control::TxnControlSession<dyn TxnManagerOps + 'a> for Session {
+    fn gate_noop_clause(&mut self, clause: &'static str, global: bool) -> Result<(), DriverError> {
+        Session::gate_noop_clause(self, clause, global)
+    }
+
+    fn calculate_as_of_ts_expr(&mut self, expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
+        Session::calculate_as_of_ts_expr(self, expr)
+    }
+
+    fn txn_read_ts_is_set(&self) -> bool {
+        self.vars.txn_read_ts() != 0
+    }
+
+    fn refuse_begin_as_of_after_txn_read_ts(&mut self, ts: u64) -> Result<(), DriverError> {
+        if let Some(provider) = &self.snapshot_schema_provider {
+            provider(ts, self.current_resource_group(), false)?;
+        }
+        Err(DriverError::unsupported(
+            "start transaction read only as of is forbidden after set transaction read only as of",
+        ))
+    }
+
+    fn enter_new_txn_with_begin(
+        &mut self,
+        begin: &tidb_ast::BeginStmt,
+        as_of: Option<u64>,
+        txn: &mut (dyn TxnManagerOps + 'a),
+    ) -> Result<(), DriverError> {
+        // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
+        // statement's own (`origTxnCtx`) is not the one it opens. Its GLOBAL
+        // temporary rows never reach a commit (`temporaryTableKVFilter`), and
+        // a BEGIN refused before this leaves the open transaction's untouched.
+        self.statement_began_txn = true;
+        self.reset_transaction_scope();
+        self.commit_before_enter_new_txn(txn)?;
+        // The fresh `TxnCtx`'s `TemporaryTables`, after the old transaction
+        // committed under its own.
+        self.txn_temporary_tables = std::sync::Arc::default();
+        self.txn_cached_tables = std::sync::Arc::default();
+        let stale_ts = match as_of {
+            Some(ts) => Some(ts),
+            None => match self.vars.use_txn_read_ts() {
+                0 => self.external_read_ts()?,
+                read_ts => Some(read_ts),
+            },
+        };
+        match stale_ts {
+            Some(ts) => self.open_stale_transaction(ts, true)?,
+            None => {
+                let mode = self.resolve_begin_txn_mode(begin.mode);
+                self.open_txn_ctx(mode, Some(begin.causal_consistency_only));
+            }
+        }
+        // Go sets `InTxn` only once `ActivateTxn` succeeded
+        // (`isolation/base.go:108-114`): a failed activation leaves no
+        // transaction open.
+        if let Err(error) = txn.enter_new_txn_with_begin(self) {
+            drop(self.take_txn_ctx());
+            self.current_tso().clear();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn leave_txn_ctx_for_commit(&mut self) {
+        Session::leave_txn_ctx_for_commit(self);
+    }
+
+    fn rollback_txn(&mut self, txn: &mut (dyn TxnManagerOps + 'a)) -> Result<(), DriverError> {
+        self.leave_txn_ctx_for_rollback();
+        txn.rollback_txn(self)
+    }
+
+    fn activate_txn(&mut self) -> Result<(), DriverError> {
+        self.begin_implicit_transaction()
+    }
+
+    fn in_transaction(&self) -> bool {
+        Session::in_transaction(self)
+    }
+
+    fn pessimistic_without_constraint_check_in_place(&self) -> bool {
+        self.statement_txn_mode().is_pessimistic() && !self.pessimistic_constraint_check_in_place()
+    }
+
+    /// Redefining an existing name is `AddSavepoint`: DELETE the old entry,
+    /// then APPEND the new one, which moves the name to the END of the stack.
+    fn add_savepoint(&mut self, name: &str, txn: &mut (dyn TxnManagerOps + 'a)) -> Result<(), DriverError> {
+        let buffer = txn.savepoint_checkpoint(self)?;
+        let table_delta = self.table_delta_savepoint();
+        let Some(ctx) = &mut self.txn_ctx else {
+            return Ok(());
+        };
+        ctx.savepoints.add(name, Savepoint { buffer, table_delta });
+        Ok(())
+    }
+
+    /// Restores the transaction's data to the savepoint (Go
+    /// `RollbackMemDBToCheckpoint`) and truncates the stack to `[:idx+1]`;
+    /// the transaction stays OPEN.
+    fn rollback_to_savepoint(&mut self, name: &str, txn: &mut (dyn TxnManagerOps + 'a)) -> bool {
+        let found = self.txn_ctx.as_mut().and_then(|ctx| {
+            ctx.savepoints
+                .rollback_to_savepoint(name)
+                .map(|savepoint| (savepoint.buffer.clone(), savepoint.table_delta.clone()))
+        });
+        let Some((buffer, table_delta)) = found else {
+            return false;
+        };
+        if let Some(buffer) = &buffer {
+            txn.rollback_to_checkpoint(buffer);
+        }
+        self.restore_table_delta_savepoint(table_delta);
+        true
+    }
+
+    fn release_savepoint(&mut self, name: &str) -> bool {
+        self.txn_ctx.as_mut().is_some_and(|ctx| ctx.savepoints.release(name))
+    }
+
+    fn append_driver_error(&mut self, level: tidb_context::WarningLevel, error: &DriverError) {
+        Session::append_driver_error(self, level, error);
     }
 }

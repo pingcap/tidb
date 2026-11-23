@@ -18,6 +18,7 @@ pub mod account;
 pub mod account_password;
 pub mod account_tables;
 pub mod exec;
+pub mod txn_control;
 
 use crate::sessionctx::SessionContext;
 use crate::{SessionExtendedInfoSchema, DriverError};
