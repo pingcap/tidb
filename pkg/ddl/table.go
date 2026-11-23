@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
@@ -362,6 +361,9 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		if err = w.removeRecoverGCDeleteRange(jobCtx, recoverInfo.DropJobID); err != nil {
+			return ver, errors.Trace(err)
+		}
 		ver, err = w.recoverTable(jobCtx, metaMut, job, recoverInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -392,6 +394,22 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
+func (w *worker) removeRecoverGCDeleteRange(jobCtx *jobContext, dropJobID int64) error {
+	if dropJobID == 0 {
+		return nil
+	}
+	// Remove dropped DDL job entries from gc_delete_range in the same metadata
+	// transaction so a rollback restores the delete-range entries.
+	var err error
+	if w.sess != nil {
+		jobCtx.mustRollbackTxnOnError = true
+		err = w.delRangeManager.removeFromGCDeleteRangeWithSession(jobCtx.stepCtx, w.sess.Session(), dropJobID)
+	} else {
+		err = w.delRangeManager.removeFromGCDeleteRange(jobCtx.stepCtx, dropJobID)
+	}
+	return errors.Trace(err)
+}
+
 func (w *worker) recoverTable(
 	jobCtx *jobContext,
 	t *meta.Mutator,
@@ -403,17 +421,6 @@ func (w *worker) recoverTable(
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
-	}
-	// Remove dropped table DDL job from gc_delete_range table in the same metadata
-	// transaction so a rollback restores the delete-range entries.
-	if w.sess != nil {
-		jobCtx.mustRollbackTxnOnError = true
-		err = w.delRangeManager.removeFromGCDeleteRangeWithSession(ctx, w.sess.Session(), recoverInfo.DropJobID)
-	} else {
-		err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
-	}
-	if err != nil {
-		return ver, errors.Trace(err)
 	}
 	err = clearTablePlacementAndBundles(ctx, recoverInfo.TableInfo)
 	if err != nil {
@@ -527,8 +534,8 @@ func isGCBarrierUnimplementedErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "Unimplemented")
 }
 
-// setRecoverGCBarrier pins PD's GC safe point at snapshotTS on NullKeyspaceID so
-// Unified GC (which ignores mysql.tidb tikv_gc_enable) cannot collect ranges
+// setRecoverGCBarrier pins PD's GC safe point at snapshotTS for the store's keyspace
+// so Unified GC (which ignores mysql.tidb tikv_gc_enable) cannot collect ranges
 // belonging to the table/schema being recovered.
 func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS uint64) error {
 	pdStore, ok := w.store.(kv.StorageWithPD)
@@ -536,7 +543,7 @@ func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS
 		return nil
 	}
 	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
-	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(keyspaceID)
 	if _, err := gcClient.SetGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID), snapshotTS, recoverGCBarrierTTL); err != nil {
 		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
 			logutil.DDLLogger().Warn("PD does not support SetGCBarrier, skip setting recover GC barrier",
@@ -548,13 +555,31 @@ func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS
 	return nil
 }
 
+func renewRecoverGCBarrierIfNeeded(
+	ctx context.Context,
+	w *worker,
+	job *model.Job,
+	snapshotTS uint64,
+	lastRenew *time.Time,
+) error {
+	if time.Since(*lastRenew) <= recoverGCBarrierTTL/2 {
+		return nil
+	}
+	if err := setRecoverGCBarrier(ctx, w, job.ID, snapshotTS); err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	*lastRenew = time.Now()
+	return nil
+}
+
 func deleteRecoverGCBarrier(ctx context.Context, w *worker, jobID int64) error {
 	pdStore, ok := w.store.(kv.StorageWithPD)
 	if !ok || pdStore.GetPDClient() == nil {
 		return nil
 	}
 	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
-	gcClient := pdStore.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(keyspaceID)
 	if _, err := gcClient.DeleteGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID)); err != nil {
 		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
 			return nil

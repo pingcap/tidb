@@ -17,17 +17,23 @@ package ddl
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -206,4 +212,114 @@ func TestRemovePartitionIndexes(t *testing.T) {
 	for offset, col := range tblInfo.Columns {
 		require.Equal(t, offset, col.Offset)
 	}
+}
+
+type keyspacedPDStoreForTest struct {
+	kv.Storage
+	kv.StorageWithPD
+	codec tikv.Codec
+}
+
+func (s *keyspacedPDStoreForTest) GetCodec() tikv.Codec {
+	return s.codec
+}
+
+type recordingDelRangeManagerForTest struct {
+	mockDelRange
+	jobIDs []int64
+}
+
+func (m *recordingDelRangeManagerForTest) removeFromGCDeleteRangeWithSession(_ context.Context, _ sessionctx.Context, jobID int64) error {
+	m.jobIDs = append(m.jobIDs, jobID)
+	return nil
+}
+
+func TestRecoverGCBarrierUsesActualKeyspaceAndRenews(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	pdStore, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	nullKeyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+	// Advance NullKeyspace's txn safe point past snapshotTS so using NullKeyspaceID would fail.
+	_, err = pdStore.GetPDClient().GetGCInternalController(nullKeyspaceID).AdvanceTxnSafePoint(ctx, 200)
+	require.NoError(t, err)
+
+	ksStore := &keyspacedPDStoreForTest{
+		Storage:       store,
+		StorageWithPD: pdStore,
+		codec:         codecV2,
+	}
+	w := &worker{ddlCtx: &ddlCtx{store: ksStore}}
+	job := &model.Job{ID: 1001, State: model.JobStateRunning}
+
+	require.NoError(t, setRecoverGCBarrier(ctx, w, job.ID, 100))
+
+	ksState, err := pdStore.GetPDClient().GetGCStatesClient(42).GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+	require.NoError(t, err)
+	require.True(t, ksState.HasGCBarriers())
+	barriers, err := ksState.GetGCBarriers()
+	require.NoError(t, err)
+	require.Len(t, barriers, 1)
+	require.Equal(t, recoverGCBarrierID(42, job.ID), barriers[0].BarrierID)
+	require.Equal(t, uint64(100), barriers[0].BarrierTS)
+
+	nullState, err := pdStore.GetPDClient().GetGCStatesClient(nullKeyspaceID).GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+	require.NoError(t, err)
+	require.True(t, nullState.HasGCBarriers())
+	nullBarriers, err := nullState.GetGCBarriers()
+	require.NoError(t, err)
+	require.Empty(t, nullBarriers)
+
+	// Simulate elapsed time during preparation before recovery starts.
+	lastRenew := time.Now().Add(-recoverGCBarrierTTL)
+	require.NoError(t, renewRecoverGCBarrierIfNeeded(ctx, w, job, 150, &lastRenew))
+	require.Less(t, time.Since(lastRenew), time.Minute)
+
+	ksState, err = pdStore.GetPDClient().GetGCStatesClient(42).GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+	require.NoError(t, err)
+	barriers, err = ksState.GetGCBarriers()
+	require.NoError(t, err)
+	require.Len(t, barriers, 1)
+	require.Equal(t, uint64(150), barriers[0].BarrierTS)
+
+	require.NoError(t, deleteRecoverGCBarrier(ctx, w, job.ID))
+	ksState, err = pdStore.GetPDClient().GetGCStatesClient(42).GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
+	require.NoError(t, err)
+	barriers, err = ksState.GetGCBarriers()
+	require.NoError(t, err)
+	require.Empty(t, barriers)
+}
+
+func TestRecoverSchemaRemovesGCDeleteRangeOnce(t *testing.T) {
+	delMgr := &recordingDelRangeManagerForTest{}
+	w := &worker{
+		sess:            sess.NewSession(mock.NewContext()),
+		delRangeManager: delMgr,
+	}
+	jobCtx := &jobContext{stepCtx: context.Background()}
+
+	recoverTbls := []*model.RecoverTableInfo{
+		{DropJobID: 777, TableInfo: &model.TableInfo{ID: 1}},
+		{DropJobID: 777, TableInfo: &model.TableInfo{ID: 2}},
+		{DropJobID: 777, TableInfo: &model.TableInfo{ID: 3}},
+	}
+	require.NoError(t, w.removeRecoverSchemaGCDeleteRange(jobCtx, 777, recoverTbls))
+	require.Equal(t, []int64{777}, delMgr.jobIDs)
+	require.True(t, jobCtx.mustRollbackTxnOnError)
+
+	// Legacy fallback when schema DropJobID is 0 still deletes shared DropJobID only once.
+	delMgr.jobIDs = nil
+	jobCtx.mustRollbackTxnOnError = false
+	require.NoError(t, w.removeRecoverSchemaGCDeleteRange(jobCtx, 0, recoverTbls))
+	require.Equal(t, []int64{777}, delMgr.jobIDs)
+	require.True(t, jobCtx.mustRollbackTxnOnError)
 }
