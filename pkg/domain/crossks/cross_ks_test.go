@@ -587,7 +587,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	})
 	t.Run("job check and ordinary holder share a runtime", func(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-		check, err := sysKSDom.AcquireKSRuntime(targetKS, "test/job-check")
+		check, err := sysKSDom.AcquireKSRuntimeWithContext(ctx, targetKS, "test/job-check")
 		require.NoError(t, err)
 		defer check.Release(true)
 		require.Same(t, handle.SysSessionPool(), check.SysSessionPool())

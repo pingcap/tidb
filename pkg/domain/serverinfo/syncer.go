@@ -100,7 +100,10 @@ func NewSyncer(
 	reporter MinStartTSReporter,
 	options ...SyncerOption,
 ) *Syncer {
-	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
+	s := newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
+	info := s.GetLocalServerInfo()
+	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
+	return s
 }
 
 // NewCrossKSSyncer creates a new Syncer instance for cross keyspace scenarios.
@@ -145,7 +148,7 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	}
 	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
-	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
+	session, err := tidbutil.NewSessionWithMetricLabel(ctx, logPrefix, "info-syncer", s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
@@ -631,8 +634,6 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, di
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
-
-	metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, info.GitHash).Set(float64(info.StartTimestamp))
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {

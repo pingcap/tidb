@@ -179,6 +179,19 @@ func (m *Manager) Acquire(
 	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (sqlsvrapi.KSRuntimeHandle, error) {
+	return m.AcquireWithContext(context.Background(), ks, holderID, ksSessFactoryGetter)
+}
+
+// AcquireWithContext honors cancellation while waiting for runtime initialization
+// or teardown, before each store-open attempt, and during retry backoff. A driver
+// open and runtime initialization each run to completion once started. Acquisition
+// checks for cancellation after a successful open and before registering a holder.
+func (m *Manager) AcquireWithContext(
+	ctx context.Context,
+	ks string,
+	holderID string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (sqlsvrapi.KSRuntimeHandle, error) {
 	if holderID == "" {
 		return nil, errors.New("cross keyspace runtime holderID must not be empty")
 	}
@@ -186,7 +199,7 @@ func (m *Manager) Acquire(
 		return nil, err
 	}
 
-	entry, holderCount, err := m.acquireEntry(ks, holderID, ksSessFactoryGetter)
+	entry, holderCount, err := m.acquireEntry(ctx, ks, holderID, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +226,7 @@ func (m *Manager) validateTargetKS(ks string) error {
 	return nil
 }
 
-type sessionManagerFactory func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error)
+type sessionManagerFactory func(context.Context, string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error)
 
 // newInitializingEntry must be called with Manager.mu held and no existing
 // entry for ks.
@@ -238,10 +251,13 @@ type entryLookup struct {
 // lookupOrReserveEntry handles the locked part of runtime lookup. A raw lookup
 // (empty holderID) may use a published runtime while its workers start or drain;
 // a holder can only enter a ready runtime.
-func (m *Manager) lookupOrReserveEntry(ks, holderID string) (entryLookup, error) {
+func (m *Manager) lookupOrReserveEntry(ctx context.Context, ks, holderID string) (entryLookup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return entryLookup{}, err
+	}
 	if holderID != "" && m.closed {
 		return entryLookup{}, errManagerClosed
 	}
@@ -273,12 +289,12 @@ func (m *Manager) getOrCreateRawEntry(
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (*runtimeEntry, error) {
 	for {
-		lookup, err := m.lookupOrReserveEntry(ks, "")
+		lookup, err := m.lookupOrReserveEntry(context.Background(), ks, "")
 		if err != nil {
 			return nil, err
 		}
 		if lookup.initialize {
-			initialized, _, err := m.initializeEntry(ks, lookup.entry, "", ksSessFactoryGetter)
+			initialized, _, err := m.initializeEntry(context.Background(), ks, lookup.entry, "", ksSessFactoryGetter)
 			return initialized, err
 		}
 		if lookup.entry != nil {
@@ -293,21 +309,26 @@ func (m *Manager) getOrCreateRawEntry(
 
 // acquireEntry admits holderID only after initialization finishes.
 func (m *Manager) acquireEntry(
+	ctx context.Context,
 	ks string,
 	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (*runtimeEntry, int, error) {
 	for {
-		lookup, err := m.lookupOrReserveEntry(ks, holderID)
+		lookup, err := m.lookupOrReserveEntry(ctx, ks, holderID)
 		if err != nil {
 			return nil, 0, err
 		}
 		if lookup.initialize {
-			return m.initializeEntry(ks, lookup.entry, holderID, ksSessFactoryGetter)
+			return m.initializeEntry(ctx, ks, lookup.entry, holderID, ksSessFactoryGetter)
 		}
 		if lookup.wait != nil {
 			failpoint.InjectCall("beforeRuntimeEntryWait", ks)
-			<-lookup.wait
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			case <-lookup.wait:
+			}
 			continue
 		}
 		if lookup.duplicate {
@@ -342,26 +363,33 @@ func (m *Manager) publishEntry(entry *runtimeEntry, mgr *SessionManager) bool {
 	return true
 }
 
-func (m *Manager) finishInitializingEntry(entry *runtimeEntry, holderID string) (int, bool) {
+func (m *Manager) finishInitializingEntry(ctx context.Context, entry *runtimeEntry, holderID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	closed := m.closed
-	if !closed && holderID != "" {
+	err := ctx.Err()
+	if m.closed {
+		err = errManagerClosed
+	}
+	if err == nil && holderID != "" {
 		// Admit the creator before waking waiters, which could otherwise acquire
 		// and eagerly release the runtime before its first holder is registered.
 		entry.activeHolders[holderID] = struct{}{}
+	} else if err != nil {
+		// Let the idle sweep reclaim a runtime published without a holder.
+		entry.lastReleaseAt = time.Now()
 	}
 	holderCount := len(entry.activeHolders)
 	entry.state = runtimeReady
 	close(entry.done)
 	entry.done = nil
-	return holderCount, closed
+	return holderCount, err
 }
 
 // initializeEntry owns the initializing placeholder until worker registration
 // finishes. Shutdown waits for that same placeholder, including private cleanup
 // when shutdown wins before publication.
 func (m *Manager) initializeEntry(
+	ctx context.Context,
 	ks string,
 	entry *runtimeEntry,
 	holderID string,
@@ -369,7 +397,7 @@ func (m *Manager) initializeEntry(
 ) (*runtimeEntry, int, error) {
 	createSessionManager := sessionManagerFactory(m.createSessionManager)
 	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
-	mgr, startWorkers, err := createSessionManager(ks, ksSessFactoryGetter)
+	mgr, startWorkers, err := createSessionManager(ctx, ks, ksSessFactoryGetter)
 	if err != nil {
 		m.removeEntry(ks, entry)
 		return nil, 0, err
@@ -382,9 +410,9 @@ func (m *Manager) initializeEntry(
 	if startWorkers != nil {
 		startWorkers()
 	}
-	holderCount, closed := m.finishInitializingEntry(entry, holderID)
-	if closed {
-		return nil, 0, errManagerClosed
+	holderCount, err := m.finishInitializingEntry(ctx, entry, holderID)
+	if err != nil {
+		return nil, 0, err
 	}
 	return entry, holderCount, nil
 }
@@ -392,11 +420,12 @@ func (m *Manager) initializeEntry(
 // createSessionManager initializes the runtime and returns a function that
 // starts its background workers after publication.
 func (*Manager) createSessionManager(
+	openCtx context.Context,
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, _ func(), err error) {
 	startTime := time.Now()
-	getStoreFn := getOrCreateStore
+	getStoreFn := func(ks string) (kv.Storage, error) { return getOrCreateStore(openCtx, ks) }
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
 	var store kv.Storage
 	store, err = getStoreFn(ks)
@@ -404,13 +433,19 @@ func (*Manager) createSessionManager(
 		return nil, nil, err
 	}
 	defer func() {
-		if err != nil {
+		// The SYSTEM store's lifecycle is managed outside the runtime.
+		if err != nil && ks != keyspace.System {
 			err2 := store.Close()
 			if err2 != nil {
 				logutil.BgLogger().Warn("failed to close store", zap.Error(err2))
 			}
 		}
 	}()
+
+	// A driver open runs to completion even if the acquisition is canceled.
+	if err = openCtx.Err(); err != nil {
+		return nil, nil, err
+	}
 
 	coordinator := newSchemaCoordinator()
 	isValidator := isvalidator.New(vardef.GetSchemaLease())
@@ -694,11 +729,11 @@ func (m *Manager) Close() {
 	}
 }
 
-func getOrCreateStore(targetKS string) (kv.Storage, error) {
+func getOrCreateStore(ctx context.Context, targetKS string) (kv.Storage, error) {
 	if targetKS == keyspace.System {
 		return kvstore.GetSystemStorage(), nil
 	}
-	return kvstore.InitStorage(targetKS)
+	return kvstore.InitStorageWithContext(ctx, targetKS)
 }
 
 type runtimeHandle struct {
