@@ -19,6 +19,7 @@ test-util = [
 ]
 
 [dependencies]
+tidb-owner = { path = "../tidb-owner" }
 tidb-util-config = { path = "../tidb-util-config" }
 tidb-cpu = { path = "../tidb-cpu" }
 tidb-dxf = { path = "../tidb-dxf" }

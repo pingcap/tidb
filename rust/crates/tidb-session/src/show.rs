@@ -249,8 +249,8 @@ impl tidb_executor::show::exec::ShowExec for Session {
         Session::sem_hides_status_var(self, name)
     }
 
-    fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>> {
-        Session::warning_rows(self, count_only, errors_only)
+    fn statement_warnings(&self) -> &[tidb_context::SqlWarn] {
+        &self.warnings
     }
 
     fn viewer_state(&self) -> tidb_executor::memtable_reader::ViewerState {
@@ -425,8 +425,16 @@ impl tidb_executor::admin::AdminExec for Session {
         Session::flush_privileges(self)
     }
 
-    fn show_ddl_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::show_ddl_rows(self)
+    fn ddl_owner_manager(&self) -> Option<&std::sync::Arc<dyn tidb_owner::Manager>> {
+        self.ddl_owner_manager.as_ref()
+    }
+
+    fn ddl_job_history_store(&self) -> Option<&std::sync::Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>> {
+        self.ddl_job_history_store.as_ref()
+    }
+
+    fn cluster_schema_version(&self) -> i64 {
+        self.cluster_schema_version.as_ref().map_or(0, |source| source())
     }
 
     fn run_planned_show(&mut self, show: &tidb_ast::ShowStmt) -> Result<StmtOutput, DriverError> {

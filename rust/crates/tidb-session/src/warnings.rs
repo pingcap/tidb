@@ -123,31 +123,6 @@ impl Session {
         self.append_driver_error(WarningLevel::Note, &error);
     }
 
-    /// Go `ShowExec.fetchShowWarnings(errOnly)`: one `Level | Code | Message`
-    /// row per reported warning (errors only for SHOW ERRORS), or, for SHOW
-    /// COUNT(*), the one count.
-    pub(crate) fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>> {
-        let reported = self
-            .warnings
-            .iter()
-            .filter(|warning| !errors_only || warning.warning_level() == WarningLevel::Error);
-        if count_only {
-            return vec![vec![Datum::Int(reported.count() as i64)]];
-        }
-        reported
-            .map(|warning| {
-                vec![
-                    Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
-                    Datum::Int(i64::from(warning.code())),
-                    // A message quoting the client's SQL (a parse error's
-                    // `near` text) carries a byte that is not UTF-8 as its
-                    // `raw_bytes` escape; Go's message holds the byte.
-                    Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&warning.message()).into_owned()),
-                ]
-            })
-            .collect()
-    }
-
     /// Moves what evaluation recorded into the statement's warning buffer.
     /// Drains a lowering/probe context's warnings into this session's
     /// buffer — the cluster DDL route's half of Go's one warning handler:

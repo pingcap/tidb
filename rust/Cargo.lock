@@ -6859,6 +6859,7 @@ dependencies = [
  "tidb-mviewutil",
  "tidb-mysql",
  "tidb-objstore",
+ "tidb-owner",
  "tidb-parser",
  "tidb-parser-types",
  "tidb-password-validation",
