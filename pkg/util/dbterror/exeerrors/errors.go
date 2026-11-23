@@ -114,4 +114,5 @@ var (
 	ErrMVRefreshLogBaselineChanged = dbterror.ClassExecutor.NewStd(mysql.ErrMVRefreshLogBaselineChanged)
 
 	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
+	ErrMaintenanceMode     = dbterror.ClassExecutor.NewStd(mysql.ErrMaintenanceMode)
 )

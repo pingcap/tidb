@@ -107,6 +107,10 @@ const (
 	HintTiKV = "tikv"
 	// HintIndexMerge is a hint to enforce using some indexes at the same time.
 	HintIndexMerge = "use_index_merge"
+	// HintSkipScan prefers using skip index scan when the query is eligible.
+	HintSkipScan = "skip_scan"
+	// HintNoSkipScan disables skip index scan for the specified index.
+	HintNoSkipScan = "no_skip_scan"
 	// HintTimeRange is a hint to specify the time range for metrics summary tables
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
@@ -617,6 +621,8 @@ type PlanHints struct {
 	ShuffleJoin           []HintedTable    // shuffle_join
 	IndexHintList         []HintedIndex    // use_index, ignore_index
 	IndexMergeHintList    []HintedIndex    // use_index_merge
+	SkipScan              []HintedIndex    // skip_scan
+	NoSkipScan            []HintedIndex    // no_skip_scan
 	TiFlashTables         []HintedTable    // isolation_read_engines(xx=tiflash)
 	TiKVTables            []HintedTable    // isolation_read_engines(xx=tikv)
 	TiFlashLMFilters      []HintedColumn   // tiflash_lm_filter
@@ -873,7 +879,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []HintedTable
 		noHashJoinTables, noMergeJoinTables, noIndexLookUpPushDownTables                []HintedTable
 		shuffleJoinTables                                                               []HintedTable
-		indexHintList, indexMergeHintList                                               []HintedIndex
+		indexHintList, indexMergeHintList, skipScanHintList, noSkipScanHintList         []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
 		tiflashLMFilters                                                                []HintedColumn
 		preferAggType                                                                   uint
@@ -892,7 +898,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintTiFlashLMFilter, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintSkipScan, HintNoSkipScan, HintTiFlashLMFilter, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -1043,6 +1049,27 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintScope:  ast.HintForScan,
 				},
 			})
+		case HintSkipScan, HintNoSkipScan:
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = hintProcessor.resolveHintDBName(hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+					hint.Tables[0].TableName, currentDB)
+			}
+			hintedIndex := HintedIndex{
+				DBName:     dbName,
+				TblName:    hint.Tables[0].TableName,
+				Partitions: hint.Tables[0].PartitionList,
+				IndexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			}
+			if hint.HintName.L == HintSkipScan {
+				skipScanHintList = append(skipScanHintList, hintedIndex)
+			} else {
+				noSkipScanHintList = append(noSkipScanHintList, hintedIndex)
+			}
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
@@ -1107,6 +1134,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		PreferAggToCop:        preferAggToCop,
 		PreferAggType:         preferAggType,
 		IndexMergeHintList:    indexMergeHintList,
+		SkipScan:              skipScanHintList,
+		NoSkipScan:            noSkipScanHintList,
 		TimeRangeHint:         timeRangeHint,
 		PreferLimitToCop:      preferLimitToCop,
 		CTEMerge:              cteMerge,
@@ -1262,8 +1291,10 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 
 // CollectUnmatchedHintWarnings collects warnings for unmatched hints from this TableHintInfo.
 func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
-	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, "")...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, HintIndexMerge)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.SkipScan, HintSkipScan)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.NoSkipScan, HintNoSkipScan)...)
 	warnings = append(warnings, collectUnmatchedColumnHintWarning(HintTiFlashLMFilter, hintInfo.TiFlashLMFilters)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexJoin.INLHJTables)...)
@@ -1301,13 +1332,11 @@ func getHintTableQBName(hint *ast.TableOptimizerHint) ast.CIStr {
 	return hint.QBName
 }
 
-func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []string) {
+func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, hintType string) (warnings []string) {
 	for _, hint := range indexHints {
 		if !hint.Matched {
-			var hintTypeString string
-			if usedForIndexMerge {
-				hintTypeString = HintIndexMerge
-			} else {
+			hintTypeString := hintType
+			if hintTypeString == "" {
 				hintTypeString = hint.HintTypeString()
 			}
 			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",

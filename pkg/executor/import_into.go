@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -103,6 +104,16 @@ func inheritMViewMaintenanceFlag(parent, child sessionctx.Context) {
 	)
 }
 
+// Open implements the Executor Open interface.
+func (e *ImportIntoExec) Open(ctx context.Context) error {
+	// Reject new user imports before opening children so maintenance admission
+	// does not start query execution or submit tasks.
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("IMPORT INTO")
+	}
+	return e.BaseExecutor.Open(ctx)
+}
+
 // Next implements the Executor Next interface.
 func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
@@ -115,6 +126,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if err != nil {
 		return err
 	}
+	importPlan.SchemaReadOnlyBypass = privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(importPlan.DBName).L)
 	astArgs := astArgsFromImportPlan(e.plan)
 	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
 		return err
@@ -335,6 +347,9 @@ func doSubmitImportTask(ctx context.Context, plan *importer.Plan, stmt string, i
 			return err2
 		}
 		if kerneltype.IsClassic() {
+			if plan.SchemaReadOnlyBypass {
+				defer privilege.WithInternalSchemaReadOnlyBypass(se, ast.NewCIStr(plan.DBName).L)()
+			}
 			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
 			if err2 != nil {
 				return err2
@@ -449,6 +464,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 	inheritMViewMaintenanceFlag(e.userSctx, newSCtx)
+	if privilege.CanWriteReadOnlySchema(e.userSctx, ast.NewCIStr(e.controller.Plan.DBName).L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, ast.NewCIStr(e.controller.Plan.DBName).L)()
+	}
 
 	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2

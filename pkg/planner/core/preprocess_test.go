@@ -122,6 +122,23 @@ func TestValidator(t *testing.T) {
 	}{
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
+		// TABLE and VALUES use SelectStmt without SelectStmtOpts.
+		{"table t", false, nil},
+		{"values row(1)", false, nil},
+		{"explain table t", false, nil},
+		// Keep error precedence and skipped binding subtrees covered here.
+		{"create table new_t as select SQL_CALC_FOUND_ROWS 1", false,
+			errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"insert into missing_t select SQL_CALC_FOUND_ROWS 1", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select SQL_CALC_FOUND_ROWS * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")},
+		{"select SQL_CALC_FOUND_ROWS * from t for update of missing_t", false,
+			plannererrors.ErrUnknownTable.GenWithStackByArgs("missing_t", "locking clause")},
+		{"create global binding for select SQL_CALC_FOUND_ROWS a from t using select SQL_CALC_FOUND_ROWS a from t", false, nil},
+		{"drop global binding for select SQL_CALC_FOUND_ROWS a from t", false, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
 			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
