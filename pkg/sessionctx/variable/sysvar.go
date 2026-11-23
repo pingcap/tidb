@@ -930,6 +930,24 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeContiguousBuckets, Value: BoolToOnOff(vardef.DefTiDBAnalyzeContiguousBuckets), Type: vardef.TypeBool,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return BoolToOnOff(vardef.AnalyzeContiguousBuckets.Load()), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			vardef.AnalyzeContiguousBuckets.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeMinSampledBlocks, Value: strconv.Itoa(vardef.DefTiDBAnalyzeMinSampledBlocks), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.AnalyzeMinSampledBlocks.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			vardef.AnalyzeMinSampledBlocks.Store(TidbOptInt64(val, vardef.DefTiDBAnalyzeMinSampledBlocks))
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeStartTime, Value: vardef.DefAutoAnalyzeStartTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeEndTime, Value: vardef.DefAutoAnalyzeEndTime, Type: vardef.TypeTime},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBMemQuotaBindingCache, Value: strconv.FormatInt(vardef.DefTiDBMemQuotaBindingCache, 10), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {

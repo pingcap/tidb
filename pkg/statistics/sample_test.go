@@ -436,3 +436,51 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 		}
 	}
 }
+
+func TestBuildContiguousBuckets(t *testing.T) {
+	// The samples are far apart, as rows sampled from a few data blocks of a
+	// column that follows the key order: no value between two samples is
+	// sampled.
+	build := func(contiguous bool) *Histogram {
+		vardef.AnalyzeContiguousBuckets.Store(contiguous)
+		defer vardef.AnalyzeContiguousBuckets.Store(vardef.DefTiDBAnalyzeContiguousBuckets)
+		ctx := mock.NewContext()
+		sketch := NewFMSketch(1000)
+		data := make([]*SampleItem, 0, 200)
+		for i := range 200 {
+			d := types.NewIntDatum(int64(i * 1000))
+			require.NoError(t, sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d))
+			data = append(data, &SampleItem{Value: d})
+		}
+		collector := &SampleCollector{
+			Samples: data, Count: 10000, FMSketch: sketch, TotalSize: 10000 * 8,
+		}
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		hist, _, err := BuildHistAndTopN(ctx, 5, 0, 1, collector, tp, true, nil)
+		require.NoError(t, err)
+		require.Equal(t, 5, hist.Len())
+		return hist
+	}
+
+	gapped := build(false)
+	upper0, lower1 := gapped.GetUpper(0).GetInt64(), gapped.GetLower(1).GetInt64()
+	require.Greater(t, lower1, upper0+1)
+	mid := types.NewIntDatum((upper0 + lower1) / 2)
+	// mid lies between two sampled bounds: no bucket holds it, so only the
+	// rows of the first bucket are below it.
+	require.Equal(t, float64(gapped.Buckets[0].Count), gapped.LessRowCount(nil, mid))
+
+	contiguous := build(true)
+	for i := 1; i < contiguous.Len(); i++ {
+		require.Equal(t, contiguous.GetUpper(i-1).GetInt64(), contiguous.GetLower(i).GetInt64())
+	}
+	// The same upper bounds and counts, but mid is now inside the second bucket.
+	require.Equal(t, gapped.Buckets, contiguous.Buckets)
+	less := contiguous.LessRowCount(nil, mid)
+	require.Greater(t, less, float64(contiguous.Buckets[0].Count))
+	require.Less(t, less, float64(contiguous.Buckets[1].Count))
+	// The upper bound of a bucket still belongs to that bucket only.
+	require.Equal(t,
+		gapped.LessRowCount(nil, types.NewIntDatum(upper0)),
+		contiguous.LessRowCount(nil, types.NewIntDatum(upper0)))
+}
