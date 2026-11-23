@@ -205,6 +205,14 @@ func (c checkCDCClient) getIncompatible(ctx context.Context, safeTS uint64) (*CD
 		if cts < safeTS {
 			log.Info("Found incompatible changefeed.", zap.Any("changefeed", cf), zap.Uint64("checkpoint-ts", cts), zap.Uint64("safe-ts", safeTS))
 			nameset.save(cf)
+			if safeTS != invalidTs {
+				namespace := path.Join(cf.Cluster, cf.Namespace)
+				if cf.KeyVersion == legacy {
+					namespace = "<nil>"
+				}
+				nameset.incompatibilities = append(nameset.incompatibilities, fmt.Sprintf(
+					"%s: effective checkpointTS=%d < restoreTS=%d", path.Join(namespace, cf.ID), cts, safeTS))
+			}
 		}
 	}
 
@@ -215,6 +223,9 @@ func (c checkCDCClient) getIncompatible(ctx context.Context, safeTS uint64) (*CD
 // nameSet maps `cluster/namespace` to `changefeed`s
 type CDCNameSet struct {
 	changefeeds map[string][]string
+	// incompatibilities preserves the timestamp comparisons for restore checks.
+	// GetRunningChangefeeds keeps using the generic changefeed listing.
+	incompatibilities []string
 }
 
 func (s *CDCNameSet) save(cf changefeed) {
@@ -238,6 +249,10 @@ func (s *CDCNameSet) Empty() bool {
 
 // MessageToUser convert the map `nameSet` to a readable message to user.
 func (s *CDCNameSet) MessageToUser() string {
+	if len(s.incompatibilities) > 0 {
+		return "found incompatible TiCDC changefeed(s) with effective checkpointTS < restoreTS: " +
+			strings.Join(s.incompatibilities, "; ") + ". "
+	}
 	var changefeedMsgBuf strings.Builder
 	changefeedMsgBuf.WriteString("found CDC changefeed(s): ")
 	for clusterID, changefeedID := range s.changefeeds {

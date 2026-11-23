@@ -1,0 +1,48 @@
+--echo # Native WordPress-style pagination without noop functions or a plugin.
+SET tidb_enable_noop_functions=OFF;
+--echo # WordPress disables ONLY_FULL_GROUP_BY on its connections.
+SET sql_mode='';
+CREATE TABLE wp_posts (ID BIGINT PRIMARY KEY, post_status VARCHAR(20), post_date DATETIME);
+INSERT INTO wp_posts VALUES (1,'publish','2025-01-01'),(2,'publish','2025-01-02'),(3,'draft','2025-01-03');
+SELECT SQL_CALC_FOUND_ROWS DISTINCT ID FROM wp_posts WHERE post_status='publish' ORDER BY post_date DESC LIMIT 1;
+SELECT FOUND_ROWS();
+SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 0;
+SELECT FOUND_ROWS();
+
+SET tidb_enable_prepared_plan_cache=ON;
+SET tidb_enable_plan_cache_for_param_limit=ON;
+PREPARE st FROM 'SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE post_status=? ORDER BY ID LIMIT ?';
+SET @status='publish', @page_size=1;
+EXECUTE st USING @status,@page_size;
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+EXECUTE st USING @status,@page_size;
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+INSERT INTO wp_posts VALUES (4,'publish','2025-01-04');
+EXECUTE st USING @status,@page_size;
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+SET @status='draft';
+EXECUTE st USING @status,@page_size;
+SELECT FOUND_ROWS(),@@last_plan_from_cache;
+DEALLOCATE PREPARE st;
+SET tidb_opt_force_inline_cte=OFF;
+WITH c AS (SELECT ID FROM wp_posts ORDER BY ID LIMIT 2)
+SELECT SQL_CALC_FOUND_ROWS ID FROM c ORDER BY ID LIMIT 1;
+SELECT FOUND_ROWS();
+SET tidb_opt_force_inline_cte=DEFAULT;
+--echo # Invalid placement uses MySQL error 1234; unsupported top-level UNION uses 1235.
+--error 1234
+SELECT * FROM (SELECT SQL_CALC_FOUND_ROWS 1 AS id) c;
+--error 1235
+SELECT SQL_CALC_FOUND_ROWS 1 UNION ALL SELECT 2 LIMIT 1;
+--echo # EXPLAIN preserves the count; ANALYZE reports the query total without adding plan rows.
+SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts WHERE ID<=2 LIMIT 0;
+--disable_result_log
+EXPLAIN SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 1;
+--enable_result_log
+SELECT FOUND_ROWS();
+--disable_result_log
+EXPLAIN ANALYZE SELECT SQL_CALC_FOUND_ROWS ID FROM wp_posts LIMIT 1;
+--enable_result_log
+SELECT FOUND_ROWS();
+DROP TABLE wp_posts;
+SET sql_mode=DEFAULT;

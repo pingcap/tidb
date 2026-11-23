@@ -145,6 +145,10 @@ type AdaptiveLimitConfig struct {
 	InitialLookupBatchSize uint64
 	// MaxLookupBatchSize is the upper bound on handles assigned to one lookup task.
 	MaxLookupBatchSize uint64
+	// NoOutputLookupBatchSize and NoOutputLookupWindow are optional floors for
+	// lookup growth once an admitted window returns no rows.
+	NoOutputLookupBatchSize uint64
+	NoOutputLookupWindow    uint64
 }
 
 // AdaptiveLimitController bounds speculative work for an early-stop LIMIT.
@@ -225,7 +229,9 @@ type AdaptiveLimitController struct {
 	// initialLookupBatchSize is the lookup task size restored by Reset.
 	initialLookupBatchSize uint64
 	// maxLookupBatchSize is the immutable upper bound on lookup task size.
-	maxLookupBatchSize uint64
+	maxLookupBatchSize      uint64
+	noOutputLookupBatchSize uint64
+	noOutputLookupWindow    uint64
 	// lookupBatchSize is the current execution-task size in index handles,
 	// independent of the logical lookup window.
 	lookupBatchSize uint64
@@ -292,20 +298,22 @@ func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMo
 		initialLookupWindow = demandRows
 	}
 	c := &AdaptiveLimitController{
-		mode:                   mode,
-		demandRows:             demandRows,
-		initialOuterWindow:     initialOuterWindow,
-		maxOuterWindow:         maxOuterWindow,
-		outerWindow:            initialOuterWindow,
-		initialLookupWindow:    initialLookupWindow,
-		maxLookupWindow:        maxLookupWindow,
-		lookupWindow:           initialLookupWindow,
-		initialLookupBatchSize: initialLookupBatchSize,
-		maxLookupBatchSize:     maxLookupBatchSize,
-		lookupBatchSize:        initialLookupBatchSize,
-		outerChanged:           make(chan struct{}, 1),
-		lookupChanged:          make(chan struct{}, 1),
-		stopCh:                 make(chan struct{}),
+		mode:                    mode,
+		demandRows:              demandRows,
+		initialOuterWindow:      initialOuterWindow,
+		maxOuterWindow:          maxOuterWindow,
+		outerWindow:             initialOuterWindow,
+		initialLookupWindow:     initialLookupWindow,
+		maxLookupWindow:         maxLookupWindow,
+		lookupWindow:            initialLookupWindow,
+		initialLookupBatchSize:  initialLookupBatchSize,
+		maxLookupBatchSize:      maxLookupBatchSize,
+		noOutputLookupBatchSize: min(config.NoOutputLookupBatchSize, maxLookupBatchSize),
+		noOutputLookupWindow:    min(config.NoOutputLookupWindow, maxLookupWindow),
+		lookupBatchSize:         initialLookupBatchSize,
+		outerChanged:            make(chan struct{}, 1),
+		lookupChanged:           make(chan struct{}, 1),
+		stopCh:                  make(chan struct{}),
 	}
 	if mode == adaptiveLimitDirectIndexLookup {
 		c.initialOuterWindow = 0
@@ -616,7 +624,7 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 		c.lookupInNoOutputPhase = true
 		c.joinLookupBatchSize = 0
 		c.lookupNoOutputRows = saturatingAdd(c.lookupNoOutputRows, uint64(max(handles, 1)))
-		c.growLookupWindowIfDrainedLocked()
+		c.growLookupWindowOnNoOutputLocked()
 	}
 	c.notifyLocked(c.lookupChanged)
 	c.mu.Unlock()
@@ -786,19 +794,21 @@ func (c *AdaptiveLimitController) growOuterWindowOnNoOutputLocked() {
 	}
 }
 
-func (c *AdaptiveLimitController) growLookupWindowIfDrainedLocked() {
-	// Grow both the logical budget and execution batch after a fully drained
-	// zero-output phase. Growing only the budget would still force a long series
-	// of tiny table lookup tasks through a low-selectivity interval.
-	if c.lookupReserved != 0 || c.lookupNoOutputRows < c.lookupWindow {
+func (c *AdaptiveLimitController) growLookupWindowOnNoOutputLocked() {
+	// Drain the initial probe before opening the fast-growth window. Once
+	// fast growth is active, each window of completed zero-output work is
+	// enough evidence to grow even if the producer keeps tasks in flight.
+	canGrowWithInFlight := c.noOutputLookupBatchSize > c.initialLookupBatchSize &&
+		c.lookupBatchSize >= c.noOutputLookupBatchSize
+	if c.lookupNoOutputRows < c.lookupWindow || (c.lookupReserved != 0 && !canGrowWithInFlight) {
 		return
 	}
-	nextWindow := growAdaptiveWindow(c.lookupWindow, c.maxLookupWindow)
+	nextWindow := max(growAdaptiveWindow(c.lookupWindow, c.maxLookupWindow), c.noOutputLookupWindow)
 	if nextWindow > c.lookupWindow {
 		c.lookupGrowthProgress = c.lookupHandles
 	}
 	c.lookupWindow = nextWindow
-	c.lookupBatchSize = growAdaptiveWindow(c.lookupBatchSize, c.maxLookupBatchSize)
+	c.lookupBatchSize = max(growAdaptiveWindow(c.lookupBatchSize, c.maxLookupBatchSize), c.noOutputLookupBatchSize)
 	c.lookupNoOutputRows = 0
 }
 

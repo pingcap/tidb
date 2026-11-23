@@ -42,6 +42,7 @@ const (
 	flagUser                     = "user"
 	flagPort                     = "port"
 	flagPassword                 = "password"
+	flagAskPassword              = "ask-password"
 	flagAllowCleartextPasswords  = "allow-cleartext-passwords"
 	flagThreads                  = "threads"
 	flagFilesize                 = "filesize"
@@ -106,6 +107,7 @@ var dumpServiceIncompatibleFlags = []string{
 	flagUser,
 	flagPort,
 	flagPassword,
+	flagAskPassword,
 	flagAllowCleartextPasswords,
 	flagConsistency,
 	flagNoViews,
@@ -424,6 +426,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagUser, "u", "root", "Username with privileges to run the dump")
 	flags.IntP(flagPort, "P", 4000, "TCP/IP port to connect to")
 	flags.StringP(flagPassword, "p", "", "User password")
+	flags.BoolP(flagAskPassword, "a", false, "Prompt for the user password without echoing it (requires a terminal)")
 	flags.Bool(flagAllowCleartextPasswords, false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	flags.IntP(flagThreads, "t", 4, "Number of goroutines to use, default 4")
 	flags.StringP(flagFilesize, "F", "", "The approximate size of output file")
@@ -492,14 +495,22 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock. Renders schema SQL using TiDB default session settings with time_zone='+00:00', character_set_connection='utf8mb4', character_set_results='utf8mb4'")
 }
 
-// ParseFromFlags parses dumpling's export.Config from flags
+// ParseFromFlags parses dumpling's export.Config from flags.
+// It never prompts for a password. When --ask-password is set, callers must
+// populate Password before constructing a dumper.
 // nolint: gocyclo
 func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := validateDumpServiceFlags(flags); err != nil {
 		return err
 	}
 
-	var err error
+	askPassword, err := flags.GetBool(flagAskPassword)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if askPassword && flags.Changed(flagPassword) {
+		return errors.New("--ask-password cannot be combined with --password")
+	}
 	conf.Databases, err = flags.GetStringSlice(flagDatabase)
 	if err != nil {
 		return errors.Trace(err)

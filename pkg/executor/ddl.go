@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -107,11 +108,26 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
+		}
+		// Validate all local targets before dropping any of them.
+		for _, target := range s.Tables {
+			_, local, err := e.getLocalTemporaryTable(target.Schema, target.Name)
+			if err != nil {
+				return err
+			}
+			if local {
+				if err := checkLatestSchemaReadOnly(e.Ctx(), target.Schema); err != nil {
+					return err
+				}
+			}
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
@@ -146,6 +162,16 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
+	case *ast.TruncateTableStmt:
+		_, local, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+		if err != nil {
+			return err
+		}
+		if local {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -270,6 +296,9 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 		return errors.Trace(err)
 	}
 	if exist {
+		if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+			return err
+		}
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
 	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
@@ -349,7 +378,14 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
-	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	failpoint.InjectCall("afterCreateViewPreprocess", e.Ctx())
+	// Only metadata was read in this transaction; preceding user writes were
+	// already committed above. A read-only transition can cache this transaction's
+	// ID and block the view job until it ends. Start an empty transaction to release
+	// that ID while retaining a context provider for statement completion hooks.
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
+		return errors.Trace(err)
+	}
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 

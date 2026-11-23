@@ -589,6 +589,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			if bestCNFIsSubset && !pointRangeIsSubset {
 				// Update final result and just update: Ranges, AccessConds and RemainedConds
 				res.RemainedConds = removeConditions(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, bestCNFItemRes.rangeResult.AccessConds)
+				// Access conditions may only yield approximate ranges, e.g. for prefix indexes.
+				// Preserve the chosen candidate's residual filters when replacing the ranges.
+				res.RemainedConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, bestCNFItemRes.rangeResult.RemainedConds)
 				res.Ranges = bestCNFItemRes.rangeResult.Ranges
 				res.AccessConds = bestCNFItemRes.rangeResult.AccessConds
 			}

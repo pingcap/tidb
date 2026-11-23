@@ -104,9 +104,9 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(1)
 	require.Equal(t, uint64(1), ss.FoundRows())
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(2)
 	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows
@@ -747,6 +747,14 @@ func TestRowIDShardGenerator(t *testing.T) {
 	// set step will reset clear remain
 	g.SetShardStep(5)
 	require.NotEqual(t, shard, g.GetCurrentShard(1))
+
+	// An allocation stays on one shard even when it consumes more than the remaining step.
+	g.SetShardStep(5)
+	shard = g.GetCurrentShard(3)
+	require.Equal(t, shard, g.GetCurrentShard(3))
+	next := g.GetCurrentShard(3)
+	require.NotEqual(t, shard, next)
+	require.Equal(t, next, g.GetCurrentShard(1))
 }
 
 func TestUserVars(t *testing.T) {

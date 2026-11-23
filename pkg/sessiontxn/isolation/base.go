@@ -284,6 +284,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
+	failpoint.InjectCall("beforeActivateTxnForSchemaReadOnly", p.sctx)
 
 	if err := p.prepareTxn(); err != nil {
 		return nil, err
@@ -318,6 +319,26 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		sessVars.MemDBFootprint.Detach()
 	}
 	sessVars.MemDBFootprint = nil
+	if !sessVars.TxnCtx.IsStaleness && sessVars.SnapshotInfoschema == nil {
+		// Planning can register accesses before a lazy transaction appears in
+		// CLUSTER_TIDB_TRX. Once it becomes visible, recheck the published flag
+		// so a transition cannot miss both its scan and this transaction.
+		latestIS := p.sctx.GetLatestISWithoutSessExt()
+		var readOnlyErr error
+		sessVars.GetRelatedTableForReadOnly().Range(func(_, value any) bool {
+			dbName := value.(ast.CIStr)
+			db, exists := p.GetTxnInfoSchema().SchemaByName(dbName)
+			latestDB, latestExists := latestIS.SchemaByName(dbName)
+			if exists && latestExists && db.ReadOnly != latestDB.ReadOnly {
+				readOnlyErr = domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbName.L)
+				return false
+			}
+			return true
+		})
+		if readOnlyErr != nil {
+			return nil, readOnlyErr
+		}
+	}
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
