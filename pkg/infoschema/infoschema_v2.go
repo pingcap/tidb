@@ -856,24 +856,29 @@ func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 // TableByID implements the InfoSchema interface.
 // As opposed to TableByName, TableByID will not refill cache when schema cache miss,
 // unless the caller changes the behavior by passing a context use WithRefillOption.
-func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
+func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (table.Table, bool) {
+	tbl, _ := is.TableByIDWithError(ctx, id)
+	return tbl, tbl != nil
+}
+
+// TableByIDWithError implements InfoSchema.TableByIDWithError.
+func (is *infoschemaV2) TableByIDWithError(ctx context.Context, id int64) (table.Table, error) {
 	if !tableIDIsValid(id) {
-		return
+		return nil, nil
 	}
 
 	is.keepAlive()
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
-		return nil, false
+		return nil, nil
 	}
 
 	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
-			val, ok = schTbls.tables[itm.tableName.L]
-			return
+			return schTbls.tables[itm.tableName.L], nil
 		}
-		return nil, false
+		return nil, nil
 	}
 
 	refill := false
@@ -885,19 +890,22 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	key := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found := is.tableCache.Get(key)
 	if found && tbl != nil {
-		return tbl, true
+		return tbl, nil
 	}
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := is.loadTableInfo(ctx, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
-	if err != nil || ret == nil {
-		return nil, false
+	if err != nil {
+		if ErrTableNotExists.Equal(err) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	if refill {
 		is.tableCache.Set(key, ret)
 	}
-	return ret, true
+	return ret, nil
 }
 
 // TableItemByID implements the InfoSchema interface.

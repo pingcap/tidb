@@ -432,6 +432,12 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+// TableByIDWithError implements InfoSchema.TableByIDWithError.
+func (is *infoSchema) TableByIDWithError(ctx stdctx.Context, id int64) (table.Table, error) {
+	tbl, _ := is.TableByID(ctx, id)
+	return tbl, nil
+}
+
 // TableItemByID implements InfoSchema.TableItemByID.
 func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), id)
@@ -1381,6 +1387,24 @@ func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (ta
 		return nil, false
 	}
 
+	if tbl, ok := ts.sessionTableByID(id); ok {
+		return tbl, true
+	}
+	return ts.InfoSchema.TableByID(ctx, id)
+}
+
+// TableByIDWithError implements InfoSchema.TableByIDWithError.
+func (ts *SessionExtendedInfoSchema) TableByIDWithError(ctx stdctx.Context, id int64) (table.Table, error) {
+	if !tableIDIsValid(id) {
+		return nil, nil
+	}
+	if tbl, ok := ts.sessionTableByID(id); ok {
+		return tbl, nil
+	}
+	return ts.InfoSchema.TableByIDWithError(ctx, id)
+}
+
+func (ts *SessionExtendedInfoSchema) sessionTableByID(id int64) (table.Table, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
@@ -1388,12 +1412,9 @@ func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (ta
 	}
 
 	if ts.MdlTables != nil {
-		if tbl, ok := ts.MdlTables.TableByID(id); ok {
-			return tbl, true
-		}
+		return ts.MdlTables.TableByID(id)
 	}
-
-	return ts.InfoSchema.TableByID(ctx, id)
+	return nil, false
 }
 
 // SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.

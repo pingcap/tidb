@@ -677,3 +677,37 @@ func TestGCOldVersionPivotDeletedLeadsToReferredFKMissing(t *testing.T) {
 	require.Len(t, ref, 1)
 	require.Equal(t, "child1", ref[0].ChildTable.L)
 }
+
+func TestInfoSchemaIDLookupLoadError(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.lookup_err (a int) partition by hash(a) partitions 1")
+	db, name := ast.NewCIStr("test"), ast.NewCIStr("lookup_err")
+	is := dom.InfoSchema()
+	ok, v2 := infoschema.IsV2(is)
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), db, name)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		table, column string
+		id            int64
+	}{
+		{"tables", "tidb_table_id", tbl.Meta().ID},
+		{"partitions", "tidb_partition_id", tbl.Meta().Partition.Definitions[0].ID},
+	} {
+		t.Run(tc.table, func(t *testing.T) {
+			query := fmt.Sprintf("select table_name from information_schema.%s where %s = ", tc.table, tc.column)
+			existing := query + strconv.FormatInt(tc.id, 10)
+			v2.EvictTable(db, name)
+			tk.MustQuery(existing).Check(testkit.Rows("lookup_err"))
+			v2.EvictTable(db, name)
+			const fp = "github.com/pingcap/tidb/pkg/infoschema/mockLoadTableInfoError"
+			testfailpoint.Enable(t, fp, "return(true)")
+			tk.MustQuery(query + "123456789").Check(testkit.Rows())
+			require.ErrorContains(t, tk.QueryToErr(existing), "mockLoadTableInfoError")
+			testfailpoint.Disable(t, fp)
+			tk.MustQuery(existing).Check(testkit.Rows("lookup_err"))
+		})
+	}
+}
