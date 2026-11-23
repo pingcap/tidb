@@ -15,14 +15,22 @@
 package objstore
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,8 +51,10 @@ func TestWithCompressReadWriteFile(t *testing.T) {
 	// make sure compressed file is written correctly
 	file, err := os.Open(filepath.Join(dir, fileName))
 	require.NoError(t, err)
+	defer file.Close()
 	uncompressedFile, err := compressedio.NewReader(compressedio.Gzip, compressedio.DecompressConfig{}, file)
 	require.NoError(t, err)
+	defer uncompressedFile.Close()
 	newContent, err := io.ReadAll(uncompressedFile)
 	require.NoError(t, err)
 	require.Equal(t, content, string(newContent))
@@ -53,4 +63,158 @@ func TestWithCompressReadWriteFile(t *testing.T) {
 	newContent, err = storage.ReadFile(ctx, fileName)
 	require.NoError(t, err)
 	require.Equal(t, content, string(newContent))
+}
+
+type compressionTestReader struct {
+	*bytes.Reader
+	closeCount int
+	closeErr   error
+}
+
+func (r *compressionTestReader) Close() error {
+	r.closeCount++
+	return r.closeErr
+}
+
+func (r *compressionTestReader) GetFileSize() (int64, error) {
+	return r.Size(), nil
+}
+
+type compressionTestStorage struct {
+	storeapi.Storage
+	reader objectio.Reader
+}
+
+func (s *compressionTestStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
+	return s.reader, nil
+}
+
+func TestWithCompressionOpenCleanup(t *testing.T) {
+	closeErr := errors.New("close source failed")
+	for _, sourceErr := range []error{nil, closeErr} {
+		source := &compressionTestReader{
+			Reader:   bytes.NewReader([]byte("invalid gzip header")),
+			closeErr: sourceErr,
+		}
+		storage := WithCompression(&compressionTestStorage{reader: source}, compressedio.Gzip, compressedio.DecompressConfig{})
+		reader, err := storage.Open(context.Background(), "invalid.gz", nil)
+		require.Nil(t, reader)
+		require.ErrorIs(t, err, gzip.ErrHeader)
+		require.Equal(t, 1, source.closeCount)
+		if sourceErr != nil {
+			require.ErrorIs(t, err, sourceErr)
+		}
+	}
+}
+
+func TestInterceptDecompressReaderClose(t *testing.T) {
+	content := bytes.Repeat([]byte("hello,world!"), 256*1024)
+	for _, test := range []struct {
+		name        string
+		compression compressedio.CompressType
+	}{
+		{name: "none", compression: compressedio.NoCompression},
+		{name: "gzip", compression: compressedio.Gzip},
+		{name: "snappy", compression: compressedio.Snappy},
+		{name: "zstd", compression: compressedio.Zstd},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var compressed bytes.Buffer
+			if test.compression == compressedio.NoCompression {
+				compressed.Write(content)
+			} else {
+				writer := compressedio.NewWriter(test.compression, &compressed)
+				_, err := writer.Write(content)
+				require.NoError(t, err)
+				require.NoError(t, writer.Close())
+			}
+			for _, limited := range []bool{false, true} {
+				for _, sourceErr := range []error{nil, errors.New("close source failed")} {
+					source := &compressionTestReader{Reader: bytes.NewReader(compressed.Bytes()), closeErr: sourceErr}
+					cfg := compressedio.DecompressConfig{ZStdDecodeConcurrency: 2}
+					var reader objectio.Reader
+					var err error
+					if limited {
+						reader, err = NewLimitedInterceptReader(source, test.compression, cfg, int64(compressed.Len()))
+					} else {
+						reader, err = InterceptDecompressReader(source, test.compression, cfg)
+					}
+					require.NoError(t, err)
+					// Drain after a failed assertion so the regression test itself does not leak workers.
+					t.Cleanup(func() { _, _ = io.Copy(io.Discard, reader) })
+					buf := make([]byte, 1)
+					_, err = io.ReadFull(reader, buf)
+					require.NoError(t, err)
+					require.Equal(t, content[:1], buf)
+					if test.compression != compressedio.Zstd {
+						offset, err := reader.Seek(0, io.SeekCurrent)
+						require.NoError(t, err)
+						require.Positive(t, offset)
+					}
+					require.ErrorIs(t, reader.Close(), sourceErr)
+					require.Equal(t, 1, source.closeCount)
+					if test.compression == compressedio.Zstd {
+						_, err = reader.Read(buf)
+						require.ErrorIs(t, err, zstd.ErrDecoderClosed)
+					}
+				}
+			}
+		})
+	}
+
+	for _, prefetched := range []bool{false, true} {
+		name := "blocked zstd read"
+		if prefetched {
+			name = "blocked prefetched zstd read"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				pipeReader, pipeWriter := io.Pipe()
+				defer pipeReader.Close()
+				defer pipeWriter.Close()
+				var input io.ReadCloser = pipeReader
+				if prefetched {
+					input = prefetch.NewReader(input, 1024, 16)
+				}
+				source := &compressReader{Reader: input, Closer: input}
+				reader, err := InterceptDecompressReader(source, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+				require.NoError(t, err)
+				// Wait until the decoder worker is blocked reading from the open pipe.
+				synctest.Wait()
+				require.NoError(t, reader.Close())
+				_, err = reader.Read(make([]byte, 1))
+				require.ErrorIs(t, err, zstd.ErrDecoderClosed)
+			})
+		})
+	}
+}
+
+func TestCompressReaderCloseErrors(t *testing.T) {
+	var compressed bytes.Buffer
+	writer := compressedio.NewWriter(compressedio.Gzip, &compressed)
+	_, err := writer.Write([]byte("hello,world!"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	// Set an invalid DEFLATE block type after the ten-byte gzip header.
+	compressed.Bytes()[10] = 0x07
+	sourceErr := errors.New("close source failed")
+	source := &compressionTestReader{Reader: bytes.NewReader(compressed.Bytes()), closeErr: sourceErr}
+	reader, err := InterceptDecompressReader(source, compressedio.Gzip, compressedio.DecompressConfig{})
+	require.NoError(t, err)
+	_, readErr := io.ReadAll(reader)
+	require.Error(t, readErr)
+	closeErr := reader.Close()
+	require.ErrorIs(t, closeErr, sourceErr)
+	require.ErrorIs(t, closeErr, readErr)
+	require.Equal(t, 1, source.closeCount)
+}
+
+func TestInterceptDecompressReaderInitError(t *testing.T) {
+	source := &compressionTestReader{Reader: bytes.NewReader([]byte("invalid gzip header"))}
+	reader, err := InterceptDecompressReader(source, compressedio.Gzip, compressedio.DecompressConfig{})
+	require.Nil(t, reader)
+	require.ErrorIs(t, err, gzip.ErrHeader)
+	// A failed interception leaves ownership with the caller.
+	require.Zero(t, source.closeCount)
+	require.NoError(t, source.Close())
 }
