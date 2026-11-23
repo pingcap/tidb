@@ -550,7 +550,15 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 			}
 			cols = append(cols, p.Exprs[idx].(*expression.Column))
 		}
-		newProp.SkipScanInfo = &property.SkipScanInfo{GroupByCols: cols}
+		newSkip := &property.SkipScanInfo{GroupByCols: cols}
+		if skip.TargetCol != nil {
+			idx := p.Schema().ColumnIndex(skip.TargetCol)
+			if idx < 0 {
+				return nil, false
+			}
+			newSkip.TargetCol = p.Exprs[idx].(*expression.Column)
+		}
+		newProp.SkipScanInfo = newSkip
 	}
 	return newProp, true
 }

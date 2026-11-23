@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -118,8 +119,13 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	if intest.InTest {
 		failpoint.Inject("enablePlannerSkipScan", func() { enableSkipScan = true })
 	}
-	enableSkipScan = enableSkipScan && len(groupByCols) > 0 && prop.IndexJoinProp == nil &&
-		skipScanAggregationSupported(la.AggFuncs, groupByCols)
+	var skipTarget *expression.Column
+	var skipDesc bool
+	if enableSkipScan && len(groupByCols) > 0 && prop.IndexJoinProp == nil {
+		skipTarget, skipDesc, enableSkipScan = getSkipScanAggRequirement(la.AggFuncs, groupByCols, desc)
+	} else {
+		enableSkipScan = false
+	}
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
@@ -129,7 +135,8 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		return nil
 	}
 	for _, possibleChildProperty := range la.PossibleProperties.Orders {
-		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
+		groupOrder := possibleChildProperty[:len(groupByCols)]
+		childProp.SortItems = property.SortItemsFromCols(groupOrder, desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
@@ -160,13 +167,15 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			}
 			streamAggs = append(streamAggs, makeStreamAgg(copiedChildProperty))
 			if enableSkipScan && taskTp == property.CopSingleReadTaskType {
-				cols := make([]*expression.Column, 0, len(childProp.SortItems))
-				for _, item := range childProp.SortItems {
-					cols = append(cols, item.Col)
-				}
 				req := copiedChildProperty.CloneEssentialFields()
-				req.SkipScanInfo = &property.SkipScanInfo{GroupByCols: cols}
-				streamAggs = append(streamAggs, makeStreamAgg(req))
+				req.SortItems = property.SortItemsFromCols(groupOrder, skipDesc)
+				if prop.IsPrefix(req) {
+					req.SkipScanInfo = &property.SkipScanInfo{
+						GroupByCols: append([]*expression.Column(nil), groupOrder...),
+						TargetCol:   skipTarget,
+					}
+					streamAggs = append(streamAggs, makeStreamAgg(req))
+				}
 			}
 		}
 	}
@@ -178,18 +187,49 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	return streamAggs
 }
 
-func skipScanAggregationSupported(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column) bool {
+func getSkipScanAggRequirement(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column, desc bool) (target *expression.Column, scanDesc bool, ok bool) {
 	schema := expression.NewSchema(groupBy...)
+	var hasMin, hasMax bool
 	for _, agg := range aggs {
-		if agg.Name != ast.AggFuncFirstRow || agg.HasDistinct || len(agg.Args) != 1 {
-			return false
+		switch agg.Name {
+		case ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow:
+		default:
+			return nil, false, false
+		}
+		if agg.HasDistinct || len(agg.OrderByItems) != 0 || len(agg.Args) != 1 {
+			return nil, false, false
 		}
 		col, ok := agg.Args[0].(*expression.Column)
-		if !ok || !schema.Contains(col) {
-			return false
+		if !ok || col.VirtualExpr != nil {
+			return nil, false, false
+		}
+		if schema.Contains(col) {
+			if agg.Name == ast.AggFuncFirstRow {
+				// The logical builder uses FIRSTROW to return grouping keys.
+				continue
+			}
+			return nil, false, false
+		}
+		if target != nil && !target.EqualColumn(col) {
+			return nil, false, false
+		}
+		target = col
+		if agg.Name != ast.AggFuncFirstRow {
+			// ENUM and SET extrema use name order, unlike index traversal.
+			if tp := col.RetType.GetType(); tp == mysql.TypeEnum || tp == mysql.TypeSet {
+				return nil, false, false
+			}
+			hasMin = hasMin || agg.Name == ast.AggFuncMin
+			hasMax = hasMax || agg.Name == ast.AggFuncMax
 		}
 	}
-	return true
+	if hasMin && hasMax {
+		return nil, false, false
+	}
+	if hasMin || hasMax {
+		desc = hasMax
+	}
+	return target, desc, true
 }
 
 // GetPointer return inner base physical agg.
