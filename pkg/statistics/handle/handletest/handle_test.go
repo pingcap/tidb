@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -693,37 +692,6 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
 		"5 0",
 	))
-}
-
-func TestEvictedColumnLoadedStatus(t *testing.T) {
-	t.Skip("skip this test because it is useless")
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.StatsHandle().SetLease(0)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.Nil(t, err)
-	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
-
-	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
-	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	tblStats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.True(t, col.IsStatsInitialized())
-		return false
-	})
 }
 
 func TestUninitializedStatsStatus(t *testing.T) {

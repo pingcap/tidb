@@ -930,6 +930,11 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 // countForError records the error count for DDL job.
 func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
 	job.Error = toTError(err)
+	// Refresh lock contention is an expected wait for an already-started
+	// MLog ADD COLUMN, including its multi-schema parent.
+	if isMLogAddColumnRefreshLockWait(job, err) {
+		return err
+	}
 	job.ErrorCount++
 
 	logger := jobCtx.logger
@@ -1044,7 +1049,15 @@ func (w *worker) runOneJobStep(
 		jobCtx.stepCtx = w.workCtx
 	} else {
 		job.State = model.JobStateRunning
-
+		if job.CheckSchemaReadOnly {
+			if err := checkSchemaReadOnlyBeforeJob(jobCtx, job); err != nil {
+				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				return ver, false, w.countForError(jobCtx, job, err)
+			}
+			job.CheckSchemaReadOnly = false
+		}
 		if jobCtx.shouldPollDDLJob() {
 			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
@@ -1270,6 +1283,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterTableAffinity(jobCtx, job)
 	case model.ActionAlterTableSetRegionSplitPolicy:
 		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

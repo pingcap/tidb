@@ -1973,6 +1973,12 @@ var tableKeyspaceMetaCols = []columnInfo{
 	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
 }
 
+var tableSchemataExtensions = []columnInfo{
+	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "OPTIONS", tp: mysql.TypeVarchar, size: 256},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2636,6 +2642,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
 	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
+	TableSchemataExtensions:                 tableSchemataExtensions,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
