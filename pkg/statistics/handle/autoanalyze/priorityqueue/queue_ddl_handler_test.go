@@ -72,7 +72,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle, handle, handle, handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(ctx))
 
@@ -109,7 +109,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	go func() {
 		defer close(down)
 		require.NoError(t, failpoint.Enable(fp, "return(1)"))
-		require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
+		require.NoError(t, job1.Analyze(handle, handle, dom.SysProcTracker()))
 	}()
 
 	// Create a new index on t1.
@@ -176,7 +176,7 @@ func TestTruncateTable(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -242,7 +242,7 @@ func testTruncatePartitionedTable(
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -292,7 +292,7 @@ func TestDropTable(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -363,7 +363,7 @@ func testDropPartitionedTable(
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -415,7 +415,7 @@ func TestTruncateTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -475,7 +475,7 @@ func TestDropTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -541,7 +541,7 @@ func TestExchangeTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -604,7 +604,7 @@ func TestReorganizeTablePartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -664,7 +664,7 @@ func TestAlterTablePartitioning(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -724,7 +724,7 @@ func TestRemovePartitioning(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -792,7 +792,7 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -850,7 +850,7 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -912,7 +912,7 @@ func TestVectorIndexTriggerAutoAnalyze(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	tk.MustExec("alter table t set tiflash replica 1;")
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 	defer pq.Close()
@@ -957,7 +957,7 @@ func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 	isEmpty, err := pq.IsEmptyForTest()
@@ -968,7 +968,7 @@ func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h, h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.
 	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -1001,7 +1001,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStaticPartition(t *testing.T) {
 	testKit.MustExec("insert into t values (1,2),(2,2)")
 	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize(context.Background()))
 	isEmpty, err := pq.IsEmptyForTest()
@@ -1037,12 +1037,12 @@ func TestAddIndexTriggerAutoAnalyzeWithStaticPartition(t *testing.T) {
 	require.NoError(t, err)
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h, h, do.SysProcTracker()))
 	job, err = pq.Pop()
 	require.NoError(t, err)
 	valid, _ = job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h, h, do.SysProcTracker()))
 
 	// Check the stats of the indexes for each partition.
 	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
@@ -1072,7 +1072,7 @@ func TestCreateIndexUnderDDLAnalyzeEnabled(t *testing.T) {
 	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), do.InfoSchema()))
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -1138,7 +1138,7 @@ func TestTurnOffAutoAnalyzeAfterQueueInit(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 	require.NoError(t, pq.Initialize(ctx))
@@ -1194,7 +1194,7 @@ func TestTurnOffAutoAnalyzeBeforeQueueInit(t *testing.T) {
 	// Disable the auto analyze.
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
 
-	pq := priorityqueue.NewAnalysisPriorityQueue(h)
+	pq := priorityqueue.NewAnalysisPriorityQueue(h, h, h, h)
 	defer pq.Close()
 	ctx := context.Background()
 

@@ -135,6 +135,7 @@ func NewHandle(
 	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
 	statsPool := util.NewPool(pool)
+	procIDs := util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
 	leaseHolder := util.NewLeaseHolder(lease)
 	tables := util.NewTableInfoGetter()
 	statsLock := lockstats.NewStatsLock(pool)
@@ -144,10 +145,11 @@ func NewHandle(
 	}
 	tableStats := newTableStatsGetter(statsPool, statsCache)
 	readWriter := storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache)
+	statsAnalyze := autoanalyze.NewStatsAnalyze(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier)
 	handle := &Handle{
 		InitStatsDone:              make(chan struct{}),
 		Pool:                       statsPool,
-		AutoAnalyzeProcIDGenerator: util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID),
+		AutoAnalyzeProcIDGenerator: procIDs,
 		LeaseHolder:                leaseHolder,
 		TableInfoGetter:            tables,
 		StatsCache:                 statsCache,
@@ -158,8 +160,8 @@ func NewHandle(
 		StatsGlobal:                globalstats.NewStatsGlobal(statsPool, tables, readWriter),
 		StatsUsage:                 usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats),
 		StatsSyncLoad:              syncload.NewStatsSyncLoad(statsPool, leaseHolder, tables, statsCache),
+		StatsAnalyze:               statsAnalyze,
 	}
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,

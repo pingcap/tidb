@@ -130,10 +130,8 @@ type IndicatorsJSON struct {
 	LastAnalysisDuration string `json:"last_analysis_duration"`
 }
 
-// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
-// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
-// Because the current auto analyze' scheduling needs the whole information.
-type StatsAnalyze interface {
+// AnalyzeJobRecorder records the state of analyze jobs in mysql.analyze_jobs.
+type AnalyzeJobRecorder interface {
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -151,6 +149,13 @@ type StatsAnalyze interface {
 	// There is no guarantee that the job record will actually be updated. If the job fails to finish, an error will be logged.
 	// It is OK because this won't affect the analysis job's success.
 	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+}
+
+// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
+type StatsAnalyze interface {
+	AnalyzeJobRecorder
 
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error

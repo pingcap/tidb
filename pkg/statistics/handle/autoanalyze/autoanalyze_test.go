@@ -594,6 +594,7 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
 			se.(sessionctx.Context),
 			dom.StatsHandle(),
+			dom.StatsHandle(),
 			dom.SysProcTracker(),
 			0.6,
 			variable.Dynamic,
