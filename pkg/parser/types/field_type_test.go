@@ -14,6 +14,7 @@
 package types_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -227,6 +228,8 @@ func TestHasCharsetFromStmt(t *testing.T) {
 		{"mediumtext", true},
 		{"longtext", true},
 		{"json", false},
+		{"geometry", false},
+		{"point", false},
 		{"enum('1')", true},
 		{"set('1')", true},
 	}
@@ -328,4 +331,64 @@ func TestCompactStr(t *testing.T) {
 		TiDBStrictIntegerDisplayWidth = true
 		require.Equal(t, cc.e2, ft.CompactStr())
 	}
+}
+
+func TestGeometryFieldType(t *testing.T) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create table t (a geometry, b point, c linestring, d polygon, e multipoint, f multilinestring, g multipolygon, h geometrycollection, i geomcollection)", "", "")
+	require.NoError(t, err)
+	expected := []struct {
+		geo  GeometryType
+		name string
+	}{
+		{GeomGeometry, "geometry"},
+		{GeomPoint, "point"},
+		{GeomLineString, "linestring"},
+		{GeomPolygon, "polygon"},
+		{GeomMultiPoint, "multipoint"},
+		{GeomMultiLineString, "multilinestring"},
+		{GeomMultiPolygon, "multipolygon"},
+		{GeomGeometryCollection, "geomcollection"},
+		{GeomGeometryCollection, "geomcollection"},
+	}
+	cols := stmt.(*ast.CreateTableStmt).Cols
+	require.Len(t, cols, len(expected))
+	for i, col := range cols {
+		ft := col.Tp
+		require.Equal(t, mysql.TypeGeometry, ft.GetType())
+		require.Equal(t, expected[i].geo, ft.GetGeometryType())
+		require.Equal(t, charset.CharsetBin, ft.GetCharset())
+		require.Equal(t, charset.CollationBin, ft.GetCollate())
+		require.True(t, mysql.HasBinaryFlag(ft.GetFlag()))
+		require.Equal(t, expected[i].name, ft.CompactStr())
+		require.Equal(t, expected[i].name, ft.InfoSchemaStr())
+
+		require.True(t, ft.Equal(ft.Clone()))
+		require.True(t, ft.Equals(ft.DeepCopy()))
+
+		// The subtype is persisted, omitted for GEOMETRY.
+		b, err := json.Marshal(ft)
+		require.NoError(t, err)
+		var restored FieldType
+		require.NoError(t, json.Unmarshal(b, &restored))
+		require.True(t, ft.Equal(&restored), string(b))
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(b, &raw))
+		subtype, ok := raw["Subtype"]
+		if ft.GetGeometryType() == GeomGeometry {
+			require.False(t, ok, string(b))
+		} else {
+			require.Equal(t, float64(ft.GetGeometryType()), subtype, string(b))
+		}
+	}
+
+	geometry, point := cols[0].Tp, cols[1].Tp
+	require.False(t, geometry.Equal(point))
+	require.False(t, geometry.Equals(point))
+
+	// Changing the type drops the subtype.
+	ft := point.Clone()
+	ft.SetType(mysql.TypeBlob)
+	ft.SetType(mysql.TypeGeometry)
+	require.Equal(t, GeomGeometry, ft.GetGeometryType())
 }
