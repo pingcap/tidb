@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -173,13 +174,15 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) || plannererrors.ErrNotSupportedYet.Equal(err) {
 				return err
 			}
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+	} else if err := revalidateSQLCalcFoundRows(sctx, stmtAst.Stmt); err != nil {
+		return err
 	}
 	// A privilege revocation or SET ROLE does not change the schema version.
 	// Recheck the resolved targets on every execution, including cache misses.
@@ -458,7 +461,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// put this plan into the plan cache.
-	if stmtCtx.UseCache() {
+	// Skip caching WARN-mode SQL_CALC_FOUND_ROWS fallbacks so repeated executions
+	// of view-triggered fallbacks continue emitting the noop warning.
+	if stmtCtx.UseCache() && !(stmtCtx.CalcFoundRowsNoop && sessVars.NoopFuncsMode == variable.WarnInt) {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)

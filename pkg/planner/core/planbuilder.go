@@ -660,7 +660,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		}
 		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
 		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
-		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
+		if nativeCalcFoundRows(b.ctx, x.SelectStmtOpts) && len(b.buildingViewStack) == 0 {
 			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)

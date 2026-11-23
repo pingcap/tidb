@@ -5658,11 +5658,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}
 	if b.buildingFoundRows {
 		// View definitions are expanded after preprocessing. Check them as inner queries,
-		// preserving legacy modifiers as noops and rejecting non-repeatable expressions.
-		checker := &foundRowsChecker{inView: true}
-		ast.Walk(selectNode, checker)
-		if checker.err != nil {
-			return nil, checker.err
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewCalcFoundRows(selectNode); err != nil {
+			return nil, err
 		}
 	}
 	originalVisitInfo := b.visitInfo
@@ -5743,6 +5741,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
+		if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
+			return nil, err
+		}
 		logutil.BgLogger().Warn("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&

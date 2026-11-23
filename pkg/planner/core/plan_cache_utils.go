@@ -441,7 +441,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	// dirty tables
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
 	// txn status
-	hashLen += 6
+	hashLen += 7
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -556,6 +556,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, bool2Byte(vars.IsAutocommit()))
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
+	hash = append(hash, byte(vars.NoopFuncsMode))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
 	if intest.InTest {
