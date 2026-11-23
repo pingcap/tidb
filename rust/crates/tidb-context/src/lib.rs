@@ -89,4 +89,3 @@ mod tests {
         assert!(ids[0] > second);
     }
 }
-pub mod warning_publication;

@@ -162,12 +162,13 @@ fn binary_literal_uses_context_warning_and_shared_terror_identity() {
     assert_eq!(warnings.0.lock().unwrap().len(), 1, "ignore wins");
 }
 
-/// tidb-context's executor warning handler is a conversion-context sink.
+/// Go's `StaticWarnHandler` is the `WarnAppender` a `types.Context` appends
+/// its conversion warnings to.
 #[test]
-fn executor_warning_handler_is_the_conversion_context_sink() {
-    use tidb_context::warning_publication::{StaticWarningHandler, WarningHandler};
+fn static_warn_handler_is_the_conversion_context_sink() {
+    use tidb_context::{StaticWarnHandler, WarnHandlerExt};
     use tidb_terror::{TerrorClass, TerrorCode};
-    let warnings = StaticWarningHandler::new(0);
+    let warnings = StaticWarnHandler::new(0);
     let context = ConversionContext::new(
         STRICT_FLAGS.with_truncate_as_warning(true),
         ConversionLocation::UTC,
@@ -178,9 +179,7 @@ fn executor_warning_handler_is_the_conversion_context_sink() {
         TerrorCode::new(1292),
         "truncated",
     ));
-    assert_eq!(warnings.warning_count(), 1);
-    assert_eq!(
-        warnings.warnings_snapshot()[0].message,
-        "[types:1292]truncated"
-    );
+    let appended = warnings.get_warnings();
+    assert_eq!(appended.len(), 1);
+    assert_eq!(appended[0].err.to_string(), "[types:1292]truncated");
 }

@@ -334,6 +334,14 @@ impl StaticWarnHandler {
     }
 }
 
+/// Go's `StaticWarnHandler` is the `WarnAppender` a `types.Context` appends
+/// its conversion warnings to.
+impl ConversionWarningAppender for StaticWarnHandler {
+    fn append_conversion_warning(&self, warning: TerrorError) {
+        self.append_warning(WarnErr::Terror(warning));
+    }
+}
+
 impl WarnAppender for StaticWarnHandler {
     fn append_warning(&self, err: WarnErr) {
         self.append_with_level(WARN_LEVEL_WARNING, err);
