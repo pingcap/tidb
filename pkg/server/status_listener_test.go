@@ -142,11 +142,13 @@ func TestStatusServerClose(t *testing.T) {
 				t.Error("status shutdown did not finish during cleanup")
 			}
 		}()
+		shutdownObserved := false
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/beforeStatusServerInit", func() {
 			close(initializing)
 			<-resume
 			// Close must not hold the client lock while joining initialization.
 			s.rwlock.Lock()
+			shutdownObserved = s.inShutdownMode.Load()
 			s.rwlock.Unlock()
 		})
 		resourcesClosed := make(chan struct{}, 1)
@@ -179,6 +181,7 @@ func TestStatusServerClose(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("shutdown did not finish after initialization was released")
 		}
+		require.True(t, shutdownObserved)
 		require.Nil(t, s.statusServer.Load())
 		require.Nil(t, s.grpcServer)
 	})
