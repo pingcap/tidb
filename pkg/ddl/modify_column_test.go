@@ -625,6 +625,21 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	for _, target := range []string{"varchar", "char"} {
+		tk.MustExec("create table shrink_multibyte (id int primary key, s varchar(16) character set utf8mb4, key(s))")
+		tk.MustExec("insert into shrink_multibyte values (1,'中文甲'),(2,'中文甲乙'),(3,null)")
+		tk.MustExec("alter table shrink_multibyte modify column s " + target + "(4) character set utf8mb4")
+		tk.MustQuery("select id,s from shrink_multibyte order by id").Check(testkit.Rows("1 中文甲", "2 中文甲乙", "3 <nil>"))
+		tk.MustExec("admin check table shrink_multibyte")
+		tk.MustGetErrCode("alter table shrink_multibyte modify column s "+target+"(3) character set utf8mb4", mysql.WarnDataTruncated)
+		tk.MustQuery("select s from shrink_multibyte where id=2").Check(testkit.Rows("中文甲乙"))
+		tk.MustExec("drop table shrink_multibyte")
+	}
+	tk.MustExec("create table shrink_multibyte (s varbinary(16))")
+	tk.MustExec("insert into shrink_multibyte values ('中文')")
+	tk.MustGetErrCode("alter table shrink_multibyte modify column s varbinary(5)", mysql.WarnDataTruncated)
+	tk.MustQuery("select length(s) from shrink_multibyte").Check(testkit.Rows("6"))
+	tk.MustExec("drop table shrink_multibyte")
 
 	// INT -> MEDIUMINT
 	tk.MustExec("create table t(a int, b int, index i1(a), index i2(b), index i3(a, b))")
