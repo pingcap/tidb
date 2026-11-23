@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -1125,6 +1126,120 @@ func TestSpaceSig(t *testing.T) {
 	require.Equal(t, 1, len(warnings))
 	lastWarn := warnings[len(warnings)-1]
 	require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+}
+
+// TestRepeatAndSpaceUnsignedCount covers unsigned counts at and above 2^63,
+// which EvalInt delivers as negative int64 values. They must be treated as
+// huge counts and return NULL with warning 1301 (max_allowed_packet exceeded),
+// matching MySQL, while signed negative counts still return an empty string.
+func TestRepeatAndSpaceUnsignedCount(t *testing.T) {
+	ctx := createContext(t)
+	strTp := types.NewFieldType(mysql.TypeVarchar)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	strCol := &Column{Index: 0, RetType: strTp}
+	uintCol := &Column{Index: 1, RetType: uintTp}
+
+	repeat, err := newFunctionForTest(ctx, ast.Repeat, strCol, uintCol)
+	require.NoError(t, err)
+	space, err := newFunctionForTest(ctx, ast.Space, uintCol)
+	require.NoError(t, err)
+
+	// counts of 2^63 and above must not be read as negative numbers
+	counts := []uint64{math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64}
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{strTp, uintTp}, len(counts)+1)
+	for _, n := range counts {
+		input.AppendString(0, "ab")
+		input.AppendUint64(1, n)
+	}
+	// a NULL count stays NULL and must not produce a warning
+	input.AppendString(0, "ab")
+	input.AppendNull(1)
+
+	for _, f := range []Expression{repeat, space} {
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		for i := range counts {
+			res, isNull, err := f.EvalString(ctx, input.GetRow(i))
+			require.NoError(t, err)
+			require.True(t, isNull, "count %d", counts[i])
+			require.Equal(t, "", res)
+		}
+		res, isNull, err := f.EvalString(ctx, input.GetRow(len(counts)))
+		require.NoError(t, err)
+		require.True(t, isNull, "NULL count")
+		require.Equal(t, "", res)
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, len(counts))
+		for _, w := range warnings {
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, w.Err))
+		}
+
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeVarchar), len(counts)+1)
+		require.True(t, f.Vectorized())
+		require.NoError(t, f.VecEvalString(ctx, input, result))
+		for i := range counts {
+			require.True(t, result.IsNull(i), "count %d", counts[i])
+		}
+		require.True(t, result.IsNull(len(counts)), "NULL count")
+		warnings = ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, len(counts))
+		for _, w := range warnings {
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, w.Err))
+		}
+	}
+
+	// signed counts keep the old behavior: negative and zero return an empty
+	// string without warnings, huge positive counts return NULL with warning
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intCol := &Column{Index: 1, RetType: intTp}
+	repeatSigned, err := newFunctionForTest(ctx, ast.Repeat, strCol, intCol)
+	require.NoError(t, err)
+	spaceSigned, err := newFunctionForTest(ctx, ast.Space, intCol)
+	require.NoError(t, err)
+	signedCounts := []int64{-5, 0, 3, math.MaxInt64}
+	signedInput := chunk.NewChunkWithCapacity([]*types.FieldType{strTp, intTp}, len(signedCounts))
+	for _, n := range signedCounts {
+		signedInput.AppendString(0, "ab")
+		signedInput.AppendInt64(1, n)
+	}
+	for _, sf := range []struct {
+		fn   Expression
+		base string
+	}{{repeatSigned, "ab"}, {spaceSigned, " "}} {
+		f, base := sf.fn, sf.base
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		for i, n := range signedCounts {
+			res, isNull, err := f.EvalString(ctx, signedInput.GetRow(i))
+			require.NoError(t, err)
+			if n == math.MaxInt64 {
+				require.True(t, isNull, "signed count %d", n)
+				require.Equal(t, "", res)
+			} else {
+				require.False(t, isNull, "signed count %d", n)
+				require.Equal(t, strings.Repeat(base, max(int(n), 0)), res)
+			}
+		}
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, warnings[0].Err))
+
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeVarchar), len(signedCounts))
+		require.True(t, f.Vectorized())
+		require.NoError(t, f.VecEvalString(ctx, signedInput, result))
+		for i, n := range signedCounts {
+			if n == math.MaxInt64 {
+				require.True(t, result.IsNull(i), "signed count %d", n)
+			} else {
+				require.False(t, result.IsNull(i), "signed count %d", n)
+				require.Equal(t, strings.Repeat(base, max(int(n), 0)), result.GetString(i))
+			}
+		}
+		warnings = ctx.GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, warnings[0].Err))
+	}
 }
 
 func TestLocate(t *testing.T) {
