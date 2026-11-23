@@ -67,6 +67,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	// extracted while building the data branch in the count branch.
 	clear(b.colMapper)
 	clear(b.correlatedAggMapper)
+	b.currentBlockExpand = nil
 	count, err := b.buildSelect(ctx, &countSel)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error
 		// Planning can preprocess or revalidate the same statement more than
 		// once (for example, in the non-prepared plan cache), so record the
 		// noop warning at most once per statement.
-		warn := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+		warn := expression.ErrFunctionsNoopImpl.FastGenByArgs("SQL_CALC_FOUND_ROWS")
 		for _, existing := range vars.StmtCtx.GetWarnings() {
 			if existing.Err != nil && existing.Err.Error() == warn.Error() {
 				return nil

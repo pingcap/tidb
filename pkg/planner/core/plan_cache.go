@@ -317,7 +317,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
 		}
 	}
-	if stmt.StmtCacheable && cacheEnabled {
+	if stmt.StmtCacheable && cacheEnabled && !stmtCtx.IgnoreCalcFoundRows {
 		stmtCtx.EnablePlanCache()
 	}
 	if stmt.UncacheableReason != "" {

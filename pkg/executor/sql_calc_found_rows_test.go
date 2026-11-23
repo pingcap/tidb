@@ -136,6 +136,14 @@ func TestSQLCalcFoundRows(t *testing.T) {
 			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		}
 	})
+	t.Run("rollup-derived-and-cte", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS dayname('2026-01-01') as d, count(*) from (select dayname('2026-01-01') as d from found_rows) s where s.d is not null group by dayname('2026-01-01') with rollup order by d limit 1").Check(testkit.Rows("<nil> 3"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+		tk.MustQuery("with s as (select dayname('2026-01-01') as d from found_rows) select SQL_CALC_FOUND_ROWS dayname('2026-01-01') as d, count(*) from s where s.d is not null group by dayname('2026-01-01') with rollup order by d limit 1").Check(testkit.Rows("<nil> 3"))
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
+	})
 }
 
 func TestSQLCalcFoundRowsViews(t *testing.T) {
@@ -452,6 +460,10 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		tk.MustQuery("execute st_lock using @p").Check(testkit.Rows("1"))
 		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("execute st_lock using @p").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select found_rows(), @@last_plan_from_cache").Check(testkit.Rows("1 0"))
 
 		tk.MustExec("set tidb_enable_noop_functions=WARN")
 		tk.MustQuery("execute st_union").Check(testkit.Rows("1"))
@@ -460,6 +472,7 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 		tk.MustQuery("show warnings").Check(noopWarn)
 		tk.MustQuery("execute st_lock using @p").Check(testkit.Rows("1"))
 		tk.MustQuery("show warnings").Check(noopWarn)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 		tk.MustExec("set tidb_enable_noop_functions=OFF")
 		tk.MustGetErrCode("execute st_union", mysql.ErrNotSupportedYet)
@@ -472,7 +485,23 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 		// View expansion fallback (including nested views) must not poison prepared ASTs.
 		tk.MustExec("create view fr_v_rand as select id from fr_t where rand() < 2")
 		tk.MustExec("create view fr_v_rand_nested as select id from fr_v_rand")
+		// When alternative logical plans discard round 1 and rebuild in a later round
+		// (e.g. fts-like-fallback), LogicalPlanBuildState restoration must also reset
+		// IgnoreCalcFoundRows so the winning round re-evaluates view fallback and
+		// preserves Warning 1235 in WARN mode.
+		tk.MustExec("create table fr_fts(id int primary key, txt varchar(32))")
+		tk.MustExec("insert into fr_fts values (1, 'hello world'), (2, 'hello tidb')")
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans=ON")
+		altViewSQL := "select SQL_CALC_FOUND_ROWS f.id from fr_fts f join fr_v_rand_nested v on f.id = v.id where match(f.txt) against ('hello') order by f.id limit 1"
+		tk.MustGetErrCode(altViewSQL, mysql.ErrNotSupportedYet)
+		tk.MustExec("set tidb_enable_noop_functions=WARN")
+		tk.MustQuery(altViewSQL).Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(noopWarn)
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		tk.MustExec("set tidb_enable_noop_functions=ON")
+		tk.MustQuery(altViewSQL).Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		tk.MustExec("prepare st_view from 'select SQL_CALC_FOUND_ROWS id from fr_v_rand_nested order by id limit 1'")
 		tk.MustQuery("execute st_view").Check(testkit.Rows("1"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
