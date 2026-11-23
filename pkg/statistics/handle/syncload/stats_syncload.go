@@ -38,6 +38,7 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -83,7 +84,10 @@ func GetSyncLoadConcurrencyByCPU() int {
 // Requests that exceed their timeout are moved to a lower priority channel to be processed
 // when there are no urgent requests.
 type statsSyncLoad struct {
-	statsHandle    statstypes.StatsHandle
+	pool           statsutil.SessionPool
+	lease          statsutil.LeaseGetter
+	tables         statsutil.TableInfoGetter
+	statsCache     StatsCache
 	neededItemsCh  chan *statstypes.NeededItemTask
 	timeoutItemsCh chan *statstypes.NeededItemTask
 	// This mutex protects the statsCache from concurrent modifications by multiple workers.
@@ -94,9 +98,21 @@ type statsSyncLoad struct {
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
-// NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{statsHandle: statsHandle}
+// StatsCache is the part of the stats cache that the sync load reads and fills.
+type StatsCache interface {
+	statstypes.StatsCacheGetter
+	statstypes.StatsCacheUpdater
+}
+
+// NewStatsSyncLoad creates a new StatsSyncLoad that loads the stats in the sessions of pool into
+// statsCache.
+func NewStatsSyncLoad(
+	pool statsutil.SessionPool,
+	lease statsutil.LeaseGetter,
+	tables statsutil.TableInfoGetter,
+	statsCache StatsCache,
+) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{pool: pool, lease: lease, tables: tables, statsCache: statsCache}
 	cfg := config.GetGlobalConfig()
 	s.neededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.timeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -210,7 +226,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
 	remainedItems := make([]model.StatsLoadItem, 0, len(neededItems))
 	for _, item := range neededItems {
-		tbl, ok := s.statsHandle.Get(item.TableID)
+		tbl, ok := s.statsCache.Get(item.TableID)
 		if !ok {
 			continue
 		}
@@ -275,7 +291,7 @@ func (s *statsSyncLoad) SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroup
 				// To avoid the thundering herd effect
 				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
 				r := rand.Intn(500)
-				time.Sleep(s.statsHandle.Lease()/10 + time.Duration(r)*time.Microsecond)
+				time.Sleep(s.lease.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
 		}
@@ -333,7 +349,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 	}()
 
-	return s.statsHandle.SPool().WithSession(func(se *syssession.Session) error {
+	return s.pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
 			sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 			defer func() {
@@ -356,13 +372,13 @@ func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task 
 	}
 
 	item := task.Item.TableItemID
-	statsTbl, ok := s.statsHandle.Get(item.TableID)
+	statsTbl, ok := s.statsCache.Get(item.TableID)
 
 	if !ok {
 		return nil
 	}
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+	tbl, ok := s.tables.TableInfoByID(is, item.TableID)
 	if !ok {
 		return nil
 	}
@@ -575,7 +591,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	defer s.mutexForStatsCache.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	tbl, ok := s.statsHandle.Get(item.TableID)
+	tbl, ok := s.statsCache.Get(item.TableID)
 	if !ok {
 		return false
 	}
@@ -617,7 +633,7 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.StatsVer = int(idxHist.StatsVer)
 		}
 	}
-	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+	s.statsCache.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
 	return true

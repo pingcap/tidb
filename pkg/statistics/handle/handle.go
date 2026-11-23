@@ -157,9 +157,9 @@ func NewHandle(
 		StatsReadWriter:            readWriter,
 		StatsGlobal:                globalstats.NewStatsGlobal(statsPool, tables, readWriter),
 		StatsUsage:                 usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats),
+		StatsSyncLoad:              syncload.NewStatsSyncLoad(statsPool, leaseHolder, tables, statsCache),
 	}
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
-	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,
