@@ -203,10 +203,8 @@ pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
-        build_prepared_point_get_plan, build_prepared_select_plan, fast_point_process_plan_info,
-        open_prepared_point_get,
-        run_prepared_point_get, PreparedPlanCacheEnvironment, PreparedPointGetExecution,
-        PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
+        build_prepared_select_plan, PreparedPlanCacheEnvironment, PreparedSelectExecution,
+        PreparedSelectPlan,
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, parameter_count, parsed_parameter_count,

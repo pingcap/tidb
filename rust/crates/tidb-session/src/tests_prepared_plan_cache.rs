@@ -623,40 +623,12 @@ fn disabling_the_cache_disables_retained_point_execution() {
     session
         .run("PREPARE s FROM 'SELECT v FROM t WHERE id = ?'")
         .unwrap();
-    let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
-    let point = prepared.point_get_plan().expect("retained point plan");
-    assert!(!session.can_reuse_prepared_point_get(&point));
     session.run("SET @id = 1").unwrap();
 
     for _ in 0..2 {
         assert_eq!(row_text(session.run("EXECUTE s USING @id"))[0], ["10"]);
         assert_eq!(cache_flag(&mut session), "0");
     }
-}
-
-#[test]
-fn point_plan_is_published_before_executor_construction() {
-    let mut session = Session::new();
-    session
-        .run("CREATE TABLE point_publish (id bigint primary key, v bigint)")
-        .unwrap();
-    let prepared = session
-        .prepare_ast("SELECT v FROM point_publish WHERE id = ?")
-        .unwrap();
-    let plan = prepared.point_get_plan().expect("point query is cacheable");
-
-    let first = session
-        .bind_cached_prepared_point_get(&plan, &[Datum::Int(1)])
-        .expect("the first point plan is generated");
-    assert!(!first.cache_hit());
-    // Do not construct or drain an executor. Go publishes in
-    // `generateNewPlan`, before `ExecStmt.buildExecutor`, so a second bind is
-    // already a hit even if execution of the first plan never started.
-    drop(first);
-    let second = session
-        .bind_cached_prepared_point_get(&plan, &[Datum::Int(1)])
-        .expect("the published point plan is reusable");
-    assert!(second.cache_hit());
 }
 
 /// DDL between two executes is a MISS: the schema version is in Go's cache
@@ -1508,33 +1480,25 @@ fn nonclustered_primary_retains_prepared_point_plan() {
     session
         .run("INSERT INTO ycsb_point VALUES ('user1','one'),('user2','two')")
         .unwrap();
-    let sql = "SELECT * FROM ycsb_point WHERE id=?";
-    let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared
-        .point_get_plan()
-        .expect("Go retains PointGet for nonclustered unique primary keys");
-    for (key, expected) in [("user1", "one"), ("user2", "two"), ("missing", "")] {
-        let execution = session
-            .bind_cached_prepared_point_get(&plan, &[Datum::Bytes(key.as_bytes().to_vec())])
-            .expect("nonclustered point plan binds its unique index key");
-        session.bind_committed_snapshot().unwrap();
-        let opened = session
-            .open_prepared_point_get(execution, prepared.statement(), sql)
-            .unwrap()
-            .unwrap();
-        let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
-        let crate::StmtOutput::Rows { rows, .. } = output else {
-            panic!("expected rows")
-        };
-        let rows: Vec<Vec<String>> = rows
-            .iter()
-            .map(|row| row.iter().map(crate::tests_support::cell_text).collect())
-            .collect();
+    // Go plans a nonclustered unique primary key as a PointGet through the
+    // unique index, and caches it for the next EXECUTE.
+    let explain = row_text(session.run("EXPLAIN FORMAT='brief' SELECT * FROM ycsb_point WHERE id='user1'"));
+    assert!(explain[0][0].starts_with("Point_Get"), "{explain:?}");
+    session
+        .run("PREPARE s FROM 'SELECT * FROM ycsb_point WHERE id=?'")
+        .unwrap();
+    for (position, (key, expected)) in [("user1", "one"), ("user2", "two"), ("missing", "")]
+        .into_iter()
+        .enumerate()
+    {
+        session.run(&format!("SET @k = '{key}'")).unwrap();
+        let rows = row_text(session.run("EXECUTE s USING @k"));
         if expected.is_empty() {
             assert!(rows.is_empty());
         } else {
             assert_eq!(rows, vec![vec![key.to_owned(), expected.to_owned()]]);
         }
+        assert_eq!(cache_flag(&mut session), if position == 0 { "0" } else { "1" });
     }
 }
 
@@ -1547,50 +1511,31 @@ fn nonclustered_point_plan_requires_complete_visible_unique_key() {
     session
         .run("INSERT INTO heap_point VALUES (1,2,9),(NULL,2,10)")
         .unwrap();
-    assert!(session
-        .prepare_ast("SELECT * FROM heap_point WHERE a=?")
-        .unwrap()
-        .point_get_plan()
-        .is_none());
-    assert!(session
-        .prepare_ast("SELECT * FROM heap_point WHERE v=?")
-        .unwrap()
-        .point_get_plan()
-        .is_none());
-    let sql = "SELECT * FROM heap_point WHERE a=? AND b=?";
-    let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared
-        .point_get_plan()
-        .expect("complete unique key on a heap table");
-    for (a, expected) in [
-        (Datum::Int(1), vec![vec!["1", "2", "9"]]),
-        (Datum::Null, vec![]),
-    ] {
-        let execution = session
-            .bind_cached_prepared_point_get(&plan, &[a, Datum::Int(2)])
-            .unwrap();
-        session.bind_committed_snapshot().unwrap();
-        let opened = session
-            .open_prepared_point_get(execution, prepared.statement(), sql)
-            .unwrap()
-            .unwrap();
-        let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
-        let crate::StmtOutput::Rows { rows, .. } = output else {
-            panic!("expected rows")
-        };
-        let rows: Vec<Vec<String>> = rows
-            .iter()
-            .map(|row| row.iter().map(crate::tests_support::cell_text).collect())
-            .collect();
-        assert_eq!(rows, expected);
+    let is_point_get = |session: &mut Session, filter: &str| {
+        row_text(session.run(&format!("EXPLAIN FORMAT='brief' SELECT * FROM heap_point WHERE {filter}")))[0][0]
+            .starts_with("Point_Get")
+    };
+    // A prefix of the unique key, or a non-unique index, is no point read.
+    assert!(!is_point_get(&mut session, "a=1"));
+    assert!(!is_point_get(&mut session, "v=1"));
+    assert!(is_point_get(&mut session, "a=1 AND b=2"));
+    session
+        .run("PREPARE s FROM 'SELECT * FROM heap_point WHERE a=? AND b=?'")
+        .unwrap();
+    session.run("SET @b = 2").unwrap();
+    for (a, expected) in [("1", vec![vec!["1", "2", "9"]]), ("NULL", vec![])] {
+        session.run(&format!("SET @a = {a}")).unwrap();
+        assert_eq!(row_text(session.run("EXECUTE s USING @a, @b")), expected);
     }
     session
         .run("ALTER TABLE heap_point ALTER INDEX uk INVISIBLE")
         .unwrap();
-    assert!(session
-        .bind_cached_prepared_point_get(&plan, &[Datum::Int(1), Datum::Int(2)])
-        .is_none());
-    assert!(session.prepare_ast(sql).unwrap().point_get_plan().is_none());
+    assert!(!is_point_get(&mut session, "a=1 AND b=2"));
+    session.run("SET @a = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("EXECUTE s USING @a, @b")),
+        vec![vec!["1", "2", "9"]]
+    );
 }
 
 #[test]
@@ -2840,23 +2785,18 @@ fn result_output_names_carry_each_column_origin() {
         "a statement without a query result leaves no names"
     );
 
-    let sql = "SELECT d FROM origin_t AS x WHERE id = ?";
-    let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared.point_get_plan().expect("a primary-key point get");
-    let execution = session
-        .bind_cached_prepared_point_get(&plan, &[Datum::Int(1)])
+    session
+        .run("PREPARE s FROM 'SELECT d FROM origin_t AS x WHERE id = ?'")
         .unwrap();
-    session.bind_committed_snapshot().unwrap();
-    let opened = session
-        .open_prepared_point_get(execution, prepared.statement(), sql)
-        .unwrap()
-        .unwrap();
-    let crate::StatementExecution::Rows(record_set) = opened.attach(&mut session) else {
-        panic!("a point get opens a record set")
-    };
-    let (names, current_db) = record_set.output_names();
-    assert_eq!(current_db, "test");
-    assert_eq!(spelled(names), [row(["test", "x", "origin_t", "d", "d"])]);
+    session.run("SET @id = 1").unwrap();
+    for _ in 0..2 {
+        session.run("EXECUTE s USING @id").unwrap();
+        let (names, current_db) = session.last_result_output_names();
+        assert_eq!(current_db, "test");
+        assert_eq!(spelled(names), [row(["test", "x", "origin_t", "d", "d"])]);
+    }
+    // The second EXECUTE served the cached plan.
+    assert_eq!(cache_flag(&mut session), "1");
 }
 
 /// Go keys a prepared plan by the statement's dirty tables
@@ -2907,11 +2847,6 @@ fn binary_prepare_sees_a_table_created_by_another_connection() {
     peer.run("INSERT INTO created_by_peer VALUES (7)").unwrap();
     let prepared =
         crate::tests_support::prepare_binary(&mut session, "SELECT id FROM created_by_peer WHERE id = ?");
-    // The point plan PREPARE retains is planned over the new table.
-    assert!(prepared
-        .prepared_ast()
-        .and_then(|ast| ast.point_get_plan())
-        .is_some());
     let crate::StmtOutput::Rows { rows, .. } =
         crate::tests_support::execute_binary(&mut session, &prepared, &[7])
     else {
@@ -3016,4 +2951,48 @@ fn test_for_share_with_promotion_plan_cache() {
     session.run("execute st using @pk").unwrap();
     assert_eq!(session.run("select @@last_plan_from_cache").unwrap(), crate::StmtResult::Rows(vec![vec![Datum::Int(0)]]));
     session.run("rollback").unwrap();
+}
+
+/// Go `buildSchemaFromFields`: the point plans `TryFastPlan` builds carry
+/// their output names, so a point read's result fields name their origin as
+/// any other query's do (plain, prepared, BatchPointGet).
+#[test]
+fn point_plans_carry_output_names() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE Origin_P (id INT PRIMARY KEY, d INT)").unwrap();
+    session.run("INSERT INTO Origin_P VALUES (1, 1), (2, 2)").unwrap();
+    let spelled = |session: &Session| {
+        let (names, db) = session.last_result_output_names();
+        let names: Vec<[String; 5]> = names
+            .iter()
+            .map(|name| {
+                [
+                    name.database.original.clone(),
+                    name.table.original.clone(),
+                    name.original_table.original.clone(),
+                    name.column.original.clone(),
+                    name.original_column.original.clone(),
+                ]
+            })
+            .collect();
+        (db.to_owned(), names)
+    };
+    let expected = |column: &str| {
+        (
+            "test".to_owned(),
+            vec![["test", "x", "Origin_P", column, "d"].map(str::to_owned)],
+        )
+    };
+    session.run("SELECT d FROM origin_p AS x WHERE id = 1").unwrap();
+    assert_eq!(spelled(&session), expected("d"));
+    session.run("SELECT d AS e FROM origin_p AS x WHERE id IN (1, 2)").unwrap();
+    assert_eq!(spelled(&session), expected("e"));
+    session
+        .run("PREPARE p FROM 'SELECT d FROM origin_p AS x WHERE id = ?'")
+        .unwrap();
+    session.run("SET @id = 1").unwrap();
+    for _ in 0..2 {
+        session.run("EXECUTE p USING @id").unwrap();
+        assert_eq!(spelled(&session), expected("d"));
+    }
 }

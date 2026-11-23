@@ -2241,19 +2241,6 @@ impl<'s> ClusterServerSession<'s> {
             self.session
                 .prepared_plan_cache_allowed_for_statement(template)
         });
-        // Bind the retained point plan once; its execution advises the
-        // provider with it (`AdviseOptimizeWithPlan`).
-        let cached_point_get = cache_allowed
-            .then(|| statement.point_get_plan())
-            .flatten()
-            .and_then(|plan| {
-                self.session.bind_cached_prepared_point_get_for_binding(
-                    &plan,
-                    &params,
-                    binding_sql.as_deref(),
-                )
-            });
-        let fast = cached_point_get.is_some();
         // On a Go plan-cache miss, physical optimization first gives
         // TryFastPlan this shape; the point plan it returns is what later
         // cache hits rebuild. Do not substitute the generic SELECT tree for
@@ -2266,7 +2253,7 @@ impl<'s> ClusterServerSession<'s> {
         // -- an uncorrelated subquery evaluated during optimization included
         // -- reads the statement's snapshot. The candidate is bound inside
         // the statement lifecycle below.
-        let select_candidate = if fast || !cache_allowed {
+        let select_candidate = if !cache_allowed {
             None
         } else {
             statement.select_plan()
@@ -2289,7 +2276,7 @@ impl<'s> ClusterServerSession<'s> {
                     })
             });
         let direct_dml = cached_dml.is_some();
-        let direct = fast || fast_select || direct_dml;
+        let direct = fast_select || direct_dml;
         let bound_template = if direct && !fast_select {
             None
         } else {
@@ -2307,9 +2294,7 @@ impl<'s> ClusterServerSession<'s> {
                     .ok()
             })
         };
-        let shape = if fast {
-            StatementReadShape::Unknown
-        } else if fast_select {
+        let shape = if fast_select {
             // A retained physical SELECT still needs the locking statement's
             // fresh for-update snapshot and lock-value cache on every replay.
             bound_template
@@ -2337,15 +2322,6 @@ impl<'s> ClusterServerSession<'s> {
                 // plan that does not bind for these values serves nothing.
                 let mut cached_select_served = false;
                 let opened = (|| {
-                    if let Some(point) = &cached_point_get {
-                        if let Some(opened) = session.open_prepared_point_get(
-                            point.clone(),
-                            effective.expect("point plan retains its statement"),
-                            &sql,
-                        )? {
-                            return Ok(opened);
-                        }
-                    }
                     if let Some(failure) = &generate_new_plan_error {
                         return session.open_failed_generate_new_plan_for(
                             effective.expect("a cached plan retains its statement"),
@@ -2406,7 +2382,7 @@ impl<'s> ClusterServerSession<'s> {
                     }
                 })();
                 session.set_binary_prepared_execution(false);
-                if fast || cached_select_served || session.successful_compiles() != compiles {
+                if cached_select_served || session.successful_compiles() != compiles {
                     if let Some(count) = stmt_node_count.take() {
                         count.record();
                     }

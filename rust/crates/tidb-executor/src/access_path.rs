@@ -195,37 +195,6 @@ mod statement_read_shape_tests {
     }
 }
 
-/// Whether the query block carries nothing above the table read: Go's
-/// `switch` admitting only a projection over a reader.
-///
-/// Every clause listed here would put an operator above the reader in Go's
-/// root plan and so land in its `default` arm. The select list is held to
-/// plain column references and wildcards for the same reason -- a scalar
-/// subquery in it is a second read, and an aggregate is a root `HashAgg`.
-pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
-    use tidb_ast::{SelectField, SelectStatementKind};
-
-    select.kind == SelectStatementKind::Select
-        && !select.is_in_braces
-        && select.with.is_none()
-        && select.values.is_empty()
-        && !select.distinct
-        && select.group_by.is_empty()
-        && !select.rollup
-        && select.having.is_none()
-        && select.windows.is_empty()
-        && select.order_by.is_empty()
-        && select.limit.is_none()
-        // `FOR UPDATE` locks the row, which needs a real timestamp to lock at.
-        && select.lock.is_none()
-        && select.into_outfile.is_none()
-        && !select.calc_found_rows
-        && select.fields.fields().iter().all(|field| match field {
-            SelectField::Wildcard(_) => true,
-            SelectField::Expr { expr, .. } => matches!(expr, tidb_ast::Expr::Column(_)),
-        })
-}
-
 
 
 /// Go `rebuildIndexRanges` / `PhysicalTableScan.ResolveCorrelatedColumns`:

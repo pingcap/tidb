@@ -40,6 +40,40 @@ pub struct FastPointOutput {
     pub table_alias: String,
 }
 
+/// Go `buildSchemaFromFields`' output names: each column names the
+/// database, the visible table (its alias when it has one), the stored table
+/// and column, and its own output name.
+#[must_use]
+pub fn fast_point_output_names(
+    table: &TableCommon,
+    output: &FastPointOutput,
+    database: &str,
+    table_name: &str,
+) -> Vec<tidb_datatype::FieldName> {
+    output
+        .offsets
+        .iter()
+        .zip(&output.columns)
+        .map(|(&offset, (name, _))| tidb_datatype::FieldName {
+            names: tidb_datatype::FieldNameMetadata {
+                database: tidb_datatype::IdentifierMetadata::new(database),
+                table: tidb_datatype::IdentifierMetadata::new(output.table_alias.clone()),
+                original_table: tidb_datatype::IdentifierMetadata::new(table_name),
+                column: tidb_datatype::IdentifierMetadata::new(name.clone()),
+                original_column: tidb_datatype::IdentifierMetadata::new(
+                    table
+                        .columns()
+                        .get(offset)
+                        .map_or_else(String::new, |column| column.read().name.original().to_owned()),
+                ),
+            },
+            hidden: false,
+            not_explicit_usable: false,
+            redundant: false,
+        })
+        .collect()
+}
+
 /// Go `ast.TiDBRowChecksum`.
 const TIDB_ROW_CHECKSUM: &str = "tidb_row_checksum";
 
@@ -354,6 +388,9 @@ fn build_fast_point_physical_plan(
         output
     };
     let schema = fast_point_schema(table, &output);
+    // Go `buildSchemaFromFields`' names, which the point plan carries as its
+    // `OutputNames` (the result set's field origins).
+    let names = fast_point_output_names(table, &output, database, table.meta().read().name.original());
 
     let mut batch = try_where_in_2_batch_point_get(select, table, &columns, &scope.zone, Some(ctx))?;
     if batch.as_ref().is_some_and(|batch| !batch.ignores_hints()) {
@@ -469,6 +506,7 @@ fn build_fast_point_physical_plan(
             base.base
                 .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
+            base.base.set_output_names(names);
             return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::TableDual(
                 tidb_planner_core_operator_physicalop::PhysicalTableDual::new(base, 0),
             )));
@@ -481,6 +519,7 @@ fn build_fast_point_physical_plan(
                 [],
             )));
         base.base.set_schema(Some(schema));
+            base.base.set_output_names(names);
         let ranges = closed_point_ranges(&batch.key_values);
         return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::BatchPointGet(
             tidb_planner_core_operator_physicalop::BatchPointGetPlan {
@@ -535,6 +574,7 @@ fn build_fast_point_physical_plan(
             base.base
                 .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
+            base.base.set_output_names(names);
             return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::TableDual(
                 tidb_planner_core_operator_physicalop::PhysicalTableDual::new(base, 0),
             )));
@@ -582,6 +622,7 @@ fn build_fast_point_physical_plan(
     base.base
         .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
+            base.base.set_output_names(names);
     // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
     let constants = tidb_planner_core_operator_physicalop::range_rebuild::PointConstantsRebuild {
         rows: vec![point

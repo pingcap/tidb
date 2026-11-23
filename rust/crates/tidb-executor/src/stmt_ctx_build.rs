@@ -445,20 +445,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         env
     }
 
-    /// The expression context used by an immutable prepared PointGet plan.
-    ///
-    /// That cache admits only direct projections of stored columns. Row
-    /// decoding can therefore consult only the session zone and SELECT's
-    /// origin-default date flags; planner settings, sequences, user values,
-    /// clocks, globals, and expression state cannot affect the result.
-    fn prepared_point_get_context(
-        &self,
-    ) -> tidb_table::tables::PreparedPointGetDecodeContext {
-        tidb_table::tables::PreparedPointGetDecodeContext::for_query(
-            self.session_vars().sql_mode().has_allow_invalid_dates_mode(),
-            self.session_time_zone(),
-        )
-    }
 
     /// Captures the policy a row result keeps after its statement finishes.
     ///

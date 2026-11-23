@@ -610,13 +610,6 @@ pub struct TableCommon {
     cached: Option<std::sync::Arc<cache::CachedTable>>,
 }
 
-/// Go PointGetExecutor keeps immutable table metadata and a separate snapshot.
-/// A read owns only the backend handle, never a detached catalog/table image.
-pub struct PointRead<'a> {
-    table: &'a TableCommon,
-    store: Box<dyn TableStorage>,
-}
-
 /// Go point readers retain encoded values until Next decodes them. The batch
 /// owns the storage result once; duplicate handles borrow the same bytes.
 pub enum PointReadValues {
@@ -761,48 +754,6 @@ impl PointReadValues {
             Self::Single(value) => value.is_none(),
             Self::Batch { keys, .. } => keys.is_empty(),
         }
-    }
-}
-
-impl PointRead<'_> {
-    pub fn point_rpc_counts(&mut self) -> (u64, u64) {
-        self.store.point_rpc_counts()
-    }
-
-    pub fn lookup_unique(
-        &mut self,
-        index_id: i64,
-        values: &[Datum],
-        zone: &SessionTimeZone,
-    ) -> Result<Option<TableHandle>, KvTableError> {
-        match self.table.unique_point_read(index_id, values, zone)? {
-            Some(read) => read.get(self.store.as_mut()),
-            None => Ok(None),
-        }
-    }
-
-    pub fn get_prepared_point_row(
-        &mut self,
-        handle: &TableHandle,
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        // The common sysbench point-get shape is an unpartitioned table. Avoid
-        // allocating a one-element physical-id Vec for every row lookup; Go's
-        // point reader carries the table id directly in that shape.
-        let record = if self.table.read_partitions.is_none() && self.table.partition.is_none() {
-            read_stored_record_one(self.store.as_mut(), self.table.table_id, handle)?
-        } else {
-            read_stored_record(
-                self.store.as_mut(),
-                self.table.record_physical_ids(),
-                handle,
-            )?
-        };
-        let Some((_, entry)) = record else {
-            return Ok(None);
-        };
-        decoder.decode(handle, &entry, context).map(Some)
     }
 }
 
@@ -1981,11 +1932,6 @@ impl TableCommon {
         }
     }
 
-    /// Go `PointGetExecutor`: this table's metadata over the snapshot
-    /// `store` the executor reads.
-    pub fn point_reader(&self, store: Box<dyn TableStorage>) -> PointRead<'_> {
-        PointRead { table: self, store }
-    }
 
 
     /// Go `TableInfo.TempTableType`.
@@ -4301,20 +4247,6 @@ impl TableCommon {
         self.read_row(store, handle, context)
     }
 
-    /// One stored-record read decoded by the immutable projection retained on
-    /// a prepared PointGet plan.
-    pub fn get_prepared_point_row(
-        &mut self,
-        store: &mut dyn TableStorage,
-        handle: &TableHandle,
-        decoder: &PreparedPointGetRowDecoder,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let Some((_, entry)) = self.stored_record(store, handle)? else {
-            return Ok(None);
-        };
-        decoder.decode(handle, &entry, context).map(Some)
-    }
 
     /// The row stored under `handle`, decoded, or `None` when absent.
     pub fn read_row(

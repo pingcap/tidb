@@ -26,8 +26,7 @@ use std::sync::Arc;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use crate::{
-    DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedPointGetExecution,
-    PreparedPointGetPlan, PreparedSelectExecution, PreparedSelectPlan,
+    DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedSelectExecution, PreparedSelectPlan,
 };
 
 
@@ -43,7 +42,6 @@ pub struct PreparedAst {
     /// demands, derived once at PREPARE against the database current then
     /// and checked by every EXECUTE (`checkPreparedPriv`).
     privilege_requests: Arc<[crate::table_privilege::TablePrivilegeRequest]>,
-    point_get_plan: Option<Arc<PreparedPointGetPlan>>,
     dml_plan: Option<Arc<PreparedDmlPlan>>,
     select_plan: Option<Arc<PreparedSelectPlan>>,
     /// Go `PlanCacheStmt.StmtCacheable`: whether PREPARE found the statement
@@ -67,7 +65,6 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
-        point_get_plan: Option<PreparedPointGetPlan>,
         dml_plan: Option<PreparedDmlPlan>,
         select_plan: Option<PreparedSelectPlan>,
         stmt_cacheable: bool,
@@ -78,7 +75,6 @@ impl PreparedAst {
             statement: Arc::new(statement),
             parameter_count,
             privilege_requests: privilege_requests.into(),
-            point_get_plan: point_get_plan.map(Arc::new),
             dml_plan: dml_plan.map(Arc::new),
             select_plan: select_plan.map(Arc::new),
             stmt_cacheable,
@@ -96,7 +92,6 @@ impl PreparedAst {
     pub fn set_stmt_cacheable(&mut self, cacheable: bool) {
         self.stmt_cacheable = cacheable;
         if !cacheable {
-            self.point_get_plan = None;
             self.dml_plan = None;
             self.select_plan = None;
         }
@@ -148,12 +143,6 @@ impl PreparedAst {
         &self.statement
     }
 
-    /// The immutable fast point-read plan compiled while the statement was
-    /// prepared, when its shape is safe to reuse for every EXECUTE.
-    #[must_use]
-    pub fn point_get_plan(&self) -> Option<Arc<PreparedPointGetPlan>> {
-        self.point_get_plan.clone()
-    }
 
     /// The immutable DML plan compiled while the statement was prepared.
     #[must_use]
@@ -371,7 +360,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         let parameter_count = crate::parsed_parameter_count(&statement);
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
         let planner_context = self.statement_context_for_stmt(&statement, false);
-        let (point_get_plan, dml_plan, select_plan, cacheable) = {
+        let (dml_plan, select_plan, cacheable) = {
             let catalog = self.lock_catalog()?;
             let cacheable = {
                 let mut candidate = statement.clone();
@@ -379,17 +368,6 @@ pub trait PreparedAstCompile: super::CompilerSession {
                     .is_ok()
             };
             (
-                cacheable
-                    .then(|| {
-                        crate::build_prepared_point_get_plan(
-                            &statement,
-                            parameter_count,
-                            &catalog,
-                            self.session_vars().current_db.as_str(),
-                            &self.session_time_zone(),
-                        )
-                    })
-                    .flatten(),
                 if cacheable {
                     crate::build_prepared_dml_plan(
                         &statement,
@@ -425,7 +403,6 @@ pub trait PreparedAstCompile: super::CompilerSession {
             statement,
             parameter_count,
             privilege_requests,
-            point_get_plan,
             dml_plan,
             select_plan,
             cacheable,
@@ -500,58 +477,6 @@ pub trait PreparedAstCompile: super::CompilerSession {
         } else {
             "ignore_plan_cache hint used in SQL binding"
         })
-    }
-
-    /// Go `IsSafeToReusePointGetExecutor` plus the plan-cache reuse gates of
-    /// `GetPlanFromPlanCache`. Every uncertain state declines to ordinary
-    /// planning; no cached lookup is allowed to widen into a multi-read plan.
-    ///
-    /// An EXPLICIT transaction may reuse the cached read too: its statement
-    /// snapshot is already bound before execution, so the lookup reads at the
-    /// transaction's timestamp through the session's own storage — the same
-    /// visibility the ordinary planner would build for it (Go serves these
-    /// from its prepared plan cache inside transactions as well).
-    fn can_reuse_prepared_point_get(&self, plan: &PreparedPointGetPlan) -> bool {
-        if !self.session_vars().enable_prepared_plan_cache() {
-            return false;
-        }
-        if self
-            .session_vars()
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
-            || self.prepared_plan_cache_environment().is_none()
-        {
-            return false;
-        }
-        self.lock_catalog()
-            .is_ok_and(|catalog| plan.matches_catalog(&catalog))
-    }
-
-    /// Binds a retained point-get plan for a binary EXECUTE after applying
-    /// the same autocommit, snapshot, session-binding, and schema gates used
-    /// by the Go point-get cache.
-    fn bind_cached_prepared_point_get(
-        &mut self,
-        plan: &Arc<PreparedPointGetPlan>,
-        values: &[Datum],
-    ) -> Option<PreparedPointGetExecution> {
-        self.bind_cached_prepared_point_get_for_binding(plan, values, None)
-    }
-
-    /// Rebuilds the point plan under the same binding-aware environment key
-    /// used by ordinary cached physical plans.
-    #[must_use]
-    fn bind_cached_prepared_point_get_for_binding(
-        &self,
-        plan: &Arc<PreparedPointGetPlan>,
-        values: &[Datum],
-        binding_sql: Option<&str>,
-    ) -> Option<PreparedPointGetExecution> {
-        if !self.can_reuse_prepared_point_get(plan) {
-            return None;
-        }
-        let environment = self.prepared_plan_cache_environment_for_binding(binding_sql)?;
-        plan.bind_with_environment(values, &self.session_time_zone(), &environment)
     }
 
     /// Binds fresh values into a retained DML plan after applying the prepared

@@ -387,13 +387,6 @@ impl PreparedGeneral {
         self.prepared_ast.as_ref()
     }
 
-    /// The immutable point-get cache candidate owned by the prepared definition.
-    pub fn point_get_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
-        self.prepared_ast
-            .as_ref()
-            .and_then(crate::PreparedAst::point_get_plan)
-    }
-
     /// The immutable prepared SELECT cache descriptor.
     #[must_use]
     pub fn select_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>> {

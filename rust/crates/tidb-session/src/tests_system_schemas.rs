@@ -789,25 +789,12 @@ fn tidb_index_usage_sizes_a_prepared_point_read_without_statistics() {
         };
         table.table_id()
     };
-    let sql = "SELECT a FROM usage_prepared_point WHERE id = ?";
-    let prepared = session.prepare_ast(sql).unwrap();
-    let plan = prepared
-        .point_get_plan()
-        .expect("an integer-handle equality is a prepared point plan");
+    session
+        .run("PREPARE s FROM 'SELECT a FROM usage_prepared_point WHERE id = ?'")
+        .unwrap();
+    session.run("SET @id = 5").unwrap();
     for _ in 0..2 {
-        let execution = session
-            .bind_cached_prepared_point_get(&plan, &[tidb_datatype::Datum::Int(5)])
-            .expect("the point plan binds its handle");
-        session.bind_committed_snapshot().unwrap();
-        let opened = session
-            .open_prepared_point_get(execution, prepared.statement(), sql)
-            .unwrap()
-            .unwrap();
-        let output = crate::tests_support::collect_record_set(opened.attach(&mut session));
-        let crate::StmtOutput::Rows { rows, .. } = output else {
-            panic!("expected rows")
-        };
-        assert_eq!(rows.len(), 1);
+        assert_eq!(row_text(session.run("EXECUTE s USING @id")).len(), 1);
     }
     assert_eq!(
         row_text(session.run("SELECT * FROM usage_prepared_point WHERE id IN (1, 2)")),

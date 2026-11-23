@@ -3718,25 +3718,16 @@ mod session_source_tests {
                 tidb_parser::normalize_digest(sql).0
             );
         }
+        // An EXECUTE's key is its prepared statement's digest.
         let sql = "SELECT id FROM t WHERE id = ?";
-        let prepared = session.prepare_ast(sql).unwrap();
+        session.run(&format!("PREPARE s FROM '{sql}'")).unwrap();
+        session.run("SET @id = 1").unwrap();
         session.run("SELECT 7").unwrap();
-        let execution = session
-            .bind_cached_prepared_point_get(
-                &prepared.point_get_plan().unwrap(),
-                &[tidb_datatype::Datum::Int(1)],
-            )
-            .unwrap();
-        session.bind_committed_snapshot().unwrap();
-        let opened = session
-            .open_prepared_point_get(execution, prepared.statement(), sql)
-            .unwrap()
-            .unwrap();
+        session.run("EXECUTE s USING @id").unwrap();
         assert_eq!(
             session.current_sql_digest_key,
             tidb_parser::normalize_digest(sql).0
         );
-        drop(opened.attach(&mut session));
         arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Disable);
         session.run("SELECT 2").unwrap();
         assert!(session.current_sql_digest_key.is_empty());

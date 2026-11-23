@@ -161,6 +161,11 @@ impl TestKit {
     pub fn drop_prepared_stmt(&mut self, stmt_id: u32) -> Option<MysqlError> {
         match self.prepared.get_mut(stmt_id as usize - 1) {
             Some(slot @ Some(_)) => {
+                // Go `DropPreparedStmt` queues the id, and the next
+                // statement's `cleanRetryInfo` deletes its cached plan.
+                if let Some(ast) = slot.as_ref().and_then(|prepared| prepared.prepared_ast()) {
+                    self.session.close_prepared(ast);
+                }
                 *slot = None;
                 None
             }
