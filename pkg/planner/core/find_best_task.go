@@ -2686,7 +2686,7 @@ func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		}
 		// matchProperty updates per-search range grouping on the path.
 		pathCopy := *path
-		match := matchProperty(ds, &pathCopy, prop)
+		match, _ := matchProperty(ds, &pathCopy, prop)
 		if match != property.PropMatched {
 			continue
 		}
