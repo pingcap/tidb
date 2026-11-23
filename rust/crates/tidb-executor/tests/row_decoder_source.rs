@@ -132,11 +132,12 @@ fn assert_point_chunks(
             .map(|column| tidb_expr::column::Column::new(column.read().id, column.read().field_type.clone()))
             .collect(),
     );
-    let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
+    let mut source = tidb_executor::batch_point_get::BatchPointGetExec::new_by_handles(
         tidb_executor_internal_exec::ExecutorMeta::new(schema, 0, 8, 8),
         table.clone(),
         storage.clone_box(),
         rows.iter().map(|(handle, _, _)| handle.clone()).collect(),
+        (0..table.columns().len()).map(tidb_executor::access_path::HandleOutputColumn::Stored).collect(),
         query_context(zone),
     );
     for _ in 0..2 {

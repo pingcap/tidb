@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 9,
-    "open": 9,
+    "unresolved": 8,
+    "open": 8,
     "partial": 0
   },
   "findings": [
@@ -64,14 +64,6 @@
       "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
     },
     {
-      "id": "T13",
-      "group": "Executor, DML and expressions",
-      "status": "open",
-      "finding": "Go's `PointGetExecutor` and `BatchPointGetExec` (`point_get.go`, `batch_point_get.go`) are not ported as executors: point and batch-point reads, and index range scans with row lookup, are `access_path` source executors over the Rust `TableStorage` seam (`MemStorage` / `ClusterTableStorage`), with the reads and locks in the storage layer.",
-      "rust_evidence": "`tidb-executor/src/access_path.rs`, `tidb-store-driver-txn/src/cluster_table_storage.rs` (`PointGetExecutor.get` / `lockKeyIfNeeded`), `tidb-table/src/tables/index_entries.rs`.",
-      "go_owner": "`pkg/executor/point_get.go`, `pkg/executor/batch_point_get.go`"
-    },
-    {
       "id": "T14",
       "group": "Structure: Go's shape before more ports",
       "status": "open",
@@ -80,7 +72,7 @@
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     }
   ],
-  "unresolved": 9,
-  "open": 9,
+  "unresolved": 8,
+  "open": 8,
   "partial": 0
 }

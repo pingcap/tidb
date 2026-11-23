@@ -25,7 +25,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::access_path::{HandleOutputColumn, HandleSourceExec, LookupProbePart, UniqueIndexPointSourceExec};
+use crate::access_path::{HandleOutputColumn, LookupProbePart};
+use crate::batch_point_get::BatchPointGetExec;
+use crate::point_get::PointGetExecutor;
 use tidb_executor_join::index_lookup::LookupProbeBound;
 use crate::apply::NestedLoopApplyExec;
 use tidb_executor_internal_exec::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
@@ -4609,17 +4611,16 @@ fn build_point_get(
             .as_ref()
             .and_then(|partition| partition_ids_named(&table, &partition.names));
         let child = Box::new(
-            UniqueIndexPointSourceExec::new(
+            PointGetExecutor::new_by_unique_index(
                 executor_meta,
                 (*table).clone(),
                 point_store(&table, ctx),
                 index_id,
-                index_values,
+                index_values.into_iter().next().expect("checked one key"),
                 output_columns,
                 RowDecodeContext::for_query(ctx),
-                true,
             )
-            .with_allowed_partitions(allowed)
+            .with_partition_names(allowed)
             .with_lock(point_lock(point.lock, point.select_lock, ctx))
             .with_consistency_report((!ctx.weak_consistency()).then(|| crate::admin_check::ReportContext::of(ctx))),
         );
@@ -4640,7 +4641,7 @@ fn build_point_get(
         ));
     }
     let child = Box::new(
-        HandleSourceExec::new_point_mapped_with_context(
+        PointGetExecutor::new_by_handle(
             executor_meta,
             (*table).clone(),
             point_store(&table, ctx),
@@ -4648,7 +4649,7 @@ fn build_point_get(
             output_columns,
             RowDecodeContext::for_query(ctx),
         )
-        .with_lock_before_read(point_lock(point.lock, point.select_lock, ctx)),
+        .with_lock(point_lock(point.lock, point.select_lock, ctx)),
     );
     Ok(wrap_point_index_usage(
         child,
@@ -4693,7 +4694,7 @@ fn build_batch_point_get(
         )?;
         let allowed = partition_ids_named(&table, &batch.partition_names);
         let child = Box::new(
-            UniqueIndexPointSourceExec::new(
+            BatchPointGetExec::new_by_unique_index(
                 executor_meta,
                 (*table).clone(),
                 point_store(&table, ctx),
@@ -4701,9 +4702,8 @@ fn build_batch_point_get(
                 index_values,
                 output_columns,
                 RowDecodeContext::for_query(ctx),
-                false,
             )
-            .with_allowed_partitions(allowed)
+            .with_partition_names(allowed)
             .with_lock(point_lock(batch.lock, batch.select_lock, ctx))
             .with_consistency_report((!ctx.weak_consistency()).then(|| crate::admin_check::ReportContext::of(ctx))),
         );
@@ -4745,7 +4745,7 @@ fn build_batch_point_get(
     }
     let partition_ids = routes.map(|routes| handles.iter().map(|handle| routes[handle]).collect());
     let child = Box::new(
-        HandleSourceExec::new_mapped_with_context(
+        BatchPointGetExec::new_by_handles(
             executor_meta,
             (*table).clone(),
             point_store(&table, ctx),
@@ -4754,7 +4754,7 @@ fn build_batch_point_get(
             RowDecodeContext::for_query(ctx),
         )
         .with_partition_ids(partition_ids)
-        .with_lock_before_read(point_lock(batch.lock, batch.select_lock, ctx)),
+        .with_lock(point_lock(batch.lock, batch.select_lock, ctx)),
     );
     Ok(wrap_point_index_usage(
         child,

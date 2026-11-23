@@ -4834,7 +4834,7 @@ fn run_delete_with_physical(
 /// to read a different record set than the plan it printed.
 ///
 /// A point get reads ONE key. `get_row_by_handle` is the same read
-/// `HandleSourceExec` performs for a `SELECT`'s `Point_Get`, and it answers
+/// `PointGetExecutor` performs for a `SELECT`'s `Point_Get`, and it answers
 /// `None` for a key no record carries -- Go's point get that finds nothing.
 struct PhysicalWriteRow {
     id: TableHandle,

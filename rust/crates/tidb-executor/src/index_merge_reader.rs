@@ -45,9 +45,9 @@
 //! * [`crate::kv_table::TableHandle`] identifies local row handles. Union
 //!   deduplicates through the shared [`tidb_txnkv::HandleMap`]; intersection uses the
 //!   shared [`tidb_txnkv::MemAwareHandleMap`] with Go's checkpoint accounting.
-//! * [`crate::access_path::HandleSourceExec`] is Go's `buildFinalTableReader`
-//!   result: a reader over an already-known handle list. Stage 3 builds one
-//!   per task and drains it, exactly as `executeTask` does.
+//! * [`FinalTableReader`] holds Go's `buildFinalTableReader` inputs: a
+//!   reader over an already-known handle list. Stage 3 builds one per task
+//!   and drains it, exactly as `executeTask` does.
 //! * `tidb_expr::compare_datums_with_collation` is Go
 //!   `chunk.GetCompareFunc(keyType)`, already used by [`tidb_executor_sortexec`]; the
 //!   order-by heap calls it rather than growing a second comparator.
@@ -115,8 +115,8 @@
 //!   Go sorts each task's handles into KEY order before the coprocessor
 //!   request (`buildTableReaderFromHandles`, `canReorderHandles = true`) and
 //!   then puts the rows back into `indexOrder`;
-//!   [`crate::access_path::HandleSourceExec`] uses the shared table request
-//!   handoff to restore handle order before the retained table operators run.
+//!   the final table reader uses the shared table request handoff to restore
+//!   handle order before the retained table operators run.
 //!   Unsupported remote shapes retain their native BatchGet fallback.
 //! * Partitioning is modelled as an opaque `partition_index` on a batch, not
 //!   as Go's `kv.PartitionHandle` wrapper. The dedup/count key is
