@@ -72,6 +72,10 @@ For TRUNCATE TABLE, affinity groups follow two rules:
   arguments, that the metadata in that transaction does not use. This covers PD
   committing only part of a creation request, groups left by an earlier attempt,
   and cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
+  PD deletion is best effort and uses a 10-second timeout. If deletion fails or
+  times out, the worker logs the failure and completes cancellation, so
+  replacement groups may remain in PD. The `kv.ErrEntryTooLarge` path while
+  writing the job row bypasses this hook.
 
 ## Schema version + diff and cluster-wide synchronization
 
