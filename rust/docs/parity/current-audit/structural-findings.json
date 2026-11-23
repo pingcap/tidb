@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 9,
-    "open": 9,
+    "unresolved": 8,
+    "open": 8,
     "partial": 0
   },
   "findings": [
@@ -70,17 +70,9 @@
       "finding": "The `kv.TiDB` store's table read is a separate executor, `TiDbTableReaderExecutor`, whose request `build_tidb_cop_request` assembles by hand, because that store's table scan has no `ToPB`; Go has one `TableReaderExecutor` whose DAG is the plan's `ToPB` for every store.",
       "rust_evidence": "`tidb-executor/src/table_reader.rs` (`TiDbTableReaderExecutor`), `tidb-executor/src/builder_utils.rs` (`build_tidb_cop_request`).",
       "go_owner": "`pkg/executor/table_reader.go`, `pkg/planner/core/operator/physicalop` `ToPB`"
-    },
-    {
-      "id": "T20",
-      "group": "Executors",
-      "status": "open",
-      "finding": "IMPORT INTO's server-disk discovery percent-encodes the storage URI by hand instead of `InitDataStore` over the parsed URL (`net/url`).",
-      "rust_evidence": "`tidb-executor/src/importer/local.rs`.",
-      "go_owner": "`pkg/executor/importer/import.go` (`InitDataStore`)"
     }
   ],
-  "unresolved": 9,
-  "open": 9,
+  "unresolved": 8,
+  "open": 8,
   "partial": 0
 }

@@ -44,20 +44,18 @@ pub(super) fn find_local_data_files(
     let escaped = tidb_stringutil::escape_glob_question_mark(file_name.as_bytes());
     filepath_match(escaped.as_bytes(), b"")
         .map_err(|e| invalid_uri(&format!("Glob pattern error: {e}")))?;
-    // InitDataStore changes URL.Path, preserving the query and fragment; the
-    // empty-scheme backend then uses URL.String as its filesystem base.
-    let mut storage_base = String::new();
-    for byte in base.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.~$&+,/:;=@".contains(&byte) {
-            storage_base.push(byte as char);
-        } else {
-            use std::fmt::Write;
-            write!(storage_base, "%{byte:02X}").unwrap();
-        }
-    }
-    if let Some(index) = path.find(['?', '#']) {
-        storage_base.push_str(&path[index..].replace('+', "%2B"));
-    }
+    // Go `parseDataSourcePath` / `InitDataStore`: the data source URL with
+    // its path set to the file's directory (query and fragment kept), and the
+    // storage backend `ParseBackendFromURL` builds over it; for the empty
+    // scheme that is the absolute form of the URL's string.
+    let mut url = tidb_objstore::parse_raw_url(path).map_err(|e| invalid_uri(&e))?;
+    url.path = base.to_string_lossy().into_owned().into_bytes();
+    url.raw_path.clear();
+    let backend = tidb_objstore::parse_backend_from_url(&mut url, None).map_err(|e| invalid_uri(&e))?;
+    let storage_base = match backend.backend {
+        Some(tidb_proto::backup::storage_backend::Backend::Local(local)) => local.path,
+        _ => return Err(invalid_uri("the data source is not on server disk")),
+    };
     let storage_base = PathBuf::from(storage_base);
     let source_path = storage_base.join(file_name.as_ref());
     if !file_name.contains(['*', '[']) {
