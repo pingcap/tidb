@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -63,12 +61,6 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	// Insert a new row to the table.
 	tk.MustExec("insert into t(a, b) values(3,'c')")
-	// Enable the failpoint to test the historical stats meta is not recorded.
-	err = failpoint.Enable(
-		"github.com/pingcap/tidb/pkg/statistics/handle/usage/panic-when-record-historical-stats-meta",
-		"1*return(true)",
-	)
-	require.NoError(t, err)
 	// Flush stats delta.
 	tk.MustExec("flush stats_delta *.*")
 
@@ -165,11 +157,6 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 }
 
 func TestLockAndUnlockTablesStats(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")

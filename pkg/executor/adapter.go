@@ -110,11 +110,12 @@ type recordSet struct {
 	executor exec.Executor
 	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
 	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
-	schema     *expression.Schema
-	stmt       *ExecStmt
-	lastErrs   []error
-	txnStartTS uint64
-	once       sync.Once
+	schema       *expression.Schema
+	stmt         *ExecStmt
+	lastErrs     []error
+	txnStartTS   uint64
+	returnedRows uint64
+	once         sync.Once
 	// traceID stores the trace ID for this statement execution.
 	// It's injected into the context during Next() to ensure trace correlation
 	// across TiDB -> client-go -> TiKV during lazy execution.
@@ -165,11 +166,10 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 	return rfs
 }
 
-// Next use uses recordSet's executor to get next available chunk for later usage.
-// If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
-// The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
-// next query.
-// If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
+// Next reads the next chunk and accumulates the number of returned rows.
+// An empty chunk after a successful read marks EOF. Only then does it publish
+// the final count, unless PreserveFoundRows is set. Errors and early close
+// leave the preceding session count unchanged.
 func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	defer func() {
 		r := recover()
@@ -216,16 +216,21 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}
-	numRows := req.NumRows()
-	if numRows == 0 {
-		if a.stmt != nil {
-			a.stmt.recordStatementRURootEOF()
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
-		}
+	if numRows := req.NumRows(); numRows != 0 {
+		a.returnedRows += uint64(numRows)
 		return nil
 	}
 	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+		a.stmt.recordStatementRURootEOF()
+		rows := a.returnedRows
+		if total, ok := e.FoundRows(); ok {
+			rows = total
+		}
+		sessVars := a.stmt.Ctx.GetSessionVars()
+		sessVars.StmtCtx.SetFoundRows(rows)
+		if !sessVars.StmtCtx.PreserveFoundRows {
+			sessVars.LastFoundRows = rows
+		}
 	}
 	return nil
 }
@@ -2129,6 +2134,20 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	if slowItems == nil {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
+
+	var unredactedSQL string
+	// tidb_redact_log off already writes the original SQL to the slow log, so
+	// skip the cache. ON and MARKER redact that line. Only non-sensitive SELECT
+	// statements are queued, and SensitiveStmtNode must never retain its
+	// original SQL in memory.
+	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQueryCacheable() {
+		// Capture the original text before it is redacted into the slow log line.
+		// Only this SQL string is retained in memory.
+		// OriginalSQL may be a substring of a much larger multi-statement request;
+		// clone it so the cache does not retain that request's backing buffer.
+		unredactedSQL = strings.Clone(sessVars.StmtCtx.OriginalSQL)
+	}
+
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
@@ -2138,6 +2157,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
+
+	if unredactedSQL != "" {
+		// Queue the plaintext before the redacted line is written. A full queue
+		// drops the cache entry and the disk write below still happens.
+		globalSlowQueryCache.putIntoCache(
+			slowQueryKeyOf(slowItems.TxnTS, slowQueryTimeKey(slowItems.TimeTotal), slowItems.Digest),
+			unredactedSQL,
+		)
+	}
+
 	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
@@ -2521,6 +2550,20 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
 	}
 	return sql
+}
+
+// isSlowQueryCacheable reports whether this statement may keep its original SQL
+// in the plaintext slow-query cache. Only a directly executed SELECT qualifies.
+// Prepared executions, TABLE, VALUES, and sensitive statements do not.
+func (a *ExecStmt) isSlowQueryCacheable() bool {
+	if a.isPreparedStmt {
+		return false
+	}
+	if _, sensitive := a.StmtNode.(ast.SensitiveStmtNode); sensitive {
+		return false
+	}
+	sel, ok := a.StmtNode.(*ast.SelectStmt)
+	return ok && sel.Kind == ast.SelectStmtKindSelect
 }
 
 func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {

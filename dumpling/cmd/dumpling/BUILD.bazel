@@ -1,16 +1,21 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "dumpling_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "password.go",
+    ],
     importpath = "github.com/pingcap/tidb/dumpling/cmd/dumpling",
     visibility = ["//visibility:private"],
     deps = [
         "//dumpling/cli",
         "//dumpling/export",
+        "//pkg/util",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_spf13_pflag//:pflag",
+        "@org_golang_x_term//:term",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -19,4 +24,35 @@ go_binary(
     name = "dumpling",
     embed = [":dumpling_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "dumpling_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "password_darwin_test.go",
+        "password_linux_test.go",
+        "password_terminal_test.go",
+    ],
+    embed = [":dumpling_lib"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "@com_github_stretchr_testify//require",
+    ] + select({
+        "@io_bazel_rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
 )

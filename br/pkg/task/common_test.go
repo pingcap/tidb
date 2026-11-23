@@ -3,6 +3,7 @@
 package task
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -51,6 +52,32 @@ func (c fakeRestoreFileClient) GetDatabases() []*metautil.Database {
 }
 
 func TestUrlNoQuery(t *testing.T) {
+	for _, testCase := range []struct{ name, input, expected string }{
+		{flagStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY#FAKE_FLAG_FRAGMENT", "s3://bucket/path"},
+		{FlagStreamFullBackupStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY", "s3://bucket/path"},
+		{FlagPiTRAddIndexSQLStorage, "s3://FAKE_FLAG_USER:FAKE_FLAG_PASS@bucket/path?token=FAKE_FLAG_QUERY", "s3://bucket/path"},
+		{flagCheckpointStorage, "local://FAKE_FLAG_USER:FAKE_FLAG_PASS@/tmp/checkpoint?token=FAKE_FLAG_QUERY", "local:///tmp/checkpoint"},
+		{"azblob.account-key", "FAKE_FLAG_AZURE_KEY", "<redacted>"},
+		{"azblob.sas-token", "FAKE_FLAG_SAS", "<redacted>"},
+		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@account.blob.core.windows.net/container?sig=FAKE_FLAG_SIGNATURE", "https://account.blob.core.windows.net/container"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path?sig=FAKE_FLAG_SIGNATURE#FAKE_FLAG_FRAGMENT", "https://host/path"},
+		{"s3.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"gcs.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+		{"azblob.endpoint", "https://FAKE_FLAG_USER:FAKE_FLAG_PASS@host/path%zz?sig=FAKE_FLAG_SIGNATURE", "<invalid URI>"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			field := flagToZapField(&pflag.Flag{Name: testCase.name, Value: fakeValue(testCase.input)})
+			output := field.String
+			if stringer, ok := field.Interface.(fmt.Stringer); ok {
+				output = stringer.String()
+			}
+			for _, secret := range []string{"FAKE_FLAG_USER", "FAKE_FLAG_PASS", "FAKE_FLAG_QUERY", "FAKE_FLAG_FRAGMENT", "FAKE_FLAG_AZURE_KEY", "FAKE_FLAG_SAS", "FAKE_FLAG_SIGNATURE"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+			require.Equal(t, testCase.expected, output)
+		})
+	}
 	testCases := []struct {
 		inputName     string
 		expectedName  string
@@ -564,6 +591,26 @@ func TestDefaultRestore(t *testing.T) {
 }
 
 func TestParseAndValidateMasterKeyInfo(t *testing.T) {
+	for _, testCase := range []struct{ name, input string }{
+		{"missing AWS region", "aws-kms:///key-id?AWS_ACCESS_KEY_ID=FAKE_KMS_AK&AWS_SECRET_ACCESS_KEY=FAKE_KMS_SK"},
+		{"malformed URL", "aws-kms://FAKE_KMS_USER:FAKE_KMS_PASS@/key%zz?AWS_SECRET_ACCESS_KEY=FAKE_KMS_PARSE_SK"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := &Config{}
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			flags.String(flagMasterKeyConfig, testCase.input, "")
+			flags.String(flagMasterKeyCipherType, "aes256-ctr", "")
+
+			err := cfg.parseAndValidateMasterKeyInfo(false, flags)
+
+			require.Error(t, err)
+			for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+				for _, secret := range []string{"FAKE_KMS_AK", "FAKE_KMS_SK", "FAKE_KMS_USER", "FAKE_KMS_PASS", "FAKE_KMS_PARSE_SK"} {
+					t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+				}
+			}
+		})
+	}
 	tests := []struct {
 		name         string
 		input        string
@@ -698,4 +745,8 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (cfg *RestoreConfig) CreateStorageCheckpointMetaManagersForTest(ctx context.Context, clusterID, restoreID uint64) error {
+	return cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID)
 }

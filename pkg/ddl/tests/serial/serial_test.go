@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1519,7 +1520,7 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("those forbidden DDLs are only for next-gen")
 	}
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -1534,18 +1535,159 @@ func TestForbiddenDDLInNextGen(t *testing.T) {
 		PRIMARY KEY (table_id) CLUSTERED
 	) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
 
-	for _, sql := range []string{
-		`drop database sys`,
+	forbiddenDDLs := []string{
 		`drop database mysql`,
+		`drop database sys`,
 		`drop table mysql.tidb_global_task`,
 		`truncate table mysql.tidb_global_task`,
 		`rename table mysql.tidb_global_task to test.t1`,
 		`rename table test.t to test.t1, mysql.tidb_global_task to test.t2`,
 		`alter table mysql.analyze_options partition by hash(table_id) partitions 8`,
 		`alter table pt exchange partition p0 with table mysql.analyze_options`,
-	} {
+	}
+	for _, sql := range forbiddenDDLs {
 		t.Run(sql, func(t *testing.T) {
 			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
 		})
 	}
+
+	tk.MustExec("drop view sys.schema_unused_indexes")
+	require.ErrorIs(t, tk.ExecToErr("drop database sys"), dbterror.ErrForbiddenDDL)
+	tk.MustExec("drop view mysql.tidb_mdl_view")
+
+	// Custom mysql tables are ordinary user objects despite their schema name.
+	tk.MustExec("create table mysql.custom_table(id int)")
+	tk.MustExec("insert into mysql.custom_table values (1)")
+	tk.MustExec("truncate table mysql.custom_table")
+	tk.MustQuery("select * from mysql.custom_table").Check(testkit.Rows())
+	tk.MustExec("insert into mysql.custom_table values (2)")
+	tk.MustExec("alter table mysql.custom_table partition by hash(id) partitions 2")
+	tk.MustExec("rename table mysql.custom_table to mysql.custom_renamed")
+	tk.MustExec("rename table test.t to test.t1, mysql.custom_renamed to test.custom_moved")
+	tk.MustExec("rename table test.custom_moved to mysql.custom_table")
+	tk.MustQuery("select * from mysql.custom_table").Check(testkit.Rows("2"))
+	tk.MustExec("drop table mysql.custom_table")
+
+	tk.MustExec("create table mysql.custom_exchange(id int)")
+	tk.MustExec("create table test.custom_partition(id int) partition by range(id) (partition p0 values less than (10))")
+	tk.MustExec("insert into mysql.custom_exchange values (1)")
+	tk.MustExec("insert into test.custom_partition values (2)")
+	tk.MustExec("alter table test.custom_partition exchange partition p0 with table mysql.custom_exchange")
+	tk.MustQuery("select * from mysql.custom_exchange").Check(testkit.Rows("2"))
+	tk.MustQuery("select * from test.custom_partition").Check(testkit.Rows("1"))
+	tk.MustExec("drop table mysql.custom_exchange, test.custom_partition")
+
+	// A user table named user can pass through a custom mysql name in one statement.
+	// The second pair's source is mysql.custom_tmp, not the snapshot name mysql.user.
+	tk.MustExec("create table test.user(id int)")
+	tk.MustExec("insert into test.user values (1)")
+	tk.MustExec("rename table test.user to mysql.custom_tmp, mysql.custom_tmp to test.user_final")
+	tk.MustQuery("select * from test.user_final").Check(testkit.Rows("1"))
+	tk.MustExec("drop table test.user_final")
+
+	// Reassign persisted IDs so an ID-based guard would accept these objects.
+	t.Run("non-reserved persisted ids", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+		tk.MustExec(`CREATE TABLE pt (
+			table_id BIGINT(64) NOT NULL,
+			sample_num BIGINT(64) NOT NULL DEFAULT 0,
+			sample_rate DOUBLE NOT NULL DEFAULT -1,
+			buckets BIGINT(64) NOT NULL DEFAULT 0,
+			topn BIGINT(64) NOT NULL DEFAULT -1,
+			column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
+			column_ids TEXT(19372),
+			PRIMARY KEY (table_id) CLUSTERED
+		) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
+		require.NoError(t, reassignPersistedSystemObjectIDs(store))
+		require.NoError(t, dom.Reload())
+		is := dom.InfoSchema()
+		mysqlDB, ok := is.SchemaByName(ast.NewCIStr(mysql.SystemDB))
+		require.True(t, ok)
+		sysDB, ok := is.SchemaByName(ast.NewCIStr(mysql.SysDB))
+		require.True(t, ok)
+		globalTask, err := is.TableByName(context.Background(), ast.NewCIStr(mysql.SystemDB), ast.NewCIStr(metadef.TiDBGlobalTaskTableName))
+		require.NoError(t, err)
+		analyzeOpts, err := is.TableByName(context.Background(), ast.NewCIStr(mysql.SystemDB), ast.NewCIStr(metadef.AnalyzeOptionsTableName))
+		require.NoError(t, err)
+		require.False(t, metadef.IsReservedID(mysqlDB.ID))
+		require.False(t, metadef.IsReservedID(sysDB.ID))
+		require.False(t, metadef.IsReservedID(globalTask.Meta().ID))
+		require.False(t, metadef.IsReservedID(analyzeOpts.Meta().ID))
+		for _, sql := range forbiddenDDLs {
+			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
+		}
+	})
+}
+
+// reassignPersistedSystemObjectIDs gives the mysql and sys schemas, plus the
+// built-in tables covered by TestForbiddenDDLInNextGen, ordinary user IDs.
+// A schema diff with RegenerateSchemaMap forces the following reload to read
+// those IDs back from meta instead of reusing the bootstrapped schema cache.
+func reassignPersistedSystemObjectIDs(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	return kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ids, err := m.GenGlobalIDs(4)
+		if err != nil {
+			return err
+		}
+		if err = moveSchemaToID(ctx, m, metadef.SystemDatabaseID, ids[0], map[string]int64{
+			metadef.TiDBGlobalTaskTableName: ids[2],
+			metadef.AnalyzeOptionsTableName: ids[3],
+		}); err != nil {
+			return err
+		}
+		if err = moveSchemaToID(ctx, m, metadef.SysDatabaseID, ids[1], nil); err != nil {
+			return err
+		}
+		ver, err := m.GenSchemaVersion()
+		if err != nil {
+			return err
+		}
+		return m.SetSchemaDiff(&model.SchemaDiff{
+			Version:             ver,
+			Type:                model.ActionFlashbackCluster,
+			RegenerateSchemaMap: true,
+		})
+	})
+}
+
+func moveSchemaToID(ctx context.Context, m *meta.Mutator, oldID, newID int64, tableIDs map[string]int64) error {
+	db, err := m.GetDatabase(oldID)
+	if err != nil {
+		return err
+	}
+	if db == nil {
+		return fmt.Errorf("database %d not found", oldID)
+	}
+	tables, err := m.ListTables(ctx, oldID)
+	if err != nil {
+		return err
+	}
+	if err = m.DropDatabase(oldID); err != nil {
+		return err
+	}
+	db.ID = newID
+	if err = m.CreateDatabase(db); err != nil {
+		return err
+	}
+	found := make(map[string]struct{}, len(tableIDs))
+	for _, tbl := range tables {
+		if id, ok := tableIDs[tbl.Name.L]; ok {
+			tbl.ID = id
+			found[tbl.Name.L] = struct{}{}
+		}
+		if err = m.CreateTableOrView(newID, tbl); err != nil {
+			return err
+		}
+	}
+	for name := range tableIDs {
+		if _, ok := found[name]; !ok {
+			return fmt.Errorf("table %s not found in database %d", name, oldID)
+		}
+	}
+	return nil
 }

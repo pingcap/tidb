@@ -299,6 +299,52 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
+
+	serviceCases := []struct {
+		name      string
+		configure func(*Config)
+		err       string
+		fileType  string
+	}{
+		{
+			name: "keeps default file type",
+		},
+		{
+			name: "allows SQL output",
+			configure: func(conf *Config) {
+				conf.FileType = FileFormatSQLTextString
+			},
+			fileType: FileFormatSQLTextString,
+		},
+		{
+			name: "rejects snapshot selection",
+			configure: func(conf *Config) {
+				conf.Snapshot = "12345"
+			},
+			err: "--snapshot cannot be combined with --dump-service; the service owns the snapshot",
+		},
+		{
+			name: "rejects SQL row selection",
+			configure: func(conf *Config) {
+				conf.Where = "id > 1"
+			},
+			err: "--dump-service cannot be combined with --sql, --where, or --rows",
+		},
+	}
+	for _, testCase := range serviceCases {
+		conf := DefaultConfig()
+		conf.DumpService = "unix:///tmp/dumper.sock"
+		if testCase.configure != nil {
+			testCase.configure(conf)
+		}
+		err := validateDumpService(conf)
+		if testCase.err == "" {
+			require.NoError(t, err, testCase.name)
+			require.Equal(t, testCase.fileType, conf.FileType, testCase.name)
+		} else {
+			require.EqualError(t, err, testCase.err, testCase.name)
+		}
+	}
 }
 
 func TestValidateResolveAutoConsistency(t *testing.T) {

@@ -212,8 +212,8 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	// FROM SELECT imports still write local engines when the plan inherits a cloud URI.
-	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery
+	// Classic FROM SELECT writes local engines even with an inherited cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery && e.QuerySource == nil
 	tidbCfg := tidb.GetGlobalConfig()
 	var dir string
 	var diskQuota int64
@@ -330,8 +330,8 @@ func NewTableImporterForTest(
 		return nil, err
 	}
 
-	// FROM SELECT imports still write local engines when the plan inherits a cloud URI.
-	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery
+	// Classic FROM SELECT writes local engines even with an inherited cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery && e.QuerySource == nil
 	tidbCfg := tidb.GetGlobalConfig()
 	var dir string
 	if localSort {

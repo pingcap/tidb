@@ -445,10 +445,12 @@ func TestBuildPurgeMaterializedViewLogDeleteSQL(t *testing.T) {
 	require.Contains(t, sql, "_tidb_commit_ts > 100 AND _tidb_commit_ts <= 200")
 	require.Contains(t, sql, "LIMIT 1000")
 	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 0, false, 200, r, 1000)
+	require.Contains(t, sql, "_tidb_rowid >= 10 AND _tidb_rowid <= 20")
 	require.Contains(t, sql, "_tidb_commit_ts <= 200")
 	require.NotContains(t, sql, "_tidb_commit_ts >")
 	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 100, true, 200, nil, 1000)
 	require.NotContains(t, sql, "_tidb_rowid")
+	require.Contains(t, sql, "_tidb_commit_ts > 100 AND _tidb_commit_ts <= 200")
 }
 
 func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {

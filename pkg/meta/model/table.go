@@ -516,7 +516,7 @@ func (t *TableInfo) ClearPlacement() {
 // GetPrimaryKey extract the primary key in a table and return `IndexInfo`
 // The returned primary key could be explicit or implicit.
 // If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// the first non-partial UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
 // For more information about implicit primary key, see
 // https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
 func (t *TableInfo) GetPrimaryKey() *IndexInfo {
@@ -531,8 +531,8 @@ func (t *TableInfo) GetPrimaryKey() *IndexInfo {
 		if len(key.Columns) == 0 {
 			continue
 		}
-		// find the first unique key with NOT NULL columns
-		if implicitPK == nil && key.Unique {
+		// find the first non-partial unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique && !key.HasCondition() {
 			// ensure all columns in unique key have NOT NULL flag
 			allColNotNull := true
 			skip := false
@@ -1360,6 +1360,17 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 		}
 	case ActionDropTablePartition:
 		if len(pi.DroppingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		// Reorganize-family DDLs populate DroppingDefinitions before backfill;
+		// Definitions still includes them during StateDeleteOnly/WriteOnly/WriteReorganization.
+		// Only ignore them once backfill swaps Definitions (StateDeleteReorganization/StatePublic).
+		if (pi.DDLState == StateDeleteReorganization || pi.DDLState == StatePublic) && len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ids = append(ids, def.ID)

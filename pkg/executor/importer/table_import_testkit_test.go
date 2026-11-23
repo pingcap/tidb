@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -49,11 +50,12 @@ func checkImportDirEmpty(t *testing.T) {
 }
 
 func TestStartDiskQuotaCheck(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
@@ -63,7 +65,7 @@ func TestStartDiskQuotaCheck(t *testing.T) {
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
 				Name: ast.NewCIStr("t"),
@@ -86,32 +88,39 @@ func TestStartDiskQuotaCheck(t *testing.T) {
 	// stop should cancel the goroutine and return without hanging.
 	stop()
 
-	t.Run("global-sort-without-sort-dir", func(t *testing.T) {
-		tidbCfg.TempDir = t.TempDir()
-		importDir := importer.GetImportRootDir(tidbCfg)
-		// A global-sort importer must not require or replace the local sort path.
-		require.NoError(t, os.WriteFile(importDir, []byte("preserve"), 0o600))
-		controller.DataSourceType = importer.DataSourceTypeFile
-		controller.CloudStorageURI = "s3://bucket/global-sort"
-		globalImporter, err := importer.NewTableImporterForTest(ctx, controller, "global-sort", store)
-		require.NoError(t, err)
-		defer globalImporter.Close()
-		require.Nil(t, globalImporter.Backend())
-		require.NotNil(t, globalImporter.Ingestor())
-		require.Equal(t, store.GetCodec().GetAPIVersion(), globalImporter.Ingestor().GetTiKVCodec().GetAPIVersion())
-		require.Equal(t, store.GetCodec().GetKeyspace(), globalImporter.Ingestor().GetTiKVCodec().GetKeyspace())
-		contents, err := os.ReadFile(importDir)
-		require.NoError(t, err)
-		require.Equal(t, "preserve", string(contents))
-	})
+	for _, sourceType := range []importer.DataSourceType{importer.DataSourceTypeFile, importer.DataSourceTypeQuery} {
+		t.Run(string(sourceType)+"-global-sort-without-sort-dir", func(t *testing.T) {
+			t.Cleanup(tidb.RestoreFunc())
+			tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+			importDir := importer.GetImportRootDir(tidb.GetGlobalConfig())
+			// A global-sort importer must not require or replace the local sort path.
+			require.NoError(t, os.WriteFile(importDir, []byte("preserve"), 0o600))
+			controller.DataSourceType = sourceType
+			controller.CloudStorageURI = "s3://bucket/global-sort"
+			if sourceType == importer.DataSourceTypeQuery {
+				controller.QuerySource = &importer.QuerySource{}
+			}
+			globalImporter, err := importer.NewTableImporterForTest(ctx, controller, "global-sort", store)
+			require.NoError(t, err)
+			defer globalImporter.Close()
+			require.Nil(t, globalImporter.Backend())
+			require.NotNil(t, globalImporter.Ingestor())
+			require.Equal(t, store.GetCodec().GetAPIVersion(), globalImporter.Ingestor().GetTiKVCodec().GetAPIVersion())
+			require.Equal(t, store.GetCodec().GetKeyspace(), globalImporter.Ingestor().GetTiKVCodec().GetKeyspace())
+			contents, err := os.ReadFile(importDir)
+			require.NoError(t, err)
+			require.Equal(t, "preserve", string(contents))
+		})
+	}
 }
 
 func TestImportFromSelectCleanup(t *testing.T) {
+	t.Cleanup(tidb.RestoreFunc())
+	tidb.UpdateGlobal(func(c *tidb.Config) { c.TempDir = t.TempDir() })
+
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
 	checkImportDirEmpty(t)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockImportFromSelectErr", `return(true)`))
@@ -127,7 +136,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
 				Name: ast.NewCIStr("t"),
@@ -140,7 +149,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		SelectPlan: &physicalop.PhysicalSelection{},
 	}.Init(tk.Session().GetPlanCtx()), table)
 	require.NoError(t, err)
-	// Query imports use local engines even when a cloud URI is inherited.
+	// Classic query imports use local engines even when a cloud URI is inherited.
 	plan.CloudStorageURI = "s3://bucket/inherited"
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
 	require.NoError(t, err)

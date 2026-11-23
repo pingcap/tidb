@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -86,7 +87,6 @@ import (
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -224,6 +224,12 @@ type PlanBuilder struct {
 	tableHintInfo []*hint.PlanHints
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
+	// foundRowsPlan counts the unlimited output of the top-level SELECT.
+	foundRowsPlan base.LogicalPlan
+	// buildingFoundRows is true while building the data and count plans for SQL_CALC_FOUND_ROWS.
+	// View definitions are unavailable during preprocessing, so check their expressions
+	// when expanding them to prevent the two plans from reading different rows.
+	buildingFoundRows bool
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
 
@@ -233,6 +239,11 @@ type PlanBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+	// projNameIndex indexes the input names of the projection being built by
+	// buildProjection, so that resolving many select fields (e.g. SELECT * on a
+	// wide table) does not scan all input names once per field. It is used only
+	// when the rewriter's names are exactly the indexed slice.
+	projNameIndex *expression.FieldNameIndex
 
 	windowSpecs  map[string]*ast.WindowSpec
 	inUpdateStmt bool
@@ -638,7 +649,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.UnlockStatsStmt:
 		return b.buildUnlockStats(x), nil
 	case *ast.PlanReplayerStmt:
-		return b.buildPlanReplayer(x), nil
+		return b.buildPlanReplayer(x)
 	case *ast.TrafficStmt:
 		return b.buildTraffic(x), nil
 	case *ast.PrepareStmt:
@@ -646,6 +657,11 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.SelectStmt:
 		if x.SelectIntoOpt != nil {
 			return b.buildSelectInto(ctx, x)
+		}
+		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
+		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
+		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
+			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)
 	case *ast.SetOprStmt:
@@ -956,10 +972,10 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 		prefix = ""
 	}
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
-	sql := fmt.Sprintf("select %s from information_schema.%stidb_statements_stats where plan_digest = '%s' union distinct ", fields, prefix, planDigest) +
-		fmt.Sprintf("select %s from information_schema.%sstatements_summary_history where plan_digest = '%s' ", fields, prefix, planDigest) +
+	sql := fmt.Sprintf("select %s from information_schema.%stidb_statements_stats where plan_digest = %%? union distinct ", fields, prefix) +
+		fmt.Sprintf("select %s from information_schema.%sstatements_summary_history where plan_digest = %%? ", fields, prefix) +
 		"order by length(plan_digest) desc"
-	rs, err := exec.ExecuteInternal(ctx, sql)
+	rs, err := exec.ExecuteInternal(ctx, sql, planDigest, planDigest)
 	if err != nil {
 		return "", "", "", "", "", err
 	}
@@ -3094,6 +3110,9 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if tnW.TableInfo.IsSequence() {
 			return nil, errors.Errorf("analyze sequence %s is not supported now", tbl.Name.O)
 		}
+		if err := CheckMViewReadable(b.ctx.GetSessionVars(), tnW.TableInfo, tbl.Name.O); err != nil {
+			return nil, err
+		}
 
 		physicalIDs, partitionNames, err := GetPhysicalIDsAndPartitionNames(tnW.TableInfo, as.PartitionNames)
 		if err != nil {
@@ -4789,9 +4808,6 @@ var (
 	showImportGroupsFTypes = []byte{mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
 		mysql.TypeTimestamp, mysql.TypeTimestamp}
-
-	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
-	ImportIntoDataSource = "data source"
 )
 
 func init() {
@@ -4907,7 +4923,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	if ld.Select == nil {
 		u, err := url.Parse(ld.Path)
 		if err != nil {
-			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
 		if semv1.IsEnabled() {
@@ -6155,7 +6171,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	return &SelectInto{
 		TargetPlan:     targetPlan,
 		IntoOpt:        selectIntoInfo,
-		LineFieldsInfo: NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
+		LineFieldsInfo: importdef.NewLineFieldsInfo(selectIntoInfo.FieldsInfo, selectIntoInfo.LinesInfo),
 	}, nil
 }
 
@@ -6476,59 +6492,40 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	return
 }
 
-func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
+	if pc.HistoricalStatsInfo != nil {
+		return nil, errors.New("WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics")
+	}
+
+	if pc.Capture || pc.Remove {
+		if !validPlanReplayerDigest(pc.SQLDigest) {
+			return nil, errors.New("invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters")
+		}
+		if pc.PlanDigest != "*" && !validPlanReplayerDigest(pc.PlanDigest) {
+			return nil, errors.New("invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'")
+		}
+	}
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
-
-	if pc.HistoricalStatsInfo != nil {
-		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
-	}
 
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
 	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
-	return p
+	return p, nil
 }
 
-func calcTSForPlanReplayer(sctx base.PlanContext, tsExpr ast.ExprNode) uint64 {
-	tsVal, err := evalAstExprWithPlanCtx(sctx, tsExpr)
-	if err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return 0
+func validPlanReplayerDigest(digest string) bool {
+	if len(digest) == 0 || len(digest) > 128 {
+		return false
 	}
-	// mustn't be NULL
-	if tsVal.IsNull() {
-		return 0
+	for _, c := range digest {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
 	}
-
-	// first, treat it as a TSO
-	tpLonglong := types.NewFieldType(mysql.TypeLonglong)
-	tpLonglong.SetFlag(mysql.UnsignedFlag)
-	// We need a strict check, which means no truncate or any other warnings/errors, or it will wrongly try to parse
-	// a date/time string into a TSO.
-	// To achieve this, we create a new type context without re-using the one in statement context.
-	tso, err := tsVal.ConvertTo(types.DefaultStmtNoWarningContext.WithLocation(sctx.GetSessionVars().Location()), tpLonglong)
-	if err == nil {
-		return tso.GetUint64()
-	}
-
-	// if failed, treat it as a date/time
-	// this part is similar to CalculateAsOfTsExpr
-	tpDateTime := types.NewFieldType(mysql.TypeDatetime)
-	tpDateTime.SetDecimal(6)
-	timestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), tpDateTime)
-	if err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return 0
-	}
-	goTime, err := timestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
-	if err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return 0
-	}
-	return oracle.GoTimeToTS(goTime)
+	return true
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
@@ -6748,7 +6745,7 @@ func checkStarterS3Path(u *url.URL) error {
 		}
 	}
 	if !hasExternalID {
-		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, "external ID is required for Starter deployments")
+		return exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(importdef.ImportIntoDataSource, "external ID is required for Starter deployments")
 	}
 	return nil
 }

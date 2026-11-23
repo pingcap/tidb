@@ -18,7 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -121,7 +123,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err := e.doBatchDelete(ctx); err != nil {
+				if err := e.doBatchDelete(ctx, tbl); err != nil {
 					return err
 				}
 				rowCount = 0
@@ -165,10 +167,17 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
+func (e *DeleteExec) doBatchDelete(ctx context.Context, tbl table.Table) error {
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
+	failpoint.InjectCall("afterBatchDeleteNewTxn", e.Ctx())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), tbl.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil

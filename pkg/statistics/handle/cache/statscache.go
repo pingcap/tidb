@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -33,6 +32,7 @@ import (
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -43,16 +43,16 @@ import (
 // See more at where it is used.
 const LeaseOffset = 5
 
-// StatsCacheImpl implements util.StatsCache.
+// StatsCacheImpl implements types.StatsCache.
 type StatsCacheImpl struct {
-	atomic.Pointer[StatsCache]
+	atomic.Pointer[statsCache]
 
 	statsHandle types.StatsHandle
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
 func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) {
-	newCache, err := NewStatsCache()
+	newCache, err := newStatsCache()
 	if err != nil {
 		return nil, err
 	}
@@ -63,11 +63,6 @@ func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) 
 	result.Store(newCache)
 
 	return result, nil
-}
-
-// NewStatsCacheImplForTest creates a new StatsCache for test.
-func NewStatsCacheImplForTest() (types.StatsCache, error) {
-	return NewStatsCacheImpl(nil)
 }
 
 // cacheOfBatchUpdate is a cache for batch update the stats cache.
@@ -118,8 +113,13 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 	}
 }
 
-// Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
+// Update reads stats meta from store and updates the stats cache.
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) (err error) {
+	// loadStatsWorker does not restart after a panic, so return the panic as an error.
+	// The worker then logs the error and tries again at the next tick.
+	defer tidbutil.Recover(tidbmetrics.LabelStats, "StatsCacheImpl.Update", func() {
+		err = errors.New("panic in StatsCacheImpl.Update")
+	}, false)
 	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
 	start := time.Now()
 	defer func() {
@@ -130,7 +130,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	var (
 		skipMoveForwardStatsCache bool
 		rows                      []chunk.Row
-		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT"
@@ -285,7 +284,7 @@ func (s *StatsCacheImpl) Replace(cache types.StatsCache) {
 }
 
 // replace replaces the cache with the new cache.
-func (s *StatsCacheImpl) replace(newCache *StatsCache) {
+func (s *StatsCacheImpl) replace(newCache *statsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()
@@ -293,15 +292,9 @@ func (s *StatsCacheImpl) replace(newCache *StatsCache) {
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
 
-// UpdateStatsCache updates the cache with the new cache.
+// UpdateStatsCache applies the updates and deletions to the current cache in place.
 func (s *StatsCacheImpl) UpdateStatsCache(cacheUpdate types.CacheUpdate) {
-	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
-	} else {
-		// TODO: remove this branch because we will always enable quota.
-		newCache := s.Load().CopyAndUpdate(cacheUpdate.Updated, cacheUpdate.Deleted)
-		s.replace(newCache)
-	}
+	s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
 }
 
 // Close closes this cache.
@@ -312,7 +305,7 @@ func (s *StatsCacheImpl) Close() {
 // Clear clears this cache.
 // Create a empty cache and replace the old one.
 func (s *StatsCacheImpl) Clear() {
-	cache, err := NewStatsCache()
+	cache, err := newStatsCache()
 	if err != nil {
 		statslogutil.StatsLogger().Warn("create stats cache failed", zap.Error(err))
 		return

@@ -98,6 +98,12 @@ func convertAddIdxJob2RollbackJob(
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// This job has not published any index metadata. A same-named index
+		// may belong to an earlier job and must not be rolled back here.
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -453,21 +459,19 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		partNames = append(partNames, pd.Name.L)
 	}
 	for _, indexInfo := range tblInfo.Indices {
-		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
-		if !ok {
-			// non-changed index
-			continue
-		}
-		if !isNew {
+		switch getPartitionIndexRole(pi, indexInfo.ID) {
+		case partitionIndexOld:
 			if pi.DDLState == model.StateDeleteReorganization {
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
 			}
-		} else if indexInfo.State != model.StateDeleteOnly {
-			// A copy may be public in delete reorganization, so it keeps taking writes for one more
-			// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
-			// A copy still in delete only never took writes and stays as is.
-			indexInfo.State = model.StateWriteOnly
+		case partitionIndexNew:
+			if indexInfo.State != model.StateDeleteOnly {
+				// A copy may be public in delete reorganization, so it keeps taking writes for one more
+				// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
+				// A copy still in delete only never took writes and stays as is.
+				indexInfo.State = model.StateWriteOnly
+			}
 		}
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
@@ -664,6 +668,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingBackDropConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = rollingBackAlterConstraint(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = rollbackModifySchemaReadOnly(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -770,4 +776,35 @@ func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	// The execution path records progress before writing database metadata.
+	// A cancelled queued job must not undo a preceding job's successful change.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	dbInfo.ReadOnly = !args.ReadOnly
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	if job.Error == nil {
+		job.Error = toTError(dbterror.ErrCancelledDDLJob)
+	}
+	return ver, nil
 }

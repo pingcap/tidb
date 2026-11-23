@@ -125,7 +125,9 @@ func (e *jsonObjectAgg) deserializeForSpill(helper *deserializeHelper) (PartialR
 }
 
 func getRealJSONValue(value types.Datum, ft *types.FieldType) (any, error) {
-	realVal := value.Clone().GetValue()
+	// Aggregate values outlive the input chunk, including opaque byte buffers.
+	value = *value.Clone()
+	realVal := value.GetValue()
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
 		buf := value.GetBytes()
