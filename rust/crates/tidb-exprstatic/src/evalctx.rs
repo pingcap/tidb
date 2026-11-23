@@ -1632,7 +1632,7 @@ mod tests {
         assert_eq!(ctx.get_div_precision_increment(), 12);
         assert_eq!(
             ctx.get_div_precision_increment(),
-            session_vars.div_precision_increment()
+            i64::from(session_vars.div_precision_increment())
         );
 
         // `@@timestamp` set to its default means "now".
