@@ -735,7 +735,7 @@ fn memory_column(
 /// The planner's `SourceTable` for a stored table of the schema `db_name`
 /// (Go's `TableInfo` as `buildDataSource` reads it).
 fn kv_source_table(
-    table: &crate::TableCommon,
+    table: &std::sync::Arc<crate::TableCommon>,
     db_name: &str,
     resolve_db_info: tidb_model::GoShared<tidb_model::DBInfo>,
 ) -> crate::table_source::SourceTable {
@@ -758,6 +758,7 @@ fn kv_source_table(
             },
         ),
         columns,
+        table: Some(std::sync::Arc::clone(table)),
         ..crate::table_source::SourceTable::default()
     };
     drop(info);

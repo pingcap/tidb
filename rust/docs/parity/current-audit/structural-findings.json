@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 7,
-    "open": 7,
+    "unresolved": 6,
+    "open": 6,
     "partial": 0
   },
   "findings": [
@@ -22,14 +22,6 @@
       "finding": "Go `pkg/planner/optimize.go`'s statement entry (`Optimize`, `optimizeNoCache`: binding match, fast plan, plan cache) and `buildLogicalPlan`'s `PlanBuilder` setup, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` live in the executor. (`optimize`'s rounds, `buildAndOptimizeLogicalPlanRound` and the alternative-round predicates are `tidb-planner/src/planner_optimize.rs`.)",
       "rust_evidence": "`tidb-executor/src/driver.rs`, `driver/dml.rs` (statement entry), `driver/planner_bridge.rs` (`QueryBuilderParts::build`, `planner_built_query_with_allocators`), `tidb-executor/src/explain.rs` (`query_plan_cost`, `gen_brief_plan`, `calculate_plan_digest`), `foreign_key.rs`.",
       "go_owner": "`pkg/planner/optimize.go`"
-    },
-    {
-      "id": "T06",
-      "group": "Planner and bindings",
-      "status": "open",
-      "finding": "Partition pruning is not Go's `partitionProcessor`: Go prunes over the conditions in the logical rule (`processRangePartition` / `processListPartition` / `processHashOrKeyPartition`, `rangePruner`, `listPartitionPruner`); Rust prunes from ranger intervals through an executor-side callback, with LIST COLUMNS locating in the executor.",
-      "rust_evidence": "`tidb-planner-rule/src/lib.rs` (`pruned_ids_from_ranger`), `tidb-executor/src/driver/planner_bridge.rs` (`partition_pruning`, `locate_list_columns_*`), `tidb-planner-core-rule/src/rule_partition_processor.rs` asks `ctx.partition_pruning`.",
-      "go_owner": "`pkg/planner/core/rule/rule_partition_processor.go`"
     },
     {
       "id": "T07",
@@ -64,7 +56,7 @@
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     }
   ],
-  "unresolved": 7,
-  "open": 7,
+  "unresolved": 6,
+  "open": 6,
   "partial": 0
 }

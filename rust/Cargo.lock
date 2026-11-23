@@ -6866,7 +6866,6 @@ dependencies = [
  "tidb-planner-costusage",
  "tidb-planner-indexadvisor",
  "tidb-planner-property",
- "tidb-planner-rule",
  "tidb-planner-util",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
@@ -8674,6 +8673,7 @@ dependencies = [
  "tidb-fixcontrol",
  "tidb-go-regexp",
  "tidb-go-url",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-hint",
  "tidb-infoschema",
@@ -8704,6 +8704,7 @@ dependencies = [
  "tidb-planner-core-partidx",
  "tidb-planner-core-rule",
  "tidb-planner-core-rule-util",
+ "tidb-planner-coretestsdk",
  "tidb-planner-coreusage",
  "tidb-planner-costusage",
  "tidb-planner-property",
@@ -8870,6 +8871,7 @@ dependencies = [
  "tidb-sessionctx",
  "tidb-stats",
  "tidb-stmtctx",
+ "tidb-table",
  "tidb-vardef",
 ]
 
@@ -8926,6 +8928,7 @@ name = "tidb-planner-core-rule"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-charset",
  "tidb-chunk",
  "tidb-context",
  "tidb-datatype",
@@ -8933,6 +8936,7 @@ dependencies = [
  "tidb-exprctx",
  "tidb-expression-aggregation",
  "tidb-filter",
+ "tidb-hack",
  "tidb-infoschema",
  "tidb-kv",
  "tidb-model",
@@ -8952,6 +8956,7 @@ dependencies = [
  "tidb-stats-asyncload",
  "tidb-stats-handle",
  "tidb-stats-handle-syncload",
+ "tidb-table",
  "tidb-vardef",
 ]
 
@@ -9050,22 +9055,6 @@ dependencies = [
  "tidb-mysql",
  "tidb-size",
  "tidb-stats",
-]
-
-[[package]]
-name = "tidb-planner-rule"
-version = "0.0.0"
-dependencies = [
- "tidb-ast",
- "tidb-charset",
- "tidb-chunk",
- "tidb-datatype",
- "tidb-expr",
- "tidb-exprctx",
- "tidb-hack",
- "tidb-model",
- "tidb-ranger",
- "tidb-table",
 ]
 
 [[package]]

@@ -190,7 +190,6 @@ members = [
     "crates/tidb-executor-internal-applycache",
     "crates/tidb-executor-join-joinversion",
     "crates/tidb-executor-internal-vecgroupchecker",
-    "crates/tidb-planner-rule",
     "crates/tidb-store-helper",
     "crates/tidb-pdhelper",
     "crates/tidb-lock",

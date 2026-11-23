@@ -135,7 +135,7 @@ fn selected_partition_ids(
                 .gen_with_stack_by_args(&[]),
         ));
     };
-    tidb_planner_rule::ids_for_selected_partitions(
+    tidb_planner_core_rule::rule_partition_processor::pruners::ids_for_selected_partitions(
                     &kv.meta().read().get_partition_info().expect("partitioned").read(),
                     partitions)
         .map(Some)

@@ -105,6 +105,11 @@ pub struct SourceTable {
     /// list, shared (Go `tbl.Cols()` hands out the table's pointers), so a
     /// planner image rebuilt per schema version copies no column.
     pub columns: std::sync::Arc<Vec<SourceColumn>>,
+    /// Go `table.Table` the infoschema hands `buildDataSource`: a stored
+    /// table's own object, with its partition expression
+    /// (`PartitionedTable.PartitionExpr`). `None` for a memory or cluster
+    /// table.
+    pub table: Option<std::sync::Arc<tidb_table::tables::TableCommon>>,
 }
 
 impl SourceTable {

@@ -37,7 +37,6 @@ use crate::rule::{logical_optimize, normalize_optimize};
 use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DeriveStatsSink, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
-use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
 use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
@@ -196,8 +195,6 @@ pub struct OptimizeServices<'a> {
         &'a dyn Fn(LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)>,
     /// Go `recordUsedItemStatsStatus`.
     pub used_stats_recorder: &'a dyn UsedStatsRecorder,
-    /// Go `PartitionProcessor`'s pruning over the table's definition.
-    pub partition_pruning: &'a dyn PartitionPruning,
     /// Go `LogicalCTE.DeriveStats`'s `DoOptimize`.
     pub cte_optimizer: &'a dyn CteOptimizer,
 }
@@ -266,7 +263,6 @@ pub fn optimize_logical<C: OptimizeContext>(
                 .filter(|name| ctx.logical_rule_disabled(name)),
         ),
         statistics_load: Some(services.statistics_load),
-        partition_pruning: Some(services.partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
         index_merge_enabled: ctx.get_enable_index_merge(),
@@ -349,7 +345,7 @@ pub fn optimize_logical<C: OptimizeContext>(
     // sources from the loaded snapshot before join reorder.
     optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
     if !ctx.static_partition_prune() {
-        attach_dynamic_partition_access(&mut optimized, services.partition_pruning)?;
+        attach_dynamic_partition_access(&mut optimized, &rule_context)?;
     }
     if optimized.output_names().is_empty()
         && optimized
@@ -443,11 +439,11 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
 /// object), computed by the partition processor's pruning.
 fn attach_dynamic_partition_access(
     plan: &mut LogicalPlan,
-    pruning: &dyn PartitionPruning,
+    rule_context: &RuleContext<'_>,
 ) -> Result<(), PlanError> {
     if let LogicalPlan::DataSource(source) = plan {
         if !source.partition_definition_ids().is_empty() {
-            let indices = pruning.partition_indices(source)?;
+            let indices = tidb_planner_core_rule::rule_partition_processor::prune::partition_indices(rule_context, source)?;
             let all_partitions = source.partition_names.is_empty()
                 && indices.len() == source.partition_definition_ids().len();
             let partitions = if all_partitions {
@@ -472,7 +468,7 @@ fn attach_dynamic_partition_access(
         return Ok(());
     }
     for child in plan.base_mut().children_mut() {
-        attach_dynamic_partition_access(child, pruning)?;
+        attach_dynamic_partition_access(child, rule_context)?;
     }
     Ok(())
 }

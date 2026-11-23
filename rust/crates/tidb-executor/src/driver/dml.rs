@@ -1353,7 +1353,7 @@ fn run_insert_rows(
             ));
         };
         Some(
-            tidb_planner_rule::ids_for_selected_partitions(
+            tidb_planner_core_rule::rule_partition_processor::pruners::ids_for_selected_partitions(
                     &kv.meta().read().get_partition_info().expect("partitioned").read(),
                     &insert.partitions)
                 .map_err(|partition| {
@@ -4230,7 +4230,7 @@ fn run_update_with_physical(
                 ));
             };
             Some(
-                tidb_planner_rule::ids_for_selected_partitions(
+                tidb_planner_core_rule::rule_partition_processor::pruners::ids_for_selected_partitions(
                     &kv.meta().read().get_partition_info().expect("partitioned").read(),
                     &table_ref.partitions)
                     .map_err(|partition| {

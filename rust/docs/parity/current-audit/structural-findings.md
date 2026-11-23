@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**7 unresolved: 7 open, 0 partial.**
+**6 unresolved: 6 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -38,7 +38,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| T06 | open | Partition pruning is not Go's `partitionProcessor`: Go prunes over the conditions in the logical rule (`processRangePartition` / `processListPartition` / `processHashOrKeyPartition`, `rangePruner`, `listPartitionPruner`); Rust prunes from ranger intervals through an executor-side callback, with LIST COLUMNS locating in the executor. Rust: `tidb-planner-rule/src/lib.rs` (`pruned_ids_from_ranger`), `tidb-executor/src/driver/planner_bridge.rs` (`partition_pruning`, `locate_list_columns_*`), `tidb-planner-core-rule/src/rule_partition_processor.rs` asks `ctx.partition_pruning`. | `pkg/planner/core/rule/rule_partition_processor.go` |
 | T07 | open | Planner code owned by the executor: the prepared and non-prepared plan cache's statement and key (`plan_cache.go` / `plan_cache_utils.go`: `PlanCacheStmt`, `NewPlanCacheKey`, `GeneratePlanCacheStmtWithAST`) live in `tidb-executor`. (`pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk and `GetParamSQLFromAST` are `tidb-planner/src/plan_cacheable_checker.rs`; `RequestLoadStats` / `SyncWaitStatsLoad` are `tidb-planner-core-rule/src/rule_collect_plan_stats.rs`.) Rust: `tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`, `PlanCacheStmtInfo`, `PreparedPlanCacheEnvironment`), `driver/plan_cache.rs`. | `pkg/planner/core/plan_cache.go`, `plan_cache_utils.go` |
 | T08 | open | Go's `expressionRewriter` (`pkg/planner/core/expression_rewriter.go`) and `ScalarSubQueryExpr` are split into the expression crate instead of the planner. Rust: `tidb-expr/src/rewriter.rs`, `tidb-expr/src/simple_expr.rs`, `tidb-expr/src/scalar_subquery.rs`. | `pkg/planner/core/expression_rewriter.go`, `scalar_subq_expression.go` |
 

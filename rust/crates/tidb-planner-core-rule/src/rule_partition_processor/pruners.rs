@@ -107,7 +107,7 @@ pub fn pruned_ids_from_ranger(
     spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranger_ranges: &[tidb_ranger::types::Range],
-    ctx: &impl tidb_exprctx::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
     pruned_ids_impl(spec, pi, ranger_ranges, ctx)
 }
@@ -116,7 +116,7 @@ fn pruned_ids_impl(
     spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranges: &[Range],
-    ctx: &impl tidb_exprctx::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
     Ok(match &spec.kind {
         // Every row is in partition 0, so there is nothing to prune away.
@@ -629,7 +629,7 @@ fn prune_list_ids(
     null_partition: Option<usize>,
     default_partition: Option<usize>,
     unsigned: bool,
-    ctx: &impl tidb_exprctx::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<Vec<i64>, tidb_exprctx::EvalError> {
     let ids = pi.definitions.map_visible(|definition| definition.id);
     let full = || {
@@ -822,7 +822,7 @@ fn prune_hash_ids(
     spec: &PartitionExpr,
     pi: &PartitionInfo,
     ranges: &[Range],
-    ctx: &impl tidb_exprctx::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let ids = pi.definitions.map_visible(|definition| definition.id);
     let mut used = vec![false; ids.len()];
@@ -2144,18 +2144,17 @@ fn go_sort_search(n: usize, mut predicate: impl FnMut(usize) -> bool) -> usize {
 /// (`PartitionRangeForCNFExpr`, `rule_partition_processor.go:1372`): the
 /// ranger does not yet handle a predicate whose collation differs from the
 /// column's, which `partitionRangeForExpr` must refuse to prune.
-struct SingleRangeColumnsPruner<'a, B, C> {
+struct SingleRangeColumnsPruner<'a, B: ?Sized> {
     less_than: &'a [Vec<tidb_table::partition_routing::RangeColumnBound>],
     bound_type: &'a tidb_datatype::FieldType,
     column: &'a tidb_expr::column::Column,
     builder: &'a B,
-    ctx: &'a C,
+    ctx: &'a dyn tidb_exprctx::Columns,
 }
 
-impl<B, C> SingleRangeColumnsPruner<'_, B, C>
+impl<B> SingleRangeColumnsPruner<'_, B>
 where
-    B: tidb_expr::expr_util::builder::FunctionBuilder,
-    C: tidb_exprctx::Columns,
+    B: tidb_expr::expr_util::builder::FunctionBuilder + ?Sized,
 {
     fn full(&self) -> PartitionRangeOr {
         PartitionRangeOr::full(self.less_than.len())
@@ -2367,7 +2366,7 @@ where
 }
 
 /// Go `LessThanDataInt` with the pruned column's own signedness.
-struct ScalarRangePruner<'a, C> {
+struct ScalarRangePruner<'a> {
     less_than: &'a [RangeBound],
     /// Go `mysql.HasUnsignedFlag(col.GetStaticType().GetFlag())`.
     unsigned: bool,
@@ -2377,7 +2376,7 @@ struct ScalarRangePruner<'a, C> {
     part_fn: Option<&'a tidb_expr::expression::Expression>,
     /// Go `RangePruner.Monotonous`; `None` is `MonotoneModeInvalid`.
     monotone: Option<RangeMonotoneMode>,
-    ctx: &'a C,
+    ctx: &'a dyn tidb_exprctx::Columns,
 }
 
 /// One `f(x) op const` condition, Go `DataForPrune`.
@@ -2387,7 +2386,7 @@ struct DataForPrune {
     unsigned: bool,
 }
 
-impl<C: tidb_exprctx::Columns> ScalarRangePruner<'_, C> {
+impl ScalarRangePruner<'_> {
     fn full(&self) -> PartitionRangeOr {
         PartitionRangeOr::full(self.less_than.len())
     }
@@ -2756,7 +2755,7 @@ pub fn scalar_range_pruned_ids(
     pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
-    ctx: &impl tidb_exprctx::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let ids = pi.definitions.map_visible(|definition| definition.id);
     let PartitionKind::Range { less_than, .. } = &spec.kind else {
@@ -2813,8 +2812,8 @@ pub fn single_range_columns_pruned_ids(
     pi: &PartitionInfo,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
-    builder: &impl tidb_expr::expr_util::builder::FunctionBuilder,
-    ctx: &impl tidb_exprctx::Columns,
+    builder: &(impl tidb_expr::expr_util::builder::FunctionBuilder + ?Sized),
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let ids = pi.definitions.map_visible(|definition| definition.id);
     let PartitionKind::RangeColumns {

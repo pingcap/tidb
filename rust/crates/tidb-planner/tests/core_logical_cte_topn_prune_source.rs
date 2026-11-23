@@ -90,7 +90,6 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         expr_pushdown_blacklist: Default::default(),
         disabled_rules: Default::default(),
         statistics_load: None,
-        partition_pruning: None,
         opt_index_prune_threshold: 20,
         opt_prefix_index_single_scan: true,
         index_merge_enabled: true,

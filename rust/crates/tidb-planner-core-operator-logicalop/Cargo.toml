@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/core/operator/logicalop (Rust)."
 workspace = true
 
 [dependencies]
+tidb-table = { path = "../tidb-table" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-execdetails = { path = "../tidb-execdetails" }

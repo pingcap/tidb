@@ -14,6 +14,9 @@
 
 //! Go `pkg/planner/core/rule/rule_partition_processor.go`.
 
+pub mod prune;
+pub mod pruners;
+
 use tidb_planner_core_operator_logicalop::{
     BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
     LogicalUnionScan,
@@ -303,13 +306,8 @@ fn prune_data_source(
     ) {
         return Ok(dual);
     }
-    let indices = ctx.partition_pruning.map_or_else(
-        || Ok((0..source.partition_definition_ids().len()).collect()),
-        |pruning| {
-            pruning.spend_partition_expression_plan_id(&source);
-            pruning.partition_indices(&source)
-        },
-    )?;
+    prune::spend_partition_expression_plan_id(ctx, &source);
+    let indices = prune::partition_indices(ctx, &source)?;
     if let Some(marker) = ctx.plan_cache_marker {
         marker.set_skip_plan_cache("Static partition pruning mode");
     }

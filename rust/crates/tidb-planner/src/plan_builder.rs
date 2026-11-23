@@ -3861,6 +3861,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut data_source = DataSource {
             base: self.base(DataSource::TYPE),
             table_info: table.table_info.clone(),
+            table: table.table.clone(),
             table_as_name: as_name,
             db_name,
             physical_table_id: table.physical_table_id,

@@ -97,6 +97,10 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
+[dev-dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-planner-coretestsdk = { path = "../tidb-planner-coretestsdk" }
+
 [[test]]
 name = "all"
 path = "tests/all.rs"

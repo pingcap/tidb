@@ -49,7 +49,6 @@ use crate::rule;
 use super::{logical_optimize, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
 use tidb_planner_core_rule::{flags, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner};
 use tidb_planner_core_operator_logicalop::plan_context::{add_selection, DisabledLogicalRules, LogicalOptRule, RuleContext};
-use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
 use tidb_planner_core_rule::rule_partition_processor::PartitionProcessor;
 use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 use tidb_planner_core_operator_logicalop::sort::LogicalSort;
@@ -76,7 +75,6 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         expr_pushdown_blacklist: Default::default(),
         disabled_rules: DisabledLogicalRules::default(),
         statistics_load: None,
-        partition_pruning: None,
         opt_index_prune_threshold: 20,
         opt_prefix_index_single_scan: true,
         index_merge_enabled: true,
@@ -1507,26 +1505,28 @@ fn predicate_push_down_moves_supported_conditions_into_a_data_source() {
     out.dismantle();
 }
 
-struct FixedPartitionPruning(Vec<usize>);
-
-impl PartitionPruning for FixedPartitionPruning {
-    fn partition_indices(
-        &self,
-        _source: &DataSource,
-    ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
-        Ok(self.0.clone())
-    }
-}
-
-struct UnexpectedPartitionPruning;
-
-impl PartitionPruning for UnexpectedPartitionPruning {
-    fn partition_indices(
-        &self,
-        _source: &DataSource,
-    ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
-        panic!("constant-false conditions must become TableDual before partition pruning")
-    }
+/// Go `MockHashPartitionTable`'s shape with `names` as its definitions (ids
+/// 101, 102, ...): the stored table a partitioned `DataSource` reads
+/// (`ds.Table`) and its `TableInfo`.
+fn hash_partitioned_source(source: &mut DataSource, names: &[&str]) {
+    let mut info = tidb_planner_coretestsdk::mock_hash_partition_table();
+    let definitions = names
+        .iter()
+        .enumerate()
+        .map(|(position, name)| tidb_model::PartitionDefinition {
+            id: 101 + position as i64,
+            name: tidb_ast::CiString::new(*name),
+            ..tidb_model::PartitionDefinition::default()
+        })
+        .collect();
+    let mut partition = info.partition.as_ref().expect("a partitioned fixture").read().clone();
+    partition.num = names.len() as u64;
+    partition.definitions = tidb_goruntime::go_runtime::GoSharedSlice::from_vec(definitions);
+    info.partition = Some(tidb_model::GoShared::new(partition));
+    let table = tidb_table::table_from_meta::table_from_meta(&info, &tidb_table::table_from_meta::AutoIdSource::Unavailable)
+        .expect("the fixture loads as a table");
+    source.table_info = Some(tidb_model::GoShared::new(info));
+    source.table = Some(std::sync::Arc::new(table));
 }
 
 #[derive(Default)]
@@ -1545,7 +1545,9 @@ fn partition_processor_puts_union_scan_inside_each_partition_branch() {
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");
     };
-    source_ref.set_partition_definition_ids(vec![101, 102, 103]);
+    hash_partitioned_source(source_ref, &["p0", "p1", "p2"]);
+    // `PARTITION (p0, p2)`: the pruner keeps the named definitions.
+    source_ref.partition_names = vec!["p0".to_owned(), "p2".to_owned()];
     // Go always enumerates the table path the per-partition hint rerun keeps.
     source_ref.public_enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)];
 
@@ -1558,10 +1560,8 @@ fn partition_processor_puts_union_scan_inside_each_partition_branch() {
     union_scan.conditions.clone_from(&conditions);
     union_scan.base.set_children(vec![source]);
 
-    let pruning = FixedPartitionPruning(vec![0, 2]);
     let marker = RecordingPlanCacheMarker::default();
     let mut ctx = test_context(&allocator);
-    ctx.partition_pruning = Some(&pruning);
     ctx.plan_cache_marker = Some(&marker);
 
     let (plan, changed) = PartitionProcessor
@@ -1609,15 +1609,14 @@ fn partition_processor_puts_union_scan_inside_each_partition_branch() {
 #[test]
 fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
     let allocator = PlanIdAllocator::new();
-    let pruning = FixedPartitionPruning(vec![1]);
-    let mut ctx = test_context(&allocator);
-    ctx.partition_pruning = Some(&pruning);
+    let ctx = test_context(&allocator);
 
     let mut source = data_source(&allocator, &[1, 2]);
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");
     };
-    source_ref.set_partition_definition_ids(vec![101, 102]);
+    hash_partitioned_source(source_ref, &["p0", "p1"]);
+    source_ref.partition_names = vec!["p1".to_owned()];
     // Go always enumerates the table path the per-partition hint rerun keeps.
     source_ref.public_enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)];
     source_ref.all_conds = vec![not_ne_const(2, 7)];
@@ -1638,9 +1637,9 @@ fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
     assert_eq!(source.physical_table_id, 102);
     plan.dismantle();
 
-    let unexpected = UnexpectedPartitionPruning;
-    let mut ctx = test_context(&allocator);
-    ctx.partition_pruning = Some(&unexpected);
+    // A constant-false condition folds to TableDual before any pruning: the
+    // source has no table for the pruner to read.
+    let ctx = test_context(&allocator);
     let mut source = data_source(&allocator, &[1]);
     let LogicalPlan::DataSource(source_ref) = &mut source else {
         unreachable!("the helper builds a DataSource");

@@ -57,7 +57,6 @@ tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vec
 tidb-executor-join-joinversion = { path = "../tidb-executor-join-joinversion" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
-tidb-planner-rule = { path = "../tidb-planner-rule" }
 tidb-store-helper = { path = "../tidb-store-helper" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-unistore-cophandler = { path = "../tidb-unistore-cophandler" }

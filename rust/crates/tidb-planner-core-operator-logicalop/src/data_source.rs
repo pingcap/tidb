@@ -121,6 +121,9 @@ pub struct DataSource {
     pub base: BaseLogicalPlan,
     /// Go `DataSource.TableInfo`: the table's shared `*model.TableInfo`.
     pub table_info: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
+    /// Go `DataSource.Table`: the stored table, whose partition expression
+    /// (`PartitionedTable.PartitionExpr`) the partition processor prunes by.
+    pub table: Option<std::sync::Arc<tidb_table::tables::TableCommon>>,
     /// Go `TableAsName`: the `AS` alias, when the query gave one.
     pub table_as_name: Option<String>,
     /// Go `DBName`.
@@ -1387,6 +1390,7 @@ impl DataSource {
         Self {
             base: self.base.shell(),
             table_info: self.table_info.clone(),
+            table: self.table.clone(),
             table_as_name: self.table_as_name.clone(),
             db_name: self.db_name.clone(),
             physical_table_id: self.physical_table_id,

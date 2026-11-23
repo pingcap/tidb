@@ -31,12 +31,15 @@ tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
-
-[dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
-tidb-context = { path = "../tidb-context" }
 tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-table = { path = "../tidb-table" }
+tidb-context = { path = "../tidb-context" }
+
+[dev-dependencies]
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
