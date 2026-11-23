@@ -38,10 +38,12 @@ go_test(
     shard_count = 12,
     deps = [
         ":refresher",
+        "//pkg/ddl/notifier",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
+        "//pkg/statistics/handle",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
