@@ -111,7 +111,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, sctx sessionctx.Context, sna
 		return nil, 0, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	cache, err := cache.NewStatsCacheImpl(h)
+	cache, err := cache.NewStatsCacheImpl(h.Pool, h.LeaseHolder, h.TableInfoGetter)
 	if err != nil {
 		return nil, 0, err
 	}

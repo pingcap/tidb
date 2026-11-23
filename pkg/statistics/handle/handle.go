@@ -146,22 +146,24 @@ func NewHandle(
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
-	handle := &Handle{
-		InitStatsDone:   make(chan struct{}),
-		TableInfoGetter: util.NewTableInfoGetter(),
-		StatsLock:       lockstats.NewStatsLock(pool),
-	}
-	handle.StatsGC = storage.NewStatsGC(handle)
-	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
-
-	statsCache, err := cache.NewStatsCacheImpl(handle)
+	statsPool := util.NewPool(pool)
+	leaseHolder := util.NewLeaseHolder(lease)
+	tables := util.NewTableInfoGetter()
+	statsCache, err := cache.NewStatsCacheImpl(statsPool, leaseHolder, tables)
 	if err != nil {
 		return nil, err
 	}
-	handle.Pool = util.NewPool(pool)
-	handle.AutoAnalyzeProcIDGenerator = util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
-	handle.LeaseHolder = util.NewLeaseHolder(lease)
-	handle.StatsCache = statsCache
+	handle := &Handle{
+		InitStatsDone:              make(chan struct{}),
+		Pool:                       statsPool,
+		AutoAnalyzeProcIDGenerator: util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID),
+		LeaseHolder:                leaseHolder,
+		TableInfoGetter:            tables,
+		StatsCache:                 statsCache,
+		StatsLock:                  lockstats.NewStatsLock(pool),
+	}
+	handle.StatsGC = storage.NewStatsGC(handle)
+	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)

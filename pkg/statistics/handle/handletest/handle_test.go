@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -969,7 +968,7 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	require.Equal(t, 2, int(globalStats.ModifyCount))
 
 	// A panic in the per-table loop is returned as an error.
-	panicCache, err := cache.NewStatsCacheImpl(panicOnTableInfoByIDHandle{h})
+	panicCache, err := cache.NewStatsCacheImpl(h, h, panicOnTableInfoByID{})
 	require.NoError(t, err)
 	defer panicCache.Close()
 	require.ErrorContains(t, panicCache.Update(context.Background(), dom.InfoSchema()), "panic in StatsCacheImpl.Update")
@@ -984,12 +983,10 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
 }
 
-// panicOnTableInfoByIDHandle panics in the per-table loop of StatsCacheImpl.Update.
-type panicOnTableInfoByIDHandle struct {
-	statstypes.StatsHandle
-}
+// panicOnTableInfoByID panics in the per-table loop of StatsCacheImpl.Update.
+type panicOnTableInfoByID struct{}
 
-func (panicOnTableInfoByIDHandle) TableInfoByID(infoschema.InfoSchema, int64) (table.Table, bool) {
+func (panicOnTableInfoByID) TableInfoByID(infoschema.InfoSchema, int64) (table.Table, bool) {
 	panic("mock panic in TableInfoByID")
 }
 

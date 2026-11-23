@@ -44,18 +44,22 @@ import (
 type StatsCacheImpl struct {
 	atomic.Pointer[statsCache]
 
-	statsHandle types.StatsHandle
+	pool   util.SessionPool
+	lease  util.LeaseGetter
+	tables util.TableInfoGetter
 }
 
-// NewStatsCacheImpl creates a new StatsCache.
-func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) {
+// NewStatsCacheImpl creates a new StatsCache that loads the stats in the sessions of pool.
+func NewStatsCacheImpl(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) (types.StatsCache, error) {
 	newCache, err := newStatsCache()
 	if err != nil {
 		return nil, err
 	}
 
 	result := &StatsCacheImpl{
-		statsHandle: statsHandle,
+		pool:   pool,
+		lease:  lease,
+		tables: tables,
 	}
 	result.Store(newCache)
 
@@ -128,7 +132,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		skipMoveForwardStatsCache bool
 		rows                      []chunk.Row
 	)
-	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT"
 		if onlyForAnalyzedTables {
 			query += " /*+ use_index(mysql.stats_meta, tbl) */"
@@ -187,7 +191,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			return ctx.Err()
 		}
 
-		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
+		table, ok := s.tables.TableInfoByID(is, physicalID)
 		if !ok {
 			statslogutil.StatsLogger().Debug(
 				"unknown physical ID in stats meta table, maybe it has been dropped",
@@ -264,7 +268,7 @@ func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than five lease.
-	offset := util.DurationToTS(util.LeaseOffset * s.statsHandle.Lease())
+	offset := util.DurationToTS(util.LeaseOffset * s.lease.Lease())
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -318,13 +322,13 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 // TableStatsFromStorage loads table stats info from storage. It starts from the cached stats of
 // the table, so the cache owns it and the storage needs no cache.
 func (s *StatsCacheImpl) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
-	err = util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		var ok bool
 		statsTbl, ok = s.Get(physicalID)
 		if !ok {
 			statsTbl = nil
 		}
-		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.statsHandle.Lease(), statsTbl)
+		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.lease.Lease(), statsTbl)
 		return err
 	}, util.FlagWrapTxn)
 	return
