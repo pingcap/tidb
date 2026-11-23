@@ -702,3 +702,26 @@ fn test_panic_in_handle_analyze_worker_panic() {
     );
     session.node_conn().execute_write("analyze table tbl_2;").expect_err("the workers panic");
 }
+
+/// Go `TestAnalyzeSamplingWorkPanic`.
+#[test]
+fn test_analyze_sampling_work_panic() {
+    let (_stack, _users, mut session) = stack_and_session(413);
+    rows(&mut session, "set @@session.tidb_analyze_version = 2");
+    rows(&mut session, "set @@tidb_build_stats_concurrency = 4");
+    rows(&mut session, "create table t(a int, index idx(a))");
+    rows(&mut session, "insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)");
+    rows(&mut session, "split table t between (-9223372036854775808) and (9223372036854775807) regions 12");
+    {
+        let _panic = tidb_failpoint::enable_for_test(
+            "github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingBuildWorkerPanic",
+            "return(1)",
+        );
+        session.node_conn().execute_write("analyze table t").expect_err("a build worker panics");
+    }
+    let _panic = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingMergeWorkerPanic",
+        "return(1)",
+    );
+    session.node_conn().execute_write("analyze table t").expect_err("a merge worker panics");
+}

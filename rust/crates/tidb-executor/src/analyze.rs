@@ -277,6 +277,9 @@ pub struct AnalyzeStatement {
     pub build_stats_concurrency: usize,
     /// Go `SessionVars.AnalyzePartitionConcurrency`: the save workers.
     pub analyze_partition_concurrency: usize,
+    /// Go `tidb_build_sampling_stats_concurrency`: the merge and build
+    /// workers of one column task (`samplingStatsConcurrency`).
+    pub sampling_stats_concurrency: usize,
     /// Shared statement evaluation and warning context for virtual sample values.
     pub eval_context: AnalyzeEvalContext,
     /// The effective knobs.
@@ -617,6 +620,7 @@ pub fn lower_analyze_admin(
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             build_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_STATS_CONCURRENCY as usize,
             analyze_partition_concurrency: tidb_vardef::defaults::DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY as usize,
+            sampling_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_SAMPLING_STATS_CONCURRENCY as usize,
             eval_context: crate::StmtContext::for_query().into(),
             options,
             local_temporary_table: None,
@@ -1083,6 +1087,7 @@ impl<'a> AnalyzeRun<'a> {
             scanned_rows,
             slot_stats,
             sampled,
+            1,
         )
     }
 
@@ -1092,6 +1097,7 @@ impl<'a> AnalyzeRun<'a> {
     pub fn finish_collector(
         self,
         collector: RowSampleCollector,
+        concurrency: usize,
         decode_and_build_handle: impl FnMut(&mut Vec<Datum>) -> Result<tidb_txnkv::Handle, AnalyzeError>,
     ) -> Result<AnalyzedTable, AnalyzeError> {
         let (count, slots, samples) = collector.into_decoded_parts(decode_and_build_handle)?;
@@ -1111,6 +1117,7 @@ impl<'a> AnalyzeRun<'a> {
             count,
             slots,
             samples,
+            concurrency,
         )
     }
 
@@ -1121,102 +1128,172 @@ impl<'a> AnalyzeRun<'a> {
         scanned_rows: i64,
         slot_stats: Vec<tidb_stats::row_sample_collector::SlotStats>,
         sampled: Vec<tidb_stats::row_sample_collector::SampledRow>,
+        concurrency: usize,
     ) -> Result<AnalyzedTable, AnalyzeError> {
-        let mut columns = Vec::with_capacity(plan.columns.len());
-        for (position, column) in plan.columns.iter().enumerate() {
-            if plan.virtual_columns.contains(&column.id) {
-                continue;
+        // Go `buildSamplingStats`' build half: one `samplingBuildTask` per
+        // column, then per index, run by `subBuildWorker`s.
+        let column_count = plan.columns.len();
+        let total = column_count + plan.indexes.len();
+        let build = |slice_pos: usize| -> Result<Option<AnalyzedHistogram>, AnalyzeError> {
+            if slice_pos < column_count {
+                Self::build_column(plan, options, scanned_rows, &slot_stats, &sampled, slice_pos)
+            } else {
+                Self::build_index(plan, options, scanned_rows, &slot_stats, &sampled, slice_pos - column_count).map(Some)
             }
-            let slot = &slot_stats[position];
-            let mut collected = SampleCollector {
-                samples: Vec::new(),
-                null_count: slot.null_count,
-                // Go's per-column count is `Count - NullCount`: a histogram
-                // and a TopN describe values, and NULLs travel beside them.
-                count: scanned_rows - slot.null_count,
-                ndv: slot.ndv,
-                unique: plan.unique_covered[position],
-                total_size: slot.total_size,
-            };
-            for row in &sampled {
-                let sampled_value = &row.columns[position];
-                if sampled_value.is_null() {
-                    continue;
-                }
-                // Go's length gate: a value this long is not one that occurs
-                // many times, and storing it would put half a `LONGTEXT` in
-                // `mysql.stats_buckets`.
-                if value_length(sampled_value) > MAX_SAMPLE_VALUE_LENGTH {
-                    continue;
-                }
-                let value = column.stored_value(sampled_value);
-                collected.samples.push(SampleItem {
-                    encoded: encode_key_of(&value, &plan.time_zone)?,
-                    value,
-                    ordinal: row.ordinal,
-                });
-            }
-            let mut built_with = options.build_options();
-            // A column a single-column unique index covers has no repeated
-            // value to put in a TopN, so Go asks for none rather than storing
-            // a list of ones.
-            if plan.unique_covered[position] {
-                built_with.num_topn = 0;
-            }
-            let built = build_hist_and_topn(column.id, &collected, built_with, true);
-            columns.push(AnalyzedHistogram {
-                id: column.id,
-                stats_ver: STATS_VERSION_2,
-                histogram: built.histogram,
-                topn: built.topn,
-                fm_sketch: slot.fm_sketch.clone(),
-            });
+        };
+        let built = (0..total).map(|_| std::sync::Mutex::new(None)).collect::<Vec<_>>();
+        let (task_tx, task_rx) = crossbeam_channel::bounded::<usize>(total.max(1));
+        for slice_pos in 0..total {
+            let _ = task_tx.send(slice_pos);
         }
-
-        let mut indexes = Vec::with_capacity(plan.indexes.len());
-        for (position, index) in plan.indexes.iter().enumerate() {
-            let slot = &slot_stats[plan.index_slot(position)];
-            let mut collected = SampleCollector {
-                samples: Vec::new(),
-                null_count: slot.null_count,
-                count: scanned_rows - slot.null_count,
-                ndv: slot.ndv,
-                unique: index.single_column_unique,
-                total_size: slot.total_size,
-            };
-            for row in &sampled {
-                let Some(encoded) = plan.index_sample(index, &row.columns)? else {
-                    continue;
-                };
-                collected.samples.push(SampleItem {
-                    value: Datum::Bytes(encoded.clone()),
-                    encoded,
-                    // Go leaves an index sample's ordinal at zero: correlation
-                    // is a column-only statistic, and the builder does not
-                    // read the ordinal when `isColumn` is false.
-                    ordinal: 0,
-                });
+        drop(task_tx);
+        let failure = std::sync::Mutex::new(None);
+        std::thread::scope(|scope| {
+            for _ in 0..concurrency.clamp(1, total.max(1)) {
+                let (task_rx, built, failure, build) = (task_rx.clone(), &built, &failure, &build);
+                scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                    // Go `subBuildWorker`.
+                    let outcome = panic_recovery::recover_analyze_panic(|| {
+                        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingBuildWorkerPanic")
+                            .is_some()
+                        {
+                            panic!("failpoint triggered");
+                        }
+                        for slice_pos in task_rx.iter() {
+                            match build(slice_pos) {
+                                Ok(histogram) => *built[slice_pos].lock().expect("built slot") = histogram,
+                                Err(error) => {
+                                    failure.lock().expect("build failure").replace(error);
+                                }
+                            }
+                        }
+                    });
+                    if let Err(panic) = outcome {
+                        failure
+                            .lock()
+                            .expect("build failure")
+                            .replace(AnalyzeError::Unsupported(panic.rendered_message().to_owned()));
+                    }
+                }));
             }
-            let mut built_with = options.build_options();
-            if index.single_column_unique {
-                built_with.num_topn = 0;
-            }
-            let built = build_hist_and_topn(index.id, &collected, built_with, false);
-            indexes.push(AnalyzedHistogram {
-                id: index.id,
-                stats_ver: STATS_VERSION_2,
-                histogram: built.histogram,
-                topn: built.topn,
-                fm_sketch: slot.fm_sketch.clone(),
-            });
+        });
+        if let Some(error) = failure.into_inner().expect("build failure") {
+            return Err(error);
         }
-
+        let mut built = built.into_iter().map(|slot| slot.into_inner().expect("built slot"));
+        let columns = built.by_ref().take(column_count).flatten().collect();
+        let indexes = built.flatten().collect();
         Ok(AnalyzedTable {
             scanned_rows,
             sampled_rows: sampled.len() as i64,
             sample_rate,
             columns,
             indexes,
+        })
+    }
+
+    /// One column's `samplingBuildTask`; a virtual column has no histogram.
+    fn build_column(
+        plan: &AnalyzePlan,
+        options: AnalyzeOptions,
+        scanned_rows: i64,
+        slot_stats: &[tidb_stats::row_sample_collector::SlotStats],
+        sampled: &[tidb_stats::row_sample_collector::SampledRow],
+        position: usize,
+    ) -> Result<Option<AnalyzedHistogram>, AnalyzeError> {
+        let column = &plan.columns[position];
+        if plan.virtual_columns.contains(&column.id) {
+            return Ok(None);
+        }
+        let slot = &slot_stats[position];
+        let mut collected = SampleCollector {
+            samples: Vec::new(),
+            null_count: slot.null_count,
+            // Go's per-column count is `Count - NullCount`: a histogram and a
+            // TopN describe values, and NULLs travel beside them.
+            count: scanned_rows - slot.null_count,
+            ndv: slot.ndv,
+            unique: plan.unique_covered[position],
+            total_size: slot.total_size,
+        };
+        for row in sampled {
+            let sampled_value = &row.columns[position];
+            if sampled_value.is_null() {
+                continue;
+            }
+            // Go's length gate: a value this long is not one that occurs many
+            // times, and storing it would put half a `LONGTEXT` in
+            // `mysql.stats_buckets`.
+            if value_length(sampled_value) > MAX_SAMPLE_VALUE_LENGTH {
+                continue;
+            }
+            let value = column.stored_value(sampled_value);
+            collected.samples.push(SampleItem {
+                encoded: encode_key_of(&value, &plan.time_zone)?,
+                value,
+                ordinal: row.ordinal,
+            });
+        }
+        let mut built_with = options.build_options();
+        // A column a single-column unique index covers has no repeated value
+        // to put in a TopN, so Go asks for none rather than storing a list of
+        // ones.
+        if plan.unique_covered[position] {
+            built_with.num_topn = 0;
+        }
+        let built = build_hist_and_topn(column.id, &collected, built_with, true);
+        Ok(Some(AnalyzedHistogram {
+            id: column.id,
+            stats_ver: STATS_VERSION_2,
+            histogram: built.histogram,
+            topn: built.topn,
+            fm_sketch: slot.fm_sketch.clone(),
+        }))
+    }
+
+    /// One index's `samplingBuildTask`.
+    fn build_index(
+        plan: &AnalyzePlan,
+        options: AnalyzeOptions,
+        scanned_rows: i64,
+        slot_stats: &[tidb_stats::row_sample_collector::SlotStats],
+        sampled: &[tidb_stats::row_sample_collector::SampledRow],
+        position: usize,
+    ) -> Result<AnalyzedHistogram, AnalyzeError> {
+        let index = &plan.indexes[position];
+        let slot = &slot_stats[plan.index_slot(position)];
+        let mut collected = SampleCollector {
+            samples: Vec::new(),
+            null_count: slot.null_count,
+            count: scanned_rows - slot.null_count,
+            ndv: slot.ndv,
+            unique: index.single_column_unique,
+            total_size: slot.total_size,
+        };
+        for row in sampled {
+            let Some(encoded) = plan.index_sample(index, &row.columns)? else {
+                continue;
+            };
+            collected.samples.push(SampleItem {
+                value: Datum::Bytes(encoded.clone()),
+                encoded,
+                // Go leaves an index sample's ordinal at zero: correlation is
+                // a column-only statistic, and the builder does not read the
+                // ordinal when `isColumn` is false.
+                ordinal: 0,
+            });
+        }
+        let mut built_with = options.build_options();
+        if index.single_column_unique {
+            built_with.num_topn = 0;
+        }
+        let built = build_hist_and_topn(index.id, &collected, built_with, false);
+        Ok(AnalyzedHistogram {
+            id: index.id,
+            stats_ver: STATS_VERSION_2,
+            histogram: built.histogram,
+            topn: built.topn,
+            fm_sketch: slot.fm_sketch.clone(),
         })
     }
 }
@@ -1316,6 +1393,7 @@ mod tests {
                     5,
                     slots,
                     Vec::new(),
+                    1,
                 )
                 .unwrap();
                 let expected = if unique {
@@ -1364,7 +1442,7 @@ mod tests {
         };
         let run = AnalyzeRun::start(&plan, &options, Some(100)).unwrap();
         let built = run
-            .finish_collector(collector, |row| {
+            .finish_collector(collector, 2, |row| {
                 for datum in row.iter_mut() {
                     let Datum::Bytes(bytes) = datum else {
                         panic!("expected encoded sample")

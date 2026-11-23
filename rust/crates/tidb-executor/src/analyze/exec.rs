@@ -338,6 +338,14 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY as usize);
+        // Go `getBuildSamplingStatsConcurrency`, resolved once before the
+        // workers fan out.
+        statement.sampling_stats_concurrency = self
+            .session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_BUILD_SAMPLING_STATS_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_BUILD_SAMPLING_STATS_CONCURRENCY as usize);
         statement.eval_context = self.analyze_statement_context().into();
         statement
     }

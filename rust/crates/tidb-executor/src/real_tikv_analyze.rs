@@ -1691,7 +1691,7 @@ impl<S: StoreClient> AnalyzeExec<'_, S> {
         &self,
         task: &AnalyzeTask<'_>,
         options: &crate::analyze::V2AnalyzeOptions,
-        progress: &dyn Fn(i64),
+        progress: &(dyn Fn(i64) + Sync),
     ) -> Result<(tidb_stats_handle_storage::cluster_stats_load::ClusterTableStats, i64, i64), ClusterAnalyzeError> {
         let resolved = task.resolved;
         let statement = &resolved.statement;
@@ -1751,7 +1751,7 @@ impl<S: StoreClient> AnalyzeExec<'_, S> {
         task: &AnalyzeTask<'_>,
         physical_id: Option<i64>,
         index_id: i64,
-        progress: &dyn Fn(i64),
+        progress: &(dyn Fn(i64) + Sync),
     ) -> Result<tidb_stats_handle_storage::cluster_stats_load::ClusterTableStats, ClusterAnalyzeError> {
         let statement = &task.resolved.statement;
         let mut transaction = self
@@ -1940,6 +1940,7 @@ fn selected_columns_for_choice(
         store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
         build_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_STATS_CONCURRENCY as usize,
         analyze_partition_concurrency: tidb_vardef::defaults::DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY as usize,
+        sampling_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_SAMPLING_STATS_CONCURRENCY as usize,
         eval_context: crate::StmtContext::for_query().into(),
         options: Default::default(),
         local_temporary_table: None,
@@ -2363,6 +2364,7 @@ mod tests {
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             build_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_STATS_CONCURRENCY as usize,
             analyze_partition_concurrency: tidb_vardef::defaults::DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY as usize,
+            sampling_stats_concurrency: tidb_vardef::defaults::DEF_BUILD_SAMPLING_STATS_CONCURRENCY as usize,
             eval_context: crate::StmtContext::for_query().into(),
             options: Default::default(),
             local_temporary_table: None,

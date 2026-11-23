@@ -428,7 +428,7 @@ pub(crate) fn analyze_table<S>(
     timeout: std::time::Duration,
     killer: &tidb_sqlkiller::SqlKiller,
     resource_group: &str,
-    progress: &dyn Fn(i64),
+    progress: &(dyn Fn(i64) + Sync),
 ) -> Result<super::AnalyzeReport, AnalyzeError>
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
@@ -457,43 +457,56 @@ where
     let mem_tracker = tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_ANALYZE_MEMORY, -1);
     mem_tracker.attach_to(statement.eval_context.statement_memory().stmt_tracker());
     let _release = TrackerRelease(&mem_tracker);
-    let mut collector = collect_regions(
-        opener,
-        &schema,
-        &plan,
-        request,
-        physical_id,
-        snapshot,
-        statement.analyze_snapshot,
-        options,
-        concurrency,
-        statement.store_batch_size,
-        timeout,
-        cancellation.clone(),
-        resource_group,
-        progress,
-        &mem_tracker,
-    )?;
-    for (position, index) in plan.indexes().iter().enumerate() {
-        if !index_requires_ndv_scan(table, &plan, index) {
-            continue;
-        }
-        let primary = table.is_common_handle
-            && table
-                .get_primary_key()
-                .is_some_and(|primary| primary.read().id == index.id);
-        let (null_count, sketch) = collect_index_ndv(
+    // Go `analyzeColumnsPushDown`: the special indexes (with a prefix or
+    // virtual column) take their NDV from TiKV's index keys
+    // (`handleNDVForSpecialIndexes`), beside the row sampling.
+    let special_indexes = plan
+        .indexes()
+        .iter()
+        .enumerate()
+        .filter(|(_, index)| index_requires_ndv_scan(table, &plan, index))
+        .collect::<Vec<_>>();
+    let (collected, special) = std::thread::scope(|scope| {
+        let special = scope.spawn(tidb_cpuprofile::labels::inherit(|| {
+            handle_ndv_for_special_indexes(
+                opener,
+                table,
+                physical_id,
+                &special_indexes,
+                statement,
+                snapshot,
+                concurrency,
+                timeout,
+                cancellation.clone(),
+                resource_group,
+            )
+        }));
+        let collected = collect_regions(
             opener,
+            &schema,
+            &plan,
+            request,
             physical_id,
-            index,
-            primary,
-            statement,
             snapshot,
+            statement.analyze_snapshot,
+            options,
             concurrency,
+            statement.store_batch_size,
             timeout,
             cancellation.clone(),
             resource_group,
-        )?;
+            progress,
+            &mem_tracker,
+            statement.sampling_stats_concurrency,
+            killer,
+        );
+        let special = special
+            .join()
+            .unwrap_or_else(|_| Err(AnalyzeError::unsupported("analyze worker panic".to_owned())));
+        (collected, special)
+    });
+    let mut collector = collected?;
+    for (position, null_count, sketch) in special? {
         collector.replace_special_index_stats(plan.index_slot(position), null_count, sketch);
     }
     finish_samples(
@@ -508,6 +521,77 @@ where
     )
 }
 
+/// Go `handleNDVForSpecialIndexes`: `subIndexWorkerForNDV`s, at most
+/// `samplingStatsConcurrency` of them, read each special index's NULL
+/// count and FM sketch from its keys.
+#[allow(clippy::too_many_arguments)]
+fn handle_ndv_for_special_indexes<S>(
+    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
+    table: &TableInfo,
+    physical_id: i64,
+    special_indexes: &[(usize, &crate::analyze::AnalyzedIndex)],
+    statement: &super::AnalyzeStatement,
+    snapshot: u64,
+    concurrency: u64,
+    timeout: std::time::Duration,
+    cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
+    resource_group: &str,
+) -> Result<Vec<(usize, i64, tidb_stats::FmSketch)>, AnalyzeError>
+where
+    S: tidb_store_driver_txn::transaction::StoreClient,
+{
+    if special_indexes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let workers = statement.sampling_stats_concurrency.clamp(1, special_indexes.len());
+    let (task_tx, task_rx) = crossbeam_channel::bounded::<usize>(special_indexes.len());
+    for task in 0..special_indexes.len() {
+        let _ = task_tx.send(task);
+    }
+    drop(task_tx);
+    let results = std::sync::Mutex::new(Vec::with_capacity(special_indexes.len()));
+    let failure = std::sync::Mutex::new(None);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let task_rx = task_rx.clone();
+            let (results, failure, cancellation) = (&results, &failure, cancellation.clone());
+            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                // Go `subIndexWorkerForNDV`.
+                for task in task_rx.iter() {
+                    let (position, index) = special_indexes[task];
+                    let primary = table.is_common_handle
+                        && table.get_primary_key().is_some_and(|primary| primary.read().id == index.id);
+                    match collect_index_ndv(
+                        opener,
+                        physical_id,
+                        index,
+                        primary,
+                        statement,
+                        snapshot,
+                        concurrency,
+                        timeout,
+                        cancellation.clone(),
+                        resource_group,
+                    ) {
+                        Ok((null_count, sketch)) => results
+                            .lock()
+                            .expect("special index NDV results")
+                            .push((position, null_count, sketch)),
+                        Err(error) => {
+                            failure.lock().expect("special index NDV failure").get_or_insert(error);
+                            return;
+                        }
+                    }
+                }
+            }));
+        }
+    });
+    if let Some(error) = failure.into_inner().expect("special index NDV failure") {
+        return Err(error);
+    }
+    Ok(results.into_inner().expect("special index NDV results"))
+}
+
 pub(super) fn finish_samples(
     virtuals: &super::virtual_samples::VirtualSamples,
     physical_id: i64,
@@ -520,7 +604,7 @@ pub(super) fn finish_samples(
 ) -> Result<super::AnalyzeReport, AnalyzeError> {
     let run = crate::analyze::AnalyzeRun::start(plan, &statement.options, realtime_count)?;
     let timezone = statement.eval_context.session_zone();
-    let analyzed = run.finish_collector(collector, |row| {
+    let analyzed = run.finish_collector(collector, statement.sampling_stats_concurrency, |row| {
         let handle = schema.decode_handle(row, &timezone)?;
         virtuals.materialize(row, &statement.eval_context)?;
         Ok(handle)
@@ -586,14 +670,16 @@ pub(super) fn collect_regions<S>(
     timeout: std::time::Duration,
     cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     resource_group: &str,
-    progress: &dyn Fn(i64),
+    progress: &(dyn Fn(i64) + Sync),
     mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    sampling_stats_concurrency: usize,
+    killer: &tidb_sqlkiller::SqlKiller,
 ) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
 {
     use prost::Message;
-    use tidb_stats::row_sample_collector::{RowSampleCollector, SamplePolicy};
+    use tidb_stats::row_sample_collector::SamplePolicy;
     let error = |e: String| AnalyzeError::unsupported(e);
     let rate = request
         .col_req
@@ -621,40 +707,176 @@ where
     let mut result = runtime
         .analyze(&request, true)
         .map_err(|e| error(e.to_string()))?;
-    // Go `subMergeWorker` over `AnalyzeColumnsExec.memTracker`: each response's
-    // data and decoded size are consumed while it is in flight, its
-    // collector's samples as `FromProto` restores them, and the merge's net
-    // growth of the root collector; the in-flight bytes are then released.
-    let mut merged = RowSampleCollector::new(plan.slot_count(), policy);
-    let outcome = (|| {
-        while let Some(bytes) = result.next_raw().map_err(|e| error(e.to_string()))? {
-            let inflight_data_size = bytes.capacity() as i64;
-            mem_tracker.consume(inflight_data_size);
-            let response = match tipb::AnalyzeColumnsResp::decode(bytes.as_slice()) {
-                Ok(response) => response,
-                Err(e) => {
-                    mem_tracker.release(inflight_data_size);
-                    return Err(error(e.to_string()));
-                }
-            };
-            let inflight_resp_size = response.encoded_len() as i64;
-            mem_tracker.consume(inflight_resp_size);
-            let raw = response
-                .row_collector
-                .ok_or_else(|| error("TiKV ANALYZE response has no row collector".to_owned()))?;
-            let projected = schema.project_collector(plan, raw)?;
-            progress(projected.count);
-            let fragment = RowSampleCollector::from_proto(&projected, policy, mem_tracker);
-            let old_merged_size = merged.go_mem_size();
-            let fragment_size = fragment.go_mem_size();
-            merged.merge(fragment);
-            mem_tracker.consume(merged.go_mem_size() - old_merged_size - fragment_size);
-            mem_tracker.release(inflight_data_size + inflight_resp_size);
-        }
-        Ok(merged)
-    })();
+    let outcome = build_sampling_collector(
+        &mut result,
+        schema,
+        plan,
+        policy,
+        sampling_stats_concurrency,
+        killer,
+        progress,
+        mem_tracker,
+    );
     let _ = result.close();
     outcome
+}
+
+/// Go `buildSamplingStats`' merge half: `readDataAndSendTask` hands each
+/// region's response to `samplingStatsConcurrency` `subMergeWorker`s, each
+/// merging into its own collector, and the root collector merges theirs.
+#[allow(clippy::too_many_arguments)]
+fn build_sampling_collector<R: tidb_distsql::query_runtime::QueryResponse>(
+    result: &mut tidb_distsql::query_runtime::QuerySelectResult<R>,
+    schema: &SamplingSchema,
+    plan: &AnalyzePlan,
+    policy: tidb_stats::row_sample_collector::SamplePolicy,
+    sampling_stats_concurrency: usize,
+    killer: &tidb_sqlkiller::SqlKiller,
+    progress: &(dyn Fn(i64) + Sync),
+    mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError> {
+    use tidb_stats::row_sample_collector::RowSampleCollector;
+    let concurrency = sampling_stats_concurrency.max(1);
+    let (merge_task_tx, merge_task_rx) = crossbeam_channel::bounded::<Vec<u8>>(1);
+    let (merge_result_tx, merge_result_rx) =
+        crossbeam_channel::bounded::<Result<RowSampleCollector, AnalyzeError>>(1);
+    // Go `taskCancel`: a failed merge worker stops the reader.
+    let task_canceled = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        for index in 0..concurrency {
+            let merge_task_rx = merge_task_rx.clone();
+            let merge_result_tx = merge_result_tx.clone();
+            let task_canceled = &task_canceled;
+            scope.spawn(tidb_cpuprofile::labels::inherit(move || {
+                let merged = crate::analyze::panic_recovery::recover_analyze_panic(|| {
+                    sub_merge_worker(&merge_task_rx, schema, plan, policy, progress, mem_tracker, index)
+                })
+                .unwrap_or_else(|panic| Err(AnalyzeError::unsupported(panic.rendered_message().to_owned())));
+                if merged.is_err() {
+                    task_canceled.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                let _ = merge_result_tx.send(merged);
+            }));
+        }
+        drop(merge_task_rx);
+        drop(merge_result_tx);
+        // Merge the results from the workers.
+        let root_merge = scope.spawn(tidb_cpuprofile::labels::inherit(|| {
+            let mut root = RowSampleCollector::new(plan.slot_count(), policy);
+            let mut err = None;
+            for merged in merge_result_rx.iter() {
+                match merged {
+                    Ok(collector) => {
+                        let old_root_size = root.go_mem_size();
+                        let collector_size = collector.go_mem_size();
+                        root.merge(collector);
+                        mem_tracker.consume(root.go_mem_size() - old_root_size - collector_size);
+                    }
+                    Err(error) => err = Some(error),
+                }
+            }
+            err.map_or(Ok(root), Err)
+        }));
+        let read = read_data_and_send_task(result, &merge_task_tx, &task_canceled, killer, mem_tracker);
+        drop(merge_task_tx);
+        let merged = root_merge
+            .join()
+            .unwrap_or_else(|_| Err(AnalyzeError::unsupported("analyze worker panic".to_owned())));
+        match (read, merged) {
+            (Ok(()), merged) => merged,
+            (Err(read), Ok(_)) => Err(read),
+            (Err(read), Err(merge)) => {
+                if read.to_string() == merge.to_string() {
+                    Err(read)
+                } else {
+                    Err(AnalyzeError::unsupported(format!("{read}\n{merge}")))
+                }
+            }
+        }
+    })
+}
+
+/// Go `readDataAndSendTask`.
+fn read_data_and_send_task<R: tidb_distsql::query_runtime::QueryResponse>(
+    result: &mut tidb_distsql::query_runtime::QuerySelectResult<R>,
+    merge_task_tx: &crossbeam_channel::Sender<Vec<u8>>,
+    task_canceled: &std::sync::atomic::AtomicBool,
+    killer: &tidb_sqlkiller::SqlKiller,
+    mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+) -> Result<(), AnalyzeError> {
+    loop {
+        if let Some(error) = killer.handle_signal() {
+            return Err(AnalyzeError::Compute(crate::analyze::AnalyzeError::Execution(Box::new(
+                crate::DriverError::Mysql(tidb_terror::MysqlError::from_terror(&error)),
+            ))));
+        }
+        if task_canceled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        let Some(data) = result.next_raw().map_err(|e| AnalyzeError::unsupported(e.to_string()))? else {
+            return Ok(());
+        };
+        let data_size = data.capacity() as i64;
+        mem_tracker.consume(data_size);
+        if merge_task_tx.send(data).is_err() {
+            mem_tracker.release(data_size);
+            return Ok(());
+        }
+    }
+}
+
+/// Go `subMergeWorker`: merges the responses it takes into its own
+/// collector, consuming each response's data and decoded size while it is
+/// in flight, and the collector's growth.
+fn sub_merge_worker(
+    merge_task_rx: &crossbeam_channel::Receiver<Vec<u8>>,
+    schema: &SamplingSchema,
+    plan: &AnalyzePlan,
+    policy: tidb_stats::row_sample_collector::SamplePolicy,
+    progress: &(dyn Fn(i64) + Sync),
+    mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    _index: usize,
+) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError> {
+    use prost::Message;
+    use tidb_stats::row_sample_collector::RowSampleCollector;
+    if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingMergeWorkerPanic").is_some() {
+        panic!("failpoint triggered");
+    }
+    let error = |e: String| AnalyzeError::unsupported(e);
+    let mut ret_collector = RowSampleCollector::new(plan.slot_count(), policy);
+    for data in merge_task_rx.iter() {
+        let inflight_data_size = data.capacity() as i64;
+        let response = match tipb::AnalyzeColumnsResp::decode(data.as_slice()) {
+            Ok(response) => response,
+            Err(e) => {
+                mem_tracker.release(inflight_data_size);
+                mem_tracker.release(ret_collector.go_mem_size());
+                return Err(error(e.to_string()));
+            }
+        };
+        let inflight_resp_size = response.encoded_len() as i64;
+        mem_tracker.consume(inflight_resp_size);
+        let release_inflight = || mem_tracker.release(inflight_data_size + inflight_resp_size);
+        let Some(raw) = response.row_collector else {
+            release_inflight();
+            return Err(error("TiKV ANALYZE response has no row collector".to_owned()));
+        };
+        let projected = match schema.project_collector(plan, raw) {
+            Ok(projected) => projected,
+            Err(e) => {
+                release_inflight();
+                return Err(e);
+            }
+        };
+        progress(projected.count);
+        let sub_collector = RowSampleCollector::from_proto(&projected, policy, mem_tracker);
+        let old_ret_collector_size = ret_collector.go_mem_size();
+        let sub_collector_size = sub_collector.go_mem_size();
+        ret_collector.merge(sub_collector);
+        mem_tracker.consume(ret_collector.go_mem_size() - old_ret_collector_size - sub_collector_size);
+        release_inflight();
+    }
+    Ok(ret_collector)
 }
 
 /// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
