@@ -20,7 +20,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -156,16 +155,9 @@ func MergeOverlappingFilesV2(
 		loaded.build(ctx)
 		readTime := time.Since(now)
 		now = time.Now()
-		sorty.MaxGor = uint64(concurrency)
-		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
-				}
-				return true
-			}
-			return false
-		})
+		parallelSort(loaded.kvs, func(a, b simplesst.KVPair) int {
+			return bytes.Compare(a.Key, b.Key)
+		}, concurrency)
 		sortTime := time.Since(now)
 		now = time.Now()
 		for _, kv := range loaded.kvs {

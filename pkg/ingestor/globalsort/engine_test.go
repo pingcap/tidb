@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -306,6 +308,77 @@ func readKVFile(t *testing.T, store storeapi.Storage, filename string) []simples
 	return kvs
 }
 
+func TestEngineSortConcurrency(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	var workers sync.WaitGroup
+	defer func() {
+		cancel()
+		workers.Wait()
+	}()
+	originalMaxGor := sorty.MaxGor
+	t.Cleanup(func() { sorty.MaxGor = originalMaxGor })
+	store := objstore.NewMemStorage()
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]simplesst.KVPair{
+		{{Key: []byte{1}, Value: []byte("v1")}, {Key: []byte{3}, Value: []byte("v3")}},
+		{{Key: []byte{2}, Value: []byte("v2")}, {Key: []byte{4}, Value: []byte("v4")}},
+	})
+	resume := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	entered := make(chan uint64, 2)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/beforeSortKVs", func(e *Engine) {
+		idx := int(e.workerConcurrency.Load()) - 1
+		entered <- sorty.MaxGor
+		select {
+		case <-resume[idx]:
+		case <-ctx.Done():
+		}
+	})
+	outputs := make([]chan engineapi.DataAndRanges, 2)
+	results := make([]chan error, 2)
+	var observedMaxGor []uint64
+	for i := range 2 {
+		e := NewExternalEngine(ctx, &EngineConfig{
+			ExtStore: store, DataFiles: dataFiles, StatFiles: statFiles,
+			StartKey: []byte{1}, EndKey: []byte{5},
+			JobKeys: [][]byte{{1}, {5}}, SplitKeys: [][]byte{{1}, {5}},
+			MemCapacity: 16 * units.MiB, OnDup: engineapi.OnDuplicateKeyError,
+		}, i+1, 123)
+		t.Cleanup(func() { require.NoError(t, e.Close()) })
+		outputs[i] = make(chan engineapi.DataAndRanges, 1)
+		results[i] = make(chan error, 1)
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			results[i] <- e.LoadIngestData(ctx, outputs[i])
+		}()
+		select {
+		case maxGor := <-entered:
+			observedMaxGor = append(observedMaxGor, maxGor)
+		case err := <-results[i]:
+			t.Fatalf("engine finished before the sort checkpoint: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	// Finish the first engine before the second: save/set/restore of a global
+	// budget would leave the first engine's budget behind after this ordering.
+	for i := range 2 {
+		close(resume[i])
+		require.NoError(t, <-results[i])
+		observedMaxGor = append(observedMaxGor, sorty.MaxGor)
+		dr := <-outputs[i]
+		dr.Data.IncRef()
+		require.Equal(t, []simplesst.KVPair{
+			{Key: []byte{1}, Value: []byte("v1")},
+			{Key: []byte{2}, Value: []byte("v2")},
+			{Key: []byte{3}, Value: []byte("v3")},
+			{Key: []byte{4}, Value: []byte("v4")},
+		}, getAllDataFromDataAndRanges(t, &dr))
+		dr.Data.DecRef()
+	}
+	require.Equal(t, []uint64{originalMaxGor, originalMaxGor, originalMaxGor, originalMaxGor}, observedMaxGor,
+		"engines must not change the process-wide sort budget, including after non-LIFO completion")
+}
+
 func TestEngineOnDup(t *testing.T) {
 	ctx := context.Background()
 	contents := [][]simplesst.KVPair{{
@@ -436,6 +509,41 @@ func TestEngineOnDup(t *testing.T) {
 				}
 			}
 		}
+	})
+
+	t.Run("record different values across parallel partitions", func(t *testing.T) {
+		const dupCount = 4 * minParallelSortSize
+		pairs := make([]simplesst.KVPair, dupCount, dupCount+1)
+		expected := make(map[string][]byte, dupCount)
+		for i := range pairs {
+			key := append([]byte{1}, fmt.Appendf(nil, "%08d", i/2)...)
+			value := fmt.Appendf(nil, "value-%08d", i)
+			pairs[i] = simplesst.KVPair{Key: key, Value: value}
+			expected[string(value)] = key
+		}
+		unique := simplesst.KVPair{Key: []byte{2}, Value: []byte("unique")}
+		pairs = append(pairs, unique)
+		store := objstore.NewMemStorage()
+		dfiles, sfiles := prepareKVFiles(t, store, [][]simplesst.KVPair{pairs})
+		extEngine := getEngineFn(store, engineapi.OnDuplicateKeyRecord, dfiles, sfiles)
+		t.Cleanup(func() { require.NoError(t, extEngine.Close()) })
+		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+		require.Len(t, loadDataCh, 1)
+		dataAndRanges := <-loadDataCh
+		dataAndRanges.Data.IncRef()
+		defer dataAndRanges.Data.DecRef()
+		require.Equal(t, []simplesst.KVPair{unique}, getAllDataFromDataAndRanges(t, &dataAndRanges))
+		info := extEngine.ConflictInfo()
+		require.EqualValues(t, dupCount, info.Count)
+		require.Len(t, info.Files, 1)
+		dupPairs := readKVFile(t, store, info.Files[0])
+		require.Len(t, dupPairs, dupCount)
+		for _, pair := range dupPairs {
+			require.Equal(t, expected[string(pair.Value)], pair.Key)
+			delete(expected, string(pair.Value))
+		}
+		require.Empty(t, expected)
 	})
 
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
