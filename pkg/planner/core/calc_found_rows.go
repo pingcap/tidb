@@ -89,9 +89,9 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	return plan, nil
 }
 
-// checkViewCalcFoundRows validates an expanded view definition while building
-// the SQL_CALC_FOUND_ROWS count branch.
-func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
+// checkViewForFoundRows validates an expanded view definition while building
+// a SQL_CALC_FOUND_ROWS plan.
+func (b *PlanBuilder) checkViewForFoundRows(selectNode ast.Node) error {
 	vars := b.ctx.GetSessionVars()
 	if vars.StmtCtx.IgnoreCalcFoundRows {
 		return nil
@@ -113,24 +113,20 @@ func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error
 		return nil
 	case variable.WarnInt:
 		vars.StmtCtx.IgnoreCalcFoundRows = true
-		appendNoopCalcFoundRowsWarning(vars)
+		// Planning can preprocess or revalidate the same statement more than
+		// once (for example, in the non-prepared plan cache), so record the
+		// noop warning at most once per statement.
+		warn := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+		for _, existing := range vars.StmtCtx.GetWarnings() {
+			if existing.Err != nil && existing.Err.Error() == warn.Error() {
+				return nil
+			}
+		}
+		vars.StmtCtx.AppendWarning(warn)
 		return nil
 	default:
 		return err
 	}
-}
-
-// appendNoopCalcFoundRowsWarning records the noop warning once per statement.
-// Planning can preprocess or revalidate the same statement more than once
-// (for example, in the non-prepared plan cache).
-func appendNoopCalcFoundRowsWarning(vars *variable.SessionVars) {
-	warn := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-	for _, existing := range vars.StmtCtx.GetWarnings() {
-		if existing.Err != nil && existing.Err.Error() == warn.Error() {
-			return
-		}
-	}
-	vars.StmtCtx.AppendWarning(warn)
 }
 
 func resolveSQLCalcFoundRowsTarget(node ast.Node) (*ast.SelectStmt, string) {

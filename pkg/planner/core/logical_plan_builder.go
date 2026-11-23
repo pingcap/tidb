@@ -5659,7 +5659,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if b.buildingFoundRows {
 		// View definitions are expanded after preprocessing. Check them as inner queries,
 		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
-		if err := b.checkViewCalcFoundRows(selectNode); err != nil {
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
 			return nil, err
 		}
 	}
