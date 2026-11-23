@@ -12,8 +12,6 @@ Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_
 pub_db	part_t	p0	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
 pub_db	part_t	p1	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
 secret_db	secret_t	NULL	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
-show placement;
-Target	Placement	Scheduling_State
 show databases like '%_db';
 Database (%_db)
 show affinity;

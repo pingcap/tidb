@@ -13,7 +13,6 @@ sorted_result;
 show affinity;
 connect (affinity_user,localhost,nopriv,,);
 connection affinity_user;
-show placement;
 show databases like '%_db';
 show affinity;
 
