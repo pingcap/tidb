@@ -161,8 +161,8 @@ func NewHandle(
 		TableInfoGetter:            tables,
 		StatsCache:                 statsCache,
 		StatsLock:                  lockstats.NewStatsLock(pool),
+		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
 	}
-	handle.StatsGC = storage.NewStatsGC(handle)
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)

@@ -32,13 +32,17 @@ import (
 
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
-	statsHandle types.StatsHandle
+	pool   util.SessionPool
+	lease  util.LeaseGetter
+	tables util.TableInfoGetter
 }
 
-// NewStatsGC creates a new StatsGC.
-func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
+// NewStatsGC creates a new StatsGC that removes the stats in the sessions of pool.
+func NewStatsGC(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) types.StatsGC {
 	return &statsGCImpl{
-		statsHandle: statsHandle,
+		pool:   pool,
+		lease:  lease,
+		tables: tables,
 	}
 }
 
@@ -46,15 +50,15 @@ func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return GCStats(sctx, gc.statsHandle, is, ddlLease)
+	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.lease, gc.tables, is, ddlLease)
 	})
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)
 }
@@ -64,13 +68,14 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err 
 // so that other tidb could know that table is deleted.
 func GCStats(
 	sctx sessionctx.Context,
-	statsHandle types.StatsHandle,
+	statsLease util.LeaseGetter,
+	tables util.TableInfoGetter,
 	is infoschema.InfoSchema,
 	ddlLease time.Duration,
 ) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := max(statsHandle.Lease(), ddlLease)
+	lease := max(statsLease.Lease(), ddlLease)
 	offset := util.DurationToTS(10 * lease)
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
@@ -99,7 +104,7 @@ func GCStats(
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
+		if err := gcTableStats(sctx, tables, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -197,9 +202,9 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 // 1. Delete the column/index's stats from storage. Then other TiDB nodes will be aware that those stats are deleted.
 // 2. Then delete the record in stats_meta.
 func gcTableStats(sctx sessionctx.Context,
-	statsHandler types.StatsHandle,
+	tables util.TableInfoGetter,
 	is infoschema.InfoSchema, physicalID int64) error {
-	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
+	tbl, ok := tables.TableInfoByID(is, physicalID)
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
