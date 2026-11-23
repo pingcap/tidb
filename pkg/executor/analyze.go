@@ -218,7 +218,7 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	if len(targetIDs) == 0 {
 		return false, nil
 	}
-	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {

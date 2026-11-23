@@ -183,20 +183,20 @@ func TestStatsCacheProcess(t *testing.T) {
 	statsTbl := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	require.Zero(t, statsTbl.Version)
-	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	currentVersion := do.StatsHandle().Cache().MaxTableStatsVersion()
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.NotZero(t, statsTbl.Version)
-	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
-	newVersion := do.StatsHandle().GetNextCheckVersionWithOffset()
+	require.Equal(t, currentVersion, do.StatsHandle().Cache().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().Cache().GetNextCheckVersionWithOffset()
 	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
 
 	// Insert more rows
 	testKit.MustExec("insert into t values(2, 3)")
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
-	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NoError(t, do.StatsHandle().Cache().Update(context.Background(), is))
+	newVersion = do.StatsHandle().Cache().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
 }
 
@@ -232,7 +232,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -242,7 +242,7 @@ func TestStatsCache(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -286,7 +286,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -298,7 +298,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -325,7 +325,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl1 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(context.Background(), is)
+	err = do.StatsHandle().Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl2.Pseudo)
@@ -348,7 +348,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	h.Clear()
-	require.Equal(t, h.MemConsumed(), int64(0))
+	require.Equal(t, h.Cache().MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
 
 	var memCostTot int64
@@ -358,14 +358,14 @@ func testInitStatsMemTrace(t *testing.T) {
 		tStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
-	tables := h.StatsCache.Values()
+	tables := h.Cache().Values()
 	for _, tt := range tables {
-		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
+		tbl, ok := h.Cache().Get(tt.PhysicalID)
 		require.True(t, ok)
 		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
 	}
 
-	require.Equal(t, h.MemConsumed(), memCostTot)
+	require.Equal(t, h.Cache().MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
@@ -435,7 +435,7 @@ func TestInitStats(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 
@@ -527,7 +527,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 

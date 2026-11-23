@@ -40,28 +40,28 @@ import (
 	"go.uber.org/zap"
 )
 
-// StatsCacheImpl implements types.StatsCache.
-type StatsCacheImpl struct {
-	atomic.Pointer[statsCache]
+// Cache keeps the stats of tables in memory, and loads their new versions from the storage.
+type Cache struct {
+	inner atomic.Pointer[statsCache]
 
 	pool   util.SessionPool
 	lease  util.LeaseGetter
 	tables util.TableInfoGetter
 }
 
-// NewStatsCacheImpl creates a new StatsCache that loads the stats in the sessions of pool.
-func NewStatsCacheImpl(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) (types.StatsCache, error) {
+// New creates a Cache that loads the stats in the sessions of pool.
+func New(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) (*Cache, error) {
 	newCache, err := newStatsCache()
 	if err != nil {
 		return nil, err
 	}
 
-	result := &StatsCacheImpl{
+	result := &Cache{
 		pool:   pool,
 		lease:  lease,
 		tables: tables,
 	}
-	result.Store(newCache)
+	result.inner.Store(newCache)
 
 	return result, nil
 }
@@ -115,7 +115,7 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 }
 
 // Update reads stats meta from store and updates the stats cache.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) (err error) {
+func (s *Cache) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) (err error) {
 	// loadStatsWorker does not restart after a panic, so return the panic as an error.
 	// The worker then logs the error and tries again at the next tick.
 	defer tidbutil.Recover(tidbmetrics.LabelStats, "StatsCacheImpl.Update", func() {
@@ -260,7 +260,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 }
 
 // GetNextCheckVersionWithOffset gets the last version with offset.
-func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
+func (s *Cache) GetNextCheckVersionWithOffset() uint64 {
 	// Get the greatest version of the stats meta table.
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -279,14 +279,13 @@ func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 }
 
 // Replace replaces this cache.
-func (s *StatsCacheImpl) Replace(cache types.StatsCache) {
-	x := cache.(*StatsCacheImpl)
-	s.replace(x.Load())
+func (s *Cache) Replace(cache *Cache) {
+	s.replace(cache.inner.Load())
 }
 
 // replace replaces the cache with the new cache.
-func (s *StatsCacheImpl) replace(newCache *statsCache) {
-	old := s.Swap(newCache)
+func (s *Cache) replace(newCache *statsCache) {
+	old := s.inner.Swap(newCache)
 	if old != nil {
 		old.Close()
 	}
@@ -294,18 +293,18 @@ func (s *StatsCacheImpl) replace(newCache *statsCache) {
 }
 
 // UpdateStatsCache applies the updates and deletions to the current cache in place.
-func (s *StatsCacheImpl) UpdateStatsCache(cacheUpdate types.CacheUpdate) {
-	s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
+func (s *Cache) UpdateStatsCache(cacheUpdate types.CacheUpdate) {
+	s.inner.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
 }
 
 // Close closes this cache.
-func (s *StatsCacheImpl) Close() {
-	s.Load().Close()
+func (s *Cache) Close() {
+	s.inner.Load().Close()
 }
 
 // Clear clears this cache.
 // Create a empty cache and replace the old one.
-func (s *StatsCacheImpl) Clear() {
+func (s *Cache) Clear() {
 	cache, err := newStatsCache()
 	if err != nil {
 		statslogutil.StatsLogger().Warn("create stats cache failed", zap.Error(err))
@@ -315,76 +314,69 @@ func (s *StatsCacheImpl) Clear() {
 }
 
 // MemConsumed returns its memory usage.
-func (s *StatsCacheImpl) MemConsumed() (size int64) {
-	return s.Load().Cost()
+func (s *Cache) MemConsumed() (size int64) {
+	return s.inner.Load().Cost()
 }
 
 // TableStatsFromStorage loads table stats info from storage. It starts from the cached stats of
-// the table, so the cache owns it and the storage needs no cache.
-func (s *StatsCacheImpl) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
-	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
-		var ok bool
-		statsTbl, ok = s.Get(physicalID)
-		if !ok {
-			statsTbl = nil
-		}
-		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.lease.Lease(), statsTbl)
-		return err
-	}, util.FlagWrapTxn)
-	return
+// the table.
+func (s *Cache) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
+	return storage.TableStatsFromStorageWithCache(s.pool, s, s.lease, tableInfo, physicalID, loadAll, snapshot)
 }
 
 // Get returns the specified table's stats.
-func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
+func (s *Cache) Get(tableID int64) (*statistics.Table, bool) {
 	failpoint.Inject("StatsCacheGetNil", func() {
 		failpoint.Return(nil, false)
 	})
-	return s.Load().Get(tableID)
+	return s.inner.Load().Get(tableID)
 }
 
 // Put puts this table stats into the cache.
-func (s *StatsCacheImpl) Put(id int64, t *statistics.Table) {
-	s.Load().put(id, t)
+func (s *Cache) Put(id int64, t *statistics.Table) {
+	s.inner.Load().put(id, t)
 }
 
 // TriggerEvict triggers the cache to evict some items.
-func (s *StatsCacheImpl) TriggerEvict() {
-	s.Load().TriggerEvict()
+func (s *Cache) TriggerEvict() {
+	s.inner.Load().TriggerEvict()
 }
 
 // WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
-func (s *StatsCacheImpl) WaitForAsyncUpdates() {
-	s.Load().WaitForAsyncUpdates()
+// Use it after adding new items when following reads depend on them. LFU/Ristretto admits
+// non-resident items asynchronously; init stats calls this between load phases/chunks.
+func (s *Cache) WaitForAsyncUpdates() {
+	s.inner.Load().WaitForAsyncUpdates()
 }
 
 // MaxTableStatsVersion returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
-func (s *StatsCacheImpl) MaxTableStatsVersion() uint64 {
-	return s.Load().Version()
+func (s *Cache) MaxTableStatsVersion() uint64 {
+	return s.inner.Load().Version()
 }
 
 // Values returns all values in this cache.
-func (s *StatsCacheImpl) Values() []*statistics.Table {
-	return s.Load().Values()
+func (s *Cache) Values() []*statistics.Table {
+	return s.inner.Load().Values()
 }
 
 // Len returns the length of this cache.
-func (s *StatsCacheImpl) Len() int {
-	return s.Load().Len()
+func (s *Cache) Len() int {
+	return s.inner.Load().Len()
 }
 
 // SetStatsCacheCapacity sets the cache's capacity.
-func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
-	s.Load().SetCapacity(c)
+func (s *Cache) SetStatsCacheCapacity(c int64) {
+	s.inner.Load().SetCapacity(c)
 }
 
 // UpdateStatsHealthyMetrics refreshes handle_metrics.StatsHealthyGauges. We
 // treat never-analyzed tables as healthy=0, count unanalyzed tables that fall below the
 // auto-analyze minimal count threshold as "unneeded analyze", and keep pseudo tables as a separate category.
 // The gauges satisfy: total tables = pseudo tables + unneeded analyze tables + tables in healthy buckets.
-func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
+func (s *Cache) UpdateStatsHealthyMetrics() {
 	var buckets [handle_metrics.StatsHealthyBucketCount]int64
-	for _, tbl := range s.Load().Values() {
+	for _, tbl := range s.inner.Load().Values() {
 		buckets[handle_metrics.StatsHealthyBucketTotal]++
 
 		// Pseudo entries usually disappear after DDL processing or table updates load

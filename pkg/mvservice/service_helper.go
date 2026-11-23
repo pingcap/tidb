@@ -67,7 +67,9 @@ const (
 // MV log tables, and takes the process IDs of the analyze statements that it runs.
 type StatsHandle interface {
 	statstypes.NonPseudoPhysicalTableStatsGetter
-	statsutil.AutoAnalyzeProcIDGenerator
+
+	// ProcIDs returns the generator of the process IDs of the analyze statements.
+	ProcIDs() statsutil.AutoAnalyzeProcIDGenerator
 }
 
 type serviceHelper struct {
@@ -1768,7 +1770,7 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	needVersionRewriteWarn := !statistics.AnalyzeVersionMatchesForTableStats(statsTbl, tableStatsVer)
 	_, _, err = statsautoanalyzeexec.RunAnalyzeStmt(
 		sctx,
-		statsHandle,
+		statsHandle.ProcIDs(),
 		h.sysProcTracker,
 		tableStatsVer,
 		needVersionRewriteWarn,

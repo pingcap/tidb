@@ -71,7 +71,7 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	if statsHandle == nil { // from test
 		return
 	}
-	do.StatsHandle().SetStatsCacheCapacity(c)
+	do.StatsHandle().Cache().SetStatsCacheCapacity(c)
 }
 
 func (do *Domain) setPDClientDynamicOption(name, sVal string) error {

@@ -23,23 +23,22 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-// statsGCImpl implements StatsGC interface.
-type statsGCImpl struct {
+// GC removes the stats that are not needed any more.
+type GC struct {
 	pool   util.SessionPool
 	lease  util.LeaseGetter
 	tables util.TableInfoGetter
 }
 
-// NewStatsGC creates a new StatsGC that removes the stats in the sessions of pool.
-func NewStatsGC(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) types.StatsGC {
-	return &statsGCImpl{
+// NewGC creates a GC that removes the stats in the sessions of pool.
+func NewGC(pool util.SessionPool, lease util.LeaseGetter, tables util.TableInfoGetter) *GC {
+	return &GC{
 		pool:   pool,
 		lease:  lease,
 		tables: tables,
@@ -49,7 +48,7 @@ func NewStatsGC(pool util.SessionPool, lease util.LeaseGetter, tables util.Table
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
-func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+func (gc *GC) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
 		return GCStats(sctx, gc.lease, gc.tables, is, ddlLease)
 	})
@@ -57,7 +56,7 @@ func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration)
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
+func (gc *GC) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
 	return util.CallWithSCtx(gc.pool.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)

@@ -63,45 +63,19 @@ var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 //
 //nolint:fieldalignment
 type Handle struct {
-	// Pool is used to get a session or a goroutine to execute stats updating.
-	util.Pool
+	pool    util.Pool
+	procIDs util.AutoAnalyzeProcIDGenerator
+	lease   *util.LeaseHolder
+	tables  util.TableInfoGetter
 
-	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	util.AutoAnalyzeProcIDGenerator
-
-	// LeaseHolder is used to get stats lease.
-	*util.LeaseHolder
-
-	// TableInfoGetter is used to fetch table meta info.
-	util.TableInfoGetter
-
-	// StatsGC is used to GC stats.
-	types.StatsGC
-
-	// StatsUsage is used to track the usage of column / index statistics.
-	types.StatsUsage
-
-	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
-	types.StatsAnalyze
-
-	// StatsSyncLoad is used to load stats syncly.
-	types.StatsSyncLoad
-
-	// StatsReadWriter is used to read/write stats from/to storage.
-	types.StatsReadWriter
-
-	// StatsLock is used to manage locked stats.
-	types.StatsLock
-
-	// StatsGlobal is used to manage global stats.
-	types.StatsGlobal
-
-	// DDL is used to handle ddl events.
-	types.DDL
-
-	// StatsCache ...
-	types.StatsCache
-
+	locker        *lockstats.Locker
+	gc            *storage.GC
+	ddlHandler    *ddl.Handler
+	syncLoad      *syncload.Loader
+	autoAnalyze   *autoanalyze.Analyzer
+	statsUsage    *usage.Tracker
+	readWriter    *storage.ReadWriter
+	cache         *cache.Cache
 	analyzeHandle *AnalyzeHandle
 
 	// tableStats gets the stats of tables. The getters of Handle wrap it, because a nil Handle
@@ -122,7 +96,72 @@ type AnalyzeHandle struct {
 	types.LockedTablesGetter
 	types.PredicateColumnsGetter
 	types.AnalyzeJobRecorder
-	types.StatsGlobal
+	types.GlobalStatsMerger
+}
+
+// Pool returns the pools whose sessions and goroutines the stats components use.
+func (h *Handle) Pool() util.Pool {
+	return h.pool
+}
+
+// ProcIDs returns the generator of the process IDs of auto-analyze statements.
+func (h *Handle) ProcIDs() util.AutoAnalyzeProcIDGenerator {
+	return h.procIDs
+}
+
+// Tables returns the getter of the table infos that the stats components use.
+func (h *Handle) Tables() util.TableInfoGetter {
+	return h.tables
+}
+
+// Lease returns the stats lease.
+func (h *Handle) Lease() time.Duration {
+	return h.lease.Lease()
+}
+
+// SetLease sets the stats lease. Only used for test.
+func (h *Handle) SetLease(lease time.Duration) {
+	h.lease.SetLease(lease)
+}
+
+// AutoAnalyze returns the component that analyzes the outdated tables in the background.
+func (h *Handle) AutoAnalyze() *autoanalyze.Analyzer {
+	return h.autoAnalyze
+}
+
+// Cache returns the component that keeps the stats of tables in memory.
+func (h *Handle) Cache() *cache.Cache {
+	return h.cache
+}
+
+// DDL returns the component that updates the stats for DDL events.
+func (h *Handle) DDL() *ddl.Handler {
+	return h.ddlHandler
+}
+
+// GC returns the component that removes the stats that are not needed any more.
+func (h *Handle) GC() *storage.GC {
+	return h.gc
+}
+
+// Locker returns the component that locks the stats of tables.
+func (h *Handle) Locker() *lockstats.Locker {
+	return h.locker
+}
+
+// Storage returns the component that reads and writes the stats in the storage.
+func (h *Handle) Storage() *storage.ReadWriter {
+	return h.readWriter
+}
+
+// SyncLoad returns the component that loads the stats that queries need.
+func (h *Handle) SyncLoad() *syncload.Loader {
+	return h.syncLoad
+}
+
+// Usage returns the component that tracks the table deltas and the usage of stats.
+func (h *Handle) Usage() *usage.Tracker {
+	return h.statsUsage
 }
 
 // AnalyzeHandle returns the stats components that ANALYZE uses.
@@ -132,11 +171,11 @@ func (h *Handle) AnalyzeHandle() *AnalyzeHandle {
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	h.StatsCache.Clear()
-	for len(h.DDLEventCh()) > 0 {
-		<-h.DDLEventCh()
+	h.cache.Clear()
+	for len(h.ddlHandler.DDLEventCh()) > 0 {
+		<-h.ddlHandler.DDLEventCh()
 	}
-	h.ResetSessionStatsList()
+	h.statsUsage.ResetSessionStatsList()
 	h.tableStats.resetSystemDBIDCache()
 }
 
@@ -159,42 +198,41 @@ func NewHandle(
 	procIDs := util.NewGenerator(autoAnalyzeProcIDGetter, releaseAutoAnalyzeProcID)
 	leaseHolder := util.NewLeaseHolder(lease)
 	tables := util.NewTableInfoGetter()
-	statsLock := lockstats.NewStatsLock(statsPool)
-	statsCache, err := cache.NewStatsCacheImpl(statsPool, leaseHolder, tables)
+	locker := lockstats.NewLocker(statsPool)
+	statsCache, err := cache.New(statsPool, leaseHolder, tables)
 	if err != nil {
 		return nil, err
 	}
 	tableStats := newTableStatsGetter(statsPool, statsCache)
-	readWriter := storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache)
-	statsAnalyze := autoanalyze.NewStatsAnalyze(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier)
-	statsGlobal := globalstats.NewStatsGlobal(statsPool, tables, readWriter)
-	statsUsage := usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats)
+	readWriter := storage.NewReadWriter(statsPool, leaseHolder, tables, statsCache)
+	autoAnalyze := autoanalyze.NewAnalyzer(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier)
+	globalStats := globalstats.NewMerger(statsPool, tables, readWriter)
+	statsUsage := usage.NewTracker(statsPool, leaseHolder, locker, tableStats)
 	handle := &Handle{
-		InitStatsDone:              make(chan struct{}),
-		Pool:                       statsPool,
-		AutoAnalyzeProcIDGenerator: procIDs,
-		LeaseHolder:                leaseHolder,
-		TableInfoGetter:            tables,
-		StatsCache:                 statsCache,
-		tableStats:                 tableStats,
-		StatsLock:                  statsLock,
-		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
-		StatsReadWriter:            readWriter,
-		StatsGlobal:                statsGlobal,
-		StatsUsage:                 statsUsage,
-		StatsSyncLoad:              syncload.NewStatsSyncLoad(statsPool, leaseHolder, tables, statsCache),
-		StatsAnalyze:               statsAnalyze,
-		DDL:                        ddl.NewDDLHandler(),
+		InitStatsDone: make(chan struct{}),
+		pool:          statsPool,
+		procIDs:       procIDs,
+		lease:         leaseHolder,
+		tables:        tables,
+		cache:         statsCache,
+		tableStats:    tableStats,
+		locker:        locker,
+		gc:            storage.NewGC(statsPool, leaseHolder, tables),
+		readWriter:    readWriter,
+		statsUsage:    statsUsage,
+		syncLoad:      syncload.NewLoader(statsPool, leaseHolder, tables, statsCache),
+		autoAnalyze:   autoAnalyze,
+		ddlHandler:    ddl.NewHandler(),
 		analyzeHandle: &AnalyzeHandle{
 			GoroutinePool:            statsPool,
 			PhysicalTableStatsGetter: tableStats,
 			StatsCacheLoader:         statsCache,
 			StatsMetaReader:          readWriter,
 			AnalyzeResultSaver:       readWriter,
-			LockedTablesGetter:       statsLock,
+			LockedTablesGetter:       locker,
 			PredicateColumnsGetter:   statsUsage,
-			AnalyzeJobRecorder:       statsAnalyze,
-			StatsGlobal:              statsGlobal,
+			AnalyzeJobRecorder:       autoAnalyze,
+			GlobalStatsMerger:        globalStats,
 		},
 	}
 	if ddlNotifier != nil {
@@ -202,7 +240,7 @@ func NewHandle(
 		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
 		// In production, DDL events are handled by the notifier system instead.
 		if !intest.InTest {
-			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.DDL.HandleDDLEvent)
+			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.ddlHandler.HandleDDLEvent)
 		}
 	}
 	return handle, nil
@@ -252,21 +290,21 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	if err := h.DumpStatsDeltaToKV(true); err != nil {
+	if err := h.statsUsage.DumpStatsDeltaToKV(true); err != nil {
 		statslogutil.StatsLogger().Warn("dump stats delta fail", zap.Error(err))
 	}
 }
 
 // StartWorker starts the background collector worker inside
 func (h *Handle) StartWorker() {
-	h.StatsUsage.StartWorker()
+	h.statsUsage.StartWorker()
 }
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.Pool.Close()
-	h.StatsCache.Close()
-	h.StatsUsage.Close()
-	h.StatsAnalyze.Close()
+	h.pool.Close()
+	h.cache.Close()
+	h.statsUsage.Close()
+	h.autoAnalyze.Close()
 	h.tableStats.resetSystemDBIDCache()
 }

@@ -729,7 +729,7 @@ func TestDropStats(t *testing.T) {
 	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
@@ -750,7 +750,7 @@ func TestDropStats(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
@@ -794,7 +794,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
@@ -822,7 +822,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(context.Background(), is))
+	require.Nil(t, h.Cache().Update(context.Background(), is))
 	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)

@@ -315,7 +315,7 @@ func TestAddIndexPreSplitFunctional(t *testing.T) {
 	}
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	tk.MustExec("alter table t add index idx(b) pre_split_regions auto")
 	rows := tk.MustQuery("show table t index idx regions").Rows()

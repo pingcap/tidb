@@ -53,7 +53,7 @@ func TestGlobalStatsSameUpperGroupAtBucketBoundary(t *testing.T) {
 		select n, 10 from s`)
 	tk.MustExec("insert into same_upper_group values (11, 20)")
 	tk.MustExec("analyze table same_upper_group all columns with 0 topn, 2 buckets, 1 samplerate")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("select count(*) from same_upper_group where v=10").Check(testkit.Rows("10"))
 	plan := tk.MustQuery("explain select * from same_upper_group where v=10").Rows()
 	require.Equal(t, "10.00", plan[0][1])
@@ -163,7 +163,7 @@ func TestBuildGlobalLevelStats(t *testing.T) {
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
 	statsHandle := do.StatsHandle()
-	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
+	require.NoError(t, statsHandle.Usage().DumpColStatsUsageToKV())
 	testKit.MustExec("analyze table t, t1;")
 	result := testKit.MustQuery("show stats_meta where table_name = 't';").Sort()
 	require.Len(t, result.Rows(), 3)
@@ -247,13 +247,13 @@ partition by range (a) (
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(2, 2, 2, 2, 0, 0)
 	checkHealthy(0, 0, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(6, 6, 2, 2, 4, 4)
 	checkHealthy(0, 0, 0)
 
@@ -263,7 +263,7 @@ partition by range (a) (
 
 	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(33, 0, 50)
 }
@@ -530,7 +530,7 @@ partition by range (a) (
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -575,12 +575,12 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	h := do.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
 	require.Len(t, result, 7)
@@ -594,7 +594,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
 	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
@@ -912,13 +912,13 @@ func TestMixedGlobalAndLocalIndexPartitionStats(t *testing.T) {
 	tk.MustExec("analyze table t index b, b_s, d_s")
 
 	// Inspect the cache published by ANALYZE before any subsequent refresh.
-	h.WaitForAsyncUpdates()
+	h.Cache().WaitForAsyncUpdates()
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	info := tbl.Meta()
 	for _, def := range info.GetPartitionInfo().Definitions {
 		t.Run(def.Name.O, func(t *testing.T) {
-			stats, ok := h.Get(def.ID)
+			stats, ok := h.Cache().Get(def.ID)
 			require.True(t, ok)
 			require.False(t, stats.Pseudo)
 			for _, col := range info.Columns {
@@ -968,10 +968,10 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
+	<-h.DDL().DDLEventCh()
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 		Check(testkit.Rows("1", "2", "3", "15"))
 	// 4 rows actually match (b in {1,2,3,15}). All 6 distinct b values
@@ -994,10 +994,10 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
+	<-h.DDL().DDLEventCh()
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t index idx")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
 	require.Equal(t, "4.00", rows[0][1]) // see comment above; exact via TopN.
 
@@ -1015,10 +1015,10 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	<-h.DDLEventCh()
+	<-h.DDL().DDLEventCh()
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t index")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
 		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
 			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
@@ -1077,7 +1077,7 @@ partitions 12;`)
 	infoSchema := dom.InfoSchema()
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.AnalyzeOptionDefault(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	dom.StatsHandle().AnalyzeHandle().MergePartitionStats2GlobalStatsByTableID(se, core.AnalyzeOptionDefault(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
 
 func TestGlobalStatsMergeCombined(t *testing.T) {
@@ -1109,7 +1109,7 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 
 	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// idx_ab has NDV ~= row_count and the per-partition
 	// TopN slot picks an arbitrary singleton each, leaving the global
@@ -1224,7 +1224,7 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 	h := dom.StatsHandle()
 	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
 	mergedNDV := func(t *testing.T, isIndex bool, id int64) int64 {
-		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, h, opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
+		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h.Pool(), h.Tables(), opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
 		require.NoError(t, err)
 		return merged.Hg[0].NDV
 	}

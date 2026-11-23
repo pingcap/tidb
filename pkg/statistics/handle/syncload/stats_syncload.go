@@ -66,7 +66,7 @@ func GetSyncLoadConcurrencyByCPU() int {
 	return 10
 }
 
-// statsSyncLoad is used to load statistics synchronously when needed by SQL queries.
+// Loader loads statistics synchronously when SQL queries need them.
 //
 // It maintains two channels for handling statistics load tasks:
 // - NeededItemsCh: High priority channel for tasks that haven't timed out yet (Higher priority)
@@ -83,7 +83,7 @@ func GetSyncLoadConcurrencyByCPU() int {
 // It uses singleflight pattern to deduplicate concurrent requests for the same statistics.
 // Requests that exceed their timeout are moved to a lower priority channel to be processed
 // when there are no urgent requests.
-type statsSyncLoad struct {
+type Loader struct {
 	pool           statsutil.SessionPool
 	lease          statsutil.LeaseGetter
 	tables         statsutil.TableInfoGetter
@@ -104,15 +104,14 @@ type StatsCache interface {
 	statstypes.StatsCacheUpdater
 }
 
-// NewStatsSyncLoad creates a new StatsSyncLoad that loads the stats in the sessions of pool into
-// statsCache.
-func NewStatsSyncLoad(
+// NewLoader creates a Loader that loads the stats in the sessions of pool into statsCache.
+func NewLoader(
 	pool statsutil.SessionPool,
 	lease statsutil.LeaseGetter,
 	tables statsutil.TableInfoGetter,
 	statsCache StatsCache,
-) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{pool: pool, lease: lease, tables: tables, statsCache: statsCache}
+) *Loader {
+	s := &Loader{pool: pool, lease: lease, tables: tables, statsCache: statsCache}
 	cfg := config.GetGlobalConfig()
 	s.neededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.timeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -127,7 +126,7 @@ type statsWrapper struct {
 }
 
 // SendLoadRequests send neededColumns requests
-func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
+func (s *Loader) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := s.removeHistLoadedColumns(neededHistItems)
 
 	if len(remainedItems) <= 0 {
@@ -167,7 +166,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
+func (*Loader) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
@@ -192,7 +191,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
-			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// this error is from Loader.SendLoadRequests which start to task and send task into worker,
 			// not the stats loading error
 			if result.Err != nil {
 				errorMsgs = append(errorMsgs, result.Err.Error())
@@ -223,7 +222,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
-func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
+func (s *Loader) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
 	remainedItems := make([]model.StatsLoadItem, 0, len(neededItems))
 	for _, item := range neededItems {
 		tbl, ok := s.statsCache.Get(item.TableID)
@@ -246,7 +245,7 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadIte
 }
 
 // AppendNeededItem appends needed columns/indices to ch, it is only used for test
-func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeout time.Duration) error {
+func (s *Loader) AppendNeededItem(task *statstypes.NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -260,7 +259,7 @@ func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeou
 var errExit = errors.New("Stop loading since domain is closed")
 
 // SubLoadWorker loads hist data for each column
-func (s *statsSyncLoad) SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
+func (s *Loader) SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	defer func() {
 		exitWg.Done()
 		statslogutil.StatsLogger().Info("SubLoadWorker: exited.")
@@ -302,7 +301,7 @@ func (s *statsSyncLoad) SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroup
 //   - If the task is handled successfully, return nil, nil.
 //   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
 //   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
-func (s *statsSyncLoad) HandleOneTask(lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
+func (s *Loader) HandleOneTask(lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -340,7 +339,7 @@ func isVaildForRetry(task *statstypes.NeededItemTask) bool {
 	return task.Retry <= RetryCount
 }
 
-func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
+func (s *Loader) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -362,7 +361,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 
 // handleOneItemTaskWithSCtx contains the core business logic for handling one item task.
 // This method preserves git blame history by keeping the original logic intact.
-func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task *statstypes.NeededItemTask) error {
+func (s *Loader) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task *statstypes.NeededItemTask) error {
 	var skipTypes map[string]struct{}
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
@@ -452,7 +451,7 @@ func (s *statsSyncLoad) handleOneItemTaskWithSCtx(sctx sessionctx.Context, task 
 var errGetHistMeta = errors.New("fail to get hist meta")
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
+func (*Loader) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -538,7 +537,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 
 // drainColTask will hang until a task can return, and either task or error will be returned.
 // The task will be drained from NeededItemsCh first, if no task, then TimeoutItemsCh.
-func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
+func (s *Loader) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededItemsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -578,7 +577,7 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItem
 }
 
 // writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask) {
+func (*Loader) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -586,7 +585,7 @@ func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask,
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *Loader) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.mutexForStatsCache.Lock()
 	defer s.mutexForStatsCache.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions

@@ -79,7 +79,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("explain format = 'brief' select * from t where a = 'aaa'")
-	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.Nil(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	var (
 		input  []string
 		output [][]string
@@ -363,12 +363,12 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	statsTbl.SetCol(colInfo.ID, col)
 
 	// Update the statistics cache with our mock data
-	h.UpdateStatsCache(statstypes.CacheUpdate{
+	h.Cache().UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
 
 	// Force a refresh of the statistics cache
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// Simulate deletion by updating the table count to 2000 (after deleting 1000 rows)
 	// and updating the statistics to reflect the new distribution
@@ -402,12 +402,12 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	statsTblAfterDelete.SetCol(colInfo.ID, colAfterDelete)
 
 	// Update the statistics cache with the new mock data
-	h.UpdateStatsCache(statstypes.CacheUpdate{
+	h.Cache().UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTblAfterDelete},
 	})
 
 	// Force a refresh of the statistics cache
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// Now test the cardinality estimation using the same format as TestOutOfRangeEstimation
 	sctx := mock.NewContext()
@@ -471,7 +471,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
 	testKit.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
@@ -741,7 +741,7 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("insert into t select a+10 from t")
 	testKit.MustExec("insert into t select a+10 from t where a <= 10")
 	testKit.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	// Search for a not found value based upon post-analyze modifications. It
@@ -1171,7 +1171,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 	}
 	// Make sure column stats has been loaded.
 	testKit.MustExec(`explain format = 'brief' select * from t where a is null`)
-	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.Nil(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	for i := 5; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -1408,7 +1408,7 @@ func TestRangeStepOverflow(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// Trigger the loading of column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
-	require.Nil(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.Nil(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	// Must execute successfully after loading the column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
 }
@@ -1657,7 +1657,7 @@ func TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation(t *testing.T) {
 	}
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t all columns with 2 topn")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	query := "select * from t where a like '%needle%'"
 	actualRows, err := strconv.ParseFloat(tk.MustQuery("select count(*) from t where a like '%needle%'").Rows()[0][0].(string), 64)
@@ -1805,7 +1805,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	testKit.MustExec("analyze table t all columns with 1 samplerate, 0 topn")
 	testKit.MustExec("delete from t where a < 500")
 	testKit.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	var (
 		input  []string
 		output []struct {
@@ -1823,7 +1823,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
 	testKit.MustExec("analyze table t partition p4 all columns with 1 samplerate, 0 topn")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1925,7 +1925,7 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 			StatsVer:          2,
 		})
 	}
-	h.UpdateStatsCache(statstypes.CacheUpdate{
+	h.Cache().UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
 
@@ -2111,7 +2111,7 @@ func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 
 	// Set the mock statistics in the stats handle
 	h := dom.StatsHandle()
-	h.UpdateStatsCache(statstypes.CacheUpdate{
+	h.Cache().UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
 
@@ -2420,7 +2420,7 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	testKit.MustExec("insert into t select a,b,c from t")
 	testKit.MustExec("analyze table t")
 	// Ensure stats are fully loaded into cache to avoid nondeterminism from stale cache.
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// Discourage merge join and hash join to encourage index join, and discourage topn to encourage limit.
 	testKit.MustExec("set @@session.tidb_opt_merge_join_cost_factor = 1000")
@@ -2468,7 +2468,7 @@ func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
 	}
 	testKit.MustExec("analyze table t1")
 	testKit.MustExec("analyze table t2")
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// Force merge join via hint with use-index hints so the plan shape stays
 	// stable across ratio values. The ordering index ib(b) matches the
@@ -2644,7 +2644,7 @@ func TestCrossValidationSelectivity(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	// Ensure stats are fully loaded into cache to avoid nondeterminism from stale cache.
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
 		"TableReader 1.00 root  data:Selection",
 		"└─Selection 1.00 cop[tikv]  gt(test.t.c, 1000)",
@@ -2664,7 +2664,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 1. Insert 11 rows of data without ANALYZE.
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)")
 	testKit.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// 1-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 11.
@@ -2686,7 +2686,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 2. After ANALYZE.
 	testKit.MustExec("analyze table t all columns with 1 samplerate")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// The execution plans are the same no matter we ignore the real-time stats or not.
 	analyzedPlan := []string{
@@ -2702,7 +2702,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 3. Insert another 4 rows of data.
 	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
 	testKit.MustExec("flush stats_delta *.*")
-	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	// 3-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 15.
@@ -2766,7 +2766,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
 	testKit.MustExec("explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1")
 	require.True(t, hasAsyncLoadForTable())
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	require.True(t, stat.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, stat.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
@@ -2800,7 +2800,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	tk.MustExec("insert into t values(1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
 	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	expectedA := testkit.Rows(
 		"TableReader 1.00 root  data:Selection",
 		"└─Selection 1.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
@@ -2824,10 +2824,10 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	require.NoError(t, h.InitStats(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)
 	tk.MustQuery("explain format='brief' select * from t where b in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedB)
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl, found := h.Get(tbl.Meta().ID)
+	statsTbl, found := h.Cache().Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.False(t, statsTbl.ColAndIdxExistenceMap.IsEmpty())
 	for _, col := range tbl.Cols() {
@@ -3117,7 +3117,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Flush any pending deltas before ANALYZE
 	h := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	testKit.MustExec("analyze table t with 5 buckets, 0 topn")
 
@@ -3141,7 +3141,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	}
 
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
@@ -3161,7 +3161,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	}
 
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
@@ -3209,7 +3209,7 @@ func TestIssue64137(t *testing.T) {
 	tk.MustQuery(`show stats_topn where is_index=1`).Check(testkit.Rows("test t  a 1 1 10000")) // 1 topN value with count 10000
 	tk.MustExec(`insert into t select * from t limit 2000`)                                     // insert 2000 rows with a=1
 	tk.MustExec("flush stats_delta *.*")
-	h.Update(context.Background(), dom.InfoSchema())
+	h.Cache().Update(context.Background(), dom.InfoSchema())
 	statsMeta := tk.MustQuery(`show stats_meta`).Rows()[0]
 	require.Equal(t, statsMeta[4], "2000")  // modify_count = 2000
 	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000

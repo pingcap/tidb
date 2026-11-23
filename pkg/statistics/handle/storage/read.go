@@ -774,7 +774,7 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 }
 
 // CleanFakeItemsForShowHistInFlights cleans the invalid inserted items.
-func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
+func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCacheGetter) int {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	reallyNeeded := 0
 	for _, item := range items {

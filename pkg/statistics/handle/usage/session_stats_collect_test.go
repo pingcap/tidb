@@ -40,7 +40,7 @@ func TestPredicateUsage_FirstTouchCreatesRow(t *testing.T) {
 
 	// trigger predicate usage on column a
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
-	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+	require.NoError(t, dom.StatsHandle().Usage().DumpColStatsUsageToKV())
 
 	// resolve table and column IDs
 	is := dom.InfoSchema()
@@ -69,7 +69,7 @@ func TestPredicateUsage_NoBumpWithinThrottle(t *testing.T) {
 
 	// first touch
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
-	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+	require.NoError(t, dom.StatsHandle().Usage().DumpColStatsUsageToKV())
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -85,7 +85,7 @@ func TestPredicateUsage_NoBumpWithinThrottle(t *testing.T) {
 
 	// touch again shortly and dump; throttled path should skip bump
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
-	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+	require.NoError(t, dom.StatsHandle().Usage().DumpColStatsUsageToKV())
 
 	ts2 := tk.MustQuery(
 		"select last_used_at from mysql.column_stats_usage where table_id=? and column_id=?",
@@ -105,7 +105,7 @@ func TestPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 
 	// first touch to create the row
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
-	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+	require.NoError(t, dom.StatsHandle().Usage().DumpColStatsUsageToKV())
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -123,7 +123,7 @@ func TestPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 
 	// touch again and dump; should bump to a recent timestamp
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
-	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+	require.NoError(t, dom.StatsHandle().Usage().DumpColStatsUsageToKV())
 
 	// verify last_used_at changed from the ancient value
 	got := tk.MustQuery(
@@ -210,7 +210,7 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 			seed = append(seed, usage.ColStatsUsageEntry{TableID: tid, ColumnID: cid, LastUsedAt: seedTSUTC})
 		}
 	}
-	require.NoError(t, usage.DumpColStatsUsageEntries(dec.GetDomain(0).StatsHandle().SPool(), seed, nil))
+	require.NoError(t, usage.DumpColStatsUsageEntries(dec.GetDomain(0).StatsHandle().Pool().SPool(), seed, nil))
 
 	noBumpTSUTC := time.Now().UTC().Add(10 * time.Minute).Format("2006-01-02 15:04:05")
 	bumpTSUTC := time.Now().UTC().Add(13 * time.Hour).Format("2006-01-02 15:04:05")
@@ -235,7 +235,7 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 		go func(id int) {
 			gStart := time.Now()
 			dom := dec.GetDomain(id)
-			err := usage.DumpColStatsUsageEntries(dom.StatsHandle().SPool(), entries, tc)
+			err := usage.DumpColStatsUsageEntries(dom.StatsHandle().Pool().SPool(), entries, tc)
 			gElapsed := time.Since(gStart)
 			if err != nil {
 				t.Logf("writer goroutine %d error: %v (elapsed=%s)", id, err, gElapsed)
@@ -279,7 +279,7 @@ func TestDumpStatsDeltaPersistsInitTime(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
@@ -297,13 +297,13 @@ func TestDumpStatsDeltaPersistsInitTime(t *testing.T) {
 	})
 
 	tk.MustExec("insert into t values (11)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(false))
 	tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).
 		Check(testkit.Rows("0"))
 
 	time.Sleep(usage.GetDumpStatsMaxDurationForTest() + 100*time.Millisecond)
 
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(false))
 	tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).
 		Check(testkit.Rows("1"))
 }
@@ -348,8 +348,8 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	require.NoError(t, err)
 	otherTableID := otherTbl.Meta().ID
 
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", lockTableID).
 		Check(testkit.Rows("1"))
 
@@ -396,7 +396,7 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	})
 	go func() {
 		defer close(dump1Err)
-		dump1Err <- dom.StatsHandle().DumpStatsDeltaToKV(false)
+		dump1Err <- dom.StatsHandle().Usage().DumpStatsDeltaToKV(false)
 	}()
 
 	select {
@@ -414,7 +414,7 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	tk.MustExec("insert into t values (12)")
 
 	dump2Start := time.Now()
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(false))
 
 	afterSecond := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
 	require.Len(t, afterSecond, 1)
@@ -423,8 +423,8 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	require.Equal(t, baseCount, afterSecondCount)
 
 	tk.MustExec("insert into t_other values (2)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true, otherTableID))
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true, otherTableID))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 
 	tkLock.MustExec("rollback")
 	select {
@@ -437,14 +437,14 @@ func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
 	require.Greater(t, dump2Start.Sub(dump1ReadyAt), usage.GetDumpStatsMaxDurationForTest())
 	require.Less(t, time.Since(dump2Start), usage.GetDumpStatsMaxDurationForTest())
 
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(false))
 	finalRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
 	require.Len(t, finalRows, 1)
 	finalCount, err := strconv.Atoi(finalRows[0][0].(string))
 	require.NoError(t, err)
 	require.Equal(t, baseCount+2, finalCount)
 
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 	lockRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", lockTableID).Rows()
 	require.Len(t, lockRows, 1)
 	lockCount, err := strconv.ParseInt(lockRows[0][0].(string), 10, 64)

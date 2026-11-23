@@ -37,20 +37,20 @@ const (
 	updateMetaVersionSQL = "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?"
 )
 
-// statsLockImpl implements the util.StatsLock interface.
-type statsLockImpl struct {
+// Locker locks and unlocks the stats of tables and partitions.
+type Locker struct {
 	pool util.SessionPool
 }
 
-// NewStatsLock creates a new StatsLock that locks the stats in the sessions of pool.
-func NewStatsLock(pool util.SessionPool) types.StatsLock {
-	return &statsLockImpl{pool: pool}
+// NewLocker creates a Locker that locks the stats in the sessions of pool.
+func NewLocker(pool util.SessionPool) *Locker {
+	return &Locker{pool: pool}
 }
 
 // LockTables add locked tables id to store.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
+func (sl *Locker) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedTables(sctx, tables)
 		return err
@@ -65,7 +65,7 @@ func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (ski
 // - pidNames: partition ids of which will be locked.
 // Return the message of skipped tables and error.
 // Note: If the whole table is locked, then skip all partitions of the table.
-func (sl *statsLockImpl) LockPartitions(
+func (sl *Locker) LockPartitions(
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
@@ -80,7 +80,7 @@ func (sl *statsLockImpl) LockPartitions(
 // RemoveLockedTables remove tables from table locked records.
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
+func (sl *Locker) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedTables(sctx, tables)
 		return err
@@ -93,7 +93,7 @@ func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTab
 // - tableName: table name of which will be unlocked.
 // - pidNames: partition ids of which will be unlocked.
 // Note: If the whole table is locked, then skip all partitions of the table.
-func (sl *statsLockImpl) RemoveLockedPartitions(
+func (sl *Locker) RemoveLockedPartitions(
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
@@ -106,7 +106,7 @@ func (sl *statsLockImpl) RemoveLockedPartitions(
 }
 
 // queryLockedTables query locked tables from store.
-func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err error) {
+func (sl *Locker) queryLockedTables() (tables map[int64]struct{}, err error) {
 	err = util.CallWithSCtx(sl.pool.SPool(), func(sctx sessionctx.Context) error {
 		tables, err = QueryLockedTables(util.StatsCtx, sctx)
 		return err
@@ -116,7 +116,7 @@ func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err err
 
 // GetLockedTables returns the locked status of the given tables.
 // Note: This function query locked tables from store, so please try to batch the query.
-func (sl *statsLockImpl) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) {
+func (sl *Locker) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) {
 	tableLocked, err := sl.queryLockedTables()
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func (sl *statsLockImpl) GetLockedTables(tableIDs ...int64) (map[int64]struct{},
 }
 
 // GetTableLockedAndClearForTest for unit test only.
-func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
+func (sl *Locker) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
 	return sl.queryLockedTables()
 }
 

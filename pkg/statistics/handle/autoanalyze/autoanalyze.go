@@ -65,14 +65,13 @@ type analyzeJobRecorder struct {
 
 // newAnalyzeJobRecorder creates a statstypes.AnalyzeJobRecorder that records the jobs in the
 // sessions of pool. It needs no stats cache.
-func newAnalyzeJobRecorder(pool statsutil.SessionPool) statstypes.AnalyzeJobRecorder {
+func newAnalyzeJobRecorder(pool statsutil.SessionPool) *analyzeJobRecorder {
 	return &analyzeJobRecorder{pool: pool}
 }
 
-// statsAnalyze implements util.StatsAnalyze.
-// statsAnalyze is used to handle auto-analyze and manage analyze jobs.
-type statsAnalyze struct {
-	statstypes.AnalyzeJobRecorder
+// Analyzer analyzes the outdated tables in the background, and manages the analyze jobs.
+type Analyzer struct {
+	*analyzeJobRecorder
 
 	pool       statsutil.SessionPool
 	procIDs    statsutil.AutoAnalyzeProcIDGenerator
@@ -84,9 +83,9 @@ type statsAnalyze struct {
 	refresher *refresher.Refresher
 }
 
-// NewStatsAnalyze creates a new StatsAnalyze that analyzes the outdated tables in the sessions
+// NewAnalyzer creates an Analyzer that analyzes the outdated tables in the sessions
 // of pool. It finds them from the stats in statsCache and tableStats.
-func NewStatsAnalyze(
+func NewAnalyzer(
 	ctx context.Context,
 	pool statsutil.SessionPool,
 	procIDs statsutil.AutoAnalyzeProcIDGenerator,
@@ -95,12 +94,12 @@ func NewStatsAnalyze(
 	tableStats TableStatsGetter,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
-) statstypes.StatsAnalyze {
+) *Analyzer {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
 	r := refresher.NewRefresher(ctx, pool, procIDs, tables, statsCache, tableStats, sysProcTracker, ddlNotifier)
-	return &statsAnalyze{
-		AnalyzeJobRecorder: newAnalyzeJobRecorder(pool),
+	return &Analyzer{
+		analyzeJobRecorder: newAnalyzeJobRecorder(pool),
 		pool:               pool,
 		procIDs:            procIDs,
 		tableStats:         tableStats,
@@ -147,7 +146,7 @@ func (r *analyzeJobRecorder) FinishAnalyzeJob(job *statistics.AnalyzeJob, failRe
 }
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
-func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
+func (sa *Analyzer) DeleteAnalyzeJobs(updateTime time.Time) error {
 	return statsutil.CallWithSCtx(sa.pool.SPool(), func(sctx sessionctx.Context) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
@@ -156,7 +155,10 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
 // It only cleans up the jobs that are associated with the current instance.
-func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
+// A corrupted analyze job is one that is in a 'pending' or 'running' state,
+// but is associated with a TiDB instance that is either not currently running or has been restarted.
+// We use current running analyze jobs to check whether the analyze job is corrupted.
+func (sa *Analyzer) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
 	return statsutil.CallWithSCtx(sa.pool.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
 	}, statsutil.FlagWrapTxn)
@@ -164,7 +166,7 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunn
 
 // CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
 // Specifically, it removes jobs associated with instances that no longer exist in the cluster.
-func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
+func (sa *Analyzer) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	return statsutil.CallWithSCtx(sa.pool.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	}, statsutil.FlagWrapTxn)
@@ -313,7 +315,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
-func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
+func (sa *Analyzer) HandleAutoAnalyze() (analyzed bool) {
 	if err := statsutil.CallWithSCtx(sa.pool.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
@@ -326,7 +328,7 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 // AnalyzeVersionMatchesForTable reports whether the table already matches the requested
 // session version. For partitioned tables it checks the global stats and every partition;
 // for non-partitioned tables it checks the table stats alone.
-func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
+func (sa *Analyzer) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
 	globalStats := sa.tableStats.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
 		return false
@@ -346,17 +348,17 @@ func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, 
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
-func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+func (sa *Analyzer) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
 	return sa.refresher.GetPriorityQueueSnapshot()
 }
 
 // ClosePriorityQueue closes the stats priority queue if initialized.
 // NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
-func (sa *statsAnalyze) ClosePriorityQueue() {
+func (sa *Analyzer) ClosePriorityQueue() {
 	sa.refresher.ClosePriorityQueue()
 }
 
-func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
+func (sa *Analyzer) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Error(
@@ -402,7 +404,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 }
 
 // Close closes the auto-analyze worker.
-func (sa *statsAnalyze) Close() {
+func (sa *Analyzer) Close() {
 	sa.refresher.Close()
 }
 

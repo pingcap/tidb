@@ -29,21 +29,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// statsGlobalImpl implements util.StatsGlobal
-type statsGlobalImpl struct {
+// Merger merges the stats of partitions into the global stats of partitioned tables.
+type Merger struct {
 	pool   util.SessionPool
 	tables util.TableInfoGetter
 	saver  statstypes.ColOrIdxStatsSaver
 }
 
-// NewStatsGlobal creates a new StatsGlobal that merges in the sessions of pool, and saves the
-// global stats through saver.
-func NewStatsGlobal(pool util.SessionPool, tables util.TableInfoGetter, saver statstypes.ColOrIdxStatsSaver) statstypes.StatsGlobal {
-	return &statsGlobalImpl{pool: pool, tables: tables, saver: saver}
+// NewMerger creates a Merger that merges in the sessions of pool, and saves the global stats
+// through saver.
+func NewMerger(pool util.SessionPool, tables util.TableInfoGetter, saver statstypes.ColOrIdxStatsSaver) *Merger {
+	return &Merger{pool: pool, tables: tables, saver: saver}
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (sg *Merger) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
