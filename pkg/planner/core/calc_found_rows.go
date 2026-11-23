@@ -96,12 +96,7 @@ func (b *PlanBuilder) checkViewForFoundRows(selectNode ast.Node) error {
 	if vars.StmtCtx.IgnoreCalcFoundRows {
 		return nil
 	}
-	checker := &foundRowsChecker{inView: true}
-	ast.Walk(selectNode, checker)
-	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
-		return handleUnsupportedCalcFoundRows(vars, checker.err)
-	}
-	return checker.err
+	return checkFoundRowsView(vars, selectNode)
 }
 
 // handleUnsupportedCalcFoundRows applies tidb_enable_noop_functions when a
@@ -158,7 +153,8 @@ func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
 // prepared/cached statements whose AST was preprocessed in an earlier mode.
 func revalidateSQLCalcFoundRows(sctx sessionctx.Context, node ast.Node) error {
 	v := newFoundRowsPreprocessor(node, nil)
-	if v.allowedSelect == nil || v.allowedSelect.SelectStmtOpts == nil || !v.allowedSelect.SelectStmtOpts.CalcFoundRows {
+	if v.allowedSelect == nil || v.allowedSelect.SelectStmtOpts == nil ||
+		!v.allowedSelect.SelectStmtOpts.CalcFoundRows {
 		return nil
 	}
 	v.preprocessor = &preprocessor{sctx: sctx}
@@ -190,15 +186,12 @@ func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
 	if stmt != v.allowedSelect {
 		return plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 	}
+	vars := v.sctx.GetSessionVars()
 	if v.unsupportedReason != "" {
-		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason))
+		return handleUnsupportedCalcFoundRows(
+			vars, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason))
 	}
-	checker := &foundRowsChecker{root: stmt}
-	ast.Walk(stmt, checker)
-	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
-		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), checker.err)
-	}
-	return checker.err
+	return checkFoundRowsSelect(vars, stmt)
 }
 
 // findSQLCalcFoundRowsAllowedSelect returns the SELECT where the modifier is
@@ -232,16 +225,34 @@ func findSQLCalcFoundRowsAllowedSelect(node ast.Node) *ast.SelectStmt {
 	return nil
 }
 
+func checkFoundRowsSelect(vars *variable.SessionVars, stmt *ast.SelectStmt) error {
+	return checkFoundRowsAST(vars, stmt, stmt)
+}
+
+func checkFoundRowsView(vars *variable.SessionVars, selectNode ast.Node) error {
+	return checkFoundRowsAST(vars, selectNode, nil)
+}
+
+func checkFoundRowsAST(vars *variable.SessionVars, node ast.Node, outerSelect *ast.SelectStmt) error {
+	checker := &foundRowsChecker{outerSelect: outerSelect}
+	ast.Walk(node, checker)
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
+		return handleUnsupportedCalcFoundRows(vars, checker.err)
+	}
+	return checker.err
+}
+
 // foundRowsChecker rejects unsupported SELECT shapes and known non-repeatable
 // expressions.
 // ORDER BY RAND() is permitted only in the outer query: dropping that ordering
 // from the count does not change which rows are counted.
 type foundRowsChecker struct {
-	root       *ast.SelectStmt
-	depth      int
-	outerOrder bool
-	inView     bool
-	err        error
+	// outerSelect is the top-level SELECT carrying SQL_CALC_FOUND_ROWS, or nil
+	// when checking an expanded view body.
+	outerSelect *ast.SelectStmt
+	depth       int
+	outerOrder  bool
+	err         error
 }
 
 func (v *foundRowsChecker) Enter(node ast.Node) bool {
@@ -253,7 +264,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.SelectStmt:
 		v.depth++
 		switch {
-		case !v.inView && n != v.root && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
+		case v.outerSelect != nil && n != v.outerSelect && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
 			v.err = plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 			return true
 		case n.LockInfo != nil && n.LockInfo.LockType != ast.SelectLockNone:
@@ -264,7 +275,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.WindowFuncExpr:
 		reason = "SQL_CALC_FOUND_ROWS with window functions"
 	case *ast.OrderByClause:
-		if !v.inView && n == v.root.OrderBy {
+		if v.outerSelect != nil && n == v.outerSelect.OrderBy {
 			v.outerOrder = true
 		}
 	case *ast.VariableExpr:
@@ -297,7 +308,7 @@ func (v *foundRowsChecker) Leave(node ast.Node) bool {
 	if _, ok := node.(*ast.SelectStmt); ok {
 		v.depth--
 	}
-	if !v.inView && node == v.root.OrderBy {
+	if v.outerSelect != nil && node == v.outerSelect.OrderBy {
 		v.outerOrder = false
 	}
 	return v.err == nil
