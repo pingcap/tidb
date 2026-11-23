@@ -6953,6 +6953,7 @@ dependencies = [
  "tidb-unistore-cophandler",
  "tidb-unistore-tikv",
  "tidb-util",
+ "tidb-util-config",
  "tidb-vardef",
  "tidb-variable",
  "tikv-client",

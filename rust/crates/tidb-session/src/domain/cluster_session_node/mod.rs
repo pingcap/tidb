@@ -1847,7 +1847,7 @@ impl<'s> ClusterServerSession<'s> {
         // `LoadPlanReplayerForExplainExplore`: the replayer's environment is
         // loaded here, then its target SQL is explored.
         if let Some(path) = explore_replayer_file(stmt) {
-            let target_sql = self.load_plan_replayer_for_explain_explore(path)?;
+            let target_sql = tidb_executor::plan_replayer::PlanReplayerLoad::load_plan_replayer_for_explain_explore(&mut self, path)?;
             let explore = Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::Explain(Box::new(
                 tidb_ast::ExplainStmt {
                     analyze: false,
@@ -2623,7 +2623,7 @@ impl<'s> ClusterServerSession<'s> {
             // Go `handlePlanReplayerLoad`.
             tidb_executor::plan_replayer::PlanReplayerExec::take_plan_replayer_load_info(&mut *self.session).map_err(map_error)?;
             if !data.is_empty() {
-                self.plan_replayer_load_update(data)?;
+                tidb_executor::plan_replayer::PlanReplayerLoad::plan_replayer_load_update(self, data)?;
             }
             return Ok(WriteOutcome::default());
         }
