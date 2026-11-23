@@ -286,6 +286,8 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
+	// PreserveFoundRows prevents result consumption from replacing the preceding FOUND_ROWS() value.
+	PreserveFoundRows bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
@@ -1088,11 +1090,11 @@ func (sc *StatementContext) FoundRows() uint64 {
 	return sc.mu.foundRows
 }
 
-// AddFoundRows adds found rows.
-func (sc *StatementContext) AddFoundRows(rows uint64) {
+// SetFoundRows sets the final row count after successful result consumption.
+func (sc *StatementContext) SetFoundRows(rows uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.mu.foundRows += rows
+	sc.mu.foundRows = rows
 }
 
 // RecordRows is used to generate info message

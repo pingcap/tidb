@@ -200,6 +200,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *physicalop.PhysicalCalcFoundRows:
+		return b.buildCalcFoundRows(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.RecoverIndex:
@@ -859,6 +861,20 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	}
 
 	return e
+}
+
+func (b *executorBuilder) buildCalcFoundRows(v *physicalop.PhysicalCalcFoundRows) exec.Executor {
+	data := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	count := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+	return &CalcFoundRowsExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), data, count),
+	}
 }
 
 func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor {
@@ -2894,7 +2910,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

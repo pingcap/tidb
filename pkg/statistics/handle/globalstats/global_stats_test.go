@@ -901,6 +901,51 @@ func TestGlobalStats(t *testing.T) {
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }
 
+func TestMixedGlobalAndLocalIndexPartitionStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, d varchar(20), index b(b), unique index b_s((b+1)) global, unique index d_s(d(3)) global) partition by hash(a) partitions 5")
+	h := dom.StatsHandle()
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t values (1,1,1,'abc'), (2,2,2,'abd'), (3,3,3,'axe'), (4,4,4,'axf'), (5,5,5,'azd')")
+	tk.MustExec("analyze table t index b, b_s, d_s")
+
+	// Inspect the cache published by ANALYZE before any subsequent refresh.
+	h.WaitForAsyncUpdates()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	info := tbl.Meta()
+	for _, def := range info.GetPartitionInfo().Definitions {
+		t.Run(def.Name.O, func(t *testing.T) {
+			stats, ok := h.Get(def.ID)
+			require.True(t, ok)
+			require.False(t, stats.Pseudo)
+			for _, col := range info.Columns {
+				if col.Hidden {
+					continue
+				}
+				hist := stats.GetCol(col.ID)
+				require.NotNil(t, hist, col.Name.O)
+				require.True(t, hist.IsFullLoad(), col.Name.O)
+				require.Equal(t, int64(1), hist.NDV, col.Name.O)
+				require.Zero(t, hist.NullCount, col.Name.O)
+			}
+			for _, idx := range info.Indices {
+				hist := stats.GetIdx(idx.ID)
+				if idx.Global {
+					require.False(t, hist != nil && hist.IsStatsInitialized(), idx.Name.O)
+					continue
+				}
+				require.NotNil(t, hist, idx.Name.O)
+				require.True(t, hist.IsFullLoad(), idx.Name.O)
+				require.Equal(t, int64(1), hist.NDV, idx.Name.O)
+				require.Zero(t, hist.NullCount, idx.Name.O)
+			}
+		})
+	}
+}
+
 func TestGlobalIndexStatistics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()

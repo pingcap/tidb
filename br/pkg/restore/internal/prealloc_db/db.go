@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"go.uber.org/zap"
 )
@@ -115,6 +116,15 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 				zap.Error(err))
 			return errors.Trace(err)
 		}
+	}
+	if sctx := db.se.GetSessionCtx(); sctx != nil {
+		databases := make([]string, 0, len(ddlJob.GetInvolvingSchemaInfo()))
+		for _, target := range ddlJob.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone && target.Database != model.InvolvingAll {
+				databases = append(databases, ast.NewCIStr(target.Database).L)
+			}
+		}
+		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, databases...)()
 	}
 	err = db.se.Execute(ctx, ddlJob.Query)
 	if err != nil {
@@ -222,6 +232,9 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 }
 
 func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[restore.UniqueTableName]bool) error {
+	if sctx := db.se.GetSessionCtx(); sctx != nil {
+		defer privilege.WithInternalSchemaReadOnlyBypass(sctx, table.DB.Name.L)()
+	}
 	var restoreMetaSQL string
 	var err error
 	switch {

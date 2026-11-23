@@ -793,6 +793,16 @@ type PointGetExecutorCache struct {
 	FastPlan *physicalop.PointGetPlan
 }
 
+// schemaReadOnlyTargetState tells whether a statement may need a database
+// read-only check on each execution.
+type schemaReadOnlyTargetState uint8
+
+const (
+	schemaReadOnlyTargetUnknown schemaReadOnlyTargetState = iota
+	schemaReadOnlyTargetAbsent
+	schemaReadOnlyTargetPresent
+)
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -824,7 +834,10 @@ type PlanCacheStmt struct {
 
 	limits      []*ast.Limit
 	hasSubquery bool
-	tables      []table.Table // to capture table stats changes
+	// schemaReadOnlyTarget caches whether the statement has a node that may
+	// need a database read-only check. It depends only on the statement.
+	schemaReadOnlyTarget schemaReadOnlyTargetState
+	tables               []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string
