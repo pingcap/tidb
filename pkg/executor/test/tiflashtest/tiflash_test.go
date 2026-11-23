@@ -16,8 +16,11 @@ package tiflashtest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1434,6 +1437,56 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
 	require.Contains(t, err.Error(), "[util:1815]Internal : get tiflash_compute topology failed")
+
+	t.Run("cancel_topology_fetch", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			close(started)
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}))
+		require.NoError(t, tiflashcompute.InitGlobalTopoFetcher(config.AWSASStr,
+			strings.TrimPrefix(server.URL, "http://"), "tmpClusterID", false))
+		defer func() {
+			require.NoError(t, tiflashcompute.InitGlobalTopoFetcher(config.AWSASStr, "tmpAddr", "tmpClusterID", false))
+		}()
+
+		ctx, cancel := context.WithCancel(kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers))
+		result := make(chan error, 1)
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			rs, err := tk.ExecWithContext(ctx, "select * from t")
+			if rs != nil {
+				_ = rs.Close()
+			}
+			result <- err
+		}()
+		defer func() {
+			cancel()
+			close(release)
+			server.Close()
+			<-finished
+		}()
+
+		select {
+		case <-started:
+		case err := <-result:
+			t.Fatalf("query finished before topology fetching: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("query did not request the autoscaler topology")
+		}
+		cancel()
+		select {
+		case err := <-result:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(5 * time.Second):
+			t.Fatal("query remained blocked in topology fetching after cancellation")
+		}
+	})
 }
 
 // todo: remove this after AutoScaler is stable.

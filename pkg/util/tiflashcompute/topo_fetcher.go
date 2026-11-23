@@ -15,6 +15,7 @@
 package tiflashcompute
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -77,10 +78,10 @@ func (r *RecoveryType) toString() (string, error) {
 type TopoFetcher interface {
 	// Always fetch topo from AutoScaler, then return topo.
 	// If topo is empty, will not return error.
-	FetchAndGetTopo() ([]string, error)
+	FetchAndGetTopo(ctx context.Context) ([]string, error)
 
 	// Try recovery error then fetch new topo.
-	RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int) ([]string, error)
+	RecoveryAndGetTopo(ctx context.Context, recovery RecoveryType, oriCNCnt int) ([]string, error)
 }
 
 // InitGlobalTopoFetcher init globalTopoFetcher if is in disaggregated-tiflash mode. It's not thread-safe.
@@ -134,8 +135,8 @@ func NewMockAutoScalerFetcher(addr string) *MockTopoFetcher {
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (f *MockTopoFetcher) FetchAndGetTopo() ([]string, error) {
-	err := f.fetchTopo()
+func (f *MockTopoFetcher) FetchAndGetTopo(ctx context.Context) ([]string, error) {
+	err := f.fetchTopo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +147,7 @@ func (f *MockTopoFetcher) FetchAndGetTopo() ([]string, error) {
 }
 
 // RecoveryAndGetTopo implements TopoFetcher interface.
-func (*MockTopoFetcher) RecoveryAndGetTopo(RecoveryType, int) ([]string, error) {
+func (*MockTopoFetcher) RecoveryAndGetTopo(context.Context, RecoveryType, int) ([]string, error) {
 	return nil, errors.New("RecoveryAndGetTopo not implemented")
 }
 
@@ -158,7 +159,7 @@ func (f *MockTopoFetcher) getTopo() []string {
 }
 
 // fetchTopo will fetch newest topo from mock autoscaler.
-func (f *MockTopoFetcher) fetchTopo() error {
+func (f *MockTopoFetcher) fetchTopo(ctx context.Context) error {
 	u := url.URL{
 		Scheme: "http",
 		Host:   f.addr,
@@ -167,7 +168,7 @@ func (f *MockTopoFetcher) fetchTopo() error {
 	url := u.String()
 	logutil.BgLogger().Info("fetchTopo", zap.String("url", url))
 
-	newTopo, err := mockHTTPGetAndParseResp(url)
+	newTopo, err := mockHTTPGetAndParseResp(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -178,9 +179,16 @@ func (f *MockTopoFetcher) fetchTopo() error {
 	return nil
 }
 
-func httpGetAndParseResp(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+func httpGetAndParseResp(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		logutil.BgLogger().Error(err.Error())
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
 	}
@@ -188,6 +196,9 @@ func httpGetAndParseResp(url string) ([]byte, error) {
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		logutil.BgLogger().Error(err.Error())
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
 	}
@@ -202,8 +213,8 @@ func httpGetAndParseResp(url string) ([]byte, error) {
 }
 
 // mockHTTPGetAndParseResp send http get request and parse topo to []string.
-func mockHTTPGetAndParseResp(url string) ([]string, error) {
-	b, err := httpGetAndParseResp(url)
+func mockHTTPGetAndParseResp(ctx context.Context, url string) ([]string, error) {
+	b, err := httpGetAndParseResp(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -252,16 +263,16 @@ func NewAWSAutoScalerFetcher(addr string, clusterID string, isFixed bool) *AWSTo
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (f *AWSTopoFetcher) FetchAndGetTopo() (curTopo []string, err error) {
-	return f.fetchAndGetTopo(RecoveryTypeNull, 0)
+func (f *AWSTopoFetcher) FetchAndGetTopo(ctx context.Context) (curTopo []string, err error) {
+	return f.fetchAndGetTopo(ctx, RecoveryTypeNull, 0)
 }
 
 // RecoveryAndGetTopo implements TopoFetcher interface.
-func (f *AWSTopoFetcher) RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int) (curTopo []string, err error) {
-	return f.fetchAndGetTopo(recovery, oriCNCnt)
+func (f *AWSTopoFetcher) RecoveryAndGetTopo(ctx context.Context, recovery RecoveryType, oriCNCnt int) (curTopo []string, err error) {
+	return f.fetchAndGetTopo(ctx, recovery, oriCNCnt)
 }
 
-func (f *AWSTopoFetcher) fetchAndGetTopo(recovery RecoveryType, oriCNCnt int) (curTopo []string, err error) {
+func (f *AWSTopoFetcher) fetchAndGetTopo(ctx context.Context, recovery RecoveryType, oriCNCnt int) (curTopo []string, err error) {
 	defer func() {
 		logutil.BgLogger().Info("AWSTopoFetcher FetchAndGetTopo done", zap.Strings("curTopo", curTopo))
 	}()
@@ -280,14 +291,14 @@ func (f *AWSTopoFetcher) fetchAndGetTopo(recovery RecoveryType, oriCNCnt int) (c
 			return curTopo, nil
 		}
 
-		if err = f.fetchFixedPoolTopo(); err != nil {
+		if err = f.fetchFixedPoolTopo(ctx); err != nil {
 			return nil, err
 		}
 		curTopo, _ = f.getTopo()
 		return curTopo, nil
 	}
 
-	if err = f.fetchTopo(recovery, oriCNCnt); err != nil {
+	if err = f.fetchTopo(ctx, recovery, oriCNCnt); err != nil {
 		return nil, err
 	}
 
@@ -295,8 +306,8 @@ func (f *AWSTopoFetcher) fetchAndGetTopo(recovery RecoveryType, oriCNCnt int) (c
 	return curTopo, nil
 }
 
-func awsHTTPGetAndParseResp(url string) (*resumeAndGetTopologyResult, error) {
-	b, err := httpGetAndParseResp(url)
+func awsHTTPGetAndParseResp(ctx context.Context, url string) (*resumeAndGetTopologyResult, error) {
+	b, err := httpGetAndParseResp(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +350,7 @@ func (f *AWSTopoFetcher) tryUpdateTopo(newTopo *resumeAndGetTopologyResult) (upd
 	return
 }
 
-func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
+func (f *AWSTopoFetcher) fetchFixedPoolTopo(ctx context.Context) error {
 	u := url.URL{
 		Scheme: "http",
 		Host:   f.addr,
@@ -348,7 +359,7 @@ func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
 	url := u.String()
 	logutil.BgLogger().Info("fetchFixedPoolTopo", zap.String("url", url))
 
-	newTopo, err := awsHTTPGetAndParseResp(url)
+	newTopo, err := awsHTTPGetAndParseResp(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -360,7 +371,7 @@ func (f *AWSTopoFetcher) fetchFixedPoolTopo() error {
 	return nil
 }
 
-func (f *AWSTopoFetcher) fetchTopo(recovery RecoveryType, oriCNCnt int) error {
+func (f *AWSTopoFetcher) fetchTopo(ctx context.Context, recovery RecoveryType, oriCNCnt int) error {
 	para := url.Values{}
 	para.Add("tidbclusterid", f.clusterID)
 
@@ -382,7 +393,7 @@ func (f *AWSTopoFetcher) fetchTopo(recovery RecoveryType, oriCNCnt int) error {
 	url := u.String()
 	logutil.BgLogger().Info("fetchTopo", zap.String("url", url))
 
-	newTopo, err := awsHTTPGetAndParseResp(url)
+	newTopo, err := awsHTTPGetAndParseResp(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -409,11 +420,11 @@ func NewTestAutoScalerFetcher() *TestTopoFetcher {
 }
 
 // FetchAndGetTopo implements TopoFetcher interface.
-func (*TestTopoFetcher) FetchAndGetTopo() ([]string, error) {
+func (*TestTopoFetcher) FetchAndGetTopo(context.Context) ([]string, error) {
 	return []string{}, nil
 }
 
 // RecoveryAndGetTopo implements TopoFetcher interface.
-func (*TestTopoFetcher) RecoveryAndGetTopo(RecoveryType, int) ([]string, error) {
+func (*TestTopoFetcher) RecoveryAndGetTopo(context.Context, RecoveryType, int) ([]string, error) {
 	return nil, errors.New("RecoveryAndGetTopo not implemented")
 }

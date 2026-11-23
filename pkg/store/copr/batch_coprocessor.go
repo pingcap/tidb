@@ -644,7 +644,7 @@ func buildBatchCopTasksConsistentHash(
 	fetchTopoStart := time.Now()
 	for {
 		retryNum++
-		storesStr, err = tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo()
+		storesStr, err = tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo(ctx)
 		if err != nil {
 			return nil, err
 		}

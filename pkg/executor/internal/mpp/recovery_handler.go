@@ -15,6 +15,7 @@
 package mpp
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -101,7 +102,7 @@ func (m *RecoveryHandler) RecoveryCnt() uint32 {
 //  1. Already return result to client because holder is full.
 //  2. Recovery method of this kind of error not implemented or error is not recoveryable.
 //  3. Retry time exceeds maxRecoveryCnt.
-func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
+func (m *RecoveryHandler) Recovery(ctx context.Context, info *RecoveryInfo) error {
 	if !m.enable {
 		return errors.New("mpp err recovery is not enabled")
 	}
@@ -118,7 +119,7 @@ func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
 
 	for _, h := range m.handlers {
 		if h.chooseHandlerImpl(info.MPPErr) {
-			return h.doRecovery(info)
+			return h.doRecovery(ctx, info)
 		}
 	}
 	return errors.New("no handler to recovery this type of mpp err")
@@ -126,7 +127,7 @@ func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
 
 type handlerImpl interface {
 	chooseHandlerImpl(mppErr error) bool
-	doRecovery(info *RecoveryInfo) error
+	doRecovery(ctx context.Context, info *RecoveryInfo) error
 }
 
 var _ handlerImpl = &memLimitHandlerImpl{}
@@ -148,10 +149,10 @@ func (h *memLimitHandlerImpl) chooseHandlerImpl(mppErr error) bool {
 	return false
 }
 
-func (*memLimitHandlerImpl) doRecovery(info *RecoveryInfo) error {
+func (*memLimitHandlerImpl) doRecovery(ctx context.Context, info *RecoveryInfo) error {
 	// Ignore fetched topo, because AutoScaler will keep the topo for a while.
 	// And the new topo will be fetched when dispatch mpp task again.
-	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(tiflashcompute.RecoveryTypeMemLimit, info.NodeCnt); err != nil {
+	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(ctx, tiflashcompute.RecoveryTypeMemLimit, info.NodeCnt); err != nil {
 		return err
 	}
 	return nil

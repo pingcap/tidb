@@ -197,7 +197,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 		})
 
 		if mppErr != nil {
-			recoveryErr := r.mppErrRecovery.Recovery(&RecoveryInfo{
+			recoveryErr := r.mppErrRecovery.Recovery(ctx, &RecoveryInfo{
 				MPPErr:  mppErr,
 				NodeCnt: r.nodeCnt,
 			})
@@ -213,6 +213,9 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			})
 
 			if recoveryErr != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				logutil.BgLogger().Error("recovery mpp error failed", zap.Any("mppErr", mppErr),
 					zap.Any("recoveryErr", recoveryErr))
 				return mppErr
@@ -221,7 +224,10 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
 				zap.Any("mppErr", mppErr), zap.Uint32("recoveryCnt", r.mppErrRecovery.RecoveryCnt()))
 
-			if _, err := r.setupMPPCoordinator(r.ctx, true); err != nil {
+			if _, err := r.setupMPPCoordinator(ctx, true); err != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
 				return mppErr
 			}
