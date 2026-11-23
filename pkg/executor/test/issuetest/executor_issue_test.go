@@ -855,9 +855,16 @@ func TestIssue73637(t *testing.T) {
 	queryDesc := "select id from bt where a=1 order by a, b desc, c, id limit 3"
 
 	// Ensure TopN is actually pushed down to coprocessor by default.
-	plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + queryAsc).Rows())
-	require.Contains(t, plan, "TopN")
-	require.Contains(t, plan, "cop[tikv]")
+	planRows := tk.MustQuery("explain format='brief' " + queryAsc).Rows()
+	hasCopTopN := false
+	for _, row := range planRows {
+		line := fmt.Sprint(row)
+		if strings.Contains(line, "TopN") && strings.Contains(line, "cop[tikv]") {
+			hasCopTopN = true
+			break
+		}
+	}
+	require.Truef(t, hasCopTopN, "expected pushed-down TopN on cop[tikv], got plan:\n%v", planRows)
 
 	// Default (TopN pushed down) must match numeric coercion and non-pushed-down execution.
 	tk.MustQuery("select id from bt where a=1 order by a, b+0, c, id limit 3").Check(testkit.Rows("1", "2", "3"))
