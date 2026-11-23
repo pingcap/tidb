@@ -372,6 +372,7 @@ impl IndexReaderExecutor {
                 root_plan_id: isize::try_from(self.meta.id()).unwrap_or(0),
                 mem_tracker: self.mem_tracker.clone(),
                 intermediate_output_types: Vec::new(),
+                tidb_server_id: None,
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

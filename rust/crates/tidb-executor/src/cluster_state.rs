@@ -1176,7 +1176,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Option<crate::table_reader::TiDbStoreReader> {
-        read.cop_request
+        read.cop_destination
             .is_some()
             .then(|| self.viewer.tidb_store_reader(catalog, ctx))
     }
@@ -1191,7 +1191,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         }
         tidb_infoschema::infoschema_meta::cluster_table_source(&read.table_name).is_some()
             // Go `TIFLASH_REPLICA`'s reader on the DDL owner.
-            || (read.cop_request.is_some() && read.table_name.go_lower_eq("TIFLASH_REPLICA"))
+            || (read.cop_destination.is_some() && read.table_name.go_lower_eq("TIFLASH_REPLICA"))
             || (!read.is_cluster_scan
                 && [
                     "TIDB_TRX",

@@ -231,6 +231,7 @@ impl AdminIndexContext {
                 root_plan_id: 0,
                 mem_tracker: None,
                 intermediate_output_types: Vec::new(),
+                tidb_server_id: None,
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

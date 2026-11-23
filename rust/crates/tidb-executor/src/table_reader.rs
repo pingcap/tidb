@@ -38,125 +38,7 @@ use tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType;
 use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableReader};
 use tidb_proto::tipb;
 
-use crate::builder_utils::TiDBCopRequest;
 use crate::range_group_merge::ReaderResult;
-
-/// What a reader on the `kv.TiDB` store sends through: Go `dctx.Client`
-/// (copr's `CopClient`, whose `Send` builds `buildTiDBMemCopTasks`' tasks)
-/// and the login user `buildTableReader` puts on the DAG for the TiDBs'
-/// privilege checks.
-pub struct TiDbStoreReader {
-    /// Go `dctx.Client`.
-    pub client: Arc<dyn tidb_txnkv::Client>,
-    /// Go `SessionVars.User`'s `Username` / `Hostname`.
-    pub user: Option<tipb::UserIdentity>,
-    /// Go `tableReaderExecutorContext.getDDLOwner`'s server ID
-    /// (`OwnerManager.GetOwnerID`, then `infosync.GetServerInfoByID`), for a
-    /// table read on the DDL owner; `None` in a context without DDL.
-    pub ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
-}
-
-/// Go `TableReaderExecutor` over the `kv.TiDB` store, its request built by
-/// [`crate::builder_utils::build_tidb_cop_request`] until that store's scan
-/// has its `ToPB` (register row T19).
-pub struct TiDbTableReaderExecutor {
-    meta: ExecutorMeta,
-    ctx: crate::StmtContext,
-    request: Arc<TiDBCopRequest>,
-    reader: TiDbStoreReader,
-    /// Go `startTS`, read when the executor is built (`getSnapshotTS`).
-    start_ts: u64,
-    /// Go `resultHandler`'s select result.
-    result: Option<SelectResponseIter>,
-    exhausted: bool,
-}
-
-impl TiDbTableReaderExecutor {
-    /// The reader of `request` through `reader`, at `start_ts`.
-    #[must_use]
-    pub fn new(
-        meta: ExecutorMeta,
-        ctx: crate::StmtContext,
-        request: Arc<TiDBCopRequest>,
-        reader: TiDbStoreReader,
-        start_ts: u64,
-    ) -> Self {
-        Self {
-            meta,
-            ctx,
-            request,
-            reader,
-            start_ts,
-            result: None,
-            exhausted: false,
-        }
-    }
-
-    /// Go `buildResp` over `buildKVReq` and `distsql.SelectWithRuntimeStats`.
-    fn build_resp(&self) -> Result<SelectResponseIter, ExecError> {
-        let ctx = &self.ctx;
-        let mut dag = self.request.dag.clone();
-        dag.user = self.reader.user.clone();
-        let plan_id = isize::try_from(self.meta.id()).unwrap_or(0);
-        // Go `TableReaderExecutor.memTracker`, under the statement's.
-        let memory_tracker = Some(ctx.statement_memory().operator_tracker(self.meta.id()));
-        let context = dist_sql_context(ctx);
-        let kv_context = ctx
-            .statement_kv_context()
-            .as_ref()
-            .map(tidb_txnkv::StatementKvContextCell::get)
-            .unwrap_or_default();
-        let mut builder = RequestBuilder::from_context(&context);
-        if let Some(tagger) = &kv_context.resource_group_tagger {
-            builder.set_resource_group_tagger(tagger());
-        }
-        builder.set_non_partitioned_key_ranges(
-            self.request
-                .ranges
-                .iter()
-                .map(|range| tidb_txnkv::KeyRange {
-                    start_key: tidb_txnkv::Key::from_bytes(range.start.to_vec()),
-                    end_key: tidb_txnkv::Key::from_bytes(range.end.to_vec()),
-                })
-                .collect(),
-        );
-        // Go `buildKVReq`: a table read on the DDL owner names its server.
-        if self.request.cop_destination
-            == tidb_infoschema::infoschema_meta::ClusterTableCopDestination::DdlOwner
-        {
-            let owner = self.reader.ddl_owner_server_id.as_ref().ok_or_else(|| {
-                ExecError::Internal("GetDDLOwner in a context without DDL".into())
-            })?;
-            builder.set_tidb_server_id(
-                owner().map_err(|error| ExecError::Internal(error.into()))?,
-            );
-        }
-        builder
-            .set_start_ts(self.start_ts)
-            .set_mem_tracker(memory_tracker.clone())
-            .set_store_type(tidb_txnkv::StoreType::TiDb)
-            .set_dag_request(executor_shapes(&dag), prost::Message::encode_to_vec(&dag));
-        let request = builder
-            .build_transport_request(ctx.statement_memory().coprocessor_request_cancellation())
-            .map_err(|error| ExecError::Internal(format!("{error:?}").into()))?
-            .with_kv_context(kv_context);
-        let result = tidb_distsql::select_with_runtime_stats_over_client(
-            self.reader.client.as_ref(),
-            &request,
-            SelectInput::default(),
-            QueryResultContext::new(self.request.field_types.clone(), ctx.cop_warning_sink())
-                .with_time_zone(ctx.session_zone()),
-            self.request.cop_plan_ids.clone(),
-            plan_id,
-            ctx.cop_response_sink().is_some(),
-        )
-        .map_err(|error| ExecError::Internal(error.to_string().into()))?;
-        Ok(result
-            .into_select_iter(Vec::new())
-            .with_cop_response_sink(ctx.cop_response_sink())
-            .with_memory_tracker(memory_tracker))
-    }
-}
 
 /// Go `SessionVars.GetDistSQLCtx()`, the part `RequestBuilder.SetFromSessionVars`
 /// reads.
@@ -197,70 +79,28 @@ pub(crate) fn executor_shapes(dag: &tipb::DagRequest) -> RequestEnvelope {
     )
 }
 
-impl Executor for TiDbTableReaderExecutor {
-    /// Go `TableReaderExecutor.Detach` (this is the one over `kv.TiDB`).
-    fn detach(&mut self) -> bool {
-        true
-    }
+/// The `kv.TiDB` store's request facts of a [`TableReaderExecutor`].
+struct TiDbStoreTarget {
+    /// Go `buildTableReader`'s `dagReq.User`.
+    user: Option<tipb::UserIdentity>,
+    /// Go `getDDLOwner`, for a table `GetClusterTableCopDestination` sends to
+    /// the DDL owner.
+    ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
+}
 
-    fn open(&mut self) -> Result<(), ExecError> {
-        self.result = Some(self.build_resp()?);
-        self.exhausted = false;
-        Ok(())
-    }
-
-    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        req.reset();
-        if self.exhausted {
-            return Ok(());
-        }
-        let Some(result) = self.result.as_mut() else {
-            return Ok(());
-        };
-        let required = req.required_rows().max(1);
-        loop {
-            if !result
-                .fill_chunk_with_required_rows(required, req)
-                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error)))?
-            {
-                self.exhausted = true;
-                req.reset();
-                return Ok(());
-            }
-            if req.num_rows() > 0 {
-                return Ok(());
-            }
-        }
-    }
-
-    fn close(&mut self) -> Result<(), ExecError> {
-        match self.result.take() {
-            Some(mut result) => result
-                .close()
-                .map_err(|error| ExecError::from(crate::cop_reader::select_response_error(error))),
-            None => Ok(()),
-        }
-    }
-
-    fn schema(&self) -> &Schema {
-        self.meta.schema()
-    }
-
-    fn ret_field_types(&self) -> &[FieldType] {
-        self.meta.ret_field_types()
-    }
-
-    fn init_cap(&self) -> usize {
-        self.meta.init_cap()
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.meta.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.meta.new_chunk()
-    }
+/// What a reader on the `kv.TiDB` store sends through: Go `dctx.Client`
+/// (copr's `CopClient`, whose `Send` builds `buildTiDBMemCopTasks`' tasks)
+/// and the login user `buildTableReader` puts on the DAG for the TiDBs'
+/// privilege checks.
+pub struct TiDbStoreReader {
+    /// Go `dctx.Client`.
+    pub client: Arc<dyn tidb_txnkv::Client>,
+    /// Go `SessionVars.User`'s `Username` / `Hostname`.
+    pub user: Option<tipb::UserIdentity>,
+    /// Go `tableReaderExecutorContext.getDDLOwner`'s server ID
+    /// (`OwnerManager.GetOwnerID`, then `infosync.GetServerInfoByID`), for a
+    /// table read on the DDL owner; `None` in a context without DDL.
+    pub ddl_owner_server_id: Option<Arc<dyn Fn() -> Result<u64, String> + Send + Sync>>,
 }
 
 /// Go `kvRangeBuilderFromRangeAndPartition`'s `TableHandleRangesToKVRanges`
@@ -291,6 +131,10 @@ pub struct TableReaderExecutor {
     net_data_size: f64,
     /// Go `dctx.Client`.
     client: Arc<dyn tidb_txnkv::Client>,
+    /// The `kv.TiDB` store's half of Go `buildKVReq` and `buildTableReader`:
+    /// the login user on the DAG and, for a table on the DDL owner, that
+    /// server (`SetTiDBServerID`).
+    tidb_store: Option<TiDbStoreTarget>,
     /// Go `tablePlan`.
     table_plan: PhysicalPlan,
     /// Go `getPhysicalPlanIDs(e.plans)`.
@@ -389,6 +233,7 @@ impl TableReaderExecutor {
             store_type: tidb_kv::store_type::StoreType::TiKv,
             net_data_size: e.net_data_size,
             client: e.client,
+            tidb_store: None,
             table_plan: e.table_plan.clone(),
             plan_ids: e.plan_ids,
             physical_table_id: e.physical_table_id,
@@ -551,6 +396,24 @@ impl TableReaderExecutor {
         store_type: tidb_kv::store_type::StoreType,
         batch_cop: bool,
     ) -> Result<Self, ExecError> {
+        Self::over_plan_with_client(meta, ctx, is, table_plan, store_type, batch_cop, None)
+    }
+
+    /// [`Self::over_plan`] sending through `client` (Go `dctx.Client` of the
+    /// store the reader reads, the `kv.TiDB` store's own for a cluster
+    /// table), or the transaction store's client.
+    ///
+    /// # Errors
+    /// A plan without exactly one table scan, or a store without a client.
+    pub(crate) fn over_plan_with_client(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        table_plan: &PhysicalPlan,
+        store_type: tidb_kv::store_type::StoreType,
+        batch_cop: bool,
+        client: Option<Arc<dyn tidb_txnkv::Client>>,
+    ) -> Result<Self, ExecError> {
         let mut table_scans = Vec::new();
         crate::mpp_gather::get_table_scans(table_plan, &mut table_scans);
         let [ts] = table_scans[..] else {
@@ -565,9 +428,12 @@ impl TableReaderExecutor {
         let store = ctx
             .txn_store()
             .ok_or_else(|| ExecError::Internal("the table reader has no store".into()))?;
-        let client = store
-            .client()
-            .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?;
+        let client = match client {
+            Some(client) => client,
+            None => store
+                .client()
+                .ok_or_else(|| ExecError::Internal("the store has no coprocessor client".into()))?,
+        };
         // Go `getPhysicalPlanIDs(e.plans)`: a list request's summaries come
         // in `v.TablePlans` order, the scan first.
         let mut plan_ids = Vec::new();
@@ -590,6 +456,7 @@ impl TableReaderExecutor {
                 tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
             ),
             client,
+            tidb_store: None,
             table_plan: table_plan.clone(),
             plan_ids,
             physical_table_id: ts.physical_table_id,
@@ -618,6 +485,27 @@ impl TableReaderExecutor {
             // union scan's.
             dummy: table.temp_table_type != tidb_model::TempTableType::NONE,
         })
+    }
+
+    /// Go `buildTableReader` over the `kv.TiDB` store: the login user on the
+    /// DAG and, when `destination` is the DDL owner, its server.
+    #[must_use]
+    pub(crate) fn with_tidb_store(
+        mut self,
+        reader: TiDbStoreReader,
+        destination: tidb_infoschema::infoschema_meta::ClusterTableCopDestination,
+    ) -> Self {
+        self.tidb_store = Some(TiDbStoreTarget {
+            user: reader.user,
+            ddl_owner_server_id: (destination
+                == tidb_infoschema::infoschema_meta::ClusterTableCopDestination::DdlOwner)
+                .then(|| {
+                    reader.ddl_owner_server_id.unwrap_or_else(|| {
+                        Arc::new(|| Err("GetDDLOwner in a context without DDL".to_owned()))
+                    })
+                }),
+        });
+        self
     }
 
     /// Go `buildTableReader`'s (and a merge's partial table reader's)
@@ -659,6 +547,9 @@ impl TableReaderExecutor {
         let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
             .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
+        if let Some(tidb_store) = &self.tidb_store {
+            dag.user = tidb_store.user.clone();
+        }
         self.dag_size = prost::Message::encoded_len(&dag);
         self.kv_ranges.clone_from(&kv_ranges);
         self.results.clear();
@@ -720,6 +611,11 @@ impl TableReaderExecutor {
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
         KvReq { dag, key_ranges, key_range_hints, partition_id_and_ranges }: KvReq,
     ) -> Result<SelectResponseIter, ExecError> {
+        // Go `buildKVReq`: a table read on the DDL owner names its server.
+        let tidb_server_id = match self.tidb_store.as_ref().and_then(|tidb| tidb.ddl_owner_server_id.as_ref()) {
+            Some(owner) => Some(owner().map_err(|error| ExecError::Internal(error.into()))?),
+            None => None,
+        };
         crate::cop_reader::open_table_read(
             self.client.as_ref(),
             statement,
@@ -744,6 +640,7 @@ impl TableReaderExecutor {
                 // Go `memTracker`, `NewTracker(e.ID(), -1)` under the statement's.
                 mem_tracker: self.mem_tracker.clone(),
                 intermediate_output_types: Vec::new(),
+                tidb_server_id,
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))
@@ -954,6 +851,9 @@ impl Executor for TableReaderExecutor {
         let mut dag = crate::builder_utils::construct_dag_req(&self.ctx, &statement, &plans, self.store_type)
             .map_err(|error| ExecError::Internal(error.to_string().into()))?;
         dag.output_offsets = (0..self.meta.schema().columns.len() as u32).collect();
+        if let Some(tidb_store) = &self.tidb_store {
+            dag.user = tidb_store.user.clone();
+        }
         self.dag_size = prost::Message::encoded_len(&dag);
         // Go `Open`: `memTracker` reset, or made, and attached to the
         // statement's.

@@ -2596,6 +2596,7 @@ impl PartialIndexWorker {
                 root_plan_id: isize::try_from(self.plan_id).unwrap_or(0),
                 mem_tracker: Some(mem_tracker),
                 intermediate_output_types: Vec::new(),
+                tidb_server_id: None,
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

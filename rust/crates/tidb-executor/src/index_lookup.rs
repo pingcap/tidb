@@ -1011,6 +1011,7 @@ impl IndexWorker {
                 cop_plan_ids: self.index_plan_ids.clone(),
                 root_plan_id: self.index_root_plan_id,
                 mem_tracker: Some(Arc::clone(&self.mem_tracker)),
+                tidb_server_id: None,
             },
         )
         .map_err(|error| ExecError::Internal(error.into()))

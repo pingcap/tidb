@@ -5383,7 +5383,7 @@ fn mem_table_read_of(
         extractor,
         query_time_range,
         is_cluster_scan,
-        cop_request: None,
+        cop_destination: None,
     })
 }
 
@@ -5405,17 +5405,6 @@ fn cluster_table_reader_read(
     if !tidb_infoschema::infoschema_meta::is_cluster_table_by_name(&scan.table_name) {
         return Ok(None);
     }
-    let table_plan = reader
-        .table_plan
-        .as_deref()
-        .ok_or_else(|| DriverError::unsupported("a TiDB-store reader has no pushed plan"))?;
-    let request = crate::builder_utils::build_tidb_cop_request(
-        ctx,
-        plan,
-        table_plan,
-        scan,
-        reader.is_common_handle(),
-    )?;
     Ok(Some(crate::mem_table_retrieval::MemTableRead {
         plan_id: plan.id(),
         db_name: scan.db_name.clone(),
@@ -5425,7 +5414,9 @@ fn cluster_table_reader_read(
         extractor: None,
         query_time_range: tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange::default(),
         is_cluster_scan: true,
-        cop_request: Some(std::sync::Arc::new(request)),
+        cop_destination: Some(tidb_infoschema::infoschema_meta::get_cluster_table_cop_destination(
+            &scan.table_name,
+        )),
     }))
 }
 
@@ -5440,18 +5431,30 @@ fn build_cluster_table_reader(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let meta = meta(ctx, plan, plan_schema(plan)?);
     if let Some(retriever) = ctx.mem_table_retrieval().retriever_for(&read) {
-        if let (Some(reader), Some(request)) =
-            (retriever.tidb_store_reader(&read, catalog, ctx), read.cop_request.clone())
+        if let (Some(reader), Some(destination)) =
+            (retriever.tidb_store_reader(&read, catalog, ctx), read.cop_destination)
         {
-            // Go `buildTableReader`'s `getSnapshotTS`.
-            let start_ts = ctx.txn_store().map_or(0, |store| store.start_ts());
-            return Ok(Box::new(crate::table_reader::TiDbTableReaderExecutor::new(
+            // Go `buildTableReader` over `kv.TiDB`: the one
+            // `TableReaderExecutor`, sending through that store's client.
+            let PhysicalPlan::TableReader(table_reader) = plan else {
+                return Err(DriverError::unsupported("a TiDB-store read is not a table reader"));
+            };
+            let table_plan = table_reader
+                .table_plan
+                .as_deref()
+                .ok_or_else(|| DriverError::unsupported("a TiDB-store reader has no pushed plan"))?;
+            let executor = crate::table_reader::TableReaderExecutor::over_plan_with_client(
                 meta,
-                ctx.clone(),
-                request,
-                reader,
-                start_ts,
-            )));
+                ctx,
+                catalog,
+                table_plan,
+                tidb_kv::store_type::StoreType::TiDb,
+                false,
+                Some(std::sync::Arc::clone(&reader.client)),
+            )
+            .map_err(DriverError::from)?
+            .with_tidb_store(reader, destination);
+            return Ok(Box::new(executor));
         }
         let (snapshot, ctx) = (catalog.clone(), ctx.clone());
         return Ok(Box::new(MemTableSourceExec::lazy(

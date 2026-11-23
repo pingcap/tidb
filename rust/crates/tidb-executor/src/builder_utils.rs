@@ -16,51 +16,10 @@
 //! for a reader on the `kv.TiDB` store, with the list-form `ToPB` of each
 //! plan the planner pushed into it (`PhysicalTableScan`, `PhysicalSelection`,
 //! `PhysicalTopN`, `PhysicalLimit`, `PhysicalHashAgg`, `PhysicalStreamAgg`)
-//! and `aggregation.AggFuncToPBExpr`; plus the reader's key ranges (Go
-//! `RequestBuilder.SetHandleRanges`).
+//! and `aggregation.AggFuncToPBExpr`.
 
-use tidb_datatype::FieldType;
-use tidb_driver_error::DriverError;
-use tidb_expr::schema::Schema;
-use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableScan};
-use tidb_proto::{coprocessor, tipb};
-
-/// What a reader on the `kv.TiDB` store sends every TiDB (Go's `kv.Request`
-/// for `buildTiDBMemCopTasks`): the DAG and its key ranges, and the types
-/// of the reader's output rows.
-#[derive(Clone, Debug)]
-pub struct TiDBCopRequest {
-    /// Go `dagPB`.
-    pub dag: tipb::DagRequest,
-    /// Go `KeyRanges`.
-    pub ranges: Vec<coprocessor::KeyRange>,
-    /// The reader's output column types, which decode the responses.
-    pub field_types: Vec<FieldType>,
-    /// Go `getPhysicalPlanIDs(TablePlans)`: the pushed plans' IDs in DAG
-    /// order, under which the select result records each executor.
-    pub cop_plan_ids: Vec<isize>,
-    /// Go `GetClusterTableCopDestination` of the scanned table: every TiDB,
-    /// or the DDL owner alone (`SetTiDBServerID`).
-    pub cop_destination: tidb_infoschema::infoschema_meta::ClusterTableCopDestination,
-}
-
-/// Go `ConstructDAGReq(ctx, plans, kv.TiDB)` plus `buildTableReader`'s
-/// `OutputOffsets` (every reader output column) for the plan `table_plan`
-/// a TiDB-store reader pushes.
-///
-/// # Errors
-/// A pushed plan or expression that has no protobuf form.
-pub fn construct_tidb_dag_req(
-    ctx: &crate::StmtContext,
-    table_plan: &PhysicalPlan,
-) -> Result<tipb::DagRequest, DriverError> {
-    let statement = crate::remote_scan::pushdown_statement_context(ctx);
-    let plans = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan);
-    let mut dag = construct_dag_req(ctx, &statement, &plans, tidb_kv::store_type::StoreType::TiDb)
-        .map_err(crate::driver::planner_error_to_driver)?;
-    dag.output_offsets = (0..table_plan.schema().map_or(0, Schema::len) as u32).collect();
-    Ok(dag)
-}
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
+use tidb_proto::tipb;
 
 /// Go `ctx.GetBuildPBCtx()`.
 fn build_pb_ctx<'a>(
@@ -136,79 +95,4 @@ pub(crate) fn construct_dag_req(
     }
     set_encode_type(&mut dag_req);
     Ok(dag_req)
-}
-
-/// Go `RequestBuilder.SetHandleRanges(dctx, tableID, isCommonHandle,
-/// ranges)` for a TiDB-store scan: int-handle ranges through
-/// `TableHandleRangesToKVRanges`, common-handle ones through
-/// `CommonHandleRangesToKVRanges` in the statement's location.
-///
-/// # Errors
-/// A range bound that does not encode.
-pub fn set_handle_ranges(
-    ctx: &crate::StmtContext,
-    scan: &PhysicalTableScan,
-    is_common_handle: bool,
-) -> Result<Vec<coprocessor::KeyRange>, DriverError> {
-    let ranges = if is_common_handle {
-        tidb_distsql::common_handle_ranges_to_kv_ranges(
-            Some(&ctx.session_zone()),
-            scan.physical_table_id,
-            &scan.ranges,
-        )
-    } else {
-        tidb_distsql::table_ranges_to_kv_ranges(scan.physical_table_id, &scan.ranges)
-    }
-    .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
-    Ok(ranges
-        .into_iter()
-        .map(|range| coprocessor::KeyRange {
-            start: range.start_key.into(),
-            end: range.end_key.into(),
-        })
-        .collect())
-}
-
-/// Go `buildTableReader` for a reader on the `kv.TiDB` store: its DAG, key
-/// ranges and output types.
-///
-/// # Errors
-/// The pushed plan has no protobuf form or its ranges do not encode.
-pub fn build_tidb_cop_request(
-    ctx: &crate::StmtContext,
-    reader: &PhysicalPlan,
-    table_plan: &PhysicalPlan,
-    scan: &PhysicalTableScan,
-    is_common_handle: bool,
-) -> Result<TiDBCopRequest, DriverError> {
-    let dag = construct_tidb_dag_req(ctx, table_plan)?;
-    let ranges = set_handle_ranges(ctx, scan, is_common_handle)?;
-    let field_types = reader
-        .schema()
-        .map(|schema| {
-            schema
-                .columns
-                .iter()
-                .map(|column| {
-                    column
-                        .ret_type
-                        .clone()
-                        .unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::Null))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let cop_plan_ids = tidb_planner_core_operator_physicalop::flatten_list_push_down_plan(table_plan)
-        .iter()
-        .map(|plan| isize::try_from(plan.id()).unwrap_or(0))
-        .collect();
-    Ok(TiDBCopRequest {
-        dag,
-        ranges,
-        field_types,
-        cop_plan_ids,
-        cop_destination: tidb_infoschema::infoschema_meta::get_cluster_table_cop_destination(
-            &scan.table_name,
-        ),
-    })
 }

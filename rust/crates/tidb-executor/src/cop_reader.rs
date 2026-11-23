@@ -167,6 +167,7 @@ fn statement_scan_plan(
         memory_tracker: None,
         session_mem_tracker: Arc::clone(statement.memory.session_tracker()),
         enabled_rate_limit_action: statement.enabled_rate_limit_action,
+        tidb: None,
         tiflash: None,
     }
 }
@@ -209,6 +210,8 @@ pub(crate) struct TableRead {
     /// Go `SelectResult.IntoIter`'s `intermediateFieldTypes`: the row types
     /// of each intermediate channel the DAG declares.
     pub intermediate_output_types: Vec<Vec<FieldType>>,
+    /// Go `SetTiDBServerID`: the one TiDB a `kv.TiDB` read goes to.
+    pub tidb_server_id: Option<u64>,
 }
 
 /// Go `TableReaderExecutor.SelectResult`: the request through `client` (a
@@ -235,6 +238,9 @@ pub(crate) fn open_table_read(
         root_plan_id: read.root_plan_id,
         memory_tracker,
         intermediate_output_types: read.intermediate_output_types,
+        tidb: (read.store_type == tidb_kv::store_type::StoreType::TiDb).then_some(TiDbRequest {
+            server_id: read.tidb_server_id,
+        }),
         tiflash: (read.store_type == tidb_kv::store_type::StoreType::TiFlash).then(|| TiFlashRequest {
             partition_id_and_ranges: read.partition_id_and_ranges,
             batch_cop: read.batch_cop,
@@ -267,6 +273,12 @@ fn dag_envelope(dag: &tidb_proto::tipb::DagRequest) -> RequestEnvelope {
             })
             .collect(),
     )
+}
+
+/// The `kv.TiDB` side of a request.
+struct TiDbRequest {
+    /// Go `SetTiDBServerID`.
+    server_id: Option<u64>,
 }
 
 /// The `kv.TiFlash` side of a request.
@@ -363,6 +375,7 @@ struct RemoteScanPlan {
     /// The statement's consumer of per-response execution details.
     cop_response_sink: Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>>,
     /// Set for a read of the `kv.TiFlash` store.
+    tidb: Option<TiDbRequest>,
     tiflash: Option<TiFlashRequest>,
 }
 
@@ -482,6 +495,12 @@ fn open_scan(
         builder.set_key_ranges_with_hints(plan.key_ranges, plan.key_range_hints);
     } else {
         builder.set_non_partitioned_key_ranges(plan.key_ranges);
+    }
+    if let Some(tidb) = plan.tidb {
+        builder.set_store_type(tidb_txnkv::StoreType::TiDb);
+        if let Some(server_id) = tidb.server_id {
+            builder.set_tidb_server_id(server_id);
+        }
     }
     let is_tiflash = plan.tiflash.is_some();
     if let Some(tiflash) = plan.tiflash {

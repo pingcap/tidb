@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 8,
-    "open": 8,
+    "unresolved": 7,
+    "open": 7,
     "partial": 0
   },
   "findings": [
@@ -62,17 +62,9 @@
       "finding": "`IndexMergeReaderExecutor`'s partial sources and table side are not Go's partial workers: handles come through the `PartialHandleSource` offer path (`MaterializedHandleSource` over `access_path`, `TableCommon` and its storage), not `partialIndexWorker` / `partialTableWorker` over each partial plan's `ConstructDAGReq`, and the final table read is not `buildFinalTableReader`'s handle-built `TableReaderExecutor`. The handle algebra (`fetchLoopUnion` / `fetchLoopIntersection`) is already Go's.",
       "rust_evidence": "`tidb-executor/src/index_merge_reader.rs` (`PartialHandleSource`, `MaterializedHandleSource`), `driver/physical_builder.rs`.",
       "go_owner": "`pkg/executor/index_merge_reader.go`"
-    },
-    {
-      "id": "T19",
-      "group": "Executors",
-      "status": "open",
-      "finding": "Two implementations of Go's `TableReaderExecutor` over two request stacks: `TableReaderExecutor` (TiKV, TiFlash) sends through `cop_reader`'s `RemoteScanPlan` / `open_scan`, and `TiDbTableReaderExecutor` (the `kv.TiDB` store's CLUSTER_* tables, reached through the memory-table retrieval) sends through `tidb_distsql`'s `RequestBuilder` (Go `distsql.RequestBuilder`). Go has one executor whose `buildKVReq` branches on the store type (`SetTiDBServerID` for a DDL-owner table, the user on the DAG) and one `RequestBuilder`.",
-      "rust_evidence": "`tidb-executor/src/table_reader.rs` (`TableReaderExecutor`, `TiDbTableReaderExecutor`), `tidb-executor/src/cop_reader.rs` (`open_table_read`, `RemoteScanPlan`), `driver/physical_builder.rs` (`build_cluster_table_reader`).",
-      "go_owner": "`pkg/executor/table_reader.go`, `pkg/planner/core/operator/physicalop` `ToPB`"
     }
   ],
-  "unresolved": 8,
-  "open": 8,
+  "unresolved": 7,
+  "open": 7,
   "partial": 0
 }

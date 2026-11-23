@@ -1306,7 +1306,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetrieve
         // serves.
         read.db_name
             .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
-            && read.cop_request.is_none()
+            && read.cop_destination.is_none()
             && crate::infoschema_reader::serves_table(&read.table_name)
     }
 

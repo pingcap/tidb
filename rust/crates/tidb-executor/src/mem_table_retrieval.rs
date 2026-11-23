@@ -56,10 +56,10 @@ pub struct MemTableRead {
     /// Whether the scan is a cluster table's TiDB-store `TableScan` rather
     /// than a `PhysicalMemTable`.
     pub is_cluster_scan: bool,
-    /// A CLUSTER_* table's TiDB-store reader: the DAG Go's planner pushed to
-    /// the `kv.TiDB` store, its key ranges and output types, which every
-    /// TiDB answers (Go `TableReaderExecutor`'s `kv.Request`).
-    pub cop_request: Option<std::sync::Arc<crate::builder_utils::TiDBCopRequest>>,
+    /// A CLUSTER_* table read through the `kv.TiDB` store (Go
+    /// `TableReaderExecutor` over `kv.TiDB`): where its request goes (Go
+    /// `GetClusterTableCopDestination`), every TiDB or the DDL owner.
+    pub cop_destination: Option<tidb_infoschema::infoschema_meta::ClusterTableCopDestination>,
 }
 
 impl MemTableRead {
@@ -147,7 +147,7 @@ impl MemTableRead {
             self.extractor,
             self.query_time_range,
             self.is_cluster_scan,
-            self.cop_request
+            self.cop_destination
         )
     }
 }
