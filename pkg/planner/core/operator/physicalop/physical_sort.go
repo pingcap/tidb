@@ -411,8 +411,18 @@ func literalForOrder(expr expression.Expression, retType *types.FieldType) (type
 		return c.Value, true
 	}
 	switch et := retType.EvalType(); et {
-	case types.ETInt, types.ETDecimal, types.ETString:
+	case types.ETInt, types.ETDecimal:
 		return c.Value, c.RetType.EvalType() == et
+	case types.ETString:
+		if c.RetType.EvalType() != et {
+			return types.Datum{}, false
+		}
+		if k := c.Value.Kind(); k == types.KindBinaryLiteral || k == types.KindMysqlBit {
+			// Hex and bit literals compare as numbers, ignoring leading zero bytes,
+			// but CASE/IF evaluates them as strings that keep those bytes.
+			return types.NewBytesDatum(c.Value.GetBytes()), true
+		}
+		return c.Value, true
 	case types.ETReal:
 		if c.RetType.EvalType() != et {
 			return types.Datum{}, false

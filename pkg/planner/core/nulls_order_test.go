@@ -64,6 +64,11 @@ func TestNullsHighOrderAvoidSort(t *testing.T) {
 		{"select a from t use index(ia) order by case when a is null then 1 end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by case when a is null then 'z' else 'a' end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by case when a is null then cast(1.5 as float) else cast(0.5 as float) end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		// Hex and bit literals are compared as the strings CASE/IF evaluates them to,
+		// keeping leading zero bytes: X'01' > X'0002'.
+		{"select a from t use index(ia) order by case when a is null then X'01' else X'0002' end, a", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		{"select a from t use index(ia) order by if(a is null, X'01', X'0002'), a", []string{"1", "2", "3", "<nil>", "<nil>"}},
+		{"select a from t use index(ia) order by case when a is null then X'0002' else b'1' end, a", []string{"<nil>", "<nil>", "1", "2", "3"}},
 		{"select a from t use index(ia) order by if(a is null, 1, 0), a", []string{"1", "2", "3", "<nil>", "<nil>"}},
 		{"select a from t use index(ia) order by if(a is null, 0, 1), a", []string{"<nil>", "<nil>", "1", "2", "3"}},
 		{"select a from t use index(ia) order by a is not null, a", []string{"<nil>", "<nil>", "1", "2", "3"}},
