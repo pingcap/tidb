@@ -1708,6 +1708,14 @@ impl SessionVars {
         if let Some(get_session) = def.get_session {
             return get_session(self).map(Cow::Owned);
         }
+        self.stored_system_value_at(index)
+    }
+
+    /// The value the session's variable table holds for a session-scoped
+    /// variable (its own copy, else the global or default it reads), without
+    /// a `GetSession` hook's answer: what Go's `s.systems` / global tier give.
+    fn stored_system_value_at(&self, index: usize) -> Result<Cow<'_, str>, VarError> {
+        let def = crate::sysvar::sys_var_at(index);
         if let Some(value) = self.session_resolved.values.get(index) {
             if let Some(value) = value.as_ref() {
                 return Ok(Cow::Borrowed(value.as_ref()));
@@ -1890,9 +1898,16 @@ impl SessionVars {
                 }
             }
             if let Some(hook) = get_sys_var(&key).and_then(|def| def.set_session) {
-                let value = self
-                    .get_system(&key)
+                // The stored value, not a `GetSession` hook's answer: that
+                // hook reads the typed field the overlay set, so it would
+                // hand the overlay back (Go `SetSystemVar(name, old)`
+                // restores the value read before the overlay).
+                let index = crate::sysvar::sys_var_index_lookup(&key)
                     .expect("a snapshot names a registered variable");
+                let value = self
+                    .stored_system_value_at(index)
+                    .expect("a snapshot names a session variable")
+                    .into_owned();
                 hook(self, &value).expect("a restored value was validated before it was stored");
             }
         }

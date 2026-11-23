@@ -955,3 +955,20 @@ fn mock_session_vars() -> tidb_variable::vars::SessionVars {
     .expect("the domain's GLOBAL tier seeds a session");
     vars
 }
+
+/// Go `StmtCtx.SetVarHintRestore`: a `SET_VAR` overlay ends with its
+/// statement, also for a variable whose read is a `GetSession` hook over a
+/// typed field (`integrationtest` `sessionctx/setvar`, `session/vars`).
+#[test]
+fn set_var_hint_restores_variables_read_through_get_session() {
+    let mut session = Session::new();
+    let read = |session: &mut Session, sql: &str| row_text(session.run(sql))[0][0].clone();
+    for (hinted, variable, overlay, restored) in [
+        ("group_concat_max_len=4", "group_concat_max_len", "4", "1024"),
+        ("tidb_partition_prune_mode=\"static\"", "tidb_partition_prune_mode", "static", "dynamic"),
+        ("tidb_enable_inl_join_inner_multi_pattern=OFF", "tidb_enable_inl_join_inner_multi_pattern", "0", "1"),
+    ] {
+        assert_eq!(read(&mut session, &format!("SELECT /*+ SET_VAR({hinted}) */ @@{variable}")), overlay);
+        assert_eq!(read(&mut session, &format!("SELECT @@{variable}")), restored, "{variable}");
+    }
+}
