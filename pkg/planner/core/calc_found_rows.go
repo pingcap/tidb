@@ -129,54 +129,40 @@ func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error
 	}
 }
 
-func resolveSQLCalcFoundRowsTarget(node ast.Node) (*ast.SelectStmt, string) {
+func newFoundRowsPreprocessor(node ast.Node, p *preprocessor) foundRowsPreprocessor {
 	query := node
 	if explain, ok := query.(*ast.ExplainStmt); ok {
 		query = explain.Stmt
 	}
-	allowedSelect := findSQLCalcFoundRowsAllowedSelect(query)
-	unsupportedReason := ""
-	if allowedSelect != query {
-		unsupportedReason = "SQL_CALC_FOUND_ROWS outside a top-level SELECT"
+	v := foundRowsPreprocessor{
+		preprocessor:  p,
+		allowedSelect: findSQLCalcFoundRowsAllowedSelect(query),
+	}
+	if v.allowedSelect != query {
+		v.unsupportedReason = "SQL_CALC_FOUND_ROWS outside a top-level SELECT"
 		if _, ok := query.(*ast.SetOprStmt); ok {
-			unsupportedReason = "SQL_CALC_FOUND_ROWS with set operations"
+			v.unsupportedReason = "SQL_CALC_FOUND_ROWS with set operations"
 		}
 	}
-	return allowedSelect, unsupportedReason
-}
-
-func checkAllowedSelectCalcFoundRows(vars *variable.SessionVars, stmt *ast.SelectStmt, unsupportedReason string) error {
-	if unsupportedReason != "" {
-		return handleUnsupportedCalcFoundRows(vars, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(unsupportedReason))
-	}
-	checker := &foundRowsChecker{root: stmt}
-	ast.Walk(stmt, checker)
-	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
-		return handleUnsupportedCalcFoundRows(vars, checker.err)
-	}
-	return checker.err
+	return v
 }
 
 // preprocessSQLCalcFoundRows checks modifier placement in the same traversal as
 // preprocessing, preserving its error order and skipped subtrees.
 func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
-	allowedSelect, unsupportedReason := resolveSQLCalcFoundRowsTarget(node)
-	v := foundRowsPreprocessor{
-		preprocessor:      p,
-		allowedSelect:     allowedSelect,
-		unsupportedReason: unsupportedReason,
-	}
+	v := newFoundRowsPreprocessor(node, p)
 	ast.Walk(node, &v)
 }
 
 // revalidateSQLCalcFoundRows re-applies tidb_enable_noop_functions for
 // prepared/cached statements whose AST was preprocessed in an earlier mode.
 func revalidateSQLCalcFoundRows(sctx sessionctx.Context, node ast.Node) error {
-	allowedSelect, unsupportedReason := resolveSQLCalcFoundRowsTarget(node)
-	if allowedSelect == nil || allowedSelect.SelectStmtOpts == nil || !allowedSelect.SelectStmtOpts.CalcFoundRows {
+	v := newFoundRowsPreprocessor(node, nil)
+	if v.allowedSelect == nil || v.allowedSelect.SelectStmtOpts == nil || !v.allowedSelect.SelectStmtOpts.CalcFoundRows {
 		return nil
 	}
-	return checkAllowedSelectCalcFoundRows(sctx.GetSessionVars(), allowedSelect, unsupportedReason)
+	v.preprocessor = &preprocessor{sctx: sctx}
+	return v.checkSelect(v.allowedSelect)
 }
 
 // foundRowsPreprocessor validates SELECT entry while retaining the preprocessor's
@@ -204,7 +190,15 @@ func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
 	if stmt != v.allowedSelect {
 		return plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 	}
-	return checkAllowedSelectCalcFoundRows(v.sctx.GetSessionVars(), stmt, v.unsupportedReason)
+	if v.unsupportedReason != "" {
+		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason))
+	}
+	checker := &foundRowsChecker{root: stmt}
+	ast.Walk(stmt, checker)
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
+		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), checker.err)
+	}
+	return checker.err
 }
 
 // findSQLCalcFoundRowsAllowedSelect returns the SELECT where the modifier is
