@@ -61,10 +61,8 @@ func resolvePanickedSubJobErr(runErr error, fallbackErrs ...*terror.Error) error
 	return dbterror.ErrCancelledDDLJob
 }
 
-func (w *worker) panicErrorLimitExceeded(jobCtx *jobContext, nextErrorCount int64) (int64, bool) {
-	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
-		jobCtx.logger.Error("load DDL global variable failed", zap.Error(err1))
-	}
+func panicErrorLimitExceeded(nextErrorCount int64) (int64, bool) {
+	// countForPanic has already refreshed TiDBDDLErrorCountLimit via loadGlobalVars.
 	errorCountLimit := vardef.GetDDLErrorCountLimit()
 	return errorCountLimit, nextErrorCount > errorCountLimit
 }
@@ -103,7 +101,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					} else if panickedSubState == model.JobStateCancelling {
 						// Keep Cancelling eligible so convertJob2RollbackJob + rollback
 						// runs on retry unless parent failures exceed the configured limit.
-						if _, exceeded := w.panicErrorLimitExceeded(jobCtx, job.ErrorCount+1); exceeded {
+						if _, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
 							panickedSubState = model.JobStateCancelled
 						}
 					}
@@ -411,7 +409,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		if res.panicked {
 			err = resolvePanickedSubJobErr(err, proxyJob.Error)
 			var cancelParent bool
-			if errorCountLimit, exceeded := w.panicErrorLimitExceeded(jobCtx, job.ErrorCount+1); exceeded {
+			if errorCountLimit, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
 				cancelParent = true
 				msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCountLimit)
 				jobCtx.logger.Warn(msg)

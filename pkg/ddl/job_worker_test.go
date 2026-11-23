@@ -895,6 +895,7 @@ func TestMultiSchemaRollbackSubJobPanicAdvancesAndFinishes(t *testing.T) {
 			require.NotEqual(t, "c2", col.Name.L, "unexpected column %s in state %s", col.Name.O, col.State)
 		}
 		require.Len(t, durableTbl.Columns, 2)
+		// Sub-job[1] panicked while already JobStateRollingback, so countForPanic cancels it in non-public StateDeleteOnly.
 		for _, idx := range durableTbl.Indices {
 			require.NotEqual(t, model.StatePublic, idx.State)
 		}
