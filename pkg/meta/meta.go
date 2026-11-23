@@ -114,6 +114,8 @@ var (
 	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
 	mDXFScheduleTuneKey            = []byte("DXFScheduleTune")
 
+	mLegacyECDSASessionTokenDisabled = []byte("LegacyECDSASessionTokenDisabled")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -2057,6 +2059,19 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
+}
+
+// GetLegacyECDSASessionTokenDisabled reports whether legacy ECDSA session tokens
+// have been permanently disabled. A missing key preserves upgrade compatibility.
+func (m *Mutator) GetLegacyECDSASessionTokenDisabled() (bool, error) {
+	value, err := m.txn.GetInt64(mLegacyECDSASessionTokenDisabled)
+	return value == 1, errors.Trace(err)
+}
+
+// SetLegacyECDSASessionTokenDisabled permanently disables legacy ECDSA session
+// tokens. The transition is one-way and repeated writes are safe.
+func (m *Mutator) SetLegacyECDSASessionTokenDisabled() error {
+	return errors.Trace(m.txn.Set(mLegacyECDSASessionTokenDisabled, []byte("1")))
 }
 
 // ElementKeyType is a key type of the element.

@@ -52,7 +52,9 @@ import (
 	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
@@ -73,6 +75,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -160,7 +163,9 @@ type Server struct {
 // NewTestServer creates a new Server for test.
 func NewTestServer(cfg *config.Config) *Server {
 	return &Server{
-		cfg: cfg,
+		cfg:            cfg,
+		health:         uatomic.NewBool(false),
+		inShutdownMode: uatomic.NewBool(false),
 	}
 }
 
@@ -348,7 +353,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 }
 
 func (s *Server) initTiDBListener() (err error) {
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
+	socketOnly := diagnosticmode.Enabled() && s.cfg.Security.SkipGrantTable
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || (RunInGoTest && !socketOnly))
+	needUnixSocket := s.cfg.Socket != ""
+	if socketOnly && (needTCPListener || s.listener != nil || !needUnixSocket) {
+		return errors.New("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+	}
+	if needTCPListener && s.listener == nil {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -363,7 +374,7 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Socket != "" {
+	if needUnixSocket && s.socket == nil {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
 		}
@@ -467,6 +478,11 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
+	// The plaintext slow-query worker is independent of tidb_redact_log.
+	// Tests start it explicitly when they exercise slow-query cache behavior.
+	if !intest.InTest {
+		executor.StartSlowQueryCache()
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 

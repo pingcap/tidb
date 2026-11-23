@@ -429,6 +429,20 @@ func (m *mockKeyspaceManager) LoadKeyspace(ctx context.Context, name string) (*k
 	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
 
+func (m *mockKeyspaceManager) LoadKeyspaceByID(ctx context.Context, id uint32) (*keyspacepb.KeyspaceMeta, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	index, exists := slices.BinarySearchFunc(m.keyspaces, id, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
+		return int(k.Id) - int(idToSearch)
+	})
+	if exists {
+		return m.keyspaces[index], nil
+	}
+
+	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
 func (m *mockKeyspaceManager) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
 	panic("unimplemented")
 }

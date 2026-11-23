@@ -252,6 +252,15 @@ func TestMeta(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 
+	legacyDisabled, err := m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.False(t, legacyDisabled)
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	require.NoError(t, m.SetLegacyECDSASessionTokenDisabled())
+	legacyDisabled, err = m.GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n)
@@ -515,6 +524,19 @@ func TestMeta(t *testing.T) {
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+
+	// A new transaction and a snapshot both observe the durable one-way flag.
+	restartedTxn, err := store.Begin()
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewMutator(restartedTxn).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
+	require.NoError(t, restartedTxn.Rollback())
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	legacyDisabled, err = meta.NewReader(store.GetSnapshot(version)).GetLegacyECDSASessionTokenDisabled()
+	require.NoError(t, err)
+	require.True(t, legacyDisabled)
 
 	// Test for DDLJobHistoryKey.
 	key = meta.DDLJobHistoryKey(m, 888)

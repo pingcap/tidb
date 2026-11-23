@@ -242,6 +242,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Savepoint"
 	case *OptimizeTableStmt:
 		return "Optimize"
+	case *RecommendIndexStmt:
+		return RecommendIndexStmtLabel
 	}
 	return "other"
 }
