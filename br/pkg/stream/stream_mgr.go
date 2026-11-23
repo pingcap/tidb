@@ -270,8 +270,6 @@ func (m *MetadataHelper) ReadFile(
 		return m.decodeCompressedData(decryptedData, compressionType)
 	}
 
-	cref.ref -= 1
-
 	if len(cref.data) == 0 {
 		cref.data, err = storage.ReadFile(ctx, path)
 		if err != nil {
@@ -292,6 +290,7 @@ func (m *MetadataHelper) ReadFile(
 	}
 	buf, err := m.decodeCompressedData(decryptedData, compressionType)
 
+	cref.ref -= 1
 	if cref.ref <= 0 {
 		// need reset reference information.
 		cref.data = nil
