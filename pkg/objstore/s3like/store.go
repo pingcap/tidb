@@ -606,11 +606,17 @@ func (rs *Storage) open(
 	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
-) (io.ReadCloser, RangeInfo, error) {
+) (_ io.ReadCloser, _ RangeInfo, retErr error) {
 	result, err := rs.s3Cli.GetObject(ctx, path, startOffset, endOffset)
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
+	defer func() {
+		// The caller takes ownership of the body only after validation succeeds.
+		if retErr != nil && result.Body != nil {
+			_ = result.Body.Close()
+		}
+	}()
 
 	var r RangeInfo
 	// Those requests without a `Range` will have no `ContentRange` in the response,
