@@ -9,6 +9,7 @@ partition by range (id) (
 create user nopriv;
 
 sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
 show affinity;
 connect (affinity_user,localhost,nopriv,,);
 connection affinity_user;
@@ -20,8 +21,10 @@ connection default;
 grant select on pub_db.part_t to nopriv;
 connection affinity_user;
 sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
 show affinity;
 sorted_result;
+--replace_column 4 <leader_store_id> 5 <voter_store_ids> 6 <status> 7 <region_count> 8 <affinity_region_count>
 show affinity like 'part%';
 
 connection default;

@@ -9,9 +9,9 @@ partition p1 values less than maxvalue
 create user nopriv;
 show affinity;
 Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_count	Affinity_region_count
-pub_db	part_t	p0	NULL	NULL	NULL	NULL	NULL
-pub_db	part_t	p1	NULL	NULL	NULL	NULL	NULL
-secret_db	secret_t	NULL	NULL	NULL	NULL	NULL	NULL
+pub_db	part_t	p0	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
+pub_db	part_t	p1	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
+secret_db	secret_t	NULL	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
 show placement;
 Target	Placement	Scheduling_State
 show databases like '%_db';
@@ -21,12 +21,12 @@ Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_
 grant select on pub_db.part_t to nopriv;
 show affinity;
 Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_count	Affinity_region_count
-pub_db	part_t	p0	NULL	NULL	NULL	NULL	NULL
-pub_db	part_t	p1	NULL	NULL	NULL	NULL	NULL
+pub_db	part_t	p0	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
+pub_db	part_t	p1	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
 show affinity like 'part%';
 Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_count	Affinity_region_count
-pub_db	part_t	p0	NULL	NULL	NULL	NULL	NULL
-pub_db	part_t	p1	NULL	NULL	NULL	NULL	NULL
+pub_db	part_t	p0	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
+pub_db	part_t	p1	<leader_store_id>	<voter_store_ids>	<status>	<region_count>	<affinity_region_count>
 revoke select on pub_db.part_t from nopriv;
 show affinity;
 Db_name	Table_name	Partition_name	Leader_store_id	Voter_store_ids	Status	Region_count	Affinity_region_count
