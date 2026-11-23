@@ -35,8 +35,8 @@
       "id": "T10",
       "group": "Executor, DML and expressions",
       "status": "partial",
-      "finding": "Go `pkg/executor` code is implemented as `Session` methods in the session crate: `ExecStmt` (`adapter.go`), `ResetContextOfStmt` and the select-lock / warning handling (`select.go`), `PlanReplayerLoadInfo.Update` (`plan_replayer.go`; `PlanReplayerExec`, `ImportIntoExec` and `DDLExec.Next`'s executor call are executors now), parts of `SimpleExec` (`simple.go`), `ShowExec` (`show.go`), the prepared-statement executors (`prepared.go`), `CompactTableTiFlashExec`, `TraceExec`, `LoadStatsExec`, `CancelDDLJobsExec` and more. In Go they are executors over `sessionctx.Context`.",
-      "rust_evidence": "`tidb-session/src/plan_replayer.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`, `show.rs`, `domain/cluster_session_node/mod.rs` (counted from their `Go \\`X\\`` doc claims on `pkg/executor` symbols).",
+      "finding": "Go `pkg/executor`'s `ExecStmt` (`adapter.go`: `Exec`, `FinishExecuteStmt`, `handlePessimisticLockError`, `handleNoDelayExecutor`, the observation's begin and publish, `isSelectForUpdate`) and `ResetContextOfStmt` / `executorBuilder.build`'s dispatch are implemented as `Session` methods in the session crate (`lib.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`), as are `TraceExec` (the node) and `CoprocessorDAGHandler`. Moved to `tidb-executor` already: PlanReplayerExec and PlanReplayerLoadInfo, ImportIntoExec, DDLExec.Next's call, SimpleExec's transaction statements, ShowDDLExec, fetchShowWarnings / fetchShowStatus / fetchShowTableStatus, the account and variable memtable retrievers, and Go master's materialized-view executors (`tidb-executor/src/mview/`).",
+      "rust_evidence": "`tidb-session/src/lib.rs` (`ExecStmt.Exec`), `dispatch.rs` (`execute_plan`, `handle_cop_plan`, `is_select_for_update`), `observation.rs`, `statement_lifecycle.rs`, `domain/cluster_session_node/mod.rs` (`TraceExec`, `handleNoDelayExecutor`).",
       "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
     },
     {
