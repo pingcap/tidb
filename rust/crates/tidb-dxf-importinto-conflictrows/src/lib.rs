@@ -237,7 +237,7 @@ pub fn clean_conflict_row_files(
     if cloud_storage_uri.is_empty() {
         return Ok(());
     }
-    let sort_store: Arc<dyn Storage> = tidb_executor::importer::get_sort_store(ctx, cloud_storage_uri)
+    let sort_store: Arc<dyn Storage> = tidb_executor_importer::get_sort_store(ctx, cloud_storage_uri)
         .map_err(|e| Box::new(e.to_mysql_error()) as Error)?;
     let result = clean_files(ctx, sort_store.as_ref(), info_getter, chrono::Utc::now().fixed_offset()).1;
     sort_store.close();

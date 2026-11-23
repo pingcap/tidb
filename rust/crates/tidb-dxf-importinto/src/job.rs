@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tidb_dxf::TaskBase;
-use tidb_executor::importer::chunk_process::Chunk;
-use tidb_executor::importer::Plan;
+use tidb_executor_importer::chunk_process::Chunk;
+use tidb_executor_importer::Plan;
 use tidb_gocontext::Context;
 
 use crate::planner::LogicalPlan;
@@ -111,7 +111,7 @@ fn do_submit_task(
     let result = task_manager.with_new_txn(&ctx, &mut |se| {
         let attempt = (|| -> Result<(), Error> {
             let conn = se.sql_executor();
-            job_id = tidb_executor::importer::job::create_job(
+            job_id = tidb_executor_importer::job::create_job(
                 &ctx,
                 conn.as_ref(),
                 &plan.db_name,
@@ -226,7 +226,7 @@ fn cancel_dangling_import_job(ctx: &Context, job_id: i64) -> Result<(), Error> {
     let manager = tidb_dxf_storage::get_task_manager().map_err(|e| Arc::new(e) as Error)?;
     let mut failure: Option<Error> = None;
     let result = manager.with_new_session(&mut |se| {
-        let attempt = tidb_executor::importer::job::cancel_pending_job(ctx, se.sql_executor().as_ref(), job_id)
+        let attempt = tidb_executor_importer::job::cancel_pending_job(ctx, se.sql_executor().as_ref(), job_id)
             .map_err(crate::driver)
             .and_then(|()| {
                 if se.affected_rows() == 0 {
@@ -273,10 +273,10 @@ mod tests {
     /// import from files.
     #[test]
     fn async_prepare_only_for_next_gen_global_sort_files() {
-        let mut plan = tidb_executor::importer::Plan { cloud_storage_uri: "s3://b/p".into(), ..Default::default() };
+        let mut plan = tidb_executor_importer::Plan { cloud_storage_uri: "s3://b/p".into(), ..Default::default() };
         let next_gen = tidb_config_kerneltype::is_next_gen();
         assert_eq!(super::should_use_async_prepare(&plan), next_gen);
-        plan.query_source = Some(tidb_executor::importer::query_source::QuerySource::default());
+        plan.query_source = Some(tidb_executor_importer::query_source::QuerySource::default());
         assert!(!super::should_use_async_prepare(&plan));
         plan.query_source = None;
         plan.cloud_storage_uri.clear();

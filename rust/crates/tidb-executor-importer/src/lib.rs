@@ -1,4 +1,8 @@
 //! Go `pkg/executor/importer`.
+
+pub mod import_into_options;
+
+use tidb_driver_error::DriverError;
 mod import;
 pub use import::*;
 
@@ -22,3 +26,7 @@ mod sampler_tests;
 #[cfg(test)]
 mod table_import_tests;
 mod local;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tidb-executor-importer = { path = "../tidb-executor-importer" }
 tidb-dxf-metering = { path = "../tidb-dxf-metering" }
 tidb-objstore-recording = { path = "../tidb-objstore-recording" }
 crossbeam-channel = "0.5"
@@ -36,7 +37,6 @@ tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
 tidb-br = { path = "../tidb-br" }
 tidb-dxf-taskexecutor = { path = "../tidb-dxf-taskexecutor" }
-tidb-executor = { path = "../tidb-executor" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
 tidb-ingestor-engineapi = { path = "../tidb-ingestor-engineapi" }
@@ -72,4 +72,5 @@ tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 chrono.workspace = true
 
 [dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
 tempfile.workspace = true

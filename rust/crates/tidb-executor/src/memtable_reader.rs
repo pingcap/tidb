@@ -21,6 +21,7 @@
 //! `Next`), so what they need of the viewing session is a [`ViewerState`]
 //! the session snapshots when a scan first asks for one of them.
 
+use tidb_driver_error::sql_exec_driver_error;
 use tidb_ddl::ddl_history::DdlJobHistoryStore;
 use tidb_kv::lock_waits::DataLockWaitsProvider;
 use tidb_sessmgr as process;
@@ -622,11 +623,6 @@ pub fn exec_restricted_sql_with_options(
         .map_err(sql_exec_driver_error)
 }
 
-/// A SQL executor's failure as the statement error it carries, or Go's
-/// unknown error naming any other.
-pub fn sql_exec_driver_error(error: tidb_sqlexec::SqlExecError) -> DriverError {
-    DriverError::Mysql(tidb_store_driver_error::sql_query_error::mysql_error_of(error))
-}
 
 pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     use std::sync::atomic::Ordering;

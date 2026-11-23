@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use tidb_datatype::Datum;
 use tidb_dxf_execute::{Collector, NoopCollector};
-use tidb_executor::importer::kv_encode::TableKVEncoder;
+use tidb_executor_importer::kv_encode::TableKVEncoder;
 use tidb_gocontext::Context;
 use tidb_ingestor_simplesst::KVPair;
 use tidb_lightning_backend_kv::Pairs;

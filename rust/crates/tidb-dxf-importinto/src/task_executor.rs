@@ -11,7 +11,7 @@ use tidb_dxf::*;
 use tidb_dxf_execute::{FrameworkInfoSlot, StepExecFrameworkInfo, StepExecutor, SubtaskSummary};
 use tidb_dxf_storage::SessionContext;
 use tidb_dxf_taskexecutor::{BaseTaskExecutor, TaskExecutor};
-use tidb_executor::importer::table_import::{self, TableImporter, INDEX_ENGINE_ID};
+use tidb_executor_importer::table_import::{self, TableImporter, INDEX_ENGINE_ID};
 use tidb_gocontext::Context;
 
 use crate::planner::build_controller_for_plan;
@@ -225,7 +225,7 @@ impl ImportStepExecutor {
         let query = self.meta.plan.query_source.as_ref();
         if let Some(q) = query {
             chunks = (0..concurrency)
-                .map(|_| tidb_executor::importer::chunk_process::Chunk { timestamp: q.encode_timestamp, ..Default::default() })
+                .map(|_| tidb_executor_importer::chunk_process::Chunk { timestamp: q.encode_timestamp, ..Default::default() })
                 .collect();
         }
         let checksum = Mutex::new(tidb_lightning_verification::KvGroupChecksum::with_keyspace(ti.key_space()));
@@ -261,7 +261,7 @@ impl ImportStepExecutor {
         ctx: &Context,
         ti: &Arc<TableImporter>,
         meta: &ImportStepMeta,
-        chunks: &[tidb_executor::importer::chunk_process::Chunk],
+        chunks: &[tidb_executor_importer::chunk_process::Chunk],
         concurrency: usize,
         checksum: &Mutex<tidb_lightning_verification::KvGroupChecksum>,
         collector: &SummaryCollector,
@@ -277,7 +277,7 @@ impl ImportStepExecutor {
         let result = run_chunks(ctx, chunks, concurrency, |worker_ctx, chunk| {
             sort_chunk_failpoint()?;
             let mut chunk_checksum = tidb_lightning_verification::KvGroupChecksum::with_keyspace(ti.key_space());
-            tidb_executor::importer::engine_process::process_chunk(
+            tidb_executor_importer::engine_process::process_chunk(
                 worker_ctx,
                 chunk,
                 ti,
@@ -311,12 +311,12 @@ impl ImportStepExecutor {
         ti: &Arc<TableImporter>,
         subtask_id: i64,
         store: &Arc<dyn tidb_objstore::storeapi::Storage>,
-        chunks: &[tidb_executor::importer::chunk_process::Chunk],
+        chunks: &[tidb_executor_importer::chunk_process::Chunk],
         concurrency: usize,
         checksum: &Mutex<tidb_lightning_verification::KvGroupChecksum>,
         collector: &SummaryCollector,
         shared: &Arc<Mutex<SortedMetas>>,
-        query: Option<&tidb_executor::importer::query_source::QuerySource>,
+        query: Option<&tidb_executor_importer::query_source::QuerySource>,
     ) -> Result<(), Error> {
         let plan = &self.meta.plan;
         let (data_mem, index_mem) = get_writer_memory_size_limit(&self.get_resource(), plan);
@@ -324,7 +324,7 @@ impl ImportStepExecutor {
         let index_block_size =
             tidb_ingestor_simplesst::get_adjusted_block_size(index_mem, tidb_ingestor_simplesst::DEFAULT_BLOCK_SIZE);
         let on_dup_key = plan.get_on_dup_key_mode().to_owned();
-        let indices_gen_kv = Arc::new(tidb_executor::importer::kv_encode::get_indices_gen_kv(
+        let indices_gen_kv = Arc::new(tidb_executor_importer::kv_encode::get_indices_gen_kv(
             plan.table_info.as_ref().ok_or_else(|| plain("import plan has no table info"))?,
         ));
         let prefix = subtask_prefix(self.task_id, subtask_id);
@@ -339,7 +339,7 @@ impl ImportStepExecutor {
         let (worker_ctx, cancel) = Context::with_cancel(ctx);
         // Go `importQueryOperator`: the query sends its chunks to the
         // encoders, which read them until the query closes the channel.
-        let (selected_tx, selected_rx) = crossbeam_channel::bounded::<tidb_executor::importer::chunk_process::QueryChunk>(1);
+        let (selected_tx, selected_rx) = crossbeam_channel::bounded::<tidb_executor_importer::chunk_process::QueryChunk>(1);
         let mut selected_tx = query.map(|_| selected_tx);
         std::thread::scope(|scope| {
             if let (Some(q), Some(tx)) = (query, selected_tx.take()) {
@@ -377,7 +377,7 @@ impl ImportStepExecutor {
                     let (store, prefix, sink) = (Arc::clone(store), prefix.clone(), Arc::clone(shared));
                     let (indices_gen_kv, on_dup_key, worker_uuid2, index_codec) =
                         (Arc::clone(&indices_gen_kv), on_dup_key.clone(), worker_uuid.clone(), Arc::clone(&tikv_codec));
-                    let mut index_writer = tidb_executor::importer::chunk_process::IndexRouteWriter::new(Box::new(
+                    let mut index_writer = tidb_executor_importer::chunk_process::IndexRouteWriter::new(Box::new(
                         move |index_id| {
                             let on_dup = get_on_dup_for_index(&indices_gen_kv, index_id, &on_dup_key).map_err(|e| e.to_string())?;
                             let sink = Arc::clone(&sink);
@@ -409,7 +409,7 @@ impl ImportStepExecutor {
                             break;
                         }
                         let r = if query.is_some() {
-                            tidb_executor::importer::engine_process::process_query_chunk_with_writer(
+                            tidb_executor_importer::engine_process::process_query_chunk_with_writer(
                                 &worker_ctx,
                                 &chunks[i],
                                 selected_rx.clone(),
@@ -420,7 +420,7 @@ impl ImportStepExecutor {
                                 Some(collector),
                             )
                         } else {
-                            tidb_executor::importer::engine_process::process_chunk_with_writer(
+                            tidb_executor_importer::engine_process::process_chunk_with_writer(
                                 &worker_ctx,
                                 &chunks[i],
                                 ti,
@@ -466,8 +466,8 @@ impl ImportStepExecutor {
     fn read_query(
         &self,
         ctx: &Context,
-        q: &tidb_executor::importer::query_source::QuerySource,
-        selected: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+        q: &tidb_executor_importer::query_source::QuerySource,
+        selected: &crossbeam_channel::Sender<tidb_executor_importer::chunk_process::QueryChunk>,
     ) -> Result<(), Error> {
         let runtime = self.query_runtime.as_ref().ok_or_else(|| plain("the import query step has no task runtime"))?;
         let session = runtime.sys_session_pool().get().map_err(|e| plain(e.to_string()))?;
@@ -564,11 +564,11 @@ const WRITER_MEM_BUDGET_RATIO: f64 = 0.5;
 
 /// Go `getWriterMemorySizeLimit`: the data writer's and each index
 /// writer's memory, from half the memory per core in `index + 3` shares.
-fn get_writer_memory_size_limit(resource: &StepResource, plan: &tidb_executor::importer::Plan) -> (u64, u64) {
+fn get_writer_memory_size_limit(resource: &StepResource, plan: &tidb_executor_importer::Plan) -> (u64, u64) {
     let index_kv_group_cnt = plan
         .desired_table_info
         .as_ref()
-        .map_or(0, tidb_executor::importer::kv_encode::get_num_of_index_gen_kv);
+        .map_or(0, tidb_executor_importer::kv_encode::get_num_of_index_gen_kv);
     let mem_per_share = resource.memory_per_core() as f64 * WRITER_MEM_BUDGET_RATIO / (index_kv_group_cnt + 3) as f64;
     ((mem_per_share * 3.0) as u64, mem_per_share as u64)
 }
@@ -589,7 +589,7 @@ fn get_on_dup_for_conflicted_kv(on_dup_key_mode: &str) -> OnDuplicateKey {
 
 /// Go `getOnDupForKVGroup`.
 fn get_on_dup_for_kv_group(
-    indices_gen_kv: &std::collections::BTreeMap<i64, tidb_executor::importer::kv_encode::GenKVIndex>,
+    indices_gen_kv: &std::collections::BTreeMap<i64, tidb_executor_importer::kv_encode::GenKVIndex>,
     kv_group: &str,
     on_dup_key_mode: &str,
 ) -> Result<OnDuplicateKey, Error> {
@@ -603,7 +603,7 @@ fn get_on_dup_for_kv_group(
 /// Go `getOnDupForIndex`: a unique index conflicts like the data; a
 /// non-unique one only repeats the same row.
 fn get_on_dup_for_index(
-    indices_gen_kv: &std::collections::BTreeMap<i64, tidb_executor::importer::kv_encode::GenKVIndex>,
+    indices_gen_kv: &std::collections::BTreeMap<i64, tidb_executor_importer::kv_encode::GenKVIndex>,
     index_id: i64,
     on_dup_key_mode: &str,
 ) -> Result<OnDuplicateKey, Error> {
@@ -722,7 +722,7 @@ impl MergeSortStepExecutor {
         let sink = Arc::clone(&sorted);
         let on_writer_close: tidb_ingestor_simplesst::OnWriterCloseFunc =
             Arc::new(move |s| sink.lock().unwrap_or_else(std::sync::PoisonError::into_inner).merge_summary(s));
-        let indices_gen_kv = tidb_executor::importer::kv_encode::get_indices_gen_kv(
+        let indices_gen_kv = tidb_executor_importer::kv_encode::get_indices_gen_kv(
             self.meta.plan.table_info.as_ref().ok_or_else(|| plain("import plan has no table info"))?,
         );
         let on_dup = get_on_dup_for_kv_group(&indices_gen_kv, &sm.kv_group, self.meta.plan.get_on_dup_key_mode())?;
@@ -828,7 +828,7 @@ impl WriteAndIngestStepExecutor {
         sm.read_external(ctx, store.as_ref())?;
         // Compatible with metas from before range job keys.
         let job_keys = sm.range_job_keys.clone().or_else(|| sm.range_split_keys.clone()).unwrap_or_default();
-        let indices_gen_kv = tidb_executor::importer::kv_encode::get_indices_gen_kv(
+        let indices_gen_kv = tidb_executor_importer::kv_encode::get_indices_gen_kv(
             self.meta.plan.table_info.as_ref().ok_or_else(|| plain("import plan has no table info"))?,
         );
         let on_dup = get_on_dup_for_kv_group(&indices_gen_kv, &sm.kv_group, self.meta.plan.get_on_dup_key_mode())?;
@@ -977,7 +977,7 @@ fn storage_driver_err(e: tidb_dxf_storage::StorageError) -> tidb_driver_error::D
 impl table_import::ChecksumSession for SessionChecksum<'_> {
     fn exec_sql(&self, sql: &str) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_driver_error::DriverError> {
         tidb_sqlexec::execute_sql(self.ctx, self.se.sql_executor().as_ref(), sql, &[])
-            .map_err(tidb_executor::memtable_reader::sql_exec_driver_error)
+            .map_err(tidb_driver_error::sql_exec_driver_error)
     }
     fn set_system_var(&self, name: &str, value: &str) -> Result<(), tidb_driver_error::DriverError> {
         self.se.set_system_var(name, value).map_err(storage_driver_err)
@@ -1091,7 +1091,7 @@ impl StepExecutor for PostProcessStepExecutor {
 /// The rebase failed, the checksum could not be read or did not match.
 pub fn post_process_with_new_session(
     ctx: &Context,
-    plan: &tidb_executor::importer::Plan,
+    plan: &tidb_executor_importer::Plan,
     max_ids: &std::collections::BTreeMap<tidb_lightning_backend_kv::AllocatorType, i64>,
     local_checksum: &tidb_lightning_verification::KvGroupChecksum,
 ) -> Result<(), Error> {
@@ -1119,7 +1119,7 @@ pub fn post_process_with_new_session(
 #[cfg(test)]
 mod global_sort_tests {
     use super::*;
-    use tidb_executor::importer::kv_encode::GenKVIndex;
+    use tidb_executor_importer::kv_encode::GenKVIndex;
 
     fn indices() -> std::collections::BTreeMap<i64, GenKVIndex> {
         std::collections::BTreeMap::from([
@@ -1163,7 +1163,7 @@ mod global_sort_tests {
     #[test]
     fn writer_memory_and_prefix() {
         let res = StepResource { cpu: tidb_dxf::Allocatable::new(4), mem: tidb_dxf::Allocatable::new(8 << 30) };
-        let plan = tidb_executor::importer::Plan::default();
+        let plan = tidb_executor_importer::Plan::default();
         // No index: half of 2 GiB per core in 3 float shares, 3 of them for
         // the data writer.
         assert_eq!(get_writer_memory_size_limit(&res, &plan), (1 << 30, 357_913_941));

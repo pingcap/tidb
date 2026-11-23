@@ -264,7 +264,7 @@ fn clean_external_files(ctx: &Context, uri: &str, group: &CleanFileGroup) -> Res
         tidb_logutil::bg_logger().with_fields(&[tidb_log::Field::new("task-ids", tidb_log::Value::Str(format!("{:?}", group.task_ids)))]),
         "cleanup global sorted data",
     );
-    let store = match tidb_executor::importer::get_sort_store(ctx, uri) {
+    let store = match tidb_executor_importer::get_sort_store(ctx, uri) {
         Ok(store) => store,
         Err(e) => {
             tidb_logutil::bg_logger()

@@ -224,3 +224,9 @@ impl From<KillStop> for DriverError {
 
 #[cfg(test)]
 mod go_error_identity_tests;
+
+/// A SQL executor's failure as the statement error it carries, or Go's
+/// unknown error naming any other.
+pub fn sql_exec_driver_error(error: tidb_sqlexec::SqlExecError) -> DriverError {
+    DriverError::Mysql(tidb_store_driver_error::sql_query_error::mysql_error_of(error))
+}

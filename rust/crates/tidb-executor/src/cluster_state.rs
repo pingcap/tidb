@@ -74,7 +74,7 @@ impl ViewerState {
         } else {
             retriever.retrieve_local(exec)
         };
-        retrieved.map_err(crate::memtable_reader::sql_exec_driver_error)?;
+        retrieved.map_err(tidb_driver_error::sql_exec_driver_error)?;
         Ok(retriever.sql_digests_map)
     }
 

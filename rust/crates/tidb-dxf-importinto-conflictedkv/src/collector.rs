@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 
 use tidb_datatype::Datum;
 use tidb_dxf_execute::Collector as ProgressCollector;
-use tidb_executor::importer::kv_encode::TableKVEncoder;
+use tidb_executor_importer::kv_encode::TableKVEncoder;
 use tidb_gocontext::Context;
 use tidb_lightning_backend_kv::Pairs;
 use tidb_lightning_verification::KvChecksum;

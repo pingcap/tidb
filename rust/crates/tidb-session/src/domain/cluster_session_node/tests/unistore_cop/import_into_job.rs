@@ -5,7 +5,7 @@
 
 use super::*;
 use serde_json::json;
-use tidb_executor::importer::job::{self, ImportParameters, JobInfo, Summary};
+use tidb_executor_importer::job::{self, ImportParameters, JobInfo, Summary};
 
 /// One session's SQL executor and affected-row count, as Go's tests read
 /// `tk.Session()`.

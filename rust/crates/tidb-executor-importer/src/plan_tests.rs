@@ -32,7 +32,7 @@ fn session(rec: &Value) -> ImportSessionInfo {
 
 #[test]
 fn plan_matches_go_capture() {
-    let mut lines = include_str!("../../testdata/import_into_plan_go.jsonl").lines();
+    let mut lines = include_str!("../testdata/import_into_plan_go.jsonl").lines();
     let header: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     let meta = tidb_meta::value::parse_table_info(header["table_info"].to_string().as_bytes(), 0).unwrap();
     let cpu = header["cpu"].as_u64().unwrap() as usize;

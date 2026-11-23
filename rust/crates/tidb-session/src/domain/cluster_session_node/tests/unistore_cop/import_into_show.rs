@@ -11,7 +11,7 @@
 
 use super::table_mode::refusal;
 use super::*;
-use tidb_executor::importer::job::{self, ImportParameters, Summary};
+use tidb_executor_importer::job::{self, ImportParameters, Summary};
 
 /// A row without the time columns, joined like the Go capture.
 fn text(session: &mut Session, sql: &str) -> Vec<String> {

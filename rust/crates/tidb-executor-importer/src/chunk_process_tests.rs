@@ -48,7 +48,7 @@ fn import(sql: &str) -> tidb_ast::ImportIntoStmt {
 
 #[test]
 fn file_chunk_process_matches_go_capture() {
-    for line in include_str!("../../testdata/import_into_chunk_go.jsonl").lines() {
+    for line in include_str!("../testdata/import_into_chunk_go.jsonl").lines() {
         let rec: Value = serde_json::from_str(line).unwrap();
         let name = rec["case"].as_str().unwrap();
         let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();
@@ -216,7 +216,7 @@ impl tidb_br::pdutil::LabelRuleClient for LabelRules {
 #[test]
 fn import_selected_rows_writes_the_rows_kvs() {
     use tidb_datatype::Datum;
-    let line = include_str!("../../testdata/import_into_chunk_go.jsonl").lines().next().unwrap();
+    let line = include_str!("../testdata/import_into_chunk_go.jsonl").lines().next().unwrap();
     let rec: Value = serde_json::from_str(line).unwrap();
     assert_eq!(rec["case"], "all_columns");
     let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();

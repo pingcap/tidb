@@ -157,7 +157,7 @@ fn test_get_conflict_handling_mode() {
 #[test]
 fn test_import_controller_mapping() {
     let table = mapping_table();
-    for line in include_str!("../../testdata/import_into_mapping_go.txt").lines() {
+    for line in include_str!("../testdata/import_into_mapping_go.txt").lines() {
         let fields: Vec<_> = line.split('\t').collect();
         let stmt = import(fields[0]);
         let plan = Plan::new_import_plan(&stmt, 6, "").unwrap();
@@ -249,7 +249,7 @@ fn mapping_table() -> tidb_table::tables::TableCommon {
 #[test]
 fn test_import_csv_interpretation() {
     use tidb_lightning_mydump::{CharsetConvertor, CsvParser};
-    for line in include_str!("../../testdata/import_into_csv_go.jsonl").lines() {
+    for line in include_str!("../testdata/import_into_csv_go.jsonl").lines() {
         let capture: serde_json::Value = serde_json::from_str(line).unwrap();
         let stmt = import(capture["sql"].as_str().unwrap());
         let plan = Plan::new_import_plan(&stmt, 6, "").unwrap();
@@ -305,7 +305,7 @@ fn test_import_csv_interpretation() {
 fn test_import_parser_contract() {
     use serde_json::{json, Value};
     use tidb_lightning_mydump::{read_chunks, read_until, ChunkParser, CsvParser, Parser};
-    for line in include_str!("../../testdata/import_parser_contract_go.jsonl").lines() {
+    for line in include_str!("../testdata/import_parser_contract_go.jsonl").lines() {
         let expected: Value = serde_json::from_str(line).unwrap();
         let format = expected[0].as_str().unwrap();
         let make_parser = || -> Box<dyn Parser> {
@@ -417,7 +417,7 @@ fn test_supported_suffix_for_server_disk() {
     std::os::unix::fs::symlink(dir.path().join("server-0.csv"), dir.path().join("link.csv"))
         .unwrap();
     std::os::unix::fs::symlink(dir.path().join("absent"), dir.path().join("dangling.csv")).unwrap();
-    for line in include_str!("../../testdata/import_local_files_go.jsonl").lines() {
+    for line in include_str!("../testdata/import_local_files_go.jsonl").lines() {
         let expected: Value = serde_json::from_str(line).unwrap();
         let name = expected[0].as_str().unwrap();
         let path = if name == "relative.csv" {
@@ -425,7 +425,7 @@ fn test_supported_suffix_for_server_disk() {
         } else {
             dir.path().join(name).to_string_lossy().into_owned()
         };
-        let result = super::super::local::find_local_data_files(&path, true);
+        let result = crate::local::find_local_data_files(&path, true);
         match result {
             Ok((_, files)) => {
                 assert_eq!(expected[2], "");

@@ -6,8 +6,8 @@
 
 use super::sql_kit::{exec_all, q, session};
 use super::*;
-use tidb_executor::importer::chunk_process::QueryChunk;
-use tidb_executor::importer::query_source::{QuerySource, SourceTable};
+use tidb_executor_importer::chunk_process::QueryChunk;
+use tidb_executor_importer::query_source::{QuerySource, SourceTable};
 
 const IMPORT_QUERY_MEM_QUOTA: i64 = 32 << 20;
 
@@ -349,7 +349,7 @@ fn new_query_step_executor(
         None,
     );
     step.init(&ctx).unwrap();
-    let sort_store = tidb_executor::importer::get_sort_store(&ctx, sort_dir.path().to_str().unwrap()).unwrap();
+    let sort_store = tidb_executor_importer::get_sort_store(&ctx, sort_dir.path().to_str().unwrap()).unwrap();
     (step, sort_store, sort_dir)
 }
 

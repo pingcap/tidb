@@ -5,9 +5,9 @@
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
-use tidb_executor::importer::chunk_process::Chunk;
-use tidb_executor::importer::job::Summary;
-use tidb_executor::importer::Plan;
+use tidb_executor_importer::chunk_process::Chunk;
+use tidb_executor_importer::job::Summary;
+use tidb_executor_importer::Plan;
 
 use tidb_ingestor_engineapi::ConflictInfo;
 use tidb_ingestor_globalsort::SortedKVMeta;
@@ -894,7 +894,7 @@ mod tests {
     /// back restores the map.
     #[test]
     fn prepared_meta_matches_go() {
-        use tidb_executor::importer::chunk_process::Chunk;
+        use tidb_executor_importer::chunk_process::Chunk;
         let chunk = |path: &str, file_size, offset, prev, max| Chunk {
             path: path.into(),
             file_size,

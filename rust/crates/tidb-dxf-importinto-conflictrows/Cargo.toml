@@ -10,13 +10,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tidb-executor-importer = { path = "../tidb-executor-importer" }
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-importinto-conflictpath = { path = "../tidb-dxf-importinto-conflictpath" }
 tidb-dxf-storage = { path = "../tidb-dxf-storage" }
-tidb-executor = { path = "../tidb-executor" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }

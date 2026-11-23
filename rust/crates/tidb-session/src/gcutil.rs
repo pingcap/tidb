@@ -52,7 +52,7 @@ impl tidb_gcutil::Context for RestrictedGcContext<'_> {
 pub(crate) fn driver_error(error: tidb_gcutil::Error<DriverError>) -> DriverError {
     match error {
         tidb_gcutil::Error::Context(error) => error,
-        tidb_gcutil::Error::Sql(error) => tidb_executor::memtable_reader::sql_exec_driver_error(error),
+        tidb_gcutil::Error::Sql(error) => tidb_driver_error::sql_exec_driver_error(error),
         tidb_gcutil::Error::SnapshotTooOld { safe_point_time } => DriverError::from(
             tidb_variable::variable_errors::ERR_SNAPSHOT_TOO_OLD
                 .gen_with_stack_by_args(&[safe_point_time.into()]),

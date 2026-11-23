@@ -110,7 +110,7 @@ impl LoadDataController {
             tidb_lightning_common::escape_identifier(self.table.meta().read().name.lowercase()),
         );
         let rows = tidb_sqlexec::execute_sql(se.ctx, se.conn, &sql, &[])
-            .map_err(crate::memtable_reader::sql_exec_driver_error)?;
+            .map_err(tidb_driver_error::sql_exec_driver_error)?;
         if !rows.is_empty() {
             return Err(pre_check_failed("target table is not empty"));
         }

@@ -19,7 +19,7 @@ use super::{ASTArgs, LoadDataController, Plan};
 
 #[test]
 fn sampled_kv_sizes_match_go() {
-    for line in include_str!("../../testdata/import_into_sampler_go.jsonl").lines() {
+    for line in include_str!("../testdata/import_into_sampler_go.jsonl").lines() {
         let rec: Value = serde_json::from_str(line).unwrap();
         let name = rec["case"].as_str().unwrap();
         let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();

@@ -1757,7 +1757,7 @@ pub fn get_snapshot_info_schema(
 /// The snapshot could not be read, or a source table changed.
 pub fn build_import_query_info_schema(
     domain: &Domain,
-    q: &tidb_executor::importer::query_source::QuerySource,
+    q: &tidb_executor_importer::query_source::QuerySource,
     parent: &tidb_infoschema::SessionExtendedInfoSchema,
 ) -> Result<tidb_infoschema::SessionExtendedInfoSchema, tidb_driver_error::DriverError> {
     let _hold = tidb_txnkv::ACTIVE_START_TS.hold(q.read_ts);

@@ -43,8 +43,8 @@ pub(crate) fn driver(error: tidb_driver_error::DriverError) -> Error {
 
 /// A failed `VerifyChecksum`: a mismatch stays Go's normalized
 /// `ErrChecksumMismatch`, which `common.IsRetryableError` does not retry.
-pub(crate) fn verify_checksum_error(error: tidb_executor::importer::table_import::VerifyChecksumError) -> Error {
-    use tidb_executor::importer::table_import::VerifyChecksumError;
+pub(crate) fn verify_checksum_error(error: tidb_executor_importer::table_import::VerifyChecksumError) -> Error {
+    use tidb_executor_importer::table_import::VerifyChecksumError;
     match error {
         VerifyChecksumError::Remote(error) => driver(error),
         VerifyChecksumError::Mismatch(error) => Arc::new(error),
@@ -132,10 +132,10 @@ pub fn import_store() -> Result<Arc<dyn ImportStore>, Error> {
 pub type ImportQueryRunner = fn(
     ctx: &tidb_gocontext::Context,
     sctx: &dyn tidb_dxf_storage::SessionContext,
-    q: &tidb_executor::importer::query_source::QuerySource,
+    q: &tidb_executor_importer::query_source::QuerySource,
     import_sql: &str,
     mem_quota: i64,
-    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+    output: &crossbeam_channel::Sender<tidb_executor_importer::chunk_process::QueryChunk>,
 ) -> Result<(), Error>;
 
 static IMPORT_QUERY_RUNNER: RwLock<Option<ImportQueryRunner>> = RwLock::new(None);
@@ -149,10 +149,10 @@ pub fn set_import_query_runner(runner: ImportQueryRunner) {
 pub(crate) fn run_import_query(
     ctx: &tidb_gocontext::Context,
     sctx: &dyn tidb_dxf_storage::SessionContext,
-    q: &tidb_executor::importer::query_source::QuerySource,
+    q: &tidb_executor_importer::query_source::QuerySource,
     import_sql: &str,
     mem_quota: i64,
-    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+    output: &crossbeam_channel::Sender<tidb_executor_importer::chunk_process::QueryChunk>,
 ) -> Result<(), Error> {
     let runner = IMPORT_QUERY_RUNNER
         .read()
@@ -171,8 +171,8 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use tidb_executor::importer::{Plan, PostOpLevel};
-    use tidb_executor::importer::table_import::verify_checksum;
+    use tidb_executor_importer::{Plan, PostOpLevel};
+    use tidb_executor_importer::table_import::verify_checksum;
     use tidb_ingestor_ingestctrl::checksum::RemoteChecksum;
 
     /// Go `common.IsRetryableError` does not retry `ErrChecksumMismatch`

@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use tidb_dxf::{StepResource, Subtask};
 use tidb_dxf_execute::{FrameworkInfoSlot, StepExecFrameworkInfo, StepExecutor, SubtaskSummary};
 use tidb_dxf_importinto_conflictedkv::Deleter;
-use tidb_executor::importer::kv_encode::TableKVEncoder;
-use tidb_executor::importer::table_import::TableImporter;
+use tidb_executor_importer::kv_encode::TableKVEncoder;
+use tidb_executor_importer::table_import::TableImporter;
 use tidb_gocontext::Context;
 
 type StepResult<T> = tidb_dxf_execute::Result<T>;

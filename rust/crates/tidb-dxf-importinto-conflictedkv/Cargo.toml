@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tidb-executor-importer = { path = "../tidb-executor-importer" }
 tidb-dxf-metering = { path = "../tidb-dxf-metering" }
 crossbeam-channel = "0.5"
 tidb-backoff = { path = "../tidb-backoff" }
@@ -17,7 +18,6 @@ tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-dxf-handle = { path = "../tidb-dxf-handle" }
-tidb-executor = { path = "../tidb-executor" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }

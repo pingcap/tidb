@@ -1,0 +1,75 @@
+[package]
+name = "tidb-executor-importer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/executor/importer: IMPORT INTO's plan, controller, data-file discovery and table import (Rust rewrite)."
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-br = { path = "../tidb-br" }
+tidb-cdcutil = { path = "../tidb-cdcutil" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-config = { path = "../tidb-config" }
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-dumpformat-parquetfile = { path = "../tidb-dumpformat-parquetfile" }
+tidb-dxf-execute = { path = "../tidb-dxf-execute" }
+tidb-dxf-handle = { path = "../tidb-dxf-handle" }
+tidb-dxf-scheduler = { path = "../tidb-dxf-scheduler" }
+tidb-dxf-storage = { path = "../tidb-dxf-storage" }
+tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-go-rand = { path = "../tidb-go-rand" }
+tidb-go-url = { path = "../tidb-go-url" }
+tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-ingestor-ingestctrl = { path = "../tidb-ingestor-ingestctrl" }
+tidb-ingestor-simplesst = { path = "../tidb-ingestor-simplesst" }
+tidb-lightning-backend = { path = "../tidb-lightning-backend" }
+tidb-lightning-backend-encode = { path = "../tidb-lightning-backend-encode" }
+tidb-lightning-backend-kv = { path = "../tidb-lightning-backend-kv" }
+tidb-lightning-common = { path = "../tidb-lightning-common" }
+tidb-lightning-mydump = { path = "../tidb-lightning-mydump" }
+tidb-lightning-verification = { path = "../tidb-lightning-verification" }
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-objstore = { path = "../tidb-objstore" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-planner = { path = "../tidb-planner" }
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-table = { path = "../tidb-table" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-variable = { path = "../tidb-variable" }
+base64 = { workspace = true }
+chrono = { workspace = true }
+crossbeam-channel = "0.5"
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
+hex = "0.4"
+tikv-client = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

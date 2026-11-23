@@ -7,7 +7,7 @@
 use super::*;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use tidb_executor::importer::{self as importer, job, precheck::PrecheckSession};
+use tidb_executor_importer::{self as importer, job, precheck::PrecheckSession};
 
 /// An in-memory etcd, standing in for Go's embedded etcd.
 #[derive(Default)]

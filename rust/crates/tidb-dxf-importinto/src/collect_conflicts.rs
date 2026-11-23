@@ -12,7 +12,7 @@ use tidb_dxf_execute::{FrameworkInfoSlot, StepExecFrameworkInfo, StepExecutor, S
 use tidb_dxf_importinto_conflictedkv::{
     BoundedKeySet, CollectResult, Collector, PairReceiver, BUFFERED_HANDLE_LIMIT,
 };
-use tidb_executor::importer::table_import::TableImporter;
+use tidb_executor_importer::table_import::TableImporter;
 use tidb_gocontext::Context;
 
 type StepResult<T> = tidb_dxf_execute::Result<T>;

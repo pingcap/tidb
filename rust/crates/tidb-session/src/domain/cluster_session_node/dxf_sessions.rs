@@ -85,10 +85,10 @@ impl tidb_dxf_storage::SessionContext for ClusterStatsSessionContext {
 pub(crate) fn run_import_query_on_worker(
     ctx: &tidb_gocontext::Context,
     sctx: &dyn tidb_dxf_storage::SessionContext,
-    q: &tidb_executor::importer::query_source::QuerySource,
+    q: &tidb_executor_importer::query_source::QuerySource,
     import_sql: &str,
     mem_quota: i64,
-    output: &crossbeam_channel::Sender<tidb_executor::importer::chunk_process::QueryChunk>,
+    output: &crossbeam_channel::Sender<tidb_executor_importer::chunk_process::QueryChunk>,
 ) -> std::result::Result<(), tidb_dxf_importinto::Error> {
     let error = |e: String| -> tidb_dxf_importinto::Error { std::sync::Arc::new(tidb_terror::MysqlError::unknown(e)) };
     let any: &dyn std::any::Any = sctx;

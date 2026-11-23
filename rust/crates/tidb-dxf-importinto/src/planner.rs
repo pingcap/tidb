@@ -10,9 +10,9 @@ use tidb_dxf::{
     IMPORT_STEP_IMPORT, IMPORT_STEP_MERGE_SORT, IMPORT_STEP_POST_PROCESS, IMPORT_STEP_WRITE_AND_INGEST,
 };
 use tidb_dxf_planner::{LinkSpec, OutputSpec, PhysicalPlan, PipelineSpec, PlanCtx, PlanError, ProcessorSpec};
-use tidb_executor::importer::chunk_process::Chunk;
-use tidb_executor::importer::job::StepSummary;
-use tidb_executor::importer::{ASTArgs, LoadDataController, Plan};
+use tidb_executor_importer::chunk_process::Chunk;
+use tidb_executor_importer::job::StepSummary;
+use tidb_executor_importer::{ASTArgs, LoadDataController, Plan};
 
 use crate::proto::{
     self, Checksum, CollectConflictsStepMeta, ConflictResolutionStepMeta, ImportStepMeta, KVGroupConflictInfos,
@@ -190,7 +190,7 @@ impl LogicalPlan {
 
 /// Go `importer.GetSortStore`.
 pub(crate) fn sort_store(ctx: &tidb_gocontext::Context, plan: &Plan) -> Result<std::sync::Arc<dyn tidb_objstore::storeapi::Storage>, Error> {
-    tidb_executor::importer::get_sort_store(ctx, &plan.cloud_storage_uri).map_err(crate::driver)
+    tidb_executor_importer::get_sort_store(ctx, &plan.cloud_storage_uri).map_err(crate::driver)
 }
 
 /// Go `handle.NewObjStoreWithRecording` with a step's deferred merge: the
@@ -362,7 +362,7 @@ fn generate_import_specs(ctx: &PlanCtx<'_>, p: &LogicalPlan) -> Result<Vec<StepS
     let mut summary = StepSummary::default();
     let mut specs = Vec::with_capacity(chunk_map.len());
     for (id, chunks) in chunk_map {
-        if id == tidb_executor::importer::table_import::INDEX_ENGINE_ID {
+        if id == tidb_executor_importer::table_import::INDEX_ENGINE_ID {
             continue;
         }
         summary.bytes = p.plan.total_file_size;
@@ -378,7 +378,7 @@ fn generate_import_specs(ctx: &PlanCtx<'_>, p: &LogicalPlan) -> Result<Vec<StepS
 /// Go `readPreparedChunkMap`.
 fn read_prepared_chunk_map(
     ctx: &tidb_gocontext::Context,
-    plan: &tidb_executor::importer::Plan,
+    plan: &tidb_executor_importer::Plan,
     external_path: &str,
 ) -> Result<BTreeMap<i32, Vec<Chunk>>, Error> {
     let store = sort_store(ctx, plan)?;
@@ -836,7 +836,7 @@ mod tests {
         };
         let p = LogicalPlan {
             plan: Plan {
-                query_source: Some(tidb_executor::importer::query_source::QuerySource::default()),
+                query_source: Some(tidb_executor_importer::query_source::QuerySource::default()),
                 cloud_storage_uri: "noop://sort".to_owned(),
                 ..Plan::default()
             },

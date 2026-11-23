@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use tidb_datatype::Datum;
-use tidb_executor::importer::kv_encode::TableKVEncoder;
-use tidb_executor::importer::{ASTArgs, LoadDataController, Plan};
+use tidb_executor_importer::kv_encode::TableKVEncoder;
+use tidb_executor_importer::{ASTArgs, LoadDataController, Plan};
 use tidb_gocontext::Context;
 use tidb_ingestor_simplesst::KVPair;
 use tidb_lightning_backend_encode::EncodingConfig;

@@ -3363,7 +3363,7 @@ pub(crate) fn sql_with_params<'a>(
 }
 
 /// A statement's failure as a SQL executor's error, which
-/// [`tidb_executor::memtable_reader::sql_exec_driver_error`] unboxes.
+/// [`tidb_driver_error::sql_exec_driver_error`] unboxes.
 pub(crate) fn boxed_sql_query_error(error: SqlQueryError) -> tidb_sqlexec::SqlExecError {
     Box::new(error)
 }

@@ -7,9 +7,9 @@
 
 use tidb_datatype::Datum;
 use tidb_dxf_importinto::runtime_info::RuntimeInfo;
-use tidb_executor::importer::job::{self as importer_job, JobInfo};
-use tidb_executor::importer::precheck::PrecheckSession;
-use tidb_executor::importer::{ASTArgs, ImportSessionInfo, LoadDataController, Plan as ImportPlan};
+use tidb_executor_importer::job::{self as importer_job, JobInfo};
+use tidb_executor_importer::precheck::PrecheckSession;
+use tidb_executor_importer::{ASTArgs, ImportSessionInfo, LoadDataController, Plan as ImportPlan};
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_gocontext::Context;
 
@@ -213,7 +213,7 @@ impl Session {
         let system = |name: &str| self.vars.get_system(name).ok();
         ImportSessionInfo {
             sql_mode: self.vars.sql_mode().0,
-            important_sys_vars: tidb_executor::importer::get_important_sys_vars(system),
+            important_sys_vars: tidb_executor_importer::get_important_sys_vars(system),
             location_id: zone_name(&self.vars.session_time_zone()),
             distsql_scan_concurrency: system(tidb_vardef::tidb_vars::TIDB_DIST_SQL_SCAN_CONCURRENCY)
                 .and_then(|v| v.parse().ok())
@@ -465,14 +465,14 @@ impl Session {
         let table_id = controller.plan.table_info.as_ref().map_or(0, |t| t.id);
         let import_plan = controller.plan.clone();
         let client = store.import_client().map_err(other)?;
-        let ti = tidb_executor::importer::table_import::TableImporter::new(controller, &import_id, client, store.keyspace())
+        let ti = tidb_executor_importer::table_import::TableImporter::new(controller, &import_id, client, store.keyspace())
             .map_err(other)?;
         let Some(tidb_planner::common_plans::Plan::Physical(physical)) = plan.select_plan.as_deref() else {
             ti.close();
             return Err(other("IMPORT INTO ... FROM SELECT has no physical SELECT plan"));
         };
         let mut physical = physical.clone();
-        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<tidb_executor::importer::chunk_process::QueryChunk>(1);
+        let (chunk_tx, chunk_rx) = crossbeam_channel::bounded::<tidb_executor_importer::chunk_process::QueryChunk>(1);
         let (import_ctx, cancel) = Context::with_cancel(ctx);
         let stmt_ctx = self.statement_context(false);
         // Go's errgroup: one goroutine imports, one sends the SELECT's
@@ -490,7 +490,7 @@ impl Session {
                 let mut row_id = 0i64;
                 while let Some(rows) = source.next_chunk()? {
                     let count = rows.len() as i64;
-                    let mut chunk = tidb_executor::importer::chunk_process::QueryChunk { rows, row_id_offset: row_id };
+                    let mut chunk = tidb_executor_importer::chunk_process::QueryChunk { rows, row_id_offset: row_id };
                     loop {
                         if let Some(e) = import_ctx.err() {
                             return Err(other(e));

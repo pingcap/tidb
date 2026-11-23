@@ -18,7 +18,7 @@ use tidb_lightning_backend_kv::PanickingAllocators;
 /// Go `buildTableForTestConvertToErrFoundConflictRecords`: the table and the
 /// KV pairs of its three rows, record then index for each.
 fn build_table(line: usize) -> (tidb_table::tables::TableCommon, Vec<(Vec<u8>, Vec<u8>)>) {
-    let json = include_str!("../../testdata/ingestctrl_conflict_records_go.jsonl").lines().nth(line).unwrap();
+    let json = include_str!("../testdata/ingestctrl_conflict_records_go.jsonl").lines().nth(line).unwrap();
     let meta = tidb_meta::value::parse_table_info(json.as_bytes(), 0).unwrap();
     let table =
         tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();
@@ -99,7 +99,7 @@ fn test_convert_to_err_found_conflict_records_other_error() {
 fn test_convert_to_err_found_conflict_records_timestamp_in_local_zone() {
     // This test runs in its own process (nextest); chrono's `Local` reads TZ.
     std::env::set_var("TZ", "Asia/Shanghai");
-    let json = include_str!("../../testdata/ingestctrl_conflict_records_go.jsonl").lines().nth(2).unwrap();
+    let json = include_str!("../testdata/ingestctrl_conflict_records_go.jsonl").lines().nth(2).unwrap();
     let meta = tidb_meta::value::parse_table_info(json.as_bytes(), 0).unwrap();
     let table =
         tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();

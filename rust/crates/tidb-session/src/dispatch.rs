@@ -540,7 +540,7 @@ impl Session {
             Plan::ImportInto(_) => {
                 let Stmt::Dml(dml) = stmt else { unreachable!("ImportInto plan has an IMPORT statement") };
                 let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!("ImportInto plan has an IMPORT statement") };
-                tidb_executor::import_into_options::validate_import_into_options(import)?;
+                tidb_executor_importer::import_into_options::validate_import_into_options(import)?;
                 let Plan::ImportInto(plan) = plan else { unreachable!() };
                 self.import_into_exec(plan, import).map(Some)
             }
@@ -2454,7 +2454,7 @@ impl Session {
                         self.check_table_mode(&stmt)?;
                         // Physical ingest and the import task owner are still
                         // absent; successful validation must not write rows.
-                        tidb_executor::import_into_options::validate_import_into_options(import)
+                        tidb_executor_importer::import_into_options::validate_import_into_options(import)
                             .and_then(|()| {
                                 Err(DriverError::unsupported("IMPORT INTO is not supported yet"))
                             })

@@ -13,7 +13,7 @@ use tidb_ingestor_ingestctrl::tikv_mode::{new_tikv_mode_switcher, TikvModeSwitch
 use tidb_dxf::*;
 use tidb_dxf_scheduler::{BaseScheduler, Scheduler};
 use tidb_dxf_storage::{SessionContext, SessionExecutor, TaskHandle};
-use tidb_executor::importer::job as importer_job;
+use tidb_executor_importer::job as importer_job;
 use tidb_gocontext::Context;
 
 use crate::planner::{get_step_of_encode, LogicalPlan};
@@ -183,8 +183,8 @@ fn with_retry(
 fn write_prepared_chunk_map(
     ctx: &Context,
     task_id: i64,
-    plan: &tidb_executor::importer::Plan,
-    chunk_map: std::collections::BTreeMap<i32, Vec<tidb_executor::importer::chunk_process::Chunk>>,
+    plan: &tidb_executor_importer::Plan,
+    chunk_map: std::collections::BTreeMap<i32, Vec<tidb_executor_importer::chunk_process::Chunk>>,
 ) -> Result<String, Error> {
     let store = crate::planner::sort_store(ctx, plan)?;
     let meta = crate::proto::PreparedMeta {
@@ -354,7 +354,7 @@ impl ImportScheduler {
     }
 
     /// Go `updatePreparedJobInfo`.
-    fn update_prepared_job_info(&self, ctx: &Context, job_id: i64, plan: &tidb_executor::importer::Plan) -> Result<(), Error> {
+    fn update_prepared_job_info(&self, ctx: &Context, job_id: i64, plan: &tidb_executor_importer::Plan) -> Result<(), Error> {
         with_retry(self, ctx, false, &mut |se| {
             importer_job::update_job_prepared_info(ctx, se.sql_executor().as_ref(), job_id, plan.total_file_size, &plan.format)
                 .map_err(crate::driver)

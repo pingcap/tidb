@@ -1,7 +1,7 @@
 //! Go `pkg/executor/importer/job.go`: IMPORT INTO jobs in
 //! `mysql.tidb_import_jobs`.
 
-use crate::memtable_reader::sql_exec_driver_error;
+use tidb_driver_error::sql_exec_driver_error;
 use crate::DriverError;
 use tidb_datatype::{Datum, Time};
 use tidb_sqlescape::SqlArg;

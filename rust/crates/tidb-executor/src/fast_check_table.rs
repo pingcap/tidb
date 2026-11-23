@@ -44,7 +44,7 @@ fn query_to_row(
     sql: &str,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     tidb_sqlexec::execute_sql(ctx, se, sql, &[])
-        .map_err(crate::memtable_reader::sql_exec_driver_error)
+        .map_err(tidb_driver_error::sql_exec_driver_error)
 }
 
 /// Go `kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)`.

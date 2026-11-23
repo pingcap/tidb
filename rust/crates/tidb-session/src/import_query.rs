@@ -6,8 +6,8 @@
 //! worker (`ImportStepQuery`).
 
 use tidb_driver_error::DriverError;
-use tidb_executor::importer::chunk_process::QueryChunk;
-use tidb_executor::importer::query_source::{self, QuerySource, QuerySourceTableKind, SourceTable};
+use tidb_executor_importer::chunk_process::QueryChunk;
+use tidb_executor_importer::query_source::{self, QuerySource, QuerySourceTableKind, SourceTable};
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
 use tidb_gocontext::Context;
 use tidb_terror::MysqlError;
@@ -18,7 +18,7 @@ fn unknown(error: impl std::fmt::Display) -> DriverError {
     DriverError::from(MysqlError::unknown(error.to_string()))
 }
 
-impl tidb_executor::importer::query_source::QueryStatesSession for Session {
+impl tidb_executor_importer::query_source::QueryStatesSession for Session {
     fn status(&self) -> u32 {
         if self.is_autocommit() { 2 } else { 0 }
     }
