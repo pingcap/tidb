@@ -61,6 +61,9 @@ type delRangeManager interface {
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
 	removeFromGCDeleteRange(ctx context.Context, jobID int64) error
+	// removeFromGCDeleteRangeWithSession removes the deleting table job from gc_delete_range
+	// using the caller's session so it participates in the caller's transaction.
+	removeFromGCDeleteRangeWithSession(ctx context.Context, sctx sessionctx.Context, jobID int64) error
 	start()
 	clear()
 }
@@ -145,8 +148,12 @@ func (dr *delRange) removeFromGCDeleteRange(ctx context.Context, jobID int64) er
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.Put(sctx)
-	err = util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID)
-	return errors.Trace(err)
+	return dr.removeFromGCDeleteRangeWithSession(ctx, sctx, jobID)
+}
+
+// removeFromGCDeleteRangeWithSession implements delRangeManager interface.
+func (*delRange) removeFromGCDeleteRangeWithSession(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
+	return errors.Trace(util.RemoveMultiFromGCDeleteRange(ctx, sctx, jobID))
 }
 
 // start implements delRangeManager interface.
