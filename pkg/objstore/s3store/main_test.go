@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	ks3aws "github.com/ks3sdklib/aws-sdk-go/aws"
 	"github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -243,6 +244,7 @@ func (r *closeTrackingReader) Close() error {
 }
 
 func TestOpenResponseBodyOwnership(t *testing.T) {
+	originalKS3HTTPClient := ks3aws.DefaultConfig.HTTPClient
 	rangeOption := &storeapi.ReaderOption{StartOffset: aws.Int64(1), EndOffset: aws.Int64(4)}
 	for _, provider := range []string{"s3", "ks3"} {
 		t.Run(provider, func(t *testing.T) {
@@ -334,6 +336,11 @@ func TestOpenResponseBodyOwnership(t *testing.T) {
 							}, nil)
 						storage = suite.Storage
 					case "ks3":
+						// NewKS3Storage mutates SDK defaults, including the test transport.
+						originalConfig := *ks3aws.DefaultConfig
+						t.Cleanup(func() {
+							*ks3aws.DefaultConfig = originalConfig
+						})
 						transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 							header := make(http.Header)
 							if tc.contentLength != nil {
@@ -377,5 +384,7 @@ func TestOpenResponseBodyOwnership(t *testing.T) {
 				})
 			}
 		})
+		require.Same(t, originalKS3HTTPClient, ks3aws.DefaultConfig.HTTPClient,
+			"response body ownership tests must not change the KS3 HTTP client")
 	}
 }
