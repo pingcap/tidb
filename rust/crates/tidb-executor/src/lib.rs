@@ -53,6 +53,7 @@ pub mod adapter;
 pub mod sessionctx;
 pub use tidb_stats_handle::stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
 pub use sessionctx::StmtOutput;
+pub mod account_state;
 pub mod admin;
 pub mod operate_ddl_jobs;
 pub mod ddl_exec;

@@ -1383,7 +1383,6 @@ pub mod restricted_sql;
 mod session_telemetry;
 mod identity;
 pub mod load_stats_arm;
-mod account_state;
 mod perfschema_retriever;
 use tidb_executor::compiler::non_prepared_plan_cache;
 mod nontransactional;

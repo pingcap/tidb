@@ -724,7 +724,7 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
-        let retriever = crate::account_state::AccountRetriever::new(self.account_state());
+        let retriever = tidb_executor::account_state::AccountRetriever::new(self.account_state());
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
@@ -732,7 +732,7 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
-        let retriever = crate::account_state::VariablesRetriever::new(self.variables_state());
+        let retriever = tidb_executor::account_state::VariablesRetriever::new(self.variables_state());
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }

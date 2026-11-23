@@ -21,7 +21,7 @@
 
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
-use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
+use crate::mem_table_retrieval::{MemTableRead, MemTableRetriever};
 use tidb_driver_error::DriverError;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_hack::GoCaseCompare;
@@ -32,14 +32,19 @@ use tidb_variable::vars::SessionVars;
 
 /// What the account tables read of the viewing session.
 #[derive(Clone)]
-pub(crate) struct AccountState {
-    pub(crate) privileges: Option<tidb_privilege::PrivilegeRegistry>,
-    pub(crate) privilege_bypassed: bool,
-    pub(crate) login_user: Option<String>,
-    pub(crate) current_user: Option<String>,
-    pub(crate) active_roles: Vec<tidb_privilege::Account>,
+pub struct AccountState {
+    /// The privilege tables the viewer is checked against.
+    pub privileges: Option<tidb_privilege::PrivilegeRegistry>,
+    /// Whether privilege checks are skipped (an internal session).
+    pub privilege_bypassed: bool,
+    /// Go `SessionVars.User`: the login identity.
+    pub login_user: Option<String>,
+    /// `CURRENT_USER()`, `user@host`.
+    pub current_user: Option<String>,
+    /// Go `SessionVars.ActiveRoles`.
+    pub active_roles: Vec<tidb_privilege::Account>,
     /// Go `GetRestrictedSQLExecutor` for the `mysql.user` read.
-    pub(crate) restricted_sql: tidb_executor::memtable_reader::RestrictedSql,
+    pub restricted_sql: crate::memtable_reader::RestrictedSql,
 }
 
 impl AccountState {
@@ -67,7 +72,7 @@ impl AccountState {
     /// The SUPER privilege (or any other dynamic privilege) doesn't help
     /// here. This is verified against MySQL."): without global or `mysql.*`
     /// `SELECT`, a session sees every one of its own host-pattern rows.
-    pub(crate) fn user_privileges_rows(&self) -> Vec<Vec<Datum>> {
+    pub fn user_privileges_rows(&self) -> Vec<Vec<Datum>> {
         let Some(registry) = &self.privileges else {
             return Vec::new();
         };
@@ -181,10 +186,10 @@ impl AccountState {
     /// account-visibility rules before exposing the virtual rows. The query
     /// runs as Go's restricted SQL on an internal session, reading committed
     /// rows; its error is the table's error (`infoschema_reader.go:382`).
-    pub(crate) fn set_data_for_user_attributes(
+    pub fn set_data_for_user_attributes(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let rows = tidb_executor::memtable_reader::exec_restricted_sql_over(
+        let rows = crate::memtable_reader::exec_restricted_sql_over(
             self.restricted_sql.as_deref(),
             tidb_txnkv::INTERNAL_TXN_PRIVILEGE,
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
@@ -231,10 +236,10 @@ impl AccountState {
                 if row.len() != 3 || can_read_all {
                     return row.len() == 3;
                 }
-                let Some(user) = crate::datum_text(&row[0]) else {
+                let Some(user) = tidb_datatype::datum_text::sysvar_datum_text(&row[0]) else {
                     return false;
                 };
-                let Some(host) = crate::datum_text(&row[1]) else {
+                let Some(host) = tidb_datatype::datum_text::sysvar_datum_text(&row[1]) else {
                     return false;
                 };
                 // `record.match(viewer)` in Go selects a stored account row
@@ -266,9 +271,11 @@ impl AccountState {
 /// What the variable tables read of the viewing session: its variables, and
 /// whether SEM hides the invisible ones from it.
 #[derive(Clone)]
-pub(crate) struct VariablesState {
-    pub(crate) vars: SessionVars,
-    pub(crate) hide_invisible: bool,
+pub struct VariablesState {
+    /// The viewer's session variables.
+    pub vars: SessionVars,
+    /// Whether SEM hides its invisible variables from the viewer.
+    pub hide_invisible: bool,
 }
 
 impl VariablesState {
@@ -282,7 +289,7 @@ impl VariablesState {
     /// CURRENT_VALUE is `GetSessionOrGlobalSystemVar` ("" when that read
     /// fails), MIN/MAX are reported only for the numeric types, and
     /// POSSIBLE_VALUES only for an enum.
-    pub(crate) fn set_data_for_variables_info(&self) -> Vec<Vec<tidb_datatype::Datum>> {
+    pub fn set_data_for_variables_info(&self) -> Vec<Vec<tidb_datatype::Datum>> {
         use tidb_datatype::Datum;
         let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
         let mut rows = Vec::with_capacity(sysvar::sys_var_count());
@@ -332,7 +339,7 @@ impl VariablesState {
     /// `performance_schema.session_variables`: every variable the viewer may
     /// see, with `GetSessionOrGlobalSystemVar`'s value. Unlike
     /// `VARIABLES_INFO`, a value that cannot be read fails the statement.
-    pub(crate) fn get_data_from_session_variables(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+    pub fn get_data_from_session_variables(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let text = |value: &str| tidb_datatype::Datum::Bytes(value.as_bytes().to_vec());
         let mut rows = Vec::with_capacity(sysvar::sys_var_count());
         for definition in sysvar::sys_vars() {
@@ -342,7 +349,7 @@ impl VariablesState {
             let value = self
                 .vars
                 .get_system(definition.name)
-                .map_err(crate::variables::var_error)?;
+                .map_err(DriverError::from)?;
             rows.push(vec![text(definition.name), text(&value)]);
         }
         Ok(rows)
@@ -351,12 +358,13 @@ impl VariablesState {
 }
 
 /// The retriever for the account tables.
-pub(crate) struct AccountRetriever {
+pub struct AccountRetriever {
     account: AccountState,
 }
 
 impl AccountRetriever {
-    pub(crate) fn new(account: AccountState) -> Self {
+    /// The retriever over the viewer's snapshot.
+    pub fn new(account: AccountState) -> Self {
         Self { account }
     }
 }
@@ -387,12 +395,13 @@ impl MemTableRetriever for AccountRetriever {
 }
 
 /// The retriever for the variable tables.
-pub(crate) struct VariablesRetriever {
+pub struct VariablesRetriever {
     state: VariablesState,
 }
 
 impl VariablesRetriever {
-    pub(crate) fn new(state: VariablesState) -> Self {
+    /// The retriever over the viewer's snapshot.
+    pub fn new(state: VariablesState) -> Self {
         Self { state }
     }
 }
@@ -419,7 +428,7 @@ impl MemTableRetriever for VariablesRetriever {
         if read.table_name.go_lower_eq("VARIABLES_INFO") {
             return Ok(self.state.set_data_for_variables_info());
         }
-        Ok(tidb_executor::memtable_retrievers::set_data_for_pseudo_profiling(
+        Ok(crate::memtable_retrievers::set_data_for_pseudo_profiling(
             tidb_vardef::option_values::tidb_opt_on(
                 &self.state.vars.get_system("profiling").unwrap_or_default(),
             ),

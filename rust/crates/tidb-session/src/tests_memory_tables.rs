@@ -226,11 +226,11 @@ fn a_scan_has_at_most_one_retriever() {
                 false,
             ),
         ),
-        Box::new(crate::account_state::AccountRetriever::new(
+        Box::new(tidb_executor::account_state::AccountRetriever::new(
             session.account_state(),
         )),
         Box::new(crate::perfschema_retriever::PerfSchemaRetriever::new(&session)),
-        Box::new(crate::account_state::VariablesRetriever::new(
+        Box::new(tidb_executor::account_state::VariablesRetriever::new(
             session.variables_state(),
         )),
         Box::new(tidb_executor::cluster_state::ClusterTablesRetriever::new(

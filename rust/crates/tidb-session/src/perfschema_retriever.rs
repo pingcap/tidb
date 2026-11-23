@@ -28,7 +28,7 @@ use tidb_infoschema_perfschema::tables::PerfSchemaContext;
 
 /// The retriever for the `performance_schema` tables Go fills when read.
 pub(crate) struct PerfSchemaRetriever {
-    variables: crate::account_state::VariablesState,
+    variables: tidb_executor::account_state::VariablesState,
     registry: Option<tidb_sessmgr::ProcessRegistry>,
     connection_id: u64,
     login_user: Option<String>,

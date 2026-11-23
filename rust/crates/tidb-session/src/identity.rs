@@ -254,9 +254,9 @@ impl Session {
     }
 
     /// What the account tables read of this session (see
-    /// [`crate::account_state::AccountState`]).
-    pub(crate) fn account_state(&self) -> crate::account_state::AccountState {
-        crate::account_state::AccountState {
+    /// [`tidb_executor::account_state::AccountState`]).
+    pub(crate) fn account_state(&self) -> tidb_executor::account_state::AccountState {
+        tidb_executor::account_state::AccountState {
             privileges: self.privileges.clone(),
             privilege_bypassed: self.privilege_bypassed,
             login_user: self.vars.login_user.clone(),
@@ -267,10 +267,10 @@ impl Session {
     }
 
     /// What the variable tables read of this session (see
-    /// [`crate::account_state::VariablesState`]): its variables, and whether
+    /// [`tidb_executor::account_state::VariablesState`]): its variables, and whether
     /// SEM hides the invisible ones (`sem_hides_sysvar` without the name).
-    pub(crate) fn variables_state(&self) -> crate::account_state::VariablesState {
-        crate::account_state::VariablesState {
+    pub(crate) fn variables_state(&self) -> tidb_executor::account_state::VariablesState {
+        tidb_executor::account_state::VariablesState {
             vars: self.vars.clone(),
             hide_invisible: tidb_sem_compat::is_enabled()
                 && self.privilege_context().is_some()
