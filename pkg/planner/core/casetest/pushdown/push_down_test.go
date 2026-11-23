@@ -256,3 +256,34 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 		}
 	})
 }
+
+func TestPushDownTopNWithCollate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, name varchar(20) collate utf8mb4_bin)")
+	tk.MustExec("insert into t values (1, 'a'), (2, 'B')")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+
+	// Verify TopN is pushed down to TiKV coprocessor.
+	tk.MustQuery("explain format='brief' select id, name from t order by name collate utf8mb4_general_ci desc, id limit 1").
+		CheckContain("cop[tikv]")
+
+	// Under utf8mb4_general_ci, 'B' sorts after 'a', so DESC starts with (2, 'B').
+	t.Run("column_collate", func(t *testing.T) {
+		tk.MustQuery("select id, name from t order by name collate utf8mb4_general_ci desc, id limit 1").
+			Check(testkit.Rows("2 B"))
+		tk.MustQuery("select id, name from t order by name collate utf8mb4_general_ci asc, id limit 1").
+			Check(testkit.Rows("1 a"))
+		tk.MustQuery("select id, name from t order by name collate utf8mb4_unicode_ci desc, id limit 1").
+			Check(testkit.Rows("2 B"))
+	})
+	t.Run("cast_collate", func(t *testing.T) {
+		tk.MustQuery("select id, name from t order by cast(name as char) collate utf8mb4_general_ci desc, id limit 1").
+			Check(testkit.Rows("2 B"))
+	})
+	t.Run("scalar_func_collate", func(t *testing.T) {
+		tk.MustQuery("select id, name from t order by concat(name, '') collate utf8mb4_general_ci desc, id limit 1").
+			Check(testkit.Rows("2 B"))
+	})
+}

@@ -706,6 +706,13 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if err != nil {
 				return true, true, v
 			}
+			if v.Function.IsExplicitCharset() {
+				chs, coll := v.CharsetAndCollation()
+				newFunc.SetCoercibility(v.Coercibility())
+				newFunc.SetCharsetAndCollation(chs, coll)
+				newFunc.SetExplicitCharset(true)
+				newFunc.GetType(ctx.GetEvalCtx()).SetCollate(coll)
+			}
 			return true, hasFail, newFunc
 		}
 	}
@@ -797,7 +804,10 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf Expression
 		)
 		if x.FuncName.L == ast.Cast {
-			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
+			newSf, err = BuildCastFunctionWithCheck(ctx, newArgs[0], x.RetType, false, x.Function.IsExplicitCharset())
+			if err == nil {
+				newSf.SetCoercibility(x.Coercibility())
+			}
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
 			sf := newSf.(*ScalarFunction)
@@ -805,6 +815,13 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
+			if err == nil && x.Function.IsExplicitCharset() {
+				chs, coll := x.CharsetAndCollation()
+				newSf.SetCoercibility(x.Coercibility())
+				newSf.SetCharsetAndCollation(chs, coll)
+				newSf.SetExplicitCharset(true)
+				newSf.GetType(ctx.GetEvalCtx()).SetCollate(coll)
+			}
 		}
 		return newSf, err
 	case *CorrelatedColumn:
