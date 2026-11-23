@@ -74,16 +74,31 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				err = res.err
 				updateParentJobFromProxy(job, &proxyJob)
 				if res.panicked {
+					if err == nil && proxyJob.Error != nil {
+						err = proxyJob.Error
+					}
+					if err == nil && job.Error != nil {
+						err = job.Error
+					}
 					if err == nil {
 						err = dbterror.ErrCancelledDDLJob
 					}
-					if usesStepCheckpointContract(job) {
-						jobCtx.stepOutcome = &stepOutcome{
-							writes:   stepWritesDiscard,
-							baseline: stepJobEntryBaseline,
-							finish:   stepFinishUpdateJob,
-							err:      err,
-						}
+					subIdx := i
+					panickedSubState := proxyJob.State
+					if panickedSubState == model.JobStateRollingback || panickedSubState == model.JobStateCancelling {
+						panickedSubState = model.JobStateCancelled
+					}
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:   stepWritesDiscard,
+						baseline: stepJobEntryBaseline,
+						finish:   stepFinishUpdateJob,
+						err:      err,
+						applyJobDelta: func(restored, _ *model.Job) {
+							if restored.MultiSchemaInfo == nil || subIdx >= len(restored.MultiSchemaInfo.SubJobs) {
+								return
+							}
+							restored.MultiSchemaInfo.SubJobs[subIdx].State = panickedSubState
+						},
 					}
 					return 0, err
 				}
@@ -121,13 +136,22 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				if err == nil {
 					err = dbterror.ErrCancelledDDLJob
 				}
-				if migrated {
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:   stepWritesDiscard,
-						baseline: stepJobEntryBaseline,
-						finish:   stepFinishUpdateJob,
-						err:      err,
-					}
+				panickedSubState := proxyJob.State
+				panickedSubErr := proxyJob.Error
+				if panickedSubErr == nil {
+					panickedSubErr = toTError(err)
+				}
+				jobCtx.stepOutcome = &stepOutcome{
+					writes:   stepWritesDiscard,
+					baseline: stepJobEntryBaseline,
+					finish:   stepFinishUpdateJob,
+					err:      err,
+					applyJobDelta: func(restored, _ *model.Job) {
+						if restored.MultiSchemaInfo == nil {
+							return
+						}
+						handleRevertibleException(restored, &model.SubJob{State: panickedSubState}, panickedSubErr)
+					},
 				}
 				return 0, err
 			}
@@ -285,7 +309,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				return ver, nil
 			}
 			if err != nil || proxyJob.Error != nil || res.panicked {
-				if err == nil {
+				if err == nil && proxyJob.Error != nil {
 					err = proxyJob.Error
 				}
 				if err == nil && res.panicked {
@@ -368,13 +392,11 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if err == nil {
 				err = dbterror.ErrCancelledDDLJob
 			}
-			if migrated {
-				jobCtx.stepOutcome = &stepOutcome{
-					writes:   stepWritesDiscard,
-					baseline: stepJobEntryBaseline,
-					finish:   stepFinishUpdateJob,
-					err:      err,
-				}
+			jobCtx.stepOutcome = &stepOutcome{
+				writes:   stepWritesDiscard,
+				baseline: stepJobEntryBaseline,
+				finish:   stepFinishUpdateJob,
+				err:      err,
 			}
 			return 0, err
 		}

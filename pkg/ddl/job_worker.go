@@ -855,6 +855,8 @@ func (w *worker) commitActiveJobStep(
 	if err != nil {
 		return 0, err
 	}
+	// Do not hold the global schema version lock during the retry sleep.
+	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	jobCtx.addUnSynced(job.ID)
 
 	// If error is non-retryable, we can ignore the sleep.
@@ -1370,6 +1372,12 @@ func (w *worker) loadGlobalVars(varName ...string) error {
 }
 
 func toTError(err error) *terror.Error {
+	if err == nil {
+		return nil
+	}
+	if tErr, ok := err.(*terror.Error); ok && tErr == nil {
+		return nil
+	}
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	if ok {

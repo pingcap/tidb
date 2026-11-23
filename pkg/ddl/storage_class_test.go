@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -1474,7 +1475,11 @@ func TestStorageClassMultiSchemaKVDiskFullPausePrefix(t *testing.T) {
 		require.Equal(t, model.JobStateDone, pausedJob.MultiSchemaInfo.SubJobs[1].State)
 		require.Equal(t, model.JobStateRunning, pausedJob.MultiSchemaInfo.SubJobs[2].State)
 
-		// Verify the shared multi-schema diff and committed prefix are readable at pausedJob.LastSchemaVersion.
+		// Verify the shared multi-schema diff and committed writes are readable at pausedJob.LastSchemaVersion.
+		// Because beforeBatchedMultiSchemaParentJobUpdate fires after onModifyTableComment mutates
+		// TableInfo, the kept pause writes include Comment = "paused" alongside ADD COLUMN and
+		// STORAGE_CLASS, while SubActionTypes still records only the finished prefix sub-jobs and
+		// SubJobs[2] stays in its pre-pause State to rerun on resume.
 		var diff *model.SchemaDiff
 		require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
 			var getErr error
@@ -1485,13 +1490,14 @@ func TestStorageClassMultiSchemaKVDiskFullPausePrefix(t *testing.T) {
 		require.Equal(t, model.ActionMultiSchemaChange, diff.Type)
 		require.Equal(t, []model.ActionType{model.ActionAddColumn, model.ActionModifyEngineAttribute}, diff.SubActionTypes)
 
-		// Reload schema via domain so InfoSchema reflects the committed prefix before resume.
+		// Reload schema via domain so InfoSchema reflects the kept pause writes before resume.
 		require.NoError(t, domain.GetDomain(tk.Session()).Reload())
 		pausedTbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
 			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Len(t, pausedTbl.Meta().Columns, 2)
 		require.Equal(t, model.StorageClassTierStandard, pausedTbl.Meta().StorageClassTier)
+		require.Equal(t, "paused", pausedTbl.Meta().Comment)
 
 		tk.MustQuery(fmt.Sprintf(`SELECT direction, state, schema_version = %d
 			FROM mysql.tidb_storage_class_transition_history
@@ -1618,4 +1624,77 @@ func TestStorageClassMultiSchemaKVDiskFullPausePrefix(t *testing.T) {
 		require.Equal(t, "paused", finalTbl.Meta().Comment)
 		tk.MustExec("ADMIN CHECK TABLE t")
 	})
+}
+
+func TestStorageClassMultiSchemaRollbackPanicAdvances(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableStorageClass = true
+	})
+	if !kerneltype.IsNextGen() {
+		t.Skip("storage class transition history is NextGen-only")
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id INT, c1 INT)")
+	tk.MustExec("INSERT INTO t VALUES (1, 1), (2, 1)")
+	tk.MustExec("ALTER TABLE t STORAGE_CLASS IA")
+
+	var (
+		mu              sync.Mutex
+		jobID           int64
+		armedPanic      bool
+		armOnRunStep    atomic.Bool
+		sawCancelledSub atomic.Bool
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionMultiSchemaChange {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		jobID = job.ID
+		if !job.IsRollingback() || job.MultiSchemaInfo == nil {
+			return
+		}
+		if len(job.MultiSchemaInfo.SubJobs) == 3 &&
+			job.MultiSchemaInfo.SubJobs[2].State == model.JobStateCancelled {
+			sawCancelledSub.Store(true)
+			return
+		}
+		if !armedPanic && !job.MultiSchemaInfo.SubJobs[2].IsFinished() {
+			armedPanic = true
+			armOnRunStep.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+		if armOnRunStep.Swap(false) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected migrated rollback panic")`))
+		}
+	})
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+	})
+
+	err := tk.ExecToErr("ALTER TABLE t ADD COLUMN c2 INT, STORAGE_CLASS STANDARD, ADD UNIQUE INDEX idx(c1)")
+	require.Error(t, err)
+	require.True(t, armedPanic)
+	require.True(t, sawCancelledSub.Load())
+
+	historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	require.NoError(t, histErr)
+	require.NotNil(t, historyJob)
+	require.Equal(t, model.JobStateRollbackDone, historyJob.State)
+	require.NotNil(t, historyJob.Error)
+
+	tbl, tblErr := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, tblErr)
+	require.Len(t, tbl.Meta().Columns, 2)
+	require.Equal(t, model.StorageClassTierIA, tbl.Meta().StorageClassTier)
+	tk.MustQuery(`SELECT direction, state FROM mysql.tidb_storage_class_transition_history
+		WHERE table_schema = 'test' AND table_name = 't' ORDER BY start_ts`).Check(testkit.Rows("TO_IA RUNNING"))
+	tk.MustExec("ADMIN CHECK TABLE t")
 }

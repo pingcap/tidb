@@ -802,3 +802,66 @@ func TestStepCheckpointPanicAndErrEntryTooLarge(t *testing.T) {
 		tk.MustQuery("SELECT COUNT(*) FROM t3").Check(testkit.Rows("0"))
 	})
 }
+
+func TestMultiSchemaRollbackSubJobPanicAdvancesAndFinishes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE t (id INT, c1 INT)")
+	tk.MustExec("INSERT INTO t VALUES (1, 1), (2, 1)")
+
+	// Trigger panics inside rollback sub-jobs (both Rollingback and Cancelling)
+	// and verify the parent multi-schema job marks each panicked sub-job Cancelled,
+	// advances through the rollback loop, and reaches JobStateRollbackDone.
+	var (
+		mu              sync.Mutex
+		jobID           int64
+		remainingPanics = 2
+		armOnRunStep    atomic.Bool
+		sawSub1Cancel   atomic.Bool
+		sawSub0Cancel   atomic.Bool
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionMultiSchemaChange {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		jobID = job.ID
+		if !job.IsRollingback() || job.MultiSchemaInfo == nil || len(job.MultiSchemaInfo.SubJobs) != 2 {
+			return
+		}
+		if job.MultiSchemaInfo.SubJobs[1].State == model.JobStateCancelled {
+			sawSub1Cancel.Store(true)
+		}
+		if job.MultiSchemaInfo.SubJobs[0].State == model.JobStateCancelled {
+			sawSub0Cancel.Store(true)
+		}
+		if remainingPanics > 0 && (!job.MultiSchemaInfo.SubJobs[0].IsFinished() || !job.MultiSchemaInfo.SubJobs[1].IsFinished()) {
+			remainingPanics--
+			armOnRunStep.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+		if armOnRunStep.Swap(false) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected unmigrated rollback panic")`))
+		}
+	})
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+	})
+
+	err := tk.ExecToErr("ALTER TABLE t ADD COLUMN c2 INT, ADD UNIQUE INDEX idx(c1)")
+	require.Error(t, err)
+	require.Zero(t, remainingPanics)
+	require.True(t, sawSub1Cancel.Load())
+	require.True(t, sawSub0Cancel.Load())
+
+	historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	require.NoError(t, histErr)
+	require.NotNil(t, historyJob)
+	require.Equal(t, model.JobStateRollbackDone, historyJob.State)
+	require.NotNil(t, historyJob.Error)
+	// Confirm DDL execution on the table is unblocked afterwards.
+	tk.MustExec("ALTER TABLE t ADD COLUMN c3 INT")
+}
