@@ -1,13 +1,110 @@
 {
-  "date": "2026-11-22",
-  "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
+  "date": "2026-11-23",
+  "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 0,
-    "open": 0,
+    "unresolved": 12,
+    "open": 12,
     "partial": 0
   },
-  "findings": [],
-  "unresolved": 0,
-  "open": 0,
+  "findings": [
+    {
+      "id": "T01",
+      "group": "Executor, DML and expressions",
+      "status": "open",
+      "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings.",
+      "rust_evidence": "`tidb-session/src/lib.rs` hard-codes `\"pipelined\":false`; no `use_pipelined_dml_or_warn`.",
+      "go_owner": "`pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn`"
+    },
+    {
+      "id": "T02",
+      "group": "System tables and startup",
+      "status": "open",
+      "finding": "`performance_schema` virtual tables return no rows: `session_connect_attrs`, `session_account_connect_attrs`, the `tidb_profile_*` tables, and the `tikv_profile_cpu` / `pd_profile_*` remote profiles. Go `perfSchemaTable.getRows` fills them (Go answers 3 connect attributes and non-empty goroutine / memory profiles).",
+      "rust_evidence": "`tidb-session/src/account_state.rs` serves only `session_variables`; no port of `getRows`, `GetDataFromSessionConnectAttrs`, `profile.Collector`, `dataForRemoteProfile`.",
+      "go_owner": "`pkg/infoschema/perfschema/tables.go`, `pkg/infoschema/tables.go` `GetDataFromSessionConnectAttrs`, `pkg/util/profile`"
+    },
+    {
+      "id": "T03",
+      "group": "Privileges, wire and administration",
+      "status": "open",
+      "finding": "`tidb_auth_token` authentication is not ported: no `GlobalJWKS` (`security.auth-token-jwks`, `auth-token-refresh-interval`), no JWT signature check (`JWKSImpl.checkSigWithRetry`) or claims check (`checkAuthTokenClaims`); such accounts cannot log in.",
+      "rust_evidence": "`tidb-session/src/domain/configured_user_store.rs:712` refuses: \"Go verifies a JWT against `GlobalJWKS`; this server has none\".",
+      "go_owner": "`pkg/privilege/privileges/tidb_auth_token.go`, `privileges.go` `ConnectionVerification`"
+    },
+    {
+      "id": "T04",
+      "group": "Executor, DML and expressions",
+      "status": "open",
+      "finding": "`consistency.Reporter` is not ported: admin-check and lookup inconsistencies build their errors ad hoc and never log Go's `admin check found data inconsistency` / `indexLookup found data inconsistency` records with the row and index MVCC (`GetMvccByKey`, `DecodeRowMvccData`, `DecodeIndexMvccData`) under the redaction mode.",
+      "rust_evidence": "`tidb-executor/src/admin_check.rs` `inconsistent`, `fast_check_table.rs`, `index_lookup.rs` build the errors themselves.",
+      "go_owner": "`pkg/util/logutil/consistency/reporter.go`"
+    },
+    {
+      "id": "T05",
+      "group": "Structure: Go's shape before more ports",
+      "status": "open",
+      "finding": "Go `pkg/planner/optimize.go` (`Optimize`, `optimizeNoCache`, `optimize`, `buildLogicalPlan`, `buildAndOptimizeLogicalPlanRound` and the alternative-round predicates, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx`) has no planner-side owner: it lives in the executor.",
+      "rust_evidence": "`tidb-executor/src/driver/planner_bridge.rs` (`planner_optimized_query_with_allocators`, `build_logical_plan_and_do_optimize`, `build_and_optimize_logical_plan_round`), `tidb-executor/src/explain.rs`.",
+      "go_owner": "`pkg/planner/optimize.go`"
+    },
+    {
+      "id": "T06",
+      "group": "Planner and bindings",
+      "status": "open",
+      "finding": "Partition pruning is not Go's `partitionProcessor`: Go prunes over the conditions in the logical rule (`processRangePartition` / `processListPartition` / `processHashOrKeyPartition`, `rangePruner`, `listPartitionPruner`); Rust prunes from ranger intervals through an executor-side callback, with LIST COLUMNS locating in the executor.",
+      "rust_evidence": "`tidb-planner-rule/src/lib.rs` (`pruned_ids_from_ranger`), `tidb-executor/src/driver/planner_bridge.rs` (`partition_pruning`, `locate_list_columns_*`), `tidb-planner-core-rule/src/rule_partition_processor.rs` asks `ctx.partition_pruning`.",
+      "go_owner": "`pkg/planner/core/rule/rule_partition_processor.go`"
+    },
+    {
+      "id": "T07",
+      "group": "Planner and bindings",
+      "status": "open",
+      "finding": "Planner code owned by the executor: `pb_to_plan.go` (`PBPlanBuilder`), the plan-cache utilities and cacheable checker, and `rule_collect_plan_stats.go`'s statistics loading live in `tidb-executor`.",
+      "rust_evidence": "`tidb-executor/src/coprocessor.rs`, `tidb-executor/src/driver/access.rs`, `tidb-executor/src/compiler/plan_cacheable_checker.rs`, `compiler/non_prepared_plan_cache.rs`, `driver/catalog_ctx.rs`.",
+      "go_owner": "`pkg/planner/core/pb_to_plan.go`, `plan_cache_utils.go`, `plan_cacheable_checker.go`, `rule/rule_collect_plan_stats.go`"
+    },
+    {
+      "id": "T08",
+      "group": "Planner and bindings",
+      "status": "open",
+      "finding": "Go's `expressionRewriter` (`pkg/planner/core/expression_rewriter.go`) and `ScalarSubQueryExpr` are split into the expression crate instead of the planner.",
+      "rust_evidence": "`tidb-expr/src/rewriter.rs`, `tidb-expr/src/simple_expr.rs`, `tidb-expr/src/scalar_subquery.rs`.",
+      "go_owner": "`pkg/planner/core/expression_rewriter.go`, `scalar_subq_expression.go`"
+    },
+    {
+      "id": "T09",
+      "group": "Structure: Go's shape before more ports",
+      "status": "open",
+      "finding": "`SessionVars`' typed fields are not on the session variables: the executor re-parses the variable table into a per-generation snapshot (66 `SessionVars` fields) instead of each variable's `SetSession` hook maintaining a field.",
+      "rust_evidence": "`tidb-executor/src/stmt_ctx_build.rs` (the statement context's session-variable half).",
+      "go_owner": "`pkg/sessionctx/variable/session.go`, `sysvar.go` `SetSession` hooks"
+    },
+    {
+      "id": "T10",
+      "group": "Executor, DML and expressions",
+      "status": "open",
+      "finding": "`pkg/executor/plan_replayer.go` (`PlanReplayerExec`, `PlanReplayerLoadInfo`) lives in the session crate.",
+      "rust_evidence": "`tidb-session/src/plan_replayer.rs`, `tidb-session/src/domain/cluster_session_node/plan_replayer_load.rs`.",
+      "go_owner": "`pkg/executor/plan_replayer.go`"
+    },
+    {
+      "id": "T11",
+      "group": "Statistics",
+      "status": "open",
+      "finding": "The analyze-job lifecycle (`insertAnalyzeJob`, `startAnalyzeJob`, `updateAnalyzeJobProgress`, `finishAnalyzeJob`) lives in the session crate behind an executor trait instead of the autoanalyze handle.",
+      "rust_evidence": "`tidb-session/src/domain/cluster_session_node/statistics.rs`, `AnalyzeJobLifecycle` in `tidb-executor/src/real_tikv_analyze.rs`.",
+      "go_owner": "`pkg/statistics/handle/autoanalyze/autoanalyze.go`"
+    },
+    {
+      "id": "T12",
+      "group": "Privileges, wire and administration",
+      "status": "open",
+      "finding": "Login verification (`ConnectionVerification`'s plugin, password, lock and TLS checks) is split between the session crate and the privilege crate.",
+      "rust_evidence": "`tidb-session/src/identity.rs`, `tidb-session/src/domain/configured_user_store.rs`.",
+      "go_owner": "`pkg/privilege/privileges/privileges.go`"
+    }
+  ],
+  "unresolved": 12,
+  "open": 12,
   "partial": 0
 }
