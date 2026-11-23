@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -280,17 +279,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	tlsCfg := task.TLSConfig{
-		CA:   tidbCfg.Security.ClusterSSLCA,
-		Cert: tidbCfg.Security.ClusterSSLCert,
-		Key:  tidbCfg.Security.ClusterSSLKey,
-	}
-	pds := strings.Split(tidbCfg.Path, ",")
 
 	// build common config
 	cfg := task.DefaultConfig()
-	cfg.PD = pds
-	cfg.TLS = tlsCfg
+	task.ApplyTiDBRuntimeConfig(&cfg)
 
 	storageURL, err := objstore.ParseRawURL(s.Storage)
 	if err != nil {
@@ -300,9 +292,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 	case "gs", "gcs":
-		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 
 	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
 	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.

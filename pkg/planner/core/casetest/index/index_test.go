@@ -396,6 +396,98 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 	})
 }
 
+func TestPartialUniqueIndexDoesNotImplyGlobalUniqueness(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table partial_unique (
+			id bigint primary key,
+			domain varchar(253) not null,
+			deleted_at datetime null,
+			unique index uk_domain_active(domain) where deleted_at is null
+		)`)
+		tk.MustExec(`insert into partial_unique values
+			(1, 'example.com', null),
+			(2, 'example.com', '2026-01-01'),
+			(3, 'example.com', '2026-01-02'),
+			(4, 'example.com', '2026-01-03')`)
+
+		tk.MustQuery("select count(distinct domain) from partial_unique").Check(testkit.Rows("1"))
+		tk.MustQuery("explain format = 'plan_tree' select count(distinct domain) from partial_unique").
+			CheckContain("Agg")
+		tk.MustQuery("select distinct domain from partial_unique").Check(testkit.Rows("example.com"))
+		tk.MustQuery("explain format = 'plan_tree' select distinct domain from partial_unique").
+			CheckContain("Agg")
+		tk.MustQuery("select domain, count(*) from partial_unique group by domain").
+			Check(testkit.Rows("example.com 4"))
+		tk.MustQuery("explain format = 'plan_tree' select domain, count(*) from partial_unique group by domain").
+			CheckContain("Agg")
+
+		tk.MustExec("create table partial_outer (id bigint primary key, domain varchar(253) not null)")
+		tk.MustExec("insert into partial_outer values (1, 'example.com')")
+		tk.MustQuery(`select o.id
+			from partial_outer o
+			left join partial_unique i
+				on o.domain = i.domain and i.deleted_at is not null`).
+			Check(testkit.Rows("1", "1", "1"))
+		err := tk.QueryToErr(`select (
+				select i.id
+				from partial_unique i
+				where i.domain = o.domain and i.deleted_at is not null
+			)
+			from partial_outer o`)
+		require.EqualError(t, err, "[executor:1242]Subquery returns more than 1 row")
+		tk.MustQuery(`select o.id
+			from partial_outer o
+			left join partial_unique i on o.domain = i.domain
+			order by o.id
+			limit 2 offset 1`).
+			Check(testkit.Rows("1", "1"))
+
+		tk.MustExec("set @@session.sql_mode = 'ONLY_FULL_GROUP_BY'")
+		for _, enabled := range []string{"off", "on"} {
+			tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = " + enabled)
+			tk.MustGetErrCode("select domain, id from partial_unique group by domain", 1055)
+		}
+
+		tk.MustQuery(`explain format = 'plan_tree'
+			select * from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' and deleted_at is null`).
+			CheckContain("uk_domain_active")
+		tk.MustQuery(`select id from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' and deleted_at is null`).
+			Check(testkit.Rows("1"))
+		tk.MustQuery(`explain format = 'plan_tree'
+			select * from partial_unique use index(uk_domain_active)
+			where domain = 'example.com'`).
+			CheckNotContain("uk_domain_active")
+		tk.MustQuery(`select id from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' order by id`).
+			Check(testkit.Rows("1", "2", "3", "4"))
+
+		tk.MustExec(`create table partial_composite (
+			a int null,
+			b int not null,
+			c int,
+			unique index uk_ab_active(a, b) where c = 1
+		)`)
+		tk.MustExec("insert into partial_composite values (1, 1, 1), (1, 1, 2), (1, 1, 3), (null, 1, 1), (null, 1, 2)")
+		tk.MustQuery("select a, b, count(*) from partial_composite group by a, b order by a").
+			Check(testkit.Rows("<nil> 1 2", "1 1 3"))
+		tk.MustQuery("select a, b, count(*) from partial_composite where a is not null group by a, b").
+			Check(testkit.Rows("1 1 3"))
+
+		tk.MustExec("create table regular_keys (id int primary key, a int not null unique, payload int)")
+		tk.MustExec("insert into regular_keys values (1, 10, 100), (2, 20, 200)")
+		for _, enabled := range []string{"off", "on"} {
+			tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = " + enabled)
+			tk.MustQuery("select a, payload from regular_keys group by a order by a").
+				Check(testkit.Rows("10 100", "20 200"))
+			tk.MustQuery("select id, payload from regular_keys group by id order by id").
+				Check(testkit.Rows("1 100", "2 200"))
+		}
+	})
+}
+
 func TestPartialIndexWithIndexPrune(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -600,6 +692,31 @@ func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
 	})
 }
 
+func TestSkylinePruningWithMissingIndexStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_prefer_range_scan = on")
+	tk.MustExec(`create table t (
+		id int not null, a int not null, b int not null, c int not null,
+		payload varchar(100), key idx_id(id))`)
+	var values strings.Builder
+	for i := 1; i <= 1000; i++ {
+		if i > 1 {
+			values.WriteString(",")
+		}
+		fmt.Fprintf(&values, "(%d, 1, 1, 1, 'payload')", i)
+	}
+	tk.MustExec("insert into t values " + values.String())
+	tk.MustExec("analyze table t")
+	tk.MustExec("alter table t add index idx_abc(a, b, c)")
+	// Only idx_id has statistics, and it is much more selective than idx_abc.
+	tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and is_index = 1").CheckAt([]int{3}, testkit.Rows("idx_id"))
+	const query = "select * from t where id = 1 and a = 1 and b = 1 and c = 1"
+	tk.MustQuery("explain format = 'brief' " + query).CheckContain("index:idx_id(id)")
+	tk.MustQuery(query).Check(testkit.Rows("1 1 1 1 payload"))
+}
+
 func TestForceIndexLimit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec(`use test`)
@@ -617,4 +734,54 @@ func TestForceIndexLimit(t *testing.T) {
 				"    └─Limit cop[tikv]  offset:0, count:100",
 				"      └─IndexRangeScan cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 	})
+}
+
+func TestCorrelatedColumnPathNotPrunedByRisk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("create table t_outer (id char(36) primary key)")
+	tk.MustExec("insert into t_outer values (lpad(5,36,'0')), (lpad(7,36,'0'))")
+	// idx_a is only reachable through the correlated equality, so at plan time it
+	// starts from a full range, while idx_b covers 50 rows through a constant. The
+	// correlated estimate must carry a matching min/max: leaving idx_a with a
+	// table-sized MaxCountAfterAccess next to its one-row estimate makes skyline
+	// pruning drop it for phantom risk before cost is ever considered.
+	tk.MustExec(`create table t (
+		id char(36) primary key,
+		a char(36) default null,
+		b char(36) not null,
+		v char(36) not null,
+		key idx_a (a),
+		key idx_b (b))`)
+	var values strings.Builder
+	for i := 1; i <= 1000; i++ {
+		if i > 1 {
+			values.WriteString(",")
+		}
+		fmt.Fprintf(&values, "(lpad(%d,36,'0'),lpad(%d,36,'0'),lpad(%d,36,'0'),lpad(%d,36,'0'))", i, i, i%20, i)
+	}
+	tk.MustExec("insert into t values " + values.String())
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t_outer")
+
+	rows := tk.MustQuery(`explain format = 'brief'
+		select o.id, (select t.v from t where t.a = o.id and t.b = lpad(5,36,'0') limit 1) from t_outer o`).Rows()
+	plan := make([]string, 0, len(rows))
+	for _, row := range rows {
+		cols := make([]string, 0, len(row))
+		for _, col := range row {
+			cols = append(cols, fmt.Sprintf("%v", col))
+		}
+		plan = append(plan, strings.Join(cols, " "))
+	}
+	joined := strings.Join(plan, "\n")
+	require.Contains(t, joined, "index:idx_a(a) range: decided by [eq(test.t.a, test.t_outer.id)]", joined)
+	require.NotContains(t, joined, "index:idx_b(b)", joined)
+
+	tk.MustQuery(`select o.id, (select t.v from t where t.a = o.id and t.b = lpad(5,36,'0') limit 1) from t_outer o`).
+		Sort().Check(testkit.Rows(
+		"000000000000000000000000000000000005 000000000000000000000000000000000005",
+		"000000000000000000000000000000000007 <nil>"))
 }

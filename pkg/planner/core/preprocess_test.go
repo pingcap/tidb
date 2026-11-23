@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -51,6 +53,65 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v, terr:%v", sql, err, terr)
+}
+
+func TestPreprocessMViewShadowResolution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{AuthUsername: "u", AuthHostname: "%"}
+
+	shadow := &model.TableInfo{
+		ID:                     1,
+		Name:                   ast.NewCIStr("mv_shadow"),
+		State:                  model.StatePublic,
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 2},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{shadow})
+	stmts, err := session.Parse(tk.Session(), "select * from mv_shadow")
+	require.NoError(t, err)
+	require.Len(t, stmts, 1)
+
+	err = core.Preprocess(
+		context.Background(),
+		tk.Session(),
+		resolve.NewNodeW(stmts[0]),
+		core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}),
+	)
+	require.NoError(t, err)
+}
+
+func TestPreprocessRefreshMaterializedViewTargetResolution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tests := []struct {
+		sql       string
+		expectErr bool
+	}{
+		{"refresh materialized view mv complete out of place", false},
+		{"refresh materialized view mv complete in place", true},
+		{"refresh materialized view mv complete delta apply", true},
+		{"refresh materialized view mv fast", true},
+	}
+	for _, tt := range tests {
+		stmts, err := session.Parse(tk.Session(), tt.sql)
+		require.NoError(t, err, tt.sql)
+		require.Len(t, stmts, 1, tt.sql)
+
+		err = core.Preprocess(
+			context.Background(),
+			tk.Session(),
+			resolve.NewNodeW(stmts[0]),
+			core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: infoschema.MockInfoSchema(nil)}),
+		)
+		if tt.expectErr {
+			require.ErrorContains(t, err, "Table 'test.mv' doesn't exist", tt.sql)
+		} else {
+			require.NoError(t, err, tt.sql)
+		}
+	}
 }
 
 func TestValidator(t *testing.T) {
@@ -345,11 +406,24 @@ func TestValidator(t *testing.T) {
 		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
 		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 
-		// SELECT can resolve _tidb_commit_ts. Unsupported access paths are rejected
-		// later while choosing a physical plan.
+		// _tidb_commit_ts reads do not depend on tidb_mview_enable.
 		{"SELECT _tidb_commit_ts FROM t WHERE a = 1", false, nil},
 		{"SELECT a FROM t WHERE _tidb_commit_ts > 0", false, nil},
 		{"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t", false, nil},
+		{"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0", false, nil},
+		{"UPDATE t SET a = (_tidb_commit_ts > 0)", false, nil},
+		{"INSERT INTO t (a) SELECT _tidb_commit_ts FROM t", false, nil},
+		{"UPDATE t SET t._tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_TIDB_COMMIT_TS) VALUES (1)", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (_tidb_commit_ts) SELECT a FROM t", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t SET _tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE _tidb_commit_ts = 1", false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now")},
+		{"DELETE FROM t WHERE _tidb_commit_ts > 0", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -359,6 +433,25 @@ func TestValidator(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	for _, tt := range tests {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
+	}
+
+	// The same access boundary applies when materialized view DDL is enabled.
+	tk.MustExec("set tidb_mview_enable = on")
+	for _, sql := range []string{
+		"SELECT _tidb_commit_ts FROM t WHERE a = 1",
+		"SELECT a FROM t WHERE _tidb_commit_ts > 0",
+		"SELECT _tidb_commit_ts FROM t UNION ALL SELECT _tidb_commit_ts FROM t",
+		"UPDATE t SET a = a + 1 WHERE _tidb_commit_ts > 0",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0",
+		"DELETE FROM t WHERE _tidb_commit_ts > 0 AND _tidb_commit_ts <= 1 LIMIT 1",
+	} {
+		runSQL(t, tk.Session(), is, sql, false, nil)
+	}
+	for _, sql := range []string{
+		"UPDATE t SET _tidb_commit_ts = 1",
+	} {
+		runSQL(t, tk.Session(), is, sql, false,
+			plannererrors.ErrInternal.GenWithStack("Usage of column name '_tidb_commit_ts' is not supported for now"))
 	}
 }
 
@@ -482,6 +575,46 @@ func TestPreprocessCTE(t *testing.T) {
 		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
 		require.NoError(t, err)
 		require.Equal(t, tc.after, rs.String())
+	}
+}
+
+func TestPreprocessCTEConsumerCountIsIdempotent(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	testCases := []struct {
+		name          string
+		sql           string
+		consumerCount int
+	}{
+		{
+			name:          "single consumer",
+			sql:           "with cte as (select * from t) select * from cte",
+			consumerCount: 1,
+		},
+		{
+			name:          "multiple consumers",
+			sql:           "with cte as (select * from t) select * from cte c1 join cte c2",
+			consumerCount: 2,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(testCase.sql, "", "")
+			require.NoError(t, err)
+			selectStmt := stmt.(*ast.SelectStmt)
+			cte := selectStmt.With.CTEs[0]
+
+			for range 2 {
+				nodeW := resolve.NewNodeW(stmt)
+				err = core.Preprocess(context.Background(), tk.Session(), nodeW)
+				require.NoError(t, err)
+				require.Equal(t, testCase.consumerCount, cte.ConsumerCount)
+			}
+		})
 	}
 }
 

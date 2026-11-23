@@ -46,11 +46,11 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
+		tk.MustExec("delete from mysql." + metadef.TiDBDDLNotifierTableName)
 	})
 
 	ctx := context.Background()
-	s := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("mysql", metadef.TiDBDDLNotifierTableName)
 	se := sess.NewSession(tk.Session())
 	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
@@ -72,10 +72,10 @@ func TestBasicPubSub(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		2,
 		func() (pools.Resource, error) {
@@ -146,10 +146,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		1,
 		func() (pools.Resource, error) {
@@ -322,11 +322,11 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {
@@ -364,7 +364,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 
 	<-waitCh
 	// mimic another owner to handle the event, which is delete the record
-	tk2.MustExec("DELETE FROM test." + metadef.NotifierTableName)
+	tk2.MustExec("DELETE FROM test." + metadef.TiDBDDLNotifierTableName)
 	close(waitCh2)
 
 	require.Eventually(t, func() bool {
@@ -460,10 +460,10 @@ func TestBeginTwice(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		5,
 		func() (pools.Resource, error) {
@@ -513,10 +513,10 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	ctx := context.Background()
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {
@@ -532,7 +532,7 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	// Always fails
 	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// Mock a duplicate key error
-		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+metadef.NotifierTableName+" VALUES(1, -1, 'some', 0)")
+		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+metadef.TiDBDDLNotifierTableName+" VALUES(1, -1, 'some', 0)")
 		return err
 	}
 	// Always succeeds
@@ -569,13 +569,13 @@ func TestCommitFailed(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_enable_metadata_lock=1")
 	})
-	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.TiDBDDLNotifierTableName)
 	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
 	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
 
 	ctx := context.Background()
-	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.TiDBDDLNotifierTableName)
 	sessionPool := util.NewSessionPool(
 		4,
 		func() (pools.Resource, error) {
@@ -614,4 +614,63 @@ func TestCommitFailed(t *testing.T) {
 		return count == 0
 	}, time.Second, 50*time.Millisecond)
 	n.OnRetireOwner()
+}
+
+func TestMViewRefreshOutOfPlaceCutoverEventPublished(t *testing.T) {
+	var (
+		cutoverEventsMu sync.Mutex
+		cutoverEvents   []*notifier.SchemaChangeEvent
+	)
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		if c.GetType() != model.ActionMViewRefreshOutOfPlaceCutover {
+			return nil
+		}
+		cutoverEventsMu.Lock()
+		defer cutoverEventsMu.Unlock()
+		cutoverEvents = append(cutoverEvents, c)
+		return nil
+	}
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated",
+		func(registry *notifier.DDLNotifier) {
+			registry.RegisterHandler(notifier.TestHandlerID, handler)
+		},
+	)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_mview_enable = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
+	require.NoError(t, err)
+	oldMViewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (3, 4)")
+	tk.MustExec("refresh materialized view mv complete out of place")
+
+	is = dom.InfoSchema()
+	mvTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
+	require.NoError(t, err)
+	newMViewID := mvTable.Meta().ID
+
+	require.Eventually(t, func() bool {
+		cutoverEventsMu.Lock()
+		defer cutoverEventsMu.Unlock()
+		return len(cutoverEvents) == 1
+	}, 5*time.Second, 100*time.Millisecond)
+
+	cutoverEventsMu.Lock()
+	defer cutoverEventsMu.Unlock()
+	newMVInfo, oldMVInfo := cutoverEvents[0].GetMViewRefreshOutOfPlaceCutoverInfo()
+	require.Equal(t, newMViewID, newMVInfo.ID)
+	require.Equal(t, oldMViewID, oldMVInfo.ID)
+	require.Equal(t, "mv", newMVInfo.Name.L)
+	require.Equal(t, "mv", oldMVInfo.Name.L)
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +57,8 @@ func TestGroupStringer(t *testing.T) {
 
 	p := parser.New()
 	ctx := coretestsdk.MockContext()
+	// The golden plans include literal values.
+	ctx.GetSessionVars().EnableRedactLog = vardef.Off
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

@@ -120,6 +120,11 @@ type AccessPath struct {
 	IndexMergeIsIntersection bool
 	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
 	IndexMergeAccessMVIndex bool
+	// IndexMergeMVCoveredConds are the JSON predicates (MEMBER OF, JSON_CONTAINS, JSON_OVERLAPS) on a MVIndex
+	// array column that a single-MVIndex IndexMerge path turned into exact index ranges. Every row this path
+	// returns satisfies them, so a parent Selection that holds them (because they can't be pushed down to
+	// TiKV) doesn't need to evaluate them again.
+	IndexMergeMVCoveredConds []expression.Expression
 
 	StoreType kv.StoreType
 
@@ -189,6 +194,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		IndexFilters:                 CloneExprs(path.IndexFilters),
 		TableFilters:                 CloneExprs(path.TableFilters),
 		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		IndexMergeAccessMVIndex:      path.IndexMergeAccessMVIndex,
+		IndexMergeMVCoveredConds:     CloneExprs(path.IndexMergeMVCoveredConds),
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
 		IsDNFCond:                    path.IsDNFCond,

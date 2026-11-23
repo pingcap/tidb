@@ -262,6 +262,95 @@ func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]any) (string,
 	return string(hack.String(bytes)), nil
 }
 
+func TestMatchURIWithWildcard(t *testing.T) {
+	testCases := []struct {
+		name     string
+		required string
+		given    string
+		match    bool
+	}{
+		{
+			name:     "exact URI",
+			required: "spiffe://domain.com/bar/something/foo/baz",
+			given:    "spiffe://domain.com/bar/something/foo/baz",
+			match:    true,
+		},
+		{
+			name:     "whole path segments",
+			required: "spiffe://domain.com/*/something/foo/*",
+			given:    "spiffe://domain.com/bar/something/foo/baz",
+			match:    true,
+		},
+		{
+			name:     "wildcard does not cross path separator",
+			required: "spiffe://domain.com/*/something/foo/*",
+			given:    "spiffe://domain.com/bar/extra/something/foo/baz",
+		},
+		{
+			name:     "wildcard does not match empty segment",
+			required: "spiffe://domain.com/*/something/foo/*",
+			given:    "spiffe://domain.com//something/foo/baz",
+		},
+		{
+			name:     "embedded asterisk is literal",
+			required: "spiffe://domain.com/foo*/bar",
+			given:    "spiffe://domain.com/foo*/bar",
+			match:    true,
+		},
+		{
+			name:     "embedded asterisk does not match partial segment",
+			required: "spiffe://domain.com/foo*/bar",
+			given:    "spiffe://domain.com/foobar/bar",
+		},
+		{
+			name:     "host wildcard is literal",
+			required: "spiffe://*/bar/*",
+			given:    "spiffe://domain.com/bar/baz",
+		},
+		{
+			name:     "scheme must match exactly",
+			required: "spiffe://domain.com/bar/*",
+			given:    "https://domain.com/bar/baz",
+		},
+		{
+			name:     "empty userinfo does not match absent userinfo",
+			required: "spiffe://@domain.com/bar/*",
+			given:    "spiffe://domain.com/bar/baz",
+		},
+		{
+			name:     "absent userinfo does not match empty userinfo",
+			required: "spiffe://domain.com/bar/*",
+			given:    "spiffe://@domain.com/bar/baz",
+		},
+		{
+			name:     "omitted authority does not match present empty authority",
+			required: "spiffe:/bar/*",
+			given:    "spiffe:///bar/baz",
+		},
+		{
+			name:     "present empty authority does not match omitted authority",
+			required: "spiffe:///bar/*",
+			given:    "spiffe:/bar/baz",
+		},
+		{
+			name:     "query wildcard is literal",
+			required: "spiffe://domain.com/bar/*?key=*",
+			given:    "spiffe://domain.com/bar/baz?key=value",
+		},
+		{
+			name:     "encoded slash stays within segment",
+			required: "spiffe://domain.com/bar/*",
+			given:    "spiffe://domain.com/bar/baz%2Fqux",
+			match:    true,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.match, matchURIWithWildcard(testCase.required, testCase.given))
+		})
+	}
+}
+
 func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
 	now := time.Now()

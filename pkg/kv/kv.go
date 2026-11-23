@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -401,6 +402,96 @@ const (
 	UnSpecified = 255
 )
 
+// CoprRequestLimiter limits the aggregate number of in-flight cop request
+// attempts. A token covers one actual RPC attempt and is released before a
+// retry selects its next store. It must be created with NewCoprRequestLimiter.
+type CoprRequestLimiter struct {
+	token chan struct{}
+}
+
+// NewCoprRequestLimiter creates a cop request limiter with capacity n.
+func NewCoprRequestLimiter(n int) *CoprRequestLimiter {
+	if n <= 0 {
+		return nil
+	}
+	return &CoprRequestLimiter{
+		token: make(chan struct{}, n),
+	}
+}
+
+// AcquireWithContext blocks until the limiter admits one request attempt, ctx
+// is canceled, or done is closed. When it returns false, the caller must call
+// Release exactly once.
+func (l *CoprRequestLimiter) AcquireWithContext(ctx context.Context, done <-chan struct{}) (exit bool) {
+	select {
+	case <-ctx.Done():
+		return true
+	case <-done:
+		return true
+	case l.token <- struct{}{}:
+		return false
+	}
+}
+
+// Release releases one acquired request token.
+func (l *CoprRequestLimiter) Release() {
+	select {
+	case <-l.token:
+	default:
+		panic("release a redundant cop request token")
+	}
+}
+
+// TryAcquire attempts to acquire one token without blocking.
+func (l *CoprRequestLimiter) TryAcquire() bool {
+	select {
+	case l.token <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Capacity returns the maximum number of concurrent request attempts.
+func (l *CoprRequestLimiter) Capacity() int {
+	return cap(l.token)
+}
+
+// QueryCopStoreLimiter owns per-store cop request limiters for one statement.
+type QueryCopStoreLimiter struct {
+	limit  int
+	stores sync.Map // storeID -> *CoprRequestLimiter
+}
+
+// NewQueryCopStoreLimiter creates a query-scoped per-store cop limiter.
+func NewQueryCopStoreLimiter(limit int) *QueryCopStoreLimiter {
+	if limit <= 0 {
+		return nil
+	}
+	return &QueryCopStoreLimiter{limit: limit}
+}
+
+// GetStoreLimiter returns the query-scoped limiter for a TiKV store.
+func (l *QueryCopStoreLimiter) GetStoreLimiter(storeID uint64) *CoprRequestLimiter {
+	if l == nil || l.limit <= 0 || storeID == 0 {
+		return nil
+	}
+	if limiter, ok := l.stores.Load(storeID); ok {
+		return limiter.(*CoprRequestLimiter)
+	}
+	newLimiter := NewCoprRequestLimiter(l.limit)
+	limiter, _ := l.stores.LoadOrStore(storeID, newLimiter)
+	return limiter.(*CoprRequestLimiter)
+}
+
+// Capacity returns the per-store concurrency limit.
+func (l *QueryCopStoreLimiter) Capacity() int {
+	if l == nil {
+		return 0
+	}
+	return l.limit
+}
+
 // Name returns the name of store type.
 func (t StoreType) Name() string {
 	if t == TiFlash {
@@ -583,10 +674,14 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
-	// CoprRequestRateLimit, if not nil, is used as the shared in-flight request
-	// limiter for all cop iterators created from this request. The token lifecycle
-	// is tied to request send/response receive instead of result consumption.
-	CoprRequestRateLimit *util.RateLimit
+	// CoprRequestLimiter, if not nil, is used as the shared in-flight request
+	// limiter for all cop iterators created from this request when
+	// QueryCopStoreLimiter is nil.
+	CoprRequestLimiter *CoprRequestLimiter
+	// QueryCopStoreLimiter, if not nil, limits in-flight cop request attempts
+	// per TiKV store within this request's statement and takes precedence over
+	// CoprRequestLimiter.
+	QueryCopStoreLimiter *QueryCopStoreLimiter
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.

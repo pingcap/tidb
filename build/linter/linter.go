@@ -17,4 +17,7 @@ package linter
 import (
 	// it is necessary to make skywalking-eye into gomod.
 	_ "github.com/apache/skywalking-eyes/pkg/config"
+	// skywalking-eyes depends on go-github, which imports this package.
+	// At the selected crypto version it is a separate module.
+	_ "golang.org/x/crypto/openpgp"
 )

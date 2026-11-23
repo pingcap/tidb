@@ -39,6 +39,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -110,6 +111,69 @@ func TestCreateTables(t *testing.T) {
 	for i := range tables {
 		require.True(t, oldTableIDExist[int64(i)], "table rule does not exist")
 	}
+}
+
+func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
+	m := mc
+	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(gluetidb.New(), m.Storage))
+	ctx := context.Background()
+
+	sourceDB := &metautil.Database{Info: &model.DBInfo{
+		ID:   100,
+		Name: ast.NewCIStr("route_source"),
+	}}
+	targetDB := sourceDB.Info.Clone()
+	targetDB.Name = ast.NewCIStr("route_target")
+	require.NoError(t, client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{{
+		Source: sourceDB,
+		Target: targetDB,
+	}}))
+
+	timestampField := types.NewFieldType(mysql.TypeTimestamp)
+	source := &metautil.Table{
+		DB: sourceDB.Info,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: ast.NewCIStr("source_table"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				FieldType: *timestampField,
+				State:     model.StatePublic,
+			}},
+			Charset: "utf8mb4",
+			Collate: "utf8mb4_bin",
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       ast.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	targetInfo := source.Info.Clone()
+	targetInfo.Name = ast.NewCIStr("target_table")
+
+	_, err := client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
+	require.NoError(t, err)
+	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{
+		Source:     source,
+		TargetDB:   targetDB,
+		TargetInfo: targetInfo,
+	}}, 0)
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Same(t, source, created[0].OldTable)
+	require.Equal(t, "route_target", created[0].TargetDBName().O)
+	require.Equal(t, "target_table", created[0].Table.Name.O)
+
+	_, err = m.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("route_target"), ast.NewCIStr("target_table"))
+	require.NoError(t, err)
+	require.Equal(t, "route_source", source.DB.Name.O)
+	require.Equal(t, "source_table", source.Info.Name.O)
+	require.True(t, source.Info.TTLInfo.Enable)
+	require.True(t, targetInfo.TTLInfo.Enable)
 }
 
 func getStartedMockedCluster(t *testing.T) *mock.Cluster {
@@ -194,14 +258,15 @@ func TestCreateDuplicateDatabaseForOneSession(t *testing.T) {
 
 	ctx := context.Background()
 	db := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}
-	require.False(t, db.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	plan := &restoreutils.DatabaseRestorePlan{Source: db, Target: db.Info.Clone()}
+	require.False(t, plan.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.False(t, db.IsReusedByPITR())
+	require.False(t, plan.Reused)
 	// continue to create the same database
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.True(t, db.IsReusedByPITR())
+	require.True(t, plan.Reused)
 }
 
 func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
@@ -217,23 +282,27 @@ func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
 	db1 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_1")}}
 	db2 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_2")}}
 	db3 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_3")}}
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3})
+	plan1 := &restoreutils.DatabaseRestorePlan{Source: db1, Target: db1.Info.Clone()}
+	plan2 := &restoreutils.DatabaseRestorePlan{Source: db2, Target: db2.Info.Clone()}
+	plan3 := &restoreutils.DatabaseRestorePlan{Source: db3, Target: db3.Info.Clone()}
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3})
 	require.NoError(t, err)
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
 	// continue to create the same databases
 	db4 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_4")}}
-	require.False(t, db4.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3, db4})
+	plan4 := &restoreutils.DatabaseRestorePlan{Source: db4, Target: db4.Info.Clone()}
+	require.False(t, plan4.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3, plan4})
 	require.NoError(t, err)
-	require.True(t, db1.IsReusedByPITR())
-	require.True(t, db2.IsReusedByPITR())
-	require.True(t, db3.IsReusedByPITR())
-	require.False(t, db4.IsReusedByPITR())
+	require.True(t, plan1.Reused)
+	require.True(t, plan2.Reused)
+	require.True(t, plan3.Reused)
+	require.False(t, plan4.Reused)
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {

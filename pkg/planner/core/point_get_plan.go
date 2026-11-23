@@ -257,7 +257,6 @@ func newBatchPointGetPlan(
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			idxInfo.HasCondition() || !indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias,
 			idxInfo,
@@ -429,6 +428,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -539,6 +541,9 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
@@ -569,7 +574,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
 		indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias.L,
 			nil,
@@ -610,7 +614,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			idxInfo.HasCondition() || !indexIsAvailableByHints(
-			ctx.GetSessionVars().CurrentDB,
 			dbName,
 			tblAlias,
 			idxInfo,
@@ -674,7 +677,6 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 // indexIsAvailableByHints checks whether this index is filtered by these specified index hints.
 // idxInfo is PK if it's nil
 func indexIsAvailableByHints(
-	currentDB string,
 	dbName string,
 	tblAlias string,
 	idxInfo *model.IndexInfo,
@@ -709,13 +711,11 @@ func indexIsAvailableByHints(
 			intest.Assert(false)
 			continue
 		}
+		// The table name matching logic from getPossibleAccessPaths(). The fast path has a single table, so a hint
+		// without a database name refers to it whatever its database, see QBHintHandler.resolveHintDBName.
 		hintDBName := h.Tables[0].DBName
-		if hintDBName.L == "" {
-			hintDBName = ast.NewCIStr(currentDB)
-		}
-		// The table name matching logic from getPossibleAccessPaths()
 		if h.Tables[0].TableName.L == tblAlias &&
-			(hintDBName.L == dbName || hintDBName.L == "*") {
+			(hintDBName.L == "" || hintDBName.L == dbName || hintDBName.L == "*") {
 			combinedHints = append(combinedHints, &ast.IndexHint{
 				IndexNames: h.Indexes,
 				HintType:   hintType,
@@ -1171,6 +1171,19 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		return nil
 	}
 
+	tblName, tblAlias := getSingleTableNameAndAlias(updateStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "UPDATE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: updateStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1320,6 +1333,20 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	if delStmt.IsMultiTable {
 		return nil
 	}
+
+	tblName, tblAlias := getSingleTableNameAndAlias(delStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "DELETE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: delStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1436,22 +1463,28 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 }
 
 // TODO: Remove this, by enabling all types of partitioning
-// and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
-	pi := tbl.GetPartitionInfo()
+// and update/add tests.
+func getHashOrKeyPartitionColumnName(tbl table.Table) *ast.CIStr {
+	if tbl == nil {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil
+	}
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
 	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tbl.ID)
+	partTable, ok := tbl.(base.PartitionTable)
 	if !ok {
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(base.PartitionTable).PartitionExpr()
+	partitionExpr := partTable.PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {

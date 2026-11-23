@@ -1097,6 +1097,8 @@ const (
 	ErrTimeStampInDSTTransition            = 8179
 	ErrQueryExecStopped                    = 8180
 	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
+	_                                      = 8182 // reserved for ErrMVAdvisoryLockConflict
+	_                                      = 8183 // reserved for ErrMVRefreshLogBaselineChanged
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1197,5 +1199,6 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrSharedLockLost            = 9015
 	ErrUserPrefixMismatch        = 20003
 )

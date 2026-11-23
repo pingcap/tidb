@@ -90,7 +90,7 @@ type tidbSession struct {
 }
 
 func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
-	return session.GetOrCreateDomainWithFilter(store, g.InfoSchemaFilter)
+	return session.GetOrCreateBRDomain(store, g.InfoSchemaFilter)
 }
 
 // GetDomain implements glue.Glue.

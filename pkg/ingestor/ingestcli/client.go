@@ -28,6 +28,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
@@ -272,6 +273,11 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	defer func() {
 		ingestmetric.IngestAPIDuration.Observe(time.Since(startTime).Seconds())
 	}()
+
+	failpoint.InjectCall("mockIngestError", &err)
+	if err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mviewutil",
+    srcs = [
+        "refresh_source.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/mviewutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/metadef",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/util/dbterror",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "mviewutil_test",
+    timeout = "short",
+    srcs = ["refresh_source_test.go"],
+    embed = [":mviewutil"],
+    flaky = True,
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "@com_github_stretchr_testify//require",
+    ],
+)

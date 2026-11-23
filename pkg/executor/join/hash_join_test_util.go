@@ -35,6 +35,7 @@ import (
 type hashJoinInfo struct {
 	ctx                   sessionctx.Context
 	schema                *expression.Schema
+	planID                int
 	leftExec, rightExec   exec.Executor
 	joinType              base.JoinType
 	rightAsBuildSide      bool
@@ -53,7 +54,7 @@ type hashJoinInfo struct {
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	concurrency := 3
 	e := &HashJoinV2Exec{
-		BaseExecutor:          exec.NewBaseExecutor(info.ctx, info.schema, 0, info.leftExec, info.rightExec),
+		BaseExecutor:          exec.NewBaseExecutor(info.ctx, info.schema, info.planID, info.leftExec, info.rightExec),
 		ProbeSideTupleFetcher: &ProbeSideTupleFetcherV2{},
 		ProbeWorkers:          make([]*ProbeWorkerV2, concurrency),
 		BuildWorkers:          make([]*BuildWorkerV2, concurrency),

@@ -1400,6 +1400,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		indexes := tbl.Meta().Indices
 		require.Equal(t, 2, len(indexes))
 		require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
+		require.Equal(t, model.VectorIndexKindHNSW, indexes[0].VectorInfo.Kind)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1473,6 +1474,13 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 		conf.CSE.ColumnarStoreType = "columnar"
 	})
 	checkCreateTableWithColumnarIdx(1)
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("create table t_off(a int, b int, c int, columnar index idx(b) using inverted);", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("create table t_off(a int, b int, c int, columnar index idx(b) using inverted);",
+		"Unsupported add columnar index: Columnar Storage is not enabled")
+	tk.MustQuery("show tables like 't_off'").Check(testkit.Rows())
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.CSE.ColumnarStoreType = "tiflash"
@@ -1593,6 +1601,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
 	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
+	require.Equal(t, model.VectorIndexKindHNSW, indexes[0].VectorInfo.Kind)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
@@ -1657,6 +1666,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
 	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
+	require.Equal(t, model.VectorIndexKindHNSW, indexes[0].VectorInfo.Kind)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +

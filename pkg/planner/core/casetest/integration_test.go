@@ -347,6 +347,7 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 
+		tk.MustExec("set @@tidb_mview_enable = on")
 		tk.MustExec("set @@tidb_enforce_mpp = off")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash'")
 		sql := "select _tidb_commit_ts from t1"
