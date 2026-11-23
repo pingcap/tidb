@@ -13094,7 +13094,7 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp:           ast.ShowImportJobs,
 			ImportJobID:  &v,
-			ImportJobRaw: $2.(bool),
+			RawImportJob: $2.(bool),
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -13466,7 +13466,7 @@ ShowTargetFilterable:
 	}
 |	ShowImportJobsTarget
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, RawImportJob: $1.(bool)}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
