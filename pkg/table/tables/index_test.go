@@ -864,3 +864,98 @@ func TestPartialIndexDMLUniqueness(t *testing.T) {
 	tk.MustGetErrCode("insert into t values (2, 4, 4)", errno.ErrDupEntry)
 	tk.MustExec("insert into t values (2, 4, 1)")
 }
+
+// See issue: https://github.com/pingcap/tidb/issues/73217
+func TestGlobalUniqueIndexDeleteGuardPartitionID(t *testing.T) {
+	for _, globalVer := range []uint8{model.GlobalIndexVersionLegacy, model.GlobalIndexVersionV1} {
+		t.Run(fmt.Sprintf("v%d", globalVer), func(t *testing.T) {
+			tblInfo := buildTableInfo(t, `create table t (
+				a int,
+				c varchar(20) not null,
+				primary key (a) nonclustered,
+				unique key uk(c) global
+			) partition by range (a) (
+				partition p0 values less than (10),
+				partition p1 values less than maxvalue
+			)`)
+			tblInfo.ID = 100
+			tblInfo.Partition.Definitions[0].ID = 101
+			tblInfo.Partition.Definitions[1].ID = 102
+			p0ID := tblInfo.Partition.Definitions[0].ID
+			p1ID := tblInfo.Partition.Definitions[1].ID
+
+			var idxInfo *model.IndexInfo
+			for _, info := range tblInfo.Indices {
+				if info.Name.L == "uk" {
+					idxInfo = info
+					break
+				}
+			}
+			require.NotNil(t, idxInfo)
+			idxInfo.ID = 1
+			idxInfo.GlobalIndexVersion = globalVer
+			idxInfo.State = model.StateWriteReorganization
+			idxInfo.BackfillState = model.BackfillStateReadyToMerge
+
+			mockCtx := mock.NewContext()
+			store := testkit.CreateMockStore(t)
+			h := kv.IntHandle(1)
+			vals := []types.Datum{types.NewStringDatum("x")}
+
+			idxP0, err := tables.NewIndex(p0ID, tblInfo, idxInfo)
+			require.NoError(t, err)
+			idxP1, err := tables.NewIndex(p1ID, tblInfo, idxInfo)
+			require.NoError(t, err)
+
+			originKey, distinct, err := idxP1.GenIndexKey(mockCtx.ErrCtx(), time.UTC, vals, h, nil)
+			require.NoError(t, err)
+			require.True(t, distinct)
+			originVal, err := idxP1.GenIndexValue(mockCtx.ErrCtx(), time.UTC, true, false, vals, h, nil, nil)
+			require.NoError(t, err)
+
+			// Seed p1's backfilled entry into the normal index.
+			seedTxn, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, seedTxn.Set(originKey, originVal))
+			require.NoError(t, seedTxn.Commit(context.Background()))
+
+			// 1. Deleting a row in p0 with the same inner handle (1) must NOT delete p1's normal-index entry.
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, idxP0.Delete(mockCtx.GetTableCtx(), txn, vals, h))
+			require.NoError(t, txn.Commit(context.Background()))
+
+			readTxn, err := store.Begin()
+			require.NoError(t, err)
+			gotVal, err := readTxn.Get(context.Background(), originKey)
+			require.NoError(t, err)
+			require.Equal(t, originVal, gotVal.Value)
+			require.NoError(t, readTxn.Rollback())
+
+			// 2. Passing an already-wrapped PartitionHandle for p0 also preserves p1's entry and does not double-wrap temp index handle.
+			txnWrap, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, idxP0.Delete(mockCtx.GetTableCtx(), txnWrap, vals, kv.NewPartitionHandle(p0ID, h)))
+			tempKey := append([]byte(nil), originKey...)
+			tablecodec.IndexKey2TempIndexKey(tempKey)
+			rawTemp, err := txnWrap.Get(context.Background(), tempKey)
+			require.NoError(t, err)
+			decodedTemp, err := tablecodec.DecodeTempIndexValue(rawTemp.Value)
+			require.NoError(t, err)
+			require.Equal(t, kv.NewPartitionHandle(p0ID, h), decodedTemp.Current().Handle)
+			require.NoError(t, txnWrap.Rollback())
+
+			// 3. Deleting p1's own row with the same handle (1) MUST delete p1's normal-index entry.
+			txnSame, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, idxP1.Delete(mockCtx.GetTableCtx(), txnSame, vals, h))
+			require.NoError(t, txnSame.Commit(context.Background()))
+
+			verifyTxn, err := store.Begin()
+			require.NoError(t, err)
+			_, err = verifyTxn.Get(context.Background(), originKey)
+			require.True(t, kv.IsErrNotFound(err))
+			require.NoError(t, verifyTxn.Rollback())
+		})
+	}
+}

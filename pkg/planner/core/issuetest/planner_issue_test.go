@@ -981,6 +981,35 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-72560-order-by-null-constant-arithmetic-uses-index-order
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t (id int primary key, c int not null, key i(c))")
+		tk.MustExec("insert into t values (1, 30), (2, 10), (3, 20)")
+		tk.MustExec("analyze table t")
+		for _, orderBy := range []string{"null-c desc, id", "null-c, id", "c-null, id", "null+c desc, id", "c+null, id"} {
+			tk.MustQuery("select /* issue:72560 */ id from t use index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+			tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+		}
+		// non-NULL constants can still use the index order without a Sort
+		query := "select /* issue:72560 */ id from t use index(i) order by 1-c desc, id"
+		tk.MustQuery(query).Check(testkit.Rows("2", "3", "1"))
+		plan := tk.MustQuery("explain format = 'brief' " + query)
+		plan.MultiCheckContain([]string{"index:i(c)", "keep order:true"})
+		plan.CheckNotContain("Sort")
+
+		// parameters may become NULL on a later execution, so a cached plan must keep the Sort
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare s from 'select /* issue:72560 */ id from t use index(i) order by nullif(?, 0) - c desc, id'")
+		tk.MustExec("set @p = 1")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
@@ -990,6 +1019,35 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustExec("create table t(a int);")
 		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
+	})
+}
+
+// TestIssue72289 checks that DISTINCT / UNION / GROUP BY over different grouping() results of the same
+// expand operator are not merged, since all of them take the same gid column as the argument.
+func TestIssue72289(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int, b int)")
+		tk.MustExec("insert into t values (1, 2)")
+		three := testkit.Rows("0 0", "0 1", "1 1")
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select distinct grouping(a) ga, grouping(b) gb from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select distinct grouping(b) gb, grouping(a) ga from t group by a, b with rollup order by ga, gb").Check(testkit.Rows("0 0", "1 0", "1 1"))
+		tk.MustQuery("select distinct grouping(a, b), grouping(b, a) from t group by a, b with rollup order by 1, 2").Check(testkit.Rows("0 0", "1 2", "3 3"))
+		tk.MustQuery("select distinct grouping(a), grouping(b), grouping(a, b) from t group by a, b with rollup order by 1, 2").Check(testkit.Rows("0 0 0", "0 1 1", "1 1 3"))
+		tk.MustQuery("select ga, gb from (select grouping(a) ga, grouping(b) gb from t group by a, b with rollup) tmp group by ga, gb order by ga, gb").Check(three)
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup union select grouping(a), grouping(b) from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup union all select grouping(a), grouping(b) from t group by a, b with rollup order by ga, gb").
+			Check(testkit.Rows("0 0", "0 0", "0 1", "0 1", "1 1", "1 1"))
+		tk.MustQuery("select grouping(a), grouping(b) from t group by a, b with rollup intersect select grouping(a), grouping(b) from t group by a, b with rollup order by 1, 2").Check(three)
+		// the same grouping() results are still merged.
+		tk.MustQuery("select distinct grouping(a) ga, grouping(a) ga2 from t group by a, b with rollup order by ga").Check(testkit.Rows("0 0", "1 1"))
+		// prepared statement and plan cache.
+		tk.MustExec("prepare stmt from 'select distinct grouping(a) ga, grouping(b) gb from t where a >= ? group by a, b with rollup order by ga, gb'")
+		tk.MustExec("set @v = 0")
+		tk.MustQuery("execute stmt using @v").Check(three)
+		tk.MustQuery("execute stmt using @v").Check(three)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	})
 }
 

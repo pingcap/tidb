@@ -99,6 +99,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// "1" means the database is read-only, "0" or "default" means read-write.
+	databaseReadOnly = "1"
 )
 
 var errCheckConstraintIsOff = errors.NewNoStackError(vardef.TiDBEnableCheckConstraint + " is off")
@@ -323,6 +325,11 @@ func (e *executor) CreateSchemaWithInfo(
 	dbInfo *model.DBInfo,
 	onExist OnExist,
 ) error {
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
 	is := e.infoCache.GetLatest()
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
@@ -459,6 +466,45 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 			Policy: placementPolicyRef.Name.L,
 			Mode:   model.SharedInvolving,
 		})
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
+func (e *executor) modifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
+	dbName := stmt.Name
+	if metadef.IsMemOrSysDB(dbName.L) {
+		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
+	}
+	if readOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	// Even an apparently redundant request must serialize with a pending
+	// transition: its flag is published before existing transactions drain.
+	// Do the DDL job.
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaReadOnly,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaArgs{
+		ReadOnly:   readOnly,
+		DDLStartTS: ctx.GetSessionVars().TxnCtx.StartTS,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -760,10 +806,11 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate     string
-		isAlterCharsetAndCollate bool
-		placementPolicyRef       *model.PolicyRefInfo
-		tiflashReplica           *ast.TiFlashReplicaSpec
+		toCharset, toCollate           string
+		isAlterCharsetAndCollate       bool
+		placementPolicyRef             *model.PolicyRefInfo
+		tiflashReplica                 *ast.TiFlashReplicaSpec
+		modifyReadOnlyOption, readOnly bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -796,6 +843,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			placementPolicyRef = &model.PolicyRefInfo{Name: ast.NewCIStr(val.Value)}
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
+		case ast.DatabaseOptionReadOnly:
+			modifyReadOnlyOption = true
+			if val.Value == databaseReadOnly {
+				readOnly = true
+			}
 		}
 	}
 
@@ -811,6 +863,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 	}
 	if tiflashReplica != nil {
 		if err = e.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
+	if modifyReadOnlyOption {
+		if err = e.modifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
 			return err
 		}
 	}
@@ -1542,6 +1599,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 		))
+	}
+	if schema.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(ctx) {
+		return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(schema.Name.O)
 	}
 	// Check not exist table with same name.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
@@ -6657,6 +6717,10 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
+	// Check admission before recording provisional session locks.
+	if err := checkUserDDLJobAllowed(ctx, job.Type); err != nil {
+		return err
+	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
 	err := e.doDDLJob2(ctx, job, args)
@@ -8063,10 +8127,27 @@ func isRetryableDDLCancelErr(err error) bool {
 		!dbterror.ErrDDLJobNotFound.Equal(err)
 }
 
+func checkUserDDLJobAllowed(ctx sessionctx.Context, jobType model.ActionType) error {
+	// Releasing existing locks, including session-close cleanup, must remain
+	// available during maintenance so other sessions are not left blocked.
+	if jobType == model.ActionUnlockTable {
+		return nil
+	}
+	if kerneltype.IsNextGen() && config.GetGlobalConfig().MaintenanceMode && !ctx.GetSessionVars().InRestrictedSQL {
+		return exeerrors.ErrMaintenanceMode.GenWithStackByArgs("DDL")
+	}
+	return nil
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	// Check maintenance admission before submitting persistent DDL jobs. Local
+	// temporary-table DDL bypasses job submission and remains available.
+	if err := checkUserDDLJobAllowed(ctx, jobW.Type); err != nil {
+		return err
+	}
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()
@@ -8088,6 +8169,26 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+	// A job can wait behind a read-only transition after its SQL passed
+	// preprocessing. Persist the submitter's bypass decision for the owner.
+	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
+		job.Type != model.ActionCreateSchema && job.Type != model.ActionUpdateTiFlashReplicaStatus &&
+		job.Type != model.ActionUnlockTable &&
+		!privilege.HasExplicitReplicaWriterAdmin(ctx)
+	if job.CheckSchemaReadOnly {
+		job.CheckSchemaReadOnly = false
+		for _, target := range job.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone &&
+				!privilege.CanWriteReadOnlySchema(ctx, target.Database) {
+				job.CheckSchemaReadOnly = true
+				break
+			}
+		}
+	}
+	if args, ok := jobW.JobArgs.(*model.AlterTableModeArgs); ok && job.Type == model.ActionAlterTableMode && args.TableMode == model.TableModeNormal {
+		// Completing an authorized import only publishes operational metadata.
+		job.CheckSchemaReadOnly = false
+	}
 
 	if traceevent.IsEnabled(tracing.DDLJob) && ctx.GetTraceCtx() != nil {
 		traceevent.TraceEvent(ctx.GetTraceCtx(), tracing.DDLJob, "ddlDelieverJobTask",
@@ -8260,6 +8361,11 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
+			if historyJob.Type == model.ActionModifySchemaReadOnly && historyJob.BinlogInfo.SchemaVersion == 0 && historyJob.BinlogInfo.DBInfo != nil {
+				dbInfo := historyJob.BinlogInfo.DBInfo
+				ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("database %s is already in the %s state", dbInfo.Name.O,
+					map[bool]string{true: "read-only", false: "read-write"}[dbInfo.ReadOnly]))
+			}
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
 			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
 				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
