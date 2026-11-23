@@ -526,7 +526,7 @@ impl Session {
             {
                 let Stmt::Admin(admin) = stmt else { unreachable!() };
                 let tidb_ast::AdminStmt::CancelImportJob(job_id) = &**admin else { unreachable!() };
-                self.cancel_import_job(*job_id).map(Some)
+                tidb_executor::import_into::ImportIntoExec::cancel_import_job(self, *job_id).map(Some)
             }
             // Go master `CancelMaterializedViewJobExec`.
             Plan::Simple(_)
@@ -542,7 +542,7 @@ impl Session {
                 let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!("ImportInto plan has an IMPORT statement") };
                 tidb_executor_importer::import_into_options::validate_import_into_options(import)?;
                 let Plan::ImportInto(plan) = plan else { unreachable!() };
-                self.import_into_exec(plan, import).map(Some)
+                tidb_executor::import_into::ImportIntoExec::import_into_exec(self, plan, import).map(Some)
             }
             Plan::Ddl(_) => self.ddl_exec(stmt),
             // Go master `RefreshMaterializedViewExec`.

@@ -19,6 +19,11 @@ test-util = [
 ]
 
 [dependencies]
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-dxf-importinto = { path = "../tidb-dxf-importinto" }
+tidb-executor-importer = { path = "../tidb-executor-importer" }
+uuid = { version = "1", features = ["v4"] }
 tidb-logutil-consistency = { path = "../tidb-logutil-consistency" }
 tidb-executor-mviewdeltamergeagg = { path = "../tidb-executor-mviewdeltamergeagg" }
 tidb-objstore = { path = "../tidb-objstore" }
