@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -30,6 +31,19 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 )
+
+func TestCreateExistingReadOnlySchemaWithMixedVersions(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", "return(`{\"old\":{}}`)")
+	cache := infoschema.NewCache(nil, 1)
+	cache.Insert(infoschema.MockInfoSchema(nil), 0)
+	job := &model.Job{Version: model.GetJobVerInUse(), Type: model.ActionCreateSchema, SchemaID: 42}
+	job.FillArgs(&model.CreateSchemaArgs{DBInfo: &model.DBInfo{Name: ast.NewCIStr("test"), ReadOnly: true}})
+	_, err := job.Encode(true)
+	require.NoError(t, err)
+	_, err = onCreateSchema(&jobContext{ctx: context.Background(), infoCache: cache}, job)
+	require.True(t, infoschema.ErrDatabaseExists.Equal(err), "%v", err)
+	require.Equal(t, model.JobStateCancelled, job.State)
+}
 
 func TestDropPartitionPropagatesMetadataUpdateError(t *testing.T) {
 	store, err := mockstore.NewMockStore()

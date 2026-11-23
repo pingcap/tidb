@@ -285,6 +285,17 @@ func TestMergeCreateTableJobsOfSameSchema(t *testing.T) {
 }
 
 func TestMergeCreateTableJobs(t *testing.T) {
+	t.Run("duplicate names across read-only checks preserve submission order", func(t *testing.T) {
+		jobs := make([]*JobWrapper, 0, 2)
+		for _, check := range []bool{false, true} {
+			jobs = append(jobs, NewJobWrapperWithArgs(&model.Job{
+				Version: model.GetJobVerInUse(), SchemaName: "db", Type: model.ActionCreateTable,
+				CheckSchemaReadOnly: check,
+			}, &model.CreateTableArgs{TableInfo: &model.TableInfo{Name: ast.NewCIStr("t")}}, false))
+		}
+		_, err := mergeCreateTableJobs(jobs)
+		require.True(t, infoschema.ErrTableExists.Equal(err), "duplicate jobs must use the unmerged submission order")
+	})
 	t.Run("replica writer bypass is not shared across jobs", func(t *testing.T) {
 		jobs := make([]*JobWrapper, 0, 3)
 		for i, check := range []bool{false, true, true} {
