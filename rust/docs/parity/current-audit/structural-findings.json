@@ -3,8 +3,8 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
     "unresolved": 6,
-    "open": 6,
-    "partial": 0
+    "open": 5,
+    "partial": 1
   },
   "findings": [
     {
@@ -50,13 +50,13 @@
     {
       "id": "T21",
       "group": "Planner",
-      "status": "open",
-      "finding": "Go's `preprocessor` (`pkg/planner/core/preprocess.go`, one AST visitor run by `Preprocess` before planning) has no single Rust owner: its checks are spread over `tidb-session` dispatch (`Enter`'s `ColumnName` arm, `tableByName`, `inPrepare`), `tidb-ddl-build` (`checkCreateTableGrammar`, `checkAutoIncrementOp`), `tidb-planner/src/preprocess.rs` (name resolution and DDL grammar helpers) and the expression rewriter, which checks NAME_CONST's argument shapes that Go checks in `preprocessor.Enter`'s `FuncCallExpr` arm. So `expression.BuildSimpleExpr` rejects `name_const('x', cast(1 as double))`, which Go's builds (difftest `expr_diff`).",
-      "rust_evidence": "`tidb-planner/src/preprocess.rs`, `tidb-session/src/dispatch.rs`, `tidb-session/src/ddl_service.rs`, `tidb-ddl-build/src/lib.rs`, `tidb-expr/src/result_type.rs` (`validate_name_const_args`), `tidb-planner/src/expression_rewriter/leave.rs`.",
+      "status": "partial",
+      "finding": "Go's `preprocessor` (`pkg/planner/core/preprocess.go`, one AST visitor run by `Preprocess` before planning and at PREPARE) has one Rust walk now, `tidb_planner::preprocess::preprocess` (stmtTp, VariableExpr, ColumnName, FuncCastExpr, FuncCallExpr and NAME_CONST arms, table names and AS OF), but its other arms are still separate code: `handleTableName` at PREPARE (`tidb_bindinfo::binding::pin_current_database`, `handle_table_name`), the DDL grammar checks (`tidb-session/src/identity.rs::validate_ddl_preprocess` over `check_ddl_grammar` / `check_repair_table_grammar` / `handle_repair_name` / `check_not_in_repair`, `tidb-ddl-build`'s `checkCreateTableGrammar` / `checkAutoIncrementOp`), `checkCreateViewWithSelect` (`tidb-executor/src/view.rs`), `checkSelectNoopFuncs` (`tidb-session/src/noop.rs`), `resolveShowStmt`, and the table-mode names; and the DDL compile path (`preprocess_and_build`) does not run the walk.",
+      "rust_evidence": "`tidb-planner/src/preprocess.rs`, `tidb-session/src/identity.rs`, `tidb-session/src/dispatch.rs`, `tidb-bindinfo/src/binding.rs` (`pin_current_database`), `tidb-ddl-build/src/lib.rs`, `tidb-executor/src/view.rs`, `tidb-session/src/noop.rs`.",
       "go_owner": "`pkg/planner/core/preprocess.go`"
     }
   ],
   "unresolved": 6,
-  "open": 6,
-  "partial": 0
+  "open": 5,
+  "partial": 1
 }

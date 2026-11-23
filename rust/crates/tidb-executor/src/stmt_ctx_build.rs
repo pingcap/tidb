@@ -848,7 +848,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             return Ok(None);
         };
         let mut scanned = stmt.clone();
-        let has_as_of = tidb_bindinfo::binding::scan_statement_tables(&mut scanned).has_as_of;
+        let has_as_of = tidb_planner::preprocess::preprocess(
+            &mut scanned,
+            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.session_vars().enable_mview() },
+        )
+        .map_err(crate::driver::planner_error_to_driver)?
+        .has_as_of;
         // Go's preprocessor drops each body SELECT's lock
         // (`checkCreateViewWithSelect`) before it reaches the SELECTs.
         let mut body = (*create.query).clone();

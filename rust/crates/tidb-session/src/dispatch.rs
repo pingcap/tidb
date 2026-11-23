@@ -1368,8 +1368,13 @@ impl Session {
             locked.clear();
         }
         let mut stmt = template.clone();
-        let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
-        self.record_mdl_related_tables(&stmt, &scan.names)
+        let names = tidb_planner::preprocess::preprocess(
+            &mut stmt,
+            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.vars.enable_mview() },
+        )
+        .map_err(tidb_executor::driver::planner_error_to_driver)?
+        .table_names;
+        self.record_mdl_related_tables(&stmt, &names)
     }
 
     /// Returns whether a table changed since the transaction began was
@@ -1780,27 +1785,21 @@ impl Session {
         // and re-walking the statement.
         // Go preprocesses the statement it compiles: an EXECUTE, not the
         // prepared statement it runs.
-        let preprocess = (!CompileDepth::is_nested())
+        let region = (!CompileDepth::is_nested())
             .then(|| tidb_tracing::start_thread_region("planner.Preprocess"));
-        let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
-        drop(preprocess);
-        // Go master `preprocessor.Enter`'s `*ast.ColumnName` arm: the
-        // commit-TS pseudo column is usable by SELECT, UPDATE or DELETE only
-        // while `tidb_mview_enable` is on.
-        if scan.names_commit_ts && !self.vars.enable_mview() {
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
-                    "Usage of column name '{}' is not supported for now",
-                    tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
-                )),
-            )));
-        }
-        if let Some(function) = &scan.qualified_function {
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS
-                    .gen_with_stack(format!("FUNCTION {function} does not exist")),
-            )));
-        }
+        let mut scan = tidb_planner::preprocess::preprocess(
+            &mut stmt,
+            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.vars.enable_mview() },
+        )
+        .map_err(tidb_executor::driver::planner_error_to_driver)?;
+        drop(region);
+        // An execution of a prepared statement preprocesses its EXECUTE,
+        // which reads no variable under a SELECT.
+        self.readonly_user_vars = std::sync::Arc::new(if prepared.is_none() {
+            std::mem::take(&mut scan.readonly_user_vars)
+        } else {
+            std::collections::HashSet::new()
+        });
         self.validate_statement_in_txn(&stmt, self.in_transaction())?;
         self.validate_statement_read_only_in_staleness(&stmt)?;
         self.check_explain_target_for_update_ts(&stmt)?;
@@ -1813,7 +1812,7 @@ impl Session {
             // not the active transaction or its write buffer.
             return self.run_snapshot_statement_in_transaction(self.vars.snapshot_ts(), stmt);
         }
-        self.record_mdl_related_tables(&stmt, &scan.names)?;
+        self.record_mdl_related_tables(&stmt, &scan.table_names)?;
         // A statement whose table references carry `AS OF TIMESTAMP` runs
         // against the store's history -- Go's stale statement
         // (`StalenessTxnContextProvider` for one statement). Intercepted at
@@ -1821,7 +1820,7 @@ impl Session {
         if !self.in_transaction()
             && reads_as_select(&stmt)
             && !scan.has_as_of
-            && (!scan.names.is_empty() || prepared.is_some() || self.vars.snapshot_ts() != 0)
+            && (!scan.table_names.is_empty() || prepared.is_some() || self.vars.snapshot_ts() != 0)
         {
             if let Some(ts) = self.configured_historical_read_ts()? {
                 // `tidb_snapshot` comes first and is no staleness read.
@@ -1921,13 +1920,6 @@ impl Session {
         // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
         // failed INSERT leaves 0).
         self.statement_kind = statement_kind_of(&stmt);
-        // Go `Preprocess` runs on the statement the session was handed: an
-        // execution of a prepared statement preprocesses its `EXECUTE`,
-        // which reads no variable under a SELECT.
-        self.readonly_user_vars = std::sync::Arc::new(match prepared {
-            None => tidb_planner::preprocess::readonly_user_vars(&stmt),
-            Some(_) => std::collections::HashSet::new(),
-        });
         self.begin_statement_keys_read();
         // Go `buildDo`: DO evaluates its expressions as a Projection over a
         // one-row TableDual and discards the row, so `DO @a := 1` assigns and

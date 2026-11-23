@@ -431,7 +431,8 @@ pub(super) fn run_physical_set_opr_stmt(
     )
 }
 
-pub(super) fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) -> DriverError {
+/// The statement layer's error for a planner failure.
+pub fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) -> DriverError {
     match error.kind() {
         tidb_planner_core_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
         tidb_planner_core_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {

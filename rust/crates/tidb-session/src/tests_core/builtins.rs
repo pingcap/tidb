@@ -2334,3 +2334,39 @@ fn inet_aton_of_a_bad_address_is_null_in_a_projection_and_an_error_in_a_row_eval
         "Incorrect string value: '1' for function inet_aton6"
     );
 }
+
+/// Go's preprocessor refuses a CAST target out of range and a NAME_CONST
+/// whose value is not a literal, for a statement and for PREPARE alike; the
+/// TIME target is the rewriter's check. Go capture (`gorun`, each statement
+/// followed by `SHOW WARNINGS`):
+///
+/// ```text
+/// SELECT NAME_CONST('a', CAST(1 AS DOUBLE))             Error|1210|Incorrect arguments to NAME_CONST
+/// PREPARE s FROM 'SELECT NAME_CONST(''a'', CAST(1 AS DOUBLE))'  (same)
+/// SELECT CAST(1 AS DECIMAL(70))                         Error|1426|Too-big precision 70 specified for '1'. Maximum is 65.
+/// PREPARE s2 FROM 'SELECT CAST(1 AS DATETIME(7))'       Error|1426|Too-big precision 7 specified for 'CAST'. Maximum is 6.
+/// SELECT CAST(1 AS TIME(7))                             Error|1426|Too-big precision 7 specified for 'CAST'. Maximum is 6.
+/// ```
+#[test]
+fn preprocessor_refuses_casts_and_name_const_before_planning() {
+    let mut session = Session::new();
+    for (sql, code, message) in [
+        ("SELECT NAME_CONST('a', CAST(1 AS DOUBLE))", 1210, "Incorrect arguments to NAME_CONST"),
+        (
+            "PREPARE s FROM 'SELECT NAME_CONST(''a'', CAST(1 AS DOUBLE))'",
+            1210,
+            "Incorrect arguments to NAME_CONST",
+        ),
+        ("SELECT CAST(1 AS DECIMAL(70))", 1426, "Too-big precision 70 specified for '1'. Maximum is 65."),
+        (
+            "PREPARE s2 FROM 'SELECT CAST(1 AS DATETIME(7))'",
+            1426,
+            "Too-big precision 7 specified for 'CAST'. Maximum is 6.",
+        ),
+        ("SELECT CAST(1 AS TIME(7))", 1426, "Too-big precision 7 specified for 'CAST'. Maximum is 6."),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, code, "{sql}");
+        assert_eq!(error.message, message, "{sql}");
+    }
+}

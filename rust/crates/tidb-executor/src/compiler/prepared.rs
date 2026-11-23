@@ -391,6 +391,11 @@ pub trait PrepareExec: super::CompilerSession {
         // Go `Preprocess` at PREPARE (`handleTableName`): the retained
         // statement names its tables by the database current NOW, so its
         // requests below and every EXECUTE after a `USE` agree.
+        tidb_planner::preprocess::preprocess(
+            &mut statement,
+            tidb_planner::preprocess::PreprocessOptions { enable_mview: self.session_vars().enable_mview() },
+        )
+        .map_err(crate::driver::planner_error_to_driver)?;
         tidb_bindinfo::binding::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
         let param_count = crate::parsed_parameter_count(&statement);
         let limit_markers = limit_marker_orders(&statement);

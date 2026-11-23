@@ -447,6 +447,10 @@ mod tests {
         );
     }
 
+    /// Go `expressionRewriter.checkTimePrecision`: the rewrite refuses a
+    /// TIME target's fsp above 6. (A DECIMAL target's M and D and a DATETIME
+    /// target's fsp are the preprocessor's `checkFuncCastExpr`, which the
+    /// rewrite does not repeat.)
     #[test]
     fn cast_type_declarations_are_validated_before_evaluation() {
         let rewrite = |sql: &str| {
@@ -464,21 +468,14 @@ mod tests {
         };
 
         assert_eq!(
-            rewrite("select cast(12.1 as decimal(3, 4))").unwrap_err(),
-            EvalError::InvalidTypeDeclaration {
-                code: 1427,
-                message:
-                    "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1')."
-                        .to_owned(),
-            }
-        );
-        assert_eq!(
-            rewrite("select cast(1 as datetime(7))").unwrap_err(),
+            rewrite("select cast(1 as time(7))").unwrap_err(),
             EvalError::InvalidTypeDeclaration {
                 code: 1426,
                 message: "Too-big precision 7 specified for 'CAST'. Maximum is 6.".to_owned(),
             }
         );
+        assert!(rewrite("select cast(12.1 as decimal(3, 4))").is_ok());
+        assert!(rewrite("select cast(1 as datetime(7))").is_ok());
     }
 }
 

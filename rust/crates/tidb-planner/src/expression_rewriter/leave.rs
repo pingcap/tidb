@@ -45,8 +45,8 @@ mod fold_mode;
 
 use fold_mode::FoldModeResolver;
 use tidb_expr::result_type::{
-    binary_literal_type, cast_target, check_func_cast_expr,
-    decimal_literal_type, int_literal_type, set_binary_charset, validate_name_const_args,
+    binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
+    set_binary_charset,
 };
 
 /// Go `buildSimpleExpr`, the function `expression.BuildSimpleExpr` calls.
@@ -639,6 +639,19 @@ fn resolved_cast_target(
     Ok(ret_type)
 }
 
+/// Go `expressionRewriter.checkTimePrecision`: a TIME target's fsp is at
+/// most 6. (A DECIMAL or DATETIME target is the preprocessor's
+/// `checkFuncCastExpr`.)
+fn check_time_precision(cast: &tidb_ast::CastExpr) -> Result<(), EvalError> {
+    match cast.cast_type {
+        tidb_ast::CastType::Time { fsp: Some(fsp) } if fsp > 6 => Err(EvalError::InvalidTypeDeclaration {
+            code: 1426,
+            message: format!("Too-big precision {fsp} specified for 'CAST'. Maximum is 6."),
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// Go `BuildJSONSumCrc32FunctionWithCheck` (`builtin_json.go`), the
 /// rewriter's `*ast.JSONSumCrc32Expr` arm: `JSON_SUM_CRC32(json AS <type>
 /// ARRAY)` is a `BIGINT` that sums the CRC32 of the array's elements, each
@@ -648,7 +661,6 @@ fn rewrite_json_sum_crc32(
     cast: &tidb_ast::CastExpr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    check_func_cast_expr(cast)?;
     let element = resolved_cast_target(cast, resolver)?;
     let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
     let mut array_type = element.clone().with_array(true);
@@ -1667,9 +1679,6 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 }
             }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
-            if lowered == "name_const" {
-                validate_name_const_args(args)?;
-            }
             // `NEXTVAL(s)` / `LASTVAL(s)` / `SETVAL(s, n)` name a SEQUENCE, but
             // the grammar has no place for a table name inside an expression,
             // so the parser produces a COLUMN reference. Go's expression
@@ -1875,7 +1884,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         .into(),
                 ));
             }
-            check_func_cast_expr(cast)?;
+            check_time_precision(cast)?;
             let target_tp = resolved_cast_target(cast, resolver)?;
             let target_tp = target_tp.with_array(cast.array);
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;

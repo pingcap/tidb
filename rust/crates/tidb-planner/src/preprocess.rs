@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/core/preprocess.go`: the preprocessor's name
-//! qualification (`handleTableName` and the CTE scope, `preprocessWith`, it
-//! consults) and its grammar checks over DDL statements (`checkDDLGrammar`
-//! below).
+//! Go `pkg/planner/core/preprocess.go`: the `preprocessor` walk
+//! ([`preprocess`]), its name qualification (`handleTableName` and the CTE
+//! scope, `preprocessWith`, it consults) and its grammar checks over DDL
+//! statements (`checkDDLGrammar` below).
 
 use std::any::Any;
 
@@ -70,67 +70,240 @@ impl CteScope {
     }
 }
 
-/// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
-/// every unqualified table name that does not name a CTE takes the current
-/// database. PREPARE runs it on the statement it retains, so the stored
-/// `VisitInfos` and every later EXECUTE -- after any `USE` -- resolve against
-/// the database current at PREPARE (`PlanCacheStmt.StmtDB`); an unqualified
-/// name with no current database is Go's `ErrNoDB`.
+/// Go `preprocessor.stmtTp`: the kind of the statement node entered last
+/// (a nested statement sets it and nothing restores it).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum StmtType {
+    #[default]
+    Invalid,
+    Select,
+    Delete,
+    Update,
+    Insert,
+    Show,
+}
+
+/// The session facts Go's `preprocessor` reads through its `sctx` and
+/// `PreprocessOpt`s.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PreprocessOptions {
+    /// Go `SessionVars.EnableMVIEW` (`tidb_mview_enable`), which admits the
+    /// commit-TS pseudo column.
+    pub enable_mview: bool,
+}
+
+/// Go `PreprocessorReturn` and what the walk learns for its callers.
+#[derive(Debug, Default)]
+pub struct PreprocessorReturn {
+    /// `(schema, table)` of every table reference and an INSERT's target,
+    /// lowercased, in walk order (an unqualified name has an empty schema).
+    pub table_names: Vec<(String, String)>,
+    /// Whether a table reference reads `AS OF TIMESTAMP`.
+    pub has_as_of: bool,
+    /// Go `preprocessor.varsReadonly`: the user variables a SELECT reads and
+    /// the statement never assigns, lowercased as the session stores them.
+    pub readonly_user_vars: std::collections::HashSet<String>,
+}
+
+/// Go `Preprocess`: one walk of the statement that checks what the planner
+/// must not see and collects what the session needs before planning. The
+/// first failing node's error stops the walk, as Go's `p.err` does.
 ///
 /// # Errors
 ///
-/// `ErrNoDB` when an unqualified name has no current database to take.
-/// Go `preprocessor.varsReadonly` after `Preprocess`: the user variables
-/// the statement reads under a SELECT and never assigns. Names are
-/// lowercased, as the session stores them.
-#[must_use]
-pub fn readonly_user_vars(stmt: &tidb_ast::Stmt) -> std::collections::HashSet<String> {
-    #[derive(Default)]
-    struct Vars {
-        /// Go `stmtTp == TypeSelect`: the statement node entered last is a
-        /// SELECT.
-        in_select: bool,
-        mutable: std::collections::HashSet<String>,
-        readonly: std::collections::HashSet<String>,
+/// The preprocessor's error for the first node it refuses.
+pub fn preprocess(stmt: &mut tidb_ast::Stmt, options: PreprocessOptions) -> Result<PreprocessorReturn, PlanError> {
+    let mut preprocessor = Preprocessor {
+        options,
+        stmt_tp: StmtType::Invalid,
+        vars_mutable: std::collections::HashSet::new(),
+        result: PreprocessorReturn::default(),
+        err: None,
+    };
+    stmt.accept(&mut preprocessor);
+    match preprocessor.err {
+        Some(err) => Err(err),
+        None => Ok(preprocessor.result),
     }
-    impl Visitor for Vars {
-        fn enter(&mut self, node: &mut dyn Any) -> bool {
-            if node.is::<tidb_ast::SelectStmt>() {
-                self.in_select = true;
-            } else if node.is::<tidb_ast::UpdateStmt>()
-                || node.is::<tidb_ast::DeleteStmt>()
-                || node.is::<tidb_ast::InsertStmt>()
-                || node.is::<tidb_ast::ShowStmt>()
-            {
-                self.in_select = false;
-            } else if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
-                match expr {
-                    tidb_ast::Expr::Assign { name, .. } => {
-                        let name = go_to_lower(name);
-                        self.readonly.remove(&name);
-                        self.mutable.insert(name);
+}
+
+/// Go `preprocessor`.
+struct Preprocessor {
+    options: PreprocessOptions,
+    stmt_tp: StmtType,
+    /// Go `varsMutable`.
+    vars_mutable: std::collections::HashSet<String>,
+    result: PreprocessorReturn,
+    err: Option<PlanError>,
+}
+
+impl Preprocessor {
+    fn collect_table_name(&mut self, name: &[String]) {
+        let (schema, table) = match name {
+            [table] => (String::new(), table.clone()),
+            [schema, table] => (schema.clone(), table.clone()),
+            _ => return,
+        };
+        self.result.table_names.push((go_to_lower(schema), go_to_lower(table)));
+    }
+
+    /// Go `Enter`'s `*ast.ColumnName` arm.
+    fn check_column_name(&mut self, path: &[String]) {
+        let names_commit_ts = path
+            .last()
+            .is_some_and(|name| go_to_lower(name.clone()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME);
+        if names_commit_ts
+            && matches!(self.stmt_tp, StmtType::Select | StmtType::Update | StmtType::Delete)
+            && !self.options.enable_mview
+        {
+            self.err = Some(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
+                "Usage of column name '{}' is not supported for now",
+                crate::plan_builder::EXTRA_COMMIT_TS_NAME
+            ))));
+        }
+    }
+}
+
+impl Visitor for Preprocessor {
+    fn enter(&mut self, node: &mut dyn Any) -> bool {
+        if node.is::<tidb_ast::SelectStmt>() {
+            self.stmt_tp = StmtType::Select;
+        } else if node.is::<tidb_ast::DeleteStmt>() {
+            self.stmt_tp = StmtType::Delete;
+        } else if node.is::<tidb_ast::UpdateStmt>() {
+            self.stmt_tp = StmtType::Update;
+        } else if node.is::<tidb_ast::InsertStmt>() {
+            self.stmt_tp = StmtType::Insert;
+        } else if node.is::<tidb_ast::ShowStmt>() {
+            self.stmt_tp = StmtType::Show;
+        } else if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+            if table_ref.as_of.is_some() {
+                self.result.has_as_of = true;
+            }
+            let name = table_ref.name.clone();
+            self.collect_table_name(&name);
+        } else if let Some(assignment) = node.downcast_ref::<tidb_ast::Assignment>() {
+            let column = assignment.col.clone();
+            self.check_column_name(&column);
+        } else if let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() {
+            match expr {
+                // Go `*ast.VariableExpr`.
+                tidb_ast::Expr::Assign { name, .. } => {
+                    let name = go_to_lower(name.clone());
+                    self.result.readonly_user_vars.remove(&name);
+                    self.vars_mutable.insert(name);
+                }
+                tidb_ast::Expr::UserVar(name) if self.stmt_tp == StmtType::Select => {
+                    let name = go_to_lower(name.clone());
+                    if !self.vars_mutable.contains(&name) {
+                        self.result.readonly_user_vars.insert(name);
                     }
-                    tidb_ast::Expr::UserVar(name) if self.in_select => {
-                        let name = go_to_lower(name);
-                        if !self.mutable.contains(&name) {
-                            self.readonly.insert(name);
-                        }
+                }
+                // Go `*ast.FuncCastExpr` (`JSON_SUM_CRC32` is an
+                // `*ast.JSONSumCrc32Expr` there).
+                tidb_ast::Expr::Cast(cast) if cast.style != tidb_ast::CastStyle::JsonSumCrc32 => {
+                    if let Err(error) = check_func_cast_expr(cast) {
+                        self.err = Some(PlanError::eval(error));
                     }
-                    _ => {}
+                }
+                // Go `*ast.FuncCallExpr`: stored procedures are not supported.
+                tidb_ast::Expr::GenericFuncCall { schema, name, .. } => {
+                    self.err = Some(PlanError::from(tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS.gen_with_stack(
+                        format!(
+                            "FUNCTION {}.{} does not exist",
+                            tidb_mysql::to_lowercase(schema),
+                            tidb_mysql::to_lowercase(name)
+                        ),
+                    )));
+                }
+                tidb_ast::Expr::Column(path) => {
+                    let path = path.clone();
+                    self.check_column_name(&path);
+                }
+                _ => {}
+            }
+        }
+        self.err.is_some()
+    }
+
+    fn leave(&mut self, node: &mut dyn Any) -> bool {
+        if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+            // The INSERT target, which Go's `Enter` resolves before the rest.
+            let table = insert.table.clone();
+            self.collect_table_name(&table);
+        } else if let Some(tidb_ast::Expr::Func { name, args, .. }) = node.downcast_ref::<tidb_ast::Expr>() {
+            // Go `Leave`'s `*ast.FuncCallExpr` arm: NAME_CONST's arguments are
+            // constants.
+            if go_to_lower(name.clone()) == "name_const" {
+                if let Err(error) = check_name_const_args(args) {
+                    self.err = Some(PlanError::eval(error));
                 }
             }
-            false
         }
-
-        fn leave(&mut self, _node: &mut dyn Any) -> bool {
-            true
-        }
+        self.err.is_none()
     }
+}
 
-    let mut statement = stmt.clone();
-    let mut vars = Vars::default();
-    statement.accept(&mut vars);
-    vars.readonly
+/// Go `preprocessor.checkFuncCastExpr`: a DECIMAL target's M and D and a
+/// DATETIME target's fsp are in range. (A TIME target's fsp is the
+/// rewriter's `checkTimePrecision`.)
+fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), tidb_exprctx::EvalError> {
+    use tidb_ast::CastType;
+
+    let invalid = |code, message| tidb_exprctx::EvalError::InvalidTypeDeclaration { code, message };
+    match cast.cast_type {
+        CastType::Decimal { flen, scale } if flen < scale => Err(invalid(
+            1427,
+            format!(
+                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{}').",
+                cast.expr.restore()
+            ),
+        )),
+        CastType::Decimal { flen, .. } if flen > 65 => Err(invalid(
+            1426,
+            format!("Too-big precision {flen} specified for '{}'. Maximum is 65.", cast.expr.restore()),
+        )),
+        CastType::Decimal { scale, .. } if scale > 30 => Err(invalid(
+            1425,
+            format!("Too big scale {scale} specified for column '{}'. Maximum is 30.", cast.expr.restore()),
+        )),
+        CastType::DateTime { fsp: Some(fsp) } if fsp > 6 => Err(invalid(
+            1426,
+            format!("Too-big precision {fsp} specified for 'CAST'. Maximum is 6."),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Go `preprocessor.Leave`'s NAME_CONST check: the name is a literal and the
+/// value a literal or a unary expression; a wrong argument count is 1582.
+fn check_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), tidb_exprctx::EvalError> {
+    use tidb_ast::Expr;
+
+    if args.len() != 2 {
+        return Err(tidb_exprctx::EvalError::WrongParameterCount("name_const"));
+    }
+    let literal = |expr: &Expr| {
+        matches!(
+            expr,
+            Expr::Null
+                | Expr::Int(_)
+                | Expr::Decimal(_)
+                | Expr::Float(_)
+                | Expr::Hex(_)
+                | Expr::Bit(_)
+                | Expr::String(_)
+                | Expr::RawString(_)
+                | Expr::CharsetString { .. }
+                | Expr::CharsetBinary { .. }
+                | Expr::Bool(_)
+        )
+    };
+    if literal(&args[0]) && (literal(&args[1]) || matches!(args[1], Expr::Unary(_, _))) {
+        Ok(())
+    } else {
+        Err(tidb_exprctx::EvalError::IncorrectArguments("Incorrect arguments to NAME_CONST".to_owned()))
+    }
 }
 
 /// Go `preprocessor.Leave`'s `*driver.ParamMarkerExpr` case: a parameter
@@ -159,6 +332,16 @@ pub fn check_param_marker<N: Visitable + Clone>(node: &N) -> Result<(), tidb_ter
     Ok(())
 }
 
+/// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
+/// every unqualified table name that does not name a CTE takes the current
+/// database. PREPARE runs it on the statement it retains, so the stored
+/// `VisitInfos` and every later EXECUTE -- after any `USE` -- resolve against
+/// the database current at PREPARE (`PlanCacheStmt.StmtDB`); an unqualified
+/// name with no current database is Go's `ErrNoDB`.
+///
+/// # Errors
+///
+/// `ErrNoDB` when an unqualified name has no current database to take.
 pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result<(), PlanError> {
     struct Pinner<'a> {
         current_db: &'a str,
@@ -1483,5 +1666,96 @@ mod ddl_grammar_tests {
         assert_eq!(error.code, 1286);
         assert_eq!(error.state, *b"42000");
         assert_eq!(error.message, "Unknown storage engine 'imaginary'");
+    }
+}
+
+#[cfg(test)]
+mod preprocessor_tests {
+    use super::*;
+
+    #[test]
+    fn name_const_requires_the_source_literal_shapes() {
+        use tidb_ast::{BinaryOp, Expr, UnaryOp};
+
+        let string = || Expr::String("hello".to_owned());
+        let int = || Expr::Int("1".to_owned());
+        assert!(check_name_const_args(&[string(), int()]).is_ok());
+        assert!(
+            check_name_const_args(&[string(), Expr::Unary(UnaryOp::Minus, Box::new(int()))]).is_ok()
+        );
+
+        for args in [
+            vec![Expr::Column(vec!["a".to_owned()]), int()],
+            vec![string(), Expr::Column(vec!["b".to_owned()])],
+            vec![
+                string(),
+                Expr::Binary(BinaryOp::Plus, Box::new(int()), Box::new(int())),
+            ],
+            vec![
+                Expr::Func {
+                    name: "concat".to_owned(),
+                    args: vec![string(), string()],
+                    origin_position: 0,
+                },
+                int(),
+            ],
+        ] {
+            assert_eq!(
+                check_name_const_args(&args),
+                Err(tidb_exprctx::EvalError::IncorrectArguments(
+                    "Incorrect arguments to NAME_CONST".to_owned()
+                ))
+            );
+        }
+    }
+
+    /// Go `preprocessor.checkFuncCastExpr` and its NAME_CONST check refuse
+    /// the statement in walk order; `JSON_SUM_CRC32` is no `FuncCastExpr`.
+    #[test]
+    fn preprocess_refuses_cast_declarations_and_name_const_shapes() {
+        let run = |sql: &str| {
+            let mut stmt = tidb_parser::parse(sql).expect("parses");
+            preprocess(&mut stmt, PreprocessOptions::default())
+        };
+        let eval = |result: Result<PreprocessorReturn, PlanError>| match result {
+            Err(error) => match error.kind() {
+                tidb_planner_core_base::PlanErrorKind::Eval(eval) => eval.clone(),
+                other => panic!("not an expression error: {other:?}"),
+            },
+            Ok(_) => panic!("the statement passed the preprocessor"),
+        };
+        assert_eq!(
+            eval(run("select cast(12.1 as decimal(3, 4))")),
+            tidb_exprctx::EvalError::InvalidTypeDeclaration {
+                code: 1427,
+                message: "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1')."
+                    .to_owned(),
+            }
+        );
+        assert_eq!(
+            eval(run("select cast(1 as datetime(7))")),
+            tidb_exprctx::EvalError::InvalidTypeDeclaration {
+                code: 1426,
+                message: "Too-big precision 7 specified for 'CAST'. Maximum is 6.".to_owned(),
+            }
+        );
+        // TIME's fsp is the rewriter's check.
+        assert!(run("select cast(1 as time(7))").is_ok());
+        assert_eq!(
+            eval(run("select name_const('x', cast(1 as double))")),
+            tidb_exprctx::EvalError::IncorrectArguments("Incorrect arguments to NAME_CONST".to_owned())
+        );
+        // The first refusal in walk order wins.
+        assert_eq!(
+            eval(run("select cast(1 as decimal(70)), name_const('x', a) from t")),
+            tidb_exprctx::EvalError::InvalidTypeDeclaration {
+                code: 1426,
+                message: "Too-big precision 70 specified for '1'. Maximum is 65.".to_owned(),
+            }
+        );
+        let names = run("select @a, @b := 1, @b from t1 join db.t2 as of timestamp now()").expect("preprocesses");
+        assert_eq!(names.table_names, vec![(String::new(), "t1".to_owned()), ("db".to_owned(), "t2".to_owned())]);
+        assert!(names.has_as_of);
+        assert_eq!(names.readonly_user_vars, ["a".to_owned()].into_iter().collect());
     }
 }
