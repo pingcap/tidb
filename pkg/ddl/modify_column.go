@@ -1177,8 +1177,8 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
-	// Different charsets require row reorg to validate/convert encoded bytes.
-	if oldCol.GetCharset() != changingCol.GetCharset() {
+	// Charset/collation changes outside the direct-convertible set require row reorg.
+	if !canModifyCharsetAndCollateWithoutReorg(oldCol.GetCharset(), oldCol.GetCollate(), changingCol.GetCharset(), changingCol.GetCollate()) {
 		return true
 	}
 
@@ -2558,12 +2558,9 @@ func validateMaterializedViewBaseModifyColumn(
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
 func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
-	// Changing charset can change byte encoding or character validity, and changing
-	// collation on an indexed column can change index key encoding/ordering.
-	if oldCol.GetCharset() != newCol.GetCharset() {
-		return false
-	}
-	if oldCol.GetCollate() != newCol.GetCollate() && tblInfo != nil && len(getRelatedIndexIDs(tblInfo, oldCol.ID, false)) > 0 {
+	// Incompatible index collation changes are already rejected by checkModifyCharsetAndCollation.
+	// Charset/collation changes outside the direct-convertible set require row reorg.
+	if !canModifyCharsetAndCollateWithoutReorg(oldCol.GetCharset(), oldCol.GetCollate(), newCol.GetCharset(), newCol.GetCollate()) {
 		return false
 	}
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())

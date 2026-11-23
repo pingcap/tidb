@@ -699,4 +699,19 @@ func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
 	tk.MustExec("create table t4 (id int primary key, c varchar(4) character set utf8mb4 collate utf8mb4_bin)")
 	tk.MustExec("insert into t4 values (1, 'éééé')")
 	tk.MustExec("alter table t4 modify column c varchar(4) character set utf8mb4 collate utf8mb4_general_ci")
+
+	// utf8 -> utf8mb4 with compatible collation does not require reorg even with an index or narrowing.
+	tk.MustExec("create table t5 (id int primary key, c varchar(10) character set utf8 collate utf8_bin, key idx_c(c))")
+	tk.MustExec("insert into t5 values (1, 'abc')")
+	tk.MustExec("alter table t5 modify column c varchar(10) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("alter table t5 modify column c varchar(5) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("admin check table t5")
+
+	// Same-length utf8mb4 -> utf8 is rejected upfront; narrowing utf8mb4 -> utf8 triggers row reorg and rejects 4-byte UTF-8 data.
+	tk.MustExec("create table t6 (id int primary key, c varchar(10) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t6 values (1, '🐱')")
+	tk.MustGetErrCode("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t6 modify column c varchar(5) character set utf8 collate utf8_bin", errno.ErrTruncatedWrongValueForField)
 }
