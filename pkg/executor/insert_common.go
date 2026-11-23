@@ -262,7 +262,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 
-	e.lazyFillAutoID = true
+	// Generated columns are evaluated in fillRow, so the auto-increment ID must be
+	// allocated eagerly when any generated column depends on it.
+	e.lazyFillAutoID = !hasGeneratedColDependOnAutoInc(e.Table)
 	evalRowFunc := e.fastEvalRow
 	if !e.allAssignmentsAreConstant {
 		evalRowFunc = e.evalRow
@@ -1056,6 +1058,31 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 		}
 	}
 	return nil, -1, false
+}
+
+// hasGeneratedColDependOnAutoInc reports whether any generated column depends on the
+// auto-increment column, directly or through other generated columns.
+func hasGeneratedColDependOnAutoInc(t table.Table) bool {
+	autoIncCol, _, found := findAutoIncrementColumn(t)
+	if !found {
+		return false
+	}
+	dependOnAutoInc := map[string]struct{}{autoIncCol.Name.L: {}}
+	hasDep := false
+	// A generated column can only refer to generated columns defined before it.
+	for _, c := range t.Cols() {
+		if !c.IsGenerated() {
+			continue
+		}
+		for dep := range c.Dependences {
+			if _, ok := dependOnAutoInc[dep]; ok {
+				dependOnAutoInc[c.Name.L] = struct{}{}
+				hasDep = true
+				break
+			}
+		}
+	}
+	return hasDep
 }
 
 func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
