@@ -97,6 +97,7 @@ pub mod split_region;
 pub mod access_cost;
 pub mod access_path;
 pub mod batch_point_get;
+pub mod plan_replayer;
 pub mod point_get;
 pub mod admin_check;
 pub(crate) mod check_table_index;

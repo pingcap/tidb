@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**6 unresolved: 5 open, 1 partial.**
+**6 unresolved: 4 open, 2 partial.**
 
 A row states the remaining gap only.
 
@@ -45,7 +45,7 @@ A row states the remaining gap only.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | T01 | open | Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings. Depends on T14: the statement's writes have to land in a pipelined store transaction. Rust: `tidb-session/src/lib.rs` hard-codes `"pipelined":false`; no `use_pipelined_dml_or_warn`. | `pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn` |
-| T10 | open | Go `pkg/executor` code is implemented as `Session` methods in the session crate: `ExecStmt` (`adapter.go`), `ResetContextOfStmt` and the select-lock / warning handling (`select.go`), `PlanReplayerExec` / `PlanReplayerLoadInfo` (`plan_replayer.go`), parts of `SimpleExec` (`simple.go`), `DDLExec` (`ddl.go`), `ShowExec` (`show.go`), the prepared-statement executors (`prepared.go`), `ImportIntoExec`, `CompactTableTiFlashExec`, `TraceExec`, `LoadStatsExec`, `CancelDDLJobsExec` and more. In Go they are executors over `sessionctx.Context`. Rust: `tidb-session/src/plan_replayer.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`, `ddl_service.rs`, `import_into.rs`, `show.rs`, `domain/cluster_session_node/mod.rs` (counted from their `Go \`X\`` doc claims on `pkg/executor` symbols). | `pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...) |
+| T10 | partial | Go `pkg/executor` code is implemented as `Session` methods in the session crate: `ExecStmt` (`adapter.go`), `ResetContextOfStmt` and the select-lock / warning handling (`select.go`), `PlanReplayerLoadInfo.Update` (`plan_replayer.go`; `PlanReplayerExec` is `tidb-executor/src/plan_replayer.rs`), parts of `SimpleExec` (`simple.go`), `DDLExec` (`ddl.go`), `ShowExec` (`show.go`), the prepared-statement executors (`prepared.go`), `ImportIntoExec`, `CompactTableTiFlashExec`, `TraceExec`, `LoadStatsExec`, `CancelDDLJobsExec` and more. In Go they are executors over `sessionctx.Context`. Rust: `tidb-session/src/plan_replayer.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`, `ddl_service.rs`, `import_into.rs`, `show.rs`, `domain/cluster_session_node/mod.rs` (counted from their `Go \`X\`` doc claims on `pkg/executor` symbols). | `pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...) |
 
 ### Domain and process services
 

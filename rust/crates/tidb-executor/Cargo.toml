@@ -170,6 +170,8 @@ tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-domain = { path = "../tidb-domain" }
+tidb-replayer = { path = "../tidb-replayer" }
+tidb-planner-extstore = { path = "../tidb-planner-extstore" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-log = { path = "../tidb-log" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }

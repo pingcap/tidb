@@ -54,7 +54,7 @@ T14/T01: `tidb-session/src/txn_manager.rs` (`MutationBuffer` staging, `commit_au
 
 ## Plan of Work
 
-1. T05/T07: move `planner_bridge.rs`'s planning core (builder setup, the query build, the physical optimization entry, the cached select plan) into `tidb-planner`, with the executor installing the subquery evaluator, default-value evaluators and dynamic-prune fallback as hooks; then `explain.rs`'s `query_plan_cost` / `gen_brief_plan` / plan digest follow the entry.
+1. T05/T07: move `planner_bridge.rs`'s planning core into `tidb-planner` behind one hook trait the executor implements (Go's executor-set function variables). Moves: `QueryBuilderParts::build` (Go `NewPlanBuilder().Init`: the `PlannerCatalog` source, `init_session_vars`, static-prune switch, `PRUNE_COLUMNS`), `planner_built_query_with_allocators` (Go `buildLogicalPlan`), `build_logical_plan_and_do_optimize` and `QueryRounds` (Go `buildAndOptimizeLogicalPlanRound`), `planner_optimized_query_with_allocators` (Go `optimize`). Hooks the executor keeps implementing: the subquery evaluator (`EvalSubqueryFirstRow`), the default-value evaluators, the dynamic-prune fallback, `CheckPrivilege` over the visit infos, and `OptimizeServices` (statistics load, stats initialization, used-stats recorder, CTE optimizer). Then `explain.rs`'s `query_plan_cost` / `gen_brief_plan` / `calculate_plan_digest` call the planner entry, and the cached select plan (`CachedSelectPlan`, T07) follows.
 2. T08: move the rewriter into `tidb-planner` behind a `BuildSimpleExpr` hook in `tidb-expr`, installed at server start and by each lower crate's tests.
 3. T10: move each `pkg/executor` executor out of the session crate onto a `sessionctx` trait surface, one Go file at a time.
 4. T14 then T01.

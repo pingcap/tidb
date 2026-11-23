@@ -593,7 +593,7 @@ pub struct Session {
     local_infile_data: Option<Vec<u8>>,
     /// Go `ctx.Value(PlanReplayerDumpVarKey)`: a `PLAN REPLAYER DUMP` of a
     /// client file, waiting for the connection to read it.
-    plan_replayer_dump_info: Option<crate::plan_replayer::PlanReplayerDumpInfo>,
+    plan_replayer_dump_info: Option<tidb_executor::plan_replayer::PlanReplayerDumpInfo>,
     /// Go `ctx.Value(PlanReplayerLoadVarKey)`: a `PLAN REPLAYER LOAD`'s file
     /// path, waiting for the connection to read it.
     plan_replayer_load_info: Option<String>,

@@ -2594,7 +2594,7 @@ impl<'s> ClusterServerSession<'s> {
         if let Stmt::Admin(admin) = stmt {
             if let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() {
                 // Go `PlanReplayerExec.Next` up to `prepare`.
-                return self.session.plan_replayer_stmt(replayer).map(drop).map_err(map_error);
+                return tidb_executor::plan_replayer::PlanReplayerExec::plan_replayer_stmt(&mut *self.session, replayer).map(drop).map_err(map_error);
             }
         }
         self.session.preprocess_load_data_local(stmt).map_err(map_error)
@@ -2618,12 +2618,12 @@ impl<'s> ClusterServerSession<'s> {
             return outcome;
         }
         if plan_replayer_dump_file(stmt).is_some() {
-            self.session.handle_plan_replayer_dump(data).map_err(map_error)?;
+            tidb_executor::plan_replayer::PlanReplayerExec::handle_plan_replayer_dump(&mut *self.session, data).map_err(map_error)?;
             return Ok(WriteOutcome::default());
         }
         if plan_replayer_load_file(stmt).is_some() {
             // Go `handlePlanReplayerLoad`.
-            self.session.take_plan_replayer_load_info().map_err(map_error)?;
+            tidb_executor::plan_replayer::PlanReplayerExec::take_plan_replayer_load_info(&mut *self.session).map_err(map_error)?;
             if !data.is_empty() {
                 self.plan_replayer_load_update(data)?;
             }

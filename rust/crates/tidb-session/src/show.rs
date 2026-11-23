@@ -468,7 +468,7 @@ impl tidb_executor::admin::AdminExec for Session {
         &mut self,
         stmt: &tidb_ast::PlanReplayerStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        Session::plan_replayer_stmt(self, stmt)
+        tidb_executor::plan_replayer::PlanReplayerExec::plan_replayer_stmt(self, stmt)
     }
 
     fn query_watch_stmt(&mut self, stmt: &tidb_ast::AdminStmt) -> Result<StmtOutput, DriverError> {

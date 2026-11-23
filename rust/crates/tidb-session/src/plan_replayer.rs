@@ -21,7 +21,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::Datum;
 use tidb_domain::plan_replayer as replayer;
 use tidb_driver_error::DriverError;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
@@ -309,212 +309,7 @@ impl replayer::DumpArchiveWriter for ArchiveWriter {
     }
 }
 
-/// Go `PlanReplayerDumpInfo`: a dump between `PlanReplayerExec.Next` and
-/// its statements' dump.
-pub(crate) struct PlanReplayerDumpInfo {
-    analyze: bool,
-    file: Option<Box<dyn tidb_replayer::WriteCloser + Send>>,
-    file_name: String,
-    start_ts: u64,
-}
-
-impl PlanReplayerDumpInfo {
-    /// Go's deferred `e.DumpInfo.File.Close()` of a failed statement.
-    fn close_file(&mut self) {
-        if let Some(mut file) = self.file.take() {
-            let _ = file.close();
-        }
-    }
-
-    fn into_closed(mut self) {
-        self.close_file();
-    }
-}
-
-/// Go `PlanReplayerExec.createFile`.
-fn create_file() -> Result<(Box<dyn tidb_replayer::WriteCloser + Send>, String), DriverError> {
-    let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
-    let storage = tidb_planner_extstore::get_global_ext_storage().map_err(unknown)?;
-    let (file, file_name) = tidb_replayer::generate_plan_replayer_file(storage.as_ref(), false, false)
-        .map_err(|error| unknown(error.to_string()))?;
-    Ok((Box::new(file), file_name))
-}
-
-/// Go `buildPlanReplayer`'s output schema.
-fn item_value_columns() -> Vec<(String, FieldType)> {
-    vec![
-        ("Item".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-        ("Value".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-    ]
-}
-
 impl Session {
-    /// Go `PlanReplayerExec.Next`.
-    pub(crate) fn plan_replayer_stmt(
-        &mut self,
-        stmt: &tidb_ast::PlanReplayerStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        match stmt {
-            tidb_ast::PlanReplayerStmt::Capture { remove, sql_digest, plan_digest } => {
-                if *remove {
-                    self.remove_capture_task(sql_digest, plan_digest)?;
-                } else {
-                    self.register_capture_task(sql_digest, plan_digest)?;
-                }
-                Ok(Some(StmtOutput::Rows { columns: item_value_columns(), rows: Vec::new() }))
-            }
-            // Go `PlanReplayerLoadExec.Next`: the load waits on the session
-            // (Go's `PlanReplayerLoadVarKey`) for the client's file.
-            tidb_ast::PlanReplayerStmt::Load(path) => {
-                if path.is_empty() {
-                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                        "plan replayer: file path is empty",
-                    )));
-                }
-                if self.plan_replayer_load_info.take().is_some() {
-                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                        "plan replayer: previous plan replayer load option isn't closed normally, please try again",
-                    )));
-                }
-                self.plan_replayer_load_info = Some(path.clone());
-                Ok(None)
-            }
-            tidb_ast::PlanReplayerStmt::Dump { historical_stats, analyze, target } => {
-                // Go `buildPlanReplayer` and `executorBuilder.buildPlanReplayer`.
-                if historical_stats.is_some() {
-                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                        "WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics",
-                    )));
-                }
-                let exec_stmts = match target.as_ref() {
-                    // Go `execStmt.Text()`: the statement's own source text.
-                    tidb_ast::PlanReplayerTarget::Statement(statement) => {
-                        let text = String::from_utf8_lossy(statement.text()).into_owned();
-                        Some(vec![if text.is_empty() { statement.restore() } else { text }])
-                    }
-                    tidb_ast::PlanReplayerTarget::Statements(statements) => Some(statements.clone()),
-                    // A file's statements arrive with the client's file; Go's
-                    // builder ignores the slow-query selector.
-                    tidb_ast::PlanReplayerTarget::File(_) | tidb_ast::PlanReplayerTarget::SlowQuery { .. } => None,
-                };
-
-                // Go `PlanReplayerExec.Next`.
-                let (file, file_name) = create_file()?;
-                // Go `GetTxnManager(sctx).GetStmtReadTS()`: the statement's read
-                // snapshot.
-                let start_ts = self.statement_snapshot.as_ref().map_or(0, |(ts, _)| *ts);
-                let mut dump_info = PlanReplayerDumpInfo {
-                    analyze: *analyze,
-                    file: Some(file),
-                    file_name,
-                    start_ts,
-                };
-                if let tidb_ast::PlanReplayerTarget::File(_) = target.as_ref() {
-                    // As we can only read file from the connection (which
-                    // requests the path), the dump info waits on the session
-                    // for the client's file.
-                    self.prepare_plan_replayer_dump(dump_info)?;
-                    return Ok(None);
-                }
-                let Some(exec_stmts) = exec_stmts else {
-                    dump_info.close_file();
-                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown("plan replayer: sql is empty")));
-                };
-                let token = self.plan_replayer_dump(&mut dump_info, exec_stmts)?;
-                Ok(Some(StmtOutput::Rows {
-                    columns: item_value_columns(),
-                    rows: vec![vec![
-                        Datum::String(tidb_datatype::StringDatum::new("File token", tidb_charset::Collation::Utf8Mb4Bin)),
-                        Datum::String(tidb_datatype::StringDatum::new(token.as_str(), tidb_charset::Collation::Utf8Mb4Bin)),
-                    ]],
-                }))
-            }
-        }
-    }
-
-    /// Go `PlanReplayerExec.prepare`: the dump waits on the session (Go's
-    /// `PlanReplayerDumpVarKey`) until the connection reads the client's file.
-    fn prepare_plan_replayer_dump(&mut self, dump_info: PlanReplayerDumpInfo) -> Result<(), DriverError> {
-        if let Some(mut previous) = self.plan_replayer_dump_info.take() {
-            previous.close_file();
-            dump_info.into_closed();
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                "plan replayer: previous plan replayer dump option isn't closed normally, please try again",
-            )));
-        }
-        self.plan_replayer_dump_info = Some(dump_info);
-        Ok(())
-    }
-
-    /// Go `handlePlanReplayerLoad`'s info: the load's file path, taken once
-    /// the connection read the client's file.
-    pub(crate) fn take_plan_replayer_load_info(&mut self) -> Result<String, DriverError> {
-        self.plan_replayer_load_info
-            .take()
-            .ok_or_else(|| DriverError::Mysql(tidb_terror::MysqlError::unknown("plan replayer load: info is empty")))
-    }
-
-    /// Go `clientConn.handlePlanReplayerDump` once the connection read the
-    /// client's file: an empty file dumps nothing.
-    pub(crate) fn handle_plan_replayer_dump(&mut self, data: &[u8]) -> Result<(), DriverError> {
-        let Some(mut dump_info) = self.plan_replayer_dump_info.take() else {
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                "plan replayer dump: executor is empty",
-            )));
-        };
-        if data.is_empty() {
-            return Ok(());
-        }
-        self.dump_sqls_from_file(&mut dump_info, data)
-    }
-
-    /// Go `PlanReplayerDumpInfo.DumpSQLsFromFile` dumps plan replayer results
-    /// for sqls from file.
-    fn dump_sqls_from_file(&mut self, dump_info: &mut PlanReplayerDumpInfo, b: &[u8]) -> Result<(), DriverError> {
-        let text = String::from_utf8_lossy(b).into_owned();
-        let mut exec_stmts = Vec::new();
-        for sql in text.split(';') {
-            let s = sql.trim_matches('\n');
-            if s.is_empty() {
-                continue;
-            }
-            // Go `GetRestrictedSQLExecutor().ParseWithParams`.
-            if let Err(error) = tidb_executor::stmt_ctx_build::ResetContextOfStmt::parse_statement(self, s) {
-                return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(format!(
-                    "parse sql error, sql:{s}, err:{}",
-                    error.error_string()
-                ))));
-            }
-            exec_stmts.push(s.to_owned());
-        }
-        self.plan_replayer_dump(dump_info, exec_stmts).map(drop)
-    }
-
-    /// Go `PlanReplayerDumpInfo.dump`: the archive is written to the global
-    /// storage's replayer directory, the status records inserted, and the
-    /// token (the file name, or a presigned URL) kept as
-    /// `LastPlanReplayerToken`.
-    fn plan_replayer_dump(
-        &mut self,
-        dump_info: &mut PlanReplayerDumpInfo,
-        exec_stmts: Vec<String>,
-    ) -> Result<String, DriverError> {
-        let unknown = |message: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(message));
-        let mut task = replayer::PlanReplayerDumpTask {
-            file_name: Some(dump_info.file_name.clone()),
-            start_ts: dump_info.start_ts,
-            analyze: dump_info.analyze,
-            session_vars: self.plan_replayer_session_vars(),
-            exec_stmts,
-            ..replayer::PlanReplayerDumpTask::default()
-        };
-        let mut file = dump_info.file.take().expect("the dump's file is open");
-        self.dump_plan_replayer_info(&mut task, file.as_mut()).map_err(|error| unknown(error.to_string()))?;
-        let token = task.presigned_url.filter(|url| !url.is_empty()).unwrap_or_else(|| dump_info.file_name.clone());
-        self.vars.last_plan_replayer_token = token.clone();
-        Ok(token)
-    }
-
     /// Go `DumpPlanReplayerInfo(ctx, sctx, task)` with this session as
     /// `sctx`: the archive goes to `zf`, Go's deferred close of the zip
     /// writer and of `zf` runs, and the status records are inserted.
@@ -715,20 +510,6 @@ impl Session {
         replayer::insert_plan_replayer_status(&exec, &info, records);
     }
 
-    /// Go `PlanReplayerExec.registerCaptureTask`.
-    fn register_capture_task(&mut self, sql_digest: &str, plan_digest: &str) -> Result<(), DriverError> {
-        let exists = self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &replayer::check_plan_replayer_task_exists_sql(sql_digest, plan_digest))?;
-        if !exists.is_empty() {
-            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
-                "plan replayer capture task already exists",
-            )));
-        }
-        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
-            "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('{sql_digest}','{plan_digest}')"
-        ))?;
-        self.collect_plan_replayer_task()
-    }
-
     /// Go `GetPlanReplayerHandle().CollectPlanReplayerTask()` after a
     /// capture task is added or removed.
     fn collect_plan_replayer_task(&self) -> Result<(), DriverError> {
@@ -741,13 +522,6 @@ impl Session {
         }
     }
 
-    /// Go `PlanReplayerExec.removeCaptureTask`.
-    fn remove_capture_task(&mut self, sql_digest: &str, plan_digest: &str) -> Result<(), DriverError> {
-        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
-            "delete from mysql.plan_replayer_task where sql_digest = '{sql_digest}' and plan_digest = '{plan_digest}'"
-        ))?;
-        self.collect_plan_replayer_task()
-    }
 }
 
 /// Go `planReplayerTaskDumpWorker`'s dumping half: the archive Go's
@@ -860,4 +634,49 @@ fn quote(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+/// Go `PlanReplayerExec`'s `sctx`.
+impl tidb_executor::plan_replayer::PlanReplayerSession for Session {
+    fn statement_read_ts(&self) -> u64 {
+        self.statement_snapshot.as_ref().map_or(0, |(ts, _)| *ts)
+    }
+
+    fn plan_replayer_load_info(&mut self) -> &mut Option<String> {
+        &mut self.plan_replayer_load_info
+    }
+
+    fn plan_replayer_dump_info(
+        &mut self,
+    ) -> &mut Option<tidb_executor::plan_replayer::PlanReplayerDumpInfo> {
+        &mut self.plan_replayer_dump_info
+    }
+
+    fn plan_replayer_session_vars(&self) -> replayer::PlanReplayerSessionVars {
+        Session::plan_replayer_session_vars(self)
+    }
+
+    fn dump_plan_replayer_info(
+        &mut self,
+        task: &mut replayer::PlanReplayerDumpTask,
+        zf: &mut dyn tidb_replayer::WriteCloser,
+    ) -> Result<(), replayer::PlanReplayerError> {
+        Session::dump_plan_replayer_info(self, task, zf)
+    }
+
+    fn set_last_plan_replayer_token(&mut self, token: String) {
+        self.vars.last_plan_replayer_token = token;
+    }
+
+    fn exec_restricted_sql(&mut self, source: &str, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+        Session::exec_restricted_sql(self, source, sql)
+    }
+
+    fn collect_plan_replayer_task(&self) -> Result<(), DriverError> {
+        Session::collect_plan_replayer_task(self)
+    }
+
+    fn parse_plan_replayer_sql(&mut self, sql: &str) -> Result<(), String> {
+        ResetContextOfStmt::parse_statement(self, sql).map(drop).map_err(|error| error.error_string())
+    }
 }
