@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -37,11 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
-
-// LeaseOffset represents the time offset for the stats cache to load statistics from the store.
-// This value is crucial to ensure that the stats are retrieved at the correct interval.
-// See more at where it is used.
-const LeaseOffset = 5
 
 // StatsCacheImpl implements types.StatsCache.
 type StatsCacheImpl struct {
@@ -217,7 +214,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			needLoadColAndIdxStats = false
 		}
 		if needLoadColAndIdxStats {
-			tbl, err = s.statsHandle.TableStatsFromStorage(
+			tbl, err = s.TableStatsFromStorage(
 				tableInfo,
 				physicalID,
 				false,
@@ -267,7 +264,7 @@ func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than five lease.
-	offset := util.DurationToTS(LeaseOffset * s.statsHandle.Lease())
+	offset := util.DurationToTS(util.LeaseOffset * s.statsHandle.Lease())
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -316,6 +313,21 @@ func (s *StatsCacheImpl) Clear() {
 // MemConsumed returns its memory usage.
 func (s *StatsCacheImpl) MemConsumed() (size int64) {
 	return s.Load().Cost()
+}
+
+// TableStatsFromStorage loads table stats info from storage. It starts from the cached stats of
+// the table, so the cache owns it and the storage needs no cache.
+func (s *StatsCacheImpl) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
+	err = util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		var ok bool
+		statsTbl, ok = s.Get(physicalID)
+		if !ok {
+			statsTbl = nil
+		}
+		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.statsHandle.Lease(), statsTbl)
+		return err
+	}, util.FlagWrapTxn)
+	return
 }
 
 // Get returns the specified table's stats.

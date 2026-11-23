@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
@@ -75,7 +74,7 @@ func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
 	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
 	// This is why we need to explicitly check the lease here. Without this check,
 	// the duration validation would always evaluate to true, which is not the intended behavior.
-	return lease > 0 && dur >= cache.LeaseOffset*lease
+	return lease > 0 && dur >= util.LeaseOffset*lease
 }
 
 // handleSlowStatsSaving is used to handle the slow stats saving process.
@@ -163,20 +162,6 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		count, modifyCount, _, err = StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
-		return err
-	}, util.FlagWrapTxn)
-	return
-}
-
-// TableStatsFromStorage loads table stats info from storage.
-func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		var ok bool
-		statsTbl, ok = s.statsHandler.Get(physicalID)
-		if !ok {
-			statsTbl = nil
-		}
-		statsTbl, err = TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.statsHandler.Lease(), statsTbl)
 		return err
 	}, util.FlagWrapTxn)
 	return
@@ -334,7 +319,7 @@ func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *mo
 
 // TableStatsToJSON dumps statistic to json.
 func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*statsutil.JSONTable, error) {
-	tbl, err := s.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	tbl, err := s.statsHandler.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
 	if err != nil || tbl == nil {
 		return nil, err
 	}

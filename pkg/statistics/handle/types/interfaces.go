@@ -236,6 +236,12 @@ type StatsCacheVersionGetter interface {
 	MaxTableStatsVersion() uint64
 }
 
+// TableStatsReader reads the statistics of a table from the storage.
+type TableStatsReader interface {
+	// TableStatsFromStorage loads table stats info from storage.
+	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+}
+
 // StatsCache is used to manage all table statistics in memory.
 type StatsCache interface {
 	StatsCacheGetter
@@ -243,6 +249,7 @@ type StatsCache interface {
 	StatsCacheLoader
 	StatsCacheLister
 	StatsCacheVersionGetter
+	TableStatsReader
 
 	// Close closes this cache.
 	Close()
@@ -344,9 +351,6 @@ type MetaUpdate struct {
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
-	// TableStatsFromStorage loads table stats info from storage.
-	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
-
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 

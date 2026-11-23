@@ -20,6 +20,11 @@ import (
 	"go.uber.org/atomic"
 )
 
+// LeaseOffset represents the time offset for the stats cache to load statistics from the store.
+// This value is crucial to ensure that the stats are retrieved at the correct interval.
+// See more at where it is used.
+const LeaseOffset = 5
+
 // LeaseGetter is used to get the stats lease.
 type LeaseGetter interface {
 	// Lease returns the stats lease.
