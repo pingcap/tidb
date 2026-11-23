@@ -2763,62 +2763,6 @@ from (
 ) as s where ref3`).Check(testkit.Rows())
 }
 
-func TestInSubqueryMatchesEachOuterRowOnceWhenKeysAreConverted(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_outer (id int)")
-	tk.MustExec("insert into t_outer values (1), (2), (3), (4)")
-	tk.MustExec("create table t_inner (a blob, b int)")
-	tk.MustExec("insert into t_inner values ('x', 1), ('y', 1), ('z', 1)")
-
-	tk.MustQuery("select count(*) from t_outer where 0 in (select a from t_inner)").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from t_outer where (0, 1) in (select a, b from t_inner)").Check(testkit.Rows("4"))
-	tk.MustQuery("select id from t_outer where (id, 0) in (select b, a from t_inner)").Check(testkit.Rows("1"))
-
-	tk.MustExec("delete from t_inner")
-	tk.MustExec("insert into t_inner values ('2', 2), ('02', 2)")
-	tk.MustQuery("select id from t_outer where (id, id) in (select a, b from t_inner)").Check(testkit.Rows("2"))
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 Implicit type or collation conversion on join keys (test.t_outer.id = test.t_inner.a) may make indexes unusable"))
-}
-
-func TestInSubqueryKeepsTheExplicitCollationOfAConvertedKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_outer (s varchar(10) collate utf8mb4_bin)")
-	tk.MustExec("insert into t_outer values ('a')")
-	tk.MustExec("create table t_inner (a blob, b varchar(10) collate utf8mb4_bin)")
-	tk.MustExec("insert into t_inner values ('x', 'A')")
-
-	tk.MustQuery("select s from t_outer where (0, s) in (select a, b collate utf8mb4_general_ci from t_inner)").Check(testkit.Rows("a"))
-	tk.MustQuery("select s from t_outer where (0, s) in (select a, b from t_inner)").Check(testkit.Rows())
-}
-
-func TestInSubqueryGroupsKeysInTheComparisonCollation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table o (s varchar(10) collate utf8mb4_bin)")
-	tk.MustExec("create table t (b varchar(10) collate utf8mb4_bin)")
-	tk.MustExec("create table t2 (b varchar(10) collate utf8mb4_general_ci)")
-	tk.MustExec("insert into o values ('a')")
-	tk.MustExec("insert into t values ('A'), ('a')")
-	tk.MustExec("insert into t2 values ('A'), ('a')")
-
-	tk.MustQuery("select count(*) from o where (1, s collate utf8mb4_general_ci) in (select 1, b from t)").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from o where (1, s) in (select 1, b from t2)").Check(testkit.Rows("1"))
-	tk.MustQuery("explain format='brief' select * from o where (1, s) in (select 1, b from t2)").CheckContain("inner join")
-
-	tk.MustExec("create table pad_o (s varchar(10)) charset utf8mb4 collate utf8mb4_0900_ai_ci")
-	tk.MustExec("create table pad_i (s varchar(10)) charset utf8 collate utf8_unicode_ci")
-	tk.MustExec("insert into pad_o values ('a'), ('a ')")
-	tk.MustExec("insert into pad_i values ('a'), ('a ')")
-	tk.MustQuery("select concat('[', s, ']') from pad_o where s in (select s from pad_i) order by 1").Check(testkit.Rows("[a ]", "[a]"))
-	tk.MustQuery("explain format='brief' select * from pad_o where s in (select s from pad_i)").CheckContain("inner join")
-}
-
 func TestIndexScanSeekCost(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

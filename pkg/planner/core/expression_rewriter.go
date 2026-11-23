@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -1320,39 +1321,101 @@ func (er *expressionRewriter) buildInSubqueryConditions(left expression.Expressi
 	return onConds, nil
 }
 
-// inSubqueryDistinctKeys returns the keys the DISTINCT of the inner join rewrite
-// groups by, one per IN column, and whether such keys exist. The DISTINCT must
-// group by the values the join compares: if "=" casts an inner column, or compares
-// it in another collation, distinct inner values can be equal for the join and
-// multiply outer rows.
-func (er *expressionRewriter) inSubqueryDistinctKeys(left expression.Expression, onConds []expression.Expression, innerCols []*expression.Column) ([]expression.Expression, bool) {
+// inSubqueryDistinctKeys finds the RHS expressions used by the comparisons.
+// A nil result means DISTINCT cannot safely group by those expressions.
+func (er *expressionRewriter) inSubqueryDistinctKeys(left expression.Expression, onConds []expression.Expression, inner base.LogicalPlan) []expression.Expression {
+	innerCols := inner.Schema().Columns
 	evalCtx := er.sctx.GetEvalCtx()
 	keys := make([]expression.Expression, len(innerCols))
 	for i, col := range innerCols {
-		keys[i] = col
-		eq, ok := onConds[i].(*expression.ScalarFunction)
-		if !ok || eq.FuncName.L != ast.EQ || !isInnerColumnOrCastOf(eq.GetArgs()[1], col) {
-			lhs := left
-			if len(innerCols) > 1 {
-				lhs = expression.GetFuncArg(left, i)
-			}
-			if !collate.CompatibleCollate(lhs.GetType(evalCtx).GetCollate(), col.GetType(evalCtx).GetCollate()) {
-				return nil, false
-			}
-			continue
+		lhs := left
+		if len(innerCols) > 1 {
+			lhs = expression.GetFuncArg(left, i)
 		}
-		key := eq.GetArgs()[1]
-		keyTp := key.GetType(evalCtx)
-		chs, coll := eq.CharsetAndCollation()
-		if keyTp.EvalType() == types.ETString && !collate.CompatibleCollate(keyTp.GetCollate(), coll) {
-			if keyTp.Hybrid() || !canCastCharsetLosslessly(keyTp.GetCharset(), chs) {
-				return nil, false
+		// Check the operands' original collations before considering the coerced key.
+		if !collate.CompatibleCollate(lhs.GetType(evalCtx).GetCollate(), col.GetType(evalCtx).GetCollate()) {
+			return nil
+		}
+		eq, ok := onConds[i].(*expression.ScalarFunction)
+		if !ok || eq.FuncName.L != ast.EQ {
+			return nil
+		}
+		args := eq.GetArgs()
+		key := args[1]
+		if !isInnerColumnOrCastOf(key, col) {
+			return nil
+		}
+		tp := key.GetType(evalCtx)
+		// ENUM/SET labels can compare differently from their stored ordinals.
+		// BIT and YEAR lookups also require the probe to fit the column's domain.
+		leftTp := args[0].GetType(evalCtx)
+		for _, arg := range args {
+			switch arg.GetType(evalCtx).GetType() {
+			case mysql.TypeEnum, mysql.TypeSet:
+				return nil
+			case mysql.TypeBit, mysql.TypeYear:
+				if leftTp.GetType() != tp.GetType() || leftTp.GetFlen() != tp.GetFlen() {
+					return nil
+				}
 			}
-			key = expression.BuildCastCollationFunction(er.sctx, key, &expression.ExprCollation{Charset: chs, Collation: coll}, false)
+		}
+		// Equal JSON numbers or vector elements with opposite signed zeros can have distinct group keys.
+		et := tp.EvalType()
+		if et == types.ETJson || et.IsVectorKind() {
+			return nil
+		}
+		// Until #72931 is fixed, only deduplicate DECIMALs read directly
+		// from storage, where all values of the column have the same scale.
+		if et == types.ETDecimal {
+			source := inner
+			// A SELECT projection preserves the unique ID of a plain column reference.
+			if proj, ok := source.(*logicalop.LogicalProjection); ok {
+				source = proj.Children()[0]
+			}
+			ds, isDataSource := source.(*logicalop.DataSource)
+			keyCol, isCol := key.(*expression.Column)
+			if !isDataSource || !isCol || keyCol.VirtualExpr != nil || !ds.Schema().Contains(keyCol) {
+				return nil
+			}
+		}
+		if et == types.ETString {
+			_, cmpColl := eq.CharsetAndCollation()
+			// Some collators compare malformed strings equal despite different sort keys.
+			if !collate.CompatibleCollate(tp.GetCollate(), cmpColl) || (collate.NewCollationEnabled() && !collate.IsBinCollation(cmpColl)) {
+				return nil
+			}
 		}
 		keys[i] = key
 	}
-	return keys, true
+	return keys
+}
+
+// Project computed RHS keys so DISTINCT and the join reference the same columns.
+func (b *PlanBuilder) projectInSubqueryKeys(inner base.LogicalPlan, keys, onConds []expression.Expression) base.LogicalPlan {
+	var proj *logicalop.LogicalProjection
+	for i, key := range keys {
+		if _, ok := key.(*expression.Column); ok {
+			continue
+		}
+		if proj == nil {
+			proj = logicalop.LogicalProjection{Exprs: keys}.Init(b.ctx, inner.QueryBlockOffset())
+			proj.SetChildren(inner)
+			proj.SetSchema(expression.NewSchema(slices.Clone(inner.Schema().Columns)...))
+		}
+		col := &expression.Column{UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(), RetType: key.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone()}
+		col.SetCoercibility(key.Coercibility())
+		if col.RetType.EvalType() == types.ETString {
+			col.SetRepertoire(key.Repertoire())
+		}
+		proj.Schema().Columns[i] = col
+		eq := onConds[i].(*expression.ScalarFunction)
+		eq.GetArgs()[1] = col
+		eq.CleanHashCode()
+	}
+	if proj != nil {
+		return proj
+	}
+	return inner
 }
 
 func isInnerColumnOrCastOf(expr expression.Expression, col *expression.Column) bool {
@@ -1365,10 +1428,6 @@ func isInnerColumnOrCastOf(expr expression.Expression, col *expression.Column) b
 	}
 	c, ok := sf.GetArgs()[0].(*expression.Column)
 	return ok && c.EqualColumn(col)
-}
-
-func canCastCharsetLosslessly(from, to string) bool {
-	return from == to || to == charset.CharsetBin || (from == charset.CharsetUTF8 && to == charset.CharsetUTF8MB4)
 }
 
 func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.PatternInExpr) bool {
@@ -1406,7 +1465,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		return true
 	}
 
-	gbyKeys, canDedup := er.inSubqueryDistinctKeys(lexpr, onConds, np.Schema().Columns)
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
@@ -1421,24 +1479,25 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 	}
 
-	// If it's not the form of `not in (SUBQUERY)`,
-	// and has no correlated column from the current level plan(if the correlated column is from upper level,
-	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
-	// and don't need to append a scalar value, we can rewrite it to inner join.
-	// When EnableCorrelateSubquery is ON (set by the correlate alternative round), skip the
-	// InnerJoin+Agg rewrite so that a SemiJoin is built instead; the CorrelateSolver rule can
-	// then convert it to a correlated Apply with index lookups.
-	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && canDedup
-	if canRewriteToJoinAgg {
-		// Record that the alternative logical plans variable is relevant — toggling it
-		// changes whether we take the InnerJoin+Agg path or the SemiApply path.
-		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
-		// Signal that a correlate alternative round is worth attempting.
-		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
-			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+	sessVars := planCtx.builder.ctx.GetSessionVars()
+	projectionIsImmutable := func(p base.LogicalPlan) bool {
+		proj, ok := p.(*logicalop.LogicalProjection)
+		return !ok || sliceutil.AllOf(proj.Exprs, expression.IsImmutableFunc)
+	}
+	var keys []expression.Expression
+	if sessVars.GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 &&
+		sliceutil.AllOf(onConds, expression.IsImmutableFunc) && projectionIsImmutable(planCtx.plan) && projectionIsImmutable(np) {
+		// A correlated semi join can stop at its first match even when DISTINCT
+		// cannot group the inner keys with the comparison's semantics.
+		sessVars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		if sessVars.EnableAlternativeLogicalPlans {
+			sessVars.StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+		}
+		if !sessVars.EnableCorrelateSubquery {
+			keys = er.inSubqueryDistinctKeys(lexpr, onConds, np)
 		}
 	}
-	if canRewriteToJoinAgg && !planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+	if keys != nil {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
@@ -1448,7 +1507,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		//   outer_col IN (SELECT inner_col ...)
 		// into:
 		//   outer JOIN DISTINCT(inner_col) ON outer_col = inner_col
-		agg, err := planCtx.builder.buildDistinctWithGbyKey(np, gbyKeys)
+		distinctChild := planCtx.builder.projectInSubqueryKeys(np, keys, onConds)
+		agg, err := planCtx.builder.buildDistinct(distinctChild, len(keys))
 		if err != nil {
 			er.err = err
 			return true
