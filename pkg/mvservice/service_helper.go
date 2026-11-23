@@ -63,10 +63,17 @@ const (
 	mvLogPurgeHistoryOrphanedReason = "task heartbeat expired before purge history finalize"
 )
 
+// StatsHandle is the part of the stats handle that the MV service uses. It reads the stats of
+// MV log tables, and takes the process IDs of the analyze statements that it runs.
+type StatsHandle interface {
+	statstypes.NonPseudoPhysicalTableStatsGetter
+	statsutil.AutoAnalyzeProcIDGenerator
+}
+
 type serviceHelper struct {
 	durationObserverCache durationObserverCache
 	runEventCounterCache  runEventCounterCache
-	statsHandleGetter     func() statstypes.StatsHandle
+	statsHandleGetter     func() StatsHandle
 	sysProcTracker        sysproctrack.Tracker
 	isAutoAnalyzeStopped  func() bool
 
@@ -125,7 +132,7 @@ type mviewMetricComponentTypeKey struct {
 }
 
 // newServiceHelper builds a default helper used by MVService.
-func newServiceHelper(statsHandleGetter func() statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
+func newServiceHelper(statsHandleGetter func() StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
 	return &serviceHelper{
 		durationObserverCache: newDurationObserverCache(8),
 		runEventCounterCache:  newRunEventCounterCache(16),
@@ -1564,7 +1571,7 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	return rowCounts, nil
 }
 
-func (h *serviceHelper) getStatsHandle() (statstypes.StatsHandle, error) {
+func (h *serviceHelper) getStatsHandle() (StatsHandle, error) {
 	if h == nil || h.statsHandleGetter == nil {
 		return nil, errors.New("mv service stats handle getter is nil")
 	}
@@ -1886,7 +1893,7 @@ func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
-	statsHandleGetter func() statstypes.StatsHandle,
+	statsHandleGetter func() StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	isAutoAnalyzeStopped func() bool,
 	onDDLHandled func(),

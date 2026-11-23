@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -517,49 +516,4 @@ type NonPseudoPhysicalTableStatsGetter interface {
 	// physicalTableID can be a table ID or partition ID.
 	// Note: this function may return nil if the table is not found in the cache.
 	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
-}
-
-// StatsHandle is used to manage TiDB Statistics.
-type StatsHandle interface {
-	// Pool is used to get a session or a goroutine to execute stats updating.
-	handleutil.Pool
-
-	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	handleutil.AutoAnalyzeProcIDGenerator
-
-	// LeaseHolder is used to get stats lease.
-	handleutil.LeaseHolder
-
-	// TableInfoGetter is used to get table meta info.
-	handleutil.TableInfoGetter
-
-	// PhysicalTableStatsGetter is used to get the stats of a table or partition.
-	PhysicalTableStatsGetter
-
-	// NonPseudoPhysicalTableStatsGetter is used to get the cached stats of a table or partition.
-	NonPseudoPhysicalTableStatsGetter
-
-	// StatsGC is used to do the GC job.
-	StatsGC
-
-	// StatsUsage is used to handle table delta and stats usage.
-	StatsUsage
-
-	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
-	StatsAnalyze
-
-	// StatsCache is used to manage all table statistics in memory.
-	StatsCache
-
-	// StatsLock is used to manage locked stats.
-	StatsLock
-
-	// StatsReadWriter is used to read and write stats to the storage.
-	StatsReadWriter
-
-	// StatsGlobal is used to manage partition table global stats.
-	StatsGlobal
-
-	// DDL is used to handle ddl events.
-	DDL
 }

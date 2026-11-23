@@ -93,7 +93,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -713,7 +712,7 @@ func (do *Domain) Init(
 		do.ctx,
 		do.ddlNotifier.RegisterHandler,
 		do.sysSessionPool,
-		func() statstypes.StatsHandle {
+		func() mvservice.StatsHandle {
 			return do.StatsHandle()
 		},
 		&do.sysProcesses,
