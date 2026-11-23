@@ -271,7 +271,7 @@ func TestRecoverGCBarrierUsesActualKeyspaceAndRenews(t *testing.T) {
 		codec:         codecV2,
 	}
 	w := &worker{ddlCtx: &ddlCtx{store: ksStore}}
-	job := &model.Job{ID: 1001, State: model.JobStateRunning}
+	job := &model.Job{ID: 1001}
 
 	require.NoError(t, setRecoverGCBarrier(ctx, w, job.ID, 100))
 
