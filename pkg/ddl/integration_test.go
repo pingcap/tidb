@@ -81,6 +81,9 @@ func TestPartialIndex(t *testing.T) {
 		if *testkit.WithTiKV != "" {
 			t.Skip("requires standalone unistore without ingest")
 		}
+		if model.GetJobVerInUse() == model.JobVersion1 {
+			t.Skip("standalone TiDB uses DDL job v2")
+		}
 		standalone := kv.StandAloneTiDB
 		fastReorg := variable.EnableFastReorg.Swap(true)
 		kv.StandAloneTiDB = true
