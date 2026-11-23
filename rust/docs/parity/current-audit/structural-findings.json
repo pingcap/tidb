@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 8,
-    "open": 8,
+    "unresolved": 7,
+    "open": 7,
     "partial": 0
   },
   "findings": [
@@ -48,14 +48,6 @@
       "go_owner": "`pkg/planner/core/expression_rewriter.go`, `scalar_subq_expression.go`"
     },
     {
-      "id": "T09",
-      "group": "Structure: Go's shape before more ports",
-      "status": "open",
-      "finding": "`SessionVars`' typed fields are not on the session variables: the executor re-parses the variable table into a per-generation snapshot (66 `SessionVars` fields) instead of each variable's `SetSession` hook maintaining a field.",
-      "rust_evidence": "`tidb-executor/src/stmt_ctx_build.rs` (the statement context's session-variable half).",
-      "go_owner": "`pkg/sessionctx/variable/session.go`, `sysvar.go` `SetSession` hooks"
-    },
-    {
       "id": "T10",
       "group": "Executor, DML and expressions",
       "status": "open",
@@ -72,7 +64,7 @@
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     }
   ],
-  "unresolved": 8,
-  "open": 8,
+  "unresolved": 7,
+  "open": 7,
   "partial": 0
 }

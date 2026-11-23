@@ -581,6 +581,168 @@ pub struct SessionVars {
     /// Go `SessionVars.PlanReplayerFinishedTaskKey`: the keys this
     /// session's continuous capture already sent.
     pub plan_replayer_finished_task_key: std::collections::HashSet<tidb_replayer::PlanReplayerTaskKey>,
+    /// Go `SessionVars.DefaultCollationForUTF8MB4`, maintained by `default_collation_for_utf8mb4`'s `SetSession`.
+    pub(crate) default_collation_for_utf8mb4: String,
+    /// Go `SessionVars.AllowWriteRowID`, maintained by `tidb_opt_write_row_id`'s `SetSession`.
+    pub(crate) allow_write_row_id: bool,
+    /// Go `SessionVars.EnableStableResultMode`, maintained by `tidb_enable_ordered_result_mode`'s `SetSession`.
+    pub(crate) enable_stable_result_mode: bool,
+    /// Go `SessionVars.SysdateIsNow`, maintained by `tidb_sysdate_is_now`'s `SetSession`.
+    pub(crate) sysdate_is_now: bool,
+    /// Go `SessionVars.SkipASCIICheck`, maintained by `tidb_skip_ascii_check`'s `SetSession`.
+    pub(crate) skip_ascii_check: bool,
+    /// Go `SessionVars.SkipUTF8Check`, maintained by `tidb_skip_utf8_check`'s `SetSession`.
+    pub(crate) skip_utf8_check: bool,
+    /// Go `SessionVars.AllowAutoRandExplicitInsert`, maintained by `allow_auto_random_explicit_insert`'s `SetSession`.
+    pub(crate) allow_auto_rand_explicit_insert: bool,
+    /// Go `SessionVars.ShardAllocateStep`, maintained by `tidb_shard_allocate_step`'s `SetSession`.
+    pub(crate) shard_allocate_step: u64,
+    /// Go `SessionVars.EnableNoBackslashEscapesInLike`, maintained by `tidb_enable_no_backslash_escapes_in_like`'s `SetSession`.
+    pub(crate) enable_no_backslash_escapes_in_like: bool,
+    /// Go `SessionVars.DivPrecisionIncrement`, maintained by `div_precision_increment`'s `SetSession`.
+    pub(crate) div_precision_increment: u32,
+    /// Go `SessionVars.WindowingUseHighPrecision`, maintained by `windowing_use_high_precision`'s `SetSession`.
+    pub(crate) windowing_use_high_precision: bool,
+    /// Go `SessionVars.EnablePipelinedWindowExec`, maintained by `tidb_enable_pipelined_window_function`'s `SetSession`.
+    pub(crate) enable_pipelined_window_exec: bool,
+    /// Go `SessionVars.CTEMaxRecursionDepth`, maintained by `cte_max_recursion_depth`'s `SetSession`.
+    pub(crate) cte_max_recursion_depth: i64,
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`, maintained by `tidb_opt_join_reorder_threshold`'s `SetSession`.
+    pub(crate) tidb_opt_join_reorder_threshold: i32,
+    /// Go `SessionVars.DefaultStrMatchSelectivity`, maintained by `tidb_default_string_match_selectivity`'s `SetSession`.
+    pub(crate) default_str_match_selectivity: f64,
+    /// Go `SessionVars.EnablePseudoForOutdatedStats`, maintained by `tidb_enable_pseudo_for_outdated_stats`'s `SetSession`.
+    pub(crate) enable_pseudo_for_outdated_stats: bool,
+    /// Go `SessionVars.StatsLoadSyncWait`, maintained by `tidb_stats_load_sync_wait`'s `SetSession`.
+    pub(crate) stats_load_sync_wait: u64,
+    /// Go `SessionVars.OptIndexPruneThreshold`, maintained by `tidb_opt_index_prune_threshold`'s `SetSession`.
+    pub(crate) opt_index_prune_threshold: i32,
+    /// Go `SessionVars.RangeMaxSize`, maintained by `tidb_opt_range_max_size`'s `SetSession`.
+    pub(crate) range_max_size: i64,
+    /// Go `SessionVars.OptPrefixIndexSingleScan`, maintained by `tidb_opt_prefix_index_single_scan`'s `SetSession`.
+    pub(crate) opt_prefix_index_single_scan: bool,
+    /// Go `SessionVars.allowPreferRangeScan`, maintained by `tidb_opt_prefer_range_scan`'s `SetSession`.
+    pub(crate) allow_prefer_range_scan: bool,
+    /// Go `SessionVars.OptimizerUseInvisibleIndexes`, maintained by `tidb_opt_use_invisible_indexes`'s `SetSession`.
+    pub(crate) optimizer_use_invisible_indexes: bool,
+    /// Go `SessionVars.AlwaysKeepJoinKey`, maintained by `tidb_opt_always_keep_join_key`'s `SetSession`.
+    pub(crate) always_keep_join_key: bool,
+    /// Go `SessionVars.AllowAggPushDown`, maintained by `tidb_opt_agg_push_down`'s `SetSession`.
+    pub(crate) allow_agg_push_down: bool,
+    /// Go `SessionVars.Enable3StageDistinctAgg`, maintained by `tidb_opt_three_stage_distinct_agg`'s `SetSession`.
+    pub(crate) enable_3_stage_distinct_agg: bool,
+    /// Go `SessionVars.Enable3StageMultiDistinctAgg`, maintained by `tidb_opt_enable_three_stage_multi_distinct_agg`'s `SetSession`.
+    pub(crate) enable_3_stage_multi_distinct_agg: bool,
+    /// Go `SessionVars.TiFlashPreAggMode`, maintained by `tiflash_hashagg_preaggregation_mode`'s `SetSession`.
+    pub(crate) tiflash_pre_agg_mode: String,
+    /// Go `SessionVars.OptPartialOrderedIndexForTopN`, maintained by `tidb_opt_partial_ordered_index_for_topn`'s `SetSession`.
+    pub(crate) opt_partial_ordered_index_for_topn: String,
+    /// Go `SessionVars.EnableUnsafeSubstitute`, maintained by `tidb_enable_unsafe_substitute`'s `SetSession`.
+    pub(crate) enable_unsafe_substitute: bool,
+    /// Go `SessionVars.enableForceInlineCTE`, maintained by `tidb_opt_force_inline_cte`'s `SetSession`.
+    pub(crate) enable_force_inline_cte: bool,
+    /// Go `SessionVars.EnableMPPSharedCTEExecution`, maintained by `tidb_opt_enable_mpp_shared_cte_execution`'s `SetSession`.
+    pub(crate) enable_mpp_shared_cte_execution: bool,
+    /// Go `SessionVars.EnableAdvancedJoinHint`, maintained by `tidb_opt_advanced_join_hint`'s `SetSession`.
+    pub(crate) enable_advanced_join_hint: bool,
+    /// Go `SessionVars.EnableSemiJoinRewrite`, maintained by `tidb_opt_enable_semi_join_rewrite`'s `SetSession`.
+    pub(crate) enable_semi_join_rewrite: bool,
+    /// Go `SessionVars.EnableAlternativeLogicalPlans`, maintained by `tidb_opt_enable_alternative_logical_plans`'s `SetSession`.
+    pub(crate) enable_alternative_logical_plans: bool,
+    /// Go `SessionVars.ExplainNonEvaledSubQuery`, maintained by `tidb_opt_enable_non_eval_scalar_subquery`'s `SetSession`.
+    pub(crate) explain_non_evaled_sub_query: bool,
+    /// Go `SessionVars.allowInSubqToJoinAndAgg`, maintained by `tidb_opt_insubq_to_join_and_agg`'s `SetSession`.
+    pub(crate) set_allow_in_subq_to_join_and_agg: bool,
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`, maintained by `tidb_opt_enable_no_decorrelate_in_select`'s `SetSession`.
+    pub(crate) enable_no_decorrelate_in_select: bool,
+    /// Go `SessionVars.EnableSkewDistinctAgg`, maintained by `tidb_opt_skew_distinct_agg`'s `SetSession`.
+    pub(crate) enable_skew_distinct_agg: bool,
+    /// Go `SessionVars.EnableAdvancedJoinReorder`, maintained by `tidb_opt_enable_advanced_join_reorder`'s `SetSession`.
+    pub(crate) enable_advanced_join_reorder: bool,
+    /// Go `SessionVars.ConstraintCheckInPlace`, maintained by `tidb_constraint_check_in_place`'s `SetSession`.
+    pub(crate) constraint_check_in_place: bool,
+    /// Go `SessionVars.OptOrderingIdxSelRatio`, maintained by `tidb_opt_ordering_index_selectivity_ratio`'s `SetSession`.
+    pub(crate) opt_ordering_idx_sel_ratio: f64,
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`, maintained by `tidb_opt_index_join_max_scan_rows_ratio`'s `SetSession`.
+    pub(crate) index_join_max_scan_rows_ratio: f64,
+    /// Go `SessionVars.OptOrderingIdxSelThresh`, maintained by `tidb_opt_ordering_index_selectivity_threshold`'s `SetSession`.
+    pub(crate) opt_ordering_idx_sel_thresh: f64,
+    /// Go `SessionVars.AllowProjectionPushDown`, maintained by `tidb_opt_projection_push_down`'s `SetSession`.
+    pub(crate) allow_projection_push_down: bool,
+    /// Go `SessionVars.AllowDistinctAggPushDown`, maintained by `tidb_opt_distinct_agg_push_down`'s `SetSession`.
+    pub(crate) allow_distinct_agg_push_down: bool,
+    /// Go `SessionVars.enableCascadesPlanner`, maintained by `tidb_enable_cascades_planner`'s `SetSession`.
+    pub(crate) enable_cascades_planner: bool,
+    /// Go `SessionVars.DisableHashJoin (negated)`, maintained by `tidb_opt_enable_hash_join`'s `SetSession`.
+    pub(crate) enable_hash_join: bool,
+    /// Go `SessionVars.OptimizerEnableNAAJ`, maintained by `tidb_enable_null_aware_anti_join`'s `SetSession`.
+    pub(crate) optimizer_enable_naaj: bool,
+    /// Go `SessionVars.LimitPushDownThreshold`, maintained by `tidb_opt_limit_push_down_threshold`'s `SetSession`.
+    pub(crate) limit_push_down_threshold: u64,
+    /// Go `SessionVars.ReadStaleness`, maintained by `tidb_read_staleness`'s `SetSession`.
+    pub(crate) read_staleness: i64,
+    /// Go `SessionVars.IndexLookUpPushDownPolicy`, maintained by `tidb_index_lookup_pushdown_policy`'s `SetSession`.
+    pub(crate) index_lookup_push_down_policy: String,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`, maintained by `tidb_opt_join_reorder_through_proj`'s `SetSession`.
+    pub(crate) tidb_opt_join_reorder_through_proj: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`, maintained by `tidb_opt_join_reorder_through_sel`'s `SetSession`.
+    pub(crate) tidb_opt_join_reorder_through_sel: bool,
+    /// Go `SessionVars.EnableOuterJoinReorder`, maintained by `tidb_enable_outer_join_reorder`'s `SetSession`.
+    pub(crate) enable_outer_join_reorder: bool,
+    /// Go `SessionVars.enableIndexMerge`, maintained by `tidb_enable_index_merge`'s `SetSession`.
+    pub(crate) enable_index_merge: bool,
+    /// Go `SessionVars.SkipMissingPartitionStats`, maintained by `tidb_skip_missing_partition_stats`'s `SetSession`.
+    pub(crate) skip_missing_partition_stats: bool,
+    /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`, maintained by `tidb_enable_new_only_full_group_by_check`'s `SetSession`.
+    pub(crate) optimizer_enable_new_only_full_group_by_check: bool,
+    /// Go `SessionVars.EnableAutoIncrementInGenerated`, maintained by `tidb_enable_auto_increment_in_generated`'s `SetSession`.
+    pub(crate) enable_auto_increment_in_generated: bool,
+    /// Go `SessionVars.PrimaryKeyRequired`, maintained by `sql_require_primary_key`'s `SetSession`.
+    pub(crate) primary_key_required: bool,
+    /// Go `SessionVars.TMPTableSize`, maintained by `tidb_tmp_table_max_size`'s `SetSession`.
+    pub(crate) tmp_table_size: i64,
+    /// Go `SessionVars.RemoveOrderbyInSubquery`, maintained by `tidb_remove_orderby_in_subquery`'s `SetSession`.
+    pub(crate) remove_orderby_in_subquery: bool,
+    /// Go `SessionVars.AnalyzeVersion`, maintained by `tidb_analyze_version`'s `SetSession`.
+    pub(crate) analyze_version: i64,
+    /// Go `SessionVars.EnabledRateLimitAction`, maintained by `tidb_enable_rate_limit_action`'s `SetSession`.
+    pub(crate) enabled_rate_limit_action: bool,
+    /// Go `SessionVars.LockWaitTimeout`, maintained by `innodb_lock_wait_timeout`'s `SetSession`.
+    pub(crate) lock_wait_timeout: u64,
+    /// Go `SessionVars.ReplicaClosestReadThreshold`, maintained by `tidb_adaptive_closest_read_threshold`'s `SetSession`.
+    pub(crate) replica_closest_read_threshold: i64,
+    /// Go `SessionVars.LoadBasedReplicaReadThreshold`, maintained by `tidb_load_based_replica_read_threshold`'s `SetSession`.
+    pub(crate) load_based_replica_read_threshold: i64,
+    /// Go `SessionVars.TiKVClientReadTimeout`, maintained by `tikv_client_read_timeout`'s `SetSession`.
+    pub(crate) tikv_client_read_timeout: u64,
+    /// Go `SessionVars.IsolationReadEngines`, maintained by `tidb_isolation_read_engines`'s `SetSession`.
+    pub(crate) isolation_read_engines: String,
+    /// Go `SessionVars.InitChunkSize`, maintained by `tidb_init_chunk_size`'s `SetSession`.
+    pub(crate) init_chunk_size: usize,
+    /// Go `SessionVars.MaxChunkSize`, maintained by `tidb_max_chunk_size`'s `SetSession`.
+    pub(crate) max_chunk_size: usize,
+    /// Go `SessionVars.MetricSchemaStep`, maintained by `tidb_metric_query_step`'s `SetSession`.
+    pub(crate) metric_schema_step: i64,
+    /// Go `SessionVars.MetricSchemaRangeDuration`, maintained by `tidb_metric_query_range_duration`'s `SetSession`.
+    pub(crate) metric_schema_range_duration: i64,
+    /// Go `SessionVars.EnableParallelApply`, maintained by `tidb_enable_parallel_apply`'s `SetSession`.
+    pub(crate) enable_parallel_apply: bool,
+    /// Go `SessionVars.AllowDeriveTopN`, maintained by `tidb_opt_derive_topn`'s `SetSession`.
+    pub(crate) allow_derive_topn: bool,
+    /// Go `SessionVars.MemQuotaApplyCache`, maintained by `tidb_mem_quota_apply_cache`'s `SetSession`.
+    pub(crate) mem_quota_apply_cache: i64,
+    /// Go `SessionVars.ExecutorConcurrency`, maintained by `tidb_executor_concurrency`'s `SetSession`.
+    pub(crate) executor_concurrency: usize,
+    /// Go `SessionVars.hashAggPartialConcurrency`, maintained by `tidb_hashagg_partial_concurrency`'s `SetSession`.
+    pub(crate) hash_agg_partial_concurrency: i64,
+    /// Go `SessionVars.hashAggFinalConcurrency`, maintained by `tidb_hashagg_final_concurrency`'s `SetSession`.
+    pub(crate) hash_agg_final_concurrency: i64,
+    /// Go `SessionVars.DDLReorgPriority`, maintained by `tidb_ddl_reorg_priority`'s `SetSession`.
+    pub(crate) ddl_reorg_priority: i32,
+    /// Go `SessionVars.MemArbitrator.WaitAverse`, maintained by `tidb_mem_arbitrator_wait_averse`'s `SetSession`.
+    pub(crate) mem_arbitrator_wait_averse: Option<bool>,
+    /// Go `SessionVars.MemArbitrator.QueryReserved`, maintained by `tidb_mem_arbitrator_query_reserved`'s `SetSession`.
+    pub(crate) mem_arbitrator_query_reserved: i64,
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -718,6 +880,87 @@ impl Default for SessionVars {
             enable_plan_replayed_continues_capture: false,
             enable_plan_replayer_capture: tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_REPLAYER_CAPTURE,
             group_concat_max_len: tidb_vardef::defaults::DEF_GROUP_CONCAT_MAX_LEN,
+            default_collation_for_utf8mb4: crate::vars_typed::registry_default_collation_for_utf8mb4(),
+            allow_write_row_id: crate::vars_typed::registry_allow_write_row_id(),
+            enable_stable_result_mode: crate::vars_typed::registry_enable_stable_result_mode(),
+            sysdate_is_now: crate::vars_typed::registry_sysdate_is_now(),
+            skip_ascii_check: crate::vars_typed::registry_skip_ascii_check(),
+            skip_utf8_check: crate::vars_typed::registry_skip_utf8_check(),
+            allow_auto_rand_explicit_insert: crate::vars_typed::registry_allow_auto_rand_explicit_insert(),
+            shard_allocate_step: crate::vars_typed::registry_shard_allocate_step(),
+            enable_no_backslash_escapes_in_like: crate::vars_typed::registry_enable_no_backslash_escapes_in_like(),
+            div_precision_increment: crate::vars_typed::registry_div_precision_increment(),
+            windowing_use_high_precision: crate::vars_typed::registry_windowing_use_high_precision(),
+            enable_pipelined_window_exec: crate::vars_typed::registry_enable_pipelined_window_exec(),
+            cte_max_recursion_depth: crate::vars_typed::registry_cte_max_recursion_depth(),
+            tidb_opt_join_reorder_threshold: crate::vars_typed::registry_tidb_opt_join_reorder_threshold(),
+            default_str_match_selectivity: crate::vars_typed::registry_default_str_match_selectivity(),
+            enable_pseudo_for_outdated_stats: crate::vars_typed::registry_enable_pseudo_for_outdated_stats(),
+            stats_load_sync_wait: crate::vars_typed::registry_stats_load_sync_wait(),
+            opt_index_prune_threshold: crate::vars_typed::registry_opt_index_prune_threshold(),
+            range_max_size: crate::vars_typed::registry_range_max_size(),
+            opt_prefix_index_single_scan: crate::vars_typed::registry_opt_prefix_index_single_scan(),
+            allow_prefer_range_scan: crate::vars_typed::registry_allow_prefer_range_scan(),
+            optimizer_use_invisible_indexes: crate::vars_typed::registry_optimizer_use_invisible_indexes(),
+            always_keep_join_key: crate::vars_typed::registry_always_keep_join_key(),
+            allow_agg_push_down: crate::vars_typed::registry_allow_agg_push_down(),
+            enable_3_stage_distinct_agg: crate::vars_typed::registry_enable_3_stage_distinct_agg(),
+            enable_3_stage_multi_distinct_agg: crate::vars_typed::registry_enable_3_stage_multi_distinct_agg(),
+            tiflash_pre_agg_mode: crate::vars_typed::registry_tiflash_pre_agg_mode(),
+            opt_partial_ordered_index_for_topn: crate::vars_typed::registry_opt_partial_ordered_index_for_topn(),
+            enable_unsafe_substitute: crate::vars_typed::registry_enable_unsafe_substitute(),
+            enable_force_inline_cte: crate::vars_typed::registry_enable_force_inline_cte(),
+            enable_mpp_shared_cte_execution: crate::vars_typed::registry_enable_mpp_shared_cte_execution(),
+            enable_advanced_join_hint: crate::vars_typed::registry_enable_advanced_join_hint(),
+            enable_semi_join_rewrite: crate::vars_typed::registry_enable_semi_join_rewrite(),
+            enable_alternative_logical_plans: crate::vars_typed::registry_enable_alternative_logical_plans(),
+            explain_non_evaled_sub_query: crate::vars_typed::registry_explain_non_evaled_sub_query(),
+            set_allow_in_subq_to_join_and_agg: crate::vars_typed::registry_set_allow_in_subq_to_join_and_agg(),
+            enable_no_decorrelate_in_select: crate::vars_typed::registry_enable_no_decorrelate_in_select(),
+            enable_skew_distinct_agg: crate::vars_typed::registry_enable_skew_distinct_agg(),
+            enable_advanced_join_reorder: crate::vars_typed::registry_enable_advanced_join_reorder(),
+            constraint_check_in_place: crate::vars_typed::registry_constraint_check_in_place(),
+            opt_ordering_idx_sel_ratio: crate::vars_typed::registry_opt_ordering_idx_sel_ratio(),
+            index_join_max_scan_rows_ratio: crate::vars_typed::registry_index_join_max_scan_rows_ratio(),
+            opt_ordering_idx_sel_thresh: crate::vars_typed::registry_opt_ordering_idx_sel_thresh(),
+            allow_projection_push_down: crate::vars_typed::registry_allow_projection_push_down(),
+            allow_distinct_agg_push_down: crate::vars_typed::registry_allow_distinct_agg_push_down(),
+            enable_cascades_planner: crate::vars_typed::registry_enable_cascades_planner(),
+            enable_hash_join: crate::vars_typed::registry_enable_hash_join(),
+            optimizer_enable_naaj: crate::vars_typed::registry_optimizer_enable_naaj(),
+            limit_push_down_threshold: crate::vars_typed::registry_limit_push_down_threshold(),
+            read_staleness: crate::vars_typed::registry_read_staleness(),
+            index_lookup_push_down_policy: crate::vars_typed::registry_index_lookup_push_down_policy(),
+            tidb_opt_join_reorder_through_proj: crate::vars_typed::registry_tidb_opt_join_reorder_through_proj(),
+            tidb_opt_join_reorder_through_sel: crate::vars_typed::registry_tidb_opt_join_reorder_through_sel(),
+            enable_outer_join_reorder: crate::vars_typed::registry_enable_outer_join_reorder(),
+            enable_index_merge: crate::vars_typed::registry_enable_index_merge(),
+            skip_missing_partition_stats: crate::vars_typed::registry_skip_missing_partition_stats(),
+            optimizer_enable_new_only_full_group_by_check: crate::vars_typed::registry_optimizer_enable_new_only_full_group_by_check(),
+            enable_auto_increment_in_generated: crate::vars_typed::registry_enable_auto_increment_in_generated(),
+            primary_key_required: crate::vars_typed::registry_primary_key_required(),
+            tmp_table_size: crate::vars_typed::registry_tmp_table_size(),
+            remove_orderby_in_subquery: crate::vars_typed::registry_remove_orderby_in_subquery(),
+            analyze_version: crate::vars_typed::registry_analyze_version(),
+            enabled_rate_limit_action: crate::vars_typed::registry_enabled_rate_limit_action(),
+            lock_wait_timeout: crate::vars_typed::registry_lock_wait_timeout(),
+            replica_closest_read_threshold: crate::vars_typed::registry_replica_closest_read_threshold(),
+            load_based_replica_read_threshold: crate::vars_typed::registry_load_based_replica_read_threshold(),
+            tikv_client_read_timeout: crate::vars_typed::registry_tikv_client_read_timeout(),
+            isolation_read_engines: crate::vars_typed::registry_isolation_read_engines(),
+            init_chunk_size: crate::vars_typed::registry_init_chunk_size(),
+            max_chunk_size: crate::vars_typed::registry_max_chunk_size(),
+            metric_schema_step: crate::vars_typed::registry_metric_schema_step(),
+            metric_schema_range_duration: crate::vars_typed::registry_metric_schema_range_duration(),
+            enable_parallel_apply: crate::vars_typed::registry_enable_parallel_apply(),
+            allow_derive_topn: crate::vars_typed::registry_allow_derive_topn(),
+            mem_quota_apply_cache: crate::vars_typed::registry_mem_quota_apply_cache(),
+            executor_concurrency: crate::vars_typed::registry_executor_concurrency(),
+            hash_agg_partial_concurrency: crate::vars_typed::registry_hash_agg_partial_concurrency(),
+            hash_agg_final_concurrency: crate::vars_typed::registry_hash_agg_final_concurrency(),
+            ddl_reorg_priority: crate::vars_typed::registry_ddl_reorg_priority(),
+            mem_arbitrator_wait_averse: crate::vars_typed::registry_mem_arbitrator_wait_averse(),
+            mem_arbitrator_query_reserved: crate::vars_typed::registry_mem_arbitrator_query_reserved(),
             partition_prune_mode: tidb_vardef::defaults::DEF_TIDB_PARTITION_PRUNE_MODE.to_owned(),
             enable_inl_join_inner_multi_pattern: tidb_vardef::defaults::DEF_TIDB_ENABLE_INL_JOIN_MULTI_PATTERN,
             tiflash_replica_read: tidb_tiflash::get_tiflash_replica_read_by_str(

@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**8 unresolved: 8 open, 0 partial.**
+**7 unresolved: 7 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -17,7 +17,6 @@ A row states the remaining gap only.
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
 | T05 | open | Go `pkg/planner/optimize.go`'s statement entry (`Optimize`, `optimizeNoCache`: binding match, fast plan, plan cache) and `buildLogicalPlan`'s `PlanBuilder` setup, `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` live in the executor. (`optimize`'s rounds, `buildAndOptimizeLogicalPlanRound` and the alternative-round predicates are `tidb-planner/src/planner_optimize.rs`.) Rust: `tidb-executor/src/driver.rs`, `driver/dml.rs` (statement entry), `driver/planner_bridge.rs` (`QueryBuilderParts::build`, `planner_built_query_with_allocators`), `tidb-executor/src/explain.rs` (`query_plan_cost`, `gen_brief_plan`, `calculate_plan_digest`), `foreign_key.rs`. | `pkg/planner/optimize.go` |
-| T09 | open | `SessionVars`' typed fields are not on the session variables: the executor re-parses the variable table into a per-generation snapshot (66 `SessionVars` fields) instead of each variable's `SetSession` hook maintaining a field. Rust: `tidb-executor/src/stmt_ctx_build.rs` (the statement context's session-variable half). | `pkg/sessionctx/variable/session.go`, `sysvar.go` `SetSession` hooks |
 | T14 | open | A transaction's writes are not Go's `LazyTxn` over the store transaction's MemDB: executors stage them in the session's `MutationBuffer`, and an autocommit statement publishes the buffer at commit through `ClusterTransactions::commit_with_schema_lease`. Go activates the `kv.Transaction` (or its pending future) before the statement writes and commits that transaction; pipelined DML (T01) flushes that MemDB while the statement runs. Rust: `tidb-session/src/txn_manager.rs` (`buffer`, `commit_autocommit_buffer`), `tidb-domain-core/src/cluster_transactions.rs`. | `pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation` |
 
 ### System tables and startup

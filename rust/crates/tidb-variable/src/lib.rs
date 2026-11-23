@@ -41,6 +41,7 @@ pub mod table_delta;
 pub mod temporary_table_data;
 pub mod varsutil;
 pub mod vars;
+mod vars_typed;
 
 pub use error::VarError;
 pub use global_accessor::{GlobalVarAccessor, MockGlobalAccessor};

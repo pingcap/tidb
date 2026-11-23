@@ -38,18 +38,17 @@ use crate::StmtOutput;
 
 use tidb_hack::GoToLower;
 
-/// The statement context's SESSION-VARIABLE half, parsed once per
-/// variable-table generation instead of once per statement.
-///
-/// Go's analogue is `SessionVars` itself: every one of these is a typed
-/// field there (`AllowWriteRowID`, `CTEMaxRecursionDepth`,
-/// `SQLMode`...), maintained by each variable's `SetSession` hook, so a
-/// Go statement reads fields where this port was doing twenty-six
-/// by-name string lookups and parses -- measured as the heaviest
-/// user-code frame on both the read and write paths once the metadata
-/// clones were gone. GLOBAL-scope statement policies
-/// (`tidb_mem_oom_action`, `tidb_enable_tmp_storage_on_oom`) stay LIVE in the
-/// builder, while expressions retain the shared global accessor itself.
+/// The statement context's SESSION-VARIABLE half: what Go's
+/// `ResetContextOfStmt` and the planner read off `SessionVars`' typed fields
+/// (`AllowWriteRowID`, `CTEMaxRecursionDepth`, `SQLMode`...), each maintained
+/// by its variable's `SetSession` hook (`tidb_variable`'s `vars_typed`). The
+/// few Go reads through `GetSystemVar` (the connection charset and
+/// collation, `default_week_format`, `block_encryption_mode`) and the
+/// GLOBAL-only switches stay reads of the variable. The view is kept per
+/// variable-table generation, so a statement that follows no `SET` reuses it.
+/// GLOBAL-scope statement policies (`tidb_mem_oom_action`,
+/// `tidb_enable_tmp_storage_on_oom`) stay LIVE in the builder, while
+/// expressions retain the shared global accessor itself.
 pub struct StatementVarSnapshot {
     generation: u64,
     time_zone: crate::SessionTimeZone,
@@ -973,9 +972,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// [`Self::statement_context`] for a DML statement that carries the
     /// `IGNORE` modifier, which Go's `ResetContextOfStmt` reads off the AST
     /// and folds into every value-level error level.
-    /// The cached [`StatementVarSnapshot`], re-derived only when a `SET`
-    /// moved the variable table; see the struct's own doc for why the
-    /// GLOBAL-scope reads are NOT in it.
+    /// The cached [`StatementVarSnapshot`], copied again from the session
+    /// variables only when a `SET` moved them; see the struct's own doc for
+    /// why the GLOBAL-scope reads are NOT in it.
     fn statement_var_snapshot(&self) -> Arc<StatementVarSnapshot> {
         let generation = self.session_vars().generation();
         if let Some(cached) = self.statement_var_cache_ref().borrow().as_ref() {
@@ -984,50 +983,21 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             }
         }
         let sql_mode = self.session_vars().sql_mode();
-        let on = |name: &str| {
-            self.session_vars()
-                .get_system(name)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1")
-        };
-        let not_off = |name: &str| {
-            !matches!(
-                self.session_vars().get_system(name).as_deref(),
-                Ok("OFF" | "off" | "0")
-            )
-        };
-        let executor_concurrency = self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_EXECUTOR_CONCURRENCY)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize);
-        let resolved_concurrency = |name: &str| {
-            self.session_vars()
-                .get_system(name)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
+        let executor_concurrency = self.session_vars().executor_concurrency();
+        // Go `SessionVars.HashAggPartialConcurrency` / `HashAggFinalConcurrency`:
+        // an unset (non-positive) value falls back to `tidb_executor_concurrency`.
+        let resolved_concurrency = |concurrency: i64| {
+            Some(concurrency)
                 .filter(|value| *value > 0)
                 .and_then(|value| usize::try_from(value).ok())
                 .unwrap_or(executor_concurrency)
         };
-        let index_lookup_push_down_policy = match self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY)
-            .as_deref()
-        {
-            Ok("force") => tidb_sessionctx::IndexLookUpPushDownPolicy::Force,
-            Ok("affinity-force") => {
-                tidb_sessionctx::IndexLookUpPushDownPolicy::AffinityForce
-            }
+        let index_lookup_push_down_policy = match self.session_vars().index_lookup_push_down_policy() {
+            "force" => tidb_sessionctx::IndexLookUpPushDownPolicy::Force,
+            "affinity-force" => tidb_sessionctx::IndexLookUpPushDownPolicy::AffinityForce,
             _ => tidb_sessionctx::IndexLookUpPushDownPolicy::HintOnly,
         };
-        let read_staleness = self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
-            .ok()
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            .is_some_and(|value| value != 0);
+        let read_staleness = self.session_vars().read_staleness() != 0;
         let index_lookup_push_down_session =
             tidb_sessionctx::IndexLookupPushDownSession {
                 repeatable_read: self
@@ -1044,8 +1014,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let snapshot = Arc::new(StatementVarSnapshot {
             generation,
             string_type_flags: tidb_datatype::ConversionFlags::default()
-                .with_skip_ascii_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_ASCII_CHECK))
-                .with_skip_utf8_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_UTF8_CHECK)),
+                .with_skip_ascii_check(self.session_vars().skip_ascii_check())
+                .with_skip_utf8_check(self.session_vars().skip_utf8_check()),
             time_zone: self.session_vars().session_time_zone(),
             connection_charset: self
                 .session_vars()
@@ -1055,28 +1025,22 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .session_vars()
                 .get_system("collation_connection")
                 .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
-            default_collation_for_utf8mb4: self
+            default_collation_for_utf8mb4: self.session_vars().default_collation_for_utf8mb4().to_owned(),
+            allow_write_row_id: self.session_vars().allow_write_row_id(),
+            stable_result_mode: self.session_vars().enable_stable_result_mode(),
+            // Go `vardef.IgnoreInlistPlanDigest`: a GLOBAL-only switch.
+            ignore_inlist_plan_digest: self
                 .session_vars()
-                .get_system("default_collation_for_utf8mb4")
-                .unwrap_or_else(|_| "utf8mb4_bin".to_owned()),
-            allow_write_row_id: on(tidb_vardef::tidb_vars::TIDB_OPT_WRITE_ROW_ID),
-            stable_result_mode: on(tidb_vardef::tidb_vars::TIDB_ENABLE_ORDERED_RESULT_MODE),
-            ignore_inlist_plan_digest: on(tidb_vardef::tidb_vars::TIDB_IGNORE_INLIST_PLAN_DIGEST),
-            sysdate_is_now: on(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW),
+                .get_system(tidb_vardef::tidb_vars::TIDB_IGNORE_INLIST_PLAN_DIGEST)
+                .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1"),
+            sysdate_is_now: self.session_vars().sysdate_is_now(),
             // Only an explicit override: this snapshot outlives the statement,
             // and the hook's live answer would pin `NOW()` to its first read.
             timestamp: self.session_vars().timestamp_override(),
-            allow_auto_random_explicit_insert: on(
-                tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT,
-            ),
-            shard_allocate_step: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_SHARD_ALLOCATE_STEP)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(i64::MAX as u64),
+            allow_auto_random_explicit_insert: self.session_vars().allow_auto_rand_explicit_insert(),
+            shard_allocate_step: self.session_vars().shard_allocate_step(),
             like_default_escape: if sql_mode.has_no_backslash_escapes_mode()
-                && not_off(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
+                && self.session_vars().enable_no_backslash_escapes_in_like()
             {
                 0
             } else {
@@ -1088,162 +1052,75 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(0),
-            div_scale: self
-                .session_vars()
-                .get_system("div_precision_increment")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                .filter(|value| *value > 0)
-                .unwrap_or(4),
-            windowing_use_high_precision: not_off("windowing_use_high_precision"),
-            enable_pipelined_window_exec: not_off("tidb_enable_pipelined_window_function"),
-            cte_depth: self
-                .session_vars()
-                .get_system("cte_max_recursion_depth")
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(1000),
-            join_reorder_threshold: self
-                .session_vars()
-                .get_system("tidb_opt_join_reorder_threshold")
-                .ok()
-                .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32),
-            default_string_match_selectivity: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_DEFAULT_STR_MATCH_SELECTIVITY)
-                .ok()
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or(0.0),
+            div_scale: self.session_vars().div_precision_increment(),
+            windowing_use_high_precision: self.session_vars().windowing_use_high_precision(),
+            enable_pipelined_window_exec: self.session_vars().enable_pipelined_window_exec(),
+            cte_depth: self.session_vars().cte_max_recursion_depth(),
+            join_reorder_threshold: self.session_vars().tidb_opt_join_reorder_threshold(),
+            default_string_match_selectivity: self.session_vars().default_str_match_selectivity(),
             selectivity_factor: self.session_vars().selectivity_factor(),
-            enable_pseudo_for_outdated_stats: on("tidb_enable_pseudo_for_outdated_stats"),
-            stats_load_sync_wait_ms: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_SYNC_WAIT)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_SYNC_WAIT as u64),
+            enable_pseudo_for_outdated_stats: self.session_vars().enable_pseudo_for_outdated_stats(),
+            stats_load_sync_wait_ms: self.session_vars().stats_load_sync_wait(),
             stats_load_pseudo_timeout: self
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_STATS_LOAD_PSEUDO_TIMEOUT)
                 .map_or(true, |value| {
                     !value.eq_ignore_ascii_case("OFF") && value != "0"
                 }),
-            plan_replayer_capture_enabled: on("tidb_enable_plan_replayer_capture")
-                || on("tidb_enable_plan_replayer_continuous_capture"),
-            opt_index_prune_threshold: self
-                .session_vars()
-                .get_system("tidb_opt_index_prune_threshold")
-                .ok()
-                .and_then(|value| value.parse::<i32>().ok())
-                .unwrap_or(20),
-            range_max_size: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_RANGE_MAX_SIZE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE),
-            opt_prefix_index_single_scan: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_PREFIX_INDEX_SINGLE_SCAN,
-            ),
-            prefer_range_scan: on(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN),
-            optimizer_use_invisible_indexes: on(tidb_vardef::tidb_vars::TIDB_OPT_USE_INVISIBLE_INDEXES),
-            always_keep_join_key: on(tidb_vardef::tidb_vars::TIDB_OPT_ALWAYS_KEEP_JOIN_KEY),
-            allow_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_AGG_PUSH_DOWN),
-            enable_3_stage_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT3_STAGE_DISTINCT_AGG),
-            enable_3_stage_multi_distinct_agg: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE3_STAGE_MULTI_DISTINCT_AGG,
-            ),
-            tiflash_pre_agg_mode: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIFLASH_HASH_AGG_PRE_AGG_MODE)
-                .unwrap_or_else(|_| tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE.to_owned()),
-            partial_ordered_index_for_topn: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_PARTIAL_ORDERED_INDEX_FOR_TOP_N)
-                .is_ok_and(|value| value.eq_ignore_ascii_case("COST")),
-            enable_unsafe_substitute: on(tidb_vardef::tidb_vars::TIDB_ENABLE_UNSAFE_SUBSTITUTE),
-            enable_force_inline_cte: on(tidb_vardef::tidb_vars::TIDB_OPT_FORCE_INLINE_CTE),
-            enable_mpp_shared_cte_execution: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_MPP_SHARED_CTE_EXECUTION),
-            advanced_join_hint: on(tidb_vardef::tidb_vars::TIDB_OPT_ADVANCED_JOIN_HINT),
-            enable_semi_join_rewrite: on(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_SEMI_JOIN_REWRITE),
-            enable_alternative_logical_plans: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ALTERNATIVE_LOGICAL_PLANS,
-            ),
-            explain_non_evaled_sub_query: on(tidb_vardef::tidb_vars::TIDB_OPT_EXPLAIN_NO_EVALED_SUB_QUERY),
-            allow_in_subq_to_join_and_agg: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_IN_SUBQ_TO_JOIN_AND_AGG,
-            ),
-            enable_no_decorrelate_in_select: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_NO_DECORRELATE_IN_SELECT,
-            ),
-            enable_skew_distinct_agg: on(tidb_vardef::tidb_vars::TIDB_OPT_SKEW_DISTINCT_AGG),
+            plan_replayer_capture_enabled: self.session_vars().enable_plan_replayer_capture()
+                || self.session_vars().enable_plan_replayed_continues_capture(),
+            opt_index_prune_threshold: self.session_vars().opt_index_prune_threshold(),
+            range_max_size: self.session_vars().range_max_size(),
+            opt_prefix_index_single_scan: self.session_vars().opt_prefix_index_single_scan(),
+            prefer_range_scan: self.session_vars().allow_prefer_range_scan(),
+            optimizer_use_invisible_indexes: self.session_vars().optimizer_use_invisible_indexes(),
+            always_keep_join_key: self.session_vars().always_keep_join_key(),
+            allow_agg_push_down: self.session_vars().allow_agg_push_down(),
+            enable_3_stage_distinct_agg: self.session_vars().enable_3_stage_distinct_agg(),
+            enable_3_stage_multi_distinct_agg: self.session_vars().enable_3_stage_multi_distinct_agg(),
+            tiflash_pre_agg_mode: self.session_vars().tiflash_pre_agg_mode().to_owned(),
+            partial_ordered_index_for_topn: self.session_vars()
+                .opt_partial_ordered_index_for_topn()
+                .eq_ignore_ascii_case("COST"),
+            enable_unsafe_substitute: self.session_vars().enable_unsafe_substitute(),
+            enable_force_inline_cte: self.session_vars().enable_force_inline_cte(),
+            enable_mpp_shared_cte_execution: self.session_vars().enable_mpp_shared_cte_execution(),
+            advanced_join_hint: self.session_vars().enable_advanced_join_hint(),
+            enable_semi_join_rewrite: self.session_vars().enable_semi_join_rewrite(),
+            enable_alternative_logical_plans: self.session_vars().enable_alternative_logical_plans(),
+            explain_non_evaled_sub_query: self.session_vars().explain_non_evaled_sub_query(),
+            allow_in_subq_to_join_and_agg: self.session_vars().set_allow_in_subq_to_join_and_agg(),
+            enable_no_decorrelate_in_select: self.session_vars().enable_no_decorrelate_in_select(),
+            enable_skew_distinct_agg: self.session_vars().enable_skew_distinct_agg(),
             max_execution_time_ms: self.session_vars().max_execution_time(),
-            advanced_join_reorder: not_off(
-                tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
-            ),
-            constraint_check_in_place: on(tidb_vardef::tidb_vars::TIDB_CONSTRAINT_CHECK_IN_PLACE),
-            ordering_index_selectivity_ratio: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_RATIO)
-                .ok()
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or(0.01),
-            index_join_max_scan_rows_ratio: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_INDEX_JOIN_MAX_SCAN_ROWS_RATIO)
-                .ok()
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or(0.0),
-            ordering_index_selectivity_threshold: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_ORDERING_IDX_SEL_THRESH)
-                .ok()
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH),
-            allow_projection_push_down: on("tidb_opt_projection_push_down"),
-            allow_distinct_agg_push_down: on(tidb_vardef::tidb_vars::TIDB_OPT_DISTINCT_AGG_PUSH_DOWN),
-            enable_cascades_planner: on(tidb_vardef::tidb_vars::TIDB_ENABLE_CASCADES_PLANNER),
+            advanced_join_reorder: self.session_vars().enable_advanced_join_reorder(),
+            constraint_check_in_place: self.session_vars().constraint_check_in_place(),
+            ordering_index_selectivity_ratio: self.session_vars().opt_ordering_idx_sel_ratio(),
+            index_join_max_scan_rows_ratio: self.session_vars().index_join_max_scan_rows_ratio(),
+            ordering_index_selectivity_threshold: self.session_vars().opt_ordering_idx_sel_thresh(),
+            allow_projection_push_down: self.session_vars().allow_projection_push_down(),
+            allow_distinct_agg_push_down: self.session_vars().allow_distinct_agg_push_down(),
+            enable_cascades_planner: self.session_vars().enable_cascades_planner(),
             enable_full_outer_join: self.session_vars().enable_full_outer_join(),
-            enable_inl_join_inner_multi_pattern: not_off(
-                tidb_vardef::tidb_vars::TIDB_ENABLE_INL_JOIN_INNER_MULTI_PATTERN,
-            ),
-            enable_hash_join: not_off(tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_HASH_JOIN),
-            enable_null_aware_anti_join: on(tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NAAJ),
-            limit_push_down_threshold: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_LIMIT_PUSH_DOWN_THRESHOLD)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_OPT_LIMIT_PUSH_DOWN_THRESHOLD as u64),
+            enable_inl_join_inner_multi_pattern: self.session_vars().enable_inl_join_inner_multi_pattern(),
+            enable_hash_join: self.session_vars().enable_hash_join(),
+            enable_null_aware_anti_join: self.session_vars().optimizer_enable_naaj(),
+            limit_push_down_threshold: self.session_vars().limit_push_down_threshold(),
             index_lookup_push_down_session,
-            join_reorder_through_proj: on(
-                tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ,
-            ),
-            join_reorder_through_sel: on(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_SEL),
-            outer_join_reorder: not_off(
-                tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_OUTER_JOIN_REORDER,
-            ),
-            index_merge: not_off("tidb_enable_index_merge"),
+            join_reorder_through_proj: self.session_vars().tidb_opt_join_reorder_through_proj(),
+            join_reorder_through_sel: self.session_vars().tidb_opt_join_reorder_through_sel(),
+            outer_join_reorder: self.session_vars().enable_outer_join_reorder(),
+            index_merge: self.session_vars().enable_index_merge(),
             select_limit: self.session_vars().select_limit(),
             static_partition_prune: self
                 .session_vars()
                 .partition_prune_mode().eq_ignore_ascii_case("static"),
-            skip_missing_partition_stats: not_off(
-                tidb_vardef::tidb_vars::TIDB_SKIP_MISSING_PARTITION_STATS,
-            ),
-            new_only_full_group_by_check: on(
-                tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK,
-            ),
-            auto_increment_in_generated: on("tidb_enable_auto_increment_in_generated"),
-            primary_key_required: on("sql_require_primary_key"),
-            tmp_table_max_size: self
-                .session_vars()
-                .get_system("tidb_tmp_table_max_size")
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(64 << 20),
-            remove_orderby_in_subquery: on(tidb_vardef::tidb_vars::TIDB_REMOVE_ORDERBY_IN_SUBQUERY),
+            skip_missing_partition_stats: self.session_vars().skip_missing_partition_stats(),
+            new_only_full_group_by_check: self.session_vars().optimizer_enable_new_only_full_group_by_check(),
+            auto_increment_in_generated: self.session_vars().enable_auto_increment_in_generated(),
+            primary_key_required: self.session_vars().primary_key_required(),
+            tmp_table_max_size: self.session_vars().tmp_table_size(),
+            remove_orderby_in_subquery: self.session_vars().remove_orderby_in_subquery(),
             redact_sql: match self
                 .session_vars()
                 .enable_redact_log()
@@ -1252,85 +1129,29 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 "MARKER" => tidb_parser::RedactMode::Marker,
                 _ => tidb_parser::RedactMode::Disabled,
             },
-            analyze_version: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_VERSION)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or_default(),
-            rate_limit_action: on(tidb_vardef::tidb_vars::TIDB_ENABLE_RATE_LIMIT_ACTION),
-            lock_wait_timeout_secs: self
-                .session_vars()
-                .get_system("innodb_lock_wait_timeout")
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or_else(|| {
-                    u64::try_from(tidb_vardef::defaults::DEF_INNODB_LOCK_WAIT_TIMEOUT)
-                        .unwrap_or_default()
-                }),
+            analyze_version: self.session_vars().analyze_version(),
+            rate_limit_action: self.session_vars().enabled_rate_limit_action(),
+            lock_wait_timeout_secs: self.session_vars().lock_wait_timeout() / 1000,
             replica_read: self.session_vars().replica_read(),
             coprocessor_read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy {
-                closest_read_threshold: self
-                    .session_vars()
-                    .get_system("tidb_adaptive_closest_read_threshold")
-                    .ok()
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(4096),
-                busy_threshold_ns: self
-                    .session_vars()
-                    .get_system("tidb_load_based_replica_read_threshold")
-                    .ok()
-                    .and_then(|value| tidb_config_configtypes::parse_duration(&value).ok())
-                    .unwrap_or(1_000_000_000),
-                read_timeout_ms: self
-                    .session_vars()
-                    .get_system("tikv_client_read_timeout")
-                    .ok()
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(0),
+                closest_read_threshold: self.session_vars().replica_closest_read_threshold(),
+                busy_threshold_ns: self.session_vars().load_based_replica_read_threshold(),
+                read_timeout_ms: self.session_vars().tikv_client_read_timeout(),
             },
-            isolation_read_engines: self
-                .session_vars()
-                .get_system("tidb_isolation_read_engines")
-                .unwrap_or_else(|_| "tikv,tiflash,tidb".to_owned()),
-            init_chunk_size: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
-                .ok()
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_INIT_CHUNK_SIZE as usize),
-            max_chunk_size: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
-                .ok()
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize),
+            isolation_read_engines: self.session_vars().isolation_read_engines().to_owned(),
+            init_chunk_size: self.session_vars().init_chunk_size(),
+            max_chunk_size: self.session_vars().max_chunk_size(),
             max_allowed_packet: self.session_vars().max_allowed_packet(),
             group_concat_max_len: self
                 .session_vars()
                 .group_concat_max_len(),
-            metric_schema_step: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_STEP)
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_STEP),
-            metric_schema_range_duration: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_METRIC_SCHEMA_RANGE_DURATION)
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_METRIC_SCHEMA_RANGE_DURATION),
-            enable_parallel_apply: on("tidb_enable_parallel_apply"),
-            allow_derive_topn: on("tidb_opt_derive_topn"),
-            apply_cache_capacity: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_APPLY_CACHE)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE),
-            hashagg_partial_concurrency: resolved_concurrency("tidb_hashagg_partial_concurrency"),
-            hashagg_final_concurrency: resolved_concurrency("tidb_hashagg_final_concurrency"),
+            metric_schema_step: self.session_vars().metric_schema_step(),
+            metric_schema_range_duration: self.session_vars().metric_schema_range_duration(),
+            enable_parallel_apply: self.session_vars().enable_parallel_apply(),
+            allow_derive_topn: self.session_vars().allow_derive_topn(),
+            apply_cache_capacity: self.session_vars().mem_quota_apply_cache(),
+            hashagg_partial_concurrency: resolved_concurrency(self.session_vars().hash_agg_partial_concurrency()),
+            hashagg_final_concurrency: resolved_concurrency(self.session_vars().hash_agg_final_concurrency()),
             block_encryption_mode: self
                 .session_vars()
                 .get_system("block_encryption_mode")
@@ -1338,34 +1159,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .and_then(|value| crate::BlockEncryptionMode::parse(&value))
                 .unwrap_or_default(),
             ddl_cdc_write_source: self.ddl_cdc_write_source(),
-            ddl_reorg_priority: match self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_DDL_REORG_PRIORITY)
-                .as_deref()
-            {
-                Ok("PRIORITY_NORMAL") => 0,
-                Ok("PRIORITY_HIGH") => 2,
-                _ => 1,
-            },
+            ddl_reorg_priority: i64::from(self.session_vars().ddl_reorg_priority()),
             ddl_session_alias: self
                 .session_vars()
                 .session_alias().to_owned(),
-            arbitrator_wait_averse: match self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
-                .unwrap_or_default()
-                .as_str()
-            {
-                "nolimit" => None,
-                "1" => Some(true),
-                _ => Some(false),
-            },
-            arbitrator_reserved: self
-                .session_vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_QUERY_RESERVED)
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or_default(),
+            arbitrator_wait_averse: self.session_vars().mem_arbitrator_wait_averse(),
+            arbitrator_reserved: self.session_vars().mem_arbitrator_query_reserved(),
             sql_mode,
         });
         *self.statement_var_cache_ref().borrow_mut() = Some(Arc::clone(&snapshot));
