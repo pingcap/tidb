@@ -50,9 +50,11 @@ func TestStreamAggSkipScan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table skip_idx (g int, n int, key idx(g, n))")
 	tk.MustExec("create table skip_pk (g int, n int, primary key(g, n) clustered, key idx(g, n))")
+	tk.MustExec("create table skip_pk_only (g int, n int, primary key(g, n) clustered)")
 	tk.MustExec("create table skip_pseudo (g int, n int, key idx(g, n))")
 	tk.MustExec("insert into skip_pseudo values (0, 1), (0, 2), (1, 3)")
-	for _, table := range []string{"skip_idx", "skip_pk"} {
+	tk.MustExec("create table skip_nullable (a int, b int, c int, d int, key idx(a, b, c, d))")
+	for _, table := range []string{"skip_idx", "skip_pk", "skip_pk_only"} {
 		values := make([]string, 0, 120)
 		for i := range 120 {
 			values = append(values, fmt.Sprintf("(%d,%d)", i%3, i))
@@ -60,24 +62,40 @@ func TestStreamAggSkipScan(t *testing.T) {
 		tk.MustExec("insert into " + table + " values " + strings.Join(values, ","))
 		tk.MustExec("analyze table " + table)
 	}
+	values := make([]string, 0, 120)
+	for i := range 40 {
+		// The first group has a NULL key and a mix of NULL and non-NULL
+		// targets; the second group has only NULL targets.
+		c := fmt.Sprint(i)
+		if i%2 == 0 {
+			c = "null"
+		}
+		values = append(values,
+			fmt.Sprintf("(null, 1, %s, %d)", c, i),
+			fmt.Sprintf("(1, 1, null, %d)", i),
+			fmt.Sprintf("(2, null, %d, %d)", i, i))
+	}
+	tk.MustExec("insert into skip_nullable values " + strings.Join(values, ","))
+	tk.MustExec("analyze table skip_nullable")
 	explain := func(sql string) string {
 		return fmt.Sprint(tk.MustQuery("explain format='verbose' " + sql).Rows())
 	}
 	indexSQL := "select /*+ stream_agg() */ g from skip_idx group by g"
-	tableSQL := "select /*+ stream_agg() */ g from skip_pk use index(primary) group by g"
+	tableSQL := "select /*+ stream_agg() */ g from skip_pk_only group by g"
 	require.NotContains(t, explain(indexSQL), "skip scan:true")
 	require.NotContains(t, explain(tableSQL), "skip scan:true")
 
 	const fp = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/enablePlannerSkipScan"
 	require.NoError(t, failpoint.Enable(fp, "return(true)"))
 	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
-	scanCost := func(sql, name string, expectSkip bool) float64 {
+	scanCost := func(sql, name string, expectSkip, desc bool) float64 {
 		t.Helper()
 		rows := tk.MustQuery("explain format='verbose' " + sql).Rows()
 		for _, row := range rows {
 			if strings.Contains(fmt.Sprint(row[0]), name) {
 				if expectSkip {
-					require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:1")
+					require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:1", "%s", sql)
+					require.Equal(t, desc, strings.Contains(fmt.Sprint(row), "keep order:true, desc"), "%s", sql)
 					require.Equal(t, "3.00", row[1])
 				} else {
 					require.NotContains(t, fmt.Sprint(row), "skip scan:true")
@@ -94,16 +112,52 @@ func TestStreamAggSkipScan(t *testing.T) {
 	}
 	for _, version := range []int{1, 2} {
 		tk.MustExec(fmt.Sprintf("set tidb_cost_model_version = %d", version))
-		for _, tc := range []struct{ sql, scan string }{
-			{indexSQL, "IndexFullScan"},
-			{tableSQL, "TableFullScan"},
+		for _, tc := range []struct {
+			sql, scan string
+			desc      bool
+		}{
+			{indexSQL, "IndexFullScan", false},
+			{tableSQL, "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, min(n) from skip_idx group by g", "IndexFullScan", false},
+			{"select /*+ stream_agg() */ g, max(n) from skip_idx group by g", "IndexFullScan", true},
+			{"select /*+ stream_agg() */ g, min(n) from skip_pk_only group by g", "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, max(n) from skip_pk_only group by g", "TableFullScan", true},
 		} {
-			skipCost := scanCost(tc.sql, tc.scan, true)
+			skipCost := scanCost(tc.sql, tc.scan, true, tc.desc)
 			require.NoError(t, failpoint.Disable(fp))
-			normalCost := scanCost(tc.sql, tc.scan, false)
+			normalCost := scanCost(tc.sql, tc.scan, false, false)
 			require.NoError(t, failpoint.Enable(fp, "return(true)"))
 			require.Less(t, skipCost, normalCost)
 		}
+	}
+	for _, tc := range []struct {
+		selectList string
+		desc       bool
+	}{
+		{"a, b", false},
+		{"a, b, min(c)", false},
+		{"a, b, max(c)", true},
+	} {
+		rows := tk.MustQuery("explain format='verbose' select /*+ stream_agg() */ " + tc.selectList + " from skip_nullable group by a, b").Rows()
+		var found bool
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[0]), "IndexFullScan") {
+				found = true
+				require.Contains(t, fmt.Sprint(row), "skip scan:true, prefix column count:2")
+				require.Equal(t, tc.desc, strings.Contains(fmt.Sprint(row), "keep order:true, desc"))
+				require.Equal(t, "3.00", row[1])
+			}
+		}
+		require.True(t, found, "%v", rows)
+	}
+	tk.MustExec("set session sql_mode = ''")
+	require.Contains(t, explain("select /*+ stream_agg() */ a, b, c from skip_nullable group by a, b"), "skip scan:true, prefix column count:2")
+	tk.MustExec("set session sql_mode = default")
+	orderedMax := explain("select /*+ stream_agg() */ g, max(n) from skip_idx group by g order by g asc")
+	if strings.Contains(orderedMax, "skip scan:true") {
+		// A reverse skip scan needs an upper sort to provide ascending order.
+		require.Contains(t, orderedMax, "keep order:true, desc")
+		require.Contains(t, orderedMax, "Sort")
 	}
 	bothSQL := "select /*+ stream_agg() */ g from skip_pk group by g"
 	// Both paths satisfy the same required property and compete on scan cost.
@@ -119,7 +173,11 @@ func TestStreamAggSkipScan(t *testing.T) {
 		"select /*+ stream_agg() */ g from skip_idx where n > 0 group by g",
 		"select /*+ stream_agg() */ g from skip_idx where g > 0 group by g",
 		"select /*+ stream_agg() */ n from skip_idx group by n",
-		"select /*+ stream_agg() */ g, max(n) from skip_idx group by g",
+		"select /*+ stream_agg() */ g, min(g) from skip_idx group by g",
+		"select /*+ stream_agg() */ g, min(n), max(n) from skip_idx group by g",
+		"select /*+ stream_agg() */ a, b, min(d) from skip_nullable group by a, b",
+		"select /*+ stream_agg() */ a, b, min(c), min(d) from skip_nullable group by a, b",
+		"select /*+ stream_agg() */ b, c from skip_nullable group by b, c",
 		"select /*+ stream_agg() */ g, count(*) from skip_idx group by g",
 		"select /*+ stream_agg() */ a.g from skip_idx a join skip_idx b on a.g=b.g group by a.g",
 		"select /*+ stream_agg() */ g from skip_pseudo group by g",

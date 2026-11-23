@@ -347,6 +347,8 @@ type PartialOrderInfo struct {
 // SkipScanInfo is immutable after the property is constructed.
 type SkipScanInfo struct {
 	GroupByCols []*expression.Column
+	// TargetCol, when present, must immediately follow the grouping key.
+	TargetCol *expression.Column
 }
 
 // AllSameOrder checks if all the items have same order.
@@ -715,6 +717,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range skip.GroupByCols {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
+		if skip.TargetCol == nil {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+			p.hashcode = append(p.hashcode, skip.TargetCol.HashCode()...)
+		}
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
@@ -788,6 +796,9 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 		sum += int64(unsafe.Sizeof(*skip)) + int64(cap(skip.GroupByCols))*size.SizeOfPointer
 		for _, col := range skip.GroupByCols {
 			sum += col.MemoryUsage()
+		}
+		if skip.TargetCol != nil {
+			sum += skip.TargetCol.MemoryUsage()
 		}
 	}
 	return

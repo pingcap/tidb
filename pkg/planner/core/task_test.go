@@ -38,6 +38,7 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	retType := types.NewFieldType(mysql.TypeLonglong)
 	groupCol := &expression.Column{UniqueID: 1, ID: 1, RetType: retType}
 	secondCol := &expression.Column{UniqueID: 2, ID: 2, RetType: retType}
+	thirdCol := &expression.Column{UniqueID: 3, ID: 3, RetType: retType}
 	normal := &property.PhysicalProperty{
 		TaskTp:    property.CopSingleReadTaskType,
 		SortItems: []property.SortItem{{Col: groupCol}},
@@ -49,9 +50,20 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	require.Equal(t, strict.HashCode(), strict.CloneEssentialFields().HashCode())
 	require.NotEqual(t, strict.HashCode(), normal.HashCode())
 	require.NotEqual(t, strict.HashCode(), otherGroup.HashCode())
+	withTarget := strict.CloneEssentialFields()
+	withTarget.SkipScanInfo = &property.SkipScanInfo{GroupByCols: strict.SkipScanInfo.GroupByCols, TargetCol: secondCol}
+	otherTarget := strict.CloneEssentialFields()
+	otherTarget.SkipScanInfo = &property.SkipScanInfo{GroupByCols: strict.SkipScanInfo.GroupByCols, TargetCol: thirdCol}
+	require.NotEqual(t, strict.HashCode(), withTarget.HashCode())
+	require.NotEqual(t, withTarget.HashCode(), otherTarget.HashCode())
 
-	cols := []*expression.Column{groupCol, secondCol}
-	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength}
+	cols := []*expression.Column{groupCol, secondCol, thirdCol}
+	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength, types.UnspecifiedLength}
+	indexCols := []*model.IndexColumn{
+		{Offset: 0, Length: types.UnspecifiedLength},
+		{Offset: 1, Length: types.UnspecifiedLength},
+		{Offset: 2, Length: types.UnspecifiedLength},
+	}
 	ds := &logicalop.DataSource{
 		TableInfo:        &model.TableInfo{IsCommonHandle: true},
 		CommonHandleCols: cols,
@@ -60,7 +72,7 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	secondary := &util.AccessPath{
 		Index: &model.IndexInfo{
 			Tp:      ast.IndexTypeBtree,
-			Columns: []*model.IndexColumn{{Offset: 0}, {Offset: 1}},
+			Columns: indexCols,
 		},
 		IdxCols:      cols,
 		IdxColLens:   lengths,
@@ -70,7 +82,7 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	clustered := &util.AccessPath{
 		Index: &model.IndexInfo{
 			Tp:      ast.IndexTypeBtree,
-			Columns: []*model.IndexColumn{{Offset: 0}, {Offset: 1}},
+			Columns: indexCols,
 			Primary: true,
 			Unique:  true,
 		},
@@ -81,15 +93,27 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	require.True(t, matchesSkipScanPath(ds, clustered, strict.SkipScanInfo))
 	require.False(t, matchesSkipScanPath(ds, secondary, otherGroup.SkipScanInfo))
 	require.False(t, matchesSkipScanPath(ds, clustered, otherGroup.SkipScanInfo))
+	require.True(t, matchesSkipScanPath(ds, secondary, withTarget.SkipScanInfo))
+	require.True(t, matchesSkipScanPath(ds, clustered, withTarget.SkipScanInfo))
+	require.False(t, matchesSkipScanPath(ds, secondary, otherTarget.SkipScanInfo))
+	require.False(t, matchesSkipScanPath(ds, clustered, otherTarget.SkipScanInfo))
+	prefix := *secondary
+	prefix.Index = secondary.Index.Clone()
+	prefix.Index.Columns[2].Length = 4
+	require.False(t, matchesSkipScanPath(ds, &prefix, withTarget.SkipScanInfo))
 
 	ctx := mock.NewContext()
-	projection := (logicalop.LogicalProjection{Exprs: []expression.Expression{secondCol}}).Init(ctx, 0)
-	projection.SetSchema(expression.NewSchema(groupCol))
-	mapped, ok := projection.TryToGetChildProp(strict)
+	projection := (logicalop.LogicalProjection{Exprs: []expression.Expression{secondCol, thirdCol}}).Init(ctx, 0)
+	projection.SetSchema(expression.NewSchema(groupCol, secondCol))
+	mapped, ok := projection.TryToGetChildProp(withTarget)
 	require.True(t, ok)
 	require.Equal(t, secondCol, mapped.SkipScanInfo.GroupByCols[0])
 	require.Equal(t, secondCol, mapped.SortItems[0].Col)
+	require.Equal(t, thirdCol, mapped.SkipScanInfo.TargetCol)
 	require.Equal(t, groupCol, strict.SkipScanInfo.GroupByCols[0])
+	require.Equal(t, secondCol, withTarget.SkipScanInfo.TargetCol)
+	_, ok = projection.TryToGetChildProp(otherTarget)
+	require.False(t, ok)
 	projection.Exprs[0] = &expression.Constant{RetType: retType}
 	_, ok = projection.TryToGetChildProp(strict)
 	require.False(t, ok)

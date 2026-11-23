@@ -2750,7 +2750,8 @@ func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *
 		return false
 	}
 	idx := path.Index
-	if idx == nil || idx.Global || idx.MVIndex || idx.ConditionExprString != "" || idx.Tp != ast.IndexTypeBtree {
+	if idx == nil || idx.Global || idx.MVIndex || idx.ConditionExprString != "" ||
+		idx.Tp != ast.IndexTypeBtree || idx.HasPrefixIndex() {
 		return false
 	}
 	keyCols, keyLengths := path.IdxCols, path.IdxColLens
@@ -2764,7 +2765,11 @@ func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *
 		return false
 	}
 	n := len(skip.GroupByCols)
-	if n > len(idx.Columns) || n > len(keyCols) || n > len(keyLengths) {
+	requiredCols := n
+	if skip.TargetCol != nil {
+		requiredCols++
+	}
+	if n == 0 || requiredCols > len(idx.Columns) || requiredCols > len(keyCols) || requiredCols > len(keyLengths) {
 		return false
 	}
 	for i, col := range skip.GroupByCols {
@@ -2772,6 +2777,11 @@ func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *
 			col.VirtualExpr != nil || !col.EqualColumn(keyCols[i]) {
 			return false
 		}
+	}
+	if target := skip.TargetCol; target != nil &&
+		(keyCols[n] == nil || keyLengths[n] != types.UnspecifiedLength ||
+			target.VirtualExpr != nil || !target.EqualColumn(keyCols[n])) {
+		return false
 	}
 	if n == len(idx.Columns) && idx.Unique {
 		// A secondary unique key can still have repeated NULL prefixes.
