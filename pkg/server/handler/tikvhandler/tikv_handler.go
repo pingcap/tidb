@@ -442,6 +442,10 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			handler.WriteError(w, err)
 			return
 		}
+		if req.Form.Has("kv_server_verify_cn_mode") || req.Form.Has("kv_server_verify_cn") {
+			h.updateKVServerSecurity(w, req)
+			return
+		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
 			err1 := logutil.SetLevel(levelStr)
 			if err1 != nil {

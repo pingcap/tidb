@@ -753,14 +753,16 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable  bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA           string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert         string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey          string   `toml:"ssl-key" json:"ssl-key"`
-	ClusterSSLCA    string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert  string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey   string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	SkipGrantTable       bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert              string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey               string   `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA         string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert       string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey        string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN      []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	KVServerVerifyCNMode string   `toml:"kv-server-verify-cn-mode" json:"kv-server-verify-cn-mode"`
+	KVServerVerifyCN     []string `toml:"kv-server-verify-cn" json:"kv-server-verify-cn"`
 	// Used for auth plugin `tidb_session_token`.
 	SessionTokenSigningCert string `toml:"session-token-signing-cert" json:"session-token-signing-cert"`
 	SessionTokenSigningKey  string `toml:"session-token-signing-key" json:"session-token-signing-key"`
@@ -833,7 +835,10 @@ func (e *ErrConfigInstanceSection) Error() string {
 
 // ClusterSecurity returns Security info for cluster
 func (s *Security) ClusterSecurity() tikvcfg.Security {
-	return tikvcfg.NewSecurity(s.ClusterSSLCA, s.ClusterSSLCert, s.ClusterSSLKey, s.ClusterVerifyCN)
+	security := tikvcfg.NewSecurity(s.ClusterSSLCA, s.ClusterSSLCert, s.ClusterSSLKey, slices.Clone(s.ClusterVerifyCN))
+	security.KVServerVerifyCNMode = s.KVServerVerifyCNMode
+	security.KVServerVerifyCN = slices.Clone(s.KVServerVerifyCN)
+	return security
 }
 
 // Status is the status section of the config.
@@ -1307,6 +1312,7 @@ var defaultConf = Config{
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
+		KVServerVerifyCNMode:        "off",
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
 		SEMConfig:                   "",
@@ -1726,6 +1732,10 @@ func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInv
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	security := c.Security.ClusterSecurity()
+	if err := security.ValidateKVServerCN(); err != nil {
+		return err
+	}
 	switch c.RUV2.ReportMode {
 	case RUReportModeResult, RUReportModeFull:
 	default:

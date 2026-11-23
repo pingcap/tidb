@@ -219,10 +219,10 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	codec := pdClient.GetCodec()
-	rpcClient := diagclient.WrapKV(tikv.NewRPCClient(
+	rpcClient := tikv.NewRPCClient(
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
-	))
+	)
 
 	safePointSetup, err := newSafePointKV(pdCli, codec, tlsConfig)
 	if err != nil {
@@ -236,7 +236,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		uuid,
 		pdClient,
 		spkv,
-		&injectTraceClient{Client: rpcClient},
+		&injectTraceClient{Client: diagclient.WrapKV(rpcClient)},
 		tikv.WithPDHTTPClient(
 			"tikv-driver",
 			pdAddrs,
@@ -259,14 +259,15 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	}
 
 	store := &tikvStore{
-		KVStore:   s,
-		tlsConfig: tlsConfig,
-		memCache:  kv.NewCacheDB(),
-		enableGC:  !disableGC,
-		coprStore: coprStore,
-		codec:     codec,
-		clusterID: clusterID,
-		keyspace:  keyspaceName,
+		KVStore:           s,
+		kvSecurityUpdater: rpcClient,
+		tlsConfig:         tlsConfig,
+		memCache:          kv.NewCacheDB(),
+		enableGC:          !disableGC,
+		coprStore:         coprStore,
+		codec:             codec,
+		clusterID:         clusterID,
+		keyspace:          keyspaceName,
 
 		metaServiceInfo: metaServiceInfo,
 	}
@@ -326,6 +327,9 @@ func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 
 type tikvStore struct {
 	*tikv.KVStore
+	kvSecurityUpdater interface {
+		UpdateKVServerSecurity(context.Context, config.Security) error
+	}
 	tlsConfig *tls.Config
 	memCache  kv.MemManager // this is used to query from memory
 	enableGC  bool
@@ -338,6 +342,15 @@ type tikvStore struct {
 	closed    bool
 
 	metaServiceInfo *metaservice.Info
+}
+
+// UpdateKVServerSecurity rotates this store's KV RPC pools after verifying the
+// candidate policy. PD/etcd and incoming status TLS configuration are unaffected.
+func (s *tikvStore) UpdateKVServerSecurity(ctx context.Context, security config.Security) error {
+	if s.kvSecurityUpdater == nil {
+		return errors.New("KV server security hot update is unavailable for this store")
+	}
+	return s.kvSecurityUpdater.UpdateKVServerSecurity(ctx, security)
 }
 
 // GetOption wraps around sync.Map.
