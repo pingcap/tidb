@@ -206,3 +206,74 @@ func TestFilterPath(t *testing.T) {
 		})
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestFastUnmarshalMetaDataSkipConditionCanSkipEmptyMeta(t *testing.T) {
+	ctx := context.Background()
+	s, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	emptyPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(20), uint64(1), uint64(0), uint64(0), uint64(0), uint64(2),
+	)
+	normalPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(30), uint64(1), uint64(5), uint64(10), uint64(20), uint64(0),
+	)
+	require.NoError(t, s.WriteFile(ctx, emptyPath, []byte("invalid empty meta payload")))
+	require.NoError(t, s.WriteFile(ctx, normalPath, []byte("normal meta payload")))
+
+	var readCount atomic.Int32
+	err = stream.FastUnmarshalMetaData(
+		ctx,
+		s,
+		0,
+		100,
+		1,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			return err == nil && parsedName.IsEmpty()
+		},
+		func(filename string, rawMetaData []byte) error {
+			readCount.Add(1)
+			require.Equal(t, normalPath, filename)
+			require.Equal(t, []byte("normal meta payload"), rawMetaData)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), readCount.Load())
+}
+
+func TestMetadataHelperReadFileInvalidRange(t *testing.T) {
+	ctx := context.Background()
+	storage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, storage.WriteFile(ctx, "log", []byte("data")))
+	for _, tc := range []struct {
+		name           string
+		offset, length uint64
+	}{
+		{"truncated object", 0, 5},
+		{"offset past end", 5, 0},
+		{"offset overflow", ^uint64(0), 2},
+		{"length overflow", 2, ^uint64(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			helper := stream.NewMetadataHelper()
+			helper.InitCacheEntry("log", 1)
+			require.NotPanics(t, func() {
+				data, err := helper.ReadFile(ctx, "log", tc.offset, tc.length, 0, backuppb.CompressionType_UNKNOWN, storage, nil)
+				require.Error(t, err)
+				require.Nil(t, data)
+			})
+			// A failed read must release the cache lock so the next read can succeed.
+			data, err := helper.ReadFile(ctx, "log", 0, 4, 4, backuppb.CompressionType_UNKNOWN, storage, nil)
+			require.NoError(t, err)
+			require.Equal(t, []byte("data"), data)
+		})
+	}
+}
+>>>>>>> f7539bdeae7 (br: fix iv panic (#73545))
