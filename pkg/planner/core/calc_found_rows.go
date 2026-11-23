@@ -18,7 +18,6 @@ import (
 	"context"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -27,11 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
-
-// errCalcFoundRowsNoopFallback aborts count-plan construction when an expanded
-// view makes dual-plan counting unsupported and tidb_enable_noop_functions
-// allows falling back to noop behavior.
-var errCalcFoundRowsNoopFallback = errors.New("fallback SQL_CALC_FOUND_ROWS to noop")
 
 // nativeCalcFoundRows reports whether this SELECT should build a native count branch.
 func nativeCalcFoundRows(ctx base.PlanContext, opts *ast.SelectStmtOpts) bool {
@@ -46,18 +40,6 @@ func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
 func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
 	b.buildingFoundRows = true
 	defer func() { b.buildingFoundRows = false }()
-	fallback := func() (base.Plan, error) {
-		vars := b.ctx.GetSessionVars()
-		clear(b.colMapper)
-		clear(b.correlatedAggMapper)
-		b.foundRowsPlan = nil
-		b.buildingFoundRows = false
-		vars.StmtCtx.CalcFoundRowsNoop = true
-		if vars.NoopFuncsMode == variable.WarnInt {
-			appendNoopCalcFoundRowsWarning(vars)
-		}
-		return b.buildSelect(ctx, sel)
-	}
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
@@ -73,48 +55,51 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	countSel.Fields = &fields
 	count, err := b.buildSelect(ctx, &countSel)
 	if err != nil {
-		if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
-			return fallback()
+		return nil, err
+	}
+	if !b.ctx.GetSessionVars().StmtCtx.CalcFoundRowsNoop {
+		count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
+			F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+		}}, nil, nil)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		// buildAggregation also exposes FIRST_ROW expressions for its input columns.
+		// Retain only COUNT, allowing normal column pruning to discard those inputs.
+		projection := logicalop.LogicalProjection{
+			Exprs: []expression.Expression{count.Schema().Columns[0]},
+		}.Init(b.ctx, b.getSelectOffset())
+		projection.SetChildren(count)
+		projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
+		projection.SetOutputNames(count.OutputNames()[:1])
+		b.foundRowsPlan = projection
 	}
-	count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
-		F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
-	}}, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	// buildAggregation also exposes FIRST_ROW expressions for its input columns.
-	// Retain only COUNT, allowing normal column pruning to discard those inputs.
-	projection := logicalop.LogicalProjection{
-		Exprs: []expression.Expression{count.Schema().Columns[0]},
-	}.Init(b.ctx, b.getSelectOffset())
-	projection.SetChildren(count)
-	projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
-	projection.SetOutputNames(count.OutputNames()[:1])
-	b.foundRowsPlan = projection
 	// AST nodes are shared, but their column bindings must belong to each
 	// independent plan. In particular, do not reuse correlated aggregate columns
 	// extracted while building the count branch in the data branch.
 	clear(b.colMapper)
 	clear(b.correlatedAggMapper)
 	plan, err := b.buildSelect(ctx, sel)
-	if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
-		return fallback()
+	if err != nil {
+		return nil, err
 	}
-	return plan, err
+	if b.ctx.GetSessionVars().StmtCtx.CalcFoundRowsNoop {
+		b.foundRowsPlan = nil
+	}
+	return plan, nil
 }
 
 // checkViewCalcFoundRows validates an expanded view definition while building
 // the SQL_CALC_FOUND_ROWS count branch.
 func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
-	checker := &foundRowsChecker{inView: true}
-	ast.Walk(selectNode, checker)
-	if checker.err == nil {
+	vars := b.ctx.GetSessionVars()
+	if vars.StmtCtx.CalcFoundRowsNoop {
 		return nil
 	}
-	if plannererrors.ErrNotSupportedYet.Equal(checker.err) && b.ctx.GetSessionVars().NoopFuncsMode != variable.OffInt {
-		return errCalcFoundRowsNoopFallback
+	checker := &foundRowsChecker{inView: true}
+	ast.Walk(selectNode, checker)
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
+		return handleUnsupportedCalcFoundRows(vars, checker.err)
 	}
 	return checker.err
 }
