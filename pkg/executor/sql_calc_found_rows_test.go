@@ -198,6 +198,11 @@ func TestSQLCalcFoundRowsViews(t *testing.T) {
 				}
 			}
 		}
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		createSQL := tk.MustQuery("show create view view_page").Rows()[0][1].(string)
+		require.Contains(t, createSQL, "SQL_CALC_FOUND_ROWS")
+		tk.MustExec(strings.Replace(createSQL, "`view_page`", "`view_recreated`", 1))
+		tk.MustQuery("select * from view_recreated order by id").Check(testkit.Rows("1", "2"))
 	})
 	tk.MustExec("create view view_coin as select id from view_found_rows where rand()<0.5")
 	tk.MustExec("create view view_coin_nested as select id from view_coin")
@@ -293,6 +298,8 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table found_rows (id int primary key)")
+	tk.MustExec("insert into found_rows values (1), (2), (3)")
+	tk.MustExec("create table found_rows_dst (id int)")
 	tk.MustExec("set tidb_enable_noop_functions=OFF")
 	for _, sql := range []string{
 		"select * from (select SQL_CALC_FOUND_ROWS 1 as id) c",
@@ -346,11 +353,56 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 	}
 	for _, mode := range []string{"OFF", "ON", "WARN"} {
 		t.Run("noop-"+mode, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
 			tk.MustExec("set tidb_enable_noop_functions=" + mode)
-			tk.MustQuery("with c as (select 1 as id union all select 2) select SQL_CALC_FOUND_ROWS * from c limit 1").Check(testkit.Rows("1"))
+			tk.MustQuery("with c as (select 1 as id union all select 2) select SQL_CALC_FOUND_ROWS * from c order by id limit 1").Check(testkit.Rows("1"))
+			require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 			tk.MustQuery("select found_rows()").Check(testkit.Rows("2"))
 			tk.MustGetErrCode("select (select SQL_CALC_FOUND_ROWS 1)", mysql.ErrCantUseOptionHere)
-			tk.MustGetErrCode("select SQL_CALC_FOUND_ROWS 1 union all select 2", mysql.ErrNotSupportedYet)
+			tk.MustGetErrCode("select 1 union all select SQL_CALC_FOUND_ROWS 2", mysql.ErrCantUseOptionHere)
+			if mode == "OFF" {
+				return
+			}
+
+			checkNoopWarning := func() {
+				warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+				if mode == "WARN" {
+					require.Len(t, warnings, 1)
+					require.ErrorContains(t, warnings[0].Err, "function SQL_CALC_FOUND_ROWS has only noop implementation")
+				} else {
+					require.Empty(t, warnings)
+				}
+			}
+			for _, tc := range []struct {
+				sql  string
+				rows []string
+			}{
+				{"select SQL_CALC_FOUND_ROWS id from found_rows union all select 4 order by id limit 1", []string{"1"}},
+				{"select SQL_CALC_FOUND_ROWS id, row_number() over (order by id) from found_rows order by id limit 1", []string{"1 1"}},
+				{"select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1 for update", []string{"1"}},
+				{"select SQL_CALC_FOUND_ROWS id from found_rows where rand()<2 order by id limit 1", []string{"1"}},
+				{"select SQL_CALC_FOUND_ROWS @n:=id from found_rows order by id limit 1", []string{"1"}},
+			} {
+				tk.MustQuery(tc.sql).Check(testkit.Rows(tc.rows...))
+				checkNoopWarning()
+				tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+			}
+			tk.MustQuery("select @n").Check(testkit.Rows("1"))
+
+			tk.MustExec("delete from found_rows_dst")
+			tk.MustExec("insert into found_rows_dst select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 1")
+			checkNoopWarning()
+			tk.MustQuery("select * from found_rows_dst").Check(testkit.Rows("1"))
+			tk.MustExec("create or replace view found_rows_view as select SQL_CALC_FOUND_ROWS id from found_rows order by id limit 2")
+			checkNoopWarning()
+			tk.MustQuery("select * from found_rows_view order by id").Check(testkit.Rows("1", "2"))
+
+			tk.MustExec("prepare noop_found_rows from 'select SQL_CALC_FOUND_ROWS id from found_rows where rand()<2 order by id limit 1'")
+			checkNoopWarning()
+			tk.MustQuery("execute noop_found_rows").Check(testkit.Rows("1"))
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+			tk.MustExec("deallocate prepare noop_found_rows")
 		})
 	}
 }

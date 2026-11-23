@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -103,11 +104,30 @@ type foundRowsPreprocessor struct {
 
 func (v *foundRowsPreprocessor) Enter(node ast.Node) bool {
 	if stmt, ok := node.(*ast.SelectStmt); ok {
-		if err := v.checkSelect(stmt); err != nil {
+		if err := v.checkSelect(stmt); err != nil && !v.tryNoop(stmt, err) {
 			v.err = err
 		}
 	}
 	return v.preprocessor.Enter(node)
+}
+
+func (v *foundRowsPreprocessor) tryNoop(stmt *ast.SelectStmt, err error) bool {
+	// Placement errors apply in every mode. Only unsupported native shapes can fall back.
+	if !plannererrors.ErrNotSupportedYet.Equal(err) {
+		return false
+	}
+	vars := v.sctx.GetSessionVars()
+	if vars.NoopFuncsMode == variable.OffInt {
+		return false
+	}
+	if vars.NoopFuncsMode == variable.WarnInt {
+		vars.StmtCtx.AppendWarning(expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS"))
+	}
+	// Clear the modifier before recursive planning can build a count branch for this SELECT.
+	opts := *stmt.SelectStmtOpts
+	opts.CalcFoundRows = false
+	stmt.SelectStmtOpts = &opts
+	return true
 }
 
 func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
