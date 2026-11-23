@@ -1,4 +1,4 @@
-# Close the 2026-11-22 re-audit rows: R01–R04 and X02
+# Close the 2026-11-23 structural audit rows (T01–T14)
 
 This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` up to date as work proceeds.
 
@@ -6,40 +6,29 @@ Reference: `PLANS.md` at the repository root; this plan must be maintained accor
 
 ## Purpose / Big Picture
 
-The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structural-audit-2026-11-22.md`) left five rows in the register (`structural-findings.md`). After this plan a session that sets `tidb_cost_model_version = 1` gets Go's version-1 costs and plans (R01), `EXPLAIN EXPLORE <sql>` answers Go's binding exploration (R02), ANALYZE runs through Go's executor shape with the planner and global-stats parts in their own owners (R03), sorting runs Go's parallel workers and multi-way merge (R04), and the DDL code has one port of Go's `sess.Session` (X02).
+The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural-audit-2026-11-23.md`) scored every symbol of the 451 Go packages `cmd/tidb-server` links and registered fourteen places where the Rust code does not have Go's shape (`structural-findings.md`). After this plan each of those Go owners has one Rust owner in the matching layer: the planner owns `pkg/planner` code, the executor owns `pkg/executor` code, the session variables own `SessionVars`' fields, and a transaction's writes land in the store transaction's MemDB.
 
 ## Progress
 
-- [x] (2026-11-22) Re-audit: 11 behavior gaps found and fixed (pushed `ac1e5b40a18`); X01's duplicate implementations collapsed (`55f9417f16b`, `346f2fff28a`).
-- [x] (2026-11-23) R01: cost model version 1 -- `coster/ver1.rs` holds Go's `getPlanCostVer14<Operator>` bodies, `CostEnv::ver1` carries the version-1 factors when `tidb_cost_model_version = 1`, and the pushed-down / point-plan Selections no longer claim Go's `FromDataSource`; 79 probe statements (pseudo and analyzed statistics, both versions) match a Go server.
-- [x] (2026-11-23) R04: `SortExec` runs Go's parallel mode (`parallel_sort.rs`: `ExecutorConcurrency` workers over a bounded chunk channel, batch sorts of `maxChunkSize*30` rows merged per worker, `parallelSortSpillAction` / `parallelSortSpillHelper` spilling the merged worker runs, the in-memory result spilling when the action fires mid-merge); the unparallel mode stays Go's test hook. TopN's spill workers were already Go's `topn_worker.go` (`topn.rs`); the crate docs that said otherwise are fixed and `TestKillSignalInTopN` carries its Go name. Go's `TestParallelSort`, `TestFailpoint`, `TestParallelSortSpillDisk`, `TestParallelSortSpillDiskFailpoint`, `TestIssue59655`, `TestIssue63216`, `TestIssue55344` are ported (with `util/chunk`'s `ChunkInDiskError` failpoint and Go's package-level `rand.Int31n`).
-- [x] (2026-11-23) R02: EXPLAIN EXPLORE. `tidb-bindinfo` ports `binding_auto.go` (historical candidates from `mysql.bind_info` and the statement stats, `getBindingPlanDigest`, `runToGetExecInfo`, `fillRecommendation`), `binding_plan_generation.go` (start state, `adjustVar`/`adjustFix`, the breadth-first search, leading-2 / index / `NO_DECORRELATE` states, the AST extractors) and `binding_plan_evolution.go` (rule-based and LLM predictors); the planner records Go's 39 `RecordRelevantOptVar`/`Fix` sites through `tidb_variable::relevant_opt`; the executor answers `GenBriefPlanWithSCtx`, `CalculatePlanDigest` and `RecordRelevantOptVarsAndFixes`; the binding handle's sessions run the exploration; `EXPLAIN EXPLORE REPLAYER` loads the replayer archive first. The five `TestPlanGeneration` queries match a Go server row for row (plans, digests, hints). Found on the way: Go's table scans without ranges are not full ranges, a limit prices its children without `isChildOfINL`, and an index-lookup cop task's table side is priced without it (all three now as Go); R05 records the remaining cop-task comparison gap.
-- [x] (2026-11-23) R05: Go's per-operator cost cache. `BasePhysicalPlan::plan_cost_ver2` is a `PlanCostVer2Cache` (`PlanCostInit` + `PlanCostVer2`) that every pricing writes and every non-recalculating pricing reads, so a cop task priced by `getTaskPlanCost` keeps its cost inside the reader built from it; the post-optimize recording pass is gone (`physicalOptimize`'s `getPlanCost` fills the rest).
-- [x] (2026-11-23) R03: ANALYZE in Go's shape.
-  - [x] (2026-11-23) R03.1 globalstats: `tidb-stats-handle-globalstats/src/global_stats.rs` ports `global_stats.go` / `global_stats_merger.go` (`GlobalStats`, `globalStatsMerger` with `prepare` and the IO / CPU workers, `MergePartitionStats2GlobalStats(ByTableID)`, `WriteGlobalStatsToStorage`); the executor's copy is gone. Two divergences fixed on the way: missing-stats errors name the table, partition and item by `Name.L`, and `prepare` reports the first missing item partition-major as Go does.
-  - [x] (2026-11-23) R03.2 `AnalyzeExec.Next`: one executor runs every table the statement names (`analyze_exec_next`): `filterAndCollectTasks` / `warnLockedTableMsg` skip locked tables and partitions (before, ANALYZE analyzed them), `tidb_build_stats_concurrency` `analyzeWorker`s, `handleResultsError` with `tidb_analyze_partition_concurrency` save workers (`analyze_worker.rs`; a failed save no longer stops the others), Go's panic and kill paths, `handleGlobalStats` (`analyze_global_stats.rs`). Diagnostics follow Go's phases: every table's planner warnings, then the builder's notes, then the executor's warnings (the 8244 warning used to precede the note).
-  - [x] (2026-11-23) R03.4 `buildSamplingStats`' workers: `readDataAndSendTask` feeds `tidb_build_sampling_stats_concurrency` `subMergeWorker`s whose collectors the root merges, `subBuildWorker`s build each column's and index's histogram, and `handleNDVForSpecialIndexes`' `subIndexWorkerForNDV`s run beside the sampling.
-  - [x] (2026-11-23) R03.5 `analyze_idx.rs`: Go's `AnalyzeIndexExec` (`analyzeIndexPushdown`, `buildStats`, `fetchAnalyzeResult`, `buildStatsFromResult`, `buildSimpleStats`, `analyzeIndexNDVPushDown`, `updateIndexResult`) replaces `collect_index_stats` / `collect_index_ndv`.
-  - [x] (2026-11-23) R03.3 planner: `tidb-planner/src/plan_builder/analyze.rs` ports `planbuilder.go`'s analyze section and builds `core.Analyze` (`ColTasks`, `IdxTasks`, `Opts`, `OptionsMap`) at compile time over the session's InfoSchema; `SessionPlanContext` answers the restricted SQL (`getSavedAnalyzeOpts`), the predicate columns and the stats-cache version checks through the domain's `AnalyzePlanService`; the executor builds its tasks from the plan (`build_analyze`, `buildAnalyzeSamplingPushdown`, `buildAnalyzeIndexPushdown`, `prepareAnalyzeColumnsJobInfo`) and saves `OptionsMap` in one `REPLACE` as Go's `saveAnalyzeOptions`; the execution-time `resolve_cluster_analyze_statement` and its TiKV catalog reloads, `lower_analyze` and the dead `analyze/kv.rs` are gone.
-- [x] (2026-11-23) X02: one port of Go's `sess.Session`. The `StepSqlSession` trait is gone: the DDL pools hand out `tidb_ddl_session::DdlSession` over the node's `ClusterStatsSessionContext` (a step session is `new_step`, whose drop commits into and releases the step's buffer), `getJobsBySQL` and `updateDDLJob2Table` have one body each (`ddl_job_scheduler.rs`), `initDDLReorgHandle` / `cleanDDLReorgHandles` / the ingest checkpoint use `Session.RunInTxn`, every `Execute` carries Go's metric label, `tidb_ddl_session::Error` keeps the error it wraps (Go's `errors.Trace`), and the session context's `ExecuteInternal` is the session's own (request source, cancellation, goroutine labels restored).
+- [x] (2026-11-23) T02 performance_schema `getRows`, T03 `tidb_auth_token`, T04 `logutil/consistency`, T11 analyze-job lifecycle, T12 `ConnectionVerification`, T13 PointGet / BatchPointGet executors.
+- [x] (2026-11-23) T09: `tidb-variable/src/vars_typed.rs` holds 81 `SessionVars` fields, each maintained by its variable's `SetSession` hook; the statement snapshot copies fields instead of parsing variables.
+- [x] (2026-11-23) T06: Go's `PartitionProcessor` and pruners live in `tidb-planner-core-rule/src/rule_partition_processor/`; `DataSource.table` is Go's `ds.Table`; the executor's pruning callback is gone.
+- [ ] T05 (partly): done: `optimize`'s rounds (`planner_optimize.rs`), `PlanBuilder.Init`'s session reads, `TryFastPlan`'s global-index bypass, `CheckPrivilege` / `CheckTableLock` (`privilege_check.rs`), `stats.GetStatsTable` (`stats/stats_table.rs`). Remaining: the statement entry (`Optimize`, `optimizeNoCache`), `buildLogicalPlan`'s catalog and evaluator wiring (`driver/planner_bridge.rs`), `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx`, `calculatePlanDigestFunc`.
+- [ ] T07 (partly): done: `pb_to_plan.rs`, the non-prepared cacheability walk, `RequestLoadStats` / `SyncWaitStatsLoad`, the plan-cache key side (`plan_cache_utils.rs`). Remaining: the prepared statement and cached plan values (`PreparedSelectPlan`, `CachedSelectPlan`, `CachedDmlPlan`, `SessionPlanCache`).
+- [ ] T08: the AST expression rewriter in `tidb-expr` (Go's is `pkg/planner/core/expression_rewriter.go`, reached from lower layers through `expression.BuildSimpleExpr`).
+- [ ] T10: `pkg/executor` code implemented as `Session` methods in `tidb-session`.
+- [ ] T14, then T01: a transaction's writes in the store transaction's MemDB (`LazyTxn`), then pipelined DML over it.
 
 ## Surprises & Discoveries
 
-- R03.3: Go's planner warnings are appended while `Compile` builds the plan, and a routed ANALYZE is not built again, so the session carries the build's statement context (`CompiledExecutor::Analyze(plan, BuildContext)`) and drains it before the builder's notes. The plan-time statistics reads must not build the per-statement `AnalyzeService` (it locks the compiling session's state: a deadlock), so they go through a domain-level `AnalyzePlanService`.
-- R05 (first half, 2026-11-23): Go's `compareTaskCost` prices both tasks before checking validity, so the first candidate of every data-source search is priced (and records its relevant variables); this planner short-circuited on an invalid best task, so a single cop candidate was never priced. Fixed; the second half (the per-operator cost cache) closed R05.
-- R02: Go's injected LEADING hint carries `Tables` but no `LeadingList`, so the join reorder never applies it (only `LeadingJoinOrder` is set); the Rust port injects the same table-list shape. The `binding_hint` column is `ParseHintsSet`'s normalized set (query-block names added), and explore rows render in plan order (`FlattenPhysicalPlan(p, false)`), not build side first.
-- X02: the node's DDL-pool session context answered `ExecuteInternal` through the plain `Execute` path, so internal SQL did not restore the caller's goroutine labels (Go's `ExecuteInternal` defers `SetGoroutineLabels`); two label tests caught it once the DDL sessions moved onto it.
-- R04: the fetcher runs on the thread that calls `Next` (Go's fetcher goroutine runs while `Next` blocks on `resultChannel`), and a failed worker keeps draining the chunk channel: a worker that stopped draining left the fetcher waiting on its in-flight chunk forever (the mutant hangs `TestFailpoint`).
-- R01: the planner marked every pushed-down and point-plan Selection `FromDataSource`; Go marks only the root Selection over `RootTaskConds`. Version 2 never reads the flag, so it was invisible until version 1 priced the Selection.
-
-- The 11-18 audit matched Go packages to Rust crates by name, so whole Go files inside a matched package could be missing (`select_into.go` was: `SELECT ... INTO OUTFILE` answered rows and wrote no file).
-- A per-file symbol-coverage score over-reports: most low-scoring files are ported under other names or decompositions. Every candidate was read before registering.
-- Two gate retry-passes were Go-inherited races widened by load (the submitter's DDL ticker reading the history row before `cleanupDDLReorgHandles`; the schema validator's 8027 when a pool's reload misses a lease); the tests now wait for, or retry, what Go does not guarantee.
+- The nextest LEAKs seen in several gates are sibling test processes inheriting another test's stderr pipe (macOS `pipe()` + `FD_CLOEXEC` race in parallel spawns), captured with `lsof` during gate 66; not product code.
+- Gate 64's panic-recovery retry was a real race: a connection that had already failed could still be cancelled by a starting drain, because it left the drained-clients registry after closing its transport. Go deletes it first (`clientConn.Close`); fixed in `18776e43537`.
+- Go's `planner/util.ByItems` had three Rust copies; one remains (`tidb_expression_aggregation::ByItems`).
 
 ## Decision Log
 
-- Decision: `ALTER TABLE ... PARTITION BY SYSTEM_TIME` stays refused. Rationale: Go keeps the old partitioning and its reorganization strands a `PARTITION BY NONE` intermediate partition, a Go bug. Date: 2026-11-22.
-- Decision: the rows are named R01–R04 so they do not collide with the earlier, closed S01–S05. Date: 2026-11-22.
+- Decision: skip-init variables (`tidb_ddl_reorg_priority`, the metric-schema step and range) keep `NewSessionVars`' default in their typed field until SET, as Go's fields do. Date: 2026-11-23.
+- Decision: the executor keeps thin re-exports (`table_privilege`, `access_cost`, `stats_stmt_ctx` types) while its callers move; no logic stays behind them. Date: 2026-11-23.
 
 ## Outcomes & Retrospective
 
@@ -47,35 +36,29 @@ The file-level re-audit of 2026-11-22 (`rust/docs/parity/current-audit/structura
 
 ## Context and Orientation
 
-R01: Go `pkg/planner/core/plan_cost_ver2.go` (`getPlanCost` picks version 2 or `GetPlanCostVer1`), `plan_cost_ver1.go` (one `getPlanCostVer14<Operator>` per operator and the `getCost4<Operator>` helpers), the version-1 factors (`tidb_opt_cpu_factor`, `copcpu`, `network`, `scan`, `desc_scan`, `seek`, `memory`, `disk`, `concurrency`). Rust prices every task with `tidb-planner/src/find_best_task/coster.rs` (`Ver2Coster`, a `TaskCoster`) over the formulas in `plan_cost_ver2.rs`; `CostEnv` carries only the version-2 factors.
+T05/T07: the executor's `driver/` module is the planner's front end: `planner_bridge.rs` configures Go's `PlanBuilder`, evaluates subqueries, runs `optimize` and keeps cached plans; `access.rs`, `plan_cache.rs` and `dml.rs` hold the plan cache's prepared statements and values. Go reaches the executor from the planner only through function variables the executor sets (`EvalSubqueryFirstRow`, `BuildSimpleExpr`).
 
-R04: Go `pkg/executor/sortexec/sort.go` (`Open` sets `IsUnparallel = false`), `parallel_sort_worker.go`, `parallel_sort_spill_helper.go`, `multi_way_merge.go`, `topn_worker.go`. Rust `tidb-executor-sortexec/src/lib.rs` is Go's unparallel mode; the parallel HashAgg in `tidb-executor-aggregate/src/agg_hash_executor.rs` shows the thread and channel pattern to follow.
+T08: `tidb-expr/src/rewriter.rs` (AST to expression) is used by `tidb-expr`'s own builtins and tests and by ddl, table, ttl and ranger code; Go hooks `expression.BuildSimpleExpr` to the planner's `buildSimpleExpr` in `core_init.go`.
 
-R02: Go `pkg/bindinfo/binding_auto.go`, `binding_plan_generation.go`, and the EXPLAIN EXPLORE executor.
+T10: `tidb-session/src/{dispatch,show,plan_replayer,ddl_service,import_into,statement_lifecycle,observation}.rs`.
 
-R03: Go `pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/statistics/handle/globalstats`. Rust `tidb-executor/src/real_tikv_analyze.rs` (3,055 lines mixing the three), `analyze.rs`, `cluster_analyze.rs`, `cluster_analyze/sampling.rs`.
-
-X02: Go `pkg/ddl/session` (`Session`). Rust `tidb-ddl-session` (`Session`) and `tidb-ddl-build/src/session_pool.rs` (`StepSqlSession`).
+T14/T01: `tidb-session/src/txn_manager.rs` (`MutationBuffer` staging, `commit_autocommit_buffer`), `tidb-domain-core/src/cluster_transactions.rs`.
 
 ## Plan of Work
 
-R01: plumb the version-1 factors into `CostEnv`; add a version-1 coster next to `Ver2Coster` that walks the same enum with Go's per-operator version-1 bodies; select it where Go's `getPlanCost` does. R04: add Go's parallel mode to `SortExec` (workers over a chunk channel, local sort and merge, the spill helper, the final multi-way merge), then TopN's workers. R02, R03 and X02 follow, each as its own series.
-
-R03 (ANALYZE), in Go's three layers, each step gated on its own:
-
-1. Planner. `Plan::Analyze` carries Go's `core.Analyze` (`ColTasks`, `IdxTasks`, `Opts`, `OptionsMap`, with `AnalyzeInfo` / `V2AnalyzeOptions`), built by `plan_builder/analyze.rs` from `planbuilder.go`'s analyze section (`buildAnalyze`, `buildAnalyzeTable`, `buildAnalyzeFullSamplingTask`, `genV2AnalyzeOptions`, `getSavedAnalyzeOpts`, `getFullAnalyzeColumnsInfo`, `getMustAnalyzedColumns`, `filterSkipColumnTypes`, `getModifiedIndexesInfoForAnalyze`, `BuildHandleColsForAnalyze`, `generateIndexTasks`, `handleAnalyzeOptions`). It runs over the session's InfoSchema at compile time. `SessionPlanContext` gives it what Go reads through `b.ctx`: the restricted SQL executor (`mysql.analyze_options`, predicate columns) and the stats handle's version checks. This replaces `resolve_cluster_analyze_statement`, which plans at execution time from a fresh TiKV snapshot.
-2. Executor builder. `buildAnalyze` -> `AnalyzeExec { tasks }`: `buildAnalyzeSamplingPushdown` (`StatsMetaCountAndModifyCount`, `getAdjustedSampleRate` and its NOTE, the `AnalyzeReq`, job info) and `buildAnalyzeIndexPushdown`.
-3. Executor. `analyze.rs` gets `AnalyzeExec.Next`: `filterAndCollectTasks`, `buildStatsConcurrency` workers (`analyzeWorker`), `handleResultsError` with `analyzeSaveStatsWorker`s at `AnalyzePartitionConcurrency` (a failed save keeps the others saving; errors join), `handleGlobalStats`, `saveAnalyzeOptions`, `statsHandle.Update`. `analyze_col.rs` / `analyze_col_sampling.rs` get `AnalyzeColumnsExec` (`readDataAndSendTask`, `subMergeWorker`, `subBuildWorker`, `handleNDVForSpecialIndexes`), `analyze_idx.rs` `AnalyzeIndexExec`, plus `analyze_global_stats.rs`, `analyze_utils.rs` and `analyze_worker.rs`. The coprocessor transport, `RowSampleCollector`, the histogram builders and `save_analyze_result_to_storage` are reused.
-4. Delete `real_tikv_analyze.rs`, `cluster_analyze*.rs`, `analyze/kv.rs` and the `AnalyzeRun` row path. Port Go's analyze tests under their names.
+1. T05/T07: move `planner_bridge.rs`'s planning core (builder setup, the query build, the physical optimization entry, the cached select plan) into `tidb-planner`, with the executor installing the subquery evaluator, default-value evaluators and dynamic-prune fallback as hooks; then `explain.rs`'s `query_plan_cost` / `gen_brief_plan` / plan digest follow the entry.
+2. T08: move the rewriter into `tidb-planner` behind a `BuildSimpleExpr` hook in `tidb-expr`, installed at server start and by each lower crate's tests.
+3. T10: move each `pkg/executor` executor out of the session crate onto a `sessionctx` trait surface, one Go file at a time.
+4. T14 then T01.
 
 ## Concrete Steps
 
-Per row in `rust/`: `cargo check -p <crates> --tests`, the crates' suites under nextest, then `zsh scripts/gate-scoped.sh <worktree> tidb-server` from `tidb-wt` after a local commit, and a push to both remotes.
+Per slice in `rust/`: `cargo check -p <crates> --tests` (exit status, not a grep), the touched tests under nextest with a mutation check, a local commit, `zsh scripts/gate-scoped.sh <worktree> tidb-server tidb-session` from `tidb-wt`, and a push to both remotes.
 
 ## Validation and Acceptance
 
-R01: with `tidb_cost_model_version = 1`, `EXPLAIN FORMAT='verbose'` costs and plan shapes match a Go server on the same statements (probe set in the audit document). R04: Go's `sortexec` tests (parallel sort, its spill and its random-failure tests) pass. R02: Go's EXPLAIN EXPLORE tests. R03: Go's analyze tests keep passing with the code in Go's files. X02: `getJobsBySQL` has one body.
+Each row closes when its Go owner's code has one Rust owner in the matching layer and the row's tests (and a mutation of the moved code) pass in a green scoped gate.
 
 ## Idempotence and Recovery
 
-Each step is its own commit; a failing gate is fixed or the commit reverted before the next step.
+Each slice is its own commit; a failing gate is fixed or the commit reverted before the next slice.
