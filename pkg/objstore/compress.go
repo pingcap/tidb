@@ -63,15 +63,18 @@ func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.W
 }
 
 func (w *withCompression) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
+	ctx, cancel := context.WithCancel(ctx)
 	fileReader, err := w.Storage.Open(ctx, path, o)
 	if err != nil {
+		cancel()
 		return nil, errors.Trace(err)
 	}
 	uncompressReader, err := InterceptDecompressReader(fileReader, w.compressType, w.decompressCfg)
 	if err != nil {
+		cancel()
 		return nil, errors.Trace(multierr.Append(err, fileReader.Close()))
 	}
-	return uncompressReader, nil
+	return &readerWithCancel{Reader: uncompressReader, cancel: cancel}, nil
 }
 
 func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) error {
@@ -106,6 +109,17 @@ func (w *withCompression) PresignFile(ctx context.Context, fileName string, expi
 	return w.Storage.PresignFile(ctx, fileName, expire)
 }
 
+type readerWithCancel struct {
+	objectio.Reader
+	cancel context.CancelFunc
+}
+
+func (r *readerWithCancel) Close() error {
+	// Interrupt backend retries before waiting for the source and decoder to close.
+	r.cancel()
+	return r.Reader.Close()
+}
+
 // compressReader owns both the source reader and, when present, its decoder.
 type compressReader struct {
 	io.Reader
@@ -120,6 +134,7 @@ type compressReader struct {
 // equals total bytes Read() if the decompress reader is used.
 // On success, closing the returned reader closes both the decoder and fileReader.
 // On failure, fileReader remains the caller's responsibility.
+// With asynchronous decoding, fileReader.Close must interrupt pending Read calls.
 func InterceptDecompressReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,
@@ -141,6 +156,8 @@ func InterceptDecompressReader(
 }
 
 // NewLimitedInterceptReader creates a decompress reader with limit n.
+// With asynchronous decoding, fileReader.Close must interrupt pending Read calls,
+// as required by InterceptDecompressReader.
 func NewLimitedInterceptReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,

@@ -39,6 +39,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	. "github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -1212,6 +1213,66 @@ type closeCountingReader struct {
 func (r *closeCountingReader) Close() error {
 	r.closeCount.Add(1)
 	return r.ReadCloser.Close()
+}
+
+func TestS3CompressedReaderCloseDuringRetry(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				initial := &closeCountingReader{ReadCloser: io.NopCloser(alwaysFailReader{})}
+				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(&s3.GetObjectOutput{Body: initial, ContentLength: aws.Int64(16)}, nil)
+				resumeOpen := make(chan struct{})
+				resume := sync.OnceFunc(func() { close(resumeOpen) })
+				defer resume()
+				var requestCtx context.Context
+				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
+					DoAndReturn(func(ctx context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+						requestCtx = ctx
+						select {
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						case <-resumeOpen:
+							return nil, errors.New("retry released for cleanup")
+						}
+					})
+				storage := WithCompression(s.Storage, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+				reader, err := storage.Open(ctx, "test.zst", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+				require.NoError(t, err)
+				closeDone := make(chan struct{})
+				var closeErr error
+				startClose := sync.OnceFunc(func() {
+					go func() {
+						closeErr = reader.Close()
+						close(closeDone)
+					}()
+				})
+				defer func() {
+					// Release a stuck retry only after checking that Close can cancel it.
+					resume()
+					startClose()
+					<-closeDone
+				}()
+				synctest.Wait()
+				require.NotNil(t, requestCtx)
+				require.NoError(t, requestCtx.Err())
+				startClose()
+				synctest.Wait()
+				select {
+				case <-closeDone:
+					require.NoError(t, closeErr)
+				default:
+					t.Fatal("compressed reader Close is blocked on the retry")
+				}
+				require.ErrorIs(t, requestCtx.Err(), context.Canceled)
+				require.NoError(t, ctx.Err())
+				require.EqualValues(t, 1, initial.closeCount.Load())
+			})
+		})
+	}
 }
 
 func TestS3ReaderCloseDuringRetry(t *testing.T) {

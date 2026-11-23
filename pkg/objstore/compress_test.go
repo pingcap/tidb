@@ -69,10 +69,14 @@ type compressionTestReader struct {
 	*bytes.Reader
 	closeCount int
 	closeErr   error
+	onClose    func()
 }
 
 func (r *compressionTestReader) Close() error {
 	r.closeCount++
+	if r.onClose != nil {
+		r.onClose()
+	}
 	return r.closeErr
 }
 
@@ -82,29 +86,100 @@ func (r *compressionTestReader) GetFileSize() (int64, error) {
 
 type compressionTestStorage struct {
 	storeapi.Storage
-	reader objectio.Reader
+	reader  objectio.Reader
+	openCtx context.Context
+	openErr error
 }
 
-func (s *compressionTestStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
-	return s.reader, nil
+func (s *compressionTestStorage) Open(ctx context.Context, _ string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
+	s.openCtx = ctx
+	return s.reader, s.openErr
 }
 
 func TestWithCompressionOpenCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	closeErr := errors.New("close source failed")
 	for _, sourceErr := range []error{nil, closeErr} {
 		source := &compressionTestReader{
 			Reader:   bytes.NewReader([]byte("invalid gzip header")),
 			closeErr: sourceErr,
 		}
-		storage := WithCompression(&compressionTestStorage{reader: source}, compressedio.Gzip, compressedio.DecompressConfig{})
-		reader, err := storage.Open(context.Background(), "invalid.gz", nil)
+		inner := &compressionTestStorage{reader: source}
+		var closeCtxErr error
+		source.onClose = func() { closeCtxErr = inner.openCtx.Err() }
+		storage := WithCompression(inner, compressedio.Gzip, compressedio.DecompressConfig{})
+		reader, err := storage.Open(ctx, "invalid.gz", nil)
 		require.Nil(t, reader)
 		require.ErrorIs(t, err, gzip.ErrHeader)
 		require.Equal(t, 1, source.closeCount)
+		require.ErrorIs(t, closeCtxErr, context.Canceled)
+		require.ErrorIs(t, inner.openCtx.Err(), context.Canceled)
+		require.NoError(t, ctx.Err())
 		if sourceErr != nil {
 			require.ErrorIs(t, err, sourceErr)
 		}
 	}
+}
+
+func TestWithCompressionOpenCancellation(t *testing.T) {
+	t.Run("open failure", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		openErr := errors.New("open source failed")
+		inner := &compressionTestStorage{openErr: openErr}
+		storage := WithCompression(inner, compressedio.Gzip, compressedio.DecompressConfig{})
+		reader, err := storage.Open(ctx, "test.gz", nil)
+		require.Nil(t, reader)
+		require.ErrorIs(t, err, openErr)
+		require.ErrorIs(t, inner.openCtx.Err(), context.Canceled)
+		require.NoError(t, ctx.Err())
+	})
+
+	t.Run("reader contexts", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var compressed bytes.Buffer
+		writer := compressedio.NewWriter(compressedio.Gzip, &compressed)
+		_, err := writer.Write([]byte("hello,world!"))
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+		inner := &compressionTestStorage{}
+		storage := WithCompression(inner, compressedio.Gzip, compressedio.DecompressConfig{})
+		var readers [2]objectio.Reader
+		var sources [2]*compressionTestReader
+		var requestCtxs [2]context.Context
+		var closeCtxErrs [2]error
+		for i := range readers {
+			sources[i] = &compressionTestReader{
+				Reader:  bytes.NewReader(compressed.Bytes()),
+				onClose: func() { closeCtxErrs[i] = requestCtxs[i].Err() },
+			}
+			inner.reader = sources[i]
+			readers[i], err = storage.Open(ctx, "test.gz", nil)
+			require.NoError(t, err)
+			requestCtxs[i] = inner.openCtx
+			t.Cleanup(func() {
+				if sources[i].closeCount == 0 {
+					require.NoError(t, readers[i].Close())
+				}
+			})
+			require.NoError(t, requestCtxs[i].Err())
+		}
+
+		require.NoError(t, readers[0].Close())
+		require.ErrorIs(t, closeCtxErrs[0], context.Canceled)
+		require.ErrorIs(t, requestCtxs[0].Err(), context.Canceled)
+		require.Equal(t, 1, sources[0].closeCount)
+		require.NoError(t, requestCtxs[1].Err())
+		require.NoError(t, ctx.Err())
+
+		cancel()
+		require.ErrorIs(t, requestCtxs[1].Err(), context.Canceled)
+		require.NoError(t, readers[1].Close())
+		require.ErrorIs(t, closeCtxErrs[1], context.Canceled)
+		require.Equal(t, 1, sources[1].closeCount)
+	})
 }
 
 func TestInterceptDecompressReaderClose(t *testing.T) {
