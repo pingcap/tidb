@@ -153,6 +153,7 @@ func NewHandle(
 	if err != nil {
 		return nil, err
 	}
+	readWriter := storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache)
 	handle := &Handle{
 		InitStatsDone:              make(chan struct{}),
 		Pool:                       statsPool,
@@ -162,12 +163,12 @@ func NewHandle(
 		StatsCache:                 statsCache,
 		StatsLock:                  lockstats.NewStatsLock(pool),
 		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
-		StatsReadWriter:            storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache),
+		StatsReadWriter:            readWriter,
+		StatsGlobal:                globalstats.NewStatsGlobal(statsPool, tables, readWriter),
 	}
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
-	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,

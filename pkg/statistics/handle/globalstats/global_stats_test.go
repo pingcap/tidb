@@ -1224,7 +1224,7 @@ func TestGlobalStatsSampledNDV(t *testing.T) {
 	h := dom.StatsHandle()
 	opts := map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumBuckets: 10, ast.AnalyzeOptNumTopN: 0}
 	mergedNDV := func(t *testing.T, isIndex bool, id int64) int64 {
-		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
+		merged, err := globalstats.MergePartitionStats2GlobalStats(tk.Session(), h, h, opts, dom.InfoSchema(), tbl, isIndex, []int64{id})
 		require.NoError(t, err)
 		return merged.Hg[0].NDV
 	}
