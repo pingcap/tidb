@@ -102,11 +102,32 @@ type Handle struct {
 	// StatsCache ...
 	types.StatsCache
 
+	analyzeHandle *AnalyzeHandle
+
 	// tableStats gets the stats of tables. The getters of Handle wrap it, because a nil Handle
 	// must still give pseudo stats.
 	tableStats *tableStatsGetter
 
 	InitStatsDone chan struct{}
+}
+
+// AnalyzeHandle is the part of the stats handle that an ANALYZE statement uses. It is a set of
+// stats components, so a session can use another set, for example one without a stats cache.
+type AnalyzeHandle struct {
+	util.GoroutinePool
+	types.PhysicalTableStatsGetter
+	types.StatsCacheLoader
+	types.StatsMetaReader
+	types.AnalyzeResultSaver
+	types.LockedTablesGetter
+	types.PredicateColumnsGetter
+	types.AnalyzeJobRecorder
+	types.StatsGlobal
+}
+
+// AnalyzeHandle returns the stats components that ANALYZE uses.
+func (h *Handle) AnalyzeHandle() *AnalyzeHandle {
+	return h.analyzeHandle
 }
 
 // Clear the statsCache, only for test.
@@ -146,6 +167,8 @@ func NewHandle(
 	tableStats := newTableStatsGetter(statsPool, statsCache)
 	readWriter := storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache)
 	statsAnalyze := autoanalyze.NewStatsAnalyze(ctx, statsPool, procIDs, tables, statsCache, tableStats, tracker, ddlNotifier)
+	statsGlobal := globalstats.NewStatsGlobal(statsPool, tables, readWriter)
+	statsUsage := usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats)
 	handle := &Handle{
 		InitStatsDone:              make(chan struct{}),
 		Pool:                       statsPool,
@@ -157,11 +180,22 @@ func NewHandle(
 		StatsLock:                  statsLock,
 		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
 		StatsReadWriter:            readWriter,
-		StatsGlobal:                globalstats.NewStatsGlobal(statsPool, tables, readWriter),
-		StatsUsage:                 usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats),
+		StatsGlobal:                statsGlobal,
+		StatsUsage:                 statsUsage,
 		StatsSyncLoad:              syncload.NewStatsSyncLoad(statsPool, leaseHolder, tables, statsCache),
 		StatsAnalyze:               statsAnalyze,
 		DDL:                        ddl.NewDDLHandler(),
+		analyzeHandle: &AnalyzeHandle{
+			GoroutinePool:            statsPool,
+			PhysicalTableStatsGetter: tableStats,
+			StatsCacheLoader:         statsCache,
+			StatsMetaReader:          readWriter,
+			AnalyzeResultSaver:       readWriter,
+			LockedTablesGetter:       statsLock,
+			PredicateColumnsGetter:   statsUsage,
+			AnalyzeJobRecorder:       statsAnalyze,
+			StatsGlobal:              statsGlobal,
+		},
 	}
 	if ddlNotifier != nil {
 		// In test environments, we use a channel-based approach to handle DDL events.
