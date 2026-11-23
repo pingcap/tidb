@@ -925,22 +925,22 @@ func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stm
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+func (stmt *PlanCacheStmt) DBName() []ast.CIStr { return stmt.dbName }
 
 // Tbls returns the tbls field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
+func (stmt *PlanCacheStmt) Tbls() []table.Table { return stmt.tbls }
 
 // TableNames returns the table names used to resolve the statement's tables.
-func (s *PlanCacheStmt) TableNames() []ast.CIStr { return s.tblName }
+func (stmt *PlanCacheStmt) TableNames() []ast.CIStr { return stmt.tblName }
 
 // SetDBNameAndTbls sets the table names and tbls fields, cloning the input slices
 // so that this PlanCacheStmt owns independent backing arrays. This is required
 // because planCachePreprocess replaces tbls[i] in-place during Execute, and
 // sharing the backing array with a cached template would cause cross-stmt contamination.
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName, tblName []ast.CIStr, tbls []table.Table) {
-	s.dbName = slices.Clone(dbName)
-	s.tblName = slices.Clone(tblName)
-	s.tbls = slices.Clone(tbls)
+func (stmt *PlanCacheStmt) SetDBNameAndTbls(dbName, tblName []ast.CIStr, tbls []table.Table) {
+	stmt.dbName = slices.Clone(dbName)
+	stmt.tblName = slices.Clone(tblName)
+	stmt.tbls = slices.Clone(tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
