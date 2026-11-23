@@ -15,6 +15,7 @@
 package exec
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"time"
@@ -95,6 +96,26 @@ func RunAnalyzeStmt(
 	sql string,
 	params ...any,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
+		}
+	}()
+	return RunAnalyzeStmtWithCtx(statsutil.StatsCtx, sctx, procIDs, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+}
+
+// RunAnalyzeStmtWithCtx is RunAnalyzeStmt that stops when ctx, which must carry an internal
+// source type, is cancelled. It recovers no panic: an unfinished statement must not look finished.
+func RunAnalyzeStmtWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
+	sysProcTracker sysproctrack.Tracker,
+	statsVer int,
+	needVersionRewriteWarn bool,
+	sql string,
+	params ...any,
+) ([]chunk.Row, []*resolve.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
@@ -106,13 +127,8 @@ func RunAnalyzeStmt(
 		sqlexec.ExecOptionUseCurSession,
 		sqlexec.ExecOptionWithSysProcTrack(autoAnalyzeProcID, autoAnalyzeTracker.Track, autoAnalyzeTracker.UnTrack),
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Warn("panic in execAnalyzeStmt", zap.Any("error", r), zap.Stack("stack"))
-		}
-		procIDs.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
-	}()
-	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
+	defer procIDs.ReleaseAutoAnalyzeProcID(autoAnalyzeProcID)
+	return statsutil.ExecWithOptsWithCtx(ctx, sctx, optFuncs, sql, params...)
 }
 
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
