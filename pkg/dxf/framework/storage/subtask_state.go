@@ -170,36 +170,27 @@ func (mgr *TaskManager) CancelPausedSubtasks(ctx context.Context, taskID int64) 
 		return err
 	}
 
-	type subtaskSize struct {
-		id   int64
-		size uint64
-	}
 	const pausedSubtaskRowOverhead = 1024
-	subtasks := make([]subtaskSize, 0, len(rs))
-	for _, r := range rs {
-		subtasks = append(subtasks, subtaskSize{
-			id:   r.GetInt64(0),
-			size: uint64(r.GetInt64(1)) + pausedSubtaskRowOverhead,
-		})
-	}
-
 	// Keep each update transaction comfortably below TxnTotalSizeLimit because
 	// UPDATE rewrites full row values and index entries in the transaction buffer.
 	maxBatchBytes := max(min(kv.TxnTotalSizeLimit.Load(), uint64(maxSubtaskBatchSize))/2, uint64(1))
-	var batches [][]int64
-	var currBatch []int64
+	ids := make([]int64, 0, len(rs))
+	batches := make([][]int64, 0, 1)
+	var batchStart int
 	var currBytes uint64
-	for _, st := range subtasks {
-		if len(currBatch) > 0 && currBytes+st.size > maxBatchBytes {
-			batches = append(batches, currBatch)
-			currBatch = nil
+	for _, r := range rs {
+		id := r.GetInt64(0)
+		size := uint64(r.GetInt64(1)) + pausedSubtaskRowOverhead
+		if len(ids) > batchStart && currBytes+size > maxBatchBytes {
+			batches = append(batches, ids[batchStart:len(ids)])
+			batchStart = len(ids)
 			currBytes = 0
 		}
-		currBatch = append(currBatch, st.id)
-		currBytes += st.size
+		ids = append(ids, id)
+		currBytes += size
 	}
-	if len(currBatch) > 0 {
-		batches = append(batches, currBatch)
+	if len(ids) > batchStart {
+		batches = append(batches, ids[batchStart:])
 	}
 
 	var cancelBatch func(ids []int64) error
