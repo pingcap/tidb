@@ -53,39 +53,39 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	fields := *sel.Fields
 	fields.Fields = slices.Clone(sel.Fields.Fields)
 	countSel.Fields = &fields
-	count, err := b.buildSelect(ctx, &countSel)
-	if err != nil {
-		return nil, err
-	}
-	if !b.ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows {
-		count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
-			F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
-		}}, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-		// buildAggregation also exposes FIRST_ROW expressions for its input columns.
-		// Retain only COUNT, allowing normal column pruning to discard those inputs.
-		projection := logicalop.LogicalProjection{
-			Exprs: []expression.Expression{count.Schema().Columns[0]},
-		}.Init(b.ctx, b.getSelectOffset())
-		projection.SetChildren(count)
-		projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
-		projection.SetOutputNames(count.OutputNames()[:1])
-		b.foundRowsPlan = projection
-	}
-	// AST nodes are shared, but their column bindings must belong to each
-	// independent plan. In particular, do not reuse correlated aggregate columns
-	// extracted while building the count branch in the data branch.
-	clear(b.colMapper)
-	clear(b.correlatedAggMapper)
+	// Build the data branch first so view-triggered noop fallback skips the
+	// count branch altogether and never evaluates non-correlated subqueries twice.
 	plan, err := b.buildSelect(ctx, sel)
 	if err != nil {
 		return nil, err
 	}
 	if b.ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows {
-		b.foundRowsPlan = nil
+		return plan, nil
 	}
+	// AST nodes are shared, but their column bindings must belong to each
+	// independent plan. In particular, do not reuse correlated aggregate columns
+	// extracted while building the data branch in the count branch.
+	clear(b.colMapper)
+	clear(b.correlatedAggMapper)
+	count, err := b.buildSelect(ctx, &countSel)
+	if err != nil {
+		return nil, err
+	}
+	count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
+		F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
+	}}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	// buildAggregation also exposes FIRST_ROW expressions for its input columns.
+	// Retain only COUNT, allowing normal column pruning to discard those inputs.
+	projection := logicalop.LogicalProjection{
+		Exprs: []expression.Expression{count.Schema().Columns[0]},
+	}.Init(b.ctx, b.getSelectOffset())
+	projection.SetChildren(count)
+	projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
+	projection.SetOutputNames(count.OutputNames()[:1])
+	b.foundRowsPlan = projection
 	return plan, nil
 }
 

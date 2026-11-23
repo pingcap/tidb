@@ -499,6 +499,29 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 			}
 			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 		}
+		// A non-correlated scalar or EXISTS subquery over a side-effecting view
+		// must evaluate only once when falling back to noop (and zero times when OFF).
+		tk.MustExec("create sequence fr_seq")
+		tk.MustExec("create view fr_v_seq as select nextval(fr_seq) as n")
+		tk.MustExec("create view fr_v_seq_exists as select 1 as ok from dual where nextval(fr_seq) > 0")
+		tk.MustExec("set tidb_enable_noop_functions=OFF")
+		tk.MustGetErrCode("select SQL_CALC_FOUND_ROWS (select n from fr_v_seq)", mysql.ErrNotSupportedYet)
+		tk.MustGetErrCode("select SQL_CALC_FOUND_ROWS 1 from fr_t where exists (select 1 from fr_v_seq_exists) limit 1", mysql.ErrNotSupportedYet)
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS (select n from fr_v_seq)").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS 1 from fr_t where exists (select 1 from fr_v_seq_exists) order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustExec("set tidb_enable_noop_functions=WARN")
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS (select n from fr_v_seq)").Check(testkit.Rows("3"))
+		tk.MustQuery("show warnings").Check(noopWarn)
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS 1 from fr_t where exists (select 1 from fr_v_seq_exists) order by id limit 1").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(noopWarn)
+		tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		tk.MustQuery("select nextval(fr_seq)").Check(testkit.Rows("5"))
 		// Replacing the view with a repeatable definition must restore native counting
 		// in both OFF and ON modes.
 		tk.MustExec("create or replace view fr_v_rand as select id from fr_t")
