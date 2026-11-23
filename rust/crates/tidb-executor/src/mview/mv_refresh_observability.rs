@@ -17,17 +17,22 @@
 //! under each data-change step, the brief EXPLAIN of the statement it would
 //! run, executing nothing.
 
+use super::mview_refresh::MviewRefreshExec as _;
+use super::mlog_purge::MlogPurgeExec as _;
+use super::mview_compare::MviewCompareExec as _;
+use super::mview_task::MviewTaskExec as _;
+use super::mview_show::MviewShowExec as _;
 use tidb_ast::{RefreshMaterializedViewMode, RefreshMaterializedViewStmt};
 use tidb_datatype::{Datum, FieldType};
 use tidb_driver_error::DriverError;
-use tidb_executor::sessionctx::StmtOutput;
+use crate::sessionctx::StmtOutput;
 use tidb_sqlescape::SqlArg;
 
-use crate::mview_refresh::{
+use super::mview_refresh::{
     annotate, apply_refresh_execution_session_vars, capture_refresh_execution_session_vars, plain, set_session_vars, sys_sql,
     validate_refresh_materialized_view_stmt,
 };
-use crate::Session;
+use super::MvSession;
 
 /// Go master `mvRefreshObserveStepKind`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,7 +185,7 @@ struct StepRuntime {
 /// Go master `mvRefreshObserveCollector`: each observed step's runtime, by
 /// step name.
 #[derive(Default)]
-pub(crate) struct MvRefreshObserveCollector {
+pub struct MvRefreshObserveCollector {
     steps: Vec<(&'static str, StepRuntime)>,
 }
 
@@ -275,15 +280,49 @@ fn refresh_steps_output(rows: Vec<String>) -> StmtOutput {
     StmtOutput::Rows { columns, rows }
 }
 
-impl Session {
+
+/// Go master `refreshImplementOptions`.
+#[derive(Clone, Copy, Debug, Default)]
+struct ImplementWindow {
+    last_successful_refresh_read_tso: u64,
+    target_refresh_read_tso: u64,
+    mlog_retained_lower_tso: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_as_go() {
+        let names = |mode| build_mv_refresh_observe_steps(mode).into_iter().map(|step| format!("{} {}", step.id, step.name)).collect::<Vec<_>>();
+        assert_eq!(
+            names(RefreshMaterializedViewMode::CompleteOutOfPlace),
+            ["S01 INSERT_HIST_RUNNING", "S02 OUT_OF_PLACE_CREATE_SHADOW", "S03 OUT_OF_PLACE_LOAD_SHADOW", "S04 OUT_OF_PLACE_CUTOVER", "S05 FINALIZE_HIST"]
+        );
+        assert_eq!(names(RefreshMaterializedViewMode::CompleteInPlace).len(), 8);
+        assert_eq!(names(RefreshMaterializedViewMode::CompleteDeltaApply)[3], "S04 DATA_CHANGE_COMPLETE_DELTA_APPLY");
+    }
+
+    #[test]
+    fn plan_id_suffixes_are_stripped_as_go() {
+        assert_eq!(strip_plan_id_suffixes("└─HashAgg_15"), "└─HashAgg");
+        assert_eq!(strip_plan_id_suffixes("├─HashAgg_15(Build)"), "├─HashAgg(Build)");
+        assert_eq!(strip_plan_id_suffixes("TableReader_1x"), "TableReader_1x");
+        assert_eq!(strip_plan_id_suffixes("a_1_2"), "a_1");
+    }
+}
+
+/// Go master `pkg/executor`'s methods of this file over a session.
+pub trait MvRefreshObservabilityExec: MvSession {
     /// Go master `observeMVRefreshStep`: `run` timed under `step` when this
     /// refresh is profiled.
-    pub(crate) fn observe_mv_refresh_step<T>(
+    fn observe_mv_refresh_step<T>(
         &self,
         step: &'static str,
         run: impl FnOnce() -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        let Some(observer) = self.mv_refresh_observer.clone() else {
+        let Some(observer) = self.mv_refresh_observer() else {
             return run();
         };
         let started = std::time::Instant::now();
@@ -298,8 +337,8 @@ impl Session {
 
     /// Go master `emitMVRefreshStepPlanRows`: the analyzed plan of the
     /// statement `session` just ran, recorded under `step`.
-    pub(crate) fn emit_mv_refresh_step_plan_rows(&self, step: &'static str, session: &mut Session) {
-        let Some(observer) = self.mv_refresh_observer.clone() else {
+    fn emit_mv_refresh_step_plan_rows(&self, step: &'static str, session: &mut Self) {
+        let Some(observer) = self.mv_refresh_observer() else {
             return;
         };
         if let Some(rows) = session.last_statement_analyzed_plan_rows() {
@@ -310,10 +349,11 @@ impl Session {
     /// Go master `Explain{Analyze: true, RuntimeStatsColl}.RenderResult` over
     /// this session's last statement plan (`StmtCtx.GetPlan()`), outside an
     /// EXPLAIN statement: the operator info keeps its plan ids.
-    pub(crate) fn last_statement_analyzed_plan_rows(&mut self) -> Option<Vec<Vec<String>>> {
-        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+    fn last_statement_analyzed_plan_rows(&mut self) -> Option<Vec<Vec<String>>> {
+        use crate::stmt_ctx_build::ResetContextOfStmt as _;
         let (plan, runtime_stats_coll, statement_memory) = {
-            let cell = self.process_plan_info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let info = self.process_plan_info();
+            let cell = info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             (cell.plan.clone()?, cell.runtime_stats_coll.clone(), cell.statement_memory.clone())
         };
         let ctx = self
@@ -324,12 +364,12 @@ impl Session {
                     .map(|coll| std::sync::Arc::clone(&*coll)),
             )
             .with_explain_target_memory(
-                statement_memory.and_then(|memory| memory.get::<tidb_executor::StatementMemory>()).map(|memory| (*memory).clone()),
+                statement_memory.and_then(|memory| memory.get::<crate::StatementMemory>()).map(|memory| (*memory).clone()),
             );
         let physical = plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>()?;
         let (_, rows) = self
             .with_catalog_mut(|catalog| {
-                tidb_executor::explain_connection_plan(&physical, catalog, &ctx, tidb_sessionctx::explain_format::ExplainFormat::Row)
+                crate::explain_connection_plan(&physical, catalog, &ctx, tidb_sessionctx::explain_format::ExplainFormat::Row)
             })
             .ok()?;
         Some(rows.iter().map(|row| row.iter().map(explain_cell).collect()).collect())
@@ -338,19 +378,19 @@ impl Session {
     /// Go master `RefreshMaterializedViewProfileExec.generateRows`: the
     /// refresh runs with a step collector, then each step's header with its
     /// status and time, and the analyzed plan of each data change.
-    pub(crate) fn refresh_materialized_view_profile(
+    fn refresh_materialized_view_profile(
         &mut self,
         s: &RefreshMaterializedViewStmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
+        validate_refresh_materialized_view_stmt(s, self.vars().restricted_sql)?;
         let steps = build_mv_refresh_observe_steps(s.mode);
         let mut refresh_stmt = s.clone();
         refresh_stmt.observe_type = tidb_ast::RefreshMaterializedViewObserveType::None;
         let collector = std::sync::Arc::new(std::sync::Mutex::new(MvRefreshObserveCollector::default()));
-        self.mv_refresh_observer = Some(std::sync::Arc::clone(&collector));
+        self.set_mv_refresh_observer(Some(std::sync::Arc::clone(&collector)));
         let refreshed = self.refresh_materialized_view(&refresh_stmt, sql);
-        self.mv_refresh_observer = None;
+        self.set_mv_refresh_observer(None);
         refreshed?;
         let collector = collector.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut rows = Vec::with_capacity(steps.len() * 2);
@@ -365,8 +405,8 @@ impl Session {
     }
 
     /// Go master `RefreshMaterializedViewDryRunExec.generateRows`.
-    pub(crate) fn refresh_materialized_view_dry_run(&mut self, s: &RefreshMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
-        validate_refresh_materialized_view_stmt(s, self.vars.restricted_sql)?;
+    fn refresh_materialized_view_dry_run(&mut self, s: &RefreshMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
+        validate_refresh_materialized_view_stmt(s, self.vars().restricted_sql)?;
         let (schema, info) = self.resolve_refresh_materialized_view_target(s)?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
         self.check_refresh_materialized_view_base_table_select(&self.refresh_latest_info_schema(), &mview)?;
@@ -425,7 +465,7 @@ impl Session {
     /// Go master `prepareMVRefreshObserveInternalSession`: a system session
     /// with the user's materialized view execution variables, materialized
     /// views on, maintenance in restricted SQL, and the user's redaction.
-    fn open_mv_refresh_observe_internal_session(&self) -> Result<Session, DriverError> {
+    fn open_mv_refresh_observe_internal_session(&self) -> Result<Self, DriverError> {
         let mut sys = self.open_refresh_system_session()?;
         // The observe session is discarded afterwards, which drops Go's
         // deferred restore.
@@ -434,9 +474,9 @@ impl Session {
         set_session_vars(&mut sys, &[(tidb_vardef::tidb_vars::TIDB_MVIEW_ENABLE.to_owned(), "ON".to_owned())])
             .map_err(|error| annotate(&error, "dry run refresh materialized view: failed to enable materialized view support"))?;
         // Go `setMVRefreshObserveRedaction`: plans follow the caller's mode.
-        sys.vars.set_enable_redact_log(self.vars.enable_redact_log().to_owned());
-        sys.vars.in_mview_maintenance = true;
-        sys.vars.restricted_sql = true;
+        sys.vars_mut().set_enable_redact_log(self.vars().enable_redact_log().to_owned());
+        sys.vars_mut().in_mview_maintenance = true;
+        sys.vars_mut().restricted_sql = true;
         Ok(sys)
     }
 
@@ -471,7 +511,7 @@ impl Session {
             &[SqlArg::Signed(info.id)],
         )
         .map_err(|error| {
-            if crate::mview_refresh::is_table_not_exists(&error) {
+            if super::mview_refresh::is_table_not_exists(&error) {
                 plain("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
             } else {
                 error
@@ -480,14 +520,14 @@ impl Session {
         let Some(row) = rows.first() else {
             return Err(plain("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info"));
         };
-        let Some(last) = row.first().and_then(crate::mview_refresh::datum_u64) else {
+        let Some(last) = row.first().and_then(super::mview_refresh::datum_u64) else {
             return Err(plain("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL"));
         };
         let mut window = ImplementWindow { last_successful_refresh_read_tso: last, ..ImplementWindow::default() };
         if target > 0 && target == last {
             return Ok(Vec::new());
         }
-        window.mlog_retained_lower_tso = crate::mview_refresh::check_fast_refresh_mlog_integrity(
+        window.mlog_retained_lower_tso = super::mview_refresh::check_fast_refresh_mlog_integrity(
             &mut validation,
             &self.refresh_latest_info_schema(),
             info,
@@ -532,7 +572,7 @@ impl Session {
         // Go's builder activates the internal session's transaction
         // (`b.ctx.Txn(true)`); with no statement provider its start TS bounds
         // the retained mlog window.
-        let start_ts = sys.node_conn().store_current_version().map_err(plain)?;
+        let start_ts = sys.store_current_version().map_err(plain)?;
         sys.optimize_refresh_implement(&mut plan, &ctx, &|| Ok(start_ts))?;
 
         // Go renders `Explain{Format: brief}` outside an EXPLAIN statement:
@@ -542,10 +582,10 @@ impl Session {
         let format = tidb_sessionctx::explain_format::ExplainFormat::Row;
         let (_, rows) = sys.with_planning_catalog(|catalog| match &plan {
             tidb_planner::common_plans::Plan::MViewCompleteDeltaApply(apply) => {
-                tidb_executor::explain_mview_complete_delta_apply(apply, catalog, &ctx, format)
+                crate::explain_mview_complete_delta_apply(apply, catalog, &ctx, format)
             }
             tidb_planner::common_plans::Plan::MViewDeltaMerge(merge) => {
-                tidb_executor::explain_mview_delta_merge(merge, catalog, &ctx, format)
+                crate::explain_mview_delta_merge(merge, catalog, &ctx, format)
             }
             _ => Err(plain("dry run refresh materialized view: unexpected internal plan")),
         })?;
@@ -553,34 +593,4 @@ impl Session {
     }
 }
 
-/// Go master `refreshImplementOptions`.
-#[derive(Clone, Copy, Debug, Default)]
-struct ImplementWindow {
-    last_successful_refresh_read_tso: u64,
-    target_refresh_read_tso: u64,
-    mlog_retained_lower_tso: u64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn steps_as_go() {
-        let names = |mode| build_mv_refresh_observe_steps(mode).into_iter().map(|step| format!("{} {}", step.id, step.name)).collect::<Vec<_>>();
-        assert_eq!(
-            names(RefreshMaterializedViewMode::CompleteOutOfPlace),
-            ["S01 INSERT_HIST_RUNNING", "S02 OUT_OF_PLACE_CREATE_SHADOW", "S03 OUT_OF_PLACE_LOAD_SHADOW", "S04 OUT_OF_PLACE_CUTOVER", "S05 FINALIZE_HIST"]
-        );
-        assert_eq!(names(RefreshMaterializedViewMode::CompleteInPlace).len(), 8);
-        assert_eq!(names(RefreshMaterializedViewMode::CompleteDeltaApply)[3], "S04 DATA_CHANGE_COMPLETE_DELTA_APPLY");
-    }
-
-    #[test]
-    fn plan_id_suffixes_are_stripped_as_go() {
-        assert_eq!(strip_plan_id_suffixes("└─HashAgg_15"), "└─HashAgg");
-        assert_eq!(strip_plan_id_suffixes("├─HashAgg_15(Build)"), "├─HashAgg(Build)");
-        assert_eq!(strip_plan_id_suffixes("TableReader_1x"), "TableReader_1x");
-        assert_eq!(strip_plan_id_suffixes("a_1_2"), "a_1");
-    }
-}
+impl<T: MvSession> MvRefreshObservabilityExec for T {}

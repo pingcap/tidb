@@ -19,6 +19,7 @@ test-util = [
 ]
 
 [dependencies]
+tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-util-config = { path = "../tidb-util-config" }
 tidb-cpu = { path = "../tidb-cpu" }

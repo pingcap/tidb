@@ -49,7 +49,7 @@ impl tidb_executor::import_into::ImportIntoSession for Session {
     }
 
     fn refresh_latest_info_schema(&self) -> std::sync::Arc<tidb_infoschema::SessionExtendedInfoSchema> {
-        Session::refresh_latest_info_schema(self)
+        tidb_executor::mview::MvSession::refresh_latest_info_schema(self)
     }
 
     fn with_planning_catalog<T>(

@@ -19,18 +19,23 @@
 //! the rows that differ -- as a one-row summary, or written to an OUTPUT
 //! table.
 
+use super::mview_refresh::MviewRefreshExec as _;
+use super::mlog_purge::MlogPurgeExec as _;
+use super::mv_refresh_observability::MvRefreshObservabilityExec as _;
+use super::mview_task::MviewTaskExec as _;
+use super::mview_show::MviewShowExec as _;
 use std::collections::HashMap;
 
 use tidb_ast::CompareMaterializedViewStmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_driver_error::DriverError;
-use tidb_executor::sessionctx::StmtOutput;
+use crate::sessionctx::StmtOutput;
 use tidb_model::{ColumnInfo, TableInfo};
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use crate::mview_refresh::{annotate, plain, read_refresh_info_snapshot, set_session_vars, sys_sql};
-use crate::Session;
+use super::mview_refresh::{annotate, plain, read_refresh_info_snapshot, set_session_vars, sys_sql};
+use super::MvSession;
 
 const FP: &str = "github.com/pingcap/tidb/pkg/executor/";
 const DIFFER_TYPE_BASE_NAME: &str = "_Differ_type_";
@@ -144,16 +149,16 @@ fn datum_sql_literal(datum: &Datum) -> Result<String, DriverError> {
 
 /// Go master `compareMaterializedViewOutputWriter`: the OUTPUT table and the
 /// session its rows are written on, in batches that each commit.
-struct CompareOutputWriter {
+struct CompareOutputWriter<S> {
     schema: String,
     table: String,
-    session: Session,
+    session: S,
     pending: Vec<String>,
     pending_bytes: usize,
     batch_bytes: usize,
 }
 
-impl CompareOutputWriter {
+impl<S: MvSession> CompareOutputWriter<S> {
     /// Go `flushBatch`: the pending rows commit, then the injected flush
     /// error.
     fn flush_batch(&mut self) -> Result<(), DriverError> {
@@ -201,16 +206,140 @@ struct ComparedRow<'a> {
     recomputed: Option<&'a [Datum]>,
 }
 
-impl Session {
+
+fn warn_output_cleanup(schema: &str, table: &str, error: &DriverError) {
+    tidb_logutil::bg_logger().warn(
+        "failed to cleanup compare materialized view output table",
+        &[
+            tidb_log::Field::new("schema", tidb_log::Value::Str(schema.to_owned())),
+            tidb_log::Field::new("table", tidb_log::Value::Str(table.to_owned())),
+            tidb_logutil::zap_error(super::mview_refresh::driver_message(error)),
+        ],
+    );
+}
+
+/// Go master `cleanupCompareMaterializedViewOutputTable`.
+fn drop_compare_materialized_view_output_table<S: MvSession>(ddl: &mut S, schema: &str, table: &str) {
+    if let Err(error) =
+        sys_sql(ddl, "DROP TABLE IF EXISTS %n.%n", &[SqlArg::String(schema.as_bytes()), SqlArg::String(table.as_bytes())])
+    {
+        warn_output_cleanup(schema, table, &error);
+    }
+}
+
+/// Go master `buildCompareMaterializedViewOutputCreateTableSQL`: the view's
+/// visible columns without key, auto-increment, no-default or on-update
+/// flags, then the diff-type column, as `SHOW CREATE TABLE` prints them,
+/// qualified by the OUTPUT table's schema.
+fn build_compare_materialized_view_output_create_table_sql<S: MvSession>(
+    ddl: &S,
+    output_schema: &str,
+    output_table: &str,
+    info: &TableInfo,
+    visible: &[ColumnInfo],
+    diff_type_column: &str,
+) -> Result<String, DriverError> {
+    use tidb_datatype::FieldTypeFlags as Flags;
+    use crate::stmt_ctx_build::ResetContextOfStmt as _;
+    const EXCLUDED: u32 = Flags::PRI_KEY
+        | Flags::UNIQUE_KEY
+        | Flags::MULTIPLE_KEY
+        | Flags::AUTO_INCREMENT
+        | Flags::NO_DEFAULT_VALUE
+        | Flags::ON_UPDATE_NOW;
+    let mut columns = Vec::with_capacity(visible.len() + 1);
+    for (offset, column) in visible.iter().enumerate() {
+        let mut column = column.clone();
+        column.offset = i64::try_from(offset).unwrap_or(i64::MAX);
+        column.state = tidb_model::SchemaState::PUBLIC;
+        let flags = column.field_type.flags() & !EXCLUDED;
+        column.field_type.set_flag(flags);
+        columns.push(column);
+    }
+    let charset = if info.charset.is_empty() { tidb_mysql::charset::DefaultCharset.to_owned() } else { info.charset.clone() };
+    let collate = if info.collate.is_empty() {
+        tidb_charset::charset::get_default_collation(&charset).map_err(|error| plain(error.to_string()))?
+    } else {
+        info.collate.clone()
+    };
+    let mut diff_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
+        .with_charset_name(&charset)
+        .with_collation_name(&collate);
+    diff_type.set_flen(32);
+    diff_type.set_flag(Flags::NOT_NULL);
+    columns.push(ColumnInfo {
+        id: i64::try_from(columns.len() + 1).unwrap_or(i64::MAX),
+        name: tidb_ast::CiString::new(diff_type_column),
+        offset: i64::try_from(columns.len()).unwrap_or(i64::MAX),
+        field_type: diff_type,
+        state: tidb_model::SchemaState::PUBLIC,
+        ..ColumnInfo::default()
+    });
+    let output = TableInfo {
+        name: tidb_ast::CiString::new(output_table),
+        charset: info.charset.clone(),
+        collate: info.collate.clone(),
+        state: tidb_model::SchemaState::PUBLIC,
+        columns: tidb_model::GoSharedPointerSlice::from_handles(columns.into_iter().map(|column| Some(tidb_model::GoShared::new(column))).collect()),
+        ..TableInfo::default()
+    };
+    let common = tidb_table::table_from_meta::table_from_meta(&output, &tidb_table::table_from_meta::AutoIdSource::Unavailable)
+        .map_err(plain)?;
+    let ctx = ddl.statement_context(false);
+    let table_def =
+        crate::show::create::construct_result_of_show_create_table(output_schema, output_table, &common, &ctx, false)?;
+    let ansi_quotes = ctx.sql_mode().ansi_quotes;
+    let escape = |name: &str| crate::show::create::escape_name(name, ansi_quotes);
+    let prefix = format!("CREATE TABLE {}", escape(output_table));
+    let Some(rest) = table_def.strip_prefix(&prefix) else {
+        return Err(plain(format!("compare materialized view: invalid output table DDL {table_def:?}")));
+    };
+    Ok(format!("CREATE TABLE {}.{}{rest}", escape(output_schema), escape(output_table)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_text_as_go() {
+        // 2026-01-01 00:00:00 UTC, logical 7.
+        let tso = (1_767_225_600_000u64 << 18) + 7;
+        let zone = tidb_datatype::SessionTimeZone::Fixed { name: "+08:00".to_owned(), offset_secs: 8 * 3600 };
+        assert_eq!(
+            format_compare_materialized_view_summary(tso, 3, &zone),
+            format!("There are differences result in 3 rows compared to source base tables at timestamp '2026-01-01 08:00:00.000000 +08:00' (TSO: {tso})")
+        );
+        assert!(format_compare_materialized_view_summary(tso, 0, &zone).starts_with("There are no differences result in 0 rows"));
+    }
+
+    #[test]
+    fn differ_type_column_avoids_view_columns_as_go() {
+        let column = |name: &str| ColumnInfo { name: tidb_ast::CiString::new(name), ..ColumnInfo::default() };
+        assert_eq!(choose_compare_materialized_view_differ_type_column_name(&[column("a")]), "_Differ_type_");
+        assert_eq!(
+            choose_compare_materialized_view_differ_type_column_name(&[column("_differ_TYPE_"), column("_Differ_type_1")]),
+            "_Differ_type_2"
+        );
+    }
+
+    #[test]
+    fn row_diff_classification_as_go() {
+        assert_eq!(classify_compare_materialized_view_row_diff(true, true, true), Some(EXCESSIVE_TYPE));
+        assert_eq!(classify_compare_materialized_view_row_diff(false, true, false), Some(EXCESSIVE_TYPE));
+        assert_eq!(classify_compare_materialized_view_row_diff(true, false, true), Some(VACUUM_TYPE));
+        assert_eq!(classify_compare_materialized_view_row_diff(false, false, true), Some(DIFFER_TYPE));
+        assert_eq!(classify_compare_materialized_view_row_diff(false, false, false), None);
+    }
+}
+
+/// Go master `pkg/executor`'s methods of this file over a session.
+pub trait MviewCompareExec: MvSession {
     /// Go master `CompareMaterializedViewExec.Next`.
-    pub(crate) fn compare_materialized_view(&mut self, s: &CompareMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
+    fn compare_materialized_view(&mut self, s: &CompareMaterializedViewStmt) -> Result<StmtOutput, DriverError> {
         let compare_snapshot_ts = self.calculate_as_of_ts_expr(&s.as_of)?;
         self.precheck_compare_materialized_view_current_state(s)?;
-        let domain = self
-            .domain_services()
-            .and_then(|services| services.domain.upgrade())
-            .ok_or_else(|| DriverError::unsupported("the session has no domain to read a snapshot schema from"))?;
-        let snapshot = crate::domain::cluster_session_node::get_snapshot_info_schema(&domain, compare_snapshot_ts)?;
+        let snapshot = self.snapshot_info_schema(compare_snapshot_ts)?;
         let (schema, info) = self.resolve_mview_statement_target(&snapshot, &s.view_name, "compare materialized view")?;
         let mview = info.materialized_view.as_ref().expect("resolved as a view").read().clone();
         self.check_refresh_materialized_view_base_table_select(&snapshot, &mview)?;
@@ -218,9 +347,9 @@ impl Session {
         let last_success_read_tso = self.read_compare_materialized_view_last_success_read_tso(info.id, compare_snapshot_ts)?;
 
         // Go `mvmerge.BuildCompleteDiffSource` for the layout.
-        let config = self.vars.build_parser_config();
-        let charset = self.vars.get_system("character_set_connection").unwrap_or_else(|_| "utf8mb4".to_owned());
-        let collation = self.vars.get_system("collation_connection").unwrap_or_else(|_| "utf8mb4_bin".to_owned());
+        let config = self.vars().build_parser_config();
+        let charset = self.vars().get_system("character_set_connection").unwrap_or_else(|_| "utf8mb4".to_owned());
+        let collation = self.vars().get_system("collation_connection").unwrap_or_else(|_| "utf8mb4_bin".to_owned());
         let parse = |sql: &str| {
             tidb_parser::parse_with_config_and_connection(sql, config, &charset, &collation)
                 .map_err(|error| error.compatibility_message(sql))
@@ -277,7 +406,7 @@ impl Session {
             .zip(names)
             .map(|(column, name)| (name.names.column.original.clone(), column.ret_type.clone().unwrap_or_else(|| FieldType::new(tidb_datatype::FieldTypeCode::String))))
             .collect();
-        let summary = format_compare_materialized_view_summary(last_success_read_tso, diff_rows, &self.vars.session_time_zone());
+        let summary = format_compare_materialized_view_summary(last_success_read_tso, diff_rows, &self.vars().session_time_zone());
         Ok(StmtOutput::Rows { columns, rows: vec![vec![Datum::String(tidb_datatype::StringDatum::new(summary, tidb_charset::Collation::Utf8Mb4Bin))]] })
     }
 
@@ -348,7 +477,7 @@ impl Session {
 
     /// Go master `openCompareMaterializedViewSnapshotSession`: a system
     /// session reading at `snapshot_ts` (`SET @@tidb_snapshot`).
-    fn open_compare_materialized_view_snapshot_session(&self, snapshot_ts: u64) -> Result<Session, DriverError> {
+    fn open_compare_materialized_view_snapshot_session(&self, snapshot_ts: u64) -> Result<Self, DriverError> {
         let mut sys = self.open_refresh_system_session()?;
         let snapshot = if snapshot_ts == 0 { String::new() } else { snapshot_ts.to_string() };
         sys_sql(&mut sys, "SET @@tidb_snapshot = %?", &[SqlArg::String(snapshot.as_bytes())])?;
@@ -368,13 +497,13 @@ impl Session {
         // Go `ddl.InitMViewSession(sessVars, mviewInfo, sessVars.CurrentDB,
         // sessVars.ResourceGroupName)`; the snapshot session is discarded
         // afterwards, which drops its restore.
-        let current_db = sys.vars.current_db.clone();
-        let resource_group = sys.vars.resource_group.clone();
-        let init = tidb_ddl::cluster_ddl::materialized_view::init_m_view_session(&mut sys.vars, mview, &current_db, &resource_group);
+        let current_db = sys.vars().current_db.clone();
+        let resource_group = sys.vars().resource_group.clone();
+        let init = tidb_ddl::cluster_ddl::materialized_view::init_m_view_session(sys.vars_mut(), mview, &current_db, &resource_group);
         sys.take_var_warnings();
         let _restore_definition_session = init.map_err(DriverError::Mysql)?;
         let context = tidb_sqlexec::BackgroundContext;
-        let (rows, fields) = crate::domain::cluster_session_node::execute_internal_under(&mut sys, &context, sql)
+        let (rows, fields) = sys.execute_internal_under(&context, sql)
             .map_err(|error| match error.downcast::<tidb_store_driver_error::sql_query_error::SqlQueryError>() {
                 Ok(error) => DriverError::Mysql((*error).into()),
                 Err(error) => plain(error.to_string()),
@@ -407,7 +536,7 @@ impl Session {
         marker: usize,
         compare_snapshot_ts: u64,
         last_success_read_tso: u64,
-        mut writer: Option<&mut CompareOutputWriter>,
+        mut writer: Option<&mut CompareOutputWriter<Self>>,
     ) -> Result<i64, DriverError> {
         let (recomputed, _) = self.read_compare_materialized_view_query(last_success_read_tso, mview, &mview.sql_content)?;
         let current_sql = build_compare_materialized_view_select_sql(schema, info.name.original(), visible)?;
@@ -467,7 +596,7 @@ impl Session {
             let current = pair.current.unwrap_or(&null_row);
             let recomputed = pair.recomputed.unwrap_or(&null_row);
             let payload_changed = payload.iter().any(|&offset| {
-                tidb_executor::driver::mview_delta_apply::values_differ(&current[offset], &recomputed[offset])
+                crate::driver::mview_delta_apply::values_differ(&current[offset], &recomputed[offset])
             });
             let Some(diff_type) = classify_compare_materialized_view_row_diff(
                 matches!(current.get(marker), None | Some(Datum::Null)),
@@ -496,7 +625,7 @@ impl Session {
         info: &TableInfo,
         mview: &tidb_model::table::MaterializedViewInfo,
         visible: &[ColumnInfo],
-    ) -> Result<CompareOutputWriter, DriverError> {
+    ) -> Result<CompareOutputWriter<Self>, DriverError> {
         let diff_type_column = choose_compare_materialized_view_differ_type_column_name(visible);
         let mut ddl = self.open_refresh_system_session()?;
         let create = build_compare_materialized_view_output_create_table_sql(&ddl, output_schema, output_table, info, visible, &diff_type_column)?;
@@ -531,7 +660,7 @@ impl Session {
     /// Go master `compareMaterializedViewOutputWriter.rollback`: the
     /// unwritten rows are dropped and so is the OUTPUT table
     /// (`cleanupCompareMaterializedViewOutputTable`).
-    fn rollback_compare_materialized_view_output_writer(&self, writer: CompareOutputWriter) {
+    fn rollback_compare_materialized_view_output_writer(&self, writer: CompareOutputWriter<Self>) {
         drop(writer.session);
         match self.open_refresh_system_session() {
             Ok(mut ddl) => drop_compare_materialized_view_output_table(&mut ddl, &writer.schema, &writer.table),
@@ -540,128 +669,4 @@ impl Session {
     }
 }
 
-fn warn_output_cleanup(schema: &str, table: &str, error: &DriverError) {
-    tidb_logutil::bg_logger().warn(
-        "failed to cleanup compare materialized view output table",
-        &[
-            tidb_log::Field::new("schema", tidb_log::Value::Str(schema.to_owned())),
-            tidb_log::Field::new("table", tidb_log::Value::Str(table.to_owned())),
-            tidb_logutil::zap_error(crate::mview_refresh::driver_message(error)),
-        ],
-    );
-}
-
-/// Go master `cleanupCompareMaterializedViewOutputTable`.
-fn drop_compare_materialized_view_output_table(ddl: &mut Session, schema: &str, table: &str) {
-    if let Err(error) =
-        sys_sql(ddl, "DROP TABLE IF EXISTS %n.%n", &[SqlArg::String(schema.as_bytes()), SqlArg::String(table.as_bytes())])
-    {
-        warn_output_cleanup(schema, table, &error);
-    }
-}
-
-/// Go master `buildCompareMaterializedViewOutputCreateTableSQL`: the view's
-/// visible columns without key, auto-increment, no-default or on-update
-/// flags, then the diff-type column, as `SHOW CREATE TABLE` prints them,
-/// qualified by the OUTPUT table's schema.
-fn build_compare_materialized_view_output_create_table_sql(
-    ddl: &Session,
-    output_schema: &str,
-    output_table: &str,
-    info: &TableInfo,
-    visible: &[ColumnInfo],
-    diff_type_column: &str,
-) -> Result<String, DriverError> {
-    use tidb_datatype::FieldTypeFlags as Flags;
-    use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
-    const EXCLUDED: u32 = Flags::PRI_KEY
-        | Flags::UNIQUE_KEY
-        | Flags::MULTIPLE_KEY
-        | Flags::AUTO_INCREMENT
-        | Flags::NO_DEFAULT_VALUE
-        | Flags::ON_UPDATE_NOW;
-    let mut columns = Vec::with_capacity(visible.len() + 1);
-    for (offset, column) in visible.iter().enumerate() {
-        let mut column = column.clone();
-        column.offset = i64::try_from(offset).unwrap_or(i64::MAX);
-        column.state = tidb_model::SchemaState::PUBLIC;
-        let flags = column.field_type.flags() & !EXCLUDED;
-        column.field_type.set_flag(flags);
-        columns.push(column);
-    }
-    let charset = if info.charset.is_empty() { tidb_mysql::charset::DefaultCharset.to_owned() } else { info.charset.clone() };
-    let collate = if info.collate.is_empty() {
-        tidb_charset::charset::get_default_collation(&charset).map_err(|error| plain(error.to_string()))?
-    } else {
-        info.collate.clone()
-    };
-    let mut diff_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
-        .with_charset_name(&charset)
-        .with_collation_name(&collate);
-    diff_type.set_flen(32);
-    diff_type.set_flag(Flags::NOT_NULL);
-    columns.push(ColumnInfo {
-        id: i64::try_from(columns.len() + 1).unwrap_or(i64::MAX),
-        name: tidb_ast::CiString::new(diff_type_column),
-        offset: i64::try_from(columns.len()).unwrap_or(i64::MAX),
-        field_type: diff_type,
-        state: tidb_model::SchemaState::PUBLIC,
-        ..ColumnInfo::default()
-    });
-    let output = TableInfo {
-        name: tidb_ast::CiString::new(output_table),
-        charset: info.charset.clone(),
-        collate: info.collate.clone(),
-        state: tidb_model::SchemaState::PUBLIC,
-        columns: tidb_model::GoSharedPointerSlice::from_handles(columns.into_iter().map(|column| Some(tidb_model::GoShared::new(column))).collect()),
-        ..TableInfo::default()
-    };
-    let common = tidb_table::table_from_meta::table_from_meta(&output, &tidb_table::table_from_meta::AutoIdSource::Unavailable)
-        .map_err(plain)?;
-    let ctx = ddl.statement_context(false);
-    let table_def =
-        tidb_executor::show::create::construct_result_of_show_create_table(output_schema, output_table, &common, &ctx, false)?;
-    let ansi_quotes = ctx.sql_mode().ansi_quotes;
-    let escape = |name: &str| tidb_executor::show::create::escape_name(name, ansi_quotes);
-    let prefix = format!("CREATE TABLE {}", escape(output_table));
-    let Some(rest) = table_def.strip_prefix(&prefix) else {
-        return Err(plain(format!("compare materialized view: invalid output table DDL {table_def:?}")));
-    };
-    Ok(format!("CREATE TABLE {}.{}{rest}", escape(output_schema), escape(output_table)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn summary_text_as_go() {
-        // 2026-01-01 00:00:00 UTC, logical 7.
-        let tso = (1_767_225_600_000u64 << 18) + 7;
-        let zone = tidb_datatype::SessionTimeZone::Fixed { name: "+08:00".to_owned(), offset_secs: 8 * 3600 };
-        assert_eq!(
-            format_compare_materialized_view_summary(tso, 3, &zone),
-            format!("There are differences result in 3 rows compared to source base tables at timestamp '2026-01-01 08:00:00.000000 +08:00' (TSO: {tso})")
-        );
-        assert!(format_compare_materialized_view_summary(tso, 0, &zone).starts_with("There are no differences result in 0 rows"));
-    }
-
-    #[test]
-    fn differ_type_column_avoids_view_columns_as_go() {
-        let column = |name: &str| ColumnInfo { name: tidb_ast::CiString::new(name), ..ColumnInfo::default() };
-        assert_eq!(choose_compare_materialized_view_differ_type_column_name(&[column("a")]), "_Differ_type_");
-        assert_eq!(
-            choose_compare_materialized_view_differ_type_column_name(&[column("_differ_TYPE_"), column("_Differ_type_1")]),
-            "_Differ_type_2"
-        );
-    }
-
-    #[test]
-    fn row_diff_classification_as_go() {
-        assert_eq!(classify_compare_materialized_view_row_diff(true, true, true), Some(EXCESSIVE_TYPE));
-        assert_eq!(classify_compare_materialized_view_row_diff(false, true, false), Some(EXCESSIVE_TYPE));
-        assert_eq!(classify_compare_materialized_view_row_diff(true, false, true), Some(VACUUM_TYPE));
-        assert_eq!(classify_compare_materialized_view_row_diff(false, false, true), Some(DIFFER_TYPE));
-        assert_eq!(classify_compare_materialized_view_row_diff(false, false, false), None);
-    }
-}
+impl<T: MvSession> MviewCompareExec for T {}

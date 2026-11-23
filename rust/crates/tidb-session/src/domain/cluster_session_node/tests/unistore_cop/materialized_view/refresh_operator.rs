@@ -14,6 +14,7 @@
 
 //! Go master `pkg/executor/test/materializedview/materialized_view_refresh_operator_test.go`.
 
+use tidb_executor::mview::mv_refresh_observability::MvRefreshObservabilityExec as _;
 use super::*;
 
 /// Go `executeRefreshOperator`: the internal statement as materialized view

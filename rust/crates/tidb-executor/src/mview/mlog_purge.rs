@@ -22,21 +22,26 @@
 //! A statement this node runs is never Go's internal (scheduled) SQL, so the
 //! purge method is `manual` and the next purge time is not derived here.
 
+use super::mview_refresh::MviewRefreshExec as _;
+use super::mview_compare::MviewCompareExec as _;
+use super::mv_refresh_observability::MvRefreshObservabilityExec as _;
+use super::mview_task::MviewTaskExec as _;
+use super::mview_show::MviewShowExec as _;
 use std::time::{Duration, Instant};
 
 use tidb_ast::PurgeMaterializedViewLogStmt;
 use tidb_datatype::Datum;
 use tidb_driver_error::DriverError;
-use tidb_executor::sessionctx::StmtOutput;
+use crate::sessionctx::StmtOutput;
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use crate::mview_refresh::{
+use super::mview_refresh::{
     annotate, datum_i64, datum_u64, driver_message, format_duration_seconds_between, hist_time, is_table_not_exists,
     plain, session_current_tso, sys_sql, sys_sql_ctx,
 };
-use crate::mview_task::{read_hist_cancel_request, start_mv_task_monitor, MvTaskCancelController, MvTaskMonitor};
-use crate::Session;
+use super::mview_task::{read_hist_cancel_request, start_mv_task_monitor, MvTaskCancelController, MvTaskMonitor};
+use super::MvSession;
 
 /// Go master `mlogPurgeAdaptiveBatchWindow`.
 const MLOG_PURGE_ADAPTIVE_BATCH_WINDOW: Duration = Duration::from_millis(200);
@@ -207,7 +212,7 @@ fn purge_info_missing_table() -> DriverError {
 /// Go master `mvMaintainMemQuotaAppliedOn<site>` (`(session MemQuotaQuery,
 /// MViewMaintainMemQuota)`) and `mvMaintainIsolationReadEnginesAppliedOn<site>`
 /// (`(session engines, MViewMaintainIsolationReadEngines)`).
-fn inject_maintenance_vars_applied(session: &mut Session, mem_quota: &str, engines: &str, site: &str) {
+fn inject_maintenance_vars_applied<S: MvSession>(session: &mut S, mem_quota: &str, engines: &str, site: &str) {
     let applied = read_vars(session, &["tidb_mem_quota_query", "tidb_isolation_read_engines"]).unwrap_or_default();
     let applied_quota = applied.first().and_then(|value| value.parse::<i64>().ok()).unwrap_or_default();
     tidb_failpoint::inject_call(
@@ -224,15 +229,15 @@ fn inject_maintenance_vars_applied(session: &mut Session, mem_quota: &str, engin
 /// enabled and the user's maintenance memory quota and read engines applied
 /// -- best effort for an internal purge, whose failures keep the session's
 /// value; the answer is what restores them.
-fn apply_mlog_purge_maintenance_session_vars(
-    session: &mut Session,
+fn apply_mlog_purge_maintenance_session_vars<S: MvSession>(
+    session: &mut S,
     target_mem_quota: &str,
     target_isolation_read_engines: &str,
     best_effort: bool,
 ) -> Result<Vec<(&'static str, String)>, DriverError> {
     let original = read_vars(session, &["tidb_mview_enable", "tidb_mem_quota_query", "tidb_isolation_read_engines"])?;
     let (enable, mem_quota, engines) = (original[0].clone(), original[1].clone(), original[2].clone());
-    let restore_enable = |session: &mut Session| {
+    let restore_enable = |session: &mut S| {
         let _ = set_var(session, "tidb_mview_enable", &enable);
     };
     if enable != "1" && !enable.eq_ignore_ascii_case("ON") {
@@ -278,8 +283,8 @@ fn apply_mlog_purge_maintenance_session_vars(
 
 /// Go master `applyMLogPurgeDeleteTiFlashThreads`: the delete session's
 /// TiFlash concurrency -- best effort for an internal purge.
-fn apply_mlog_purge_delete_tiflash_threads(
-    session: &mut Session,
+fn apply_mlog_purge_delete_tiflash_threads<S: MvSession>(
+    session: &mut S,
     target_threads: i64,
     best_effort: bool,
 ) -> Result<Vec<(&'static str, String)>, DriverError> {
@@ -305,17 +310,17 @@ fn apply_mlog_purge_delete_tiflash_threads(
     Ok(vec![("tidb_max_tiflash_threads", original)])
 }
 
-fn set_var(session: &mut Session, name: &str, value: &str) -> Result<(), DriverError> {
+fn set_var<S: MvSession>(session: &mut S, name: &str, value: &str) -> Result<(), DriverError> {
     sys_sql(session, &format!("SET @@SESSION.{name} = %?"), &[SqlArg::String(value.as_bytes())]).map(|_| ())
 }
 
-fn read_vars(session: &mut Session, names: &[&str]) -> Result<Vec<String>, DriverError> {
+fn read_vars<S: MvSession>(session: &mut S, names: &[&str]) -> Result<Vec<String>, DriverError> {
     let select = format!("SELECT {}", names.iter().map(|name| format!("@@SESSION.{name}")).collect::<Vec<_>>().join(", "));
     let rows = sys_sql(session, &select, &[])?;
-    Ok(rows.first().map(|row| row.iter().map(crate::mview_refresh::datum_text).collect()).unwrap_or_default())
+    Ok(rows.first().map(|row| row.iter().map(super::mview_refresh::datum_text).collect()).unwrap_or_default())
 }
 
-fn restore_vars(session: &mut Session, vars: &[(&'static str, String)]) {
+fn restore_vars<S: MvSession>(session: &mut S, vars: &[(&'static str, String)]) {
     for (name, value) in vars {
         let _ = set_var(session, name, value);
     }
@@ -323,8 +328,8 @@ fn restore_vars(session: &mut Session, vars: &[(&'static str, String)]) {
 
 /// Go master `acquireMaterializedViewLogPurgeLock`: the purge-info row
 /// locked without waiting; its checkpoint and next purge time.
-fn acquire_materialized_view_log_purge_lock(
-    session: &mut Session,
+fn acquire_materialized_view_log_purge_lock<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     schema: &str,
     base_table: &str,
@@ -368,8 +373,8 @@ fn acquire_materialized_view_log_purge_lock(
 /// Go master `collectDependentMViewIDsForMLogPurge`: the base table's
 /// public views, and the views a running CREATE MATERIALIZED VIEW is
 /// building over the log.
-pub(crate) fn collect_dependent_mview_ids_for_mlog_purge(
-    session: &mut Session,
+pub fn collect_dependent_mview_ids_for_mlog_purge<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     base_table: &tidb_model::TableInfo,
     mlog_id: i64,
@@ -423,8 +428,8 @@ fn build_in_list(ids: &[i64]) -> String {
 
 /// Go master `calcMaterializedViewLogSafePurgeTSO`: the purge's start TSO,
 /// lowered to the least last-read TSO of the dependent views.
-pub(crate) fn calc_materialized_view_log_safe_purge_tso(
-    session: &mut Session,
+pub fn calc_materialized_view_log_safe_purge_tso<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     base_schema: &str,
     base_table: &str,
@@ -514,8 +519,8 @@ fn build_purge_materialized_view_log_delete_sql(
 
 /// Go master `purgeMaterializedViewLogData`: one delete batch on the delete
 /// session; the rows it deleted.
-fn purge_materialized_view_log_data(
-    session: &mut Session,
+fn purge_materialized_view_log_data<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     schema: &str,
     mlog_name: &str,
@@ -535,17 +540,17 @@ fn purge_materialized_view_log_data(
         build_purge_materialized_view_log_delete_sql(schema, mlog_name, last_purged_tso, safe_purge_tso, row_id_range, batch_size)?;
     tidb_failpoint::inject_call(&format!("{FP}purgeMaterializedViewLogDeleteSQL"), &mut delete_sql.clone());
     // Go master: the delete runs in materialized view maintenance.
-    let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
+    let original_maintenance = std::mem::replace(&mut session.vars_mut().in_mview_maintenance, true);
     let deleted = sys_sql_ctx(session, kctx, &delete_sql, &[]);
-    session.vars.in_mview_maintenance = original_maintenance;
+    session.vars_mut().in_mview_maintenance = original_maintenance;
     deleted?;
     Ok(i64::try_from(session.affected_rows()).unwrap_or(i64::MAX))
 }
 
 /// Go master `readMLogPurgePendingRowStatsOnTiFlash`: the window's row count
 /// and row-id bounds, read on TiFlash only.
-fn read_mlog_purge_pending_row_stats_on_tiflash(
-    session: &mut Session,
+fn read_mlog_purge_pending_row_stats_on_tiflash<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     schema: &str,
     mlog_name: &str,
@@ -584,7 +589,7 @@ fn read_mlog_purge_pending_row_stats_on_tiflash(
         };
         arguments.push(SqlArg::Unsigned(safe_purge_tso));
         // Go master: the count runs in materialized view maintenance.
-        let original_maintenance = std::mem::replace(&mut session.vars.in_mview_maintenance, true);
+        let original_maintenance = std::mem::replace(&mut session.vars_mut().in_mview_maintenance, true);
         let counted = sys_sql_ctx(
             session,
             kctx,
@@ -593,7 +598,7 @@ fn read_mlog_purge_pending_row_stats_on_tiflash(
             ),
             &arguments,
         );
-        session.vars.in_mview_maintenance = original_maintenance;
+        session.vars_mut().in_mview_maintenance = original_maintenance;
         counted
     })();
     restore_vars(session, &restore);
@@ -803,7 +808,7 @@ impl MLogPurgeThrottlePlan {
 }
 
 /// Go master `readPurgeHistCancelRequest`.
-fn read_purge_hist_cancel_request(session: &mut Session, purge_job_id: u64, mlog_id: i64) -> Result<(bool, String), DriverError> {
+fn read_purge_hist_cancel_request<S: MvSession>(session: &mut S, purge_job_id: u64, mlog_id: i64) -> Result<(bool, String), DriverError> {
     read_hist_cancel_request(
         session,
         "SELECT CANCEL_REQUEST_TIME, CANCEL_REQUESTED_BY\nFROM mysql.tidb_mlog_purge_hist\nWHERE PURGE_JOB_ID = %? AND MLOG_ID = %?",
@@ -814,7 +819,7 @@ fn read_purge_hist_cancel_request(session: &mut Session, purge_job_id: u64, mlog
 }
 
 /// Go master `updatePurgeHistHeartbeat`.
-fn update_purge_hist_heartbeat(session: &mut Session, purge_job_id: u64, mlog_id: i64) -> Result<(), DriverError> {
+fn update_purge_hist_heartbeat<S: MvSession>(session: &mut S, purge_job_id: u64, mlog_id: i64) -> Result<(), DriverError> {
     sys_sql(
         session,
         "UPDATE mysql.tidb_mlog_purge_hist\nSET LAST_HEARTBEAT_TIME = NOW(6)\nWHERE PURGE_JOB_ID = %? AND MLOG_ID = %? AND PURGE_STATUS = 'running'",
@@ -825,7 +830,7 @@ fn update_purge_hist_heartbeat(session: &mut Session, purge_job_id: u64, mlog_id
 }
 
 /// Go master `readLatestMLogPurgeCutoffFenceTSO`.
-fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, kctx: &tidb_gocontext::Context, mlog_id: i64) -> Result<Option<u64>, DriverError> {
+fn read_latest_mlog_purge_cutoff_fence_tso<S: MvSession>(session: &mut S, kctx: &tidb_gocontext::Context, mlog_id: i64) -> Result<Option<u64>, DriverError> {
     let rows = sys_sql_ctx(
         session,
         kctx,
@@ -844,8 +849,8 @@ fn read_latest_mlog_purge_cutoff_fence_tso(session: &mut Session, kctx: &tidb_go
 
 /// Go master `insertMLogPurgeHistRunning`.
 #[allow(clippy::too_many_arguments)]
-fn insert_mlog_purge_hist_running(
-    session: &mut Session,
+fn insert_mlog_purge_hist_running<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     purge_job_id: u64,
     mlog_id: i64,
@@ -878,8 +883,8 @@ fn insert_mlog_purge_hist_running(
 
 /// Go master `insertMLogPurgeHistFailed`.
 #[allow(clippy::too_many_arguments)]
-fn insert_mlog_purge_hist_failed(
-    session: &mut Session,
+fn insert_mlog_purge_hist_failed<S: MvSession>(
+    session: &mut S,
     purge_job_id: u64,
     mlog_id: i64,
     base_schema: &str,
@@ -915,8 +920,8 @@ fn insert_mlog_purge_hist_failed(
 
 /// Go master `finalizeMLogPurgeHist`.
 #[allow(clippy::too_many_arguments)]
-fn finalize_mlog_purge_hist(
-    session: &mut Session,
+fn finalize_mlog_purge_hist<S: MvSession>(
+    session: &mut S,
     purge_job_id: u64,
     status: &str,
     start: chrono::DateTime<chrono::Local>,
@@ -948,8 +953,8 @@ fn finalize_mlog_purge_hist(
 
 /// Go master `finalizeMLogPurgeHistWithRetry`.
 #[allow(clippy::too_many_arguments)]
-fn finalize_mlog_purge_hist_with_retry(
-    session: &mut Session,
+fn finalize_mlog_purge_hist_with_retry<S: MvSession>(
+    session: &mut S,
     purge_job_id: u64,
     status: &str,
     start: chrono::DateTime<chrono::Local>,
@@ -967,8 +972,8 @@ fn finalize_mlog_purge_hist_with_retry(
 
 /// Go master `updateMaterializedViewLogPurgeInfoOnSuccess` for a manual
 /// purge: the checkpoint advanced, the next purge time left alone.
-fn update_materialized_view_log_purge_info_on_success(
-    session: &mut Session,
+fn update_materialized_view_log_purge_info_on_success<S: MvSession>(
+    session: &mut S,
     kctx: &tidb_gocontext::Context,
     mlog_id: i64,
     last_purged_tso: Option<u64>,
@@ -999,19 +1004,385 @@ fn update_materialized_view_log_purge_info_on_success(
     .map_err(missing)
 }
 
-impl Session {
+
+/// The body of Go master `executePurgeMaterializedViewLog` from `BEGIN
+/// PESSIMISTIC` to `COMMIT` and the finalized history row; answers the rows
+/// deleted and a history error to warn about.
+#[allow(clippy::too_many_arguments)]
+fn purge_locked<S: MvSession>(
+    purge: &mut S,
+    delete: &mut S,
+    hist: &mut S,
+    target: &PurgeTarget,
+    method: &str,
+    purge_start: chrono::DateTime<chrono::Local>,
+    batch_size: i64,
+    delete_tiflash_threads: i64,
+    throttle_config: Result<MLogPurgeThrottleConfig, DriverError>,
+    progress: &mut PurgeProgress,
+    txn_started: &mut bool,
+    txn_finished: &mut bool,
+    restore_delete_threads: &mut Vec<(&'static str, String)>,
+    controller: &std::sync::Arc<MvTaskCancelController>,
+    purge_handle: &tidb_sqlkiller::StatementCancellation,
+    open_session: &dyn Fn() -> Result<S, DriverError>,
+) -> Result<(i64, Option<DriverError>), DriverError> {
+    // Go `kctx = taskCancelController.context()`: the running statements'
+    // context; the cleanup runs on `finalizeCtx` (uncanceled).
+    let kctx = controller.context().clone();
+    let kctx = &kctx;
+    // Go `stopTaskMonitor`, deferred: dropping the monitor stops it.
+    let mut _monitor: Option<MvTaskMonitor> = None;
+    let schema = target.schema.as_str();
+    let base_table = target.base_table.name.original();
+    let mlog_id = target.mlog_id;
+    // Go `finalizeFailure`.
+    let finalize_failure = |purge: &mut S, hist: &mut S, progress: &PurgeProgress, txn_started: bool, txn_finished: &mut bool, error: DriverError| {
+        let (failed_reason, error) = controller.normalize_task_failure(error);
+        if txn_started && !*txn_finished {
+            // Go `finalizeCtx`: the rollback runs uncanceled.
+            purge_handle.reset();
+            let _ = sys_sql(purge, "ROLLBACK", &[]);
+            *txn_finished = true;
+        }
+        if !progress.hist_running_inserted {
+            return error;
+        }
+        let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
+        match finalize_mlog_purge_hist_with_retry(
+            hist,
+            progress.purge_job_id,
+            MV_TASK_HIST_STATUS_FAILED,
+            purge_start,
+            chrono::Local::now(),
+            progress.total_purge_rows,
+            Some(&reason),
+        ) {
+            Ok(()) => error,
+            Err(hist_error) => annotate(
+                &hist_error,
+                &format!("purge materialized view log: failed to finalize purge history after error {reason}"),
+            ),
+        }
+    };
+    if let Some(message) =
+        tidb_failpoint::eval(&format!("{FP}mockPurgeMaterializedViewLogErrorBeforeInsertHist")).and_then(|value| value.as_string().map(str::to_owned))
+    {
+        return Err(plain(message));
+    }
+    if failpoint_on("mockPurgeMaterializedViewLogBeginErr") {
+        return Err(finalize_failure(purge, hist, progress, false, txn_finished, plain("mock purge begin error")));
+    }
+    if let Err(error) = sys_sql_ctx(purge, kctx, "BEGIN PESSIMISTIC", &[]) {
+        return Err(finalize_failure(purge, hist, progress, false, txn_finished, error));
+    }
+    *txn_started = true;
+
+    macro_rules! try_purge {
+        ($expr:expr) => {
+            match $expr {
+                Ok(value) => value,
+                Err(error) => return Err(finalize_failure(purge, hist, progress, true, txn_finished, error)),
+            }
+        };
+    }
+
+    let (locked_last_purged_tso, locked_next_time) =
+        try_purge!(acquire_materialized_view_log_purge_lock(purge, kctx, schema, base_table, mlog_id));
+    // Go `purgeSctx.Txn(true).StartTS()`: the lock above activated the
+    // transaction.
+    let mut purge_start_tso = purge.explicit_start_ts().unwrap_or(0);
+    if failpoint_on("mockPurgeMaterializedViewLogZeroStartTS") {
+        purge_start_tso = 0;
+    }
+    if purge_start_tso == 0 {
+        try_purge!(Err(plain("purge materialized view log: invalid transaction start tso")));
+    }
+    progress.purge_job_id = purge_start_tso;
+
+    let (public, building) = try_purge!(collect_dependent_mview_ids_for_mlog_purge(purge, kctx, &target.base_table, mlog_id));
+    let safe_purge_tso =
+        try_purge!(calc_materialized_view_log_safe_purge_tso(purge, kctx, schema, base_table, purge_start_tso, &public, &building));
+
+    let mut purge_cutoff_fence_tso = locked_last_purged_tso.unwrap_or(0);
+    if let Some(latest) = try_purge!(read_latest_mlog_purge_cutoff_fence_tso(hist, kctx, mlog_id)) {
+        purge_cutoff_fence_tso = purge_cutoff_fence_tso.max(latest);
+    }
+    let skip_purge_by_cutoff_fence = safe_purge_tso < purge_cutoff_fence_tso;
+    if !skip_purge_by_cutoff_fence {
+        try_purge!(insert_mlog_purge_hist_running(
+            hist,
+            kctx,
+            progress.purge_job_id,
+            mlog_id,
+            schema,
+            base_table,
+            method,
+            safe_purge_tso,
+            &hist_time(purge_start),
+        ));
+        progress.hist_running_inserted = true;
+        let purge_job_id = progress.purge_job_id;
+        let started = open_session().and_then(|watch| {
+            start_mv_task_monitor(
+                watch,
+                std::sync::Arc::clone(controller),
+                format!("mlog-purge-{purge_job_id}"),
+                Box::new(move |session: &mut S| read_purge_hist_cancel_request(session, purge_job_id, mlog_id)),
+                Some(Box::new(move |session: &mut S| update_purge_hist_heartbeat(session, purge_job_id, mlog_id))),
+            )
+        });
+        _monitor = Some(try_purge!(started));
+        tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning"), |_| {});
+    }
+    let skip_delete_by_checkpoint = locked_last_purged_tso.is_some_and(|last| last >= safe_purge_tso);
+    if !skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint && safe_purge_tso > 0 {
+        let delete_plan = try_build_mlog_purge_delete_plan_best_effort(
+            delete,
+            kctx,
+            target,
+            locked_last_purged_tso,
+            safe_purge_tso,
+            locked_next_time,
+            throttle_config,
+        );
+        // Keep COUNT at the session's original TiFlash concurrency.
+        if delete_plan.as_ref().is_none_or(|plan| plan.pending_rows > 0) {
+            *restore_delete_threads = try_purge!(apply_mlog_purge_delete_tiflash_threads(delete, delete_tiflash_threads, target.is_internal_sql));
+        }
+        match delete_plan {
+            Some(plan) if !(plan.pending_rows > 0 && plan.row_id_ranges.is_empty()) => {
+                if plan.pending_rows > 0 {
+                    let mut throttle_plan = plan.throttle_plan;
+                    let mut effective_batch_size =
+                        throttle_plan.as_mut().map_or(batch_size, |throttle| throttle.effective_delete_batch_size(batch_size));
+                    let delete_loop_start = Instant::now();
+                    for (range_index, &row_id_range) in plan.row_id_ranges.iter().enumerate() {
+                        loop {
+                            let deleted = purge_materialized_view_log_data(
+                                delete,
+                                kctx,
+                                schema,
+                                &target.mlog_name,
+                                locked_last_purged_tso,
+                                safe_purge_tso,
+                                Some(row_id_range),
+                                effective_batch_size,
+                            );
+                            let rows = try_purge!(deleted);
+                            progress.total_purge_rows += rows;
+                            tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
+                            let has_more_ranges = range_index + 1 < plan.row_id_ranges.len();
+                            let batch_completed = rows >= effective_batch_size;
+                            if let Some(throttle) = throttle_plan.as_mut() {
+                                if should_throttle_mlog_purge_delete_batch(batch_completed, has_more_ranges) {
+                                    match throttle.maybe_sleep(delete_loop_start, progress.total_purge_rows) {
+                                        Ok(()) => effective_batch_size = throttle.effective_delete_batch_size(batch_size),
+                                        Err(error) if controller.is_manual_cancel_requested() => {
+                                            try_purge!(Err(error));
+                                        }
+                                        Err(error) => {
+                                            log_purge_warn("purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
+                                            throttle_plan = None;
+                                            effective_batch_size = batch_size;
+                                        }
+                                    }
+                                }
+                            }
+                            if !batch_completed {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => loop {
+                let deleted = purge_materialized_view_log_data(
+                    delete,
+                    kctx,
+                    schema,
+                    &target.mlog_name,
+                    locked_last_purged_tso,
+                    safe_purge_tso,
+                    None,
+                    batch_size,
+                );
+                let rows = try_purge!(deleted);
+                progress.total_purge_rows += rows;
+                tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
+                if rows < batch_size {
+                    break;
+                }
+            },
+        }
+    }
+
+    let (next_unix_seconds, should_update_next) =
+        if target.is_internal_sql { try_purge!(derive_mlog_purge_next_unix_seconds(target)) } else { (None, false) };
+    let checkpoint = (!skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint).then_some(safe_purge_tso);
+    try_purge!(update_materialized_view_log_purge_info_on_success(purge, kctx, mlog_id, checkpoint, next_unix_seconds, should_update_next));
+    try_purge!(sys_sql_ctx(purge, kctx, "COMMIT", &[]));
+    *txn_finished = true;
+
+    let mut history_error = None;
+    if progress.hist_running_inserted {
+        let finalized = if failpoint_on("mockPurgeMaterializedViewLogFinalizeSuccessErr") {
+            Err(plain("mock purge finalize success error"))
+        } else {
+            finalize_mlog_purge_hist_with_retry(
+                hist,
+                progress.purge_job_id,
+                MV_TASK_HIST_STATUS_SUCCESS,
+                purge_start,
+                chrono::Local::now(),
+                progress.total_purge_rows,
+                None,
+            )
+        };
+        history_error = finalized.err();
+    }
+    Ok((progress.total_purge_rows, history_error))
+}
+
+/// Go master `tryBuildMLogPurgeDeletePlanBestEffort` for a manual purge:
+/// `None` (an unscoped, unthrottled purge) when the pending rows cannot be
+/// counted.
+fn try_build_mlog_purge_delete_plan_best_effort<S: MvSession>(
+    delete: &mut S,
+    kctx: &tidb_gocontext::Context,
+    target: &PurgeTarget,
+    last_purged_tso: Option<u64>,
+    safe_purge_tso: u64,
+    fallback_next_time: Option<chrono::DateTime<chrono::Utc>>,
+    throttle_config: Result<MLogPurgeThrottleConfig, DriverError>,
+) -> Option<MLogPurgeDeletePlan> {
+    if safe_purge_tso == 0 {
+        return None;
+    }
+    let stats = match read_mlog_purge_pending_row_stats_on_tiflash(delete, kctx, &target.schema, &target.mlog_name, last_purged_tso, safe_purge_tso) {
+        Ok(stats) => stats,
+        Err(error) => {
+            log_purge_warn("purge materialized view log: failed to read pending row stats, fallback to unscoped unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
+            return None;
+        }
+    };
+    let mut plan = MLogPurgeDeletePlan { pending_rows: stats.pending_rows, throttle_plan: None, row_id_ranges: Vec::new() };
+    if stats.pending_rows <= 0 {
+        return Some(plan);
+    }
+    plan.row_id_ranges = build_mlog_purge_delete_row_id_ranges(stats, target.mlog_shard_row_id_bits);
+    let config = match throttle_config {
+        Ok(config) => config,
+        Err(error) => {
+            log_purge_warn("purge materialized view log: failed to load adaptive throttle config, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
+            return Some(plan);
+        }
+    };
+    let deadline = match derive_mlog_purge_throttle_deadline(target, fallback_next_time) {
+        Ok(deadline) => deadline,
+        Err(error) => {
+            log_purge_warn("purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
+            return Some(plan);
+        }
+    };
+    plan.throttle_plan = try_build_mlog_purge_throttle_plan(stats, deadline, config);
+    Some(plan)
+}
+
+/// Go master `deriveMLogPurgeThrottleDeadline`: the adaptive budget's end,
+/// no later than an internal purge's next scheduled run (a manual one's
+/// stored next run).
+fn derive_mlog_purge_throttle_deadline(
+    target: &PurgeTarget,
+    fallback_next_time: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<chrono::DateTime<chrono::Utc>, DriverError> {
+    if failpoint_on("mockMLogPurgeAdaptiveDeadlineErr") {
+        return Err(plain("mock adaptive purge deadline error"));
+    }
+    let mut deadline = chrono::Utc::now() + MLOG_PURGE_ADAPTIVE_MAX_BUDGET;
+    if target.is_internal_sql {
+        let (next, should_update) = derive_mlog_purge_next_unix_seconds(target)?;
+        if let Some(next) = next.filter(|_| should_update).and_then(|next| chrono::DateTime::from_timestamp(next, 0)) {
+            if next < deadline {
+                deadline = next;
+            }
+        }
+    } else if let Some(next) = fallback_next_time.filter(|&next| next < deadline) {
+        deadline = next;
+    }
+    Ok(deadline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_sql_scopes_the_commit_ts_window_as_go() {
+        let range = MLogPurgeDeleteRowIdRange { start_row_id: 1, end_row_id: 9 };
+        assert_eq!(
+            build_purge_materialized_view_log_delete_sql("d", "$mlog$t", None, 7, None, 100).unwrap(),
+            "DELETE /*+ read_from_storage(tiflash[`d`.`$mlog$t`]) */ FROM `d`.`$mlog$t` WHERE _tidb_commit_ts <= 7 LIMIT 100"
+        );
+        assert_eq!(
+            build_purge_materialized_view_log_delete_sql("d", "$mlog$t", Some(3), 7, Some(range), 100).unwrap(),
+            "DELETE /*+ read_from_storage(tiflash[`d`.`$mlog$t`]) */ FROM `d`.`$mlog$t` WHERE _tidb_rowid >= 1 AND _tidb_rowid <= 9 AND _tidb_commit_ts > 3 AND _tidb_commit_ts <= 7 LIMIT 100"
+        );
+    }
+
+    #[test]
+    fn row_id_ranges_split_as_go() {
+        let stats = |pending_rows, min_row_id, max_row_id| MLogPurgePendingRowStats {
+            pending_rows,
+            min_row_id,
+            max_row_id,
+            has_row_id_bounds: true,
+        };
+        let r = |start_row_id, end_row_id| MLogPurgeDeleteRowIdRange { start_row_id, end_row_id };
+        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(10, 1, 100), 0), vec![r(1, 100)]);
+        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(24_000, 1, 100), 0), vec![r(1, 33), r(34, 66), r(67, 100)]);
+        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(1_000_000, 1, 10), 0).len(), 1);
+        // Two shard bits, a signed row id: 61 incremental bits per bucket;
+        // three ranges floor to two of two buckets each.
+        assert_eq!(
+            build_mlog_purge_delete_row_id_ranges(stats(24_000, 5, i64::MAX), 2),
+            vec![r(5, (1 << 62) - 1), r(1 << 62, i64::MAX)]
+        );
+        assert_eq!(floor_power_of_two(3), 2);
+        assert_eq!(floor_power_of_two(16), 16);
+        assert_eq!(floor_power_of_two(0), 0);
+    }
+
+    #[test]
+    fn throttle_batches_follow_the_target_rate_as_go() {
+        assert_eq!(calc_mlog_purge_adaptive_batch_size(0.0), 8000);
+        assert_eq!(calc_mlog_purge_adaptive_batch_size(100_000.0), 20_000);
+        let stats = MLogPurgePendingRowStats { pending_rows: 10, ..MLogPurgePendingRowStats::default() };
+        let config = MLogPurgeThrottleConfig { min_rate: 2000.0, budget_ratio: 0.5 };
+        let deadline = chrono::Utc::now() + Duration::from_secs(100);
+        let mut plan = try_build_mlog_purge_throttle_plan(stats, deadline, config).unwrap();
+        assert!((plan.target_rate - 2000.0).abs() < f64::EPSILON);
+        assert_eq!(plan.effective_delete_batch_size(10_000), 8000);
+        assert_eq!(plan.effective_delete_batch_size(500), 500);
+        assert!(try_build_mlog_purge_throttle_plan(stats, chrono::Utc::now(), config).is_none());
+        assert!(try_build_mlog_purge_throttle_plan(stats, deadline, MLogPurgeThrottleConfig { budget_ratio: 0.0, ..config }).is_none());
+    }
+}
+
+/// Go master `pkg/executor`'s methods of this file over a session.
+pub trait MlogPurgeExec: MvSession {
     /// Go master `PurgeMaterializedViewLogExec.Next`.
-    pub(crate) fn purge_materialized_view_log(&mut self, stmt: &PurgeMaterializedViewLogStmt) -> Result<StmtOutput, DriverError> {
+    fn purge_materialized_view_log(&mut self, stmt: &PurgeMaterializedViewLogStmt) -> Result<StmtOutput, DriverError> {
         let purge_start = chrono::Local::now();
-        let is_internal_sql = self.vars.restricted_sql;
+        let is_internal_sql = self.vars().restricted_sql;
         let method = validate_purge_materialized_view_log_stmt(stmt, is_internal_sql)?;
         let mut target = self.resolve_purge_materialized_view_log_meta(stmt)?;
         target.is_internal_sql = is_internal_sql;
         let mut progress = PurgeProgress::default();
         // Go `newMVTaskCancelController(kctx)` over the statement's context.
-        let controller = std::sync::Arc::new(MvTaskCancelController::new(&self.exec_ctx));
+        let controller = std::sync::Arc::new(MvTaskCancelController::new(&self.exec_ctx()));
         // Go's deferred `recover()`: a panic fails the purge with its value.
-        let result = crate::mview_refresh::recover_refresh_panic(|| {
+        let result = super::mview_refresh::recover_refresh_panic(|| {
             self.check_operate_view_on_mlog(&target.schema, &target.mlog_name)
                 .and_then(|()| self.execute_purge_materialized_view_log(&target, method, purge_start, &controller, &mut progress))
         });
@@ -1140,7 +1511,7 @@ impl Session {
         controller: &std::sync::Arc<MvTaskCancelController>,
         progress: &mut PurgeProgress,
     ) -> Result<StmtOutput, DriverError> {
-        let user_var = |name: &str| self.vars.get_system(name).unwrap_or_default();
+        let user_var = |name: &str| self.vars().get_system(name).unwrap_or_default();
         let mem_quota = user_var(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_MEM_QUOTA);
         let engines = user_var(tidb_vardef::tidb_vars::TIDB_MVIEW_MAINTAIN_ISOLATION_READ_ENGINES);
         let batch_size = user_var(tidb_vardef::tidb_vars::TIDB_MLOG_PURGE_BATCH_SIZE)
@@ -1170,7 +1541,7 @@ impl Session {
         // advisory lock is released."
         let advisory_lock_name = tidb_mviewutil::purge_advisory_lock_name(target.mlog_id);
         let locked = match sys_sql(&mut purge, "SELECT GET_LOCK(%?, 1)", &[SqlArg::String(advisory_lock_name.as_bytes())]) {
-            Ok(rows) => rows.first().and_then(|row| row.first()).and_then(crate::mview_refresh::datum_i64) == Some(1),
+            Ok(rows) => rows.first().and_then(|row| row.first()).and_then(super::mview_refresh::datum_i64) == Some(1),
             Err(error) => {
                 restore_vars(&mut purge, &restore_purge);
                 return Err(error);
@@ -1187,7 +1558,7 @@ impl Session {
                 .into()]),
             )));
         }
-        let release_advisory_lock = |purge: &mut Session| {
+        let release_advisory_lock = |purge: &mut Self| {
             let _ = sys_sql(purge, "SELECT RELEASE_LOCK(%?)", &[SqlArg::String(advisory_lock_name.as_bytes())]);
         };
         let mut delete = match self.open_refresh_system_session() {
@@ -1249,376 +1620,14 @@ impl Session {
         restore_vars(&mut purge, &restore_purge);
         let (total_purge_rows, history_error) = result?;
         if let Some(error) = history_error {
-            crate::mview_refresh::append_cause_warning(
+            super::mview_refresh::append_cause_warning(
                 self,
                 &annotate(&error, "purge materialized view log: purge committed but failed to finalize purge history"),
             );
         }
-        self.statement_message = format!("Rows inserted: 0  Updated: 0  Deleted: {total_purge_rows}");
+        self.set_statement_message(format!("Rows inserted: 0  Updated: 0  Deleted: {total_purge_rows}"));
         Ok(StmtOutput::Affected(u64::try_from(total_purge_rows).unwrap_or_default()))
     }
 }
 
-/// The body of Go master `executePurgeMaterializedViewLog` from `BEGIN
-/// PESSIMISTIC` to `COMMIT` and the finalized history row; answers the rows
-/// deleted and a history error to warn about.
-#[allow(clippy::too_many_arguments)]
-fn purge_locked(
-    purge: &mut Session,
-    delete: &mut Session,
-    hist: &mut Session,
-    target: &PurgeTarget,
-    method: &str,
-    purge_start: chrono::DateTime<chrono::Local>,
-    batch_size: i64,
-    delete_tiflash_threads: i64,
-    throttle_config: Result<MLogPurgeThrottleConfig, DriverError>,
-    progress: &mut PurgeProgress,
-    txn_started: &mut bool,
-    txn_finished: &mut bool,
-    restore_delete_threads: &mut Vec<(&'static str, String)>,
-    controller: &std::sync::Arc<MvTaskCancelController>,
-    purge_handle: &tidb_sqlkiller::StatementCancellation,
-    open_session: &dyn Fn() -> Result<Session, DriverError>,
-) -> Result<(i64, Option<DriverError>), DriverError> {
-    // Go `kctx = taskCancelController.context()`: the running statements'
-    // context; the cleanup runs on `finalizeCtx` (uncanceled).
-    let kctx = controller.context().clone();
-    let kctx = &kctx;
-    // Go `stopTaskMonitor`, deferred: dropping the monitor stops it.
-    let mut _monitor: Option<MvTaskMonitor> = None;
-    let schema = target.schema.as_str();
-    let base_table = target.base_table.name.original();
-    let mlog_id = target.mlog_id;
-    // Go `finalizeFailure`.
-    let finalize_failure = |purge: &mut Session, hist: &mut Session, progress: &PurgeProgress, txn_started: bool, txn_finished: &mut bool, error: DriverError| {
-        let (failed_reason, error) = controller.normalize_task_failure(error);
-        if txn_started && !*txn_finished {
-            // Go `finalizeCtx`: the rollback runs uncanceled.
-            purge_handle.reset();
-            let _ = sys_sql(purge, "ROLLBACK", &[]);
-            *txn_finished = true;
-        }
-        if !progress.hist_running_inserted {
-            return error;
-        }
-        let reason = failed_reason.unwrap_or_else(|| driver_message(&error));
-        match finalize_mlog_purge_hist_with_retry(
-            hist,
-            progress.purge_job_id,
-            MV_TASK_HIST_STATUS_FAILED,
-            purge_start,
-            chrono::Local::now(),
-            progress.total_purge_rows,
-            Some(&reason),
-        ) {
-            Ok(()) => error,
-            Err(hist_error) => annotate(
-                &hist_error,
-                &format!("purge materialized view log: failed to finalize purge history after error {reason}"),
-            ),
-        }
-    };
-    if let Some(message) =
-        tidb_failpoint::eval(&format!("{FP}mockPurgeMaterializedViewLogErrorBeforeInsertHist")).and_then(|value| value.as_string().map(str::to_owned))
-    {
-        return Err(plain(message));
-    }
-    if failpoint_on("mockPurgeMaterializedViewLogBeginErr") {
-        return Err(finalize_failure(purge, hist, progress, false, txn_finished, plain("mock purge begin error")));
-    }
-    if let Err(error) = sys_sql_ctx(purge, kctx, "BEGIN PESSIMISTIC", &[]) {
-        return Err(finalize_failure(purge, hist, progress, false, txn_finished, error));
-    }
-    *txn_started = true;
-
-    macro_rules! try_purge {
-        ($expr:expr) => {
-            match $expr {
-                Ok(value) => value,
-                Err(error) => return Err(finalize_failure(purge, hist, progress, true, txn_finished, error)),
-            }
-        };
-    }
-
-    let (locked_last_purged_tso, locked_next_time) =
-        try_purge!(acquire_materialized_view_log_purge_lock(purge, kctx, schema, base_table, mlog_id));
-    // Go `purgeSctx.Txn(true).StartTS()`: the lock above activated the
-    // transaction.
-    let mut purge_start_tso = purge.node_conn().explicit_start_ts().unwrap_or(0);
-    if failpoint_on("mockPurgeMaterializedViewLogZeroStartTS") {
-        purge_start_tso = 0;
-    }
-    if purge_start_tso == 0 {
-        try_purge!(Err(plain("purge materialized view log: invalid transaction start tso")));
-    }
-    progress.purge_job_id = purge_start_tso;
-
-    let (public, building) = try_purge!(collect_dependent_mview_ids_for_mlog_purge(purge, kctx, &target.base_table, mlog_id));
-    let safe_purge_tso =
-        try_purge!(calc_materialized_view_log_safe_purge_tso(purge, kctx, schema, base_table, purge_start_tso, &public, &building));
-
-    let mut purge_cutoff_fence_tso = locked_last_purged_tso.unwrap_or(0);
-    if let Some(latest) = try_purge!(read_latest_mlog_purge_cutoff_fence_tso(hist, kctx, mlog_id)) {
-        purge_cutoff_fence_tso = purge_cutoff_fence_tso.max(latest);
-    }
-    let skip_purge_by_cutoff_fence = safe_purge_tso < purge_cutoff_fence_tso;
-    if !skip_purge_by_cutoff_fence {
-        try_purge!(insert_mlog_purge_hist_running(
-            hist,
-            kctx,
-            progress.purge_job_id,
-            mlog_id,
-            schema,
-            base_table,
-            method,
-            safe_purge_tso,
-            &hist_time(purge_start),
-        ));
-        progress.hist_running_inserted = true;
-        let purge_job_id = progress.purge_job_id;
-        let started = open_session().and_then(|watch| {
-            start_mv_task_monitor(
-                watch,
-                std::sync::Arc::clone(controller),
-                format!("mlog-purge-{purge_job_id}"),
-                Box::new(move |session: &mut Session| read_purge_hist_cancel_request(session, purge_job_id, mlog_id)),
-                Some(Box::new(move |session: &mut Session| update_purge_hist_heartbeat(session, purge_job_id, mlog_id))),
-            )
-        });
-        _monitor = Some(try_purge!(started));
-        tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning"), |_| {});
-    }
-    let skip_delete_by_checkpoint = locked_last_purged_tso.is_some_and(|last| last >= safe_purge_tso);
-    if !skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint && safe_purge_tso > 0 {
-        let delete_plan = try_build_mlog_purge_delete_plan_best_effort(
-            delete,
-            kctx,
-            target,
-            locked_last_purged_tso,
-            safe_purge_tso,
-            locked_next_time,
-            throttle_config,
-        );
-        // Keep COUNT at the session's original TiFlash concurrency.
-        if delete_plan.as_ref().is_none_or(|plan| plan.pending_rows > 0) {
-            *restore_delete_threads = try_purge!(apply_mlog_purge_delete_tiflash_threads(delete, delete_tiflash_threads, target.is_internal_sql));
-        }
-        match delete_plan {
-            Some(plan) if !(plan.pending_rows > 0 && plan.row_id_ranges.is_empty()) => {
-                if plan.pending_rows > 0 {
-                    let mut throttle_plan = plan.throttle_plan;
-                    let mut effective_batch_size =
-                        throttle_plan.as_mut().map_or(batch_size, |throttle| throttle.effective_delete_batch_size(batch_size));
-                    let delete_loop_start = Instant::now();
-                    for (range_index, &row_id_range) in plan.row_id_ranges.iter().enumerate() {
-                        loop {
-                            let deleted = purge_materialized_view_log_data(
-                                delete,
-                                kctx,
-                                schema,
-                                &target.mlog_name,
-                                locked_last_purged_tso,
-                                safe_purge_tso,
-                                Some(row_id_range),
-                                effective_batch_size,
-                            );
-                            let rows = try_purge!(deleted);
-                            progress.total_purge_rows += rows;
-                            tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
-                            let has_more_ranges = range_index + 1 < plan.row_id_ranges.len();
-                            let batch_completed = rows >= effective_batch_size;
-                            if let Some(throttle) = throttle_plan.as_mut() {
-                                if should_throttle_mlog_purge_delete_batch(batch_completed, has_more_ranges) {
-                                    match throttle.maybe_sleep(delete_loop_start, progress.total_purge_rows) {
-                                        Ok(()) => effective_batch_size = throttle.effective_delete_batch_size(batch_size),
-                                        Err(error) if controller.is_manual_cancel_requested() => {
-                                            try_purge!(Err(error));
-                                        }
-                                        Err(error) => {
-                                            log_purge_warn("purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
-                                            throttle_plan = None;
-                                            effective_batch_size = batch_size;
-                                        }
-                                    }
-                                }
-                            }
-                            if !batch_completed {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            _ => loop {
-                let deleted = purge_materialized_view_log_data(
-                    delete,
-                    kctx,
-                    schema,
-                    &target.mlog_name,
-                    locked_last_purged_tso,
-                    safe_purge_tso,
-                    None,
-                    batch_size,
-                );
-                let rows = try_purge!(deleted);
-                progress.total_purge_rows += rows;
-                tidb_failpoint::inject(&format!("{FP}pausePurgeMaterializedViewLogAfterDeleteBatch"), |_| {});
-                if rows < batch_size {
-                    break;
-                }
-            },
-        }
-    }
-
-    let (next_unix_seconds, should_update_next) =
-        if target.is_internal_sql { try_purge!(derive_mlog_purge_next_unix_seconds(target)) } else { (None, false) };
-    let checkpoint = (!skip_purge_by_cutoff_fence && !skip_delete_by_checkpoint).then_some(safe_purge_tso);
-    try_purge!(update_materialized_view_log_purge_info_on_success(purge, kctx, mlog_id, checkpoint, next_unix_seconds, should_update_next));
-    try_purge!(sys_sql_ctx(purge, kctx, "COMMIT", &[]));
-    *txn_finished = true;
-
-    let mut history_error = None;
-    if progress.hist_running_inserted {
-        let finalized = if failpoint_on("mockPurgeMaterializedViewLogFinalizeSuccessErr") {
-            Err(plain("mock purge finalize success error"))
-        } else {
-            finalize_mlog_purge_hist_with_retry(
-                hist,
-                progress.purge_job_id,
-                MV_TASK_HIST_STATUS_SUCCESS,
-                purge_start,
-                chrono::Local::now(),
-                progress.total_purge_rows,
-                None,
-            )
-        };
-        history_error = finalized.err();
-    }
-    Ok((progress.total_purge_rows, history_error))
-}
-
-/// Go master `tryBuildMLogPurgeDeletePlanBestEffort` for a manual purge:
-/// `None` (an unscoped, unthrottled purge) when the pending rows cannot be
-/// counted.
-fn try_build_mlog_purge_delete_plan_best_effort(
-    delete: &mut Session,
-    kctx: &tidb_gocontext::Context,
-    target: &PurgeTarget,
-    last_purged_tso: Option<u64>,
-    safe_purge_tso: u64,
-    fallback_next_time: Option<chrono::DateTime<chrono::Utc>>,
-    throttle_config: Result<MLogPurgeThrottleConfig, DriverError>,
-) -> Option<MLogPurgeDeletePlan> {
-    if safe_purge_tso == 0 {
-        return None;
-    }
-    let stats = match read_mlog_purge_pending_row_stats_on_tiflash(delete, kctx, &target.schema, &target.mlog_name, last_purged_tso, safe_purge_tso) {
-        Ok(stats) => stats,
-        Err(error) => {
-            log_purge_warn("purge materialized view log: failed to read pending row stats, fallback to unscoped unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
-            return None;
-        }
-    };
-    let mut plan = MLogPurgeDeletePlan { pending_rows: stats.pending_rows, throttle_plan: None, row_id_ranges: Vec::new() };
-    if stats.pending_rows <= 0 {
-        return Some(plan);
-    }
-    plan.row_id_ranges = build_mlog_purge_delete_row_id_ranges(stats, target.mlog_shard_row_id_bits);
-    let config = match throttle_config {
-        Ok(config) => config,
-        Err(error) => {
-            log_purge_warn("purge materialized view log: failed to load adaptive throttle config, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
-            return Some(plan);
-        }
-    };
-    let deadline = match derive_mlog_purge_throttle_deadline(target, fallback_next_time) {
-        Ok(deadline) => deadline,
-        Err(error) => {
-            log_purge_warn("purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge", &target.schema, &target.mlog_name, Some(&error));
-            return Some(plan);
-        }
-    };
-    plan.throttle_plan = try_build_mlog_purge_throttle_plan(stats, deadline, config);
-    Some(plan)
-}
-
-/// Go master `deriveMLogPurgeThrottleDeadline`: the adaptive budget's end,
-/// no later than an internal purge's next scheduled run (a manual one's
-/// stored next run).
-fn derive_mlog_purge_throttle_deadline(
-    target: &PurgeTarget,
-    fallback_next_time: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<chrono::DateTime<chrono::Utc>, DriverError> {
-    if failpoint_on("mockMLogPurgeAdaptiveDeadlineErr") {
-        return Err(plain("mock adaptive purge deadline error"));
-    }
-    let mut deadline = chrono::Utc::now() + MLOG_PURGE_ADAPTIVE_MAX_BUDGET;
-    if target.is_internal_sql {
-        let (next, should_update) = derive_mlog_purge_next_unix_seconds(target)?;
-        if let Some(next) = next.filter(|_| should_update).and_then(|next| chrono::DateTime::from_timestamp(next, 0)) {
-            if next < deadline {
-                deadline = next;
-            }
-        }
-    } else if let Some(next) = fallback_next_time.filter(|&next| next < deadline) {
-        deadline = next;
-    }
-    Ok(deadline)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn delete_sql_scopes_the_commit_ts_window_as_go() {
-        let range = MLogPurgeDeleteRowIdRange { start_row_id: 1, end_row_id: 9 };
-        assert_eq!(
-            build_purge_materialized_view_log_delete_sql("d", "$mlog$t", None, 7, None, 100).unwrap(),
-            "DELETE /*+ read_from_storage(tiflash[`d`.`$mlog$t`]) */ FROM `d`.`$mlog$t` WHERE _tidb_commit_ts <= 7 LIMIT 100"
-        );
-        assert_eq!(
-            build_purge_materialized_view_log_delete_sql("d", "$mlog$t", Some(3), 7, Some(range), 100).unwrap(),
-            "DELETE /*+ read_from_storage(tiflash[`d`.`$mlog$t`]) */ FROM `d`.`$mlog$t` WHERE _tidb_rowid >= 1 AND _tidb_rowid <= 9 AND _tidb_commit_ts > 3 AND _tidb_commit_ts <= 7 LIMIT 100"
-        );
-    }
-
-    #[test]
-    fn row_id_ranges_split_as_go() {
-        let stats = |pending_rows, min_row_id, max_row_id| MLogPurgePendingRowStats {
-            pending_rows,
-            min_row_id,
-            max_row_id,
-            has_row_id_bounds: true,
-        };
-        let r = |start_row_id, end_row_id| MLogPurgeDeleteRowIdRange { start_row_id, end_row_id };
-        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(10, 1, 100), 0), vec![r(1, 100)]);
-        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(24_000, 1, 100), 0), vec![r(1, 33), r(34, 66), r(67, 100)]);
-        assert_eq!(build_mlog_purge_delete_row_id_ranges(stats(1_000_000, 1, 10), 0).len(), 1);
-        // Two shard bits, a signed row id: 61 incremental bits per bucket;
-        // three ranges floor to two of two buckets each.
-        assert_eq!(
-            build_mlog_purge_delete_row_id_ranges(stats(24_000, 5, i64::MAX), 2),
-            vec![r(5, (1 << 62) - 1), r(1 << 62, i64::MAX)]
-        );
-        assert_eq!(floor_power_of_two(3), 2);
-        assert_eq!(floor_power_of_two(16), 16);
-        assert_eq!(floor_power_of_two(0), 0);
-    }
-
-    #[test]
-    fn throttle_batches_follow_the_target_rate_as_go() {
-        assert_eq!(calc_mlog_purge_adaptive_batch_size(0.0), 8000);
-        assert_eq!(calc_mlog_purge_adaptive_batch_size(100_000.0), 20_000);
-        let stats = MLogPurgePendingRowStats { pending_rows: 10, ..MLogPurgePendingRowStats::default() };
-        let config = MLogPurgeThrottleConfig { min_rate: 2000.0, budget_ratio: 0.5 };
-        let deadline = chrono::Utc::now() + Duration::from_secs(100);
-        let mut plan = try_build_mlog_purge_throttle_plan(stats, deadline, config).unwrap();
-        assert!((plan.target_rate - 2000.0).abs() < f64::EPSILON);
-        assert_eq!(plan.effective_delete_batch_size(10_000), 8000);
-        assert_eq!(plan.effective_delete_batch_size(500), 500);
-        assert!(try_build_mlog_purge_throttle_plan(stats, chrono::Utc::now(), config).is_none());
-        assert!(try_build_mlog_purge_throttle_plan(stats, deadline, MLogPurgeThrottleConfig { budget_ratio: 0.0, ..config }).is_none());
-    }
-}
+impl<T: MvSession> MlogPurgeExec for T {}

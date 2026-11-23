@@ -18,19 +18,24 @@
 //! WAIT_PURGE, whose counts read the logs on a system session of the
 //! domain (Go `beginMViewLogShowInternalTxn`).
 
+use super::mview_refresh::MviewRefreshExec as _;
+use super::mlog_purge::MlogPurgeExec as _;
+use super::mview_compare::MviewCompareExec as _;
+use super::mv_refresh_observability::MvRefreshObservabilityExec as _;
+use super::mview_task::MviewTaskExec as _;
 use std::sync::Arc;
 
 use tidb_ast::ShowStmtType;
 use tidb_datatype::Datum;
 use tidb_driver_error::DriverError;
-use tidb_executor::show::exec::ShowExec as _;
+use crate::show::exec::ShowExec as _;
 use tidb_model::TableInfo;
 use tidb_planner_core_operator_logicalop::ShowContents;
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use crate::mview_refresh::{datum_i64, datum_u64, is_table_not_exists, plain, sys_sql};
-use crate::Session;
+use super::mview_refresh::{datum_i64, datum_u64, is_table_not_exists, plain, sys_sql};
+use super::MvSession;
 
 /// Go master `materializedViewTablePrivs`.
 const MATERIALIZED_VIEW_TABLE_PRIVS: [tidb_mysql::PrivilegeType; 5] = [
@@ -162,17 +167,61 @@ enum MissingLog {
     Errorf,
 }
 
-impl Session {
+
+/// Go master's base-table and log checks shared by SHOW CREATE
+/// MATERIALIZED VIEW LOG (`ErrWrongObject` for a missing log) and SHOW
+/// MATERIALIZED VIEW LOG ... WAIT_PURGE (a plain error).
+fn materialized_view_log_target(
+    catalog: &Catalog,
+    schema: &str,
+    name: &str,
+    missing: MissingLog,
+) -> Result<(TableInfo, TableInfo), DriverError> {
+    if catalog.0.schema_by_name(schema).is_none() {
+        return Err(database_not_exists(schema));
+    }
+    let base = catalog.table(schema, name).ok_or_else(|| table_not_exists(schema, name))?;
+    let base_name = base.name.original().to_owned();
+    if base.is_view() || base.is_sequence() || base.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(wrong_object(schema, &base_name, "BASE TABLE"));
+    }
+    let no_log = || match missing {
+        MissingLog::WrongObject => wrong_object(schema, &base_name, "BASE TABLE WITH MATERIALIZED VIEW LOG"),
+        MissingLog::Errorf => plain(format!("materialized view log does not exist for base table {schema}.{base_name}")),
+    };
+    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
+    if mlog_id == 0 {
+        return Err(no_log());
+    }
+    let mlog = catalog.table_by_id(mlog_id).ok_or_else(no_log)?;
+    if mlog.materialized_view_log.as_ref().is_none_or(|info| info.read().base_table_id != base.id) {
+        let mlog_name = mlog.name.original();
+        return Err(match missing {
+            MissingLog::WrongObject => wrong_object(
+                schema,
+                mlog_name,
+                &format!("MATERIALIZED VIEW LOG FOR BASE TABLE {schema}.{base_name}"),
+            ),
+            MissingLog::Errorf => plain(format!(
+                "table {schema}.{mlog_name} is not a materialized view log for base table {schema}.{base_name}"
+            )),
+        });
+    }
+    Ok((base, mlog))
+}
+
+/// Go master `pkg/executor`'s methods of this file over a session.
+pub trait MviewShowExec: MvSession {
     /// Go master `ShowExec.fetchAll`'s materialized view arms.
-    pub(crate) fn show_materialized_view_rows(
+    fn show_materialized_view_rows(
         &mut self,
         contents: &ShowContents,
-        extractor: tidb_executor::show::Extractor<'_>,
+        extractor: crate::show::Extractor<'_>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let catalog = Catalog(self.with_catalog_scope(false, |catalog| Ok(Arc::new(catalog.clone())))?);
         let schema = contents.db_name.clone();
         let name = contents.table_name.clone().unwrap_or_default();
-        let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
+        let ansi_quotes = self.vars().sql_mode().has_ansi_quotes_mode();
         match contents.tp {
             ShowStmtType::MaterializedViews | ShowStmtType::MaterializedViewLogs => {
                 self.show_materialized_views_or_logs(&catalog, contents.tp, &schema, extractor)
@@ -215,7 +264,7 @@ impl Session {
         catalog: &Catalog,
         tp: ShowStmtType,
         schema: &str,
-        extractor: tidb_executor::show::Extractor<'_>,
+        extractor: crate::show::Extractor<'_>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let Some(names) = catalog.0.table_names(schema) else {
             return Err(DriverError::Mysql(MysqlError::from_terror(
@@ -236,7 +285,7 @@ impl Session {
             if tp == ShowStmtType::MaterializedViews {
                 if table.materialized_view.is_none()
                     || !visible(table.name.original())
-                    || !tidb_executor::show::extractor_admits(extractor, &lower, &lower)
+                    || !crate::show::extractor_admits(extractor, &lower, &lower)
                 {
                     continue;
                 }
@@ -253,7 +302,7 @@ impl Session {
                 .map(|base| base.name.original().to_owned())
                 .unwrap_or_default();
             if base_name.is_empty()
-                || !tidb_executor::show::extractor_admits(extractor, &lower, &lower)
+                || !crate::show::extractor_admits(extractor, &lower, &lower)
                 || !visible(table.name.original())
             {
                 continue;
@@ -360,7 +409,7 @@ impl Session {
             return Err(plain(format!("schema does not exist for materialized view log {}", mlog.name.original())));
         };
         // Go passes the statement's context.
-        let exec_ctx = self.exec_ctx.clone();
+        let exec_ctx = self.exec_ctx().clone();
         self.with_mview_log_show_txn(|sys, show_start_ts| {
             let rows = sys_sql(sys, "SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?", &[SqlArg::Signed(mlog.id)])
                 .map_err(|error| {
@@ -377,8 +426,8 @@ impl Session {
                 )));
             };
             let last_purged_tso = row.first().and_then(datum_u64);
-            let (public, building) = crate::mlog_purge::collect_dependent_mview_ids_for_mlog_purge(sys, &exec_ctx, &base, mlog.id)?;
-            let safe_purge_tso = crate::mlog_purge::calc_materialized_view_log_safe_purge_tso(
+            let (public, building) = super::mlog_purge::collect_dependent_mview_ids_for_mlog_purge(sys, &exec_ctx, &base, mlog.id)?;
+            let safe_purge_tso = super::mlog_purge::calc_materialized_view_log_safe_purge_tso(
                 sys,
                 &exec_ctx,
                 schema,
@@ -419,65 +468,25 @@ impl Session {
     /// `body` gets the session and the transaction's start TS.
     fn with_mview_log_show_txn<T>(
         &self,
-        body: impl FnOnce(&mut Session, u64) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut Self, u64) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         let mut sys = self.open_refresh_system_session()?;
         let original = sys_sql(&mut sys, "SELECT @@SESSION.tidb_mview_enable", &[])?
             .first()
             .and_then(|row| row.first())
-            .map(crate::mview_refresh::datum_text)
+            .map(super::mview_refresh::datum_text)
             .unwrap_or_default();
         sys_sql(&mut sys, "SET @@SESSION.tidb_mview_enable = ON", &[])?;
-        sys.vars.in_mview_maintenance = true;
+        sys.vars_mut().in_mview_maintenance = true;
         let outcome = sys_sql(&mut sys, "BEGIN", &[]).and_then(|_| {
-            let start_ts = sys.node_conn().explicit_start_ts().filter(|&ts| ts != 0).ok_or_else(|| plain("invalid transaction start ts"))?;
+            let start_ts = sys.explicit_start_ts().filter(|&ts| ts != 0).ok_or_else(|| plain("invalid transaction start ts"))?;
             body(&mut sys, start_ts)
         });
         let _ = sys_sql(&mut sys, "ROLLBACK", &[]);
-        sys.vars.in_mview_maintenance = false;
+        sys.vars_mut().in_mview_maintenance = false;
         let _ = sys_sql(&mut sys, "SET @@SESSION.tidb_mview_enable = %?", &[SqlArg::String(original.as_bytes())]);
         outcome
     }
 }
 
-/// Go master's base-table and log checks shared by SHOW CREATE
-/// MATERIALIZED VIEW LOG (`ErrWrongObject` for a missing log) and SHOW
-/// MATERIALIZED VIEW LOG ... WAIT_PURGE (a plain error).
-fn materialized_view_log_target(
-    catalog: &Catalog,
-    schema: &str,
-    name: &str,
-    missing: MissingLog,
-) -> Result<(TableInfo, TableInfo), DriverError> {
-    if catalog.0.schema_by_name(schema).is_none() {
-        return Err(database_not_exists(schema));
-    }
-    let base = catalog.table(schema, name).ok_or_else(|| table_not_exists(schema, name))?;
-    let base_name = base.name.original().to_owned();
-    if base.is_view() || base.is_sequence() || base.temp_table_type != tidb_model::TempTableType::NONE {
-        return Err(wrong_object(schema, &base_name, "BASE TABLE"));
-    }
-    let no_log = || match missing {
-        MissingLog::WrongObject => wrong_object(schema, &base_name, "BASE TABLE WITH MATERIALIZED VIEW LOG"),
-        MissingLog::Errorf => plain(format!("materialized view log does not exist for base table {schema}.{base_name}")),
-    };
-    let mlog_id = base.materialized_view_base.as_ref().map_or(0, |base| base.read().mlog_id);
-    if mlog_id == 0 {
-        return Err(no_log());
-    }
-    let mlog = catalog.table_by_id(mlog_id).ok_or_else(no_log)?;
-    if mlog.materialized_view_log.as_ref().is_none_or(|info| info.read().base_table_id != base.id) {
-        let mlog_name = mlog.name.original();
-        return Err(match missing {
-            MissingLog::WrongObject => wrong_object(
-                schema,
-                mlog_name,
-                &format!("MATERIALIZED VIEW LOG FOR BASE TABLE {schema}.{base_name}"),
-            ),
-            MissingLog::Errorf => plain(format!(
-                "table {schema}.{mlog_name} is not a materialized view log for base table {schema}.{base_name}"
-            )),
-        });
-    }
-    Ok((base, mlog))
-}
+impl<T: MvSession> MviewShowExec for T {}

@@ -27,6 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use tidb_executor::mview::{mlog_purge::MlogPurgeExec as _, mv_refresh_observability::MvRefreshObservabilityExec as _, mview_compare::MviewCompareExec as _, mview_refresh::MviewRefreshExec as _, mview_show::MviewShowExec as _, mview_task::MviewTaskExec as _};
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PreparedAstCompile;
 use std::collections::HashMap;
@@ -964,7 +965,7 @@ pub struct Session {
     process_plan_info: Arc<std::sync::Mutex<tidb_stmtctx::ProcessPlanInfo>>,
     /// Go master `RefreshMaterializedViewExec.stepObserver`: the step
     /// collector of a REFRESH ... WITH PROFILE this session runs.
-    pub(crate) mv_refresh_observer: Option<Arc<std::sync::Mutex<crate::mv_refresh_observability::MvRefreshObserveCollector>>>,
+    pub(crate) mv_refresh_observer: Option<Arc<std::sync::Mutex<tidb_executor::mview::mv_refresh_observability::MvRefreshObserveCollector>>>,
     /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
     /// `DurationWaitTS`, set by the planner and the transaction tier.
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
@@ -1349,12 +1350,6 @@ impl Drop for Session {
 
 
 mod account;
-mod mlog_purge;
-mod mview_compare;
-mod mv_refresh_observability;
-mod mview_refresh;
-mod mview_show;
-mod mview_task;
 mod account_password;
 use tidb_bindinfo::binding;
 mod binding_arm;
@@ -1379,6 +1374,7 @@ mod load_data;
 pub mod stats_statement_service;
 mod dispatch;
 mod gcutil;
+mod mview_session;
 pub mod restricted_sql;
 mod session_telemetry;
 mod identity;

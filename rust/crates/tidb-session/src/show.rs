@@ -19,6 +19,7 @@
 //! domain and its session manager. The executors' bodies live in
 //! `tidb_executor`.
 
+use tidb_executor::mview::{mlog_purge::MlogPurgeExec as _, mv_refresh_observability::MvRefreshObservabilityExec as _, mview_compare::MviewCompareExec as _, mview_refresh::MviewRefreshExec as _, mview_show::MviewShowExec as _, mview_task::MviewTaskExec as _};
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_privilege::PrivilegeTypeExt;
 use crate::*;

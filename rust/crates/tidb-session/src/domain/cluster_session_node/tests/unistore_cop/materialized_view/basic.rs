@@ -574,7 +574,7 @@ fn cutover_fixture(
     let old = latest_table(stack, view);
     let shadow_id = create_shadow_like(stack, tk, view, shadow_name);
     let expected = get_last_success_read_tso(tk, old.id);
-    let sources = crate::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old.id).unwrap();
+    let sources = tidb_executor::mview::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old.id).unwrap();
     (old.id, shadow_id, expected, sources, old.revision)
 }
 
@@ -687,7 +687,7 @@ fn test_materialized_view_out_of_place_cutover_failure_keeps_old_affinity_group(
 
     let shadow_id = create_shadow_like(&stack, &mut tk, "mv_cutover_affinity", "__mv_shadow_cutover_affinity");
     let expected = get_last_success_read_tso(&mut tk, old_id);
-    let sources = crate::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old_id).unwrap();
+    let sources = tidb_executor::mview::mview_refresh::resolve_refresh_sources(stack.factory.catalog.get_latest().as_ref(), old_id).unwrap();
     // "The fixture updates metadata directly, so this test intentionally does
     // not pass an expected revision to the cutover job."
     let error = {
@@ -1027,7 +1027,7 @@ fn test_mview_refresh_source_info_log_sets() {
         // restriction."
         must_exec_all(&mut tk, &["begin optimistic"]);
         {
-            let mut exec = crate::mview_refresh::session_sql_exec(&mut tk);
+            let mut exec = tidb_executor::mview::mview_refresh::session_sql_exec(&mut tk);
             insert_refresh_source_ids(&mut exec, 1001, &[0, 10, 11]).unwrap();
             insert_refresh_source_ids(&mut exec, 1002, &[10]).unwrap();
             assert_eq!(read_refresh_source_ids(&mut exec, 1001).unwrap(), vec![0, 10, 11]);
@@ -1040,7 +1040,7 @@ fn test_mview_refresh_source_info_log_sets() {
         );
 
         must_exec_all(&mut tk, &["begin optimistic"]);
-        let inserted = insert_refresh_source_ids(&mut crate::mview_refresh::session_sql_exec(&mut tk), 1002, &[9, 10, 12]);
+        let inserted = insert_refresh_source_ids(&mut tidb_executor::mview::mview_refresh::session_sql_exec(&mut tk), 1002, &[9, 10, 12]);
         // "Optimistic SQL can defer duplicate-key checks until commit."
         let code = match inserted {
             Ok(()) => answer(&mut tk, "commit"),
@@ -1052,7 +1052,7 @@ fn test_mview_refresh_source_info_log_sets() {
         assert_eq!(answer(&mut tk, "select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = 1002"), r#"RS:[["10"]]"#);
 
         must_exec_all(&mut tk, &["begin optimistic"]);
-        delete_refresh_source_info(&mut crate::mview_refresh::session_sql_exec(&mut tk), &[1001]).unwrap();
+        delete_refresh_source_info(&mut tidb_executor::mview::mview_refresh::session_sql_exec(&mut tk), &[1001]).unwrap();
         must_exec_all(&mut tk, &["commit"]);
         assert_eq!(
             answer(&mut tk, "select MVIEW_ID, MLOG_ID from mysql.tidb_mview_fast_refresh_source_info use index(idx_mlog)"),

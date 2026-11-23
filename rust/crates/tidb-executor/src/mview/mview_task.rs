@@ -22,17 +22,22 @@
 //! running statement and every later one on that session until the task
 //! drops them -- the same reach a canceled context has.
 
+use super::mview_refresh::MviewRefreshExec as _;
+use super::mlog_purge::MlogPurgeExec as _;
+use super::mview_compare::MviewCompareExec as _;
+use super::mv_refresh_observability::MvRefreshObservabilityExec as _;
+use super::mview_show::MviewShowExec as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_ast::{CancelMaterializedViewJobStmt, CancelMaterializedViewJobType};
 use tidb_driver_error::DriverError;
-use tidb_executor::sessionctx::StmtOutput;
+use crate::sessionctx::StmtOutput;
 use tidb_sqlescape::SqlArg;
 use tidb_terror::MysqlError;
 
-use crate::mview_refresh::{datum_i64, datum_text, is_table_not_exists, plain, sys_sql};
-use crate::Session;
+use super::mview_refresh::{datum_i64, datum_text, is_table_not_exists, plain, sys_sql};
+use super::MvSession;
 
 /// Go master `mvTaskMonitorPollInterval`.
 const MV_TASK_MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -40,7 +45,7 @@ const MV_TASK_MONITOR_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const MV_TASK_HIST_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// Go master `errMVTaskCanceledManually`.
-pub(crate) const ERR_MV_TASK_CANCELED_MANUALLY: &str = "materialized view task canceled manually";
+pub const ERR_MV_TASK_CANCELED_MANUALLY: &str = "materialized view task canceled manually";
 
 const FP: &str = "github.com/pingcap/tidb/pkg/executor/";
 
@@ -56,7 +61,7 @@ fn interval(failpoint: &str, default: Duration) -> Duration {
 /// Go master `mvTaskCancelController`: whether a manual cancel was
 /// requested and by whom, and the task sessions' statement handles it
 /// interrupts.
-pub(crate) struct MvTaskCancelController {
+pub struct MvTaskCancelController {
     /// Go `ctx`: the task's context, canceled with its parent (the
     /// statement's) or by a manual cancel.
     ctx: tidb_gocontext::Context,
@@ -80,19 +85,19 @@ struct CancelState {
 
 impl MvTaskCancelController {
     /// Go master `newMVTaskCancelController(parent)`.
-    pub(crate) fn new(parent: &tidb_gocontext::Context) -> Self {
+    pub fn new(parent: &tidb_gocontext::Context) -> Self {
         let (ctx, cancel) = tidb_gocontext::Context::with_cancel(parent);
         Self { ctx, cancel, state: Mutex::default() }
     }
 
     /// Go master `context()`: the task's context (`kctx`).
-    pub(crate) fn context(&self) -> &tidb_gocontext::Context {
+    pub fn context(&self) -> &tidb_gocontext::Context {
         &self.ctx
     }
 
     /// A task session whose statements a cancel interrupts (Go: the session
     /// runs under the controller's context).
-    pub(crate) fn watch(&self, session: &Session) -> Arc<tidb_sqlkiller::StatementCancellation> {
+    pub fn watch<S: MvSession>(&self, session: &S) -> Arc<tidb_sqlkiller::StatementCancellation> {
         let handle = Arc::new(session.begin_query_cancellation());
         let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.manual {
@@ -103,7 +108,7 @@ impl MvTaskCancelController {
     }
 
     /// Go `kctx.Err()` on the task's cancelable context.
-    pub(crate) fn err(&self) -> Result<(), DriverError> {
+    pub fn err(&self) -> Result<(), DriverError> {
         match self.ctx.err() {
             Some(error) => Err(plain(error.to_string())),
             None => Ok(()),
@@ -113,7 +118,7 @@ impl MvTaskCancelController {
     /// [`Self::watch`] for the guard's lifetime: dropping it resets the
     /// session's statements to uncanceled (Go's cleanup runs on
     /// `finalizeCtx`, outside the canceled context).
-    pub(crate) fn watch_guard(&self, session: &Session) -> MvTaskWatch {
+    pub fn watch_guard<S: MvSession>(&self, session: &S) -> MvTaskWatch {
         MvTaskWatch(self.watch(session))
     }
 
@@ -133,7 +138,7 @@ impl MvTaskCancelController {
 
     /// Go master `normalizeTaskFailure`: a manually canceled task fails with
     /// `errMVTaskCanceledManually` and records who canceled it.
-    pub(crate) fn normalize_task_failure(&self, error: DriverError) -> (Option<String>, DriverError) {
+    pub fn normalize_task_failure(&self, error: DriverError) -> (Option<String>, DriverError) {
         let state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !state.manual {
             return (None, error);
@@ -142,17 +147,17 @@ impl MvTaskCancelController {
     }
 
     /// Go master `isManualCancelRequested`.
-    pub(crate) fn is_manual_cancel_requested(&self) -> bool {
+    pub fn is_manual_cancel_requested(&self) -> bool {
         self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).manual
     }
 }
 
 /// A watched task session; dropping it resets the session's cancellation.
-pub(crate) struct MvTaskWatch(Arc<tidb_sqlkiller::StatementCancellation>);
+pub struct MvTaskWatch(Arc<tidb_sqlkiller::StatementCancellation>);
 
 impl MvTaskWatch {
     /// Resets the session's statements to uncanceled now.
-    pub(crate) fn reset(&self) {
+    pub fn reset(&self) {
         self.0.reset();
     }
 }
@@ -184,13 +189,13 @@ fn format_mv_manual_cancel_requester(user: Option<(&str, &str)>) -> String {
 }
 
 /// Go master `mvTaskCancelPoller`.
-pub(crate) type MvTaskCancelPoller = Box<dyn Fn(&mut Session) -> Result<(bool, String), DriverError> + Send>;
+pub type MvTaskCancelPoller<S> = Box<dyn Fn(&mut S) -> Result<(bool, String), DriverError> + Send>;
 /// Go master `mvTaskHeartbeatWriter`.
-pub(crate) type MvTaskHeartbeatWriter = Box<dyn Fn(&mut Session) -> Result<(), DriverError> + Send>;
+pub type MvTaskHeartbeatWriter<S> = Box<dyn Fn(&mut S) -> Result<(), DriverError> + Send>;
 
 /// Go master `startMVTaskMonitor`'s stop function: stops the monitor and
 /// waits for it.
-pub(crate) struct MvTaskMonitor {
+pub struct MvTaskMonitor {
     stop: Option<std::sync::mpsc::Sender<()>>,
     done: Option<std::thread::JoinHandle<()>>,
 }
@@ -214,12 +219,12 @@ impl Drop for MvTaskMonitor {
 /// history row for a cancel request every poll interval and writes the
 /// heartbeat every heartbeat interval, until the task stops it or a cancel
 /// is requested.
-pub(crate) fn start_mv_task_monitor(
-    monitor_session: Session,
+pub fn start_mv_task_monitor<S: MvSession + Send + 'static>(
+    monitor_session: S,
     controller: Arc<MvTaskCancelController>,
     monitor_name: String,
-    poller: MvTaskCancelPoller,
-    heartbeat_writer: Option<MvTaskHeartbeatWriter>,
+    poller: MvTaskCancelPoller<S>,
+    heartbeat_writer: Option<MvTaskHeartbeatWriter<S>>,
 ) -> Result<MvTaskMonitor, DriverError> {
     let (stop, stopped) = std::sync::mpsc::channel::<()>();
     let mut session = monitor_session;
@@ -273,14 +278,14 @@ fn warn(msg: &str, monitor: &str, error: &DriverError) {
         msg,
         &[
             tidb_log::Field::new("monitor", tidb_log::Value::Str(monitor.to_owned())),
-            tidb_logutil::zap_error(crate::mview_refresh::driver_message(error)),
+            tidb_logutil::zap_error(super::mview_refresh::driver_message(error)),
         ],
     );
 }
 
 /// Go master `readRefreshHistCancelRequest` / `readPurgeHistCancelRequest`.
-pub(crate) fn read_hist_cancel_request(
-    session: &mut Session,
+pub fn read_hist_cancel_request<S: MvSession>(
+    session: &mut S,
     sql: &str,
     job_id: u64,
     object_id: i64,
@@ -297,9 +302,21 @@ pub(crate) fn read_hist_cancel_request(
     Ok((true, row.get(1).filter(|datum| !datum.is_null()).map(datum_text).unwrap_or_default()))
 }
 
-impl Session {
+
+/// Go master `cancelMaterializedViewJobUserError`.
+fn cancel_materialized_view_job_user_error(stmt: &CancelMaterializedViewJobStmt) -> DriverError {
+    match stmt.tp {
+        CancelMaterializedViewJobType::Refresh => plain(format!("cannot cancel materialized view refresh job {}", stmt.job_id)),
+        CancelMaterializedViewJobType::LogPurge => {
+            plain(format!("cannot cancel materialized view log purge job {}", stmt.job_id))
+        }
+    }
+}
+
+/// Go master `pkg/executor`'s methods of this file over a session.
+pub trait MviewTaskExec: MvSession {
     /// Go master `CancelMaterializedViewJobExec.Next`.
-    pub(crate) fn cancel_materialized_view_job(
+    fn cancel_materialized_view_job(
         &mut self,
         stmt: &CancelMaterializedViewJobStmt,
     ) -> Result<StmtOutput, DriverError> {
@@ -325,7 +342,7 @@ impl Session {
     /// the running job's view (refresh) or log (purge).
     fn check_cancel_materialized_view_job_privilege(
         &self,
-        sys: &mut Session,
+        sys: &mut Self,
         stmt: &CancelMaterializedViewJobStmt,
     ) -> Result<(), DriverError> {
         let Some((user, host)) = self.current_identity().map(|(user, host)| (user.to_owned(), host.to_owned())) else {
@@ -390,12 +407,4 @@ impl Session {
     }
 }
 
-/// Go master `cancelMaterializedViewJobUserError`.
-fn cancel_materialized_view_job_user_error(stmt: &CancelMaterializedViewJobStmt) -> DriverError {
-    match stmt.tp {
-        CancelMaterializedViewJobType::Refresh => plain(format!("cannot cancel materialized view refresh job {}", stmt.job_id)),
-        CancelMaterializedViewJobType::LogPurge => {
-            plain(format!("cannot cancel materialized view log purge job {}", stmt.job_id))
-        }
-    }
-}
+impl<T: MvSession> MviewTaskExec for T {}

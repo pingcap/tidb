@@ -139,6 +139,7 @@ use tidb_distsql::select_response::CopResponseSink;
 mod tests_generated_column_ddl;
 use tidb_distsql::split_ranges_across_int64_boundary;
 pub mod import_into;
+pub mod mview;
 pub mod index_merge_reader;
 pub mod kv_table;
 pub mod limit;

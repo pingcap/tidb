@@ -681,7 +681,7 @@ fn test_create_materialized_view_build_read_ts_query_type_alignment() {
     // would record its own).
     let expected = tk.vars.last_query_info.start_ts;
     assert_ne!(expected, 0);
-    let rows = crate::mview_refresh::sys_sql(
+    let rows = tidb_executor::mview::mview_refresh::sys_sql(
         &mut tk,
         "SELECT COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(@@tidb_last_query_info, '$.start_ts')) AS UNSIGNED), CAST(0 AS UNSIGNED))",
         &[],

@@ -21,6 +21,7 @@
 //! DDL's implicit commit), then transaction control and `SET`, then the parsed
 //! dispatch over query/DML/DDL.
 
+use tidb_executor::mview::{mlog_purge::MlogPurgeExec as _, mv_refresh_observability::MvRefreshObservabilityExec as _, mview_compare::MviewCompareExec as _, mview_refresh::MviewRefreshExec as _, mview_show::MviewShowExec as _, mview_task::MviewTaskExec as _};
 use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use tidb_executor::mem_table_retrieval::StmtMemTableRetrieval as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;

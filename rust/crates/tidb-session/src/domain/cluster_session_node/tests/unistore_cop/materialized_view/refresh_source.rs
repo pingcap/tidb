@@ -261,11 +261,11 @@ fn test_m_view_refresh_source_info_recovery_atomicity() {
 /// Go `mviewRefreshSourceSnapshot`: the snapshot with some tables replaced
 /// (`None` hides one), as `TableByID` reads them.
 struct ReplacedSnapshot {
-    inner: Box<dyn crate::mview_refresh::RefreshSourceSchema>,
+    inner: Box<dyn tidb_executor::mview::mview_refresh::RefreshSourceSchema>,
     replaced: std::collections::HashMap<i64, Option<tidb_model::GoShared<tidb_model::TableInfo>>>,
 }
 
-impl crate::mview_refresh::RefreshSourceSchema for ReplacedSnapshot {
+impl tidb_executor::mview::mview_refresh::RefreshSourceSchema for ReplacedSnapshot {
     fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
         match self.replaced.get(&id) {
             Some(table) => table.clone(),
@@ -286,7 +286,7 @@ fn replace_snapshot(
     mview_id: i64,
     mlog_id: i64,
     plan_mlog_table_id: Option<&mut i64>,
-    snapshot: &mut Box<dyn crate::mview_refresh::RefreshSourceSchema>,
+    snapshot: &mut Box<dyn tidb_executor::mview::mview_refresh::RefreshSourceSchema>,
 ) {
     let mv = snapshot.table_info_by_id(mview_id).expect("the view").read().clone_like_go();
     let source_id = mv.materialized_view.as_ref().unwrap().read().base_table_ids.iter().copied().next().unwrap();
@@ -341,7 +341,7 @@ fn replace_snapshot(
 /// A placeholder snapshot while [`replace_snapshot`] swaps the real one.
 struct EmptySnapshot;
 
-impl crate::mview_refresh::RefreshSourceSchema for EmptySnapshot {
+impl tidb_executor::mview::mview_refresh::RefreshSourceSchema for EmptySnapshot {
     fn table_info_by_id(&self, _: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
         None
     }
@@ -375,14 +375,14 @@ fn test_m_view_refresh_source_info_snapshot_identity() {
             let _hook = if method == "fast" {
                 let checked = Arc::clone(&checked);
                 tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", move |input| {
-                    let input = input.downcast_mut::<crate::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
+                    let input = input.downcast_mut::<tidb_executor::mview::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
                     checked.store(true, std::sync::atomic::Ordering::SeqCst);
                     replace_snapshot(&change_owned, mview_id, mlog_id, Some(&mut input.plan_mlog_table_id), &mut input.snapshot);
                 })
             } else {
                 let checked = Arc::clone(&checked);
                 tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", move |input| {
-                    let input = input.downcast_mut::<crate::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
+                    let input = input.downcast_mut::<tidb_executor::mview::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
                     checked.store(true, std::sync::atomic::Ordering::SeqCst);
                     replace_snapshot(&change_owned, mview_id, mlog_id, None, &mut input.snapshot);
                 })
@@ -472,7 +472,7 @@ fn test_m_view_refresh_source_info_read_ts_after_retry() {
             let metadata_ts = Arc::clone(&metadata_ts);
             move |session: &mut dyn std::any::Any| {
                 let session = session.downcast_mut::<Session>().expect("the refresh session");
-                crate::mview_refresh::sys_sql(
+                tidb_executor::mview::mview_refresh::sys_sql(
                     session,
                     "UPDATE mysql.tidb_mview_fast_refresh_source_info SET MLOG_ID = MLOG_ID WHERE MVIEW_ID = %?",
                     &[tidb_sqlescape::SqlArg::Signed(mview_id)],
@@ -484,14 +484,14 @@ fn test_m_view_refresh_source_info_read_ts_after_retry() {
         let _validate = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", {
             let validated_ts = Arc::clone(&validated_ts);
             move |input: &mut dyn std::any::Any| {
-                let input = input.downcast_mut::<crate::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
+                let input = input.downcast_mut::<tidb_executor::mview::mview_refresh::MvRefreshValidateInputSnapshot>().unwrap();
                 validated_ts.lock().unwrap().push(input.read_tso);
             }
         });
         let _resolve = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", {
             let validated_ts = Arc::clone(&validated_ts);
             move |input: &mut dyn std::any::Any| {
-                let input = input.downcast_mut::<crate::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
+                let input = input.downcast_mut::<tidb_executor::mview::mview_refresh::MvRefreshResolveInputSnapshot>().unwrap();
                 validated_ts.lock().unwrap().push(input.read_tso);
             }
         });

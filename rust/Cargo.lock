@@ -6861,6 +6861,7 @@ dependencies = [
  "tidb-objstore",
  "tidb-owner",
  "tidb-parser",
+ "tidb-parser-format",
  "tidb-parser-types",
  "tidb-password-validation",
  "tidb-pd-client",

@@ -18,6 +18,7 @@
 //! session. The mock-schema cases live in `tidb-executor`'s
 //! `casetest_mview_tests.rs`.
 
+use tidb_executor::mview::mv_refresh_observability::MvRefreshObservabilityExec as _;
 use super::refresh_operator::execute_refresh_operator;
 use super::*;
 
