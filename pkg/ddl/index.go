@@ -1052,6 +1052,9 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		err = initForReorgIndexes(w, job, allIndexInfos)
+		if err == nil && job.ReorgMeta.ReorgTp == model.ReorgTypeTxnMerge {
+			err = checkPartialIndexOnTxnMerge(tblInfo, allIndexInfos)
+		}
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1186,6 +1189,30 @@ SwitchIndexState:
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func checkPartialIndexOnTxnMerge(tblInfo *model.TableInfo, idxInfos []*model.IndexInfo) error {
+	for _, idxInfo := range idxInfos {
+		if !idxInfo.HasCondition() {
+			continue
+		}
+		for _, col := range idxInfo.AffectColumn {
+			if tblInfo.Columns[col.Offset].GetType() != mysql.TypeTimestamp {
+				continue
+			}
+			condition, err := generatedexpr.ParseExpression(idxInfo.ConditionExprString)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if _, ok := condition.(*ast.IsNullExpr); !ok {
+				// TIMESTAMP comparisons can disagree between backfill and DML sessions
+				// in different time zones. NULL predicates are independent of time zones.
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+					"TIMESTAMP comparisons with transactional backfill are not supported")
+			}
+		}
+	}
+	return nil
 }
 
 func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
