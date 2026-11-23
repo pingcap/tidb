@@ -69,8 +69,24 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+				res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+				ver = res.ver
+				err = res.err
 				updateParentJobFromProxy(job, &proxyJob)
+				if res.panicked {
+					if err == nil {
+						err = dbterror.ErrCancelledDDLJob
+					}
+					if usesStepCheckpointContract(job) {
+						jobCtx.stepOutcome = &stepOutcome{
+							writes:   stepWritesDiscard,
+							baseline: stepJobEntryBaseline,
+							finish:   stepFinishUpdateJob,
+							err:      err,
+						}
+					}
+					return 0, err
+				}
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -86,6 +102,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
+		migrated := usesStepCheckpointContract(job)
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if !sub.Revertible || sub.IsFinished() {
 				// Skip the sub-jobs which related schema states
@@ -95,14 +112,78 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}
 			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+			res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+			ver, err = res.ver, res.err
 			updateParentJobFromProxy(job, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			job.ResumeReason = proxyJob.ResumeReason
+			if res.panicked {
+				if err == nil {
+					err = dbterror.ErrCancelledDDLJob
+				}
+				if migrated {
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:   stepWritesDiscard,
+						baseline: stepJobEntryBaseline,
+						finish:   stepFinishUpdateJob,
+						err:      err,
+					}
+				}
+				return 0, err
+			}
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				if migrated {
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:        stepWritesKeep,
+						baseline:      stepJobCurrent,
+						finish:        stepFinishUpdateJob,
+						schemaVer:     ver,
+						updateRawArgs: true,
+					}
+				}
 				return ver, nil
 			}
 			handleRevertibleException(job, sub, proxyJob.Error)
+			if migrated {
+				if err == nil && !job.IsCancelled() {
+					updateRawArgs := res.updateRawArgs
+					if !sub.IsNormal() {
+						updateRawArgs = true
+					}
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:        stepWritesKeep,
+						baseline:      stepJobCurrent,
+						finish:        stepFinishUpdateJob,
+						schemaVer:     ver,
+						updateRawArgs: updateRawArgs,
+					}
+				} else if err != nil && sub.State == model.JobStateRollingback {
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:        stepWritesKeep,
+						baseline:      stepJobCurrent,
+						finish:        stepFinishUpdateJob,
+						schemaVer:     ver,
+						updateRawArgs: true,
+						err:           err,
+					}
+				} else {
+					failedSubNormal := sub.IsNormal()
+					failedSubState := sub.State
+					failedSubErr := proxyJob.Error
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:   stepWritesDiscard,
+						baseline: stepJobEntryBaseline,
+						finish:   stepFinishUpdateJob,
+						err:      err,
+						applyJobDelta: func(restored, _ *model.Job) {
+							if failedSubNormal || restored.MultiSchemaInfo == nil {
+								return
+							}
+							handleRevertibleException(restored, &model.SubJob{State: failedSubState}, failedSubErr)
+						},
+					}
+				}
+			}
 			return ver, err
 		}
 
@@ -119,10 +200,13 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 
 		var schemaVersionGenerated = false
-		// Save every sub-job, including finished no-ops, before running the batch.
-		subJobs := make([]*model.SubJob, len(job.MultiSchemaInfo.SubJobs))
-		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			subJobs[i] = sub.Clone()
+		var subJobs []*model.SubJob
+		if !migrated {
+			// Save every sub-job, including finished no-ops, before running the batch.
+			subJobs = make([]*model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				subJobs[i] = sub.Clone()
+			}
 		}
 		diff := &model.SchemaDiff{Type: job.Type, TableID: job.TableID, SchemaID: job.SchemaID}
 		SetSchemaDiffForMultiInfos(diff, collectAffectedTableInfosFromInvolving(jobCtx, job)...)
@@ -130,12 +214,6 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		// Collect updates even from sub-jobs that skip schema version generation.
 		jobCtx.multiSchemaDiff = diff
 		defer func() { jobCtx.multiSchemaDiff = nil }()
-		processedSubJobs := make([]int, 0, len(job.MultiSchemaInfo.SubJobs))
-		restoreProcessedSubJobs := func() {
-			for _, i := range processedSubJobs {
-				job.MultiSchemaInfo.SubJobs[i] = subJobs[i]
-			}
-		}
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
 		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
@@ -144,13 +222,14 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if sub.IsFinished() {
 				continue
 			}
-			processedSubJobs = append(processedSubJobs, i)
 			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
+			res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+			proxyJobVer := res.ver
+			err = res.err
 			failpoint.InjectCall("beforeBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
 			updateParentJobFromProxy(job, &proxyJob)
 			failpoint.InjectCall("afterBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
@@ -163,17 +242,74 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			job.ResumeReason = proxyJob.ResumeReason
 			if proxyJob.IsPausingOrPausedBySystemForKVDiskFull() {
 				// Promoting the pause commits changes made by preceding sub-jobs,
-				// so their deferred history must be committed with them.
+				// so their deferred history and shared multi-table diff must be
+				// committed with them.
 				jobCtx.deferStorageClassTransitionStaging = false
 				if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
-					restoreProcessedSubJobs()
+					if migrated {
+						jobCtx.stepOutcome = &stepOutcome{
+							writes:   stepWritesDiscard,
+							baseline: stepJobEntryBaseline,
+							finish:   stepFinishUpdateJob,
+							err:      err,
+						}
+					}
 					return 0, err
+				}
+				if len(actionTypes) > 1 && ver != 0 {
+					diff.Version = ver
+					diff.SubActionTypes = actionTypes
+					if err = metaMut.SetSchemaDiff(diff); err != nil {
+						if migrated {
+							jobCtx.stepOutcome = &stepOutcome{
+								writes:   stepWritesDiscard,
+								baseline: stepJobEntryBaseline,
+								finish:   stepFinishUpdateJob,
+								err:      err,
+							}
+						}
+						return 0, err
+					}
 				}
 			}
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				if migrated {
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:        stepWritesKeep,
+						baseline:      stepJobCurrent,
+						finish:        stepFinishUpdateJob,
+						schemaVer:     ver,
+						updateRawArgs: true,
+					}
+				}
 				return ver, nil
 			}
-			if err != nil || proxyJob.Error != nil {
+			if err != nil || proxyJob.Error != nil || res.panicked {
+				if err == nil {
+					err = proxyJob.Error
+				}
+				if err == nil && res.panicked {
+					err = dbterror.ErrCancelledDDLJob
+				}
+				if migrated {
+					failedSubNormal := sub.IsNormal()
+					failedSubState := sub.State
+					failedSubErr := proxyJob.Error
+					handleRevertibleException(job, sub, failedSubErr)
+					jobCtx.stepOutcome = &stepOutcome{
+						writes:   stepWritesDiscard,
+						baseline: stepJobEntryBaseline,
+						finish:   stepFinishUpdateJob,
+						err:      err,
+						applyJobDelta: func(restored, _ *model.Job) {
+							if failedSubNormal || restored.MultiSchemaInfo == nil {
+								return
+							}
+							handleRevertibleException(restored, &model.SubJob{State: failedSubState}, failedSubErr)
+						},
+					}
+					return 0, err
+				}
 				for j := 0; j <= i; j++ {
 					job.MultiSchemaInfo.SubJobs[j] = subJobs[j]
 				}
@@ -184,9 +320,6 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				// entire transaction before persisting the error and restored jobs.
 				// External effects such as allocator rebases cannot be undone here.
 				jobCtx.mustRollbackTxnOnError = true
-				if err == nil {
-					err = proxyJob.Error
-				}
 				return 0, err
 			}
 			actionTypes = append(actionTypes, sub.Type)
@@ -202,9 +335,16 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 		if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
 			// Staging is part of the same transaction as the TableInfo changes.
-			// Restore the in-memory sub-jobs so the outer worker can roll the
-			// transaction back and retry the whole batch.
-			restoreProcessedSubJobs()
+			// Outer stepCheckpoint rolls the transaction and job state back so the
+			// whole batch retries cleanly.
+			if migrated {
+				jobCtx.stepOutcome = &stepOutcome{
+					writes:   stepWritesDiscard,
+					baseline: stepJobEntryBaseline,
+					finish:   stepFinishUpdateJob,
+					err:      err,
+				}
+			}
 			return 0, err
 		}
 		// All the sub-jobs are non-revertible.
@@ -212,17 +352,42 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
+	migrated := usesStepCheckpointContract(job)
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if sub.IsFinished() {
 			continue
 		}
 		prevSubState := sub.State
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+		res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+		ver, err = res.ver, res.err
 		updateParentJobFromProxy(job, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		job.ResumeReason = proxyJob.ResumeReason
+		if res.panicked {
+			if err == nil {
+				err = dbterror.ErrCancelledDDLJob
+			}
+			if migrated {
+				jobCtx.stepOutcome = &stepOutcome{
+					writes:   stepWritesDiscard,
+					baseline: stepJobEntryBaseline,
+					finish:   stepFinishUpdateJob,
+					err:      err,
+				}
+			}
+			return 0, err
+		}
 		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+			if migrated {
+				jobCtx.stepOutcome = &stepOutcome{
+					writes:        stepWritesKeep,
+					baseline:      stepJobCurrent,
+					finish:        stepFinishUpdateJob,
+					schemaVer:     ver,
+					updateRawArgs: true,
+				}
+			}
 			return ver, nil
 		}
 		return ver, err

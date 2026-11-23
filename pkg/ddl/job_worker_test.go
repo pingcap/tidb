@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,8 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -680,4 +685,120 @@ func TestJobNeedGC(t *testing.T) {
 			{Type: model.ActionRebaseAutoID, State: model.JobStateCancelled},
 		}}}
 	require.True(t, ddl.JobNeedGC(job))
+}
+
+func TestStepCheckpointPanicAndErrEntryTooLarge(t *testing.T) {
+	t.Run("panic resets LastSchemaVersion and preserves error count on retry", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t (a INT)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+		defer tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+
+		var (
+			retryOnce       atomic.Bool
+			retryState      model.JobState
+			retryLastVer    int64
+			retryErrorCount int64
+			jobID           int64
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionAddColumn {
+				return
+			}
+			jobID = job.ID
+			if job.ErrorCount == 1 && !retryOnce.Swap(true) {
+				retryState = job.State
+				retryLastVer = job.LastSchemaVersion
+				retryErrorCount = job.ErrorCount
+			}
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected step panic")`)
+
+		err := tk.ExecToErr("ALTER TABLE t ADD COLUMN b INT")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "Cancelled DDL job")
+		require.True(t, retryOnce.Load())
+		require.Equal(t, model.JobStateCancelling, retryState)
+		require.Zero(t, retryLastVer)
+		require.Equal(t, int64(1), retryErrorCount)
+
+		historyJob, getErr := ddl.GetHistoryJobByID(tk.Session(), jobID)
+		require.NoError(t, getErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		require.NotNil(t, historyJob.Error)
+
+		tbl, tblErr := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, tblErr)
+		require.Len(t, tbl.Meta().Columns, 1)
+		tk.MustExec("CREATE TABLE t_after (id INT)")
+	})
+
+	t.Run("panic exceeding error count limit finalizes directly", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t2 (a INT)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 0")
+		defer tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+
+		var jobID atomic.Int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionAddColumn {
+				jobID.Store(job.ID)
+			}
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected fatal panic")`)
+
+		err := tk.ExecToErr("ALTER TABLE t2 ADD COLUMN b INT")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "panic in handling DDL logic and error count beyond the limitation 0, cancelled")
+
+		historyJob, getErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, getErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		require.Equal(t, int64(1), historyJob.ErrorCount)
+		require.NotNil(t, historyJob.Error)
+		require.Zero(t, historyJob.LastSchemaVersion)
+		require.Positive(t, historyJob.BinlogInfo.FinishedTS)
+
+		tbl, tblErr := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+		require.NoError(t, tblErr)
+		require.Len(t, tbl.Meta().Columns, 1)
+	})
+
+	t.Run("ErrEntryTooLarge reopens txn and records FinishedTS in history", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t3 (a INT)")
+
+		var jobID atomic.Int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionRenameTable {
+				jobID.Store(job.ID)
+			}
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge", "1*return(true)")
+
+		tk.MustGetErrCode("RENAME TABLE t3 TO t3_new", errno.ErrEntryTooLarge)
+		historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, err)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		require.Equal(t, int64(1), historyJob.ErrorCount)
+		require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error))
+		require.Zero(t, historyJob.LastSchemaVersion)
+		require.Positive(t, historyJob.BinlogInfo.FinishedTS)
+		tk.MustQuery("SELECT COUNT(*) FROM t3").Check(testkit.Rows("0"))
+	})
 }

@@ -124,6 +124,7 @@ type jobContext struct {
 	deferStorageClassTransitionStaging bool
 	pendingStorageClassTransitions     []pendingStorageClassTransition
 	sharedMultiSchemaVersion           int64
+	stepOutcome                        *stepOutcome
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -317,26 +318,35 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err error) error {
+func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err error) (bool, error) {
 	if err == nil {
-		return nil
+		return false, nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
+		job := jobW.Job
 		jobCtx.logger.Warn("update DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		w.sess.Rollback()
-		err1 := w.sess.Begin(w.workCtx)
+		txn, err1 := w.prepareTxn(job)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return false, errors.Trace(err1)
 		}
+		if len(jobW.Bytes) > 0 {
+			if err1 = w.checkJobMetaUnchanged(jobCtx, jobW); err1 != nil {
+				w.sess.Rollback()
+				return false, errors.Trace(err1)
+			}
+		}
+		jobCtx.metaMut = meta.NewMutator(txn)
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
+		job.LastSchemaVersion = 0
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
-		err = w.finishDDLJob(jobCtx, job)
+		return true, errors.Trace(w.finishDDLJob(jobCtx, job))
 	}
-	return errors.Trace(err)
+	return false, errors.Trace(err)
 }
 
 // updateDDLJob updates the DDL job information.
@@ -686,6 +696,10 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	jobCtx.mustRollbackTxnOnError = false
+	jobCtx.stepOutcome = nil
+	defer func() {
+		jobCtx.stepOutcome = nil
+	}()
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
 	defer r.End()
@@ -740,38 +754,34 @@ func (w *worker) transitOneJobStep(
 	defer func() {
 		metrics.DDLTransitOneStepOpHist.Observe(time.Since(start).Seconds())
 	}()
-	// If running job meets error, we will save this error in job Error and retry
-	// later if the job is not cancelled.
-	restoreStorageClassTransitionStep := checkpointStorageClassTransitionStep(w.sess, txn, job)
+	defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+
+	cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+	if err != nil {
+		w.sess.Rollback()
+		return 0, err
+	}
 	jobCtx.pendingReorgRU = 0
 	defer func() {
 		jobCtx.pendingReorgRU = 0
 	}()
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
-	if restoreStorageClassTransitionStep != nil {
-		var stagingErr *storageClassTransitionStagingError
-		if goerrors.As(runJobErr, &stagingErr) {
-			// History SQL can release earlier TableInfo and history writes from
-			// the statement buffer, so Reset alone cannot discard this step.
-			restoreStorageClassTransitionStep()
-			schemaVer = 0
-			// Preserve the saved raw arguments, not decoded args mutated by a
-			// sub-job whose metadata changes were just rolled back.
-			updateRawArgs = false
-		}
-	}
+	res := w.runOneJobStepInternal(jobCtx, job)
+	schemaVer, updateRawArgs, runJobErr := res.ver, res.updateRawArgs, res.err
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
+	if outcome, ok := resolveStepOutcome(job, jobCtx, res); ok {
+		return w.applyStepOutcome(jobCtx, jobW, cp, outcome)
+	}
+
+	// Legacy fallback for actions not yet migrated to explicit stepOutcome.
 	// Internal SQL may release statement mutations before a terminal cancellation.
 	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
-		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
@@ -783,14 +793,12 @@ func (w *worker) transitOneJobStep(
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
-				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
 			// Rollback ends the transaction checked above. Recheck in the new
 			// transaction so it does not overwrite a concurrent job update.
 			if txnErr = w.checkJobMetaUnchanged(jobCtx, jobW); txnErr != nil {
 				w.sess.Rollback()
-				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
@@ -808,32 +816,42 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if job.IsCancelled() {
-		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
-	err = w.registerMDLInfo(job, schemaVer)
+	return w.commitActiveJobStep(jobCtx, jobW, schemaVer, updateRawArgs, runJobErr)
+}
+
+func (w *worker) commitActiveJobStep(
+	jobCtx *jobContext,
+	jobW *model.JobW,
+	schemaVer int64,
+	updateRawArgs bool,
+	runJobErr error,
+) (int64, error) {
+	job := jobW.Job
+	err := w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	if err = w.accountJobRU(job); err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
+	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, err)
+	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
+	}
+	if handledErr {
+		schemaVer = 0
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.workCtx)
-	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -876,6 +894,7 @@ func (w *worker) checkBeforeCommit() error {
 
 	if err := w.workCtx.Err(); err != nil {
 		// The worker context is canceled, it should not commit any transaction.
+		w.sess.Rollback()
 		return err
 	}
 	return nil
@@ -992,12 +1011,32 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 // user that the job is finished because other nodes in cluster may not be
 // synchronized. So JobStateSynced *step* is added to make sure there is
 // updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
+func (w *worker) runOneJobStepInternal(
+	jobCtx *jobContext,
+	job *model.Job,
+) (res runStepResult) {
+	res.ver, res.updateRawArgs, res.err = w.runOneJobStepWithPanicFlag(jobCtx, job, &res.panicked)
+	return res
+}
+
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	job *model.Job,
 ) (ver int64, updateRawArgs bool, err error) {
+	var panicked bool
+	return w.runOneJobStepWithPanicFlag(jobCtx, job, &panicked)
+}
+
+func (w *worker) runOneJobStepWithPanicFlag(
+	jobCtx *jobContext,
+	job *model.Job,
+	panicked *bool,
+) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
+			if panicked != nil {
+				*panicked = true
+			}
 			w.countForPanic(jobCtx, job)
 		}, false)
 
@@ -1031,6 +1070,14 @@ func (w *worker) runOneJobStep(
 
 	isRunnable, err := w.processJobPausingRequest(jobCtx, job)
 	if !isRunnable {
+		if !jobCtx.inInnerRunOneJobStep {
+			jobCtx.stepOutcome = &stepOutcome{
+				writes:   stepWritesDiscard,
+				baseline: stepJobCurrent,
+				finish:   stepFinishUpdateJob,
+				err:      err,
+			}
+		}
 		return ver, false, err
 	}
 

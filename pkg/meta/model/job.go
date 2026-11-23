@@ -1025,6 +1025,58 @@ func (job *Job) ClearDecodedArgs() {
 	job.args = nil
 }
 
+// RestoreFrom replaces job's state (except Mu) from src, resetting cached
+// decoded args to src.args so subsequent V1/V2 getters decode from src.RawArgs.
+func (job *Job) RestoreFrom(src *Job) {
+	if job == nil || src == nil || job == src {
+		return
+	}
+	job.Mu.Lock()
+	defer job.Mu.Unlock()
+
+	job.ID = src.ID
+	job.Type = src.Type
+	job.SchemaID = src.SchemaID
+	job.TableID = src.TableID
+	job.SchemaName = src.SchemaName
+	job.TableName = src.TableName
+	job.State = src.State
+	job.Warning = src.Warning
+	job.Error = src.Error
+	job.ErrorCount = src.ErrorCount
+	job.RowCount = src.RowCount
+	job.NeedReorg = src.NeedReorg
+	job.args = src.args
+	job.RawArgs = src.RawArgs
+	job.SchemaState = src.SchemaState
+	job.SnapshotVer = src.SnapshotVer
+	job.RealStartTS = src.RealStartTS
+	job.StartTS = src.StartTS
+	job.DependencyID = src.DependencyID
+	job.Query = src.Query
+	job.BinlogInfo = src.BinlogInfo
+	job.Version = src.Version
+	job.ReorgMeta = src.ReorgMeta
+	job.MultiSchemaInfo = src.MultiSchemaInfo
+	job.Priority = src.Priority
+	job.SeqNum = src.SeqNum
+	job.Charset = src.Charset
+	job.Collate = src.Collate
+	job.InvolvingSchemaInfo = src.InvolvingSchemaInfo
+	job.AdminOperator = src.AdminOperator
+	job.PauseReason = src.PauseReason
+	job.ResumeReason = src.ResumeReason
+	job.TraceInfo = src.TraceInfo
+	job.BDRRole = src.BDRRole
+	job.CDCWriteSource = src.CDCWriteSource
+	job.LocalMode = src.LocalMode
+	job.CheckSchemaReadOnly = src.CheckSchemaReadOnly
+	job.SQLMode = src.SQLMode
+	job.SessionVars = src.SessionVars
+	job.LastSchemaVersion = src.LastSchemaVersion
+	job.RU = src.RU
+}
+
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {

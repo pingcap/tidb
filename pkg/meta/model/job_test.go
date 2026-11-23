@@ -21,6 +21,7 @@ import (
 	goast "go/ast"
 	"go/parser"
 	"go/token"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -543,4 +544,91 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 			{ResourceGroup: "resourcegroupname"},
 		}, job.InvolvingSchemaInfo)
 	})
+}
+
+func TestJobRestoreFrom(t *testing.T) {
+	src := &Job{
+		ID:                  42,
+		Type:                ActionAddIndex,
+		SchemaID:            10,
+		TableID:             20,
+		SchemaName:          "db",
+		TableName:           "tbl",
+		State:               JobStateCancelling,
+		Warning:             terror.ErrResultUndetermined,
+		Error:               terror.ErrResultUndetermined,
+		ErrorCount:          3,
+		RowCount:            100,
+		NeedReorg:           true,
+		args:                []any{"src"},
+		RawArgs:             json.RawMessage(`{"idx":1}`),
+		SchemaState:         StateWriteOnly,
+		SnapshotVer:         99,
+		RealStartTS:         101,
+		StartTS:             102,
+		DependencyID:        103,
+		Query:               "alter table tbl add index idx(a)",
+		BinlogInfo:          &HistoryInfo{SchemaVersion: 7},
+		Version:             JobVersion2,
+		ReorgMeta:           &DDLReorgMeta{UseCloudStorage: true},
+		MultiSchemaInfo:     &MultiSchemaInfo{Revertible: true, Seq: 1},
+		Priority:            5,
+		SeqNum:              6,
+		Charset:             "utf8mb4",
+		Collate:             "utf8mb4_bin",
+		InvolvingSchemaInfo: []InvolvingSchemaInfo{{Database: "db", Table: "tbl"}},
+		AdminOperator:       AdminCommandBySystem,
+		PauseReason:         &JobPauseReason{Type: JobPauseReasonKVDiskFull},
+		ResumeReason:        &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+		BDRRole:             "primary",
+		CDCWriteSource:      8,
+		LocalMode:           true,
+		CheckSchemaReadOnly: true,
+		SQLMode:             12,
+		SessionVars:         map[string]string{"k": "v"},
+		LastSchemaVersion:   77,
+		RU:                  12.5,
+	}
+	dst := &Job{
+		ID:         1,
+		args:       []any{"stale"},
+		BinlogInfo: &HistoryInfo{SchemaVersion: 999},
+	}
+	dst.RestoreFrom(src)
+
+	srcVal := reflect.ValueOf(src).Elem()
+	dstVal := reflect.ValueOf(dst).Elem()
+	typ := srcVal.Type()
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if f.Name == "Mu" {
+			continue
+		}
+		if f.Name == "args" {
+			require.Equal(t, []any{"src"}, dst.args)
+			continue
+		}
+		require.Equal(t, srcVal.Field(i).Interface(), dstVal.Field(i).Interface(), "field %s", f.Name)
+	}
+
+	// Restoring from a decoded baseline clears stale V2 decoded args and zeroed pointer fields.
+	baselineSrc := &Job{
+		Version: JobVersion2,
+		ID:      7,
+		Type:    ActionModifyTableComment,
+		State:   JobStateRunning,
+	}
+	baselineSrc.FillArgs(&ModifyTableCommentArgs{Comment: "initial"})
+	srcBytes, err := baselineSrc.Encode(true)
+	require.NoError(t, err)
+	var baseline Job
+	require.NoError(t, baseline.Decode(srcBytes))
+	dst.FillArgs(&ModifyTableCommentArgs{Comment: "mutated"})
+	dst.RestoreFrom(&baseline)
+	require.Nil(t, dst.args)
+	require.Nil(t, dst.PauseReason)
+	require.Nil(t, dst.MultiSchemaInfo)
+	gotArgs, err := GetModifyTableCommentArgs(dst)
+	require.NoError(t, err)
+	require.Equal(t, "initial", gotArgs.Comment)
 }
