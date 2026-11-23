@@ -137,10 +137,12 @@ func NewHandle(
 	statsPool := util.NewPool(pool)
 	leaseHolder := util.NewLeaseHolder(lease)
 	tables := util.NewTableInfoGetter()
+	statsLock := lockstats.NewStatsLock(pool)
 	statsCache, err := cache.NewStatsCacheImpl(statsPool, leaseHolder, tables)
 	if err != nil {
 		return nil, err
 	}
+	tableStats := newTableStatsGetter(statsPool, statsCache)
 	readWriter := storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache)
 	handle := &Handle{
 		InitStatsDone:              make(chan struct{}),
@@ -149,13 +151,13 @@ func NewHandle(
 		LeaseHolder:                leaseHolder,
 		TableInfoGetter:            tables,
 		StatsCache:                 statsCache,
-		tableStats:                 newTableStatsGetter(statsPool, statsCache),
-		StatsLock:                  lockstats.NewStatsLock(pool),
+		tableStats:                 tableStats,
+		StatsLock:                  statsLock,
 		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
 		StatsReadWriter:            readWriter,
 		StatsGlobal:                globalstats.NewStatsGlobal(statsPool, tables, readWriter),
+		StatsUsage:                 usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats),
 	}
-	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.DDL = ddl.NewDDLHandler(

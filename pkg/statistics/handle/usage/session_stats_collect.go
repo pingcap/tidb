@@ -82,7 +82,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(snapshotTableInfoGetter *utilstats.S
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
-	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	statsTable, found := s.tableStats.GetNonPseudoPhysicalTableStats(id)
 	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
 		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
@@ -129,7 +129,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		batchTableIDs := tableIDs[i:end]
 		var batchUpdates []*storage.DeltaUpdate
 		batchStart := time.Now()
-		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		err := utilstats.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
@@ -202,7 +202,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		// The batch wrote its start_ts as the version. If it committed too late, the stats cache on other
 		// TiDB nodes may have moved past that version, so write a newer one, as handleSlowStatsSaving does.
 		if batchDur := time.Since(batchStart); len(unlockedTableIDs) > 0 &&
-			storage.IsStatsMetaWriteTooSlow(s.statsHandle.Lease(), batchDur) {
+			storage.IsStatsMetaWriteTooSlow(s.lease.Lease(), batchDur) {
 			updateStart := time.Now()
 			newVersion, err := s.updateStatsMetaVerForSlowDump(unlockedTableIDs)
 			updateDur := time.Since(updateStart)
@@ -228,7 +228,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 
 // updateStatsMetaVerForSlowDump updates the version of the dumped tables to a newer TS.
 func (s *statsUsageImpl) updateStatsMetaVerForSlowDump(tableIDs []int64) (statsVersion uint64, err error) {
-	err = utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	err = utilstats.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		statsVersion, err = storage.UpdateStatsMetaVer(utilstats.StatsCtx, sctx, tableIDs...)
 		return err
 	}, utilstats.FlagWrapTxn)
@@ -301,7 +301,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	}
 
 	// Batch get lock status for all tables.
-	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	lockedTables, err := s.locks.GetLockedTables(allTableIDs...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -385,7 +385,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, ColStatsUsageEntry{TableID: id.TableID, ColumnID: id.ID, LastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	if err := DumpColStatsUsageEntries(s.statsHandle.SPool(), pairs, nil); err != nil {
+	if err := DumpColStatsUsageEntries(s.pool.SPool(), pairs, nil); err != nil {
 		return errors.Trace(err)
 	}
 	for id := range colMap {

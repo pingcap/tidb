@@ -51,15 +51,19 @@ type ColStatsTimeInfo struct {
 	LastAnalyzedAt *types.Time // last time the column is analyzed
 }
 
+// PredicateColumnsGetter gives the predicate columns of a table.
+type PredicateColumnsGetter interface {
+	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+	GetPredicateColumns(tableID int64) ([]int64, error)
+}
+
 // StatsUsage is used to track the usage of column / index statistics.
 type StatsUsage interface {
 	// Below methods are for predicated columns.
+	PredicateColumnsGetter
 
 	// LoadColumnStatsUsage returns all columns' usage information.
 	LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID]ColStatsTimeInfo, error)
-
-	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-	GetPredicateColumns(tableID int64) ([]int64, error)
 
 	IndexUsage
 
@@ -288,8 +292,17 @@ type StatsLockTable struct {
 	FullName string
 }
 
+// LockedTablesGetter gives the tables whose statistics are locked.
+type LockedTablesGetter interface {
+	// GetLockedTables returns the locked status of the given tables.
+	// Note: This function query locked tables from store, so please try to batch the query.
+	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
+}
+
 // StatsLock is used to manage locked stats.
 type StatsLock interface {
+	LockedTablesGetter
+
 	// LockTables add locked tables id to store.
 	// - tables: tables that will be locked.
 	// Return the message of skipped tables and error.
@@ -323,10 +336,6 @@ type StatsLock interface {
 		tableName string,
 		pidNames map[int64]string,
 	) (skipped string, err error)
-
-	// GetLockedTables returns the locked status of the given tables.
-	// Note: This function query locked tables from store, so please try to batch the query.
-	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
 
 	// GetTableLockedAndClearForTest for unit test only.
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
