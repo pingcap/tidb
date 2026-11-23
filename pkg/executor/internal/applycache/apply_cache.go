@@ -26,10 +26,15 @@ import (
 // ApplyCache is used in the apply executor. When we get the same value of the outer row.
 // We fetch the inner rows in the cache not to fetch them in the inner executor.
 type ApplyCache struct {
-	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
+	cache       *kvcache.SimpleLRUCache // protected by lock, together with memory accounting
 	memTracker  *memory.Tracker         // track memory usage.
 	memCapacity int64
 	lock        syncutil.Mutex
+}
+
+type applyCacheEntry struct {
+	value *chunk.List
+	mem   int64
 }
 
 type applyCacheKey []byte
@@ -39,7 +44,7 @@ func (key applyCacheKey) Hash() []byte {
 }
 
 func applyCacheKVMem(key applyCacheKey, value *chunk.List) int64 {
-	return int64(len(key)) + value.GetMemTracker().BytesConsumed()
+	return int64(len(key)) + value.MemoryUsage()
 }
 
 // NewApplyCache creates a new ApplyCache.
@@ -55,49 +60,41 @@ func NewApplyCache(ctx sessionctx.Context) (*ApplyCache, error) {
 	return &c, nil
 }
 
-func (c *ApplyCache) get(key applyCacheKey) (value kvcache.Value, ok bool) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.cache.Get(key)
-}
-
-func (c *ApplyCache) put(key applyCacheKey, val kvcache.Value) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.cache.Put(key, val)
-}
-
-func (c *ApplyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.cache.RemoveOldest()
-}
-
 // Get gets a cache item according to cache key. It's thread-safe.
 func (c *ApplyCache) Get(key applyCacheKey) (*chunk.List, error) {
-	value, hit := c.get(key)
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil, nil
 	}
-	typedValue := value.(*chunk.List)
-	return typedValue, nil
+	return value.(*applyCacheEntry).value, nil
 }
 
-// Set inserts an item to the cache. It's thread-safe.
+// Set inserts or replaces an item in the cache. It's thread-safe.
+// The key and list contents must not be modified while they are cached.
 func (c *ApplyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 	mem := applyCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		return false, nil
 	}
-	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		evictedKey, evictedValue, evicted := c.removeOldest()
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	// Release the old charge before choosing victims for a replacement.
+	if old, ok := c.cache.Peek(key); ok {
+		c.cache.Delete(key)
+		c.memTracker.Consume(-old.(*applyCacheEntry).mem)
+	}
+	for mem > c.memCapacity-c.memTracker.BytesConsumed() {
+		_, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
 			return false, nil
 		}
-		c.memTracker.Consume(-applyCacheKVMem(evictedKey.(applyCacheKey), evictedValue.(*chunk.List)))
+		c.memTracker.Consume(-evictedValue.(*applyCacheEntry).mem)
 	}
+	c.cache.Put(key, &applyCacheEntry{value: value, mem: mem})
 	c.memTracker.Consume(mem)
-	c.put(key, value)
 	return true, nil
 }
 
