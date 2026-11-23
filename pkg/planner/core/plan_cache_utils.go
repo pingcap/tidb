@@ -202,6 +202,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 
+	if destBuilder.foundRowsViewNoop {
+		// Preserve the PREPARE decision until schema revalidation creates a
+		// new resolve context.
+		nodeW.GetResolveContext().CalcFoundRowsMode = resolve.CalcFoundRowsNoop
+	}
+
 	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
@@ -440,8 +446,8 @@ func newPlanCacheKeyWithMatchedBinding(
 	}
 	// dirty tables
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
-	// txn status
-	hashLen += 6
+	// txn status and SQL_CALC_FOUND_ROWS validation mode
+	hashLen += 7
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -557,6 +563,11 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
+	foundRowsMode := resolve.CalcFoundRowsNative
+	if stmt.ResolveCtx != nil {
+		foundRowsMode = stmt.ResolveCtx.CalcFoundRowsMode
+	}
+	hash = append(hash, byte(foundRowsMode))
 
 	if intest.InTest {
 		if cap(hash) != hashInitCap {
@@ -860,6 +871,21 @@ type PlanCacheStmt struct {
 	dbName  []ast.CIStr
 	tblName []ast.CIStr
 	tbls    []table.Table
+}
+
+// RequiresCalcFoundRowsViewValidation reports whether PREPARE must expand a
+// view to validate the modifier under the current no-op mode.
+func (stmt *PlanCacheStmt) RequiresCalcFoundRowsViewValidation() bool {
+	selectStmt := findSQLCalcFoundRowsAllowedSelect(stmt.PreparedAst.Stmt)
+	if selectStmt == nil || selectStmt.SelectStmtOpts == nil || !selectStmt.SelectStmtOpts.CalcFoundRows {
+		return false
+	}
+	for _, table := range stmt.ResolveCtx.GetTableNames() {
+		if table.TableInfo.IsView() {
+			return true
+		}
+	}
+	return false
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.

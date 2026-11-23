@@ -5656,13 +5656,16 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if err != nil {
 		return nil, err
 	}
-	if b.buildingFoundRows {
-		// View definitions are expanded after preprocessing. Check them as inner queries,
-		// preserving legacy modifiers as noops and rejecting non-repeatable expressions.
+	if b.buildingFoundRows && !b.foundRowsViewNoop {
+		// A stored definition is visible only during view expansion. A legacy
+		// modifier in that definition remains a no-op.
 		checker := &foundRowsChecker{inView: true}
 		ast.Walk(selectNode, checker)
 		if checker.err != nil {
-			return nil, checker.err
+			if b.resolveCtx.CalcFoundRowsMode == resolve.CalcFoundRowsNative {
+				return nil, checker.err
+			}
+			b.foundRowsViewNoop = true
 		}
 	}
 	originalVisitInfo := b.visitInfo

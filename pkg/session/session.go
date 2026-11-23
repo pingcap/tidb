@@ -3410,10 +3410,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	// Store the result in the dedup cache for future Prepares of the same SQL.
-	if s.sessionVars.EnableCachePrepareStmt {
-		if prepareExec.Stmt != nil {
+	if s.sessionVars.EnableCachePrepareStmt && prepareExec.Stmt != nil {
+		stmt := prepareExec.Stmt.(*plannercore.PlanCacheStmt)
+		if !stmt.RequiresCalcFoundRowsViewValidation() {
 			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
-				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
+				Stmt:       stmt,
 				Fields:     prepareExec.Fields,
 				ParamCount: prepareExec.ParamCount,
 			})

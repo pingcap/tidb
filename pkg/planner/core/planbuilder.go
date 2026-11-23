@@ -230,6 +230,7 @@ type PlanBuilder struct {
 	// View definitions are unavailable during preprocessing, so check their expressions
 	// when expanding them to prevent the two plans from reading different rows.
 	buildingFoundRows bool
+	foundRowsViewNoop bool
 	// capFlag indicates the capability flags.
 	capFlag capFlagType
 
@@ -660,7 +661,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		}
 		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
 		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
-		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
+		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows &&
+			len(b.buildingViewStack) == 0 && b.resolveCtx.CalcFoundRowsMode != resolve.CalcFoundRowsNoop {
 			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)
@@ -5708,6 +5710,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "",
 				"", "", err)
 		}
+		if b.resolveCtx.CalcFoundRowsMode == resolve.CalcFoundRowsNoop {
+			node = omitCalcFoundRows(v).(*ast.CreateViewStmt)
+		}
 	case *ast.CreateSequenceStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
@@ -5984,6 +5989,9 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 		Format:               trace.Format,
 		OptimizerTrace:       trace.TracePlan,
 		OptimizerTraceTarget: trace.TracePlanTarget,
+	}
+	if b.resolveCtx.CalcFoundRowsMode == resolve.CalcFoundRowsNoop {
+		p.StmtNode = omitCalcFoundRows(p.StmtNode).(ast.StmtNode)
 	}
 	// TODO: forbid trace plan if the statement isn't select read-only statement
 	if trace.TracePlan {
@@ -6492,7 +6500,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	return
 }
 
-func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
 	if pc.HistoricalStatsInfo != nil {
 		return nil, errors.New("WITH STATS AS OF TIMESTAMP is no longer supported because the historical statistics feature has been removed; remove the clause to dump the current statistics")
 	}
@@ -6507,6 +6515,9 @@ func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, erro
 	}
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
+	if b.resolveCtx.CalcFoundRowsMode == resolve.CalcFoundRowsNoop {
+		p.ExecStmt = omitCalcFoundRows(p.ExecStmt).(ast.StmtNode)
+	}
 
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))

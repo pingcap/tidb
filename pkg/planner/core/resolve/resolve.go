@@ -64,9 +64,25 @@ func (n *NodeW) GetResolveContext() *Context {
 	return n.resolveCtx
 }
 
+// CalcFoundRowsMode records how the current statement can use SQL_CALC_FOUND_ROWS.
+type CalcFoundRowsMode uint8
+
+const (
+	// CalcFoundRowsNative requires native counting.
+	CalcFoundRowsNative CalcFoundRowsMode = iota
+	// CalcFoundRowsAllowNoop allows falling back to an ordinary SELECT.
+	CalcFoundRowsAllowNoop
+	// CalcFoundRowsWarnNoop allows fallback and requests a warning.
+	CalcFoundRowsWarnNoop
+	// CalcFoundRowsNoop records that validation has already selected the fallback.
+	CalcFoundRowsNoop
+)
+
 // Context is used to store the context and result of resolving AST tree.
 type Context struct {
 	tableNames map[*ast.TableName]*TableNameW
+	// CalcFoundRowsMode preserves the validation decision without rewriting the parsed modifier.
+	CalcFoundRowsMode CalcFoundRowsMode
 }
 
 // NewContext creates a Context.

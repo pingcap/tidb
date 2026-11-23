@@ -280,6 +280,15 @@ func planCacheSnapshotVersions(ctx context.Context, is infoschema.InfoSchema, st
 func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
+	previousResolveCtx := stmt.ResolveCtx
+	defer func() {
+		if stmt.ResolveCtx != previousResolveCtx && plannererrors.ErrNotSupportedYet.Equal(err) &&
+			stmt.RequiresCalcFoundRowsViewValidation() {
+			// View validation runs after preprocessing. Recheck the SQL mode
+			// on the next execution if that validation just failed.
+			stmt.SchemaVersion = 0
+		}
+	}()
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -450,6 +459,19 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		return nil, nil, err
 	}
 
+	fellBackAfterRevalidation := false
+	switch stmt.ResolveCtx.CalcFoundRowsMode {
+	case resolve.CalcFoundRowsAllowNoop, resolve.CalcFoundRowsWarnNoop:
+		if _, isSelect := stmtAst.Stmt.(*ast.SelectStmt); isSelect {
+			// Only view expansion can select fallback here: preprocessing
+			// has already recorded any fallback it could determine.
+			if _, counted := p.(*physicalop.PhysicalCalcFoundRows); !counted {
+				stmt.ResolveCtx.CalcFoundRowsMode = resolve.CalcFoundRowsNoop
+				fellBackAfterRevalidation = true
+			}
+		}
+	}
+
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
 		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(paramTypes), len(stmt.limits), stmt.hasSubquery); !cacheable {
@@ -457,8 +479,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		}
 	}
 
-	// put this plan into the plan cache.
-	if stmtCtx.UseCache() {
+	// When view expansion selects fallback during revalidation, the current
+	// key reflects the provisional mode. The next execution uses the no-op key.
+	if stmtCtx.UseCache() && !fellBackAfterRevalidation {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)

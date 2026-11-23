@@ -204,18 +204,75 @@ func TestSQLCalcFoundRowsViews(t *testing.T) {
 		tk.MustExec(strings.Replace(createSQL, "`view_page`", "`view_recreated`", 1))
 		tk.MustQuery("select * from view_recreated order by id").Check(testkit.Rows("1", "2"))
 	})
-	tk.MustExec("create view view_coin as select id from view_found_rows where rand()<0.5")
+	tk.MustExec("create view view_coin as select id from view_found_rows where rand()<2")
 	tk.MustExec("create view view_coin_nested as select id from view_coin")
 	tk.MustExec("create view view_token as select id, uuid() as token from view_found_rows")
-	t.Run("non-repeatable", func(t *testing.T) {
+	for _, mode := range []string{"OFF", "ON", "WARN"} {
+		t.Run("non-repeatable-"+mode, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_enable_noop_functions=" + mode)
+			for _, name := range []string{"view_coin", "view_coin_nested", "view_token"} {
+				query := "select SQL_CALC_FOUND_ROWS id from " + name + " order by id limit 1"
+				prepare := "prepare view_stmt from '" + query + "'"
+				if mode == "OFF" {
+					tk.MustGetErrCode(query, mysql.ErrNotSupportedYet)
+					tk.MustGetErrCode("explain "+query, mysql.ErrNotSupportedYet)
+					tk.MustGetErrCode(prepare, mysql.ErrNotSupportedYet)
+					continue
+				}
+				checkWarning := func() {
+					var noopWarnings int
+					for _, w := range tk.Session().GetSessionVars().StmtCtx.GetWarnings() {
+						if strings.Contains(w.Err.Error(), "function SQL_CALC_FOUND_ROWS has only noop implementation") {
+							noopWarnings++
+						}
+					}
+					if mode == "WARN" {
+						require.Equal(t, 1, noopWarnings)
+					} else {
+						require.Zero(t, noopWarnings)
+					}
+				}
+				tk.MustQuery(query).Check(testkit.Rows("1"))
+				checkWarning()
+				tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+				tk.MustQuery("explain " + query)
+				checkWarning()
+				tk.MustExec(prepare)
+				checkWarning()
+				tk.MustQuery("execute view_stmt").Check(testkit.Rows("1"))
+				tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+			}
+		})
+	}
+	t.Run("revalidate-prepared-view", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		for _, name := range []string{"view_coin", "view_coin_nested", "view_token"} {
-			query := "select SQL_CALC_FOUND_ROWS id from " + name + " order by id limit 1"
-			tk.MustGetErrCode(query, mysql.ErrNotSupportedYet)
-			tk.MustGetErrCode("explain "+query, mysql.ErrNotSupportedYet)
-			tk.MustGetErrCode("prepare view_stmt from '"+query+"'", mysql.ErrNotSupportedYet)
-		}
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		tk.MustExec("prepare view_stmt from 'select SQL_CALC_FOUND_ROWS id from view_coin_nested order by id limit 1'")
+		tk.MustExec("set tidb_enable_noop_functions=OFF")
+		tk.MustExec("alter table view_found_rows add column revalidate int")
+		tk.MustContainErrMsg("execute view_stmt", "SQL_CALC_FOUND_ROWS with random expressions")
+		tk.MustExec("set tidb_enable_noop_functions=WARN")
+		tk.MustQuery("execute view_stmt").Check(testkit.Rows("1"))
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.ErrorContains(t, warnings[0].Err, "function SQL_CALC_FOUND_ROWS has only noop implementation")
+		tk.MustQuery("execute view_stmt").Check(testkit.Rows("1"))
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	})
+	t.Run("binary-prepare-view", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_cache_prepare_stmt=ON")
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		query := "select SQL_CALC_FOUND_ROWS id from view_coin order by id limit 1"
+		_, _, _, err := tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		tk.MustExec("set tidb_enable_noop_functions=OFF")
+		_, _, _, err = tk.Session().PrepareStmt(query)
+		require.ErrorContains(t, err, "SQL_CALC_FOUND_ROWS with random expressions")
 	})
 }
 
@@ -405,6 +462,32 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 			tk.MustExec("deallocate prepare noop_found_rows")
 		})
 	}
+	t.Run("noop-binding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache=OFF")
+		query := "id, row_number() over (order by id) as rn from found_rows order by id limit 1"
+		tk.MustExec("create session binding for select " + query + " using select /*+ max_execution_time(10000) */ " + query)
+		tk.MustQuery("select " + query).Check(testkit.Rows("1 1"))
+		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+		tk.MustQuery("select SQL_CALC_FOUND_ROWS " + query).Check(testkit.Rows("1 1"))
+		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	})
+	t.Run("noop-reprepare", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_noop_functions=ON")
+		tk.MustExec("prepare noop_found_rows from 'select SQL_CALC_FOUND_ROWS id, row_number() over (order by id) from found_rows order by id limit 1'")
+		tk.MustExec("set tidb_enable_noop_functions=OFF")
+		tk.MustExec("alter table found_rows add column reprepare int")
+		tk.MustContainErrMsg("execute noop_found_rows", "SQL_CALC_FOUND_ROWS with window functions")
+		tk.MustExec("set tidb_enable_noop_functions=WARN")
+		tk.MustQuery("execute noop_found_rows").Check(testkit.Rows("1 1"))
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		require.Len(t, warnings, 1)
+		require.ErrorContains(t, warnings[0].Err, "function SQL_CALC_FOUND_ROWS has only noop implementation")
+	})
 }
 
 func TestSQLCalcFoundRowsPlanningAndClose(t *testing.T) {
