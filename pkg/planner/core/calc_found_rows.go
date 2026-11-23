@@ -46,6 +46,18 @@ func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
 func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
 	b.buildingFoundRows = true
 	defer func() { b.buildingFoundRows = false }()
+	fallback := func() (base.Plan, error) {
+		vars := b.ctx.GetSessionVars()
+		clear(b.colMapper)
+		clear(b.correlatedAggMapper)
+		b.foundRowsPlan = nil
+		b.buildingFoundRows = false
+		vars.StmtCtx.CalcFoundRowsNoop = true
+		if vars.NoopFuncsMode == variable.WarnInt {
+			appendNoopCalcFoundRowsWarning(vars)
+		}
+		return b.buildSelect(ctx, sel)
+	}
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
@@ -62,16 +74,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	count, err := b.buildSelect(ctx, &countSel)
 	if err != nil {
 		if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
-			vars := b.ctx.GetSessionVars()
-			clear(b.colMapper)
-			clear(b.correlatedAggMapper)
-			b.foundRowsPlan = nil
-			b.buildingFoundRows = false
-			vars.StmtCtx.CalcFoundRowsNoop = true
-			if vars.NoopFuncsMode == variable.WarnInt {
-				appendNoopCalcFoundRowsWarning(vars)
-			}
-			return b.buildSelect(ctx, sel)
+			return fallback()
 		}
 		return nil, err
 	}
@@ -95,7 +98,11 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	// extracted while building the count branch in the data branch.
 	clear(b.colMapper)
 	clear(b.correlatedAggMapper)
-	return b.buildSelect(ctx, sel)
+	plan, err := b.buildSelect(ctx, sel)
+	if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
+		return fallback()
+	}
+	return plan, err
 }
 
 // checkViewCalcFoundRows validates an expanded view definition while building

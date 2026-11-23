@@ -485,6 +485,20 @@ func TestSQLCalcFoundRowsUnsupported(t *testing.T) {
 		}
 		tk.MustExec("set tidb_enable_noop_functions=OFF")
 		tk.MustGetErrCode("execute st_view", mysql.ErrNotSupportedYet)
+		// A volatile view referenced only in outer ORDER BY is expanded during the
+		// data branch (countSel drops ORDER BY) and must also fall back cleanly.
+		orderByViewSQL := "select SQL_CALC_FOUND_ROWS t.id from fr_t t order by (select v.id from fr_v_rand_nested v where v.id = t.id limit 1), t.id limit 1"
+		tk.MustGetErrCode(orderByViewSQL, mysql.ErrNotSupportedYet)
+		for _, mode := range []string{"ON", "WARN"} {
+			tk.MustExec("set tidb_enable_noop_functions=" + mode)
+			tk.MustQuery(orderByViewSQL).Check(testkit.Rows("1"))
+			if mode == "WARN" {
+				tk.MustQuery("show warnings").Check(noopWarn)
+			} else {
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+			}
+			tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
+		}
 		// Replacing the view with a repeatable definition must restore native counting
 		// in both OFF and ON modes.
 		tk.MustExec("create or replace view fr_v_rand as select id from fr_t")
